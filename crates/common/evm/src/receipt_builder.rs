@@ -4,9 +4,13 @@
 use alloc::boxed::Box;
 use core::fmt::Debug;
 
-use alloy_consensus::{Eip658Value, TransactionEnvelope};
+use alloy_consensus::{Eip658Value, ReceiptWithBloom, TransactionEnvelope};
 use alloy_evm::{Evm, eth::receipt_builder::ReceiptBuilderCtx};
-use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope, DepositReceipt, OpTxType};
+use base_common_consensus::{
+    BaseReceiptEnvelope, BaseTxEnvelope, DepositReceipt, Eip8130Receipt, OpTxType,
+};
+
+use crate::Eip8130ReceiptHandoff;
 
 /// Boxed receipt-builder context returned for deposit transactions.
 pub(crate) type ReceiptBuilderError<'a, Tx, E> = Box<ReceiptBuilderCtx<'a, Tx, E>>;
@@ -64,7 +68,13 @@ impl BaseReceiptBuilder for AlloyReceiptBuilder {
                     OpTxType::Eip1559 => BaseReceiptEnvelope::Eip1559(receipt),
                     OpTxType::Eip7702 => BaseReceiptEnvelope::Eip7702(receipt),
                     OpTxType::Deposit => unreachable!(),
-                    OpTxType::Eip8130 => BaseReceiptEnvelope::Eip8130(receipt),
+                    OpTxType::Eip8130 => {
+                        let (payer, phase_statuses) = Eip8130ReceiptHandoff::take();
+                        BaseReceiptEnvelope::Eip8130(ReceiptWithBloom {
+                            receipt: Eip8130Receipt::new(receipt.receipt, payer, phase_statuses),
+                            logs_bloom: receipt.logs_bloom,
+                        })
+                    }
                 })
             }
         }

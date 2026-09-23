@@ -6,7 +6,7 @@ use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_serde::OtherFields;
 use base_common_consensus::{
-    BaseReceipt, BaseReceiptEnvelope, DepositReceipt, DepositReceiptWithBloom,
+    BaseReceipt, BaseReceiptEnvelope, DepositReceipt, DepositReceiptWithBloom, Eip8130Receipt,
 };
 use serde::{Deserialize, Serialize};
 
@@ -25,16 +25,17 @@ pub struct BaseTransactionReceipt {
     #[serde(flatten)]
     pub l1_block_info: L1BlockInfo,
     /* --------------------------------------- EIP-8130 --------------------------------------- */
-    /// Gas payer address for EIP-8130 transactions: the sender for self-pay, or the
-    /// specified payer for sponsored transactions.
+    /// Gas payer address for EIP-8130 transactions: the sender for self-pay, the
+    /// named payer for sponsored transactions, or the recovered signer in open
+    /// payer mode.
     ///
     /// Always null for non-EIP-8130 transactions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer: Option<Address>,
     /// Per-phase execution statuses for EIP-8130 transactions.
     ///
-    /// Each entry is `0x01` (success) or `0x00` (reverted); phases after a revert are
-    /// not executed and reported as `0x00`. `None` for non-EIP-8130 transactions (the
+    /// Each entry is `0x01` (success), `0x00` (reverted), or `0x02` (skipped after
+    /// an earlier phase reverted). `None` for non-EIP-8130 transactions (the
     /// field is omitted from the JSON); `Some([])` for an EIP-8130 transaction whose
     /// `calls` was empty, which per EIP-8130 must still surface as `"phaseStatuses": []`.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "phase_statuses_serde")]
@@ -299,6 +300,8 @@ impl Eq for L1BlockInfo {}
 
 impl From<BaseTransactionReceipt> for BaseReceiptEnvelope {
     fn from(value: BaseTransactionReceipt) -> Self {
+        let payer = value.payer.unwrap_or_default();
+        let phase_statuses = value.phase_statuses.unwrap_or_default();
         let ReceiptWithBloom { logs_bloom, receipt } = value.inner.inner;
 
         /// Helper function to convert the inner logs within a [`ReceiptWithBloom`] from RPC to
@@ -333,9 +336,13 @@ impl From<BaseTransactionReceipt> for BaseReceiptEnvelope {
                 Self::Eip7702(convert_standard_receipt(receipt, logs_bloom))
             }
             BaseReceipt::Eip8130(receipt) => {
-                // The consensus envelope only carries the standard receipt; the
-                // EIP-8130 `phaseStatuses` live on the RPC receipt, not in RLP.
-                Self::Eip8130(convert_standard_receipt(receipt.inner, logs_bloom))
+                // `payer` and `phaseStatuses` are carried by the RPC receipt's own
+                // fields rather than the flattened consensus body.
+                let standard = convert_standard_receipt(receipt.inner, logs_bloom);
+                Self::Eip8130(ReceiptWithBloom {
+                    receipt: Eip8130Receipt::new(standard.receipt, payer, phase_statuses),
+                    logs_bloom: standard.logs_bloom,
+                })
             }
             BaseReceipt::Deposit(receipt) => {
                 let consensus_logs =

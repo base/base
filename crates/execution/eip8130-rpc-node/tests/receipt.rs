@@ -253,7 +253,7 @@ async fn eip8130_sponsored_receipt_reports_declared_payer() -> eyre::Result<()> 
 /// its own `phaseStatuses`.
 ///
 /// This locks the per-transaction attribution of the thread-local
-/// executor→receipt-builder handoff ([`Eip8130PhaseStatuses`]), which relies on
+/// executor→receipt-builder handoff ([`Eip8130ReceiptHandoff`]), which relies on
 /// reth driving each transaction as `execute` -> `build_receipt` sequentially on
 /// one thread. A regression that leaked one transaction's statuses into the next
 /// (or swapped them) would surface here — distinct array lengths and contents

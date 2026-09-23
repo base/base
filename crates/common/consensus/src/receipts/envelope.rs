@@ -7,10 +7,10 @@ use alloy_eips::{
     Typed2718,
     eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718, IsTyped2718},
 };
-use alloy_primitives::{Bloom, Log, logs_bloom};
+use alloy_primitives::{Address, Bloom, Log, logs_bloom};
 use alloy_rlp::{BufMut, Decodable, Encodable, length_of_length};
 
-use crate::{DepositReceipt, DepositReceiptWithBloom, OpTxType};
+use crate::{DepositReceipt, DepositReceiptWithBloom, Eip8130Receipt, OpTxType};
 
 /// Receipt envelope, as defined in [EIP-2718], modified for Base.
 ///
@@ -54,11 +54,14 @@ pub enum BaseReceiptEnvelope {
     ///
     /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
     #[cfg_attr(feature = "serde", serde(rename = "0x79"))]
-    Eip8130(ReceiptWithBloom<Receipt<Log>>),
+    Eip8130(ReceiptWithBloom<Eip8130Receipt<Log>>),
 }
 
 impl BaseReceiptEnvelope {
     /// Creates a new [`BaseReceiptEnvelope`] from the given parts.
+    ///
+    /// An EIP-8130 receipt built here has a zero `payer` and no phase statuses,
+    /// since neither is among the parts.
     pub fn from_parts<'a>(
         status: bool,
         cumulative_gas_used: u64,
@@ -84,9 +87,10 @@ impl BaseReceiptEnvelope {
             OpTxType::Eip7702 => {
                 Self::Eip7702(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
             }
-            OpTxType::Eip8130 => {
-                Self::Eip8130(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
-            }
+            OpTxType::Eip8130 => Self::Eip8130(ReceiptWithBloom {
+                receipt: Eip8130Receipt::new(inner_receipt, Address::ZERO, Vec::new()),
+                logs_bloom,
+            }),
             OpTxType::Deposit => {
                 let inner = DepositReceiptWithBloom {
                     receipt: DepositReceipt {
@@ -143,11 +147,10 @@ impl BaseReceiptEnvelope {
     /// Return the receipt's bloom.
     pub const fn logs_bloom(&self) -> &Bloom {
         match self {
-            Self::Legacy(t)
-            | Self::Eip2930(t)
-            | Self::Eip1559(t)
-            | Self::Eip7702(t)
-            | Self::Eip8130(t) => &t.logs_bloom,
+            Self::Legacy(t) | Self::Eip2930(t) | Self::Eip1559(t) | Self::Eip7702(t) => {
+                &t.logs_bloom
+            }
+            Self::Eip8130(t) => &t.logs_bloom,
             Self::Deposit(t) => &t.logs_bloom,
         }
     }
@@ -181,11 +184,8 @@ impl BaseReceiptEnvelope {
     /// Consumes the type and returns the underlying [`Receipt`].
     pub fn into_receipt(self) -> Receipt<Log> {
         match self {
-            Self::Legacy(t)
-            | Self::Eip2930(t)
-            | Self::Eip1559(t)
-            | Self::Eip7702(t)
-            | Self::Eip8130(t) => t.receipt,
+            Self::Legacy(t) | Self::Eip2930(t) | Self::Eip1559(t) | Self::Eip7702(t) => t.receipt,
+            Self::Eip8130(t) => t.receipt.into_inner(),
             Self::Deposit(t) => t.receipt.into_inner(),
         }
     }
@@ -194,11 +194,10 @@ impl BaseReceiptEnvelope {
     /// receipt types may be added.
     pub const fn as_receipt(&self) -> Option<&Receipt<Log>> {
         match self {
-            Self::Legacy(t)
-            | Self::Eip2930(t)
-            | Self::Eip1559(t)
-            | Self::Eip7702(t)
-            | Self::Eip8130(t) => Some(&t.receipt),
+            Self::Legacy(t) | Self::Eip2930(t) | Self::Eip1559(t) | Self::Eip7702(t) => {
+                Some(&t.receipt)
+            }
+            Self::Eip8130(t) => Some(&t.receipt.inner),
             Self::Deposit(t) => Some(&t.receipt.inner),
         }
     }
@@ -208,11 +207,8 @@ impl BaseReceiptEnvelope {
     /// Get the length of the inner receipt in the 2718 encoding.
     pub fn inner_length(&self) -> usize {
         match self {
-            Self::Legacy(t)
-            | Self::Eip2930(t)
-            | Self::Eip1559(t)
-            | Self::Eip7702(t)
-            | Self::Eip8130(t) => t.length(),
+            Self::Legacy(t) | Self::Eip2930(t) | Self::Eip1559(t) | Self::Eip7702(t) => t.length(),
+            Self::Eip8130(t) => t.length(),
             Self::Deposit(t) => t.length(),
         }
     }
@@ -310,11 +306,10 @@ impl Encodable2718 for BaseReceiptEnvelope {
             Some(ty) => out.put_u8(ty),
         }
         match self {
-            Self::Legacy(t)
-            | Self::Eip2930(t)
-            | Self::Eip1559(t)
-            | Self::Eip7702(t)
-            | Self::Eip8130(t) => t.encode(out),
+            Self::Legacy(t) | Self::Eip2930(t) | Self::Eip1559(t) | Self::Eip7702(t) => {
+                t.encode(out)
+            }
+            Self::Eip8130(t) => t.encode(out),
             Self::Deposit(t) => t.encode(out),
         }
     }

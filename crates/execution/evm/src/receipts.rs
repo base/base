@@ -1,7 +1,7 @@
 use alloy_consensus::{Eip658Value, Receipt};
 use alloy_evm::eth::receipt_builder::ReceiptBuilderCtx;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned, Eip8130Receipt, OpTxType};
-use base_common_evm::{BaseReceiptBuilder, Eip8130PhaseStatuses};
+use base_common_evm::{BaseReceiptBuilder, Eip8130ReceiptHandoff};
 use reth_evm::Evm;
 
 /// A builder that operates on Base primitive types, specifically [`BaseTransactionSigned`] and
@@ -35,12 +35,12 @@ impl BaseReceiptBuilder for BaseRethReceiptBuilder {
                     OpTxType::Eip2930 => BaseReceipt::Eip2930(receipt),
                     OpTxType::Eip7702 => BaseReceipt::Eip7702(receipt),
                     OpTxType::Deposit => unreachable!(),
-                    // Consume the per-phase statuses published by the executor for
-                    // this transaction (see [`Eip8130PhaseStatuses`]).
-                    OpTxType::Eip8130 => BaseReceipt::Eip8130(Eip8130Receipt::new(
-                        receipt,
-                        Eip8130PhaseStatuses::take(),
-                    )),
+                    // Consume the payer and per-phase statuses published by the
+                    // executor for this transaction (see [`Eip8130ReceiptHandoff`]).
+                    OpTxType::Eip8130 => {
+                        let (payer, phase_statuses) = Eip8130ReceiptHandoff::take();
+                        BaseReceipt::Eip8130(Eip8130Receipt::new(receipt, payer, phase_statuses))
+                    }
                 })
             }
         }

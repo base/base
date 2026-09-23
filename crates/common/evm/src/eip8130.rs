@@ -45,7 +45,9 @@ use alloc::{boxed::Box, rc::Rc, vec::Vec};
 
 use alloy_evm::{Database as AlloyDatabase, EvmInternals};
 use alloy_primitives::{Address, Bytes, U256};
-use base_common_consensus::{AccountChange, Delegation, Eip8130Constants, Predeploys};
+use base_common_consensus::{
+    AccountChange, Delegation, Eip8130Constants, Eip8130PhaseStatus, Predeploys,
+};
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
     AccountChangeApplier, AccountConfigurationStorage, ApplyError, DelegationEffect,
@@ -74,7 +76,7 @@ use revm::{
 
 use crate::{
     BaseContext, BaseContextTr, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransaction,
-    BaseTransactionError, BaseTxTr, Eip8130PhaseStatuses, L1BlockInfo, handler::BaseHandler,
+    BaseTransactionError, BaseTxTr, Eip8130ReceiptHandoff, L1BlockInfo, handler::BaseHandler,
 };
 
 /// EIP-3529 maximum gas refund quotient: refunds are capped at `gas_used / 5`.
@@ -177,8 +179,8 @@ impl Eip8130Executor {
         // Discard any phase statuses a previous transaction may have leaked into
         // the thread-local slot (e.g. via a panic caught between its `set` and the
         // receipt builder's `take`), so this transaction's receipt can only ever
-        // observe its own statuses. See [`Eip8130PhaseStatuses`] panic safety.
-        Eip8130PhaseStatuses::clear();
+        // observe its own statuses. See [`Eip8130ReceiptHandoff`] panic safety.
+        Eip8130ReceiptHandoff::clear();
 
         // The signed envelope is cloned out of the context because the pipeline
         // borrows `ctx` mutably (journal/account access) while needing the
@@ -336,7 +338,7 @@ impl Eip8130Executor {
         evm.frame_stack().clear();
 
         // Hand the per-phase statuses to the receipt builder, which runs on this
-        // same thread immediately after execution (see [`Eip8130PhaseStatuses`]).
+        // same thread immediately after execution (see [`Eip8130ReceiptHandoff`]).
         // This is the only channel available: the receipt builder is generic over
         // the EVM and the `ExecutionResult`'s `output` already carries the
         // transaction's revert data. Published as the last step before returning —
@@ -345,7 +347,7 @@ impl Eip8130Executor {
         // stale statuses in the slot for the next transaction; only the
         // allocation-free result construction below runs before the builder's
         // `take`.
-        Eip8130PhaseStatuses::set(core::mem::take(&mut calls.phase_statuses));
+        Eip8130ReceiptHandoff::set(outcome.payer, core::mem::take(&mut calls.phase_statuses));
 
         // The gas refund is already folded into `gas_used` (via `net_used` in
         // `settle_fees`), so the `refunded` counter is left 0.
@@ -1100,7 +1102,7 @@ impl Eip8130Executor {
         let mut refund: i64 = 0;
         let total_phases = signed.tx().calls.len();
         // One status byte per phase; phases not reached after a revert are filled
-        // with `0x00` below.
+        // with `SKIPPED` below.
         let mut phase_statuses: Vec<u8> = Vec::with_capacity(total_phases);
 
         for phase in &signed.tx().calls {
@@ -1154,9 +1156,9 @@ impl Eip8130Executor {
             if phase_reverted {
                 evm.ctx_mut().journal_mut().checkpoint_revert(checkpoint);
                 // This phase reverted; record it and report every remaining
-                // (unexecuted) phase as reverted too, per EIP-8130.
-                phase_statuses.push(0x00);
-                phase_statuses.resize(total_phases, 0x00);
+                // (unexecuted) phase as skipped.
+                phase_statuses.push(Eip8130PhaseStatus::REVERTED);
+                phase_statuses.resize(total_phases, Eip8130PhaseStatus::SKIPPED);
                 return Ok(CallsResult {
                     call_gas_spent: pool.saturating_sub(remaining),
                     refund,
@@ -1173,7 +1175,7 @@ impl Eip8130Executor {
             // surfaces a database error. Committed phases are only durable once
             // `commit_tx` runs.
             evm.ctx_mut().journal_mut().checkpoint_commit();
-            phase_statuses.push(0x01);
+            phase_statuses.push(Eip8130PhaseStatus::SUCCEEDED);
             refund = refund.saturating_add(phase_refund);
         }
 
@@ -2892,6 +2894,14 @@ mod tests {
         let storer_acc = outcome.state.get(&storer);
         let slot0 = storer_acc.and_then(|a| a.storage.get(&U256::ZERO)).map(|s| s.present_value);
         assert!(slot0.is_none() || slot0 == Some(U256::ZERO), "phase 1 should have been skipped");
+
+        let (payer, phase_statuses) = Eip8130ReceiptHandoff::take();
+        assert_eq!(payer, sender, "self-pay receipt payer is the sender");
+        assert_eq!(
+            phase_statuses,
+            vec![Eip8130PhaseStatus::REVERTED, Eip8130PhaseStatus::SKIPPED],
+            "the reverting phase reports 0x00 and the skipped phase 0x02"
+        );
     }
 
     /// Signs `tx` for a configured sender as `K1_AUTHENTICATOR || sig`.

@@ -311,8 +311,7 @@ pub struct BaseReceiptBuilder {
     pub core_receipt: TransactionReceipt<ReceiptWithBloom<BaseReceipt<BaseLogResponse>>>,
     /// Additional Base receipt fields.
     pub receipt_fields: TransactionReceiptFields,
-    /// EIP-8130 gas payer (sender for self-pay, specified payer for sponsored). `None` for
-    /// non-EIP-8130 transactions.
+    /// EIP-8130 gas payer from the consensus receipt. `None` for non-EIP-8130 transactions.
     pub payer: Option<Address>,
     /// EIP-8130 per-phase execution statuses. `None` for non-EIP-8130 transactions;
     /// `Some` (possibly empty) for EIP-8130 transactions.
@@ -341,12 +340,8 @@ impl BaseReceiptBuilder {
         let base_fee = u128::from(input.meta.base_fee.unwrap_or_default());
         let tx_signed = *input.tx.inner();
 
-        // EIP-8130 RPC-only fields, derived before `input` is consumed below. The payer is
-        // the sender for self-pay, the named payer for sponsored transactions, or the
-        // recovered signer in open payer mode; the per-phase statuses are persisted on the
-        // receipt and surfaced only at RPC.
-        let payer =
-            tx_signed.as_eip8130().and_then(|signed| signed.resolved_payer(input.tx.signer()));
+        // EIP-8130 fields, derived before `input` is consumed below. The payer and the
+        // per-phase statuses are part of the consensus receipt.
         // Omit empty metadata rather than serializing it as `"0x"`. Empty
         // `phase_statuses` is still serialized as `[]` on EIP-8130 receipts;
         // only metadata is skipped when empty.
@@ -357,9 +352,11 @@ impl BaseReceiptBuilder {
         // `Some` (possibly empty) marks an EIP-8130 receipt so an empty-`calls`
         // transaction still surfaces `"phaseStatuses": []`; `None` omits the field
         // entirely for non-EIP-8130 receipts.
-        let phase_statuses = match &input.receipt {
-            BaseReceipt::Eip8130(receipt) => Some(receipt.phase_statuses.clone()),
-            _ => None,
+        let (payer, phase_statuses) = match &input.receipt {
+            BaseReceipt::Eip8130(receipt) => {
+                (Some(receipt.payer), Some(receipt.phase_statuses.clone()))
+            }
+            _ => (None, None),
         };
 
         let mut core_receipt = build_receipt(input, None, |receipt, next_log_index, meta| {
