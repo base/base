@@ -1,4 +1,4 @@
-//! Zenith EIP-8130 system-account stub transition.
+//! Everest EIP-8130 system-account stub transition.
 
 use alloy_primitives::{Address, Bytes, KECCAK256_EMPTY};
 use base_common_eip8130::NonceManagerSlots;
@@ -30,25 +30,25 @@ const SYSTEM_ACCOUNT_STUB: [u8; 1] = [0xEF];
 /// `base_common_precompiles` `NonceManagerStorage::ADDRESS`.
 const CODELESS_SYSTEM_ACCOUNTS: [Address; 1] = [NonceManagerSlots::ADDRESS];
 
-/// The Zenith EIP-8130 system-account transition.
+/// The Everest EIP-8130 system-account transition.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Zenith;
+pub struct Everest;
 
-impl Zenith {
-    /// The Zenith upgrade enables EIP-8130, whose enshrined execution path writes persistent state
+impl Everest {
+    /// The Everest upgrade enables EIP-8130, whose enshrined execution path writes persistent state
     /// to system accounts that hold storage but carry no code, leaving them EIP-161-"empty" and
     /// liable to be reaped by end-of-block state clearing.
     ///
     /// This force-deploys a one-byte code stub onto those accounts so they are no longer empty. It
     /// is planted only on an account that has no code yet, so it never overwrites a real
-    /// deployment, and it is idempotent: it fires on the first Zenith block and is a no-op after.
+    /// deployment, and it is idempotent: it fires on the first Everest block and is a no-op after.
     pub fn ensure_eip8130_system_accounts(
         chain_spec: &impl BaseForkActivations,
         timestamp: u64,
         evm: &mut Evm<'_, BaseEvmTypes>,
         block_state: &mut BlockStateAccumulator,
     ) -> HandlerResult<()> {
-        if !chain_spec.is_active_at_timestamp(BaseUpgrade::Zenith, timestamp) {
+        if !chain_spec.is_active_at_timestamp(BaseUpgrade::Everest, timestamp) {
             return Ok(());
         }
 

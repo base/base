@@ -884,7 +884,7 @@ where
     /// This behaves the same as [`EthTransactionValidator::validate_one_with_state`], but in
     /// addition applies Base-specific validity checks:
     /// - ensures tx is not eip4844
-    /// - for eip8130 (account abstraction): rejects submissions before the Zenith upgrade is
+    /// - for eip8130 (account abstraction): rejects submissions before the Everest upgrade is
     ///   active, runs structural checks, then runs EIP-8130-specific stateful validation for
     ///   actor authorization, nonce/replay state, intrinsic gas, create/delegation safety, and
     ///   payer funding instead of using the inner Eth validator
@@ -1674,7 +1674,7 @@ where
 
     /// Runs the mempool admission checks that apply to EIP-8130 (account
     /// abstraction) transactions without requiring authenticator dispatch or account
-    /// state lookups. Enforces the Zenith fork gate and the structural
+    /// state lookups. Enforces the Everest fork gate and the structural
     /// invariants listed in EIP-8130 § Validation and § Nonce-Free Mode.
     fn validate_eip8130_structural(
         &self,
@@ -1694,8 +1694,8 @@ where
         // the atomic concurrently.
         let now = self.block_timestamp();
         // Fork gate: EIP-8130 (account abstraction) transactions are only
-        // admissible to the pool once the Zenith upgrade is active.
-        if !self.chain_spec().is_zenith_active_at_timestamp(now) {
+        // admissible to the pool once the Everest upgrade is active.
+        if !self.chain_spec().is_everest_active_at_timestamp(now) {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
         let local_chain_id = self.inner.chain_spec().chain().id();
@@ -2170,7 +2170,7 @@ mod tests {
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_eip8130::{AccountChangeApplier, ConfigChangeAuthorizer};
     use base_execution_evm::BaseEvmConfig;
-    use base_test_utils::{Account, build_test_genesis_zenith};
+    use base_test_utils::{Account, build_test_genesis_everest};
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_transaction_pool::{
         TransactionOrigin, TransactionValidationOutcome, blobstore::InMemoryBlobStore,
@@ -2186,8 +2186,8 @@ mod tests {
         BaseEvmConfig,
     >;
 
-    fn zenith_chain_spec() -> Arc<BaseChainSpec> {
-        let mut genesis = build_test_genesis_zenith();
+    fn everest_chain_spec() -> Arc<BaseChainSpec> {
+        let mut genesis = build_test_genesis_everest();
         genesis.config.chain_id = test_chain_id();
         Arc::new(BaseChainSpec::from_genesis(genesis))
     }
@@ -2206,16 +2206,16 @@ mod tests {
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
     }
 
-    /// Builds a [`BaseTransactionValidator`] against a Zenith-activated test chain spec with
-    /// no accounts seeded. EIP-8130 admission is fork-gated on Zenith, so the structural-gate
-    /// tests run with Zenith active (at genesis) to exercise the checks past the fork gate.
+    /// Builds a [`BaseTransactionValidator`] against a Everest-activated test chain spec with
+    /// no accounts seeded. EIP-8130 admission is fork-gated on Everest, so the structural-gate
+    /// tests run with Everest active (at genesis) to exercise the checks past the fork gate.
     fn build_test_validator() -> TestValidator {
-        build_test_validator_with_spec(zenith_chain_spec())
+        build_test_validator_with_spec(everest_chain_spec())
     }
 
-    /// Builds a Zenith-activated validator with a custom encoded transaction-size limit.
+    /// Builds a Everest-activated validator with a custom encoded transaction-size limit.
     fn build_test_validator_with_max_tx_input_bytes(max_tx_input_bytes: usize) -> TestValidator {
-        let chain_spec = zenith_chain_spec();
+        let chain_spec = everest_chain_spec();
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
             .with_genesis_block();
@@ -2228,12 +2228,12 @@ mod tests {
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
     }
 
-    /// Builds a Zenith-activated validator with one canonical account seeded.
+    /// Builds a Everest-activated validator with one canonical account seeded.
     fn build_test_validator_with_account(
         address: Address,
         account: ExtendedAccount,
     ) -> TestValidator {
-        let chain_spec = zenith_chain_spec();
+        let chain_spec = everest_chain_spec();
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
             .with_genesis_block();
@@ -2588,7 +2588,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_eip8130_before_zenith_activation() {
+    fn rejects_eip8130_before_everest_activation() {
         // Cobalt alone does not open the EIP-8130 gate.
         let chain_spec = BaseChainSpecBuilder::base_mainnet().cobalt_activated().build();
         let validator = build_test_validator_with_spec(Arc::new(chain_spec));
@@ -3522,7 +3522,7 @@ mod tests {
     #[test]
     fn eip8130_payer_max_cost_includes_l1_and_operator_fees() {
         let chain_config = ChainConfig::mainnet();
-        let chain_spec = zenith_chain_spec();
+        let chain_spec = everest_chain_spec();
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
         // Headroom above the worst-case intrinsic: admission pins the sender policy
@@ -3582,7 +3582,7 @@ mod tests {
 
     #[test]
     fn nonce_free_manifest_uses_transaction_validity_window() {
-        let chain_spec = zenith_chain_spec();
+        let chain_spec = everest_chain_spec();
         let signer = PrivateKeySigner::random();
         let now = 100;
         // `valid_before` is in milliseconds; at the admission-window edge it is

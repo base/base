@@ -25,19 +25,19 @@ const SYSTEM_ACCOUNT_STUB: [u8; 1] = [0xEF];
 /// every chain where EIP-8130 is enabled.
 const CODELESS_SYSTEM_ACCOUNTS: [Address; 1] = [NonceManagerStorage::ADDRESS];
 
-/// The Zenith upgrade enables EIP-8130. The enshrined execution path writes
+/// The Everest upgrade enables EIP-8130. The enshrined execution path writes
 /// persistent state (e.g. 2D nonce channels) to system accounts that hold
 /// storage but carry no code, leaving them EIP-161-"empty" and liable to be
 /// reaped — discarding that storage — by end-of-block state clearing.
 ///
-/// This issues an irregular state transition at the Zenith activation that
+/// This issues an irregular state transition at the Everest activation that
 /// force-deploys a one-byte code stub onto those accounts, mirroring the Canyon
 /// create2-deployer transition in [`ensure_create2_deployer`]. Once an account
 /// has code it is no longer EIP-161-empty and survives clearing.
 ///
 /// The stub is only planted on an account that has no code yet, so it never
 /// overwrites a real deployment, and it is idempotent: it fires on the first
-/// Zenith block and is a no-op thereafter.
+/// Everest block and is a no-op thereafter.
 ///
 /// [`ensure_create2_deployer`]: crate::ensure_create2_deployer
 pub fn ensure_eip8130_system_accounts<DB>(
@@ -48,7 +48,7 @@ pub fn ensure_eip8130_system_accounts<DB>(
 where
     DB: Database + DatabaseCommit,
 {
-    if !chain_spec.is_zenith_active_at_timestamp(timestamp) {
+    if !chain_spec.is_everest_active_at_timestamp(timestamp) {
         return Ok(());
     }
 
@@ -89,13 +89,13 @@ mod tests {
 
     const ADDR: Address = NonceManagerStorage::ADDRESS;
 
-    /// Zenith active: the code-less nonce manager is given the `0xEF` stub so it
+    /// Everest active: the code-less nonce manager is given the `0xEF` stub so it
     /// is no longer EIP-161-empty.
     #[test]
-    fn zenith_active_plants_stub_on_codeless_system_account() {
+    fn everest_active_plants_stub_on_codeless_system_account() {
         let mut db = InMemoryDB::default();
 
-        ensure_eip8130_system_accounts(zenith(Some(0)), 100, &mut db).unwrap();
+        ensure_eip8130_system_accounts(everest(Some(0)), 100, &mut db).unwrap();
 
         let acc = db.basic(ADDR).unwrap().expect("system account must exist");
         assert!(!acc.is_empty_code_hash(), "the stub must give the account a non-empty code hash");
@@ -105,12 +105,12 @@ mod tests {
         );
     }
 
-    /// Zenith inactive: nothing is planted.
+    /// Everest inactive: nothing is planted.
     #[test]
-    fn zenith_inactive_is_a_noop() {
+    fn everest_inactive_is_a_noop() {
         let mut db = InMemoryDB::default();
 
-        ensure_eip8130_system_accounts(zenith(None), 100, &mut db).unwrap();
+        ensure_eip8130_system_accounts(everest(None), 100, &mut db).unwrap();
 
         assert!(db.basic(ADDR).unwrap().is_none(), "no system account should be materialized");
     }
@@ -129,16 +129,16 @@ mod tests {
             },
         );
 
-        ensure_eip8130_system_accounts(zenith(Some(0)), 100, &mut db).unwrap();
+        ensure_eip8130_system_accounts(everest(Some(0)), 100, &mut db).unwrap();
 
         let acc = db.basic(ADDR).unwrap().unwrap();
         assert_eq!(acc.code_hash, real.hash_slow(), "a real deployment must not be overwritten");
     }
 
-    fn zenith(timestamp: Option<u64>) -> RollupConfig {
+    fn everest(timestamp: Option<u64>) -> RollupConfig {
         let mut config = RollupConfig::default();
         if let Some(timestamp) = timestamp {
-            config.set_upgrade_activation_timestamp(BaseUpgrade::Zenith, timestamp);
+            config.set_upgrade_activation_timestamp(BaseUpgrade::Everest, timestamp);
         }
         config
     }
