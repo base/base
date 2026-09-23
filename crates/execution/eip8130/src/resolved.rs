@@ -1,16 +1,15 @@
 //! The authorization surface returned by a successful authorize step.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{B256, U256};
 use base_common_consensus::Eip8130Constants;
 
 /// A resolved and authorized actor: the output of
 /// [`ActorAuthorizer::authenticate_actor`](crate::ActorAuthorizer::authenticate_actor),
 /// mirroring `AccountConfiguration.authenticateActor`'s return tuple.
 ///
-/// Authorization is **scope + policy**, not scope alone: `scope` is the actor's
-/// capability set and `policy_target` describes its policy gate. The
-/// consuming validator combines these with the transaction's operation (sender,
-/// payer, or config change) to make the final scope/policy decision.
+/// `scope` is the actor's capability set; the consuming validator combines it
+/// with the transaction's operation (sender, payer, or config change) to make
+/// the final scope decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ResolvedActor {
@@ -19,9 +18,6 @@ pub struct ResolvedActor {
     pub actor_id: B256,
     /// The actor's scope bitfield (`uint16`; `0 = unrestricted`).
     pub scope: u16,
-    /// The actor's policy gate target (the policy *manager*), or
-    /// [`Address::ZERO`] when ungated. Never the signed policy commitment.
-    pub policy_target: Address,
     /// The actor's Unix-seconds authorization expiry (`0 = no expiry`). The
     /// authorization is valid while `now <= expiry`; surfaced so the mempool can
     /// evict transactions that depend on a key whose authorization expires before
@@ -30,11 +26,11 @@ pub struct ResolvedActor {
 }
 
 impl ResolvedActor {
-    /// An unrestricted, ungated owner — the surface of an implicit EOA and the
-    /// shape of any actor with `scope == 0` and no policy.
+    /// An unrestricted owner — the surface of an implicit EOA and the shape of
+    /// any actor with `scope == 0`.
     #[must_use]
     pub const fn unrestricted(actor_id: B256) -> Self {
-        Self { actor_id, scope: 0, policy_target: Address::ZERO, expiry: 0 }
+        Self { actor_id, scope: 0, expiry: 0 }
     }
 
     /// `true` if the actor is an unrestricted administrator (`scope == 0`).
@@ -44,17 +40,6 @@ impl ResolvedActor {
     #[must_use]
     pub const fn is_admin(&self) -> bool {
         self.scope == 0
-    }
-
-    /// `true` if the actor's sender authorization is policy-gated.
-    ///
-    /// Length decides what gets stored; POLICY decides whether the sender is
-    /// gated; OPERATOR overrides POLICY. The protocol gates on `SCOPE_POLICY`
-    /// (not on whether policy bytes were attached); `SCOPE_OPERATOR` is the more
-    /// permissive initiation grant and is not suppressed by `SCOPE_POLICY`.
-    #[must_use]
-    pub const fn is_policy_gated(&self) -> bool {
-        Eip8130Constants::sender_is_policy_gated(self.scope)
     }
 
     /// Whether this actor may use the transaction's nonce key.
@@ -74,7 +59,7 @@ mod tests {
     use super::*;
 
     fn actor(scope: u16) -> ResolvedActor {
-        ResolvedActor { actor_id: B256::ZERO, scope, policy_target: Address::ZERO, expiry: 0 }
+        ResolvedActor { actor_id: B256::ZERO, scope, expiry: 0 }
     }
 
     #[test]

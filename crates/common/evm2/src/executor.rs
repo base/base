@@ -63,7 +63,7 @@ impl core::error::Error for PreExecutionError {}
 /// Mirrors the reference `BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas`: a
 /// transaction whose reserved gas is larger than the block's unused gas cannot be included. The
 /// reserved gas is the transaction's gas limit, plus — for an EIP-8130 transaction — the payer's
-/// worst-case authentication gas ([`IntrinsicGas::max_payer_auth_cost`]), which is metered on top
+/// authentication gas ([`IntrinsicGas::max_payer_auth_cost`]), which is metered on top
 /// of the sender-signed gas limit (matching the reference `reserved_block_gas`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BlockGasLimitExceeded {

@@ -97,12 +97,9 @@ where
     /// `gas_limit` alone could admit a transaction whose true consumption
     /// (`gas_limit + payer_auth`) pushes cumulative block gas over the limit.
     ///
-    /// The payer authentication gas is a *conservative upper bound*
-    /// ([`IntrinsicGas::max_payer_auth_cost`]): it pins the payer's policy gate
-    /// worst-case, since the pre-execution check cannot resolve the payer's
-    /// on-chain scope. Reserving a ceiling can only over-reserve (never admit an
-    /// over-limit block), and the same bound is used by block building and
-    /// validation, keeping them consistent.
+    /// The payer authentication gas ([`IntrinsicGas::max_payer_auth_cost`]) is
+    /// derived from the payer auth blob alone, and the same bound is used by
+    /// block building and validation, keeping them consistent.
     #[cfg(feature = "std")]
     fn reserved_block_gas(tx_env: &E::Tx, gas_limit: u64) -> Result<u64, BlockExecutionError> {
         let Some(signed) = tx_env.eip8130_signed() else {
