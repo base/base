@@ -8,8 +8,8 @@ use std::{
 use base_batcher_core::{
     AdminError, DerivationStatus,
     test_utils::{
-        DriverFixture, ImmediateConfirmTxManager, ManualConfirmTxManager, Recorded, SubmissionStub,
-        TrackingPipeline, TrackingSource,
+        BlockStub, DriverFixture, ImmediateConfirmTxManager, ManualConfirmTxManager, Recorded,
+        SubmissionStub, TrackingPipeline, TrackingSource,
     },
 };
 use base_batcher_encoder::{
@@ -85,7 +85,7 @@ fn test_start_triggers_catchup_from_safe_head() {
 }
 
 /// While stopped, `Block` source events must be dropped; the pipeline must not
-/// receive any blocks.
+/// receive any blocks. Once started again, new blocks reach the pipeline.
 #[test]
 fn test_stopped_drops_block_events() {
     Runner::start(Config::seeded(0), |ctx| async move {
@@ -146,20 +146,24 @@ fn test_stopped_drops_block_events() {
                 .build();
         let handle = ctx.spawn(driver.run());
 
-        // Stop, then send a block — it must be dropped.
+        // Stop, then send a block: it must be dropped.
         handles.admin.stop().await.unwrap();
+        source_tx.send(L2BlockEvent::Block(Box::new(BlockStub::with_number(1)))).unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
-        source_tx.send(L2BlockEvent::Block(Box::default())).unwrap();
-        ctx.sleep(Duration::from_millis(10)).await;
-
-        ctx.cancel();
-
-        assert!(handle.await.unwrap().is_ok());
         assert_eq!(
             *add_block_calls.lock().unwrap(),
             0,
             "add_block must not be called while stopped"
         );
+
+        // Start, then send the next block: it must reach the pipeline.
+        handles.admin.start().await.unwrap();
+        source_tx.send(L2BlockEvent::Block(Box::new(BlockStub::with_number(2)))).unwrap();
+        ctx.sleep(Duration::from_millis(10)).await;
+        assert_eq!(*add_block_calls.lock().unwrap(), 1, "add_block must be called once started");
+
+        ctx.cancel();
+        assert!(handle.await.unwrap().is_ok());
     });
 }
 

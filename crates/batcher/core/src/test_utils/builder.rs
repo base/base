@@ -1,10 +1,12 @@
-//! Builder for test [`BatchDriver`] instances and [`BatchSubmission`] stubs.
+//! Builder for test [`BatchDriver`] instances, and block and [`BatchSubmission`] stubs.
 
 use std::{sync::Arc, time::Duration};
 
+use alloy_consensus::Header;
 use alloy_primitives::Address;
 use base_batcher_encoder::{BatchPipeline, BatchSubmission, BlobPayload, SubmissionId};
 use base_batcher_source::{L1HeadSource, UnsafeBlockSource};
+use base_common_consensus::BaseBlock;
 use base_protocol::{BlockInfo, Frame};
 use base_runtime::Runtime;
 use base_tx_manager::TxManager;
@@ -15,6 +17,18 @@ use crate::{
     NoopThrottleClient, ThrottleClient, ThrottleController,
     test_utils::{PendingL1HeadSource, PendingSource},
 };
+
+/// Factory for empty L2 block stubs used in driver tests.
+#[derive(Debug)]
+pub struct BlockStub;
+
+impl BlockStub {
+    /// Returns an empty block with the given number. Pick one above the driver's safe head,
+    /// or the driver drops it as already safe.
+    pub fn with_number(number: u64) -> BaseBlock {
+        BaseBlock { header: Header { number, ..Default::default() }, body: Default::default() }
+    }
+}
 
 /// Factory methods for [`BatchSubmission`] stubs used in driver tests.
 #[derive(Debug)]
@@ -36,7 +50,11 @@ impl SubmissionStub {
 }
 
 /// Builds a [`BatchDriver`] for tests, with a parked source, a parked L1 head source, a
-/// disabled throttle and one in-flight transaction unless told otherwise.
+/// disabled throttle and at most one in-flight transaction unless told otherwise.
+///
+/// The driver starts from L1 head 0 and, unless [`initial_status`](Self::initial_status)
+/// says otherwise, from the L2 genesis (block 0) as safe head, so it drops blocks
+/// numbered 0 as already safe.
 ///
 /// [`build`](Self::build) also creates the derivation-status and admin channels and hands
 /// their sending sides back as [`DriverHandles`]. Keep them alive while the driver runs:
@@ -176,6 +194,7 @@ where
             BatchDriverInputs {
                 source: self.source,
                 l1_head_source: self.l1_head_source,
+                initial_l1_head: 0,
                 initial_status: self.initial_status,
                 derivation_status_rx,
                 admin_rx,

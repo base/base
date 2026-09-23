@@ -142,8 +142,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// [`advance`]: Batcher::advance
     pub fn new(l2_source: S, rollup_config: &RollupConfig, config: BatcherConfig) -> Self {
         let l1_chain_id = rollup_config.l1_chain_id;
-        // Anchor the safe head at the L2 genesis. No action test exercises derivation
-        // status, so the channel stays open and silent.
+        // Anchor the safe head at the L2 genesis.
         let genesis = BlockInfo {
             hash: rollup_config.genesis.l2.hash,
             number: rollup_config.genesis.l2.number,
@@ -172,6 +171,7 @@ impl<S: L2BlockProvider> Batcher<S> {
         let cancel = CancellationToken::new();
         let runtime = TokioRuntime::with_token(cancel.clone());
 
+        // No action test exercises derivation status: the channel stays open and silent.
         let (derivation_status_tx, derivation_status_rx) = mpsc::channel(1);
 
         let driver = BatchDriver::new(
@@ -191,6 +191,8 @@ impl<S: L2BlockProvider> Batcher<S> {
             BatchDriverInputs {
                 source,
                 l1_head_source: l1_source,
+                // The driver learns the L1 head from the blocks the tests mine.
+                initial_l1_head: 0,
                 initial_status: DerivationStatus::from_safe_l2(genesis),
                 derivation_status_rx,
                 admin_rx,

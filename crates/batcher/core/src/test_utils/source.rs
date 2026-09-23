@@ -2,11 +2,11 @@
 
 use std::sync::{Arc, Mutex};
 
-use alloy_consensus::Header;
 use async_trait::async_trait;
 use base_batcher_source::{L1HeadSource, L2BlockEvent, UnsafeBlockSource};
-use base_common_consensus::BaseBlock;
 use base_protocol::BlockInfo;
+
+use crate::test_utils::BlockStub;
 
 /// [`UnsafeBlockSource`] that parks the select arm forever.
 ///
@@ -72,10 +72,7 @@ impl UnsafeBlockSource for OneBlockSource {
     async fn next(&mut self) -> L2BlockEvent {
         if !self.delivered {
             self.delivered = true;
-            L2BlockEvent::Block(Box::new(BaseBlock {
-                header: Header { number: 1, ..Default::default() },
-                body: Default::default(),
-            }))
+            L2BlockEvent::Block(Box::new(BlockStub::with_number(1)))
         } else {
             std::future::pending().await
         }

@@ -15,7 +15,7 @@ use base_batcher_core::{
     AdminHandle, BatchDriver, BatchDriverInputs, DaThrottle, NoopThrottleClient, ThrottleClient,
     ThrottleController, ThrottleStrategy,
 };
-use base_batcher_encoder::{BatchEncoder, BatchPipeline, BatcherMetrics};
+use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
 use base_batcher_source::{HybridL1HeadSource, PollingBlockSource};
 use base_common_network::Base;
 use base_consensus_rpc::RollupNodeApiClient;
@@ -628,11 +628,8 @@ impl BatcherService {
             safe_l2,
             self.config.poll_interval,
         );
-        // Seed the encoder with the live L1 tip so channel duration is measured from it,
-        // not from block 0.
-        let mut encoder =
+        let encoder =
             BatchEncoder::new(Arc::clone(&rollup_config), self.config.encoder_config.clone())?;
-        encoder.advance_l1_head(initial_l1_head);
 
         // Build the throttle controller and the appropriate client. The throttle
         // RPC uses the L2 endpoint(s); `RpcThrottleClient` rotates per-call
@@ -716,7 +713,7 @@ impl BatcherService {
         };
         background_tasks.push(("derivation status poller", derivation_status_handle));
 
-        // Build the driver — all fallible setup is complete at this point.
+        // Build the driver.
         let (admin_handle, admin_rx) = AdminHandle::channel();
         let driver = BatchDriver::new(
             runtime,
@@ -733,17 +730,20 @@ impl BatcherService {
             BatchDriverInputs {
                 source,
                 l1_head_source,
+                initial_l1_head,
                 initial_status: initial_derivation_status,
                 derivation_status_rx,
                 admin_rx,
             },
         );
 
-        // Drop the handle when there is no admin server: the driver's admin arm then stays
-        // quiet.
+        // Without an admin server, drop the handle: the driver's admin arm then stays quiet.
         let admin_server = match self.config.admin_addr {
             Some(addr) => Some(AdminServer::spawn(addr, admin_handle).await?),
-            None => None,
+            None => {
+                drop(admin_handle);
+                None
+            }
         };
 
         info!("batcher service components initialized");

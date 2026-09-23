@@ -18,13 +18,16 @@ use crate::{
     DerivationStatus, SubmissionQueue, ThrottleClient, ThrottleController, event::DriverEvent,
 };
 
-/// Everything a [`BatchDriver`] listens to.
+/// The sources a [`BatchDriver`] listens to, and the L1 head and derivation status it
+/// starts from.
 #[derive(Debug)]
 pub struct BatchDriverInputs<S, L> {
     /// Source of unsafe L2 blocks and reorg signals.
     pub source: S,
     /// Source of live L1 head updates.
     pub l1_head_source: L,
+    /// Live L1 head at startup.
+    pub initial_l1_head: u64,
     /// Derivation status at startup.
     pub initial_status: DerivationStatus,
     /// Ordered derivation-status updates.
@@ -96,14 +99,18 @@ where
     pub const STEP_BUDGET: usize = 128;
 
     /// Create a [`BatchDriver`].
+    ///
+    /// Advances the pipeline to the initial L1 head, so channel duration is measured from
+    /// the live L1 tip rather than from block 0.
     pub fn new(
         runtime: R,
-        pipeline: P,
+        mut pipeline: P,
         tx_manager: TM,
         config: BatchDriverConfig,
         throttle: DaThrottle<TC>,
         inputs: BatchDriverInputs<S, L>,
     ) -> Self {
+        pipeline.advance_l1_head(inputs.initial_l1_head);
         Self {
             runtime,
             pipeline,
@@ -250,7 +257,8 @@ where
     /// Reconcile buffered state with an ordered derivation-progress snapshot.
     fn on_derivation_status(&mut self, status: DerivationStatus) {
         let head = status.safe_l2;
-        let previous = std::mem::replace(&mut self.safe_head, head);
+        let previous = self.safe_head;
+        self.safe_head = head;
 
         if head.number < previous.number
             || (head.number == previous.number && head.hash != previous.hash)
@@ -535,6 +543,41 @@ mod tests {
         BlockInfo { hash: B256::with_last_byte(number as u8), number, ..Default::default() }
     }
 
+    /// The pipeline starts from the live L1 head, so channel duration is not measured from
+    /// block 0.
+    #[test]
+    fn new_driver_seeds_pipeline_from_live_l1_head() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let (_admin_tx, admin_rx) = mpsc::channel(1);
+            let (_status_tx, status_rx) = mpsc::channel(1);
+
+            let _driver = BatchDriver::new(
+                ctx,
+                TrackingPipeline::new(Arc::clone(&recorded)),
+                NeverConfirmTxManager,
+                BatchDriverConfig {
+                    inbox: Address::ZERO,
+                    max_pending_transactions: 1,
+                    drain_timeout: Duration::from_millis(10),
+                    force_blobs_when_throttling: true,
+                    stopped: false,
+                },
+                DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
+                BatchDriverInputs {
+                    source: QueuedSource::new([]),
+                    l1_head_source: QueuedL1HeadSource::new([]),
+                    initial_l1_head: 50,
+                    initial_status: DerivationStatus::from_safe_l2(safe_head(10)),
+                    derivation_status_rx: status_rx,
+                    admin_rx,
+                },
+            );
+
+            assert_eq!(recorded.lock().unwrap().l1_heads, vec![50]);
+        });
+    }
+
     /// Build a [`BatchSubmission`] whose single frame exactly fills one blob payload,
     /// leaving no room for any additional frame alongside it.
     ///
@@ -584,16 +627,6 @@ mod tests {
         }
     }
 
-    fn test_config() -> BatchDriverConfig {
-        BatchDriverConfig {
-            inbox: Address::ZERO,
-            max_pending_transactions: 1,
-            drain_timeout: Duration::from_millis(10),
-            force_blobs_when_throttling: true,
-            stopped: false,
-        }
-    }
-
     /// The channels a [`driver_for_next_event`] driver listens to, kept by the test.
     struct EventChannels {
         admin_tx: mpsc::Sender<AdminCommand>,
@@ -622,11 +655,18 @@ mod tests {
             runtime,
             TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default()))),
             tx_manager,
-            test_config(),
+            BatchDriverConfig {
+                inbox: Address::ZERO,
+                max_pending_transactions: 1,
+                drain_timeout: Duration::from_millis(10),
+                force_blobs_when_throttling: true,
+                stopped: false,
+            },
             DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
             BatchDriverInputs {
                 source: QueuedSource::new(source_events),
                 l1_head_source: QueuedL1HeadSource::new(l1_heads),
+                initial_l1_head: 0,
                 initial_status: DerivationStatus::from_safe_l2(safe_head(0)),
                 derivation_status_rx: status_rx,
                 admin_rx,
@@ -950,8 +990,8 @@ mod tests {
             let recorded = recorded.lock().unwrap();
             assert_eq!(recorded.dequeued.len(), 2, "both submissions must be dequeued");
             assert_eq!(
-                recorded.l1_heads,
-                vec![10, 10],
+                recorded.confirmed,
+                vec![SubmissionId(0), SubmissionId(1)],
                 "each pipeline submission should produce its own confirmation"
             );
             assert_eq!(
@@ -1071,8 +1111,8 @@ mod tests {
 
             assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
             assert_eq!(
-                recorded.lock().unwrap().l1_heads,
-                vec![7, 7, 7],
+                recorded.lock().unwrap().confirmed,
+                vec![SubmissionId(0), SubmissionId(1), SubmissionId(2)],
                 "each queued submission must confirm as permits are freed"
             );
         });

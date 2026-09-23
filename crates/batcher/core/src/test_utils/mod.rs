@@ -10,7 +10,7 @@ mod source;
 pub use source::{OneBlockSource, PendingL1HeadSource, PendingSource, TrackingSource};
 
 mod builder;
-pub use builder::{DriverFixture, DriverHandles, SubmissionStub};
+pub use builder::{BlockStub, DriverFixture, DriverHandles, SubmissionStub};
 
 mod tx_manager;
 pub use tx_manager::{

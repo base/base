@@ -8,7 +8,7 @@ use std::{
 use base_batcher_core::{
     DaThrottle, ThrottleConfig, ThrottleController, ThrottleStrategy,
     test_utils::{
-        DriverFixture, ImmediateConfirmTxManager, Recorded, TrackingPipeline,
+        BlockStub, DriverFixture, ImmediateConfirmTxManager, Recorded, TrackingPipeline,
         TrackingThrottleClient,
     },
 };
@@ -231,7 +231,7 @@ fn test_throttle_transitions_from_active_to_inactive() {
         // Drop the backlog to zero, then wake the driver by delivering a dummy
         // block so the select! arm fires and the loop re-runs the throttle check.
         *backlog.lock().unwrap() = 0;
-        source_tx.send(L2BlockEvent::Block(Box::default())).unwrap();
+        source_tx.send(L2BlockEvent::Block(Box::new(BlockStub::with_number(1)))).unwrap();
 
         ctx.sleep(Duration::from_millis(30)).await;
         ctx.cancel();
