@@ -1,12 +1,12 @@
 //! Hybrid L1 head source that races a subscription stream against interval-based polling.
 
-use std::{marker::PhantomData, time::Duration};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use base_runtime::Clock;
 use futures::{StreamExt, stream::BoxStream};
 
-use crate::{L1HeadEvent, L1HeadPolling, L1HeadSource, L1HeadSubscription, SourceError};
+use crate::{L1HeadEvent, L1HeadPolling, L1HeadSource, SourceError};
 
 /// An L1 head source that races a subscription stream against an interval-based poller.
 ///
@@ -15,53 +15,32 @@ use crate::{L1HeadEvent, L1HeadPolling, L1HeadSource, L1HeadSubscription, Source
 ///
 /// When the subscription stream ends, the source keeps delivering heads from the poller.
 #[derive(derive_more::Debug)]
-pub struct HybridL1HeadSource<S, P, C> {
-    /// The head number stream returned by `S::take_stream`, swapped for a pending stream
-    /// once it ends.
-    ///
-    /// Declared before `_subscription` so it is dropped first, ensuring the
-    /// stream's underlying transport is released before the provider is torn down.
+pub struct HybridL1HeadSource<P> {
+    /// Live head numbers pushed by the subscription; pending forever once it ends.
     #[debug(skip)]
     sub: BoxStream<'static, Result<u64, SourceError>>,
-    /// The original subscription, kept alive so its resources remain open.
-    #[debug(skip)]
-    _subscription: S,
     /// Polling source for fetching the latest L1 head block number.
     #[debug(skip)]
     poller: P,
     /// Polling interval timer.
     #[debug(skip)]
     interval: BoxStream<'static, ()>,
-    /// Runtime clock type marker.
-    #[debug(skip)]
-    _clock: PhantomData<C>,
     /// Last reported head number for deduplication.
     last_head: Option<u64>,
 }
 
-impl<S, P, C> HybridL1HeadSource<S, P, C>
-where
-    S: L1HeadSubscription,
-    P: L1HeadPolling,
-    C: Clock,
-{
+impl<P: L1HeadPolling> HybridL1HeadSource<P> {
     /// Create a new hybrid L1 head source.
     ///
-    /// Calls [`L1HeadSubscription::take_stream`] once to obtain the live head
-    /// number stream, then retains the subscription to keep any underlying
-    /// resources (e.g. a WebSocket provider) alive. Combines the stream with a
-    /// poller that fires at `poll_interval`.
-    pub fn new(clock: C, mut subscription: S, poller: P, poll_interval: Duration) -> Self {
-        let sub = subscription.take_stream();
-        let interval = clock.interval(poll_interval);
-        Self {
-            sub,
-            _subscription: subscription,
-            poller,
-            interval,
-            _clock: PhantomData,
-            last_head: None,
-        }
+    /// `sub` carries the live head numbers and must own whatever keeps them flowing
+    /// (for example a WebSocket provider). The poller fires every `poll_interval`.
+    pub fn new(
+        clock: impl Clock,
+        sub: BoxStream<'static, Result<u64, SourceError>>,
+        poller: P,
+        poll_interval: Duration,
+    ) -> Self {
+        Self { sub, poller, interval: clock.interval(poll_interval), last_head: None }
     }
 
     /// Process a received head number, returning an event if it is strictly newer.
@@ -78,12 +57,7 @@ where
 }
 
 #[async_trait]
-impl<S, P, C> L1HeadSource for HybridL1HeadSource<S, P, C>
-where
-    S: L1HeadSubscription,
-    P: L1HeadPolling,
-    C: Clock,
-{
+impl<P: L1HeadPolling> L1HeadSource for HybridL1HeadSource<P> {
     async fn next(&mut self) -> Result<L1HeadEvent, SourceError> {
         loop {
             tokio::select! {
@@ -128,17 +102,9 @@ mod tests {
 
     use async_trait::async_trait;
     use base_runtime::{Config, Runner};
-    use futures::{StreamExt, stream::BoxStream};
+    use futures::StreamExt;
 
     use super::*;
-
-    struct StreamSub(BoxStream<'static, Result<u64, SourceError>>);
-
-    impl L1HeadSubscription for StreamSub {
-        fn take_stream(&mut self) -> BoxStream<'static, Result<u64, SourceError>> {
-            std::mem::replace(&mut self.0, futures::stream::pending().boxed())
-        }
-    }
 
     struct IncrementingPoller(AtomicU64);
 
@@ -165,7 +131,7 @@ mod tests {
             let stream = futures::stream::iter(vec![Ok(10u64), Ok(9u64), Ok(10u64), Ok(11u64)]);
             let mut source = HybridL1HeadSource::new(
                 ctx,
-                StreamSub(stream.boxed()),
+                stream.boxed(),
                 ProviderErrorPoller,
                 Duration::from_secs(100),
             );
@@ -186,7 +152,7 @@ mod tests {
             let stream = futures::stream::once(async { Ok(5u64) });
             let mut source = HybridL1HeadSource::new(
                 ctx,
-                StreamSub(stream.boxed()),
+                stream.boxed(),
                 IncrementingPoller(AtomicU64::new(5)),
                 Duration::from_secs(100),
             );
@@ -207,7 +173,7 @@ mod tests {
                 futures::stream::once(async { Err(SourceError::Provider("rpc down".to_string())) });
             let mut source = HybridL1HeadSource::new(
                 ctx,
-                StreamSub(stream.boxed()),
+                stream.boxed(),
                 // The virtual-time interval ticks immediately, and `select!` may poll this
                 // branch before the stream error. Keep the fallback poller from producing a
                 // head so the test only covers subscription error propagation.

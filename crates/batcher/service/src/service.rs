@@ -25,7 +25,7 @@ use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use futures::{
     StreamExt,
     future::BoxFuture,
-    stream::{BoxStream, FuturesUnordered},
+    stream::{self, BoxStream, FuturesUnordered},
 };
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -35,9 +35,8 @@ use url::Url;
 
 use crate::{
     BatcherConfig, DerivationStatusPoller, DerivationStatusProvider, L2BlockParityMonitor,
-    L2BlockParityMonitorConfig, MAX_CHECK_RECENT_TXS_DEPTH, NullL1HeadSubscription,
-    RecentTxSyncTarget, RpcL1HeadPollingSource, RpcL2BlockProvider, RpcPollingSource,
-    RpcThrottleClient, WsL1HeadSubscription,
+    L2BlockParityMonitorConfig, MAX_CHECK_RECENT_TXS_DEPTH, RecentTxSyncTarget,
+    RpcL1HeadPollingSource, RpcL2BlockProvider, RpcPollingSource, RpcThrottleClient,
 };
 
 const WEI_PER_ETHER: f64 = 1_000_000_000_000_000_000.0;
@@ -64,21 +63,6 @@ impl ThrottleClient for ServiceThrottle {
     }
 }
 
-/// Batcher-internal L1 subscription variant: either a live WS subscription or a no-op.
-enum L1Subscription {
-    Ws(WsL1HeadSubscription),
-    Null(NullL1HeadSubscription),
-}
-
-impl base_batcher_source::L1HeadSubscription for L1Subscription {
-    fn take_stream(&mut self) -> BoxStream<'static, Result<u64, SourceError>> {
-        match self {
-            Self::Ws(ws) => ws.take_stream(),
-            Self::Null(null) => null.take_stream(),
-        }
-    }
-}
-
 /// Concrete driver type produced by [`BatcherService::setup`].
 ///
 /// Private — callers interact only through [`ReadyBatcher`].
@@ -88,7 +72,7 @@ type ServiceDriver = BatchDriver<
     PollingBlockSource<RpcPollingSource, TokioRuntime>,
     SimpleTxManager<RootProvider>,
     ServiceThrottle,
-    HybridL1HeadSource<L1Subscription, RpcL1HeadPollingSource, TokioRuntime>,
+    HybridL1HeadSource<RpcL1HeadPollingSource>,
 >;
 
 /// A fully-initialised batcher ready to run the submission loop.
@@ -202,27 +186,28 @@ impl BatcherService {
         Self { config }
     }
 
-    /// Build an L1 head subscription for the given optional L1 WebSocket URL.
+    /// Build the live L1 head stream for the given optional L1 WebSocket URL.
     ///
-    /// When `url` is `Some`, connects a dedicated WS provider, subscribes to
-    /// new L1 block headers, and streams their block numbers. The provider is
-    /// wrapped in a [`WsL1HeadSubscription`] to keep the connection alive.
+    /// When `url` is `Some`, connects a dedicated WS provider, subscribes to new L1
+    /// block headers and streams their block numbers. The stream owns the provider, so
+    /// the connection lives as long as the stream does.
     ///
-    /// When `url` is `None`, or if the WS connection fails, returns a
-    /// [`NullL1HeadSubscription`] so that [`HybridL1HeadSource`] falls back
-    /// entirely to polling.
+    /// When `url` is `None`, or if the WS connection fails, returns a stream that never
+    /// yields so that [`HybridL1HeadSource`] relies on polling alone.
     ///
     /// [`HybridL1HeadSource`]: base_batcher_source::HybridL1HeadSource
-    async fn build_l1_subscription(url: Option<&Url>) -> L1Subscription {
+    async fn build_l1_head_stream(
+        url: Option<&Url>,
+    ) -> BoxStream<'static, Result<u64, SourceError>> {
         let Some(url) = url else {
-            return L1Subscription::Null(NullL1HeadSubscription::new());
+            return stream::pending().boxed();
         };
 
         let ws_provider = match ProviderBuilder::new().connect(url.as_str()).await {
             Ok(p) => Arc::new(p),
             Err(e) => {
                 warn!(error = %e, l1_ws = %url, "failed to connect L1 WS provider; falling back to polling");
-                return L1Subscription::Null(NullL1HeadSubscription::new());
+                return stream::pending().boxed();
             }
         };
 
@@ -230,12 +215,16 @@ impl BatcherService {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "failed to subscribe to new L1 blocks; falling back to polling");
-                return L1Subscription::Null(NullL1HeadSubscription::new());
+                return stream::pending().boxed();
             }
         };
 
-        let stream = sub.into_stream().map(|header| Ok(header.number)).boxed();
-        L1Subscription::Ws(WsL1HeadSubscription::new(ws_provider, stream))
+        sub.into_stream()
+            .map(move |header| {
+                let _keep_alive = &ws_provider;
+                Ok(header.number)
+            })
+            .boxed()
     }
 
     /// Try each URL in order, returning the first that connects.
@@ -649,8 +638,7 @@ impl BatcherService {
             });
 
         // Build the L1 head source: a hybrid of optional WS subscription + polling.
-        let l1_head_subscription =
-            Self::build_l1_subscription(self.config.l1_ws_url.as_ref()).await;
+        let l1_head_stream = Self::build_l1_head_stream(self.config.l1_ws_url.as_ref()).await;
         let l1_head_poller = RpcL1HeadPollingSource::new(Arc::new(
             Self::rpc_retry("l1-rpc-poller", retry, rpc_timeout, || {
                 Self::connect_first(&self.config.l1_rpc_url, "l1-rpc-poller", |url| {
@@ -667,7 +655,7 @@ impl BatcherService {
         ));
         let l1_head_source = HybridL1HeadSource::new(
             TokioRuntime::new(),
-            l1_head_subscription,
+            l1_head_stream,
             l1_head_poller,
             self.config.poll_interval,
         );
