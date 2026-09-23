@@ -220,6 +220,14 @@ python3 etc/scripts/ci/check_feature_map.py --write
 python3 etc/scripts/ci/check_feature_map.py --check
 ```
 
+The map also has a strict **8,000-token** budget, measured with the
+`tiktoken` `o200k_base` encoding. After installing `tiktoken@1.0.22`, check it
+locally with:
+
+```sh
+node etc/scripts/ci/check_feature_map_tokens.cjs
+```
+
 The `Feature map` pull-request workflow runs on every pull request. If the
 complete generated block is already in the PR diff, it posts a GitHub review
 with a one-click replacement suggestion when the inventory is stale. Otherwise
