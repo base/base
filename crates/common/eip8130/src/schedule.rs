@@ -76,6 +76,15 @@ impl Eip8130GasSchedule {
     /// indicator, charged per delegation entry.
     pub const DELEGATION_DEPOSIT_COST: u64 =
         Self::CODE_DEPOSIT_PER_BYTE * Eip8130Constants::DELEGATION_INDICATOR_SIZE as u64;
+    /// `TX_VALUE_COST`: per call with `value > 0` and `to != sender`, covering
+    /// the recipient balance write and the transfer log. Charged statically
+    /// because `to` and `value` are signed fields.
+    pub const TX_VALUE_COST: u64 = 6_000;
+    /// Account-creation charge for a value-bearing call to an account that does
+    /// not exist, charged at dispatch because existence is only known then.
+    pub const NEW_ACCOUNT_COST: u64 = 25_000;
+    /// Upper bound on `payer_auth_cost`, which is metered outside `gas_limit`.
+    pub const MAX_AUTHENTICATION_GAS: u64 = 100_000;
 
     // ── Config-change actor slot writes ──────────────────────────────────────
     //
