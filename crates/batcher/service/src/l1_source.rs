@@ -1,4 +1,4 @@
-//! L1 head source implementations for the batcher service.
+//! L1 head polling source for the batcher service.
 
 use std::sync::Arc;
 

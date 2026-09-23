@@ -33,7 +33,8 @@ impl<P: L1HeadPolling> HybridL1HeadSource<P> {
     /// Create a new hybrid L1 head source.
     ///
     /// `sub` carries the live head numbers and must own whatever keeps them flowing
-    /// (for example a WebSocket provider). The poller fires every `poll_interval`.
+    /// (for example a WebSocket provider). `poller` is queried for the latest head on every
+    /// `poll_interval` tick.
     pub fn new(
         clock: impl Clock,
         sub: BoxStream<'static, Result<u64, SourceError>>,
@@ -100,9 +101,7 @@ impl<P: L1HeadPolling> L1HeadSource for HybridL1HeadSource<P> {
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use async_trait::async_trait;
     use base_runtime::{Config, Runner};
-    use futures::StreamExt;
 
     use super::*;
 

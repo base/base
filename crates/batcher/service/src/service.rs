@@ -192,8 +192,8 @@ impl BatcherService {
     /// block headers and streams their block numbers. The stream owns the provider, so
     /// the connection lives as long as the stream does.
     ///
-    /// When `url` is `None`, or if the WS connection fails, returns a stream that never
-    /// yields so that [`HybridL1HeadSource`] relies on polling alone.
+    /// When `url` is `None`, or if connecting or subscribing fails, returns a stream that
+    /// never yields so that [`HybridL1HeadSource`] relies on polling alone.
     ///
     /// [`HybridL1HeadSource`]: base_batcher_source::HybridL1HeadSource
     async fn build_l1_head_stream(
@@ -204,7 +204,7 @@ impl BatcherService {
         };
 
         let ws_provider = match ProviderBuilder::new().connect(url.as_str()).await {
-            Ok(p) => Arc::new(p),
+            Ok(p) => p,
             Err(e) => {
                 warn!(error = %e, l1_ws = %url, "failed to connect L1 WS provider; falling back to polling");
                 return stream::pending().boxed();
@@ -221,6 +221,7 @@ impl BatcherService {
 
         sub.into_stream()
             .map(move |header| {
+                // Capture the provider: dropping it closes the connection and ends the stream.
                 let _keep_alive = &ws_provider;
                 Ok(header.number)
             })
