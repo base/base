@@ -15,12 +15,11 @@ PR/stack policy; the role files own their specialized quality bar.
 | `performance_engineer` | A representative, baseline-backed performance improvement. | An unmeasured optimization or a benchmark/report-only PR. |
 | `test_breaker` | A confirmed behavior bug plus a deterministic regression test and fix. | Adding tests without a real behavior improvement. |
 
-## High-value search themes
+## Opportunity selection principle
 
-Prefer candidates with an explicit invariant and observable consequence: one
-canonical owner for a state transition; duplicate/reordered Engine or derivation
-events; Base-to-Reth mapping duplication; runtime versus startup schedule
-divergence; legacy pre-Holocene special-case removal; configuration accepted but
-ignored; operator-owned versus system-owned lifecycle state; proof/recovery cache
-invalidation; and hardfork activation/reorg/recovery behavior. For performance,
-choose the benchmark tier before editing and require the matching evidence.
+Prefer a candidate only when investigation identifies a concrete observable
+failure, duplicated responsibility, obsolete supported surface, or measurable
+cost. Let the code, current roadmap, existing PRs, and affected users/operators
+identify the opportunity; do not treat a canned list of subsystems or solution
+patterns as a work queue. For performance, choose the benchmark tier only after
+the workload and bottleneck are understood.
