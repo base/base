@@ -97,14 +97,9 @@ impl ThrottleController {
         Self { config, strategy }
     }
 
-    /// Returns a [`ThrottleController`] with [`ThrottleStrategy::Off`] that never throttles.
-    ///
-    /// Useful in tests and configurations where DA backlog throttling should be disabled.
-    pub fn noop() -> Self {
-        Self::new(
-            ThrottleConfig { threshold_bytes: 0, max_intensity: 0.0, ..Default::default() },
-            ThrottleStrategy::Off,
-        )
+    /// Returns a controller with [`ThrottleStrategy::Off`], which never throttles.
+    pub fn disabled() -> Self {
+        Self::new(ThrottleConfig::default(), ThrottleStrategy::Off)
     }
 
     /// Returns a reference to the throttle configuration.

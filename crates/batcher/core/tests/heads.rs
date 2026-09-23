@@ -47,7 +47,7 @@ fn test_l1_head_source_advances_pipeline() {
                 drain_timeout: Duration::from_millis(10),
                 force_blobs_when_throttling: true,
             },
-            DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
+            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
             l1_source,
         );
         let handle = ctx.spawn(driver.run());
@@ -88,7 +88,7 @@ fn test_l1_source_closed_driver_continues() {
                 drain_timeout: Duration::from_millis(10),
                 force_blobs_when_throttling: true,
             },
-            DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
+            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
             l1_source,
         );
         let handle = ctx.spawn(driver.run());
@@ -130,7 +130,7 @@ fn test_safe_head_conflicts_reset_pipeline_and_source() {
                 drain_timeout: Duration::from_millis(10),
                 force_blobs_when_throttling: true,
             },
-            DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
+            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
             BatchDriverHeads::new(
                 PendingL1HeadSource,
                 0,
@@ -177,7 +177,7 @@ fn test_derivation_cursor_advance_replays_stalled_channel() {
                 drain_timeout: Duration::from_millis(10),
                 force_blobs_when_throttling: true,
             },
-            DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
+            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
             BatchDriverHeads::new(
                 PendingL1HeadSource,
                 0,

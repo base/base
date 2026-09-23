@@ -77,7 +77,7 @@ fn test_start_triggers_catchup_from_safe_head() {
                 drain_timeout: Duration::from_millis(10),
                 force_blobs_when_throttling: true,
             },
-            DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
+            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
             PendingL1HeadSource,
         )
         .with_admin_rx(admin_rx)
@@ -170,7 +170,7 @@ fn test_stopped_drops_block_events() {
                 drain_timeout: Duration::from_millis(10),
                 force_blobs_when_throttling: true,
             },
-            DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
+            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
             PendingL1HeadSource,
         )
         .with_admin_rx(admin_rx);

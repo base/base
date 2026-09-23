@@ -4,7 +4,7 @@ use alloy_primitives::B256;
 use alloy_signer_local::PrivateKeySigner;
 use base_batcher_core::{
     AdminError, AdminHandle, BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle,
-    NoopThrottleClient, ThrottleConfig, ThrottleController, ThrottleStrategy,
+    NoopThrottleClient, ThrottleController,
 };
 use base_batcher_encoder::{BatchEncoder, EncoderConfig};
 use base_batcher_source::{L2BlockEvent, test_utils::ChannelL1HeadSource};
@@ -163,7 +163,7 @@ impl<S: L2BlockProvider> Batcher<S> {
         let cancel = CancellationToken::new();
         let runtime = TokioRuntime::with_token(cancel.clone());
 
-        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Off);
+        let throttle = ThrottleController::disabled();
         let driver = BatchDriver::new_without_derivation_status(
             runtime,
             pipeline,

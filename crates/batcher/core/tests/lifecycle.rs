@@ -42,7 +42,7 @@ fn test_block_source_closed_is_fatal() {
                 drain_timeout: Duration::from_millis(10),
                 force_blobs_when_throttling: true,
             },
-            DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
+            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
             PendingL1HeadSource,
         );
         let handle = ctx.spawn(driver.run());
@@ -165,7 +165,7 @@ fn test_driver_finishes_pending_work_before_waiting_for_events() {
                 drain_timeout: Duration::from_millis(10),
                 force_blobs_when_throttling: true,
             },
-            DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
+            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
             PendingL1HeadSource,
         );
         let handle = ctx.spawn(driver.run());
