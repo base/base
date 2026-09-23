@@ -65,3 +65,12 @@ integration or full affected-package test in addition to a regression test. A
 format, metadata, diff, or compile attempt alone is not sufficient validation;
 if the relevant test cannot run in the current environment, keep the goal active
 and find a viable validation route before claiming the PR is ready.
+
+## Test-discovery gate
+
+When a PR adds or changes regression coverage, prove that the intended test is
+discovered and executed. A filtered command reporting zero tests is not a pass.
+Run the containing test target or use the test listing/filter output to confirm
+the test name, then run it and report a nonzero executed-test count. If the
+affected test cannot compile or execute, the validation gate remains unmet and
+the PR is not ready.
