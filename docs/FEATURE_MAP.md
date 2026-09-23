@@ -1,6 +1,6 @@
 # Feature Map
 
-**Current as of September 23, 2026.** This is the maintained, high-level map of
+This is the maintained, high-level map of
 Base's code and its Reth boundary. It gives an agent or contributor enough
 context to place a change in the right subsystem, follow the principal data
 path, and avoid extending a retired one. It is not an API reference, ownership
