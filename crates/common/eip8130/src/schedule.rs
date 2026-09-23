@@ -73,7 +73,7 @@ impl Eip8130GasSchedule {
     const _DELEGATION_INDICATOR_FITS_U64: () =
         assert!(Eip8130Constants::DELEGATION_INDICATOR_SIZE <= u64::MAX as usize);
     /// Delegation-indicator deposit: `200 × 23` for the `0xef0100 || address`
-    /// indicator (`auto_delegation_cost` and per delegation entry).
+    /// indicator, charged per delegation entry.
     pub const DELEGATION_DEPOSIT_COST: u64 =
         Self::CODE_DEPOSIT_PER_BYTE * Eip8130Constants::DELEGATION_INDICATOR_SIZE as u64;
 
