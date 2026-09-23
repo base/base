@@ -770,13 +770,23 @@ impl StandardBaseRethNode {
         runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
-        // Query-only nodes must not accept a transaction they cannot forward to a builder.
-        if args.rpc.enable_tx_forwarding || args.rpc.enable_experimental_validity_transactions {
+        // Query nodes proxy validity metadata to their sequencer; forwarders submit locally.
+        if args.rpc.enable_tx_forwarding
+            || args.rpc.rollup_args.sequencer.is_some()
+            || args.rpc.enable_experimental_validity_transactions
+        {
             runner.install_ext::<SendRawTransactionValidityExtension>(
                 SendRawTransactionValidityConfig {
                     max_validity_predicates: args.rpc.experimental_validity_max_predicates,
                     max_validity_expiry_secs: args.rpc.experimental_validity_max_expiry_secs,
                     experimental_override: args.rpc.enable_experimental_validity_transactions,
+                    sequencer_url: args
+                        .rpc
+                        .rollup_args
+                        .sequencer
+                        .clone()
+                        .filter(|_| !args.rpc.enable_tx_forwarding),
+                    sequencer_headers: args.rpc.rollup_args.sequencer_headers,
                 },
             );
         }
