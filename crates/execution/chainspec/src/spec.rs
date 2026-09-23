@@ -177,6 +177,7 @@ impl BaseChainSpec {
         let beryl_time = genesis_info.base.beryl;
         let cobalt_time = genesis_info.base.cobalt;
         let denim_time = genesis_info.base.denim;
+        let everest_time = genesis_info.base.everest;
         let zenith_time = genesis_info.base.zenith;
         let time_upgrade_opts = [
             (BaseUpgrade::Regolith.boxed(), genesis_info.regolith_time),
@@ -195,6 +196,7 @@ impl BaseChainSpec {
             (BaseUpgrade::Beryl.boxed(), beryl_time),
             (BaseUpgrade::Cobalt.boxed(), cobalt_time),
             (BaseUpgrade::Denim.boxed(), denim_time),
+            (BaseUpgrade::Everest.boxed(), everest_time),
             (BaseUpgrade::Zenith.boxed(), zenith_time),
         ];
 
@@ -1051,12 +1053,14 @@ mod tests {
     }
 
     #[test]
-    fn builtin_chain_specs_never_activate_denim_or_zenith() {
-        // Built-in production schedules do not configure Denim or genesis-only Zenith.
+    fn builtin_chain_specs_never_activate_denim_everest_or_zenith() {
+        // Built-in production schedules do not configure Denim, Everest, or genesis-only Zenith.
         for spec in [BaseChainSpec::mainnet(), BaseChainSpec::sepolia(), BaseChainSpec::devnet()] {
             assert_eq!(spec.fork(BaseUpgrade::Denim), ForkCondition::Never);
             assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, 0));
             assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, u64::MAX));
+            assert_eq!(spec.fork(BaseUpgrade::Everest), ForkCondition::Never);
+            assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Everest, u64::MAX));
             assert_eq!(spec.fork(BaseUpgrade::Zenith), ForkCondition::Never);
             assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 0));
             assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, u64::MAX));
@@ -1355,6 +1359,7 @@ mod tests {
           "v2": 60,
           "v3": 65,
           "denim": 900000,
+          "everest": 950000,
           "zenith": 1000000
         },
         "activationAdminAddress": "0xcb00000000000000000000000000000000000000",
@@ -1400,6 +1405,8 @@ mod tests {
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Cobalt, 65));
         assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, 899_999));
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, 900_000));
+        assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Everest, 949_999));
+        assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Everest, 950_000));
         assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 999_999));
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 1_000_000));
     }

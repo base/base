@@ -243,6 +243,7 @@ impl PerChainConfig {
                     beryl: None,
                     cobalt: None,
                     denim: None,
+                    everest: None,
                     zenith: None,
                 },
             },

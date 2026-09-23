@@ -330,6 +330,11 @@ impl RollupConfig {
         [upgrade_activation_timestamp(BaseUpgrade::Denim)],
         "Denim";
 
+        is_everest_active,
+        is_first_everest_block,
+        [upgrade_activation_timestamp(BaseUpgrade::Everest)],
+        "Everest";
+
         is_zenith_active,
         is_first_zenith_block,
         [upgrade_activation_timestamp(BaseUpgrade::Zenith)],
@@ -522,6 +527,8 @@ impl RollupConfig {
             Some(BaseUpgrade::Cobalt)
         } else if self.is_first_denim_block(timestamp, parent_timestamp) {
             Some(BaseUpgrade::Denim)
+        } else if self.is_first_everest_block(timestamp, parent_timestamp) {
+            Some(BaseUpgrade::Everest)
         } else {
             None
         };
@@ -617,6 +624,7 @@ mod tests {
                     beryl: Some(120),
                     cobalt: Some(130),
                     denim: None,
+                    everest: None,
                     zenith: None,
                 },
             },
@@ -699,6 +707,7 @@ mod tests {
                     beryl: Some(120),
                     cobalt: None,
                     denim: None,
+                    everest: None,
                     zenith: None,
                 },
                 ..Default::default()
@@ -981,6 +990,7 @@ mod tests {
             beryl: None,
             cobalt: None,
             denim: None,
+            everest: None,
             zenith: None,
         };
         assert_eq!(
@@ -995,6 +1005,7 @@ mod tests {
             beryl: Some(800),
             cobalt: None,
             denim: None,
+            everest: None,
             zenith: None,
         };
         assert_eq!(
@@ -1011,6 +1022,7 @@ mod tests {
             beryl: Some(800),
             cobalt: None,
             denim: None,
+            everest: None,
             zenith: None,
         };
         assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Osaka), ForkCondition::Never);

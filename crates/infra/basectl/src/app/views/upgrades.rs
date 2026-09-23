@@ -108,6 +108,7 @@ impl ChainUpgrades {
         self.set_timestamp(BaseUpgrade::Beryl, upgrades.base.beryl);
         self.set_timestamp(BaseUpgrade::Cobalt, upgrades.base.cobalt);
         self.set_timestamp(BaseUpgrade::Denim, upgrades.base.denim);
+        self.set_timestamp(BaseUpgrade::Everest, upgrades.base.everest);
         self.set_timestamp(BaseUpgrade::Zenith, upgrades.base.zenith);
     }
 
@@ -193,6 +194,7 @@ fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
             timestamp: cfg.cobalt_timestamp,
         },
         UpgradeSpec { upgrade: BaseUpgrade::Denim, name: "Denim", timestamp: None },
+        UpgradeSpec { upgrade: BaseUpgrade::Everest, name: "Everest", timestamp: None },
         UpgradeSpec { upgrade: BaseUpgrade::Zenith, name: "Zenith", timestamp: None },
     ]
 }
@@ -2814,6 +2816,7 @@ mod tests {
                 beryl: Some(12),
                 cobalt: None,
                 denim: None,
+                everest: None,
                 zenith: None,
             },
             ..UpgradeConfig::default()
@@ -2839,6 +2842,7 @@ mod tests {
                 beryl: None,
                 cobalt: None,
                 denim: None,
+                everest: None,
                 zenith: None,
             },
             ..UpgradeConfig::default()
@@ -2884,6 +2888,7 @@ mod tests {
                 beryl: None,
                 cobalt: None,
                 denim: None,
+                everest: None,
                 zenith: None,
             },
             ..UpgradeConfig::default()

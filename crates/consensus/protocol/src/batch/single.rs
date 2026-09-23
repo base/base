@@ -668,6 +668,7 @@ mod tests {
                 base: BaseUpgradeConfig {
                     cobalt: Some(0),
                     denim: Some(0),
+                    everest: None,
                     zenith: Some(0),
                     ..Default::default()
                 },
