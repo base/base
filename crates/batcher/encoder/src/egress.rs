@@ -109,23 +109,6 @@ impl DaEgress {
         !channel.is_open() && available == 0 && !terminal_pending
     }
 
-    /// Returns whether an immutable ready artifact or buildable payload exists.
-    pub fn has_ready_submission(
-        &self,
-        channels: &VecDeque<Channel>,
-        da_type: DaType,
-        l1_head: u64,
-    ) -> bool {
-        if self.artifacts.has_ready() {
-            return true;
-        }
-
-        match da_type {
-            DaType::Blob => Self::plan_blob(channels, l1_head).is_some(),
-            DaType::Calldata => Self::plan_calldata(channels).is_some(),
-        }
-    }
-
     /// Builds and leases one transaction-sized submission.
     pub fn next_submission(
         &mut self,

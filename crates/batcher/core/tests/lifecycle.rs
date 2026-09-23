@@ -1,5 +1,5 @@
-//! Integration tests for [`BatchDriver`] lifecycle: source exhaustion, flush, drain, and
-//! the order of work and waiting in the loop.
+//! Integration tests for [`BatchDriver`] lifecycle: source exhaustion, drain, and the order
+//! of work and waiting in the loop.
 
 use std::{
     sync::{Arc, Mutex},
@@ -18,8 +18,7 @@ use base_batcher_core::{
 };
 use base_batcher_encoder::{ChannelLimit, StepError, SubmissionId};
 use base_batcher_source::{
-    L2BlockEvent, SourceError, UnsafeBlockSource,
-    test_utils::{ChannelBlockSource, InMemoryBlockSource},
+    L2BlockEvent, SourceError, UnsafeBlockSource, test_utils::InMemoryBlockSource,
 };
 use base_runtime::{
     Cancellation, Clock, Spawner,
@@ -59,46 +58,6 @@ fn test_source_exhaustion_shuts_down_driver_gracefully() {
             recorded.lock().unwrap().flush_count,
             1,
             "flush must be called once on source exhaustion shutdown"
-        );
-    });
-}
-
-/// When the source delivers `L2BlockEvent::Flush`, the driver must call
-/// `flush` immediately. On subsequent shutdown it is called once
-/// more, giving a total of two calls.
-#[test]
-fn test_flush_event_calls_pipeline_flush() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-        let (source, source_tx) = ChannelBlockSource::new();
-
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            pipeline,
-            source,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
-            PendingL1HeadSource,
-        );
-        let handle = ctx.spawn(driver.run());
-
-        source_tx.send(L2BlockEvent::Flush { ack: None }).unwrap();
-        ctx.sleep(Duration::from_millis(50)).await;
-        ctx.cancel();
-
-        assert!(handle.await.unwrap().is_ok());
-        // Flush arm: +1; Shutdown arm: +1 → total 2
-        assert_eq!(
-            recorded.lock().unwrap().flush_count,
-            2,
-            "flush must be called for the event and again on shutdown"
         );
     });
 }

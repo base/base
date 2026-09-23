@@ -13,14 +13,8 @@ pub enum DriverEvent {
     Shutdown,
     /// New L2 unsafe block from the source.
     Block(Box<BaseBlock>),
-    /// Source requested a force-flush of the current channel. No production source emits this,
-    /// only tests.
-    ///
-    /// If the ack is set, it fires once every frame resulting from this flush has been
-    /// encoded and handed to the tx manager.
-    SourceFlush(Option<oneshot::Sender<()>>),
-    /// Admin requested a force-flush of the current channel; answered once the pipeline is flushed.
-    AdminFlush(oneshot::Sender<AdminResult<()>>),
+    /// Admin requested a flush of the current channel; answered once the pipeline is flushed.
+    Flush(oneshot::Sender<AdminResult<()>>),
     /// L2 reorganisation detected.
     Reorg,
     /// An in-flight L1 transaction settled, carrying one or more submissions.

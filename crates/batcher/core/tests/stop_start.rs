@@ -1,4 +1,4 @@
-//! Integration tests for stop/start admin commands in [`BatchDriver`].
+//! Integration tests for the stop, start and flush admin commands in [`BatchDriver`].
 
 use std::{
     sync::{Arc, Mutex},
@@ -102,10 +102,10 @@ fn test_start_triggers_catchup_from_safe_head() {
     });
 }
 
-/// While stopped, `Block` and `Flush` source events must be dropped; the
-/// pipeline must not receive any blocks.
+/// While stopped, `Block` source events must be dropped; the pipeline must not
+/// receive any blocks.
 #[test]
-fn test_stopped_drops_block_and_flush_events() {
+fn test_stopped_drops_block_events() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let (admin_handle, admin_rx) = AdminHandle::channel();
         let (source, source_tx) = ChannelBlockSource::new();
@@ -126,9 +126,6 @@ fn test_stopped_drops_block_and_flush_events() {
             }
             fn next_submission(&mut self) -> Option<BatchSubmission> {
                 self.inner.next_submission()
-            }
-            fn has_ready_submission(&self) -> bool {
-                self.inner.has_ready_submission()
             }
             fn confirm(&mut self, id: SubmissionId, n: u64) {
                 self.inner.confirm(id, n);
@@ -184,16 +181,6 @@ fn test_stopped_drops_block_and_flush_events() {
         ctx.sleep(Duration::from_millis(10)).await;
         source_tx.send(L2BlockEvent::Block(Box::default())).unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
-
-        // A flush's ack must also be dropped (not silently leaked/hung) while stopped, so a
-        // waiter sees an immediate closed-channel error rather than an indefinite wait.
-        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
-        source_tx.send(L2BlockEvent::Flush { ack: Some(ack_tx) }).unwrap();
-        ctx.sleep(Duration::from_millis(10)).await;
-        assert!(
-            ack_rx.await.is_err(),
-            "flush ack must be dropped (not fired) while the batcher is stopped"
-        );
 
         ctx.cancel();
 
