@@ -279,7 +279,6 @@ impl UpgradeSignalMonitor {
                 if summary.committed {
                     self.last_apply_failure = None;
                     self.validated_protocol_versions = Self::active_protocol_versions(schedule);
-                    UpgradeSignalMetrics::record_apply_success(self.metrics_layer, schedule);
                 }
                 return UpgradeSignalPollOutcome::Continue;
             }

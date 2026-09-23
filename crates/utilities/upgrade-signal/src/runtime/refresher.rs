@@ -1,7 +1,7 @@
 use super::{UpgradeSignalApplySummary, UpgradeSignalRuntimeApplier};
 use crate::{
     AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalError, UpgradeSignalMetricLayer,
-    UpgradeSignalSchedule,
+    UpgradeSignalMetrics, UpgradeSignalSchedule,
 };
 
 /// Reads and applies upgrade signal schedules while the node is running.
@@ -31,8 +31,10 @@ impl UpgradeSignalRefresher {
     /// Validates and applies an already-read schedule without touching L1.
     ///
     /// This is atomic: the whole schedule is validated before any registry mutation, so a
-    /// validation failure leaves the runtime registry unchanged. The live poller
-    /// ([`crate::UpgradeSignalMonitor::poll_and_apply`]) advances its applied baseline only when
+    /// validation failure leaves the runtime registry unchanged. A committed apply is also the
+    /// sole owner of clearing the live apply-failure gauges; a stale, uncommitted read leaves them
+    /// intact. The live poller ([`crate::UpgradeSignalMonitor::poll_and_apply`]) advances its
+    /// applied baseline only when
     /// this call succeeds, so a failed apply leaves the schedule offered for retry on the next
     /// poll rather than being silently adopted as the baseline.
     pub fn apply(
@@ -41,6 +43,9 @@ impl UpgradeSignalRefresher {
     ) -> Result<UpgradeSignalApplySummary, UpgradeSignalError> {
         self.config.validate_schedule_protocol_versions(schedule)?;
         let summary = UpgradeSignalRuntimeApplier::apply_schedule(self.chain_id, schedule);
+        if summary.committed {
+            UpgradeSignalMetrics::record_apply_success(self.metrics_layer);
+        }
         summary.log("runtime registry");
 
         Ok(summary)

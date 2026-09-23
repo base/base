@@ -184,21 +184,15 @@ impl ExecutionUpgradeSignal {
         refresher: &UpgradeSignalRefresher,
     ) -> RpcResult<UpgradeSignalApplySummary> {
         match refresher.read_schedule().await {
-            Ok(schedule) => match refresher.apply(&schedule) {
-                Ok(summary) => {
-                    UpgradeSignalMetrics::record_apply_success(refresher.metrics_layer, &schedule);
-                    Ok(summary)
-                }
-                Err(error) => {
-                    UpgradeSignalMetrics::record_apply_failure(refresher.metrics_layer, &schedule);
-                    warn!(
-                        target: "upgrade_signal",
-                        error = %error,
-                        "failed to validate execution runtime upgrade signal"
-                    );
-                    Err(ErrorObject::owned(-32005, "failed to validate upgrade signal", None::<()>))
-                }
-            },
+            Ok(schedule) => refresher.apply(&schedule).map_err(|error| {
+                UpgradeSignalMetrics::record_apply_failure(refresher.metrics_layer, &schedule);
+                warn!(
+                    target: "upgrade_signal",
+                    error = %error,
+                    "failed to validate execution runtime upgrade signal"
+                );
+                ErrorObject::owned(-32005, "failed to validate upgrade signal", None::<()>)
+            }),
             Err(error) => {
                 warn!(
                     target: "upgrade_signal",
@@ -237,13 +231,13 @@ impl ExecutionUpgradeSignal {
             .register_async_method("admin_refreshUpgradeSignal", move |_, refresher, _| {
                 let filter_refresh = Arc::clone(&filter_refresh);
                 async move {
-                    let result = Self::refresh_runtime_upgrade_signal(&refresher).await;
-                    if result.is_ok() {
-                        // The registry is already mutated (apply returned Ok); wake the monitor to
-                        // reinstall the fork filter against the new schedule right away.
+                    let summary = Self::refresh_runtime_upgrade_signal(&refresher).await?;
+                    if summary.committed {
+                        // The registry accepted a new schedule, so reinstall the fork filter
+                        // against it immediately rather than waiting for the next L1 poll.
                         filter_refresh.notify_one();
                     }
-                    result
+                    Ok::<UpgradeSignalApplySummary, ErrorObject<'static>>(summary)
                 }
             })
             .map_err(|error| eyre::eyre!(error))?;

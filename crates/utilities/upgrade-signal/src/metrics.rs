@@ -167,11 +167,15 @@ impl UpgradeSignalMetrics {
         }
     }
 
-    /// Records a successful live apply of a schedule, clearing the sticky failure gauge per upgrade.
-    pub fn record_apply_success(layer: UpgradeSignalMetricLayer, schedule: &UpgradeSignalSchedule) {
+    /// Records a successful live apply of a schedule, clearing sticky failure gauges.
+    ///
+    /// A committed apply replaces the runtime registry's complete contract-backed override set,
+    /// including removals. Clear every contract-backed gauge rather than only gauges named by the
+    /// new schedule, so an alert from an upgrade removed by a later L1 schedule recovers too.
+    pub fn record_apply_success(layer: UpgradeSignalMetricLayer) {
         Self::init();
-        for signal in &schedule.signals {
-            Self::apply_failed(layer.label(), signal.upgrade_id.contract_id().to_string()).set(0.0);
+        for upgrade_id in BaseUpgrade::CONTRACT_VARIANTS {
+            Self::apply_failed(layer.label(), upgrade_id.contract_id().to_string()).set(0.0);
         }
     }
 
@@ -257,18 +261,48 @@ mod tests {
         assert_eq!(UpgradeSignalMetrics::protocol_version_to_f64(version), 1_001_000.0);
     }
 
+    #[cfg(feature = "metrics")]
     #[test]
-    fn records_apply_outcome_without_panicking() {
-        let schedule = UpgradeSignalSchedule::new(
+    fn committed_schedule_recovery_clears_removed_upgrade_failure_gauges() {
+        let failed_schedule = UpgradeSignalSchedule::new(
             1,
-            vec![UpgradeSignal {
-                upgrade_id: BaseUpgrade::Azul,
-                activation_timestamp: 42,
-                protocol_version: U256::from(7),
-            }],
+            vec![
+                UpgradeSignal {
+                    upgrade_id: BaseUpgrade::Azul,
+                    activation_timestamp: 42,
+                    protocol_version: U256::from(7),
+                },
+                UpgradeSignal {
+                    upgrade_id: BaseUpgrade::Beryl,
+                    activation_timestamp: 84,
+                    protocol_version: U256::from(7),
+                },
+            ],
         );
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
 
-        UpgradeSignalMetrics::record_apply_failure(UpgradeSignalMetricLayer::Consensus, &schedule);
-        UpgradeSignalMetrics::record_apply_success(UpgradeSignalMetricLayer::Consensus, &schedule);
+        metrics::with_local_recorder(&recorder, || {
+            UpgradeSignalMetrics::record_apply_failure(
+                UpgradeSignalMetricLayer::Consensus,
+                &failed_schedule,
+            );
+            // A later committed schedule omits Beryl, which removes its runtime override.
+            UpgradeSignalMetrics::record_apply_success(UpgradeSignalMetricLayer::Consensus);
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        let beryl = snapshot
+            .iter()
+            .find(|(key, _, _, _)| {
+                key.key().name() == "base.upgrade_signal.apply_failed"
+                    && key
+                        .key()
+                        .labels()
+                        .any(|label| label.key() == "upgrade" && label.value() == "beryl")
+            })
+            .expect("Beryl failure gauge should be present after the failed schedule");
+        assert_eq!(beryl.0.kind(), MetricKind::Gauge);
+        assert_eq!(beryl.3, DebugValue::Gauge(0.0.into()));
     }
 }
