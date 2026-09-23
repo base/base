@@ -1515,6 +1515,7 @@ where
                 "delegate nested actor lacks SIGNATURE scope"
             }
             TxAuthError::SenderRecovery => "EOA sender recovery failed",
+            TxAuthError::PayerRecovery => "open payer recovery failed",
             TxAuthError::Scope { .. } => "actor scope insufficient",
             TxAuthError::AccountIsLocked => "account is locked",
             TxAuthError::DelegationUnauthorized => "delegation requires admin actor",
@@ -1740,9 +1741,9 @@ where
         Ok(())
     }
 
-    /// Ensures `payer_auth` is present iff a `payer` is set, and that its
-    /// authenticator prefix sits in the live policy range (above the reserved
-    /// floor, below the revoked sentinel).
+    /// Ensures `payer_auth` is present iff a `payer` is set. Open payer mode
+    /// carries a raw 65-byte signature; a named payer carries an allowed
+    /// `authenticator || data` blob.
     fn validate_payer_auth(signed: &Eip8130Signed) -> Result<(), InvalidPoolTransactionError> {
         let payer_present = signed.tx().payer.is_some();
         let auth = signed.payer_auth();
@@ -1750,7 +1751,11 @@ where
         if payer_present == auth.is_empty() {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
-        if payer_present {
+        if signed.tx().is_open_payer() {
+            if auth.len() != 65 {
+                return Err(InvalidTransactionError::TxTypeNotSupported.into());
+            }
+        } else if payer_present {
             if auth.len() < 20 {
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }

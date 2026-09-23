@@ -126,7 +126,7 @@ impl TryFrom<&BaseTxEnvelope> for SpanBatchTransactionData {
                     .0,
                     payer_authenticator: SpanBatchEip8130TransactionData::split_auth(
                         signed.payer_auth(),
-                        tx.payer.is_some(),
+                        SpanBatchEip8130TransactionData::named_payer(tx.payer),
                     )?
                     .0,
                 }))

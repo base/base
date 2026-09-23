@@ -46,7 +46,8 @@ pub struct Eip8130Signed {
     sender_auth: Bytes,
     /// Payer authentication payload, or empty for self-pay.
     ///
-    /// When `tx.payer.is_some()` this carries the payer's authorization,
+    /// When `tx.payer.is_some()` this carries the payer's authorization (a raw
+    /// 65-byte signature in open payer mode, otherwise `authenticator || data`),
     /// formatted as `authenticator(20) || authenticator_data` and validated against
     /// [`TxEip8130::payer_signature_hash`] (with the resolved sender substituted).
     /// When `tx.payer.is_none()` this is empty.
@@ -355,6 +356,55 @@ impl Eip8130Signed {
         self.recover_eoa_sender_unchecked()?.ok_or_else(alloy_consensus::crypto::RecoveryError::new)
     }
 
+    /// Recovers the payer of an open-payer transaction
+    /// ([`TxEip8130::is_open_payer`]) from its raw 65-byte `payer_auth` over
+    /// [`TxEip8130::payer_signature_hash`] bound to `resolved_sender`, using
+    /// checked (low-`s`) recovery. Returns `Ok(None)` for any other payer mode.
+    #[cfg(feature = "k256")]
+    pub fn recover_open_payer(
+        &self,
+        resolved_sender: Address,
+    ) -> Result<Option<Address>, alloy_consensus::crypto::RecoveryError> {
+        if !self.tx.is_open_payer() {
+            return Ok(None);
+        }
+        let signature = Self::parse_raw_k1_signature(self.payer_auth.as_ref())?;
+        alloy_consensus::crypto::secp256k1::recover_signer(
+            &signature,
+            self.tx.payer_signature_hash(resolved_sender),
+        )
+        .map(Some)
+    }
+
+    /// The account that pays gas: `resolved_sender` for self-pay, the named
+    /// payer for sponsored pay, and the recovered signer in open payer mode.
+    /// Returns `None` only when an open-mode `payer_auth` does not recover.
+    #[cfg(feature = "k256")]
+    pub fn resolved_payer(&self, resolved_sender: Address) -> Option<Address> {
+        match self.tx.payer {
+            None => Some(resolved_sender),
+            Some(_) if self.tx.is_open_payer() => {
+                self.recover_open_payer(resolved_sender).ok().flatten()
+            }
+            Some(payer) => Some(payer),
+        }
+    }
+
+    /// Parses a raw `r || s || v` secp256k1 signature, requiring exactly 65
+    /// bytes and `v in {27, 28}`. The auth blob is not covered by the hash it
+    /// signs, so accepting the alternative `v in {0, 1}` encoding would let a
+    /// relayer mint a second transaction hash for the same signer.
+    #[cfg(feature = "k256")]
+    fn parse_raw_k1_signature(
+        raw: &[u8],
+    ) -> Result<alloy_primitives::Signature, alloy_consensus::crypto::RecoveryError> {
+        if raw.len() != 65 || !matches!(raw[64], 27 | 28) {
+            return Err(alloy_consensus::crypto::RecoveryError::new());
+        }
+        alloy_primitives::Signature::try_from(raw)
+            .map_err(|_| alloy_consensus::crypto::RecoveryError::new())
+    }
+
     #[cfg(feature = "k256")]
     fn recover_eoa_sender_with(
         &self,
@@ -366,22 +416,9 @@ impl Eip8130Signed {
         if self.tx.sender.is_some() {
             return Ok(None);
         }
-        // Canonical-encoding guard: the EOA `sender_auth` must be exactly a
-        // 65-byte `r || s || v` blob with `v` in 'Electrum' notation
-        // (`v in {27, 28}`). `sender_auth` cannot be covered by
-        // `sender_signature_hash` (a signature cannot sign over itself), so if we
-        // accepted the alternative `v in {0, 1}` encoding any relayer could flip
-        // that byte to mint a second, equally valid transaction hash for the same
-        // signer without the key (txid malleability). `alloy`'s parser normalizes
-        // `{0, 1, 27, 28}` all to the same parity, so we reject the non-canonical
-        // forms here before parsing, matching the k1 authenticator's strict
+        // Canonical-encoding guard, matching the k1 authenticator's strict
         // `v in {27, 28}` check in `RecoveredActorId::recover_k1`.
-        let raw = self.sender_auth.as_ref();
-        if raw.len() != 65 || !matches!(raw[64], 27 | 28) {
-            return Err(alloy_consensus::crypto::RecoveryError::new());
-        }
-        let signature = alloy_primitives::Signature::try_from(raw)
-            .map_err(|_| alloy_consensus::crypto::RecoveryError::new())?;
+        let signature = Self::parse_raw_k1_signature(self.sender_auth.as_ref())?;
         let hash = self.tx.sender_signature_hash();
         recover(&signature, hash).map(Some)
     }

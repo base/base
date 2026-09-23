@@ -752,8 +752,10 @@ impl Eip8130Executor {
         let gas_limit = tx.gas_limit;
         let max_fee = tx.max_fee_per_gas;
         let max_priority = tx.max_priority_fee_per_gas;
-        // Use the declared payer (sponsor); no signature is verified here.
-        let payer = tx.payer.unwrap_or(sender);
+        // Use the declared payer (sponsor); no signature is verified here. An
+        // open-mode placeholder `payer_auth` does not recover, so the sender
+        // stands in.
+        let payer = signed.resolved_payer(sender).unwrap_or(sender);
 
         let internals = EvmInternals::from_context(ctx);
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
@@ -2409,6 +2411,29 @@ mod tests {
             .expect("configured-account estimation should succeed");
         assert!(result.is_success(), "estimation should report success");
         assert!(result.tx_gas_used() > 0, "estimated gas should be positive");
+    }
+
+    /// In open payer mode the account recovered from `payer_auth` pays gas, so
+    /// an unfunded sender's transaction executes against the payer's balance.
+    #[test]
+    fn open_payer_is_charged_instead_of_the_sender() {
+        let key = signing_key(0x34);
+        let sender = eoa_address(&key);
+        let payer_key = signing_key(0x35);
+        let payer = eoa_address(&payer_key);
+
+        let tx = TxEip8130 { payer: Some(Eip8130Constants::OPEN_PAYER), ..base_tx() };
+        let sender_auth = eoa_sig(&key, tx.sender_signature_hash());
+        let payer_auth = eoa_sig(&payer_key, tx.payer_signature_hash(sender));
+        let signed = Eip8130Signed::new(tx, sender_auth, payer_auth);
+
+        let initial = U256::from(10u64).pow(U256::from(18u64));
+        let mut evm = evm_with(initial, payer);
+        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("open-payer tx executes");
+
+        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+        assert!(outcome.state[&payer].info.balance < initial, "payer must be charged");
+        assert!(outcome.state[&sender].info.balance.is_zero(), "sender must not be charged");
     }
 
     #[test]

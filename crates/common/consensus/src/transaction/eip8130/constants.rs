@@ -181,6 +181,12 @@ impl Eip8130Constants {
     /// is never a valid authenticator selector; addresses below this are reserved.
     pub const K1_AUTHENTICATOR: Address = address!("0x0000000000000000000000000000000000000001");
 
+    /// In-memory `payer` value for open payer mode, encoded on the wire as the
+    /// single byte `0x00`. The payer is recovered from a raw 65-byte
+    /// `payer_auth` over the payer signature hash. A 20-byte zero address is
+    /// not a valid wire `payer`.
+    pub const OPEN_PAYER: Address = Address::ZERO;
+
     /// `AccountState.flags` bit that disables the implicit default-EOA path.
     ///
     /// The implicit default EOA is a [`Self::K1_AUTHENTICATOR`] signature whose

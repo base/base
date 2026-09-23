@@ -80,6 +80,25 @@ impl ActorTxVerifier {
                 }
                 None
             }
+            Some(_) if tx.is_open_payer() => {
+                // Open mode: whoever signs the payer hash pays. The hash binds to
+                // the resolved sender, so the signature cannot be reused for
+                // another sender's identical body.
+                let hash = tx.payer_signature_hash(sender.account);
+                let recovered = RecoveredActorId::recover_k1(hash, signed.payer_auth())
+                    .map_err(|_| TxAuthError::PayerRecovery)?;
+                let account = recovered.address();
+                let resolved = ActorAuthorizer::authorize_k1(storage, account, recovered, now)?;
+                let operation = if account == sender.account {
+                    Operation::SelfPayer
+                } else {
+                    Operation::SponsorPayer
+                };
+                if !operation.is_granted(&resolved) {
+                    return Err(TxAuthError::Scope { operation, scope: resolved.scope });
+                }
+                Some(AuthorizedActor { account, resolved })
+            }
             Some(account) => {
                 // The payer digest binds to the resolved sender account.
                 let hash = tx.payer_signature_hash(sender.account);
@@ -423,6 +442,74 @@ mod tests {
             let payer = actors.payer.expect("payer present");
             assert_eq!(payer.account, payer_account);
             assert_eq!(payer.resolved.scope, Eip8130Constants::SCOPE_SPONSOR_PAYER);
+        });
+    }
+
+    #[test]
+    fn open_payer_resolves_to_the_recovered_signer() {
+        let sk = key(0x46);
+        let sender_account = addr(&sk);
+        let pk = key(0x57);
+        let payer_account = addr(&pk);
+
+        let tx = base_tx(None, Some(Eip8130Constants::OPEN_PAYER));
+        let sender_hash = tx.sender_signature_hash();
+        let payer_hash = tx.payer_signature_hash(sender_account);
+        let signed = Eip8130Signed::new(
+            tx,
+            Bytes::from(sig(&sk, sender_hash)),
+            Bytes::from(sig(&pk, payer_hash)),
+        );
+        with_storage(|acc| {
+            let actors = ActorTxVerifier::verify(&signed, acc, NOW).unwrap();
+            assert_eq!(actors.sender.account, sender_account);
+            let payer = actors.payer.expect("open payer resolves");
+            assert_eq!(payer.account, payer_account);
+            assert!(payer.resolved.is_admin());
+        });
+    }
+
+    #[test]
+    fn open_payer_signature_bound_to_another_sender_resolves_elsewhere() {
+        // The open-mode payer hash binds to the resolved sender, so a signature
+        // issued for another sender recovers to an unrelated address.
+        let sk = key(0x47);
+        let pk = key(0x58);
+        let payer_account = addr(&pk);
+
+        let tx = base_tx(None, Some(Eip8130Constants::OPEN_PAYER));
+        let sender_hash = tx.sender_signature_hash();
+        let foreign_hash = tx.payer_signature_hash(Address::repeat_byte(0x99));
+        let signed = Eip8130Signed::new(
+            tx,
+            Bytes::from(sig(&sk, sender_hash)),
+            Bytes::from(sig(&pk, foreign_hash)),
+        );
+        with_storage(|acc| {
+            let actors = ActorTxVerifier::verify(&signed, acc, NOW).unwrap();
+            assert_ne!(actors.payer.expect("recovers some signer").account, payer_account);
+        });
+    }
+
+    #[test]
+    fn open_payer_with_prefixed_auth_is_rejected() {
+        let sk = key(0x48);
+        let sender_account = addr(&sk);
+        let pk = key(0x59);
+
+        let tx = base_tx(None, Some(Eip8130Constants::OPEN_PAYER));
+        let sender_hash = tx.sender_signature_hash();
+        let payer_hash = tx.payer_signature_hash(sender_account);
+        let signed = Eip8130Signed::new(
+            tx,
+            Bytes::from(sig(&sk, sender_hash)),
+            auth_blob(K1, &sig(&pk, payer_hash)),
+        );
+        with_storage(|acc| {
+            assert_eq!(
+                ActorTxVerifier::verify(&signed, acc, NOW).unwrap_err(),
+                TxAuthError::PayerRecovery
+            );
         });
     }
 
