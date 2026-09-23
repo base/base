@@ -117,37 +117,33 @@ def grouped_reth_dependencies(dependencies: list[str]) -> list[tuple[str, list[s
 
 def render_inventory(root: Path) -> str:
     grouped_packages: dict[tuple[str, str], list[str]] = defaultdict(list)
-    for path, package in package_manifests(root):
-        grouped_packages[category_for(path)].append(package)
+    for package_path, package in package_manifests(root):
+        grouped_packages[category_for(package_path)].append(package)
 
     package_lines = []
     for _prefix, category, pattern in CATEGORY_RULES:
         packages = grouped_packages.get((category, pattern), [])
-        if not packages:
-            continue
-        rendered_packages = ", ".join(f"`{package}`" for package in sorted(packages))
-        package_lines.append(f"- **{category}** — `{pattern}`: {rendered_packages}")
+        if packages:
+            package_lines.append(f"- **{category}** — `{pattern}` ({len(packages)} packages)")
 
     pin, dependencies = reth_dependencies(root)
     reth_lines = []
     for group, packages in grouped_reth_dependencies(dependencies):
-        rendered_packages = ", ".join(f"`{package}`" for package in packages)
-        reth_lines.append(f"- **{group}:** {rendered_packages}")
+        reth_lines.append(f"- **{group}** ({len(packages)} direct packages)")
 
     return "\n".join(
         [
             BEGIN,
-            "### Generated coverage inventory",
+            "### Generated repository index",
             "",
-            "This inventory is generated from package manifests and the root Reth dependency set. "
-            "It is deliberately an index, not an ownership chart or a dependency graph.",
+            "Generated from Cargo manifests and direct Reth dependencies. It confirms coverage; ",
+            "the system-path index above explains ownership and data flow.",
             "",
-            "#### Repository Cargo packages",
+            "#### Base package groups",
             *package_lines,
             "",
-            "#### Reth packages used directly by this workspace",
-            f"Base Reth is pinned at **`{pin}`** where the dependency is git-sourced. "
-            "Version-only compatibility crates remain listed because they are part of the integration boundary.",
+            "#### Direct Reth boundary",
+            f"Base Reth git dependencies are pinned at **`{pin}`**.",
             *reth_lines,
             END,
         ]
