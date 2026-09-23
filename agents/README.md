@@ -4,9 +4,10 @@ The role definitions in this directory are opt-in instructions for a caller that
 selects one. They do not apply to ordinary repository chats or user-directed
 edits.
 
-Read `AGENTS.md`, `docs/FEATURE_MAP.md`, `agents/COMMON.md`, and the selected
-role file in that order. `COMMON.md` owns the autonomous-improvement and
-PR/stack policy; the role files own their specialized quality bar.
+For an autonomous improvement run, read `AGENTS.md`, `docs/FEATURE_MAP.md`,
+`agents/autonomous-improvement.toml`, and the selected role file in that order.
+The autonomous-improvement agent owns the shared run and PR/stack policy; role
+files own their specialized quality bar.
 
 | Role | Use for | Do not use for |
 | --- | --- | --- |
