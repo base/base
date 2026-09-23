@@ -140,11 +140,16 @@ impl StateMetrics {
         seek: impl FnOnce() -> Result<T, E>,
         hit: impl FnOnce(&T) -> bool,
     ) -> Result<T, E> {
-        let started = Instant::now();
-        let value = seek()?;
-        let elapsed = started.elapsed();
+        let mut timer = base_metrics::timed!(Self::seek_duration_seconds());
+        let value = match seek() {
+            Ok(value) => value,
+            Err(error) => {
+                timer.disarm();
+                return Err(error);
+            }
+        };
+        timer.stop();
 
-        Self::seek_duration_seconds().record(elapsed.as_secs_f64());
         Self::reads().increment(1);
         if !hit(&value) {
             Self::misses().increment(1);
