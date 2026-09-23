@@ -227,7 +227,7 @@ impl BlockHandler {
         if let Some(seen_hashes_at_height) =
             self.seen_hashes.get_mut(&envelope.payload.block_number())
         {
-            // CHECK: If more than [`Self::MAX_BLOCKS_TO_KEEP`] different blocks have been received
+            // CHECK: If [`Self::MAX_BLOCKS_TO_KEEP`] different blocks have already been received
             // for the same height, reject the block.
             if seen_hashes_at_height.len() >= Self::MAX_BLOCKS_TO_KEEP {
                 return Err(BlockInvalidError::TooManyBlocks {
