@@ -3,7 +3,7 @@
 /// Errors produced by block sources.
 #[derive(Debug, thiserror::Error)]
 pub enum SourceError {
-    /// The source has no more blocks (used by [`InMemoryBlockSource`][crate::test_utils::InMemoryBlockSource] when empty).
+    /// The source has no more blocks. Only in-memory test sources report this.
     #[error("block source exhausted")]
     Exhausted,
     /// Provider or RPC error.

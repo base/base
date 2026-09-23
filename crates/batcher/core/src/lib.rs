@@ -41,4 +41,5 @@ pub use admin::{
 mod driver;
 pub use driver::{BatchDriver, BatchDriverHeads};
 
+#[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
