@@ -346,12 +346,8 @@ pub struct RpcStandardNodeArgs {
     )]
     pub enable_tx_forwarding: bool,
 
-    /// Enable the experimental validity transaction RPC.
-    ///
-    /// When transaction forwarding is enabled, validity predicates are forwarded to builders, which
-    /// evaluate and enforce them during block construction. This can also be enabled on a standalone
-    /// sequencer (e.g. a local devnet) that builds blocks itself, in which case forwarding is not
-    /// required.
+    /// Enable validity transactions before Cobalt activates. Without this override, the
+    /// endpoint is registered at startup but rejects submissions until Cobalt is active.
     #[arg(long = "enable-experimental-validity-transactions")]
     pub enable_experimental_validity_transactions: bool,
 
@@ -736,11 +732,23 @@ impl StandardBaseRethNode {
         runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
-        if args.rpc.enable_experimental_validity_transactions {
+        // Query nodes proxy validity metadata to their sequencer; forwarders submit locally.
+        if args.rpc.enable_tx_forwarding
+            || args.rpc.rollup_args.sequencer.is_some()
+            || args.rpc.enable_experimental_validity_transactions
+        {
             runner.install_ext::<SendRawTransactionValidityExtension>(
                 SendRawTransactionValidityConfig {
                     max_validity_predicates: args.rpc.experimental_validity_max_predicates,
                     max_validity_expiry_secs: args.rpc.experimental_validity_max_expiry_secs,
+                    experimental_override: args.rpc.enable_experimental_validity_transactions,
+                    sequencer_url: args
+                        .rpc
+                        .rollup_args
+                        .sequencer
+                        .clone()
+                        .filter(|_| !args.rpc.enable_tx_forwarding),
+                    sequencer_headers: args.rpc.rollup_args.sequencer_headers,
                 },
             );
         }

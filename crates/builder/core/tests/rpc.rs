@@ -1,4 +1,5 @@
 //! Integration tests for the Builder RPC extension.
+use std::sync::Arc;
 
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_eips::eip2718::Encodable2718;
@@ -9,12 +10,13 @@ use alloy_signer::SignerSync;
 use base_builder_core::{BuilderApiExtension, BuilderApiExtensionConfig};
 use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
 use base_common_rpc_types::BaseTransactionRequest;
+use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{
     DEFAULT_MAX_VALIDITY_PREDICATES, NoExtensions, TransactionValidity, ValidatedTransaction,
     ValidityOperator, ValidityPredicate,
 };
 use base_node_runner::test_utils::TestHarness;
-use base_test_utils::Account;
+use base_test_utils::{Account, build_test_genesis_cobalt};
 use base_txpool_rpc::{
     SendRawTransactionValidityConfig, SendRawTransactionValidityExtension,
     SendRawTransactionValidityOptions,
@@ -56,11 +58,12 @@ async fn setup_with_validity_ingress(
 ) -> eyre::Result<(TestHarness, RpcClient)> {
     let config = BuilderApiExtensionConfig::new(accept_validity, max_validity_predicates);
     let mut builder = TestHarness::builder().with_ext::<BuilderApiExtension>(config);
-    if accept_validity {
-        builder = builder.with_ext::<SendRawTransactionValidityExtension>(
-            SendRawTransactionValidityConfig { max_validity_predicates, ..Default::default() },
-        );
-    }
+    builder =
+        builder.with_ext::<SendRawTransactionValidityExtension>(SendRawTransactionValidityConfig {
+            max_validity_predicates,
+            experimental_override: accept_validity,
+            ..Default::default()
+        });
     let harness = builder.build().await?;
     let client = harness.rpc_client()?;
     Ok((harness, client))
@@ -204,6 +207,33 @@ async fn test_validity_transactions_require_explicit_opt_in() -> eyre::Result<()
     Ok(())
 }
 
+/// A builder deployed before Cobalt accepts extensions once the fork is active.
+#[tokio::test]
+async fn test_validity_extensions_open_at_cobalt() -> eyre::Result<()> {
+    let spec = BaseChainSpec::from_genesis(build_test_genesis_cobalt());
+    let config = BuilderApiExtensionConfig::new(false, DEFAULT_MAX_VALIDITY_PREDICATES);
+    let harness = TestHarness::builder()
+        .with_chain_spec(Arc::new(spec))
+        .with_ext::<BuilderApiExtension>(config)
+        .build()
+        .await?;
+    let client = harness.rpc_client()?;
+    let tx = ValidatedTransaction {
+        sender: Account::Alice.address(),
+        raw: Bytes::from_static(&[0xff]),
+        extensions: TransactionValidity {
+            validity: vec![ValidityPredicate::Balance {
+                address: Account::Alice.address(),
+                op: ValidityOperator::Equal,
+                value: U256::ZERO,
+            }],
+        },
+    };
+    let result: Result<(), _> = client.request("base_insertValidatedTransaction", (tx,)).await;
+    assert!(result.unwrap_err().to_string().contains("failed to decode transaction"));
+    Ok(())
+}
+
 /// Verifies the builder enforces its configured validity predicate limit.
 #[tokio::test]
 async fn test_validity_transactions_enforce_configured_limit() -> eyre::Result<()> {
@@ -229,10 +259,11 @@ async fn test_validity_transactions_enforce_configured_limit() -> eyre::Result<(
     Ok(())
 }
 
-/// Verifies builders do not expose public validity ingress unless explicitly opted in.
+/// The public method is wired before Cobalt but fails closed until activation.
 #[tokio::test]
-async fn test_send_raw_transaction_validity_requires_explicit_opt_in() -> eyre::Result<()> {
-    let (disabled_harness, disabled_client) = setup(false, DEFAULT_MAX_VALIDITY_PREDICATES).await?;
+async fn test_send_raw_transaction_validity_pre_cobalt_gate() -> eyre::Result<()> {
+    let (disabled_harness, disabled_client) =
+        setup_with_validity_ingress(false, DEFAULT_MAX_VALIDITY_PREDICATES).await?;
     let disabled: Result<TxHash, _> = disabled_client
         .request(
             "base_sendRawTransactionValidity",
@@ -242,12 +273,11 @@ async fn test_send_raw_transaction_validity_requires_explicit_opt_in() -> eyre::
             ),
         )
         .await;
-    let disabled_error = disabled
-        .expect_err("disabled builder should not expose base_sendRawTransactionValidity")
-        .to_string();
+    let disabled_error =
+        disabled.expect_err("pre-Cobalt builder should reject validity").to_string();
     assert!(
-        disabled_error.contains("-32601") || disabled_error.to_ascii_lowercase().contains("method"),
-        "expected method-not-found for disabled builder, got: {disabled_error}"
+        disabled_error.contains("gated behind the Cobalt hard fork"),
+        "expected pre-Cobalt rejection, got: {disabled_error}"
     );
 
     let (enabled_harness, enabled_client) =

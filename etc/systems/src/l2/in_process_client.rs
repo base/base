@@ -428,7 +428,10 @@ impl InProcessClient {
                 && !tx_fwd_config.builder_urls.is_empty()
             {
                 extensions.push(Box::new(SendRawTransactionValidityExtension::from_config(
-                    SendRawTransactionValidityConfig::default(),
+                    SendRawTransactionValidityConfig {
+                        experimental_override: true,
+                        ..Default::default()
+                    },
                 )));
             }
             extensions.push(Box::new(TxForwardingExtension::from_config(tx_fwd_config.clone())));

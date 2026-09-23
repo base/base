@@ -69,14 +69,13 @@ fn main() {
         runner.install_ext::<MeteringStoreExtension>(metering_provider);
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
         runner.install_ext::<BuilderApiExtension>(builder_api_config);
-        if builder_api_config.accept_experimental_validity_transactions {
-            runner.install_ext::<SendRawTransactionValidityExtension>(
-                SendRawTransactionValidityConfig {
-                    max_validity_predicates: builder_api_config.max_validity_predicates,
-                    ..Default::default()
-                },
-            );
-        }
+        runner.install_ext::<SendRawTransactionValidityExtension>(
+            SendRawTransactionValidityConfig {
+                max_validity_predicates: builder_api_config.max_validity_predicates,
+                experimental_override: builder_api_config.accept_experimental_validity_transactions,
+                ..Default::default()
+            },
+        );
         runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);
         StandardBaseRethNode::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         runner.add_started_callback(|| {

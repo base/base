@@ -1,5 +1,6 @@
 //! `TxPool` RPC extension for registering transaction pool management APIs.
 
+use base_execution_rpc::SequencerClient;
 pub use base_execution_txpool::{
     DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
 };
@@ -46,12 +47,18 @@ impl BaseNodeExtension for TxPoolRpcExtension {
 }
 
 /// Configuration for local validity-bearing transaction ingress.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct SendRawTransactionValidityConfig {
     /// Maximum number of validity predicates accepted per transaction.
     pub max_validity_predicates: usize,
     /// Maximum validity-transaction lifetime, in seconds.
     pub max_validity_expiry_secs: u64,
+    /// Accept validity transactions before Cobalt activates.
+    pub experimental_override: bool,
+    /// Upstream sequencer RPC for query nodes that proxy rather than build transactions.
+    pub sequencer_url: Option<String>,
+    /// HTTP headers sent to the upstream sequencer, in `name=value` form.
+    pub sequencer_headers: Vec<String>,
 }
 
 impl Default for SendRawTransactionValidityConfig {
@@ -59,6 +66,9 @@ impl Default for SendRawTransactionValidityConfig {
         Self {
             max_validity_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
             max_validity_expiry_secs: DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
+            experimental_override: false,
+            sequencer_url: None,
+            sequencer_headers: Vec::new(),
         }
     }
 }
@@ -73,12 +83,19 @@ impl BaseNodeExtension for SendRawTransactionValidityExtension {
     fn apply(self: Box<Self>, builder: NodeHooks) -> NodeHooks {
         let config = self.config;
         builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
-            let api = SendRawTransactionValidityApiImpl::with_validity_limits(
+            let mut api = SendRawTransactionValidityApiImpl::with_validity_limits(
                 ctx.pool().clone(),
                 ctx.provider().clone(),
                 config.max_validity_predicates,
                 config.max_validity_expiry_secs,
-            );
+            )
+            .with_experimental_override(config.experimental_override);
+            if let Some(url) = &config.sequencer_url {
+                api = api.with_sequencer_client(SequencerClient::new_http_with_headers(
+                    url,
+                    config.sequencer_headers.clone(),
+                )?);
+            }
             ctx.modules.merge_configured(api.into_rpc())?;
             Ok(())
         })
