@@ -14,7 +14,7 @@ pub enum DriverEvent {
     /// New L2 unsafe block from the source.
     Block(Box<BaseBlock>),
     /// Source requested a force-flush of the current channel. No production source emits this,
-    /// only the action-test harness and tests.
+    /// only tests.
     ///
     /// If the ack is set, it fires once every frame resulting from this flush has been
     /// encoded and handed to the tx manager.

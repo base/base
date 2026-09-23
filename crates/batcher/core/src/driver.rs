@@ -218,6 +218,10 @@ where
     /// 1. **CPU phase**: drain encoding, apply throttle, recover txpool, submit pending frames.
     /// 2. **I/O phase**: block on `tokio::select!` until one external event fires.
     ///
+    /// Every event the I/O phase returns is therefore followed by a CPU phase before the
+    /// driver waits again, so the work an event releases is done before the next one, up to
+    /// the encoding step budget.
+    ///
     /// When shutting down (after cancellation or source exhaustion), the I/O phase is
     /// replaced by a bounded drain of all in-flight receipts.
     ///
@@ -231,7 +235,7 @@ where
     /// and producing fresh encoding/submission work while the ack is outstanding, it's delayed
     /// until that work drains too, and under sustained continuous ingestion may not fire at
     /// all. Callers that need a precise, always-terminating signal must ensure the source is
-    /// otherwise quiesced before flushing (as the action-test harness does).
+    /// otherwise quiesced before flushing.
     pub async fn run(mut self) -> Result<(), BatchDriverError> {
         if self.stopped {
             info!(

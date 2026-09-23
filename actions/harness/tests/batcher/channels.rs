@@ -316,7 +316,7 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
 /// with an **empty L1 block** between them. The derivation pipeline must
 /// correctly reassemble the channel across the gap.
 ///
-/// Note: `encode_only()` sends a `Flush` event that closes the channel
+/// Note: `encode_only()` ends with an admin flush that closes the channel
 /// immediately, so all frames are in the pending queue before any L1 head
 /// events arrive. This means this test exercises the multi-frame split
 /// submission scenario (frame 0 in block 1, empty block 2, rest in block 3),
@@ -346,7 +346,7 @@ async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
     );
 
     // Encode block — produces multiple frames with max_frame_size=80.
-    // The Flush from encode_only() closes the channel; frames become pending.
+    // The admin flush at the end of encode_only() closes the channel; frames become pending.
     let mut source = ActionL2Source::new();
     source.push(block);
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
@@ -374,7 +374,7 @@ async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
     );
 
     // Mine an empty L1 block 2. The channel was already closed by encode_only()
-    // (which sent Flush), so no staged items are confirmed here. The call to
+    // (its admin flush), so no staged items are confirmed here. The call to
     // confirm_staged is used solely to advance the driver's L1 head to block 2
     // via L1HeadEvent::NewHead — confirm_all fires zero receipts and just sends
     // the head event. The remaining frames are already in `pending`.
