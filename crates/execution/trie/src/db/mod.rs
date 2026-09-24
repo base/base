@@ -12,10 +12,10 @@ pub use store::{MdbxProofsStorage, MdbxProofsStorageOptions};
 mod rocksdb;
 pub use rocksdb::{
     ProofWindowValue, RocksDbHistoryTable, RocksDbLatestVersionResult, RocksdbAccountCursor,
-    RocksdbBatchSession, RocksdbHistoryDeleteBatch, RocksdbPreparedHistoryDeletes,
-    RocksdbPreparedPrune, RocksdbProofsStorage, RocksdbProofsStorageOptions, RocksdbPrunePlan,
-    RocksdbReadSnapshot, RocksdbReplacementState, RocksdbStorageCursor, RocksdbTrieCursor,
-    RocksdbVersionedCursor,
+    RocksdbBatchSession, RocksdbHistoryDeleteBatch, RocksdbHistoryIterator,
+    RocksdbPreparedHistoryDeletes, RocksdbPreparedPrune, RocksdbProofsStorage,
+    RocksdbProofsStorageOptions, RocksdbPrunePlan, RocksdbReadSnapshot, RocksdbReplacementState,
+    RocksdbStorageCursor, RocksdbTrieCursor, RocksdbVersionedCursor,
 };
 
 mod cursor;

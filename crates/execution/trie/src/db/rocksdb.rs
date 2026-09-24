@@ -29,8 +29,9 @@ use reth_trie_common::{
 };
 use rocksdb::{
     BlockBasedIndexType, BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor,
-    CompactionPri, DBCompressionType, DBWithThreadMode, Direction, IteratorMode, MultiThreaded,
-    Options, ReadOptions, SliceTransform, SnapshotWithThreadMode, WriteBatch, WriteOptions,
+    CompactionPri, DBCompressionType, DBRawIteratorWithThreadMode, DBWithThreadMode, Direction,
+    IteratorMode, MultiThreaded, Options, ReadOptions, SliceTransform, SnapshotWithThreadMode,
+    WriteBatch, WriteOptions,
 };
 use tracing::info;
 
@@ -255,6 +256,26 @@ pub struct RocksdbReadSnapshot<'db> {
     pub snapshot: SnapshotWithThreadMode<'db, RocksDb>,
 }
 
+/// Raw `RocksDB` iterator over one history column family, pinned to a cursor's read snapshot.
+///
+/// A versioned cursor keeps one of these for its whole lifetime and steps it across
+/// `seek`/`next` calls instead of opening a fresh iterator (and paying a full multi-level
+/// seek) per call.
+///
+/// The fields are private because they encode a lifetime invariant the type system does not
+/// check: the iterator's read options reference the `RocksDB` snapshot owned by `_snapshot`
+/// (`ReadOptions::set_snapshot` stores a raw pointer), so the snapshot must be released only
+/// after the iterator is destroyed. Keeping both in one struct, with `iter` declared first so it
+/// is dropped first, guarantees that ordering.
+pub struct RocksdbHistoryIterator<'db> {
+    /// Iterator reading `_snapshot`; must be dropped before `_snapshot`.
+    iter: DBRawIteratorWithThreadMode<'db, RocksDb>,
+    /// Key prefix bounding the iterator, or `None` for an unbounded total-order iterator.
+    prefix: Option<Vec<u8>>,
+    /// Keeps the snapshot referenced by `iter` alive.
+    _snapshot: Arc<RocksdbReadSnapshot<'db>>,
+}
+
 /// Cursor over `RocksDB` versioned history rows.
 pub struct RocksdbVersionedCursor<'db, T: Table + DupSort> {
     /// Shared read snapshot used for cursor lookups.
@@ -263,6 +284,9 @@ pub struct RocksdbVersionedCursor<'db, T: Table + DupSort> {
     pub max_block_number: u64,
     /// Current logical key position in the cursor.
     pub current_key: Option<T::Key>,
+    /// Iterator reused across `seek`/`next` calls; created lazily and recreated when the
+    /// requested prefix bound changes.
+    pub iter: Option<RocksdbHistoryIterator<'db>>,
     /// Marker for the table type parameter.
     pub _table: PhantomData<T>,
 }
@@ -338,6 +362,14 @@ static_assertions::assert_impl_all!(RocksdbReadSnapshot<'static>: Send, Sync);
 impl fmt::Debug for RocksdbReadSnapshot<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RocksdbReadSnapshot").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for RocksdbHistoryIterator<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RocksdbHistoryIterator")
+            .field("prefix", &self.prefix)
+            .finish_non_exhaustive()
     }
 }
 
@@ -2391,6 +2423,151 @@ impl reth_db::database_metrics::DatabaseMetrics for RocksdbProofsStorage {
 #[cfg(not(feature = "metrics"))]
 impl reth_db::database_metrics::DatabaseMetrics for RocksdbProofsStorage {}
 
+impl<'db> RocksdbHistoryIterator<'db> {
+    /// Maximum number of `next()` steps used to walk past a key's older versions before
+    /// falling back to a seek, mirroring `RocksDB`'s default
+    /// `max_sequential_skip_in_iterations`. Keys with few versions are skipped by stepping
+    /// within the current data block; deeply versioned keys cost one extra seek.
+    pub const MAX_SEQUENTIAL_VERSION_SKIPS: usize = 8;
+
+    /// Opens an iterator over `cf_name` reading `snapshot`, bounded to `prefix` when given and
+    /// otherwise in total order.
+    pub fn new(
+        snapshot: Arc<RocksdbReadSnapshot<'db>>,
+        cf_name: &'static str,
+        prefix: Option<&[u8]>,
+    ) -> Result<Self, DatabaseError> {
+        let db: &'db RocksDb = snapshot.db;
+        let cf = db.cf_handle(cf_name).ok_or_else(|| {
+            DatabaseError::Other(format!("missing RocksDB column family {cf_name}"))
+        })?;
+        let mut read_options = prefix.map_or_else(total_order_read_options, prefix_read_options);
+        // The snapshot outlives the iterator: both are owned by `Self` and `iter` drops first.
+        read_options.set_snapshot(&snapshot.snapshot);
+        let iter = db.raw_iterator_cf_opt(&cf, read_options);
+        Ok(Self { iter, prefix: prefix.map(<[u8]>::to_vec), _snapshot: snapshot })
+    }
+
+    /// Seeks to the first row of the first key at or after `key` and resolves the first live
+    /// key from there.
+    pub fn seek_live<T, V>(
+        &mut self,
+        key: &T::Key,
+        max_block_number: u64,
+    ) -> Result<Option<(T::Key, V)>, DatabaseError>
+    where
+        T: Table<Value = VersionedValue<V>> + RocksDbHistoryTable,
+        T::Value: Decompress,
+    {
+        // Under the reversed block-suffix encoding a key's newest row (block `u64::MAX`) sorts
+        // first, so this lands on the first row of the first key `>= key`.
+        self.iter.seek(encode_history_key::<T>(key, u64::MAX)?);
+        self.resolve_live::<T, V>(max_block_number)
+    }
+
+    /// Resolves the first live key strictly after `key`.
+    ///
+    /// When the iterator is still on one of `key`'s rows (the common case after a previous
+    /// `seek_live`/`next_live_after` returned `key`) it steps forward from there; otherwise
+    /// (e.g. after a point lookup or an interleaved seek) it seeks past `key`'s rows.
+    pub fn next_live_after<T, V>(
+        &mut self,
+        key: &T::Key,
+        max_block_number: u64,
+    ) -> Result<Option<(T::Key, V)>, DatabaseError>
+    where
+        T: Table<Value = VersionedValue<V>> + RocksDbHistoryTable,
+        T::Value: Decompress,
+    {
+        let key_prefix = encode_history_key_prefix::<T>(key)?;
+        if self.is_on_key(&key_prefix) {
+            self.skip_key_versions(&key_prefix);
+        } else {
+            self.seek_past_key(&key_prefix);
+        }
+        self.resolve_live::<T, V>(max_block_number)
+    }
+
+    /// Resolves the first live key starting from the iterator's current row, which must be the
+    /// first (newest) row of its key.
+    fn resolve_live<T, V>(
+        &mut self,
+        max_block_number: u64,
+    ) -> Result<Option<(T::Key, V)>, DatabaseError>
+    where
+        T: Table<Value = VersionedValue<V>> + RocksDbHistoryTable,
+        T::Value: Decompress,
+    {
+        loop {
+            let Some(raw_key) = self.iter.key() else {
+                // `key()` returns `None` both on exhaustion and on I/O error, so an error here
+                // would otherwise be silently treated as "no more entries". This path feeds
+                // state-root computation, so a swallowed error must be surfaced rather than
+                // resolved as an absent trie node.
+                self.iter.status().map_err(rocksdb_error)?;
+                return Ok(None);
+            };
+            if raw_key.len() != T::KEY_LEN + BLOCK_NUMBER_KEY_LEN {
+                return Err(DatabaseError::Decode);
+            }
+            let key_prefix = raw_key[..T::KEY_LEN].to_vec();
+            let block_number = decode_history_block_suffix(&raw_key[T::KEY_LEN..])?;
+
+            if block_number > max_block_number {
+                // The newest row is above the bound; the newest version at or below it is the
+                // first row `>= (key, max_block_number)`, if it still belongs to this key.
+                let mut target = key_prefix.clone();
+                target.extend_from_slice(&encode_history_block_suffix(max_block_number));
+                self.iter.seek(&target);
+                if !self.is_on_key(&key_prefix) {
+                    // No version at or below the bound: the key does not exist at
+                    // `max_block_number`, and the iterator already sits on the next key's
+                    // first row.
+                    continue;
+                }
+            }
+
+            let raw_value = self.iter.value().ok_or(DatabaseError::Decode)?;
+            if let MaybeDeleted(Some(value)) = T::Value::decompress(raw_value)?.value {
+                return Ok(Some((T::decode_history_key_prefix(&key_prefix)?, value)));
+            }
+            self.skip_key_versions(&key_prefix);
+        }
+    }
+
+    /// Returns whether the iterator is on a row of the key encoded as `key_prefix`.
+    fn is_on_key(&self, key_prefix: &[u8]) -> bool {
+        self.iter.key().is_some_and(|raw_key| {
+            raw_key.len() == key_prefix.len() + BLOCK_NUMBER_KEY_LEN
+                && raw_key.starts_with(key_prefix)
+        })
+    }
+
+    /// Moves from one of `key_prefix`'s rows to the first row of the next key.
+    fn skip_key_versions(&mut self, key_prefix: &[u8]) {
+        for _ in 0..Self::MAX_SEQUENTIAL_VERSION_SKIPS {
+            self.iter.next();
+            if !self.is_on_key(key_prefix) {
+                return;
+            }
+        }
+        self.seek_past_key(key_prefix);
+    }
+
+    /// Seeks to the first row of the first key after `key_prefix`.
+    fn seek_past_key(&mut self, key_prefix: &[u8]) {
+        // A key's oldest possible row (block `0`) has the largest suffix, so seeking there and
+        // stepping over that row if it exists lands on the next key.
+        let mut last_row = Vec::with_capacity(key_prefix.len() + BLOCK_NUMBER_KEY_LEN);
+        last_row.extend_from_slice(key_prefix);
+        last_row.extend_from_slice(&encode_history_block_suffix(0));
+        self.iter.seek(&last_row);
+        if self.iter.key() == Some(last_row.as_slice()) {
+            self.iter.next();
+        }
+    }
+}
+
 impl<'db, T, V> RocksdbVersionedCursor<'db, T>
 where
     T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
@@ -2408,7 +2585,7 @@ where
         snapshot: Arc<RocksdbReadSnapshot<'db>>,
         max_block_number: u64,
     ) -> Self {
-        Self { snapshot, max_block_number, current_key: None, _table: PhantomData }
+        Self { snapshot, max_block_number, current_key: None, iter: None, _table: PhantomData }
     }
 
     fn cf(&self) -> Result<Arc<BoundColumnFamily<'_>>, DatabaseError> {
@@ -2467,23 +2644,11 @@ where
     }
 
     fn seek(&mut self, start_key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        self.next_live_from(start_key)
+        self.seek_live(start_key, None)
     }
 
     fn next(&mut self) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        if let Some(key) = self.current_key.clone() {
-            self.next_live_after(key)
-        } else {
-            self.next_live_from(T::Key::default())
-        }
-    }
-
-    fn next_live_from(&mut self, key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        self.next_live_candidate(key, false, total_order_read_options())
-    }
-
-    fn next_live_after(&mut self, key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        self.next_live_candidate(key, true, total_order_read_options())
+        self.next_live(None)
     }
 
     fn seek_with_prefix(
@@ -2491,69 +2656,49 @@ where
         key: T::Key,
         prefix: &[u8],
     ) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        self.next_live_candidate(key, false, prefix_read_options(prefix))
+        self.seek_live(key, Some(prefix))
     }
 
     fn next_with_prefix(&mut self, prefix: &[u8]) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        if let Some(key) = self.current_key.clone() {
-            self.next_live_candidate(key, true, prefix_read_options(prefix))
-        } else {
-            self.next_live_candidate(T::Key::default(), false, prefix_read_options(prefix))
-        }
+        self.next_live(Some(prefix))
     }
 
-    fn next_live_candidate(
+    /// Returns the cursor's persistent iterator, (re)creating it when it does not exist yet or
+    /// was opened with a different prefix bound.
+    fn history_iter(
+        &mut self,
+        prefix: Option<&[u8]>,
+    ) -> Result<&mut RocksdbHistoryIterator<'db>, DatabaseError> {
+        let iter = match self.iter.take() {
+            Some(iter) if iter.prefix.as_deref() == prefix => iter,
+            _ => RocksdbHistoryIterator::new(Arc::clone(&self.snapshot), T::NAME, prefix)?,
+        };
+        Ok(self.iter.insert(iter))
+    }
+
+    /// Positions the cursor on the first live key at or after `key`.
+    fn seek_live(
         &mut self,
         key: T::Key,
-        exclusive: bool,
-        read_options: ReadOptions,
+        prefix: Option<&[u8]>,
     ) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        let found = {
-            let cf = self.cf()?;
-            // Under the reversed block-suffix encoding, within a given key's
-            // prefix the SMALLEST encoded suffix is `u64::MAX - u64::MAX = 0`
-            // (i.e. block `u64::MAX`) and the LARGEST is `u64::MAX - 0 =
-            // u64::MAX` (i.e. block `0`). So to start a forward scan at the
-            // first encoded row of `key`, use block `u64::MAX`; to start
-            // strictly after all of `key`'s rows, use block `0` (the
-            // `before_start` filter below then skips the equal-key row).
-            let start_block = if exclusive { 0 } else { u64::MAX };
-            let start_key = encode_history_key::<T>(&key, start_block)?;
-            let iter = self.snapshot.snapshot().iterator_cf_opt(
-                &cf,
-                read_options,
-                IteratorMode::From(&start_key, Direction::Forward),
-            );
-            let mut last_candidate = None;
-            let mut found = None;
+        let max_block_number = self.max_block_number;
+        let found = self.history_iter(prefix)?.seek_live::<T, V>(&key, max_block_number)?;
+        self.current_key = found.as_ref().map(|(key, _)| key.clone());
+        Ok(found)
+    }
 
-            for item in iter {
-                let (raw_key, _) = item.map_err(rocksdb_error)?;
-                let (candidate, _) = decode_history_key::<T>(&raw_key)?;
-                let before_start = if exclusive { candidate <= key } else { candidate < key };
-                if before_start || last_candidate.as_ref() == Some(&candidate) {
-                    continue;
-                }
-
-                last_candidate = Some(candidate.clone());
-                if let Some((live_key, latest_value)) = self.latest_version_for_key(&candidate)?
-                    && let MaybeDeleted(Some(value)) = latest_value.value
-                {
-                    found = Some((live_key, value));
-                    break;
-                }
-            }
-
-            found
+    /// Advances the cursor to the first live key after the current key, or to the first live key
+    /// when unpositioned.
+    fn next_live(&mut self, prefix: Option<&[u8]>) -> Result<Option<(T::Key, V)>, DatabaseError> {
+        let Some(current_key) = self.current_key.clone() else {
+            return self.seek_live(T::Key::default(), prefix);
         };
-
-        if let Some((key, value)) = found {
-            self.current_key = Some(key.clone());
-            return Ok(Some((key, value)));
-        }
-
-        self.current_key = None;
-        Ok(None)
+        let max_block_number = self.max_block_number;
+        let found =
+            self.history_iter(prefix)?.next_live_after::<T, V>(&current_key, max_block_number)?;
+        self.current_key = found.as_ref().map(|(key, _)| key.clone());
+        Ok(found)
     }
 
     const fn is_positioned(&self) -> bool {
@@ -3221,6 +3366,58 @@ mod tests {
             .expect("account exists");
         assert_eq!(key, account);
         assert_eq!(acc.nonce, 1);
+    }
+
+    #[test]
+    fn cursor_skips_heavily_versioned_tombstoned_key_to_next_live_key() {
+        const DEAD_VERSIONS: u64 = 256;
+
+        let (storage, _dir) = temp_storage();
+        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
+
+        let dead_key = B256::repeat_byte(0x01);
+        let live_key = B256::repeat_byte(0x02);
+
+        // Give `dead_key` a long version chain so a naive one-row-at-a-time
+        // skip would have to walk every one of these before reaching
+        // `live_key`.
+        let mut parent = B256::ZERO;
+        for version in 1..=DEAD_VERSIONS {
+            let block_ref = block(version, parent);
+            storage.store_trie_updates(block_ref, account_update(dead_key, version)).unwrap();
+            parent = block_ref.block.hash;
+        }
+
+        // Tombstone `dead_key` so its latest version (at or below `max_block`)
+        // resolves to "not live".
+        let tombstone_block = DEAD_VERSIONS + 1;
+        let block_ref = block(tombstone_block, parent);
+        let mut post_state = HashedPostState::default();
+        post_state.accounts.insert(dead_key, None);
+        storage
+            .store_trie_updates(
+                block_ref,
+                BlockStateDiff {
+                    sorted_trie_updates: TrieUpdates::default().into_sorted(),
+                    sorted_post_state: post_state.into_sorted(),
+                },
+            )
+            .unwrap();
+        parent = block_ref.block.hash;
+
+        // `live_key` sorts after `dead_key`, so a forward walk must skip past
+        // the entire dead version chain (and the tombstone row) to reach it.
+        let live_block = tombstone_block + 1;
+        let block_ref = block(live_block, parent);
+        storage.store_trie_updates(block_ref, account_update(live_key, 1)).unwrap();
+
+        let mut cursor = storage.account_hashed_cursor(live_block).unwrap();
+        let (key, account) = cursor.next().unwrap().expect("live key found");
+        assert_eq!(key, live_key);
+        assert_eq!(account.nonce, 1);
+
+        // The tombstoned key must never be surfaced, and the walk terminates.
+        assert!(cursor.next().unwrap().is_none());
     }
 
     fn block(number: u64, parent: B256) -> BlockWithParent {
