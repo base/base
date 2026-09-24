@@ -141,21 +141,11 @@ async fn test_start_sequencer_conductor_is_leader(
     conductor.expect_leader().times(1).return_once(|| Ok(true));
 
     let mut client = MockSequencerEngineClient::new();
-    if shadow {
-        client.expect_prepare_sequencer_start().never();
-        client.expect_get_unsafe_head().once().return_once(move || {
-            Ok(L2BlockInfo {
-                block_info: BlockInfo { hash: test_hash, ..Default::default() },
-                ..Default::default()
-            })
-        });
-    } else {
-        client
-            .expect_prepare_sequencer_start()
-            .with(mockall::predicate::eq(test_hash))
-            .times(1)
-            .return_once(|_| Ok(()));
-    }
+    client
+        .expect_prepare_sequencer_start()
+        .with(mockall::predicate::eq(test_hash))
+        .times(1)
+        .return_once(|_| Ok(()));
 
     let mut actor = test_actor();
     actor.conductor = Some(conductor);
@@ -324,7 +314,10 @@ async fn test_start_sequencer_engine_not_initialized(#[values(true, false)] via_
 /// Caller's `unsafe_head` does not match the engine's current unsafe head: sequencer refuses.
 #[rstest]
 #[tokio::test]
-async fn test_start_sequencer_unsafe_head_mismatch(#[values(true, false)] via_channel: bool) {
+async fn test_start_sequencer_unsafe_head_mismatch(
+    #[values(true, false)] via_channel: bool,
+    #[values(true, false)] shadow: bool,
+) {
     let requested_hash = B256::from([1u8; 32]);
     let mut client = MockSequencerEngineClient::new();
     client
@@ -335,6 +328,7 @@ async fn test_start_sequencer_unsafe_head_mismatch(#[values(true, false)] via_ch
     let mut actor = test_actor();
     actor.engine_client = Arc::new(client);
     actor.is_active = false;
+    actor.shadow_blocks_per_cycle = shadow.then(|| NonZeroU64::new(1).unwrap());
 
     let result = async {
         match via_channel {

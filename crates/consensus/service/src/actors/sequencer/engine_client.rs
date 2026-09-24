@@ -23,6 +23,7 @@ use crate::{
 #[async_trait]
 pub trait SequencerEngineClient: Debug + Send + Sync {
     /// Atomically validates the expected engine head and prepares sequencer request routing.
+    /// Shadow starts validate the head without changing catch-up or reconciliation state.
     async fn prepare_sequencer_start(&self, expected_hash: B256) -> EngineClientResult<()>;
 
     /// Resets the engine's forkchoice, awaiting confirmation that it succeeded or returning the

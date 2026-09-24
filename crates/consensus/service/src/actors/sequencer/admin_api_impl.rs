@@ -143,61 +143,28 @@ where
         }
 
         if let Some(conductor) = &self.conductor {
-            match conductor.leader().await {
-                Ok(true) => {}
-                Ok(false) => {
-                    warn!(target: "sequencer", "Not the conductor leader, refusing to start sequencer");
-                    Metrics::sequencer_start_rejected_total("not_leader").increment(1);
-                    return Err(SequencerAdminAPIError::NotLeader);
-                }
-                Err(err) => {
-                    error!(target: "sequencer", error = %err, "Failed to check conductor leadership");
-                    Metrics::sequencer_start_rejected_total("leadership_check_failed").increment(1);
-                    return Err(SequencerAdminAPIError::RequestError(err.to_string()));
-                }
+            let is_leader = conductor.leader().await.map_err(|err| {
+                error!(target: "sequencer", error = %err, "Failed to check conductor leadership");
+                Metrics::sequencer_start_rejected_total("leadership_check_failed").increment(1);
+                SequencerAdminAPIError::RequestError(err.to_string())
+            })?;
+
+            if !is_leader {
+                warn!(target: "sequencer", "Not the conductor leader, refusing to start sequencer");
+                Metrics::sequencer_start_rejected_total("not_leader").increment(1);
+                return Err(SequencerAdminAPIError::NotLeader);
             }
         }
 
-        self.prepare_sequencer_start(unsafe_head).await?;
+        self.engine_client.prepare_sequencer_start(unsafe_head).await.map_err(|err| {
+            error!(target: "sequencer", error = %err, "Engine rejected sequencer start");
+            SequencerAdminAPIError::RequestError(err.to_string())
+        })?;
 
         info!(target: "sequencer", unsafe_head = %unsafe_head, "Starting sequencer");
         self.is_active = true;
 
         self.update_metrics();
-
-        Ok(())
-    }
-
-    /// Validates the start head and prepares non-shadow engine routing after leadership is checked.
-    pub async fn prepare_sequencer_start(
-        &self,
-        unsafe_head: B256,
-    ) -> Result<(), SequencerAdminAPIError> {
-        if !self.is_shadow_sequencer() {
-            return self.engine_client.prepare_sequencer_start(unsafe_head).await.map_err(|e| {
-                error!(target: "sequencer", error = %e, "Engine rejected sequencer start");
-                SequencerAdminAPIError::RequestError(e.to_string())
-            });
-        }
-
-        let engine_head = self.engine_client.get_unsafe_head().await.map_err(|e| {
-            error!(target: "sequencer", error = %e, "Failed to fetch engine unsafe head");
-            SequencerAdminAPIError::RequestError(e.to_string())
-        })?;
-
-        if engine_head.block_info.hash == B256::ZERO {
-            return Err(SequencerAdminAPIError::RequestError(
-                "no prestate: engine unsafe head is uninitialized, cannot safely start sequencer"
-                    .to_string(),
-            ));
-        }
-
-        if unsafe_head != engine_head.block_info.hash {
-            return Err(SequencerAdminAPIError::RequestError(format!(
-                "block hash mismatch: engine unsafe head is {}, caller requested {}",
-                engine_head.block_info.hash, unsafe_head,
-            )));
-        }
 
         Ok(())
     }

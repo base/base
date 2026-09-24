@@ -1016,7 +1016,7 @@ mod tests {
                 .unwrap()
                 .expect("takeover must accept the inserted committed head");
         } else {
-            assert!(matches!(barrier, Err(EngineClientError::RequestError(_))));
+            barrier.expect("shadow preparation must accept the unchanged head");
             assert_eq!(*unsafe_head_rx.borrow(), parent);
             assert!(client.last_new_payload_v2().await.is_none());
         }

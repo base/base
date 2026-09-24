@@ -91,6 +91,7 @@ where
     /// Conductor supplies its committed head to admin start even when it has no new payload to
     /// post. That head can release an unobserved non-shadow catch-up, but cannot override known
     /// gaps or conflicts. The caller must check conductor leadership before requesting activation.
+    /// Shadow starts validate the head without changing catch-up or reconciliation state.
     pub fn prepare_sequencer_start(
         &mut self,
         expected_hash: B256,
@@ -108,27 +109,26 @@ where
                 head.block_info.hash, expected_hash
             )));
         }
+
+        // Shadow activation must not release its catch-up or reconciliation gate.
+        if self.is_shadow_sequencer() {
+            return Ok(());
+        }
+
         if !self.processor.engine_state().el_sync_finished {
             return Err(EngineClientError::ELSyncing);
         }
-        match &self.sequencer_state {
-            SequencerEngineState::CatchingUp { shadow: true, .. }
-            | SequencerEngineState::ShadowActive(_) => {
-                return Err(EngineClientError::RequestError(
-                    "sequencer start handshake is unavailable in shadow mode".to_string(),
-                ));
+
+        if let SequencerEngineState::CatchingUp { catchup, .. } = &self.sequencer_state {
+            if catchup.is_faulted() {
+                return Err(EngineClientError::ShadowBufferFaulted);
             }
-            SequencerEngineState::CatchingUp { catchup, .. } => {
-                if catchup.is_faulted() {
-                    return Err(EngineClientError::ShadowBufferFaulted);
-                }
-                if catchup.has_observations() && !catchup.is_complete(head, sync_state.safe_head())
-                {
-                    return Err(EngineClientError::ELSyncing);
-                }
+
+            if catchup.has_observations() && !catchup.is_complete(head, sync_state.safe_head()) {
+                return Err(EngineClientError::ELSyncing);
             }
-            SequencerEngineState::Regular => {}
         }
+
         self.sequencer_state = SequencerEngineState::Regular;
         Ok(())
     }
@@ -863,8 +863,13 @@ mod tests {
     #[case::different_branch(100, true, &[(100, 99)], false, false)]
     #[case::private_tail(100, true, &[(99, 99)], false, false)]
     #[case::faulted(100, true, &[(100, 100), (100, 99)], false, false)]
-    #[case::shadow_catchup(100, true, &[], true, false)]
-    #[case::shadow_caught_up(100, true, &[(100, 100)], true, false)]
+    #[case::shadow_catchup(100, true, &[], true, true)]
+    #[case::shadow_caught_up(100, true, &[(100, 100)], true, true)]
+    #[case::shadow_el_syncing(100, false, &[], true, true)]
+    #[case::shadow_gap(100, true, &[(102, 102)], true, true)]
+    #[case::shadow_faulted(100, true, &[(100, 100), (100, 99)], true, true)]
+    #[case::shadow_wrong_hash(99, true, &[], true, false)]
+    #[case::shadow_zero_hash(0, true, &[], true, false)]
     fn prepare_start_preserves_catchup_safety(
         #[case] requested_hash: u8,
         #[case] el_synced: bool,
@@ -925,7 +930,14 @@ mod tests {
         assert_eq!(result.is_ok(), accepted, "{result:?}");
         assert_eq!(
             matches!(coordinator.sequencer_state(), SequencerEngineState::Regular),
-            accepted
+            accepted && !shadow
+        );
+        assert_eq!(
+            matches!(
+                coordinator.sequencer_state(),
+                SequencerEngineState::CatchingUp { shadow: true, .. }
+            ),
+            shadow
         );
         // Acceptance must remain idempotent; refusal must not discard the blocking evidence.
         assert_eq!(
@@ -935,7 +947,24 @@ mod tests {
 
         *coordinator.sequencer_state_mut() =
             SequencerEngineState::ShadowActive(Box::new(ShadowReconciliationGate::new(head)));
-        assert!(coordinator.prepare_sequencer_start(head.block_info.hash).is_err());
+        assert_eq!(
+            coordinator.prepare_sequencer_start(B256::with_last_byte(requested_hash)).is_ok(),
+            requested_hash == 100
+        );
         assert!(matches!(coordinator.sequencer_state(), SequencerEngineState::ShadowActive(_)));
+    }
+
+    #[rstest]
+    #[case(B256::ZERO)]
+    #[case(B256::with_last_byte(100))]
+    fn prepare_start_rejects_uninitialized_head(
+        #[case] requested_hash: B256,
+        #[values(false, true)] shadow: bool,
+    ) {
+        let mut coordinator = coordinator(shadow, true, None);
+        assert!(matches!(
+            coordinator.prepare_sequencer_start(requested_hash),
+            Err(crate::EngineClientError::RequestError(message)) if message.contains("no prestate")
+        ));
     }
 }
