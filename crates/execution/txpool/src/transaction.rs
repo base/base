@@ -759,6 +759,24 @@ mod tests {
     }
 
     #[test]
+    fn eip8130_with_validity_predicates_uses_relaxed_replacement_rule() {
+        let existing = eip8130_pooled_with_fees(U256::ZERO, 10, 100)
+            .with_validity_predicates(vec![balance_predicate()]);
+        // Zero tip and a higher max fee is accepted: both transactions carry
+        // validity predicates, so the relaxed rule runs before the EIP-8130
+        // bump that requires both fee fields to rise.
+        let replacement = eip8130_pooled_with_fees(U256::ZERO, 0, 101)
+            .with_validity_predicates(vec![balance_predicate()]);
+        assert!(!existing.is_replacement_underpriced(&replacement, &PriceBumpConfig::default()));
+
+        let unchanged_max_fee = eip8130_pooled_with_fees(U256::ZERO, 100, 100)
+            .with_validity_predicates(vec![balance_predicate()]);
+        assert!(
+            existing.is_replacement_underpriced(&unchanged_max_fee, &PriceBumpConfig::default())
+        );
+    }
+
+    #[test]
     fn in_memory_size_includes_watch_keys() {
         let transaction = eip8130_pooled(U256::ZERO);
         let size_without_keys = transaction.size();
