@@ -10,10 +10,9 @@ use crate::{L1HeadPolling, L1HeadSource};
 
 /// An L1 head source that races a subscription stream against an interval-based poller.
 ///
-/// Deduplicates head numbers so that the same block number is only reported once.
-/// Stale reads (same or lower block number than last reported) are also silently dropped.
-///
-/// When the subscription stream ends, the source keeps delivering heads from the poller.
+/// Reports only heads strictly above the last one it reported, so a head seen by both the
+/// stream and the poller is reported once. When the subscription stream ends, the source
+/// keeps delivering heads from the poller.
 #[derive(derive_more::Debug)]
 pub struct HybridL1HeadSource<P> {
     /// Live head numbers pushed by the subscription; pending forever once it ends.
@@ -25,7 +24,7 @@ pub struct HybridL1HeadSource<P> {
     /// Polling interval timer.
     #[debug(skip)]
     interval: BoxStream<'static, ()>,
-    /// Last reported head number for deduplication.
+    /// Last reported head number.
     last_head: Option<u64>,
 }
 
@@ -43,53 +42,38 @@ impl<P: L1HeadPolling> HybridL1HeadSource<P> {
     ) -> Self {
         Self { sub, poller, interval: clock.interval(poll_interval), last_head: None }
     }
-
-    /// Record a received head number, returning it if it is strictly newer.
-    ///
-    /// Drops duplicate or stale values (same or lower head number than last emitted).
-    fn process(&mut self, head: u64) -> Option<u64> {
-        if self.last_head.is_some_and(|last| last >= head) {
-            tracing::debug!(head, "stale or duplicate L1 head, skipping");
-            return None;
-        }
-        self.last_head = Some(head);
-        Some(head)
-    }
 }
 
 #[async_trait]
 impl<P: L1HeadPolling> L1HeadSource for HybridL1HeadSource<P> {
     async fn next(&mut self) -> u64 {
         loop {
-            tokio::select! {
-                next = self.sub.next() => {
-                    match next {
-                        Some(head) => {
-                            if let Some(head) = self.process(head) {
-                                return head;
-                            }
-                            // Stale or duplicate: loop for the next one.
-                        }
-                        None => {
-                            tracing::warn!("L1 head subscription ended; falling back to polling");
-                            self.sub = futures::stream::pending().boxed();
-                        }
+            // Take the next head from whichever of the stream and the poller answers first.
+            let head = tokio::select! {
+                next = self.sub.next() => match next {
+                    Some(head) => head,
+                    None => {
+                        tracing::warn!("L1 head subscription ended; falling back to polling");
+                        self.sub = futures::stream::pending().boxed();
+                        continue;
                     }
-                }
-                _ = self.interval.next() => {
-                    match self.poller.latest_head().await {
-                        Ok(head) => {
-                            if let Some(head) = self.process(head) {
-                                return head;
-                            }
-                            // Stale or duplicate: loop for the next one.
-                        }
-                        Err(error) => {
-                            tracing::warn!(error = %error, "L1 head polling error, retrying on next tick");
-                        }
+                },
+                _ = self.interval.next() => match self.poller.latest_head().await {
+                    Ok(head) => head,
+                    Err(error) => {
+                        tracing::warn!(error = %error, "L1 head polling error, retrying on next tick");
+                        continue;
                     }
-                }
+                },
+            };
+
+            // Report it only if it is newer than the last one.
+            if self.last_head.is_some_and(|last| last >= head) {
+                tracing::debug!(head, "stale or duplicate L1 head, skipping");
+                continue;
             }
+            self.last_head = Some(head);
+            return head;
         }
     }
 }
