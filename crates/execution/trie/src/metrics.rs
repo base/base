@@ -67,6 +67,8 @@ pub enum StorageOperation {
     TrieCursorCurrent,
     /// Hashed cursor seek
     HashedCursorSeek,
+    /// Hashed account or storage point lookup
+    HashedCursorSeekExact,
     /// Hashed cursor next
     HashedCursorNext,
 }
@@ -84,6 +86,7 @@ impl StorageOperation {
             Self::TrieCursorNext => "trie_cursor_next",
             Self::TrieCursorCurrent => "trie_cursor_current",
             Self::HashedCursorSeek => "hashed_cursor_seek",
+            Self::HashedCursorSeekExact => "hashed_cursor_seek_exact",
             Self::HashedCursorNext => "hashed_cursor_next",
         }
     }
@@ -441,6 +444,37 @@ where
     {
         let cursor = self.storage.account_hashed_cursor_with_tx(tx, max_block_number)?;
         Ok(BaseProofsHashedCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
+    }
+
+    #[inline]
+    fn hashed_account_with_tx<'db>(
+        &self,
+        tx: &Self::Tx<'db>,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Account>>
+    where
+        Self: 'db,
+    {
+        self.metrics.record_operation(StorageOperation::HashedCursorSeekExact, || {
+            self.storage.hashed_account_with_tx(tx, hashed_address, max_block_number)
+        })
+    }
+
+    #[inline]
+    fn hashed_storage_with_tx<'db>(
+        &self,
+        tx: &Self::Tx<'db>,
+        hashed_address: B256,
+        hashed_slot: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<U256>>
+    where
+        Self: 'db,
+    {
+        self.metrics.record_operation(StorageOperation::HashedCursorSeekExact, || {
+            self.storage.hashed_storage_with_tx(tx, hashed_address, hashed_slot, max_block_number)
+        })
     }
 
     #[inline]

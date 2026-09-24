@@ -644,6 +644,40 @@ impl BaseProofsStore for InMemoryProofsStorage {
         self.account_hashed_cursor(max_block_number)
     }
 
+    fn hashed_account_with_tx<'db>(
+        &self,
+        _tx: &Self::Tx<'db>,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Account>>
+    where
+        Self: 'db,
+    {
+        // In-memory cursors materialize only live entries, so an equality-checked seek is exact.
+        Ok(self
+            .account_hashed_cursor(max_block_number)?
+            .seek(hashed_address)?
+            .and_then(|(key, account)| (key == hashed_address).then_some(account)))
+    }
+
+    fn hashed_storage_with_tx<'db>(
+        &self,
+        _tx: &Self::Tx<'db>,
+        hashed_address: B256,
+        hashed_slot: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<U256>>
+    where
+        Self: 'db,
+    {
+        // In-memory cursors materialize only live, non-zero entries, so an equality-checked seek
+        // is exact.
+        Ok(self
+            .storage_hashed_cursor(hashed_address, max_block_number)?
+            .seek(hashed_slot)?
+            .and_then(|(key, value)| (key == hashed_slot).then_some(value)))
+    }
+
     fn store_trie_updates(
         &self,
         block_ref: BlockWithParent,
