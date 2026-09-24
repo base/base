@@ -1,6 +1,7 @@
 Admin JSON-RPC API server for the Base Batcher.
 
-Methods answer once the driver has applied them, not when the command is queued.
+Every method except `admin_setLogLevel` answers once the driver has applied it, not when the
+command is queued.
 
 | Method | Behavior |
 |---|---|

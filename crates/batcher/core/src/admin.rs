@@ -98,8 +98,8 @@ pub enum AdminCommand {
 ///
 /// Create with [`AdminHandle::channel`]; hand the returned [`mpsc::Receiver`] to the
 /// driver as [`BatchDriverInputs::admin_rx`](crate::BatchDriverInputs::admin_rx). Every
-/// method returns once the driver has applied the command, or [`AdminError::ChannelClosed`]
-/// once the driver is gone.
+/// method that sends a command returns once the driver has applied it, or
+/// [`AdminError::ChannelClosed`] once the driver is gone.
 #[derive(Clone, Debug)]
 pub struct AdminHandle {
     tx: mpsc::Sender<AdminCommand>,
