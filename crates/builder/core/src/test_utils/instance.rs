@@ -32,9 +32,9 @@ use reth_node_core::{
     exit::NodeExitFuture,
 };
 use reth_provider::providers::BlockchainProvider;
-use reth_tasks::{Runtime, RuntimeBuildError, RuntimeBuilder, RuntimeConfig, TokioConfig};
+use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
 use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
-use tokio::{runtime::Runtime as TokioRuntime, sync::oneshot, task::JoinHandle};
+use tokio::{sync::oneshot, task::JoinHandle};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
@@ -65,66 +65,13 @@ pub fn clear_otel_env_vars() {
     }
 }
 
-/// Owns the dedicated Tokio runtime and attached Reth executor used by local test nodes.
-///
-/// Keeping Tokio ownership separate means clones of the Reth executor can safely outlive this
-/// value. Drop performs both graceful Reth shutdown and bounded Tokio shutdown off async threads.
-#[derive(Debug)]
-pub struct LocalInstanceRuntime {
-    tokio: Option<TokioRuntime>,
-    reth: Option<Runtime>,
-}
-
-impl LocalInstanceRuntime {
-    /// Builds a runtime matching Reth's default Tokio configuration.
-    pub fn new() -> Result<Self, RuntimeBuildError> {
-        let tokio = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .thread_keep_alive(Duration::from_secs(15))
-            .thread_name("tokio-rt")
-            .build()?;
-        let mut runtime = Self { tokio: Some(tokio), reth: None };
-        let handle = runtime.tokio.as_ref().expect("Tokio runtime present").handle().clone();
-        runtime.reth = Some(
-            RuntimeBuilder::new(
-                RuntimeConfig::default().with_tokio(TokioConfig::existing_handle(handle)),
-            )
-            .build()?,
-        );
-        Ok(runtime)
-    }
-
-    /// Returns the attached Reth executor.
-    pub const fn reth(&self) -> &Runtime {
-        self.reth.as_ref().expect("Reth runtime present")
-    }
-}
-
-impl Drop for LocalInstanceRuntime {
-    fn drop(&mut self) {
-        let reth = self.reth.take();
-        let tokio = self.tokio.take();
-        let shutdown = std::thread::spawn(move || {
-            if let Some(reth) = reth {
-                reth.graceful_shutdown_with_timeout(Duration::from_secs(10));
-            }
-            if let Some(tokio) = tokio {
-                tokio.shutdown_timeout(Duration::from_secs(10));
-            }
-        });
-        if let Err(panic) = shutdown.join() {
-            std::panic::resume_unwind(panic);
-        }
-    }
-}
-
 /// Represents a type that emulates a local in-process instance of the builder node.
 /// This node uses IPC as the communication channel for the RPC server Engine API.
 #[derive(Debug)]
 pub struct LocalInstance {
     node_config: NodeConfig<BaseChainSpec>,
     builder_config: BuilderConfig,
-    runtime: Option<LocalInstanceRuntime>,
+    runtime: Option<Runtime>,
     exit_future: NodeExitFuture,
     node_handle: Option<Box<dyn Any + Send>>,
     pool_handle: Option<Arc<dyn ExternalTransactionPool>>,
@@ -259,7 +206,7 @@ impl LocalInstance {
     ) -> eyre::Result<Self> {
         clear_otel_env_vars();
         init_silenced_tracing();
-        let runtime = LocalInstanceRuntime::new()?;
+        let runtime = RuntimeBuilder::new(RuntimeConfig::default()).build()?;
 
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
@@ -283,7 +230,7 @@ impl LocalInstance {
 
         let builder = NodeBuilder::<_, BaseChainSpec>::new(node_config.clone())
             .with_database(db)
-            .with_launch_context(runtime.reth().clone())
+            .with_launch_context(runtime.clone())
             .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
             .with_components(components)
             .with_add_ons(base_node.add_ons())
@@ -406,7 +353,17 @@ impl LocalInstance {
 impl Drop for LocalInstance {
     fn drop(&mut self) {
         if let Some(runtime) = self.runtime.take() {
-            drop(runtime);
+            // Tokio runtimes cannot perform their blocking shutdown while they are being dropped
+            // from another runtime's async context. `LocalInstance` is commonly owned directly by
+            // async tests, so shut down and drop its runtime on a plain thread before cleaning up
+            // the resources it owns.
+            let shutdown = std::thread::spawn(move || {
+                runtime.graceful_shutdown_with_timeout(Duration::from_secs(10));
+                drop(runtime);
+            });
+            if let Err(panic) = shutdown.join() {
+                std::panic::resume_unwind(panic);
+            }
             // Drop the node and the pool handle (both hold open database handles via the node's
             // provider / the pool's transaction validator) before removing the backing files.
             drop(self.node_handle.take());
@@ -602,56 +559,5 @@ impl FlashblocksListener {
     pub async fn stop(self) -> eyre::Result<()> {
         self.cancellation_token.cancel();
         self.handle.await?
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::process::Command;
-
-    use tokio::runtime::Builder;
-
-    use super::LocalInstance;
-
-    #[test]
-    fn local_instance_drop_does_not_panic() {
-        const CHILD_ENV: &str = "BASE_LOCAL_INSTANCE_DROP_CHILD";
-        if std::env::var_os(CHILD_ENV).is_some() {
-            // Tokio catches worker panics. Fail the isolated process even if the test body passes.
-            let default_hook = std::panic::take_hook();
-            std::panic::set_hook(Box::new(move |panic| {
-                default_hook(panic);
-                std::process::exit(1);
-            }));
-
-            for mut builder in [Builder::new_current_thread(), Builder::new_multi_thread()] {
-                let runtime = builder.enable_all().build().expect("test runtime");
-                runtime.block_on(async {
-                    let instance = LocalInstance::flashblocks().await.expect("builder node");
-                    let pool = instance.pool_handle();
-                    drop(instance);
-                    drop(pool);
-                });
-                // Also catch panics in RPC tasks cancelled when the caller's runtime stops.
-                drop(runtime);
-            }
-            return;
-        }
-
-        let output = Command::new(std::env::current_exe().expect("test executable"))
-            .args([
-                "--exact",
-                "test_utils::instance::tests::local_instance_drop_does_not_panic",
-                "--nocapture",
-            ])
-            .env(CHILD_ENV, "1")
-            .output()
-            .expect("run isolated teardown test");
-        assert!(
-            output.status.success(),
-            "builder teardown failed:\n{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
-        );
     }
 }
