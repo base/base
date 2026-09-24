@@ -682,8 +682,11 @@ where
         let mut receiver = self.eth_api.provider().subscribe_to_canonical_state();
 
         loop {
-            if let Ok(Some(receipt)) =
-                EthTransactions::transaction_receipt(&self.eth_api, tx_hash).await
+            if let Ok(Some(receipt)) = EthTransactions::transaction_receipt(&self.eth_api, tx_hash)
+                .await
+                .inspect_err(|error| {
+                    debug!(error = %error, tx_hash = %tx_hash, "canonical receipt lookup failed");
+                })
             {
                 debug!(message = "found receipt in canonical state", tx_hash = %tx_hash);
                 return Some(receipt);
