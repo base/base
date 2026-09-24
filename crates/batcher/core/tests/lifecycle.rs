@@ -23,7 +23,7 @@ use base_runtime::{
 
 /// When cancellation fires while a submission is in-flight with a
 /// `NeverConfirmTxManager`, the drain timeout must fire and the driver must
-/// exit cleanly. This verifies the `runtime.sleep(drain_timeout)` fix.
+/// exit cleanly.
 #[test]
 fn test_drain_timeout_exits_with_in_flight_submissions() {
     Runner::start(Config::seeded(0), |ctx| async move {

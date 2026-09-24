@@ -731,7 +731,7 @@ impl BatcherService {
                 source,
                 l1_head_source,
                 initial_l1_head,
-                initial_status: initial_derivation_status,
+                initial_safe_head: safe_l2,
                 derivation_status_rx,
                 admin_rx,
             },

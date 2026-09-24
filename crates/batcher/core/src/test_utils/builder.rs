@@ -52,9 +52,9 @@ impl SubmissionStub {
 /// Builds a [`BatchDriver`] for tests, with a parked source, a parked L1 head source, a
 /// disabled throttle and at most one in-flight transaction unless told otherwise.
 ///
-/// The driver starts from L1 head 0 and, unless [`initial_status`](Self::initial_status)
-/// says otherwise, from the L2 genesis (block 0) as safe head, so it drops blocks
-/// numbered 0 as already safe.
+/// The driver starts from L1 head 0 and, unless [`safe_head`](Self::safe_head) says
+/// otherwise, from the L2 genesis (block 0) as safe head, so it drops blocks numbered 0 as
+/// already safe.
 ///
 /// [`build`](Self::build) also creates the derivation-status and admin channels and hands
 /// their sending sides back as [`DriverHandles`]. Keep them alive while the driver runs:
@@ -78,7 +78,7 @@ pub struct DriverFixture<
     l1_head_source: L,
     throttle: DaThrottle<TC>,
     max_pending: usize,
-    initial_status: DerivationStatus,
+    safe_head: BlockInfo,
 }
 
 /// The sending sides of a fixture-built driver's channels.
@@ -86,7 +86,7 @@ pub struct DriverFixture<
 pub struct DriverHandles {
     /// Admin commands.
     pub admin: AdminHandle,
-    /// Derivation-status updates. The driver exits once this is dropped.
+    /// Derivation-status updates.
     pub derivation_status_tx: mpsc::Sender<DerivationStatus>,
 }
 
@@ -101,7 +101,7 @@ impl<R: Runtime, P: BatchPipeline, TM: TxManager> DriverFixture<R, P, TM> {
             l1_head_source: PendingL1HeadSource,
             throttle: DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
             max_pending: 1,
-            initial_status: DerivationStatus::from_safe_l2(BlockInfo::default()),
+            safe_head: BlockInfo::default(),
         }
     }
 }
@@ -125,7 +125,7 @@ where
             l1_head_source: self.l1_head_source,
             throttle: self.throttle,
             max_pending: self.max_pending,
-            initial_status: self.initial_status,
+            safe_head: self.safe_head,
         }
     }
 
@@ -142,7 +142,7 @@ where
             l1_head_source,
             throttle: self.throttle,
             max_pending: self.max_pending,
-            initial_status: self.initial_status,
+            safe_head: self.safe_head,
         }
     }
 
@@ -159,7 +159,7 @@ where
             l1_head_source: self.l1_head_source,
             throttle,
             max_pending: self.max_pending,
-            initial_status: self.initial_status,
+            safe_head: self.safe_head,
         }
     }
 
@@ -169,9 +169,9 @@ where
         self
     }
 
-    /// Set the derivation status the driver starts from.
-    pub const fn initial_status(mut self, initial_status: DerivationStatus) -> Self {
-        self.initial_status = initial_status;
+    /// Set the safe L2 head the driver starts from.
+    pub const fn safe_head(mut self, safe_head: BlockInfo) -> Self {
+        self.safe_head = safe_head;
         self
     }
 
@@ -195,7 +195,7 @@ where
                 source: self.source,
                 l1_head_source: self.l1_head_source,
                 initial_l1_head: 0,
-                initial_status: self.initial_status,
+                initial_safe_head: self.safe_head,
                 derivation_status_rx,
                 admin_rx,
             },

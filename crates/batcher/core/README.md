@@ -6,7 +6,7 @@ Async orchestration core for the Base batcher.
 `BatchPipeline` (frame encoding), an `UnsafeBlockSource` (L2 block delivery), an `L1HeadSource`
 (L1 chain head tracking), a `TxManager` (L1 submission), and a `ThrottleClient` (DA limit
 application). Construction takes `BatchDriverInputs`: the sources the driver listens to and
-the L1 head and derivation status it starts from. The initial L1 head seeds the pipeline, so
+the L1 head and safe L2 head it starts from. The initial L1 head seeds the pipeline, so
 channel duration is measured from the live L1 tip rather than from block 0. The driver runs a
 single `tokio::select!` task that reacts to unsafe L2 blocks, derivation-status updates, L1
 heads, completed transaction receipts, admin commands, and cancellation.

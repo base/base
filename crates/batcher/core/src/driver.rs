@@ -18,8 +18,7 @@ use crate::{
     DerivationStatus, SubmissionQueue, ThrottleClient, ThrottleController, event::DriverEvent,
 };
 
-/// The sources a [`BatchDriver`] listens to, and the L1 head and derivation status it
-/// starts from.
+/// The sources a [`BatchDriver`] listens to, and the L1 head and safe L2 head it starts from.
 #[derive(Debug)]
 pub struct BatchDriverInputs<S, L> {
     /// Source of unsafe L2 blocks and reorg signals.
@@ -28,8 +27,8 @@ pub struct BatchDriverInputs<S, L> {
     pub l1_head_source: L,
     /// Live L1 head at startup.
     pub initial_l1_head: u64,
-    /// Derivation status at startup.
-    pub initial_status: DerivationStatus,
+    /// Safe L2 head at startup.
+    pub initial_safe_head: BlockInfo,
     /// Ordered derivation-status updates.
     pub derivation_status_rx: mpsc::Receiver<DerivationStatus>,
     /// Admin commands; see [`AdminHandle::channel`](crate::AdminHandle::channel).
@@ -54,7 +53,7 @@ where
     TC: ThrottleClient,
     L: L1HeadSource,
 {
-    /// Runtime providing cancellation (and future clock/spawn use).
+    /// Runtime providing cancellation and the shutdown drain timer.
     runtime: R,
     /// The encoding pipeline.
     pipeline: P,
@@ -122,7 +121,7 @@ where
             ),
             throttle,
             l1_head_source: inputs.l1_head_source,
-            safe_head: inputs.initial_status.safe_l2,
+            safe_head: inputs.initial_safe_head,
             derivation_status_rx: inputs.derivation_status_rx,
             drain_timeout: config.drain_timeout,
             stopped: config.stopped,
@@ -568,7 +567,7 @@ mod tests {
                     source: QueuedSource::new([]),
                     l1_head_source: QueuedL1HeadSource::new([]),
                     initial_l1_head: 50,
-                    initial_status: DerivationStatus::from_safe_l2(safe_head(10)),
+                    initial_safe_head: safe_head(10),
                     derivation_status_rx: status_rx,
                     admin_rx,
                 },
@@ -667,7 +666,7 @@ mod tests {
                 source: QueuedSource::new(source_events),
                 l1_head_source: QueuedL1HeadSource::new(l1_heads),
                 initial_l1_head: 0,
-                initial_status: DerivationStatus::from_safe_l2(safe_head(0)),
+                initial_safe_head: safe_head(0),
                 derivation_status_rx: status_rx,
                 admin_rx,
             },
@@ -1040,9 +1039,9 @@ mod tests {
                 "multi-frame blob submission must not be requeued by blob encoding"
             );
             assert_eq!(
-                recorded.l1_heads,
-                vec![10],
-                "multi-frame blob submission should confirm in one L1 tx"
+                recorded.confirmed,
+                vec![SubmissionId(0)],
+                "multi-frame blob submission should confirm once"
             );
             let candidates = candidates.lock().unwrap();
             assert_eq!(candidates.len(), 1, "multi-frame submission should use one L1 tx");

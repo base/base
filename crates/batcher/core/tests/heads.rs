@@ -65,7 +65,7 @@ fn test_safe_head_conflicts_reset_pipeline_and_source() {
         let (driver, handles) =
             DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
                 .source(source)
-                .initial_status(DerivationStatus::from_safe_l2(safe_head(10)))
+                .safe_head(safe_head(10))
                 .build();
         let handle = ctx.spawn(driver.run());
         let status_tx = handles.derivation_status_tx;
@@ -98,7 +98,7 @@ fn test_derivation_cursor_advance_replays_stalled_channel() {
         let (driver, handles) =
             DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
                 .source(source)
-                .initial_status(DerivationStatus::from_safe_l2(safe_l2))
+                .safe_head(safe_l2)
                 .build();
         let handle = ctx.spawn(driver.run());
         let status_tx = handles.derivation_status_tx;
@@ -124,7 +124,7 @@ fn test_queued_safe_head_preempts_submission() {
 
         let (driver, handles) =
             DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-                .initial_status(DerivationStatus::from_safe_l2(safe_head(10)))
+                .safe_head(safe_head(10))
                 .build();
         handles
             .derivation_status_tx

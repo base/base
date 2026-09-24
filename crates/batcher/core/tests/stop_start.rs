@@ -6,7 +6,7 @@ use std::{
 };
 
 use base_batcher_core::{
-    AdminError, DerivationStatus,
+    AdminError,
     test_utils::{
         BlockStub, DriverFixture, ImmediateConfirmTxManager, ManualConfirmTxManager, Recorded,
         SubmissionStub, TrackingPipeline, TrackingSource,
@@ -65,7 +65,7 @@ fn test_start_triggers_catchup_from_safe_head() {
             ImmediateConfirmTxManager { l1_block: 1 },
         )
         .source(source)
-        .initial_status(DerivationStatus::from_safe_l2(safe_head))
+        .safe_head(safe_head)
         .build();
         let handle = ctx.spawn(driver.run());
 

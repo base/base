@@ -120,7 +120,8 @@ pub struct Batcher<S: L2BlockProvider> {
     driver_task: tokio::task::JoinHandle<Result<(), BatchDriverError>>,
     /// Token used to cancel the background driver on drop.
     cancel: CancellationToken,
-    /// Keeps the driver's derivation-status channel open; nothing is ever sent on it.
+    /// Keeps the driver's derivation-status channel open. No action test exercises derivation
+    /// status, so nothing is ever sent on it.
     _derivation_status_tx: mpsc::Sender<DerivationStatus>,
 }
 
@@ -171,7 +172,6 @@ impl<S: L2BlockProvider> Batcher<S> {
         let cancel = CancellationToken::new();
         let runtime = TokioRuntime::with_token(cancel.clone());
 
-        // No action test exercises derivation status: the channel stays open and silent.
         let (derivation_status_tx, derivation_status_rx) = mpsc::channel(1);
 
         let driver = BatchDriver::new(
@@ -193,7 +193,7 @@ impl<S: L2BlockProvider> Batcher<S> {
                 l1_head_source: l1_source,
                 // The driver learns the L1 head from the blocks the tests mine.
                 initial_l1_head: 0,
-                initial_status: DerivationStatus::from_safe_l2(genesis),
+                initial_safe_head: genesis,
                 derivation_status_rx,
                 admin_rx,
             },
