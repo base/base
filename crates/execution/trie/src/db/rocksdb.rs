@@ -2553,7 +2553,7 @@ where
 
             while let Some(item) = iter.item() {
                 let (raw_key, _) = item;
-                let (candidate, _) = decode_history_key::<T>(&raw_key)?;
+                let (candidate, _) = decode_history_key::<T>(raw_key)?;
                 let before_start = if exclusive { candidate <= key } else { candidate < key };
                 if before_start || last_candidate.as_ref() == Some(&candidate) {
                     iter.next();
@@ -2579,6 +2579,13 @@ where
                     iter.next();
                 }
             }
+
+            // `raw_iterator_cf_opt`'s `item()`/`valid()` return `None`/`false`
+            // both on exhaustion and on I/O error, so an error here would
+            // otherwise be silently treated as "no more entries". This path
+            // feeds state-root computation, so a swallowed error must be
+            // surfaced rather than resolved as an absent trie node.
+            iter.status().map_err(rocksdb_error)?;
 
             found
         };
@@ -3277,6 +3284,58 @@ mod tests {
             .expect("account exists");
         assert_eq!(key, account);
         assert_eq!(acc.nonce, 1);
+    }
+
+    #[test]
+    fn cursor_skips_heavily_versioned_tombstoned_key_to_next_live_key() {
+        const DEAD_VERSIONS: u64 = 256;
+
+        let (storage, _dir) = temp_storage();
+        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
+
+        let dead_key = B256::repeat_byte(0x01);
+        let live_key = B256::repeat_byte(0x02);
+
+        // Give `dead_key` a long version chain so a naive one-row-at-a-time
+        // skip would have to walk every one of these before reaching
+        // `live_key`.
+        let mut parent = B256::ZERO;
+        for version in 1..=DEAD_VERSIONS {
+            let block_ref = block(version, parent);
+            storage.store_trie_updates(block_ref, account_update(dead_key, version)).unwrap();
+            parent = block_ref.block.hash;
+        }
+
+        // Tombstone `dead_key` so its latest version (at or below `max_block`)
+        // resolves to "not live".
+        let tombstone_block = DEAD_VERSIONS + 1;
+        let block_ref = block(tombstone_block, parent);
+        let mut post_state = HashedPostState::default();
+        post_state.accounts.insert(dead_key, None);
+        storage
+            .store_trie_updates(
+                block_ref,
+                BlockStateDiff {
+                    sorted_trie_updates: TrieUpdates::default().into_sorted(),
+                    sorted_post_state: post_state.into_sorted(),
+                },
+            )
+            .unwrap();
+        parent = block_ref.block.hash;
+
+        // `live_key` sorts after `dead_key`, so a forward walk must skip past
+        // the entire dead version chain (and the tombstone row) to reach it.
+        let live_block = tombstone_block + 1;
+        let block_ref = block(live_block, parent);
+        storage.store_trie_updates(block_ref, account_update(live_key, 1)).unwrap();
+
+        let mut cursor = storage.account_hashed_cursor(live_block).unwrap();
+        let (key, account) = cursor.next().unwrap().expect("live key found");
+        assert_eq!(key, live_key);
+        assert_eq!(account.nonce, 1);
+
+        // The tombstoned key must never be surfaced, and the walk terminates.
+        assert!(cursor.next().unwrap().is_none());
     }
 
     fn block(number: u64, parent: B256) -> BlockWithParent {
