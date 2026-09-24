@@ -1161,43 +1161,4 @@ mod tests {
             with_data.size()
         );
     }
-
-    #[test]
-    fn size_counts_account_change_nested_heap() {
-        use crate::transaction::eip8130::account_changes::{
-            AccountChangeChannel, ChangeType, SignedAccountChanges, SignedChange,
-        };
-
-        let bare = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(SignedAccountChanges {
-                channel: AccountChangeChannel::Local,
-                sequence: 0,
-                changes: vec![SignedChange {
-                    change_type: ChangeType::RevokeActor,
-                    payload: Bytes::new(),
-                }],
-                signature: Bytes::new(),
-            })],
-            ..Default::default()
-        };
-        let with_auth = TxEip8130 {
-            account_changes: vec![AccountChange::ConfigChange(SignedAccountChanges {
-                channel: AccountChangeChannel::Local,
-                sequence: 0,
-                changes: vec![SignedChange {
-                    change_type: ChangeType::RevokeActor,
-                    payload: Bytes::new(),
-                }],
-                signature: Bytes::from(vec![0xcd; 2_048]),
-            })],
-            ..Default::default()
-        };
-
-        assert!(
-            with_auth.size() >= bare.size() + 2_048,
-            "config-change signature heap must be counted: bare={}, with_auth={}",
-            bare.size(),
-            with_auth.size()
-        );
-    }
 }

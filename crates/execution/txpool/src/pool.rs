@@ -2374,16 +2374,12 @@ mod tests {
         let signer = signer();
         fund(&client, signer.address());
 
-        let nonce_free = self_paid_eoa_8130(
-            &signer,
-            Eip8130Constants::NONCE_KEY_MAX,
-            0,
-            INTEGRATION_POOL_NOW_MS + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
-            1_000,
-        );
-        let nonce_free_hash = *nonce_free.hash();
-        pool.add_transaction(TransactionOrigin::Local, nonce_free).await.unwrap();
-        let pooled = pool.get(&nonce_free_hash).unwrap();
+        // A sequenced (channel) nonce transaction exposes an exact
+        // nonce-manager config-slot dependency in its watch set.
+        let channel = self_paid_eoa_8130(&signer, U256::from(1), 0, 0, 1_000);
+        let channel_hash = *channel.hash();
+        pool.add_transaction(TransactionOrigin::Local, channel).await.unwrap();
+        let pooled = pool.get(&channel_hash).unwrap();
         let (address, slot) = pooled
             .transaction
             .watch_set()
@@ -2393,7 +2389,7 @@ mod tests {
                 InvalidationKey::Slot { address, slot } => Some((*address, *slot)),
                 _ => None,
             })
-            .expect("EOA authorization must expose an exact config-slot dependency");
+            .expect("a channel-nonce transaction must expose an exact config-slot dependency");
 
         let removed = pool.apply_state_diff(&[AccountStateDiff {
             address,
@@ -2401,18 +2397,18 @@ mod tests {
             ..Default::default()
         }]);
         assert_eq!(removed.len(), 1);
-        assert_eq!(*removed[0].hash(), nonce_free_hash);
-        assert!(pool.get(&nonce_free_hash).is_none());
+        assert_eq!(*removed[0].hash(), channel_hash);
+        assert!(pool.get(&channel_hash).is_none());
 
-        let channel = self_paid_eoa_8130(&signer, U256::from(1), 0, 0, 1_000);
-        let channel_hash = *channel.hash();
-        pool.add_transaction(TransactionOrigin::Local, channel).await.unwrap();
-        assert!(pool.guard.read().contains(&channel_hash));
+        let second = self_paid_eoa_8130(&signer, U256::from(2), 0, 0, 1_000);
+        let second_hash = *second.hash();
+        pool.add_transaction(TransactionOrigin::Local, second).await.unwrap();
+        assert!(pool.guard.read().contains(&second_hash));
 
         let removed = pool.invalidate_all_tracked_transactions(InvalidationCause::Reorg);
         assert_eq!(removed.len(), 1);
-        assert_eq!(*removed[0].hash(), channel_hash);
-        assert!(pool.get(&channel_hash).is_none());
+        assert_eq!(*removed[0].hash(), second_hash);
+        assert!(pool.get(&second_hash).is_none());
         assert!(pool.guard.read().is_empty());
     }
 
