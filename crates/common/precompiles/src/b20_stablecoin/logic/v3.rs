@@ -65,7 +65,9 @@ impl StablecoinV3 {
                 policies.executor,
                 transfer.caller,
             )?;
-            if transfer.caller != from || policies.executor != policies.sender {
+            let should_check_sender_policy =
+                transfer.caller != from || policies.executor != policies.sender;
+            if should_check_sender_policy {
                 B20Guards::ensure_authorized_by_id(
                     token,
                     B20PolicyType::TransferSender.id(),
