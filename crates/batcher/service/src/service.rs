@@ -3,6 +3,7 @@
 use std::{
     future::{Future, pending},
     sync::Arc,
+    task::Poll,
     time::Duration,
 };
 
@@ -194,9 +195,15 @@ impl BatcherService {
     ///
     /// When `url` is `None`, or if connecting or subscribing fails, returns a stream that
     /// never yields so that [`HybridL1HeadSource`] relies on polling alone.
+    ///
+    /// `l1_head_subscription_active` is 1 while the subscription streams heads, and 0 once
+    /// the batcher relies on polling alone.
     async fn build_l1_head_stream(
         url: Option<&Url>,
     ) -> BoxStream<'static, Result<u64, SourceError>> {
+        let active = BatcherMetrics::l1_head_subscription_active();
+        active.set(0.0);
+
         let Some(url) = url else {
             return stream::pending().boxed();
         };
@@ -217,12 +224,18 @@ impl BatcherService {
             }
         };
 
+        active.set(1.0);
         sub.into_stream()
             .map(move |header| {
                 // Capture the provider: dropping it closes the connection and ends the stream.
                 let _keep_alive = &ws_provider;
                 Ok(header.number)
             })
+            // Mark the subscription down once alloy gives up reconnecting and the stream ends.
+            .chain(stream::poll_fn(move |_| {
+                active.set(0.0);
+                Poll::Ready(None)
+            }))
             .boxed()
     }
 
