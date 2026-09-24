@@ -5,6 +5,7 @@
 //! the stateless worker can later download the completed proof.
 
 use std::{
+    num::NonZeroU64,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -571,6 +572,10 @@ impl ClusterZkProver {
         request: &ZkProofRequest,
         request_session_id: &str,
     ) -> Result<String, ZkProverError> {
+        let intermediate_root_interval = NonZeroU64::new(
+            request.intermediate_root_interval.unwrap_or(INTERMEDIATE_ROOT_INTERVAL),
+        )
+        .ok_or_else(|| backend_error!("intermediate_root_interval must be greater than zero"))?;
         let (proof_id, existing_backend_session_id) = self
             .find_available_proof_id(request_session_id, "range", Self::proof_id_for_attempt)
             .await?;
@@ -591,7 +596,7 @@ impl ClusterZkProver {
             end_block = end_block,
             number_of_blocks = request.number_of_blocks_to_prove,
             sequence_window = sequence_window,
-            intermediate_root_interval = INTERMEDIATE_ROOT_INTERVAL,
+            intermediate_root_interval = intermediate_root_interval.get(),
             l1_head = ?request.l1_head,
             "starting SP1 cluster range proof generation"
         );
@@ -611,6 +616,7 @@ impl ClusterZkProver {
                     L1HeadSource::Pinned,
                 ),
                 schedule_l2_block_number: request.schedule_l2_block_number,
+                intermediate_root_interval,
             })
             .await
         {

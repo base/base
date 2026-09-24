@@ -7,7 +7,7 @@ sp1_zkvm::entrypoint!(main);
 use std::collections::HashMap;
 
 use alloy_consensus::Header;
-use alloy_primitives::{B256, Bytes, keccak256};
+use alloy_primitives::{B256, keccak256};
 use alloy_sol_types::SolValue;
 use base_proof_zk_utils::{
     boot::BootInfoStruct,
@@ -24,6 +24,7 @@ pub fn main() {
     let headers_bytes = sp1_zkvm::io::read_vec();
     let headers: Vec<Header> = serde_cbor::from_slice(&headers_bytes).unwrap();
     assert!(!agg_inputs.boot_infos.is_empty());
+    let intermediate_roots = agg_inputs.validated_intermediate_roots().unwrap();
 
     // Confirm that the boot infos are sequential.
     agg_inputs.boot_infos.windows(2).for_each(|pair| {
@@ -78,14 +79,6 @@ pub fn main() {
     let first_boot_info = &agg_inputs.boot_infos[0];
     let last_boot_info = &agg_inputs.boot_infos[agg_inputs.boot_infos.len() - 1];
 
-    // Consolidate the intermediate roots for all boot infos into a single Bytes.
-    let intermediate_roots: Bytes = agg_inputs
-        .boot_infos
-        .iter()
-        .flat_map(|boot_info| boot_info.intermediateRoots.iter().copied())
-        .collect::<Vec<u8>>()
-        .into();
-
     // Consolidate the boot info into a single BootInfo struct that represents the range proven.
     let final_boot_info = BootInfoStruct {
         l2PreRoot: first_boot_info.l2PreRoot,
@@ -95,6 +88,7 @@ pub fn main() {
         l1Head: agg_inputs.latest_l1_checkpoint_head,
         rollupConfigHash: last_boot_info.rollupConfigHash,
         scheduleId: last_boot_info.scheduleId,
+        intermediateBlockInterval: last_boot_info.intermediateBlockInterval,
         intermediateRoots: intermediate_roots,
     };
 

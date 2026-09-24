@@ -17,6 +17,45 @@ pub struct AggregationInputs {
     pub prover_address: Address,
 }
 
+impl AggregationInputs {
+    /// Validate and concatenate the intermediate roots committed by each range.
+    ///
+    /// Every range must end on the same checkpoint cadence. Otherwise concatenating roots
+    /// could assign them to different block heights than the on-chain verifier expects.
+    pub fn validated_intermediate_roots(&self) -> Result<Bytes, &'static str> {
+        let first = self.boot_infos.first().ok_or("aggregation requires at least one range")?;
+        let interval = first.intermediateBlockInterval;
+        if interval == 0 {
+            return Err("intermediate block interval must be nonzero");
+        }
+        if self.boot_infos.iter().any(|boot| boot.intermediateBlockInterval != interval) {
+            return Err("intermediate block intervals must match");
+        }
+
+        for boot in &self.boot_infos {
+            let span = boot
+                .l2BlockNumber
+                .checked_sub(boot.l2PreBlockNumber)
+                .ok_or("range end precedes range start")?;
+            if span % interval != 0 {
+                return Err("range span must be a multiple of the intermediate block interval");
+            }
+            let expected_len =
+                (span / interval).checked_mul(32).ok_or("intermediate root count overflow")?;
+            if u64::try_from(boot.intermediateRoots.len()).ok() != Some(expected_len) {
+                return Err("intermediate root count does not match range span");
+            }
+        }
+
+        Ok(self
+            .boot_infos
+            .iter()
+            .flat_map(|boot| boot.intermediateRoots.iter().copied())
+            .collect::<Vec<u8>>()
+            .into())
+    }
+}
+
 sol! {
     #[derive(Debug, Serialize, Deserialize)]
     struct AggregationOutputs {
@@ -108,4 +147,71 @@ pub fn u32_to_u8(input: [u32; 8]) -> [u8; 32] {
         output[i * 4..(i + 1) * 4].copy_from_slice(&bytes);
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn boot(start: u64, end: u64, interval: u64, roots: &[u8]) -> BootInfoStruct {
+        BootInfoStruct {
+            l1Head: B256::ZERO,
+            l2PreRoot: B256::ZERO,
+            l2PostRoot: B256::ZERO,
+            l2PreBlockNumber: start,
+            l2BlockNumber: end,
+            rollupConfigHash: B256::ZERO,
+            scheduleId: B256::ZERO,
+            intermediateBlockInterval: interval,
+            intermediateRoots: Bytes::copy_from_slice(roots),
+        }
+    }
+
+    fn inputs(boot_infos: Vec<BootInfoStruct>) -> AggregationInputs {
+        AggregationInputs {
+            boot_infos,
+            latest_l1_checkpoint_head: B256::ZERO,
+            multi_block_vkey: [0; 8],
+            prover_address: Address::ZERO,
+        }
+    }
+
+    #[test]
+    fn validates_300_block_ranges_and_preserves_root_order() {
+        let first = [1; 32];
+        let second = [2; 32];
+        let roots = inputs(vec![boot(0, 300, 300, &first), boot(300, 600, 300, &second)])
+            .validated_intermediate_roots()
+            .unwrap();
+
+        assert_eq!(roots, [&first[..], &second[..]].concat());
+    }
+
+    #[test]
+    fn validates_30_block_ranges() {
+        assert!(inputs(vec![boot(0, 60, 30, &[3; 64])]).validated_intermediate_roots().is_ok());
+    }
+
+    #[test]
+    fn rejects_mixed_intervals_even_when_total_root_count_matches() {
+        // Both ranges have valid root counts. Together they span 600 blocks with two roots,
+        // but the first root is not at the 300-block checkpoint a verifier would expect.
+        assert!(
+            inputs(vec![boot(37, 187, 150, &[1; 32]), boot(187, 637, 450, &[2; 32])])
+                .validated_intermediate_roots()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_truncated_and_fractional_ranges() {
+        assert!(inputs(vec![boot(0, 300, 300, &[])]).validated_intermediate_roots().is_err());
+        assert!(inputs(vec![boot(0, 300, 300, &[1; 31])]).validated_intermediate_roots().is_err());
+        assert!(inputs(vec![boot(0, 301, 300, &[1; 32])]).validated_intermediate_roots().is_err());
+    }
+
+    #[test]
+    fn rejects_zero_interval() {
+        assert!(inputs(vec![boot(0, 0, 0, &[])]).validated_intermediate_roots().is_err());
+    }
 }

@@ -1,4 +1,4 @@
-use std::{fmt, sync::Arc};
+use std::{fmt, num::NonZeroU64, sync::Arc};
 
 use alloy_eips::BlockId;
 use alloy_primitives::B256;
@@ -69,8 +69,7 @@ impl SuccinctHost {
     /// - `safe_db_fallback`: Flag to indicate whether to fallback to timestamp-based L1 head
     ///   estimation when `SafeDB` is not available.
     ///
-    /// Intermediate roots are sampled every [`base_proof_zk_utils::INTERMEDIATE_ROOT_INTERVAL`]
-    /// blocks.
+    /// Intermediate roots are sampled every `intermediate_root_interval` blocks.
     pub async fn fetch(
         &self,
         l2_start_block: u64,
@@ -78,6 +77,7 @@ impl SuccinctHost {
         l1_head_hash: Option<B256>,
         safe_db_fallback: bool,
         schedule_l2_block_number: Option<u64>,
+        intermediate_root_interval: NonZeroU64,
     ) -> Result<HostConfig> {
         let l1_head_hash = match l1_head_hash {
             Some(hash) => hash,
@@ -85,7 +85,13 @@ impl SuccinctHost {
         };
 
         self.fetcher
-            .get_host_args(l2_start_block, l2_end_block, l1_head_hash, schedule_l2_block_number)
+            .get_host_args(
+                l2_start_block,
+                l2_end_block,
+                l1_head_hash,
+                schedule_l2_block_number,
+                intermediate_root_interval,
+            )
             .await
     }
 

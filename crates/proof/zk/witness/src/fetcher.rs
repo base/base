@@ -1,6 +1,7 @@
 use std::{
     cmp::{Ordering, min},
     env, fmt, fs,
+    num::NonZeroU64,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -20,7 +21,7 @@ use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_optimism_rpc::DebugProviderExt;
 use base_proof_host::HostConfig;
-use base_proof_zk_utils::{INTERMEDIATE_ROOT_INTERVAL, boot::BootInfoStruct};
+use base_proof_zk_utils::boot::BootInfoStruct;
 use base_protocol::L2BlockInfo;
 use futures::{StreamExt, stream};
 use reqwest::Url;
@@ -750,6 +751,7 @@ impl OPSuccinctDataFetcher {
         l2_end_block: u64,
         l1_head_hash: B256,
         schedule_l2_block_number: Option<u64>,
+        intermediate_root_interval: NonZeroU64,
     ) -> Result<HostConfig> {
         let Some(rollup_config) = &self.rollup_config else {
             return Err(anyhow::anyhow!("Rollup config not loaded."));
@@ -847,7 +849,7 @@ impl OPSuccinctDataFetcher {
             agreed_l2_head_hash,
             claimed_l2_output_root,
             claimed_l2_block_number: l2_end_block,
-            intermediate_block_interval: INTERMEDIATE_ROOT_INTERVAL,
+            intermediate_block_interval: intermediate_root_interval.get(),
             l1_head_number,
             // We don't need to set the proposer for the range proof zk program
             proposer: Address::ZERO,
@@ -871,7 +873,11 @@ impl OPSuccinctDataFetcher {
 
 #[cfg(test)]
 mod tests {
+    use alloy_network::Ethereum;
+    use alloy_provider::{builder as provider_builder, mock::Asserter};
+
     use super::*;
+    use crate::host::SuccinctHost;
 
     fn rpc_config(l1: Option<PathBuf>, l2: Option<PathBuf>) -> RPCConfig {
         RPCConfig {
@@ -889,5 +895,44 @@ mod tests {
         let rpc = rpc_config(Some(PathBuf::from("/tmp/l1")), Some(PathBuf::from("/tmp/l2")));
         assert_eq!(rpc.l1_config_directory(), PathBuf::from("/tmp/l1"));
         assert_eq!(rpc.l2_config_directory(), PathBuf::from("/tmp/l2"));
+    }
+
+    #[tokio::test]
+    async fn host_preserves_requested_checkpoint_interval() {
+        let l1 = Asserter::new();
+        let l2 = Asserter::new();
+        let l1_block = <Ethereum as Network>::BlockResponse::default();
+        let l2_block = <Base as Network>::BlockResponse::default();
+        let proof = json!({
+            "address": Address::ZERO,
+            "accountProof": [],
+            "balance": "0x0",
+            "codeHash": B256::ZERO,
+            "nonce": "0x0",
+            "storageHash": B256::ZERO,
+            "storageProof": []
+        });
+        let host = SuccinctHost::new(Arc::new(OPSuccinctDataFetcher {
+            rpc_config: rpc_config(None, None),
+            l1_provider: Arc::new(provider_builder().connect_mocked_client(l1.clone())),
+            l2_provider: Arc::new(provider_builder::<Base>().connect_mocked_client(l2.clone())),
+            rollup_config: Some(base_common_chains::rollup_config!(8453).unwrap()),
+            rollup_config_path: None,
+            l1_config_path: None,
+        }));
+
+        for interval in [30, 300] {
+            l1.push_success(&l1_block);
+            l2.push_success(&l2_block);
+            l2.push_success(&proof);
+            l2.push_success(&l2_block);
+            l2.push_success(&proof);
+
+            let args = host
+                .fetch(37, 337, Some(B256::ZERO), false, None, NonZeroU64::new(interval).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(args.request.intermediate_block_interval, interval);
+        }
     }
 }
