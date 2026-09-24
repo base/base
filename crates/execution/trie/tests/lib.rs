@@ -1,6 +1,7 @@
 //! Common test suite for [`BaseProofsStore`] implementations.
 
 mod branch_cursors;
+mod cursor_differential;
 mod hashed_cursors;
 mod history;
 mod proof_window;
