@@ -465,23 +465,10 @@ impl Decodable for AccountChange {
         }
         let started_len = buf.len();
         let type_byte = u8::decode(buf)?;
+        // Delegation (`0x01`) is the only account change on the launch wire.
+        // `Create` (`0x00`) and `ConfigChange` (`0x02`) are Keystore operations;
+        // they never decode, so no transaction can carry them.
         let this = match type_byte {
-            Eip8130Constants::ACCOUNT_CHANGE_TYPE_CREATE => Self::Create(CreateEntry {
-                user_salt: B256::decode(buf)?,
-                code: Bytes::decode(buf)?,
-                initial_actors: Vec::<InitialActor>::decode(buf)?,
-            }),
-            Eip8130Constants::ACCOUNT_CHANGE_TYPE_CONFIG => {
-                let channel_byte = u8::decode(buf)?;
-                let channel = AccountChangeChannel::from_byte(channel_byte)
-                    .ok_or(alloy_rlp::Error::Custom("invalid SignedAccountChanges channel byte"))?;
-                Self::ConfigChange(SignedAccountChanges {
-                    channel,
-                    sequence: u64::decode(buf)?,
-                    changes: Vec::<SignedChange>::decode(buf)?,
-                    signature: Bytes::decode(buf)?,
-                })
-            }
             Eip8130Constants::ACCOUNT_CHANGE_TYPE_DELEGATION => {
                 Self::Delegation(Delegation { target: Address::decode(buf)? })
             }
@@ -558,7 +545,7 @@ mod tests {
     }
 
     #[test]
-    fn account_change_create_roundtrip() {
+    fn account_change_create_does_not_decode() {
         let ac = AccountChange::Create(CreateEntry {
             user_salt: b256!("0x2222222222222222222222222222222222222222222222222222222222222222"),
             code: bytes!("6080604052"),
@@ -579,13 +566,13 @@ mod tests {
             first_list_element_type_byte(&buf),
             Eip8130Constants::ACCOUNT_CHANGE_TYPE_CREATE
         );
-        assert_eq!(buf.len(), ac.length());
-        let decoded = AccountChange::decode(&mut buf.as_slice()).unwrap();
-        assert_eq!(ac, decoded);
+        // Create is a Keystore operation: it is not accepted on the launch wire,
+        // so a well-formed encoding still fails to decode.
+        assert!(AccountChange::decode(&mut buf.as_slice()).is_err());
     }
 
     #[test]
-    fn account_change_config_roundtrip() {
+    fn account_change_config_does_not_decode() {
         let ac = AccountChange::ConfigChange(SignedAccountChanges {
             channel: AccountChangeChannel::Local,
             sequence: 7,
@@ -601,9 +588,9 @@ mod tests {
             first_list_element_type_byte(&buf),
             Eip8130Constants::ACCOUNT_CHANGE_TYPE_CONFIG
         );
-        assert_eq!(buf.len(), ac.length());
-        let decoded = AccountChange::decode(&mut buf.as_slice()).unwrap();
-        assert_eq!(ac, decoded);
+        // ConfigChange is a Keystore operation and is not accepted on the launch
+        // wire, so a well-formed encoding still fails to decode.
+        assert!(AccountChange::decode(&mut buf.as_slice()).is_err());
     }
 
     #[test]
@@ -668,21 +655,8 @@ mod tests {
         // rlp(body)` encoding a generic RLP walk would see two items per entry.
         let entries = vec![
             AccountChange::Delegation(Delegation { target: Address::ZERO }),
-            AccountChange::ConfigChange(SignedAccountChanges {
-                channel: AccountChangeChannel::Multichain,
-                sequence: 0,
-                changes: Vec::new(),
-                signature: Bytes::new(),
-            }),
-            AccountChange::Create(CreateEntry {
-                user_salt: b256!(
-                    "0x2222222222222222222222222222222222222222222222222222222222222222"
-                ),
-                code: bytes!("6080604052"),
-                initial_actors: vec![InitialActor::owner(
-                    b256!("0x3333333333333333333333333333333333333333333333333333333333333333"),
-                    address!("0x00000000000000000000000000000000000000bb"),
-                )],
+            AccountChange::Delegation(Delegation {
+                target: address!("0x00000000000000000000000000000000000000bb"),
             }),
         ];
 
