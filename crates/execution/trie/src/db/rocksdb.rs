@@ -2204,7 +2204,7 @@ impl BaseProofsInitialStateStore for RocksdbProofsStorage {
 
 /// Batch session for [`RocksdbProofsStorage`].
 ///
-/// Unlike the MDBX implementation, `RocksDB` does not expose a transaction cursor readable
+/// `RocksDB` does not expose a transaction cursor readable
 /// mid-session; each `store_trie_updates` call commits immediately via a write batch. To
 /// avoid the per-cursor cost of `db.snapshot()` (which pins SST files against compaction
 /// and is expensive enough at the thousands-per-block scale to stall sync), the session

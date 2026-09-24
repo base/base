@@ -14,7 +14,7 @@ use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorageError, BaseProofsStorageResult, BaseProofsStore,
     BlockStateDiff, InMemoryProofsStorage,
     api::{InitialStateAnchor, WriteCounts},
-    db::{MdbxProofsStorage, RocksdbProofsStorage},
+    db::RocksdbProofsStorage,
 };
 use reth_primitives_traits::Account;
 use reth_trie::{
@@ -76,11 +76,6 @@ fn create_test_account_with_values(nonce: u64, balance: u64, code_hash_byte: u8)
         balance: U256::from(balance),
         bytecode_hash: Some(B256::repeat_byte(code_hash_byte)),
     }
-}
-
-fn create_mdbx_proofs_storage() -> MdbxProofsStorage {
-    let path = TempDir::new().unwrap();
-    MdbxProofsStorage::new(path.path()).unwrap()
 }
 
 #[derive(Debug)]

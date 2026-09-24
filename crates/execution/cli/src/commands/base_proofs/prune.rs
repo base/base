@@ -5,12 +5,10 @@ use std::{path::PathBuf, sync::Arc};
 use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_trie::{
-    BaseProofStoragePruner, BaseProofsStorage, BaseProofsStore, MdbxProofsStorage,
-    RocksdbProofsStorage,
+    BaseProofStoragePruner, BaseProofsStorage, BaseProofsStore, RocksdbProofsStorage,
 };
 use base_node_core::{
-    DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs,
-    TWELVE_HOURS_IN_BLOCKS,
+    DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryRocksdbArgs, TWELVE_HOURS_IN_BLOCKS,
 };
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
@@ -32,15 +30,6 @@ pub struct PruneCommand<C: ChainSpecParser> {
         required = true
     )]
     pub storage_path: PathBuf,
-
-    /// The on-disk database backend for proofs history.
-    #[arg(
-        long = "proofs-history.db",
-        visible_alias = "proofs.db",
-        value_name = "PROOFS_HISTORY_DB",
-        default_value = "mdbx"
-    )]
-    pub proofs_history_db: ProofsHistoryDbBackend,
 
     /// Runtime tuning options for the `RocksDB` proofs history backend.
     #[command(flatten)]
@@ -83,7 +72,6 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> PruneCommand<C> {
         let Self {
             env,
             storage_path,
-            proofs_history_db,
             proofs_history_rocksdb,
             proofs_history_window,
             proofs_history_prune_batch_size,
@@ -93,45 +81,27 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> PruneCommand<C> {
         info!(
             target: "reth::cli",
             path = ?storage_path,
-            backend = ?proofs_history_db,
             "Pruning Base proofs storage"
         );
-        proofs_history_db.ensure_storage_path_matches(&storage_path)?;
+        base_node_core::args::ensure_rocksdb_storage_path(&storage_path)?;
 
         // Initialize the environment with read-only access
         let Environment { provider_factory, .. } = env.init::<N>(AccessRights::RO, runtime)?;
 
-        match proofs_history_db {
-            ProofsHistoryDbBackend::Rocksdb => {
-                let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::new(
-                    RocksdbProofsStorage::new_with_options(
-                        &storage_path,
-                        proofs_history_rocksdb.storage_options()?,
-                    )
-                    .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
-                )
-                .into();
-                Self::prune_storage(
-                    storage,
-                    provider_factory,
-                    proofs_history_window,
-                    proofs_history_prune_batch_size,
-                )?;
-            }
-            ProofsHistoryDbBackend::Mdbx => {
-                let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::new(
-                    MdbxProofsStorage::new(&storage_path)
-                        .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))?,
-                )
-                .into();
-                Self::prune_storage(
-                    storage,
-                    provider_factory,
-                    proofs_history_window,
-                    proofs_history_prune_batch_size,
-                )?;
-            }
-        }
+        let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::new(
+            RocksdbProofsStorage::new_with_options(
+                &storage_path,
+                proofs_history_rocksdb.storage_options()?,
+            )
+            .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
+        )
+        .into();
+        Self::prune_storage(
+            storage,
+            provider_factory,
+            proofs_history_window,
+            proofs_history_prune_batch_size,
+        )?;
 
         Ok(())
     }

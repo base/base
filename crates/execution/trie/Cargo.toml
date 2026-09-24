@@ -18,7 +18,7 @@ reth-tasks.workspace = true
 reth-provider.workspace = true
 reth-execution-errors.workspace = true
 reth-primitives-traits.workspace = true
-reth-db = { workspace = true, features = ["mdbx"] }
+reth-db.workspace = true
 reth-codecs.workspace = true
 reth-revm = { workspace = true, features = ["witness"] }
 reth-trie = { workspace = true, features = ["serde"] }
@@ -52,7 +52,6 @@ thiserror.workspace = true
 auto_impl.workspace = true
 parking_lot.workspace = true
 derive_more.workspace = true
-eyre = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }
 rocksdb = { workspace = true, features = ["lz4", "zstd"] }
 static_assertions.workspace = true
@@ -104,7 +103,6 @@ serde-bincode-compat = [
 ]
 metrics = [
 	"base-metrics/metrics",
-	"dep:eyre",
 	"dep:metrics",
 	"reth-evm/metrics",
 	"reth-trie-db/metrics",

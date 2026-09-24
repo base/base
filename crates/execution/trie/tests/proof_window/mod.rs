@@ -7,7 +7,6 @@ use super::*;
 
 /// Test basic storage and retrieval of earliest block number
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
 #[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_earliest_block_operations<S: BaseProofsStore + BaseProofsInitialStateStore>(
@@ -29,7 +28,6 @@ fn test_earliest_block_operations<S: BaseProofsStore + BaseProofsInitialStateSto
 }
 
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
 #[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_proof_window<S: BaseProofsStore + BaseProofsInitialStateStore>(

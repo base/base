@@ -60,7 +60,7 @@ impl<T: Decompress> Decompress for MaybeDeleted<T> {
 
 /// Versioned value wrapper for [`DupSort`] tables
 ///
-/// For [`DupSort`] tables in MDBX, the Value type must contain the [`DupSort::SubKey`] as a field.
+/// For versioned history tables, the value contains the associated block number.
 /// This wrapper combines a [`block_number`] (the [`DupSort::SubKey`]) with
 /// the actual value.
 ///

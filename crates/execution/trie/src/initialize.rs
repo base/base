@@ -1478,6 +1478,5 @@ mod tests {
         };
     }
 
-    proof_storage_init_tests!(mdbx_tests, MdbxProofsStorage);
     proof_storage_init_tests!(rocksdb_tests, RocksdbProofsStorage);
 }

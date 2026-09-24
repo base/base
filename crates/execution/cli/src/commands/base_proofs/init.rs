@@ -6,9 +6,9 @@ use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, InitializationJob,
-    MdbxProofsStorage, RethTrieStorageLayout, RocksdbProofsStorage,
+    RethTrieStorageLayout, RocksdbProofsStorage,
 };
-use base_node_core::args::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
+use base_node_core::args::ProofsHistoryRocksdbArgs;
 use clap::Parser;
 use reth_chainspec::ChainInfo;
 use reth_cli::chainspec::ChainSpecParser;
@@ -38,15 +38,6 @@ pub struct InitCommand<C: ChainSpecParser> {
     )]
     pub storage_path: PathBuf,
 
-    /// The on-disk database backend for proofs history.
-    #[arg(
-        long = "proofs-history.db",
-        visible_alias = "proofs.db",
-        value_name = "PROOFS_HISTORY_DB",
-        default_value = "mdbx"
-    )]
-    pub proofs_history_db: ProofsHistoryDbBackend,
-
     /// Runtime tuning options for the `RocksDB` proofs history backend.
     #[command(flatten)]
     pub proofs_history_rocksdb: ProofsHistoryRocksdbArgs,
@@ -58,41 +49,28 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
         self,
         runtime: reth_tasks::Runtime,
     ) -> eyre::Result<()> {
-        let Self { env, storage_path, proofs_history_db, proofs_history_rocksdb } = self;
+        let Self { env, storage_path, proofs_history_rocksdb } = self;
 
         info!(target: "reth::cli", version = %version_metadata().short_version, "reth starting");
         info!(
             target: "reth::cli",
             path = ?storage_path,
-            backend = ?proofs_history_db,
             "Initializing Base proofs storage"
         );
-        proofs_history_db.ensure_storage_path_matches(&storage_path)?;
+        base_node_core::args::ensure_rocksdb_storage_path(&storage_path)?;
 
         // Initialize the environment with read-only access
         let Environment { provider_factory, .. } = env.init::<N>(AccessRights::RO, runtime)?;
 
-        match proofs_history_db {
-            ProofsHistoryDbBackend::Rocksdb => {
-                let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::new(
-                    RocksdbProofsStorage::new_with_options(
-                        &storage_path,
-                        proofs_history_rocksdb.storage_options()?,
-                    )
-                    .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
-                )
-                .into();
-                Self::initialize_storage(storage, &provider_factory)?;
-            }
-            ProofsHistoryDbBackend::Mdbx => {
-                let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::new(
-                    MdbxProofsStorage::new(&storage_path)
-                        .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))?,
-                )
-                .into();
-                Self::initialize_storage(storage, &provider_factory)?;
-            }
-        }
+        let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::new(
+            RocksdbProofsStorage::new_with_options(
+                &storage_path,
+                proofs_history_rocksdb.storage_options()?,
+            )
+            .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
+        )
+        .into();
+        Self::initialize_storage(storage, &provider_factory)?;
 
         Ok(())
     }

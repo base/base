@@ -3,8 +3,7 @@
 //! Both factories borrow one read-only [`BaseProofsStore::Tx`] for their entire lifetime
 //! and route every cursor allocation through the `*_with_tx` fast path. This mirrors
 //! reth's own `DatabaseTrieCursorFactory` / `DatabaseHashedCursorFactory` pattern and is
-//! what lets proof, state-root, and witness requests acquire exactly one MDBX
-//! transaction.
+//! what lets proof, state-root, and witness requests share one read handle.
 
 use alloy_primitives::B256;
 use reth_db::DatabaseError;
@@ -23,8 +22,8 @@ use crate::{
 
 /// Request-scoped factory that opens trie cursors against a shared read-only transaction.
 ///
-/// Holds a borrow of the transaction so every cursor allocation reuses the same MDBX
-/// reader slot. See [`BaseProofsStore::Tx`] for the underlying contention story.
+/// Holds a borrow of the read handle so every cursor allocation reuses the same snapshot.
+/// See [`BaseProofsStore::Tx`] for the underlying contention story.
 #[derive(Debug, Clone)]
 pub struct BaseProofsTrieCursorFactory<'tx, 'db, S: BaseProofsStore> {
     storage: &'db BaseProofsStorage<S>,
