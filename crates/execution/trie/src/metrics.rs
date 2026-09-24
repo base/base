@@ -122,14 +122,36 @@ base_metrics::define_metrics! {
     latest_number: gauge,
 }
 
+/// Which state cursor a point read used.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum StateSeekKind {
+    /// Account lookup.
+    Account,
+    /// Storage slot lookup.
+    Storage,
+}
+
+impl StateSeekKind {
+    /// Metric label for this seek. The only values are `account` and `storage`.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Account => "account",
+            Self::Storage => "storage",
+        }
+    }
+}
+
 base_metrics::define_metrics! {
     base_trie.state,
     struct = StateMetrics,
     #[describe("Account and storage seeks")]
+    #[label(kind)]
     reads: counter,
     #[describe("Seeks whose returned key was not the key requested")]
+    #[label(kind)]
     misses: counter,
     #[describe("Time spent in account and storage seeks, in seconds")]
+    #[label(kind)]
     seek_duration_seconds: histogram,
 }
 
@@ -137,17 +159,19 @@ impl StateMetrics {
     /// Times one account or storage seek and counts it, including a seek that returns an error.
     /// A successful seek where `hit` returns `false` counts as a miss.
     pub fn record_seek<T, E>(
+        kind: StateSeekKind,
         seek: impl FnOnce() -> Result<T, E>,
         hit: impl FnOnce(&T) -> bool,
     ) -> Result<T, E> {
+        let label = kind.as_str();
         let result = {
-            let _timer = base_metrics::timed!(Self::seek_duration_seconds());
+            let _timer = base_metrics::timed!(Self::seek_duration_seconds(label));
             seek()
         };
 
-        Self::reads().increment(1);
+        Self::reads(label).increment(1);
         if result.as_ref().is_ok_and(|value| !hit(value)) {
-            Self::misses().increment(1);
+            Self::misses(label).increment(1);
         }
         result
     }

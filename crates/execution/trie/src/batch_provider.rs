@@ -33,7 +33,8 @@ use reth_trie_common::{
 
 use crate::{
     BaseProofsBatchHashedAccountCursorFactory, BaseProofsBatchTrieCursorFactory,
-    api::BaseProofsBatchSession, metrics::StateMetrics,
+    api::BaseProofsBatchSession,
+    metrics::{StateMetrics, StateSeekKind},
 };
 
 /// State provider that reads through an active [`BaseProofsBatchSession`]'s transaction.
@@ -284,6 +285,7 @@ impl<S: BaseProofsBatchSession> AccountReader for BaseProofsBatchStateProviderRe
             .account_hashed_cursor(self.block_number)
             .map_err(Into::<ProviderError>::into)?;
         let found = StateMetrics::record_seek(
+            StateSeekKind::Account,
             || cursor.seek(hashed_key).map_err(Into::<ProviderError>::into),
             |found| found.as_ref().is_some_and(|(key, _)| *key == hashed_key),
         )?;
@@ -299,6 +301,7 @@ impl<S: BaseProofsBatchSession> StateProvider for BaseProofsBatchStateProviderRe
             .storage_hashed_cursor(keccak256(address.0), self.block_number)
             .map_err(Into::<ProviderError>::into)?;
         let found = StateMetrics::record_seek(
+            StateSeekKind::Storage,
             || cursor.seek(hashed_key).map_err(Into::<ProviderError>::into),
             |found| found.as_ref().is_some_and(|(key, _)| *key == hashed_key),
         )?;

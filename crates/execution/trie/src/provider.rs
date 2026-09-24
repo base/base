@@ -27,7 +27,7 @@ use reth_trie_common::{
 
 use crate::{
     BaseProofsStorage, BaseProofsStorageError, BaseProofsStore,
-    metrics::StateMetrics,
+    metrics::{StateMetrics, StateSeekKind},
     proof::{
         DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
         DatabaseTrieWitness,
@@ -98,6 +98,7 @@ impl<'a, Storage: BaseProofsStore + Clone> BaseProofsStateProviderRef<'a, Storag
             .storage_hashed_cursor_with_tx(&tx, keccak256(address.0), self.block_number)
             .map_err(Into::<ProviderError>::into)?;
         let found = StateMetrics::record_seek(
+            StateSeekKind::Storage,
             || cursor.seek(hashed_key).map_err(Into::<ProviderError>::into),
             |found| found.as_ref().is_some_and(|(key, _)| *key == hashed_key),
         )?;
@@ -243,6 +244,7 @@ impl<'a, Storage: BaseProofsStore> AccountReader for BaseProofsStateProviderRef<
             .account_hashed_cursor_with_tx(&tx, self.block_number)
             .map_err(Into::<ProviderError>::into)?;
         let found = StateMetrics::record_seek(
+            StateSeekKind::Account,
             || cursor.seek(hashed_key).map_err(Into::<ProviderError>::into),
             |found| found.as_ref().is_some_and(|(key, _)| *key == hashed_key),
         )?;
