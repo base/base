@@ -419,6 +419,107 @@ impl Eip8130Signed {
         out
     }
 
+    /// Folds `byte_cost` over the sender-billed EIP-2718 encoding: this
+    /// transaction with `payer_auth` replaced by the empty string.
+    ///
+    /// When `encoded_2718` is this transaction's network encoding, the fold
+    /// rewrites only the list header and the `payer_auth` suffix. The
+    /// transaction body is not re-serialized. A mismatched `encoded_2718`
+    /// falls back to [`Self::encoded_2718_without_payer_auth`].
+    pub fn fold_sender_billed_bytes(
+        &self,
+        encoded_2718: &[u8],
+        mut byte_cost: impl FnMut(u8) -> u64,
+    ) -> u64 {
+        let fold = |bytes: &[u8], byte_cost: &mut dyn FnMut(u8) -> u64| {
+            bytes.iter().fold(0u64, |acc, &byte| acc.saturating_add(byte_cost(byte)))
+        };
+        if self.payer_auth.is_empty() {
+            return fold(encoded_2718, &mut byte_cost);
+        }
+        if let Some(cost) = self.try_fold_sender_billed(encoded_2718, &mut byte_cost) {
+            return cost;
+        }
+        fold(&self.encoded_2718_without_payer_auth(), &mut byte_cost)
+    }
+
+    /// Sender-billed fold of a verified EIP-2718 encoding. `None` when
+    /// `encoded_2718` is not this transaction.
+    fn try_fold_sender_billed(
+        &self,
+        encoded_2718: &[u8],
+        byte_cost: &mut impl FnMut(u8) -> u64,
+    ) -> Option<u64> {
+        let (&type_byte, rest) = encoded_2718.split_first()?;
+        if type_byte != Eip8130Constants::EIP8130_TX_TYPE {
+            return None;
+        }
+        let mut payload = rest;
+        let header = Header::decode(&mut payload).ok()?;
+        if !header.list || payload.len() != header.payload_length {
+            return None;
+        }
+        let payer_len = self.payer_auth.length();
+        if payload.len() < payer_len {
+            return None;
+        }
+        let (body, payer_suffix) = payload.split_at(payload.len() - payer_len);
+        if !Self::is_rlp_bytes(self.payer_auth.as_ref(), payer_suffix) {
+            return None;
+        }
+        // Empty `payer_auth` is the one-byte RLP string `0x80`.
+        let new_payload_len = body.len().checked_add(1)?;
+        let mut header_buf = [0u8; 9];
+        let remaining = {
+            let mut cursor: &mut [u8] = &mut header_buf;
+            Header { list: true, payload_length: new_payload_len }.encode(&mut cursor);
+            cursor.len()
+        };
+        let header_len = header_buf.len() - remaining;
+
+        let mut total = byte_cost(type_byte);
+        for &byte in &header_buf[..header_len] {
+            total = total.saturating_add(byte_cost(byte));
+        }
+        for &byte in body {
+            total = total.saturating_add(byte_cost(byte));
+        }
+        Some(total.saturating_add(byte_cost(0x80)))
+    }
+
+    /// Whether `encoded` is the canonical RLP string for `raw`.
+    fn is_rlp_bytes(raw: &[u8], encoded: &[u8]) -> bool {
+        if raw.is_empty() {
+            return encoded == [0x80];
+        }
+        if raw.len() == 1 && raw[0] < 0x80 {
+            return encoded == raw;
+        }
+        if raw.len() < 56 {
+            let Ok(len) = u8::try_from(raw.len()) else {
+                return false;
+            };
+            return encoded.len() == raw.len() + 1
+                && encoded[0] == 0x80 + len
+                && &encoded[1..] == raw;
+        }
+        let len_of_len = raw.len().to_be_bytes().iter().skip_while(|&&byte| byte == 0).count();
+        if encoded.len() != 1 + len_of_len + raw.len() {
+            return false;
+        }
+        let Ok(len_of_len_byte) = u8::try_from(len_of_len) else {
+            return false;
+        };
+        if encoded[0] != 0xb7 + len_of_len_byte {
+            return false;
+        }
+        let mut declared = 0usize;
+        for &byte in &encoded[1..1 + len_of_len] {
+            declared = declared.saturating_mul(256).saturating_add(usize::from(byte));
+        }
+        declared == raw.len() && &encoded[1 + len_of_len..] == raw
+    }
+
     fn rlp_encoded_signed_length(&self) -> usize {
         let payload = self.rlp_payload_length();
         length_of_length(payload) + payload

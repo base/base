@@ -1254,6 +1254,11 @@ impl Eip8130Executor {
             return Ok(false);
         }
         let journal = evm.ctx_mut().journal_mut();
+        // `load_account` warms `to` and `sender`. The following `run_call` frame
+        // therefore sees both as warm (100 gas, not 2600, on a later access).
+        // Protocol calls are priced by `TX_VALUE_COST` / `NEW_ACCOUNT_COST`
+        // rather than the CALL opcode, so the warming does not undercharge; it
+        // is a side effect of the emptiness and balance checks.
         if !journal.load_account(to).map_err(EVMError::Database)?.data.is_empty() {
             return Ok(false);
         }
