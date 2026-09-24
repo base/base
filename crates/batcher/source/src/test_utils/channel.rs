@@ -3,14 +3,13 @@
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
-use crate::{L2BlockEvent, SourceError, UnsafeBlockSource};
+use crate::{L2BlockEvent, UnsafeBlockSource};
 
 /// An [`UnsafeBlockSource`] backed by a `tokio::sync::mpsc` unbounded channel.
 ///
 /// Use [`ChannelBlockSource::new`] to obtain a `(source, sender)` pair.
 /// Events sent on the [`mpsc::UnboundedSender`] side are consumed by
-/// [`UnsafeBlockSource::next`]. When all senders are dropped, `next` returns
-/// [`SourceError::Closed`].
+/// [`UnsafeBlockSource::next`]. Once all senders are dropped, `next` parks forever.
 #[derive(Debug)]
 pub struct ChannelBlockSource {
     rx: mpsc::UnboundedReceiver<L2BlockEvent>,
@@ -26,8 +25,11 @@ impl ChannelBlockSource {
 
 #[async_trait]
 impl UnsafeBlockSource for ChannelBlockSource {
-    async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
-        self.rx.recv().await.ok_or(SourceError::Closed)
+    async fn next(&mut self) -> L2BlockEvent {
+        match self.rx.recv().await {
+            Some(event) => event,
+            None => std::future::pending().await,
+        }
     }
 }
 
@@ -35,6 +37,7 @@ impl UnsafeBlockSource for ChannelBlockSource {
 mod tests {
     use alloy_primitives::B256;
     use base_common_consensus::BaseBlock;
+    use futures::FutureExt;
 
     use super::*;
 
@@ -55,7 +58,7 @@ mod tests {
         let (mut source, tx) = ChannelBlockSource::new();
         tx.send(L2BlockEvent::Block(Box::new(make_block(1)))).unwrap();
 
-        let event = source.next().await.unwrap();
+        let event = source.next().await;
         match event {
             L2BlockEvent::Block(b) => assert_eq!(b.header.number, 1),
             _ => panic!("expected Block event"),
@@ -67,16 +70,7 @@ mod tests {
         let (mut source, tx) = ChannelBlockSource::new();
         tx.send(L2BlockEvent::Reorg).unwrap();
 
-        assert!(matches!(source.next().await.unwrap(), L2BlockEvent::Reorg));
-    }
-
-    #[tokio::test]
-    async fn closed_when_sender_dropped() {
-        let (mut source, tx) = ChannelBlockSource::new();
-        drop(tx);
-
-        let err = source.next().await.unwrap_err();
-        assert!(matches!(err, SourceError::Closed));
+        assert!(matches!(source.next().await, L2BlockEvent::Reorg));
     }
 
     #[tokio::test]
@@ -90,7 +84,7 @@ mod tests {
             tx.send(L2BlockEvent::Block(Box::new(make_block(42)))).unwrap();
         });
 
-        let event = source.next().await.unwrap();
+        let event = source.next().await;
         match event {
             L2BlockEvent::Block(b) => assert_eq!(b.header.number, 42),
             _ => panic!("expected Block event"),
@@ -106,14 +100,22 @@ mod tests {
         tx.send(L2BlockEvent::Block(Box::new(make_block(2)))).unwrap();
         tx.send(L2BlockEvent::Reorg).unwrap();
 
-        match source.next().await.unwrap() {
+        match source.next().await {
             L2BlockEvent::Block(b) => assert_eq!(b.header.number, 1),
             _ => panic!("expected Block(1)"),
         }
-        match source.next().await.unwrap() {
+        match source.next().await {
             L2BlockEvent::Block(b) => assert_eq!(b.header.number, 2),
             _ => panic!("expected Block(2)"),
         }
-        assert!(matches!(source.next().await.unwrap(), L2BlockEvent::Reorg));
+        assert!(matches!(source.next().await, L2BlockEvent::Reorg));
+    }
+
+    #[tokio::test]
+    async fn parks_once_all_senders_are_dropped() {
+        let (mut source, tx) = ChannelBlockSource::new();
+        drop(tx);
+
+        assert!(source.next().now_or_never().is_none(), "a closed source must park");
     }
 }

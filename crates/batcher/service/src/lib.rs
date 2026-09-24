@@ -20,7 +20,7 @@ mod source;
 pub use source::RpcPollingSource;
 
 mod l1_source;
-pub use l1_source::{NullL1HeadSubscription, RpcL1HeadPollingSource, WsL1HeadSubscription};
+pub use l1_source::RpcL1HeadPollingSource;
 
 mod l2_block_parity;
 pub use l2_block_parity::{

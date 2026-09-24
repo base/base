@@ -21,4 +21,10 @@ pub struct BatchDriverConfig {
     /// No-op when the encoder is already configured for blob DA.
     /// Default: `true`.
     pub force_blobs_when_throttling: bool,
+    /// Start with block ingestion stopped, as if [`AdminCommand::Stop`] had been
+    /// received at startup; [`AdminCommand::Start`] resumes it.
+    ///
+    /// [`AdminCommand::Stop`]: crate::AdminCommand::Stop
+    /// [`AdminCommand::Start`]: crate::AdminCommand::Start
+    pub stopped: bool,
 }

@@ -3,6 +3,7 @@
 use std::{
     future::{Future, pending},
     sync::Arc,
+    task::Poll,
     time::Duration,
 };
 
@@ -11,11 +12,11 @@ use backon::Retryable;
 use base_balance_monitor::BalanceMonitorLayer;
 use base_batcher_admin::AdminServer;
 use base_batcher_core::{
-    AdminHandle, BatchDriver, BatchDriverHeads, DaThrottle, NoopThrottleClient, ThrottleClient,
+    AdminHandle, BatchDriver, BatchDriverInputs, DaThrottle, NoopThrottleClient, ThrottleClient,
     ThrottleController, ThrottleStrategy,
 };
 use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
-use base_batcher_source::{HybridL1HeadSource, PollingBlockSource, SourceError};
+use base_batcher_source::{HybridL1HeadSource, PollingBlockSource};
 use base_common_network::Base;
 use base_consensus_rpc::RollupNodeApiClient;
 use base_protocol::BlockInfo;
@@ -25,7 +26,7 @@ use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use futures::{
     StreamExt,
     future::BoxFuture,
-    stream::{BoxStream, FuturesUnordered},
+    stream::{self, BoxStream, FuturesUnordered},
 };
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -35,9 +36,8 @@ use url::Url;
 
 use crate::{
     BatcherConfig, DerivationStatusPoller, DerivationStatusProvider, L2BlockParityMonitor,
-    L2BlockParityMonitorConfig, MAX_CHECK_RECENT_TXS_DEPTH, NullL1HeadSubscription,
-    RecentTxSyncTarget, RpcL1HeadPollingSource, RpcL2BlockProvider, RpcPollingSource,
-    RpcThrottleClient, WsL1HeadSubscription,
+    L2BlockParityMonitorConfig, MAX_CHECK_RECENT_TXS_DEPTH, RecentTxSyncTarget,
+    RpcL1HeadPollingSource, RpcL2BlockProvider, RpcPollingSource, RpcThrottleClient,
 };
 
 const WEI_PER_ETHER: f64 = 1_000_000_000_000_000_000.0;
@@ -64,21 +64,6 @@ impl ThrottleClient for ServiceThrottle {
     }
 }
 
-/// Batcher-internal L1 subscription variant: either a live WS subscription or a no-op.
-enum L1Subscription {
-    Ws(WsL1HeadSubscription),
-    Null(NullL1HeadSubscription),
-}
-
-impl base_batcher_source::L1HeadSubscription for L1Subscription {
-    fn take_stream(&mut self) -> BoxStream<'static, Result<u64, SourceError>> {
-        match self {
-            Self::Ws(ws) => ws.take_stream(),
-            Self::Null(null) => null.take_stream(),
-        }
-    }
-}
-
 /// Concrete driver type produced by [`BatcherService::setup`].
 ///
 /// Private — callers interact only through [`ReadyBatcher`].
@@ -88,7 +73,7 @@ type ServiceDriver = BatchDriver<
     PollingBlockSource<RpcPollingSource, TokioRuntime>,
     SimpleTxManager<RootProvider>,
     ServiceThrottle,
-    HybridL1HeadSource<L1Subscription, RpcL1HeadPollingSource, TokioRuntime>,
+    HybridL1HeadSource<RpcL1HeadPollingSource>,
 >;
 
 /// A fully-initialised batcher ready to run the submission loop.
@@ -202,27 +187,30 @@ impl BatcherService {
         Self { config }
     }
 
-    /// Build an L1 head subscription for the given optional L1 WebSocket URL.
+    /// Build the live L1 head stream for the given optional L1 WebSocket URL.
     ///
-    /// When `url` is `Some`, connects a dedicated WS provider, subscribes to
-    /// new L1 block headers, and streams their block numbers. The provider is
-    /// wrapped in a [`WsL1HeadSubscription`] to keep the connection alive.
+    /// When `url` is `Some`, connects a dedicated WS provider, subscribes to new L1
+    /// block headers and streams their block numbers. The stream owns the provider, so
+    /// the connection lives as long as the stream does.
     ///
-    /// When `url` is `None`, or if the WS connection fails, returns a
-    /// [`NullL1HeadSubscription`] so that [`HybridL1HeadSource`] falls back
-    /// entirely to polling.
+    /// When `url` is `None`, or if connecting or subscribing fails, returns a stream that
+    /// never yields so that [`HybridL1HeadSource`] relies on polling alone.
     ///
-    /// [`HybridL1HeadSource`]: base_batcher_source::HybridL1HeadSource
-    async fn build_l1_subscription(url: Option<&Url>) -> L1Subscription {
+    /// `l1_head_subscription_active` is 1 while the subscription streams heads, and 0 once
+    /// the batcher relies on polling alone.
+    async fn build_l1_head_stream(url: Option<&Url>) -> BoxStream<'static, u64> {
+        let active = BatcherMetrics::l1_head_subscription_active();
+        active.set(0.0);
+
         let Some(url) = url else {
-            return L1Subscription::Null(NullL1HeadSubscription::new());
+            return stream::pending().boxed();
         };
 
         let ws_provider = match ProviderBuilder::new().connect(url.as_str()).await {
-            Ok(p) => Arc::new(p),
+            Ok(p) => p,
             Err(e) => {
                 warn!(error = %e, l1_ws = %url, "failed to connect L1 WS provider; falling back to polling");
-                return L1Subscription::Null(NullL1HeadSubscription::new());
+                return stream::pending().boxed();
             }
         };
 
@@ -230,12 +218,23 @@ impl BatcherService {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "failed to subscribe to new L1 blocks; falling back to polling");
-                return L1Subscription::Null(NullL1HeadSubscription::new());
+                return stream::pending().boxed();
             }
         };
 
-        let stream = sub.into_stream().map(|header| Ok(header.number)).boxed();
-        L1Subscription::Ws(WsL1HeadSubscription::new(ws_provider, stream))
+        active.set(1.0);
+        sub.into_stream()
+            .map(move |header| {
+                // Capture the provider: dropping it closes the connection and ends the stream.
+                let _keep_alive = &ws_provider;
+                header.number
+            })
+            // Mark the subscription down once alloy gives up reconnecting and the stream ends.
+            .chain(stream::poll_fn(move |_| {
+                active.set(0.0);
+                Poll::Ready(None)
+            }))
+            .boxed()
     }
 
     /// Try each URL in order, returning the first that connects.
@@ -649,8 +648,7 @@ impl BatcherService {
             });
 
         // Build the L1 head source: a hybrid of optional WS subscription + polling.
-        let l1_head_subscription =
-            Self::build_l1_subscription(self.config.l1_ws_url.as_ref()).await;
+        let l1_head_stream = Self::build_l1_head_stream(self.config.l1_ws_url.as_ref()).await;
         let l1_head_poller = RpcL1HeadPollingSource::new(Arc::new(
             Self::rpc_retry("l1-rpc-poller", retry, rpc_timeout, || {
                 Self::connect_first(&self.config.l1_rpc_url, "l1-rpc-poller", |url| {
@@ -667,7 +665,7 @@ impl BatcherService {
         ));
         let l1_head_source = HybridL1HeadSource::new(
             TokioRuntime::new(),
-            l1_head_subscription,
+            l1_head_stream,
             l1_head_poller,
             self.config.poll_interval,
         );
@@ -715,35 +713,37 @@ impl BatcherService {
         };
         background_tasks.push(("derivation status poller", derivation_status_handle));
 
-        // Build the driver — all fallible setup is complete at this point.
-        let mut driver = BatchDriver::new(
+        // Build the driver.
+        let (admin_handle, admin_rx) = AdminHandle::channel();
+        let driver = BatchDriver::new(
             runtime,
             encoder,
-            source,
             tx_manager,
             base_batcher_core::BatchDriverConfig {
                 inbox: effective_batch_inbox,
                 max_pending_transactions: self.config.max_pending_transactions,
                 drain_timeout,
                 force_blobs_when_throttling: self.config.force_blobs_when_throttling,
+                stopped: self.config.stopped,
             },
             DaThrottle::new(throttle, throttle_client),
-            BatchDriverHeads::new(
+            BatchDriverInputs {
+                source,
                 l1_head_source,
                 initial_l1_head,
-                initial_derivation_status,
+                initial_safe_head: safe_l2,
                 derivation_status_rx,
-            ),
-        )
-        .with_stopped(self.config.stopped);
+                admin_rx,
+            },
+        );
 
+        // Without an admin server, drop the handle: the driver's admin arm then stays quiet.
         let admin_server = match self.config.admin_addr {
-            Some(addr) => {
-                let (admin_handle, admin_rx) = AdminHandle::channel();
-                driver = driver.with_admin_rx(admin_rx);
-                Some(AdminServer::spawn(addr, admin_handle).await?)
+            Some(addr) => Some(AdminServer::spawn(addr, admin_handle).await?),
+            None => {
+                drop(admin_handle);
+                None
             }
-            None => None,
         };
 
         info!("batcher service components initialized");
@@ -754,6 +754,8 @@ impl BatcherService {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicU8, Ordering};
+
+    use alloy_node_bindings::Anvil;
 
     use super::*;
 
@@ -803,5 +805,19 @@ mod tests {
             error.to_string().contains("max_pending_transactions"),
             "error should name the setting, got {error}"
         );
+    }
+
+    #[tokio::test]
+    async fn l1_head_stream_outlives_its_builder() {
+        let anvil = Anvil::new().spawn();
+        let mut heads = BatcherService::build_l1_head_stream(Some(&anvil.ws_endpoint_url())).await;
+
+        // The builder has returned: the stream alone must keep the WS provider alive.
+        let miner = RootProvider::<Base>::new_http(anvil.endpoint_url());
+        for expected in 1..=2 {
+            miner.raw_request::<(), String>("evm_mine".into(), ()).await.unwrap();
+            let head = tokio::time::timeout(Duration::from_secs(5), heads.next()).await;
+            assert_eq!(head.unwrap(), Some(expected));
+        }
     }
 }

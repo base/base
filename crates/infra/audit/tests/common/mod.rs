@@ -1,6 +1,10 @@
 //! Common test harness for audit integration tests with S3 fixtures.
 
-use testcontainers::{ImageExt, runners::AsyncRunner};
+use testcontainers::{
+    ImageExt,
+    core::{IntoContainerPort, Mount},
+    runners::AsyncRunner,
+};
 use testcontainers_modules::minio::MinIO;
 use uuid::Uuid;
 
@@ -12,9 +16,21 @@ pub(crate) struct TestHarness {
 
 impl TestHarness {
     pub(crate) async fn new() -> anyhow::Result<Self> {
-        // MinIO removed the `minio/minio` image from Docker Hub, so pull the
-        // same tag from quay.io (their current official registry) instead.
-        let minio_container = MinIO::default().with_name("quay.io/minio/minio").start().await?;
+        // MinIO no longer publishes community images: Docker Hub dropped them and quay.io
+        // refuses anonymous pulls. Run Chainguard's build of MinIO RELEASE.2026-09-22T19-25-18Z,
+        // pinned by digest (`docker buildx imagetools inspect cgr.dev/chainguard/minio:latest`
+        // prints the current one). Unlike MinIO's image it declares no volume and exposes no
+        // port, so give `/data` a tmpfs (MinIO cannot rename directories across overlay layers)
+        // and publish the S3 port.
+        let minio_container = MinIO::default()
+            .with_name("cgr.dev/chainguard/minio")
+            .with_tag(
+                "latest@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1",
+            )
+            .with_mount(Mount::tmpfs_mount("/data"))
+            .with_mapped_port(0, 9000.tcp())
+            .start()
+            .await?;
         let s3_port = minio_container.get_host_port_ipv4(9000).await?;
         let s3_endpoint = format!("http://127.0.0.1:{s3_port}");
 

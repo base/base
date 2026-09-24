@@ -13,8 +13,13 @@ use base_protocol::BlockInfo;
 /// Shared recording state populated by the test pipeline implementations.
 #[derive(Debug, Default)]
 pub struct Recorded {
-    /// L1 block numbers passed to `advance_l1_head` in order.
+    /// L1 heads the pipeline advanced to, in order. Like [`BatchEncoder`], the pipeline
+    /// ignores a head that does not advance.
+    ///
+    /// [`BatchEncoder`]: base_batcher_encoder::BatchEncoder
     pub l1_heads: Vec<u64>,
+    /// Submission IDs passed to `confirm` in order.
+    pub confirmed: Vec<SubmissionId>,
     /// Submission IDs passed to `requeue` in order.
     pub requeued: Vec<SubmissionId>,
     /// Submission IDs dequeued via `next_submission` in order.
@@ -100,7 +105,9 @@ impl BatchPipeline for TrackingPipeline {
         Some(sub)
     }
 
-    fn confirm(&mut self, _: SubmissionId, _: u64) {}
+    fn confirm(&mut self, id: SubmissionId, _: u64) {
+        self.recorded.lock().unwrap().confirmed.push(id);
+    }
 
     fn requeue(&mut self, id: SubmissionId) {
         self.recorded.lock().unwrap().requeued.push(id);
@@ -115,7 +122,10 @@ impl BatchPipeline for TrackingPipeline {
     }
 
     fn advance_l1_head(&mut self, l1_block: u64) {
-        self.recorded.lock().unwrap().l1_heads.push(l1_block);
+        let mut recorded = self.recorded.lock().unwrap();
+        if l1_block > recorded.l1_heads.last().copied().unwrap_or_default() {
+            recorded.l1_heads.push(l1_block);
+        }
     }
 
     fn reconcile_derivation(

@@ -3,13 +3,14 @@ use std::{sync::Arc, time::Duration};
 use alloy_primitives::B256;
 use alloy_signer_local::PrivateKeySigner;
 use base_batcher_core::{
-    AdminError, AdminHandle, BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle,
-    NoopThrottleClient, ThrottleController,
+    AdminError, AdminHandle, BatchDriver, BatchDriverConfig, BatchDriverError, BatchDriverInputs,
+    DaThrottle, NoopThrottleClient, ThrottleController,
 };
 use base_batcher_encoder::{BatchEncoder, EncoderConfig};
 use base_batcher_source::{L2BlockEvent, test_utils::ChannelL1HeadSource};
 use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
+use base_protocol::BlockInfo;
 use base_runtime::TokioRuntime;
 use base_tx_manager::TxManager;
 use tokio::sync::{mpsc, oneshot};
@@ -97,7 +98,7 @@ pub enum BatcherError {
 /// 4. Wait for the driver's next submit pass (a second marker), after which every
 ///    resulting submission has been handed to the tx manager, not just the first.
 /// 5. Mine one L1 block via the shared [`L1MinerTxManager`], firing all
-///    receipt oneshots and delivering an [`L1HeadEvent::NewHead`] to the driver.
+///    receipt oneshots and delivering the new L1 head to the driver.
 /// 6. Yield to let the driver confirm receipts and advance its L1 head.
 ///
 /// The driver's [`BatchEncoder`] state is persistent across `advance()` calls.
@@ -106,7 +107,6 @@ pub enum BatcherError {
 /// [`advance`]: Batcher::advance
 /// [`BatchDriver`]: base_batcher_core::BatchDriver
 /// [`ChannelL1HeadSource`]: base_batcher_source::test_utils::ChannelL1HeadSource
-/// [`L1HeadEvent::NewHead`]: base_batcher_source::L1HeadEvent
 pub struct Batcher<S: L2BlockProvider> {
     /// The L2 block source to drain on each [`advance`](Batcher::advance) cycle.
     l2_source: S,
@@ -137,18 +137,22 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Spawns the driver immediately. The driver will not process any events
     /// until the first [`advance`] call.
     ///
+    /// # Panics
+    ///
+    /// Panics if `config.encoder` is invalid, or if `config.batcher_address` is not the
+    /// address of `config.l1_signer`.
+    ///
     /// [`advance`]: Batcher::advance
     pub fn new(l2_source: S, rollup_config: &RollupConfig, config: BatcherConfig) -> Self {
         let l1_chain_id = rollup_config.l1_chain_id;
-        let rollup_config = Arc::new(rollup_config.clone());
-        let pipeline =
-            BatchEncoder::new(rollup_config, config.encoder.clone()).expect("valid encoder config");
+        let pipeline = BatchEncoder::new(Arc::new(rollup_config.clone()), config.encoder.clone())
+            .expect("valid encoder config");
 
         let (source, source_tx) = HarnessBlockSource::new();
         let (admin, admin_rx) = AdminHandle::channel();
 
-        // L1 head source: mine_block() sends L1HeadEvent::NewHead; the driver
-        // calls advance_l1_head() when the channel delivers an event.
+        // L1 head source: mine_block() sends the mined block number; the driver
+        // calls advance_l1_head() when the channel delivers it.
         let (l1_source, l1_head_tx) = ChannelL1HeadSource::new();
 
         let tx_manager =
@@ -163,11 +167,11 @@ impl<S: L2BlockProvider> Batcher<S> {
         let cancel = CancellationToken::new();
         let runtime = TokioRuntime::with_token(cancel.clone());
 
-        let throttle = ThrottleController::disabled();
-        let driver = BatchDriver::new_without_derivation_status(
+        let (derivation_status_tx, derivation_status_rx) = mpsc::channel(1);
+
+        let driver = BatchDriver::new(
             runtime,
             pipeline,
-            source,
             tx_manager.clone(),
             BatchDriverConfig {
                 inbox: config.inbox_address,
@@ -176,13 +180,26 @@ impl<S: L2BlockProvider> Batcher<S> {
                 max_pending_transactions: 16,
                 drain_timeout: Duration::from_secs(10),
                 force_blobs_when_throttling: true,
+                stopped: false,
             },
-            DaThrottle::new(throttle, Arc::new(NoopThrottleClient)),
-            l1_source,
-        )
-        .with_admin_rx(admin_rx);
+            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
+            BatchDriverInputs {
+                source,
+                l1_head_source: l1_source,
+                // The driver learns the L1 head from the blocks the tests mine.
+                initial_l1_head: 0,
+                initial_safe_head: BlockInfo::from_l2_genesis(&rollup_config.genesis),
+                derivation_status_rx,
+                admin_rx,
+            },
+        );
 
-        let driver_task = tokio::spawn(async move { driver.run().await });
+        // No action test exercises derivation status: the driver task keeps the sender, so
+        // the channel stays open, and silent, for as long as the driver runs.
+        let driver_task = tokio::spawn(async move {
+            let _derivation_status_tx = derivation_status_tx;
+            driver.run().await
+        });
 
         Self { l2_source, source_tx, admin, tx_manager, driver_task, cancel }
     }
@@ -339,7 +356,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     }
 
     /// Fire receipts for all staged items from `block` and yield to let
-    /// the driver process confirmations and the L1 head event.
+    /// the driver process confirmations and the new L1 head.
     pub async fn confirm_staged(&self, block: &L1Block) {
         self.tx_manager.confirm_block(block);
         tokio::task::yield_now().await;
@@ -348,8 +365,8 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Simulate an L1 reorg back to `block_number`.
     ///
     /// Truncates the L1 chain via [`L1Miner::reorg_to`], fires failure
-    /// receipts for every item in `pending` and `staged`, and publishes
-    /// [`L1HeadEvent::NewHead`] to the driver.
+    /// receipts for every item in `pending` and `staged`, and publishes the new
+    /// L1 head to the driver.
     ///
     /// Items already confirmed via [`confirm_staged`] (and thus living in
     /// the driver's own `in_flight` set) are **not** covered — see
@@ -437,10 +454,10 @@ impl<S: L2BlockProvider> Batcher<S> {
         self.try_encode_only().await?;
 
         // Mine one L1 block: submits all pending txs/blobs, fires receipt
-        // oneshots, and publishes the block number to the L1 head watch.
+        // oneshots, and sends the new L1 head to the driver.
         self.tx_manager.mine_block(l1);
 
-        // Yield to let the driver process the receipts and the L1 head event.
+        // Yield to let the driver process the receipts and the new L1 head.
         tokio::task::yield_now().await;
 
         Ok(())

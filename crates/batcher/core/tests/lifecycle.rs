@@ -1,63 +1,29 @@
-//! Integration tests for [`BatchDriver`] lifecycle: source errors, drain, and the order of
-//! work and waiting in the loop.
+//! Integration tests for [`BatchDriver`] lifecycle: drain and the order of work and waiting
+//! in the loop.
 
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
 
-use alloy_primitives::Address;
 use async_trait::async_trait;
 use base_batcher_core::{
-    BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle, NoopThrottleClient,
-    ThrottleController,
+    BatchDriverError,
     test_utils::{
-        DriverFixture, ImmediateConfirmTxManager, ManualConfirmTxManager, NeverConfirmTxManager,
-        PendingL1HeadSource, Recorded, SubmissionStub, TrackingPipeline,
+        DriverFixture, ManualConfirmTxManager, NeverConfirmTxManager, Recorded, SubmissionStub,
+        TrackingPipeline,
     },
 };
 use base_batcher_encoder::{ChannelLimit, StepError, SubmissionId};
-use base_batcher_source::{
-    L2BlockEvent, SourceError, UnsafeBlockSource, test_utils::ChannelBlockSource,
-};
+use base_batcher_source::{L2BlockEvent, UnsafeBlockSource};
 use base_runtime::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
 };
 
-/// An error from the block source is fatal: the driver exits with it instead of running
-/// without input.
-#[test]
-fn test_block_source_closed_is_fatal() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let (source, source_tx) = ChannelBlockSource::new();
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default()))),
-            source,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
-            PendingL1HeadSource,
-        );
-        let handle = ctx.spawn(driver.run());
-
-        // Closing the channel makes the source fail on its next poll.
-        drop(source_tx);
-
-        let result = handle.await.unwrap();
-        assert!(matches!(result, Err(BatchDriverError::Source(SourceError::Closed))));
-    });
-}
-
 /// When cancellation fires while a submission is in-flight with a
 /// `NeverConfirmTxManager`, the drain timeout must fire and the driver must
-/// exit cleanly. This verifies the `runtime.sleep(drain_timeout)` fix.
+/// exit cleanly.
 #[test]
 fn test_drain_timeout_exits_with_in_flight_submissions() {
     Runner::start(Config::seeded(0), |ctx| async move {
@@ -65,7 +31,8 @@ fn test_drain_timeout_exits_with_in_flight_submissions() {
         let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
         pipeline.submissions.push_back(SubmissionStub::stub());
 
-        let driver = DriverFixture::build(ctx.clone(), pipeline, NeverConfirmTxManager);
+        let (driver, _handles) =
+            DriverFixture::new(ctx.clone(), pipeline, NeverConfirmTxManager).build();
         let handle = ctx.spawn(driver.run());
 
         ctx.sleep(Duration::from_millis(20)).await;
@@ -95,7 +62,8 @@ fn test_shutdown_drains_in_flight_before_returning_flush_error() {
         );
         pipeline.submissions.push_back(SubmissionStub::stub());
 
-        let driver = DriverFixture::build(ctx.clone(), pipeline, NeverConfirmTxManager);
+        let (driver, _handles) =
+            DriverFixture::new(ctx.clone(), pipeline, NeverConfirmTxManager).build();
         let handle = ctx.spawn(driver.run());
 
         ctx.sleep(Duration::from_millis(20)).await;
@@ -129,7 +97,7 @@ struct PollRecorder {
 
 #[async_trait]
 impl UnsafeBlockSource for PollRecorder {
-    async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
+    async fn next(&mut self) -> L2BlockEvent {
         let dequeued = self.recorded.lock().unwrap().dequeued.len();
         self.dequeued_at_poll.lock().unwrap().push(dequeued);
         std::future::pending().await
@@ -154,20 +122,8 @@ fn test_driver_finishes_pending_work_before_waiting_for_events() {
 
         // A single permit: the second submission can only leave the pipeline once the
         // receipt of the first one has been processed.
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            pipeline,
-            source,
-            tx_manager.clone(),
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
-            PendingL1HeadSource,
-        );
+        let (driver, _handles) =
+            DriverFixture::new(ctx.clone(), pipeline, tx_manager.clone()).source(source).build();
         let handle = ctx.spawn(driver.run());
 
         // Let the driver submit the first stub and wait on the source, then confirm that stub

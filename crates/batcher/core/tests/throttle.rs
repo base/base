@@ -5,12 +5,10 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::Address;
 use base_batcher_core::{
-    BatchDriver, BatchDriverConfig, DaThrottle, ThrottleConfig, ThrottleController,
-    ThrottleStrategy,
+    DaThrottle, ThrottleConfig, ThrottleController, ThrottleStrategy,
     test_utils::{
-        ImmediateConfirmTxManager, PendingL1HeadSource, PendingSource, Recorded, TrackingPipeline,
+        BlockStub, DriverFixture, ImmediateConfirmTxManager, Recorded, TrackingPipeline,
         TrackingThrottleClient,
     },
 };
@@ -38,20 +36,10 @@ fn test_throttle_client_called_on_high_backlog() {
         let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            pipeline,
-            PendingSource,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(throttle, Arc::new(throttle_client)),
-            PendingL1HeadSource,
-        );
+        let (driver, _handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+                .throttle(DaThrottle::new(throttle, Arc::new(throttle_client)))
+                .build();
         let handle = ctx.spawn(driver.run());
 
         ctx.sleep(Duration::from_millis(50)).await;
@@ -83,20 +71,10 @@ fn test_throttle_client_called_with_upper_limits_on_zero_backlog() {
         let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            pipeline,
-            PendingSource,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(throttle, Arc::new(throttle_client)),
-            PendingL1HeadSource,
-        );
+        let (driver, _handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+                .throttle(DaThrottle::new(throttle, Arc::new(throttle_client)))
+                .build();
         let handle = ctx.spawn(driver.run());
 
         ctx.sleep(Duration::from_millis(50)).await;
@@ -128,20 +106,10 @@ fn test_throttle_not_called_redundantly() {
         let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            pipeline,
-            PendingSource,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(throttle, Arc::new(throttle_client)),
-            PendingL1HeadSource,
-        );
+        let (driver, _handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+                .throttle(DaThrottle::new(throttle, Arc::new(throttle_client)))
+                .build();
         let handle = ctx.spawn(driver.run());
 
         // Run for 100ms to allow multiple loop iterations.
@@ -173,20 +141,10 @@ fn test_step_strategy_full_intensity_applies_lower_limits() {
         let throttle = ThrottleController::new(config, ThrottleStrategy::Step);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            pipeline,
-            PendingSource,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(throttle, Arc::new(throttle_client)),
-            PendingL1HeadSource,
-        );
+        let (driver, _handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+                .throttle(DaThrottle::new(throttle, Arc::new(throttle_client)))
+                .build();
         let handle = ctx.spawn(driver.run());
 
         ctx.sleep(Duration::from_millis(50)).await;
@@ -260,20 +218,11 @@ fn test_throttle_transitions_from_active_to_inactive() {
         let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            pipeline,
-            source,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(throttle, Arc::new(throttle_client)),
-            PendingL1HeadSource,
-        );
+        let (driver, _handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+                .source(source)
+                .throttle(DaThrottle::new(throttle, Arc::new(throttle_client)))
+                .build();
         let handle = ctx.spawn(driver.run());
 
         // First iteration fires immediately on startup; give it time to complete.
@@ -282,7 +231,7 @@ fn test_throttle_transitions_from_active_to_inactive() {
         // Drop the backlog to zero, then wake the driver by delivering a dummy
         // block so the select! arm fires and the loop re-runs the throttle check.
         *backlog.lock().unwrap() = 0;
-        source_tx.send(L2BlockEvent::Block(Box::default())).unwrap();
+        source_tx.send(L2BlockEvent::Block(Box::new(BlockStub::with_number(1)))).unwrap();
 
         ctx.sleep(Duration::from_millis(30)).await;
         ctx.cancel();

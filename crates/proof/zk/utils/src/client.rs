@@ -16,7 +16,7 @@ use base_protocol::L2BlockInfo;
 use tracing::{error, info, warn};
 
 /// Fixed interval (in blocks) at which the ZK range program records intermediate output roots.
-pub const INTERMEDIATE_ROOT_INTERVAL: u64 = 30;
+pub const INTERMEDIATE_ROOT_INTERVAL: u64 = 300;
 
 /// Fetches the safe head hash of the L2 chain based on the agreed upon L2 output root in the
 /// [`BootInfo`].

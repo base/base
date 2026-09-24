@@ -5,14 +5,9 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::Address;
-use base_batcher_core::{
-    AdminHandle, BatchDriver, BatchDriverConfig, DaThrottle, NoopThrottleClient,
-    ThrottleController,
-    test_utils::{
-        ImmediateConfirmTxManager, ManualConfirmTxManager, OneBlockSource, PendingL1HeadSource,
-        Recorded, ReorgPipeline, SubmissionStub, TrackingPipeline,
-    },
+use base_batcher_core::test_utils::{
+    DriverFixture, ImmediateConfirmTxManager, ManualConfirmTxManager, OneBlockSource, Recorded,
+    ReorgPipeline, SubmissionStub, TrackingPipeline,
 };
 use base_batcher_source::{L2BlockEvent, test_utils::ChannelBlockSource};
 use base_runtime::{
@@ -29,20 +24,10 @@ fn test_add_block_reorg_resets_pipeline_instead_of_fatal_error() {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let pipeline = ReorgPipeline::new(Arc::clone(&recorded));
 
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            pipeline,
-            OneBlockSource::new(),
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
-            PendingL1HeadSource,
-        );
+        let (driver, _handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+                .source(OneBlockSource::new())
+                .build();
         let handle = ctx.spawn(driver.run());
 
         ctx.sleep(Duration::from_millis(50)).await;
@@ -68,20 +53,10 @@ fn test_l2_reorg_event_resets_pipeline() {
         let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
         let (source, source_tx) = ChannelBlockSource::new();
 
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            pipeline,
-            source,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
-            PendingL1HeadSource,
-        );
+        let (driver, _handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+                .source(source)
+                .build();
         let handle = ctx.spawn(driver.run());
 
         source_tx.send(L2BlockEvent::Reorg).unwrap();
@@ -107,23 +82,8 @@ fn test_reorg_keeps_tracking_in_flight_submissions() {
         pipeline.submissions.push_back(SubmissionStub::stub());
         let tx_manager = ManualConfirmTxManager::default();
         let (source, source_tx) = ChannelBlockSource::new();
-        let (admin_handle, admin_rx) = AdminHandle::channel();
-
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            pipeline,
-            source,
-            tx_manager.clone(),
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
-            PendingL1HeadSource,
-        )
-        .with_admin_rx(admin_rx);
+        let (driver, handles) =
+            DriverFixture::new(ctx.clone(), pipeline, tx_manager.clone()).source(source).build();
         let handle = ctx.spawn(driver.run());
 
         // Let the driver submit the stub, then reorg while it is in flight.
@@ -133,7 +93,7 @@ fn test_reorg_keeps_tracking_in_flight_submissions() {
 
         assert_eq!(recorded.lock().unwrap().resets, 1);
         assert_eq!(
-            admin_handle.get_status().await.unwrap().in_flight,
+            handles.admin.get_status().await.unwrap().in_flight,
             1,
             "the reset must not drop the in-flight submission"
         );
@@ -142,7 +102,7 @@ fn test_reorg_keeps_tracking_in_flight_submissions() {
         ctx.sleep(Duration::from_millis(10)).await;
 
         assert_eq!(
-            admin_handle.get_status().await.unwrap().in_flight,
+            handles.admin.get_status().await.unwrap().in_flight,
             0,
             "the receipt must settle the submission after the reset"
         );
