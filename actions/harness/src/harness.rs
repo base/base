@@ -1,6 +1,5 @@
 use std::{fmt::Debug, sync::Arc};
 
-use alloy_eips::BlockNumHash;
 use alloy_genesis::ChainConfig;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
@@ -93,26 +92,19 @@ impl ActionTestHarness {
         block_info_from(self.l1.tip())
     }
 
-    /// Return the L2 genesis [`L2BlockInfo`] anchored to the L1 genesis block.
-    ///
-    /// Convenience method eliminating the repeated 10-line construction used in
-    /// reorg reset tests.
+    /// Return the L2 genesis [`L2BlockInfo`] anchored to the L1 genesis block of this
+    /// harness's L1 chain.
     pub fn l2_genesis(&self) -> L2BlockInfo {
         let genesis_l1_number = self.rollup_config.genesis.l1.number;
         let genesis_l1 =
             self.l1.block_by_number(genesis_l1_number).map(block_info_from).unwrap_or_else(|| {
                 block_info_from(self.l1.chain().first().expect("genesis always present"))
             });
-        L2BlockInfo {
-            block_info: BlockInfo {
-                hash: self.rollup_config.genesis.l2.hash,
-                number: self.rollup_config.genesis.l2.number,
-                parent_hash: Default::default(),
-                timestamp: self.rollup_config.genesis.l2_time,
-            },
-            l1_origin: BlockNumHash { number: genesis_l1.number, hash: genesis_l1.hash },
-            seq_num: 0,
-        }
+        L2BlockInfo::new(
+            BlockInfo::from_l2_genesis(&self.rollup_config.genesis),
+            genesis_l1.id(),
+            0,
+        )
     }
 
     /// Create a [`SupervisedP2P`] / [`TestGossipTransport`] channel pair and
