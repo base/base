@@ -186,9 +186,10 @@ impl IntrinsicGas {
     /// parameter, rather than re-serialized here, because `compute` runs for
     /// every transaction on both the mempool-admission and block-building paths,
     /// where the caller already holds the serialized form; it feeds only the
-    /// EIP-2028 `payload` cost. A sponsored transaction is re-serialized with an
-    /// empty `payer_auth`, since the payer's bytes are billed in `payer_auth`
-    /// rather than against the sender's `gas_limit`.
+    /// EIP-2028 `payload` cost. A sponsored transaction is priced as if
+    /// `payer_auth` were empty, since the payer's bytes are billed in
+    /// `payer_auth` rather than against the sender's `gas_limit`. That cost is
+    /// folded from `encoded` rather than by re-serializing the body.
     ///
     /// Returns [`IntrinsicGasError::UnscheduledAuthenticator`] if any sender,
     /// payer, or config-change authenticator lacks a gas-schedule entry, and
@@ -318,11 +319,13 @@ impl IntrinsicGas {
             Self::auth_cost(signed.sender_auth().as_ref(), AuthWireForm::for_sender(tx.sender))?;
         let payer_auth = Self::max_payer_auth_cost(signed)?;
 
-        let payload = if signed.payer_auth().is_empty() {
-            Self::data_cost(encoded)
-        } else {
-            Self::data_cost(&signed.encoded_2718_without_payer_auth())
-        };
+        let payload = signed.fold_sender_billed_bytes(encoded, |byte| {
+            if byte == 0 {
+                Eip8130GasSchedule::TX_DATA_ZERO_BYTE
+            } else {
+                Eip8130GasSchedule::TX_DATA_NONZERO_BYTE
+            }
+        });
 
         let value_calls = tx
             .calls
@@ -1267,6 +1270,32 @@ mod tests {
         assert_eq!(
             long.payer_auth - short.payer_auth,
             200 * Eip8130GasSchedule::TX_DATA_NONZERO_BYTE
+        );
+    }
+
+    #[test]
+    fn sender_payload_cost_matches_empty_payer_auth_encoding() {
+        let tx = TxEip8130 {
+            sender: Some(ACCOUNT),
+            payer: Some(address!("0x2222222222222222222222222222222222222222")),
+            calls: vec![vec![Call {
+                to: ACCOUNT,
+                value: U256::from(1u64),
+                data: Bytes::from(vec![0u8; 64]),
+            }]],
+            ..Default::default()
+        };
+        // A long, mostly-zero `payer_auth` changes the list header's
+        // length-of-length and the zero/nonzero mix of the suffix. The
+        // sender-billed payload must still match a true empty-`payer_auth`
+        // re-encoding.
+        let mut payer_auth = configured_auth(K1);
+        payer_auth.extend_from_slice(&[0x00; 4_000]);
+        let signed_tx = signed(tx, configured_auth(K1), payer_auth);
+        let gas = intrinsic(&signed_tx, &EXISTING_KEY);
+        assert_eq!(
+            gas.payload,
+            IntrinsicGas::data_cost(&signed_tx.encoded_2718_without_payer_auth())
         );
     }
 
