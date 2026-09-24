@@ -13,12 +13,13 @@ use base_tx_manager::{
     BlobTxBuilder, SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError,
     TxManagerResult,
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use tracing::info;
 
 use crate::{L1Block, L1Miner};
 
-/// A pending submission waiting for [`L1MinerTxManager::mine_block`] to fire its receipt.
+/// A submission waiting to be staged, then for [`L1MinerTxManager::confirm_block`] to fire
+/// its receipt.
 pub struct Pending {
     /// Signed L1 transaction submitted to the miner.
     envelope: TxEnvelope,
@@ -75,62 +76,30 @@ pub struct Inner {
 
 /// Adapts [`L1Miner`] to the [`TxManager`] trait for action tests.
 ///
-/// [`send_async`] enqueues a [`TxCandidate`] and returns a [`SendHandle`] that
-/// resolves when [`mine_block`] is called. The spawned [`BatchDriver`] task
-/// suspends on these handles; [`Batcher::encode_only`] returns once every
-/// submission of a cycle has been enqueued, so [`mine_block`] can follow it directly.
+/// [`send_async`] signs a [`TxCandidate`], queues it as pending and returns a [`SendHandle`]
+/// that resolves once the transaction is staged to the miner and [`confirm_block`] sees it
+/// mined. The spawned [`BatchDriver`] task suspends on these handles; [`Batcher`] stages,
+/// mines and confirms from the test side.
 ///
 /// [`L1MinerTxManager`] is cheaply cloneable (Arc bump). Pass one clone to
-/// [`BatchDriver`] and retain the other for [`mine_block`] calls from the test.
-///
-/// When constructed with [`with_l1_head_tx`], [`mine_block`] automatically
-/// sends the new L1 head to a paired [`ChannelL1HeadSource`] so that the
-/// [`BatchDriver`] observes live L1 head updates.
+/// [`BatchDriver`] and retain the other for the test.
 ///
 /// [`send_async`]: L1MinerTxManager::send_async
-/// [`mine_block`]: L1MinerTxManager::mine_block
-/// [`with_l1_head_tx`]: L1MinerTxManager::with_l1_head_tx
+/// [`confirm_block`]: L1MinerTxManager::confirm_block
 /// [`BatchDriver`]: base_batcher_core::BatchDriver
-/// [`Batcher::encode_only`]: crate::Batcher::encode_only
-/// [`ChannelL1HeadSource`]: base_batcher_source::test_utils::ChannelL1HeadSource
+/// [`Batcher`]: crate::Batcher
 #[derive(Debug, Clone)]
 pub struct L1MinerTxManager {
     inner: Arc<Mutex<Inner>>,
     inbox_address: Address,
     signer: PrivateKeySigner,
     chain_id: u64,
-    /// Optional L1 head channel sender. When set, [`mine_block`] publishes the mined
-    /// block number so a paired [`ChannelL1HeadSource`] can advance the driver's L1 head.
-    ///
-    /// [`mine_block`]: L1MinerTxManager::mine_block
-    /// [`ChannelL1HeadSource`]: base_batcher_source::test_utils::ChannelL1HeadSource
-    l1_head_tx: Option<mpsc::UnboundedSender<u64>>,
 }
 
 impl L1MinerTxManager {
     /// Create a new manager.
     pub fn new(signer: PrivateKeySigner, inbox_address: Address, chain_id: u64) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(Inner::default())),
-            inbox_address,
-            signer,
-            chain_id,
-            l1_head_tx: None,
-        }
-    }
-
-    /// Attach an L1 head channel sender.
-    ///
-    /// After each [`mine_block`] call, the mined block number is sent to this channel.
-    /// A [`BatchDriver`] constructed with the paired [`ChannelL1HeadSource`] will observe
-    /// the update and advance its pipeline's L1 head accordingly.
-    ///
-    /// [`mine_block`]: L1MinerTxManager::mine_block
-    /// [`BatchDriver`]: base_batcher_core::BatchDriver
-    /// [`ChannelL1HeadSource`]: base_batcher_source::test_utils::ChannelL1HeadSource
-    pub fn with_l1_head_tx(mut self, tx: mpsc::UnboundedSender<u64>) -> Self {
-        self.l1_head_tx = Some(tx);
-        self
+        Self { inner: Arc::new(Mutex::new(Inner::default())), inbox_address, signer, chain_id }
     }
 
     /// Returns the number of pending (not yet staged) submissions.
@@ -212,8 +181,7 @@ impl L1MinerTxManager {
         count
     }
 
-    /// Fire receipt oneshots for staged items included in `block` and (if configured)
-    /// publish the new L1 head.
+    /// Fire receipt oneshots for staged items included in `block`.
     ///
     /// Staged items without receipts in `block` remain staged. This models the
     /// production transaction manager's receipt polling: RPC submission can succeed
@@ -243,28 +211,17 @@ impl L1MinerTxManager {
         for (responder, response) in responses {
             let _ = responder.send(response);
         }
-        if let Some(tx) = &self.l1_head_tx {
-            let _ = tx.send(block.number());
-        }
     }
 
     /// Simulate an L1 reorg back to `block_number`.
     ///
-    /// Calls [`L1Miner::reorg_to`] to truncate the canonical chain, fires a
-    /// failure receipt for every pending and staged submission (since their
-    /// inclusion block has been discarded or they are no longer valid), and
-    /// publishes the new L1 head so the [`BatchDriver`] observes the reorg.
+    /// Calls [`L1Miner::reorg_to`] to truncate the canonical chain and fires a
+    /// failure receipt for every pending and staged submission, since their
+    /// inclusion block has been discarded or they are no longer valid.
     ///
     /// Both `pending` (not yet staged) and `staged` (submitted to L1 but not
     /// yet confirmed) items are drained. This ensures no [`SendHandle`] is
     /// left dangling, which would block the driver's `in_flight.next()`.
-    ///
-    /// # Ordering
-    ///
-    /// Failure receipts are fired *before* the new L1 head is sent.
-    /// This is intentional: the driver's `select!` loop prioritises receipt
-    /// processing over head events, so firing receipts first ensures the
-    /// driver requeues any failed frames before it advances its L1 head.
     ///
     /// # In-flight items
     ///
@@ -290,30 +247,7 @@ impl L1MinerTxManager {
         for p in pending.into_iter().chain(staged) {
             let _ = p.responder.send(Err(TxManagerError::Rpc("reorg".to_string())));
         }
-        if let Some(tx) = &self.l1_head_tx {
-            let _ = tx.send(block_number);
-        }
         info!(block_number = %block_number, drained = %drained, "simulated L1 reorg");
-    }
-
-    /// Submit all pending transactions/blobs to `l1`, mine one block, resolve
-    /// all waiting [`SendHandle`]s with the real mined block number, and
-    /// (if configured) publish the block number to the L1 head channel.
-    ///
-    /// # Timing
-    ///
-    /// Call this once the spawned [`BatchDriver`] task has called [`send_async`] for
-    /// every submission of the cycle, which [`Batcher::encode_only`] guarantees on return.
-    ///
-    /// [`send_async`]: L1MinerTxManager::send_async
-    /// [`BatchDriver`]: base_batcher_core::BatchDriver
-    /// [`Batcher::encode_only`]: crate::Batcher::encode_only
-    pub fn mine_block(&self, l1: &mut L1Miner) -> u64 {
-        self.stage_n_to_l1(l1, usize::MAX);
-        let block = l1.mine_block().clone();
-        let block_number = block.number();
-        self.confirm_block(&block);
-        block_number
     }
 
     /// Build a signed transaction envelope and matching blob sidecar index for

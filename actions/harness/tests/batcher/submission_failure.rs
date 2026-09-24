@@ -47,9 +47,9 @@ async fn submission_failure_requeues_and_derivation_recovers() {
     batcher.fail_next_n_submissions(1);
     batcher.encode_only().await;
 
-    // Wait for the driver to process the failure receipt and return the frame
-    // to the pending queue via requeue + re-submit.
-    batcher.wait_until_requeued(1).await;
+    // The driver has processed the failure receipt and returned the frame to the
+    // pending queue via requeue + re-submit.
+    assert_eq!(batcher.pending_count(), 1, "the failed frame must be resubmitted");
 
     // Mine the successfully requeued frame into an L1 block.
     let block_num = batcher.mine_pending(&mut h.l1).await;
@@ -90,9 +90,9 @@ async fn consecutive_failures_then_success_derives_correctly() {
     batcher.fail_next_n_submissions(3);
     batcher.encode_only().await;
 
-    // Poll until the frame has made it through all three failures and back to
-    // pending via the successful fourth submission.
-    batcher.wait_until_requeued(1).await;
+    // The frame has made it through all three failures and back to pending via the
+    // successful fourth submission.
+    assert_eq!(batcher.pending_count(), 1, "the failed frame must be resubmitted");
 
     let block_num = batcher.mine_pending(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
