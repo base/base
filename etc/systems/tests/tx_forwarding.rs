@@ -455,7 +455,7 @@ async fn test_validity_transaction_submitted_directly_to_builder_is_included() -
     Ok(())
 }
 
-/// Verifies a Everest EIP-8130 transaction can carry validity predicates through forwarding and be
+/// Verifies an Everest EIP-8130 transaction can carry validity predicates through forwarding and be
 /// included by the native Denim payload builder.
 #[tokio::test]
 async fn test_eip8130_validity_transaction_is_included_by_native_builder() -> Result<()> {

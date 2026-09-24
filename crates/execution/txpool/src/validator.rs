@@ -2206,14 +2206,14 @@ mod tests {
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
     }
 
-    /// Builds a [`BaseTransactionValidator`] against a Everest-activated test chain spec with
+    /// Builds a [`BaseTransactionValidator`] against an Everest-activated test chain spec with
     /// no accounts seeded. EIP-8130 admission is fork-gated on Everest, so the structural-gate
     /// tests run with Everest active (at genesis) to exercise the checks past the fork gate.
     fn build_test_validator() -> TestValidator {
         build_test_validator_with_spec(everest_chain_spec())
     }
 
-    /// Builds a Everest-activated validator with a custom encoded transaction-size limit.
+    /// Builds an Everest-activated validator with a custom encoded transaction-size limit.
     fn build_test_validator_with_max_tx_input_bytes(max_tx_input_bytes: usize) -> TestValidator {
         let chain_spec = everest_chain_spec();
         let client = MockEthProvider::<BasePrimitives>::new()
@@ -2228,7 +2228,7 @@ mod tests {
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
     }
 
-    /// Builds a Everest-activated validator with one canonical account seeded.
+    /// Builds an Everest-activated validator with one canonical account seeded.
     fn build_test_validator_with_account(
         address: Address,
         account: ExtendedAccount,
