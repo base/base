@@ -94,6 +94,10 @@ including commands that a human might judge safe on inspection.
 
 ## 3. Pre-enable gates
 
+The workflows select Python 3.13 explicitly, including on `BaseRunnerGroup`;
+they do not rely on the runner's system Python. Local checks require Python
+3.11 or newer because the stdlib-only schema reader uses `tomllib`.
+
 Complete every gate below with `FEATURE_DOCS_AUTOMATION_ENABLED=false`
 before flipping it to `true`. None of these are exercised by this
 documentation change; they are deployment prerequisites, and unavailable
