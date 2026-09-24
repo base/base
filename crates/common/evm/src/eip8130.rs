@@ -758,8 +758,9 @@ impl Eip8130Executor {
         // `TxContext` precompile matches a real execution: a call that reads it
         // must see the same address it would on-chain, or it could take a
         // different path and skew the estimate. No signature is verified here.
-        // An open-mode placeholder `payer_auth` does not recover, so the sender
-        // stands in.
+        // An open-mode placeholder `payer_auth` does not recover. Estimation
+        // charges the sender for that stub so `eth_estimateGas` still prices
+        // the transaction. Included transactions recover a real payer.
         let payer = signed.resolved_payer(sender).unwrap_or(sender);
 
         let internals = EvmInternals::from_context(ctx);
