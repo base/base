@@ -8,7 +8,7 @@ use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, InitializationJob,
     RethTrieStorageLayout, RocksdbProofsStorage,
 };
-use base_node_core::args::ProofsHistoryRocksdbArgs;
+use base_node_core::args::{DeprecatedProofsHistoryDbArgs, ProofsHistoryRocksdbArgs};
 use clap::Parser;
 use reth_chainspec::ChainInfo;
 use reth_cli::chainspec::ChainSpecParser;
@@ -38,6 +38,10 @@ pub struct InitCommand<C: ChainSpecParser> {
     )]
     pub storage_path: PathBuf,
 
+    /// Deprecated proofs history database selection flags.
+    #[command(flatten)]
+    pub deprecated_proofs_history_db: DeprecatedProofsHistoryDbArgs,
+
     /// Runtime tuning options for the `RocksDB` proofs history backend.
     #[command(flatten)]
     pub proofs_history_rocksdb: ProofsHistoryRocksdbArgs,
@@ -49,7 +53,7 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
         self,
         runtime: reth_tasks::Runtime,
     ) -> eyre::Result<()> {
-        let Self { env, storage_path, proofs_history_rocksdb } = self;
+        let Self { env, storage_path, deprecated_proofs_history_db, proofs_history_rocksdb } = self;
 
         info!(target: "reth::cli", version = %version_metadata().short_version, "reth starting");
         info!(
@@ -57,6 +61,7 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
             path = ?storage_path,
             "Initializing Base proofs storage"
         );
+        deprecated_proofs_history_db.warn_if_set();
         base_node_core::args::ensure_rocksdb_storage_path(&storage_path)?;
 
         // Initialize the environment with read-only access

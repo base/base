@@ -54,6 +54,7 @@ pub async fn launch_node_with_proof_history(
         mempool_trusted_delegation_targets,
         proofs_history,
         proofs_history_storage_path,
+        deprecated_proofs_history_db,
         proofs_history_rocksdb,
         proofs_history_window,
         proofs_history_prune_interval,
@@ -75,6 +76,7 @@ pub async fn launch_node_with_proof_history(
         mempool_trusted_delegation_targets,
         proofs_history: false,
         proofs_history_storage_path: None,
+        deprecated_proofs_history_db: Default::default(),
         proofs_history_rocksdb: Default::default(),
         proofs_history_window: DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS,
         proofs_history_prune_interval: Duration::from_secs(15),
@@ -82,6 +84,8 @@ pub async fn launch_node_with_proof_history(
         upgrade_signal,
         upgrade_signal_l1_rpc,
     }));
+
+    deprecated_proofs_history_db.warn_if_set();
 
     if proofs_history {
         let path = proofs_history_storage_path.ok_or_else(|| {

@@ -12,6 +12,7 @@ use base_execution_trie::RocksdbProofsStorageOptions;
 use base_execution_txpool::{DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT};
 use base_upgrade_signal::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs};
 use clap::{ArgAction, ValueEnum, builder::ArgPredicate};
+use tracing::warn;
 
 /// Default proofs history window: 1 month of blocks at 2s block time.
 pub const DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS: u64 = 1_296_000;
@@ -62,6 +63,34 @@ pub fn ensure_rocksdb_storage_path(path: &Path) -> eyre::Result<()> {
     }
 
     Ok(())
+}
+
+/// Deprecated proofs history database selection arguments.
+///
+/// Proofs history now always uses `RocksDB`; this only preserves CLI compatibility while
+/// operators remove the old option from their configurations.
+#[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
+pub struct DeprecatedProofsHistoryDbArgs {
+    /// Deprecated and ignored. Proofs history always uses `RocksDB`.
+    #[arg(
+        long = "proofs-history.db",
+        visible_alias = "proofs.db",
+        value_name = "PROOFS_HISTORY_DB",
+        hide = true
+    )]
+    pub backend: Option<String>,
+}
+
+impl DeprecatedProofsHistoryDbArgs {
+    /// Emits a warning when the deprecated database-selection flag is provided.
+    pub fn warn_if_set(&self) {
+        if let Some(backend) = &self.backend {
+            warn!(
+                proofs_history_db = %backend,
+                "--proofs-history.db is deprecated and ignored; proofs history always uses RocksDB"
+            );
+        }
+    }
 }
 
 /// Runtime tuning options for the `RocksDB` proofs history backend.
@@ -353,6 +382,10 @@ pub struct RollupArgs {
     )]
     pub proofs_history_storage_path: Option<PathBuf>,
 
+    /// Deprecated proofs history database selection flags.
+    #[command(flatten)]
+    pub deprecated_proofs_history_db: DeprecatedProofsHistoryDbArgs,
+
     /// Runtime tuning options for the `RocksDB` proofs history backend.
     #[command(flatten)]
     pub proofs_history_rocksdb: ProofsHistoryRocksdbArgs,
@@ -438,6 +471,7 @@ impl Default for RollupArgs {
             mempool_trusted_delegation_targets: Vec::new(),
             proofs_history: false,
             proofs_history_storage_path: None,
+            deprecated_proofs_history_db: Default::default(),
             proofs_history_rocksdb: Default::default(),
             proofs_history_window: DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS,
             proofs_history_prune_interval: Duration::from_secs(15),
@@ -693,10 +727,16 @@ mod tests {
     }
 
     #[test]
-    fn test_proofs_history_db_flag_is_rejected() {
-        let result =
-            CommandParser::<RollupArgs>::try_parse_from(["reth", "--proofs-history.db", "rocksdb"]);
-        assert!(result.is_err());
+    fn test_deprecated_proofs_history_db_flags_remain_accepted() {
+        let args =
+            CommandParser::<RollupArgs>::parse_from(["reth", "--proofs-history.db", "mdbx"]).args;
+        assert_eq!(args.deprecated_proofs_history_db.backend.as_deref(), Some("mdbx"));
+
+        let args = CommandParser::<RollupArgs>::parse_from(["reth", "--proofs.db", "v2"]).args;
+        assert_eq!(args.deprecated_proofs_history_db.backend.as_deref(), Some("v2"));
+
+        let help = CommandParser::<RollupArgs>::command().render_help().to_string();
+        assert!(!help.contains("proofs-history.db"));
     }
 
     #[test]

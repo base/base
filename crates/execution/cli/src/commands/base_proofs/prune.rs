@@ -8,7 +8,8 @@ use base_execution_trie::{
     BaseProofStoragePruner, BaseProofsStorage, BaseProofsStore, RocksdbProofsStorage,
 };
 use base_node_core::{
-    DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryRocksdbArgs, TWELVE_HOURS_IN_BLOCKS,
+    DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, DeprecatedProofsHistoryDbArgs, ProofsHistoryRocksdbArgs,
+    TWELVE_HOURS_IN_BLOCKS,
 };
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
@@ -30,6 +31,10 @@ pub struct PruneCommand<C: ChainSpecParser> {
         required = true
     )]
     pub storage_path: PathBuf,
+
+    /// Deprecated proofs history database selection flags.
+    #[command(flatten)]
+    pub deprecated_proofs_history_db: DeprecatedProofsHistoryDbArgs,
 
     /// Runtime tuning options for the `RocksDB` proofs history backend.
     #[command(flatten)]
@@ -72,6 +77,7 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> PruneCommand<C> {
         let Self {
             env,
             storage_path,
+            deprecated_proofs_history_db,
             proofs_history_rocksdb,
             proofs_history_window,
             proofs_history_prune_batch_size,
@@ -83,6 +89,7 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> PruneCommand<C> {
             path = ?storage_path,
             "Pruning Base proofs storage"
         );
+        deprecated_proofs_history_db.warn_if_set();
         base_node_core::args::ensure_rocksdb_storage_path(&storage_path)?;
 
         // Initialize the environment with read-only access

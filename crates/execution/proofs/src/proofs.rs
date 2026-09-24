@@ -36,6 +36,8 @@ impl BaseNodeExtension for ProofsHistoryExtension {
     fn apply(self: Box<Self>, mut hooks: NodeHooks) -> NodeHooks {
         // TODO: if NodeHooks exposes the underlying Builder, we can call launch_node_with_proof_history
         let args = self.config;
+        args.deprecated_proofs_history_db.warn_if_set();
+
         let proofs_history_enabled = args.proofs_history;
         let proofs_history_rocksdb = args.proofs_history_rocksdb;
         let proofs_history_window = args.proofs_history_window;

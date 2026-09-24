@@ -5,7 +5,7 @@ use std::{path::PathBuf, sync::Arc};
 use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_trie::{BaseProofsStorage, BaseProofsStore, RocksdbProofsStorage};
-use base_node_core::args::ProofsHistoryRocksdbArgs;
+use base_node_core::args::{DeprecatedProofsHistoryDbArgs, ProofsHistoryRocksdbArgs};
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
@@ -30,6 +30,10 @@ pub struct UnwindCommand<C: ChainSpecParser> {
     )]
     pub storage_path: PathBuf,
 
+    /// Deprecated proofs history database selection flags.
+    #[command(flatten)]
+    pub deprecated_proofs_history_db: DeprecatedProofsHistoryDbArgs,
+
     /// Runtime tuning options for the `RocksDB` proofs history backend.
     #[command(flatten)]
     pub proofs_history_rocksdb: ProofsHistoryRocksdbArgs,
@@ -47,7 +51,13 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> UnwindCommand<C> {
         self,
         runtime: reth_tasks::Runtime,
     ) -> eyre::Result<()> {
-        let Self { env, storage_path, proofs_history_rocksdb, target } = self;
+        let Self {
+            env,
+            storage_path,
+            deprecated_proofs_history_db,
+            proofs_history_rocksdb,
+            target,
+        } = self;
 
         info!(target: "reth::cli", version = %version_metadata().short_version, "reth starting");
         info!(
@@ -55,6 +65,7 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> UnwindCommand<C> {
             path = ?storage_path,
             "Unwinding Base proofs storage"
         );
+        deprecated_proofs_history_db.warn_if_set();
         base_node_core::args::ensure_rocksdb_storage_path(&storage_path)?;
 
         // Initialize the environment with read-only access
