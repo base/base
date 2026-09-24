@@ -1,6 +1,6 @@
 //! High-level client helpers for derivation and execution.
 
-use std::{fmt::Debug, num::NonZeroU64};
+use std::fmt::Debug;
 
 use alloy_consensus::BlockBody;
 use alloy_primitives::{B256, Bytes};
@@ -47,7 +47,8 @@ where
 /// - `cfg`: The rollup configuration.
 /// - `target`: The target block number.
 ///
-/// Intermediate output roots are recorded every `intermediate_root_interval` blocks.
+/// Intermediate output roots are recorded every `intermediate_root_interval` blocks, which must
+/// be nonzero.
 ///
 /// ## Returns
 /// - `Ok((l2_safe_head, output_root, intermediate_roots))` - A tuple containing the [`L2BlockInfo`]
@@ -59,7 +60,7 @@ pub async fn advance_to_target<E, DP, P>(
     driver: &mut Driver<E, DP, P>,
     cfg: &RollupConfig,
     mut target: Option<u64>,
-    intermediate_root_interval: NonZeroU64,
+    intermediate_root_interval: u64,
 ) -> DriverResult<(L2BlockInfo, B256, Vec<B256>), E::Error>
 where
     E: Executor + Send + Sync + Debug,
@@ -187,7 +188,7 @@ where
             L2BlockInfo::from_block_and_genesis(&block, &driver.pipeline.rollup_config().genesis)?;
         let output_root = driver.executor.compute_output_root().map_err(DriverError::Executor)?;
         blocks_processed += 1;
-        if blocks_processed.is_multiple_of(intermediate_root_interval.get()) {
+        if blocks_processed.is_multiple_of(intermediate_root_interval) {
             intermediate_roots.push(output_root);
         }
         let tip_cursor = TipCursor::new(l2_info, outcome.header, output_root);
@@ -345,13 +346,9 @@ pub mod tests {
             .returning(move || Ok(keccak256(numbers.next().unwrap().to_be_bytes())));
 
         let mut driver = Driver::new(Arc::new(RwLock::new(cursor)), executor, pipeline);
-        let (head, root, checkpoints) = base_proof::block_on(advance_to_target(
-            &mut driver,
-            &config,
-            Some(end),
-            NonZeroU64::new(interval).unwrap(),
-        ))
-        .unwrap();
+        let (head, root, checkpoints) =
+            base_proof::block_on(advance_to_target(&mut driver, &config, Some(end), interval))
+                .unwrap();
 
         assert_eq!(head.block_info.number, end);
         assert_eq!(root, keccak256(337_u64.to_be_bytes()));
