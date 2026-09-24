@@ -5,7 +5,7 @@
 //! the network, `poll` checks the network proof request status, and `download`
 //! fetches and serializes the completed proof for `submitProof`.
 
-use std::{fmt, num::NonZeroU64, sync::Arc, time::Duration};
+use std::{fmt, sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
 use async_trait::async_trait;
@@ -323,8 +323,10 @@ impl NetworkZkProver {
             .ok_or_else(|| backend_error!("proof range end block overflowed u64"))?;
         let sequence_window =
             request.sequence_window.unwrap_or(self.config.default_sequence_window);
-        let intermediate_root_interval =
-            request.intermediate_root_interval.and_then(NonZeroU64::new).ok_or_else(|| {
+        let intermediate_root_interval = request
+            .intermediate_root_interval
+            .filter(|interval| *interval > 0)
+            .ok_or_else(|| {
                 backend_error!("intermediate_root_interval must be provided and greater than zero")
             })?;
 
@@ -334,7 +336,7 @@ impl NetworkZkProver {
             end_block = end_block,
             number_of_blocks = request.number_of_blocks_to_prove,
             sequence_window = sequence_window,
-            intermediate_root_interval = intermediate_root_interval.get(),
+            intermediate_root_interval = intermediate_root_interval,
             l1_head = ?request.l1_head,
             "starting SP1 Network range proof generation"
         );

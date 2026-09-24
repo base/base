@@ -1,6 +1,6 @@
 //! Witness generation for Succinct ZK proving backends.
 
-use std::{error::Error as StdError, fmt, num::NonZeroU64, sync::Arc};
+use std::{error::Error as StdError, fmt, sync::Arc};
 
 use alloy_primitives::{Address, B256};
 use base_l1_head::{L1HeadCalculator, L1HeadError};
@@ -25,7 +25,7 @@ pub struct WitnessParams<'a> {
     /// L2 block number whose timestamp determines the activated upgrade schedule.
     pub schedule_l2_block_number: Option<u64>,
     /// Number of blocks between intermediate output roots.
-    pub intermediate_root_interval: NonZeroU64,
+    pub intermediate_root_interval: u64,
 }
 
 /// Source used to select the L1 head hash for witness generation.
@@ -224,7 +224,7 @@ impl OpSuccinctWitnessProvider {
             start_block = start_block,
             end_block = end_block,
             l1_head_source = l1_head.variant_name(),
-            intermediate_root_interval = intermediate_root_interval.get(),
+            intermediate_root_interval = intermediate_root_interval,
             "starting witness generation"
         );
 

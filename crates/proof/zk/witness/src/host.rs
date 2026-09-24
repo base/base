@@ -1,4 +1,4 @@
-use std::{fmt, num::NonZeroU64, sync::Arc};
+use std::{fmt, sync::Arc};
 
 use alloy_eips::BlockId;
 use alloy_primitives::B256;
@@ -77,7 +77,7 @@ impl SuccinctHost {
         l1_head_hash: Option<B256>,
         safe_db_fallback: bool,
         schedule_l2_block_number: Option<u64>,
-        intermediate_root_interval: NonZeroU64,
+        intermediate_root_interval: u64,
     ) -> Result<HostConfig> {
         let l1_head_hash = match l1_head_hash {
             Some(hash) => hash,
