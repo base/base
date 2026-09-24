@@ -769,6 +769,50 @@ async fn test_send_raw_transaction_sync() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_send_raw_transaction_sync_existing_flashblock_receipt() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let state = setup.harness.flashblocks_state();
+    let mut updates = state.subscribe_to_flashblocks();
+    setup.send_test_payloads().await?;
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while state
+            .get_pending_blocks()
+            .get_transaction_receipt(setup.txn_details.alice_eth_transfer_hash)
+            .is_none()
+        {
+            updates.recv().await.unwrap();
+        }
+    })
+    .await?;
+
+    // Inclusion predates the request, so no new notification will arrive for this receipt.
+    let receipt = setup
+        .send_raw_transaction_sync(setup.txn_details.alice_eth_transfer_tx.clone(), Some(500))
+        .await?;
+
+    assert_eq!(receipt.transaction_hash(), setup.txn_details.alice_eth_transfer_hash);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_send_raw_transaction_sync_canonical_receipt() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let transaction = setup.txn_details.alice_eth_transfer_tx.clone();
+    let (receipt, inclusion) = tokio::join!(
+        setup.send_raw_transaction_sync(transaction.clone(), None),
+        setup.harness.build_block_from_transactions(vec![DEPOSIT_TX, transaction]),
+    );
+    inclusion?;
+
+    let receipt = receipt?;
+    assert_eq!(receipt.transaction_hash(), setup.txn_details.alice_eth_transfer_hash);
+    assert_eq!(receipt.block_number(), Some(1));
+    assert!(receipt.status());
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_send_raw_transaction_sync_timeout() {
     let setup = TestSetup::new().await.unwrap();
 
