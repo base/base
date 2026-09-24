@@ -1,6 +1,6 @@
 //! Database-backed implementations of [`BaseProofsStore`](crate::BaseProofsStore).
 //!
-//! This module defines the schema models and RocksDB storage backend used for storing trie
+//! This module defines the schema models and `RocksDB` storage backend used for storing trie
 //! branches, accounts, and storage leaves.
 
 mod models;

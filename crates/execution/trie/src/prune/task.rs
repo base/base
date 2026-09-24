@@ -10,7 +10,7 @@ use tracing::{info, warn};
 
 use crate::{BaseProofsStorage, BaseProofsStore, prune::BaseProofStoragePruner};
 
-/// Number of blocks pruned per RocksDB write batch.
+/// Number of blocks pruned per `RocksDB` write batch.
 ///
 /// Each batch commits independently, so commit overhead is amortized across this many blocks.
 /// The previous value of 200 caused commit overhead to dominate catch-up pruning runs; 2000

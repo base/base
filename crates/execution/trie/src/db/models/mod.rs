@@ -1,6 +1,6 @@
 //! Shared schema models for [`BaseProofsStore`](crate::BaseProofsStore).
 //!
-//! This module defines the keys and values used by the RocksDB proofs storage backend for
+//! This module defines the keys and values used by the `RocksDB` proofs storage backend for
 //! storing trie branches, accounts, and storage leaves.
 
 mod block;
