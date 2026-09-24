@@ -68,10 +68,6 @@ jobs:
           just: "false"
       - name: Checkout pinned fork-test pair
         shell: bash
-        env:
-          # BASE_STD_TOKEN must be a PAT with Contents:Read on base/base-std.
-          # GITHUB_TOKEN is repo-scoped and cannot access other repos, even internal ones.
-          GH_TOKEN: ${{ secrets.BASE_STD_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -81,8 +77,8 @@ jobs:
 
           # FETCH_HEAD supports commit SHAs and tags (including annotated tags),
           # keeping refs independently configurable for each repository.
-          gh repo clone base/base-std "$workdir/base-std" -- \
-            --filter=blob:none --no-checkout
+          git clone --filter=blob:none --no-checkout \
+            https://github.com/base/base-std.git "$workdir/base-std"
           git -C "$workdir/base-std" fetch --depth 1 origin "$BASE_STD_REF"
           git -C "$workdir/base-std" checkout --detach FETCH_HEAD
           git -C "$workdir/base-std" submodule update --init --recursive --depth 1
