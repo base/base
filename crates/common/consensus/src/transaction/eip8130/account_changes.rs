@@ -350,8 +350,8 @@ pub struct Delegation {
 /// On the wire each entry is a single RLP list whose first element is the type
 /// byte, followed by the body fields inline (per [EIP-8130]):
 /// - `rlp([0x00, user_salt, code, initial_actors])` -> [`AccountChange::Create`]
-/// - `rlp([0x01, channel, sequence, changes, signature])` -> [`AccountChange::ConfigChange`]
-/// - `rlp([0x02, target])` -> [`AccountChange::Delegation`]
+/// - `rlp([0x01, target])` -> [`AccountChange::Delegation`]
+/// - `rlp([0x02, channel, sequence, changes, signature])` -> [`AccountChange::ConfigChange`]
 ///
 /// The type byte is a genuine list element (not an EIP-2718-style `type_byte ||
 /// rlp(...)` prefix), so each entry is one self-contained RLP item and the
