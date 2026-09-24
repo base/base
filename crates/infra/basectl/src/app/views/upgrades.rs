@@ -193,8 +193,12 @@ fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
             name: "Cobalt",
             timestamp: cfg.cobalt_timestamp,
         },
-        UpgradeSpec { upgrade: BaseUpgrade::Denim, name: "Denim", timestamp: None },
-        UpgradeSpec { upgrade: BaseUpgrade::Everest, name: "Everest", timestamp: None },
+        UpgradeSpec { upgrade: BaseUpgrade::Denim, name: "Denim", timestamp: cfg.denim_timestamp },
+        UpgradeSpec {
+            upgrade: BaseUpgrade::Everest,
+            name: "Everest",
+            timestamp: cfg.everest_timestamp,
+        },
         UpgradeSpec { upgrade: BaseUpgrade::Zenith, name: "Zenith", timestamp: None },
     ]
 }
