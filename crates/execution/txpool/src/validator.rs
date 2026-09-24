@@ -974,9 +974,15 @@ where
             sender_bytecode_hash: sender_account.bytecode_hash,
             payer_auth: intrinsic.payer_auth,
             watch_set,
-            sender_locked: false,
-            payer_locked: false,
-            payer_trusted: false,
+            // With the Keystore removed there is no lock/trusted classification.
+            // For now every account gets the trusted, signature-stable treatment:
+            // exempt from the inflight-signature cap (`*_locked`), and payment
+            // bounded by an aggregate balance reservation rather than a per-payer
+            // count cap (`payer_trusted`). A per-account admission policy can be
+            // reintroduced later if needed.
+            sender_locked: true,
+            payer_locked: true,
+            payer_trusted: true,
             payer_max_cost,
             manifest,
         })
