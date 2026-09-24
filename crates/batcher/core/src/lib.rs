@@ -27,9 +27,6 @@ pub use submissions::{BatchTxCandidateBuilder, BatchTxCandidateError, Submission
 mod config;
 pub use config::BatchDriverConfig;
 
-mod event;
-pub use event::DriverEvent;
-
 mod derivation_status;
 pub use derivation_status::DerivationStatus;
 

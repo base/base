@@ -391,9 +391,9 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// after an L1 reorg.
     ///
     /// A reorg requires two driver loop iterations to complete: the first
-    /// processes each `Receipt(id, Failed)` event and requeues the frames in
-    /// the encoder pipeline; the second calls `submit_pending()` →
-    /// [`send_async`] to return them to the pending queue. This method polls
+    /// handles each failed receipt and requeues the frames in the encoder
+    /// pipeline; the second calls `submit_pending()` → [`send_async`] to
+    /// return them to the pending queue. This method polls
     /// [`pending_count`] until the condition is satisfied.
     ///
     /// # Panics

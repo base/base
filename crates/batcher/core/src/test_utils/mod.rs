@@ -4,7 +4,7 @@ mod throttle;
 pub use throttle::{ThrottleCallLog, TrackingThrottleClient};
 
 mod pipeline;
-pub use pipeline::{Recorded, ReorgPipeline, TrackingPipeline};
+pub use pipeline::{PipelineCall, Recorded, ReorgPipeline, TrackingPipeline};
 
 mod source;
 pub use source::{OneBlockSource, PendingL1HeadSource, PendingSource, TrackingSource};

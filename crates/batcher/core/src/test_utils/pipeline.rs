@@ -1,4 +1,8 @@
 //! Test [`BatchPipeline`] implementations for action-testing the batch driver.
+//!
+//! Hand-rolled rather than mocked: the driver ordering tests need one call log ordered across
+//! several trait methods, and the pipelines hold state (queued submissions, steps to encode)
+//! that the driver consumes while it runs.
 
 use std::sync::{Arc, Mutex};
 
@@ -9,6 +13,21 @@ use base_batcher_encoder::{
 };
 use base_common_consensus::BaseBlock;
 use base_protocol::BlockInfo;
+
+/// A [`BatchPipeline`] call recorded by [`TrackingPipeline`] for the ordering tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PipelineCall {
+    /// `add_block`.
+    AddBlock,
+    /// `confirm`.
+    Confirm,
+    /// `flush`.
+    Flush,
+    /// `advance_l1_head`, recorded only when the head advances.
+    AdvanceL1Head,
+    /// `reconcile_derivation`.
+    ReconcileDerivation,
+}
 
 /// Shared recording state populated by the test pipeline implementations.
 #[derive(Debug, Default)]
@@ -30,6 +49,10 @@ pub struct Recorded {
     pub safe_numbers: Vec<u64>,
     /// Number of times `flush()` was called.
     pub flush_count: usize,
+    /// The calls the ordering tests look at, in call order.
+    pub calls: Vec<PipelineCall>,
+    /// Number of `step()` calls that encoded a block.
+    pub encoded_steps: usize,
 }
 
 /// [`BatchPipeline`] that records every significant method call into a shared [`Recorded`].
@@ -50,6 +73,8 @@ pub struct TrackingPipeline {
     derivation_stalled: bool,
     /// When set, `flush` records the call then returns this error.
     flush_error: Option<StepError>,
+    /// Blocks left to encode: `step` reports one encoded block per call while above zero.
+    encoding_steps: usize,
 }
 
 impl TrackingPipeline {
@@ -62,7 +87,14 @@ impl TrackingPipeline {
             safe_head_matches: true,
             derivation_stalled: false,
             flush_error: None,
+            encoding_steps: 0,
         }
+    }
+
+    /// Make `step` report `steps` encoded blocks before reporting idle.
+    pub const fn with_encoding_steps(mut self, steps: usize) -> Self {
+        self.encoding_steps = steps;
+        self
     }
 
     /// Set the value returned by `da_backlog_bytes`.
@@ -92,11 +124,17 @@ impl TrackingPipeline {
 
 impl BatchPipeline for TrackingPipeline {
     fn add_block(&mut self, _: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)> {
+        self.recorded.lock().unwrap().calls.push(PipelineCall::AddBlock);
         Ok(())
     }
 
     fn step(&mut self) -> Result<StepResult, StepError> {
-        Ok(StepResult::Idle)
+        if self.encoding_steps == 0 {
+            return Ok(StepResult::Idle);
+        }
+        self.encoding_steps -= 1;
+        self.recorded.lock().unwrap().encoded_steps += 1;
+        Ok(StepResult::BlockEncoded)
     }
 
     fn next_submission(&mut self) -> Option<BatchSubmission> {
@@ -106,7 +144,9 @@ impl BatchPipeline for TrackingPipeline {
     }
 
     fn confirm(&mut self, id: SubmissionId, _: u64) {
-        self.recorded.lock().unwrap().confirmed.push(id);
+        let mut recorded = self.recorded.lock().unwrap();
+        recorded.confirmed.push(id);
+        recorded.calls.push(PipelineCall::Confirm);
     }
 
     fn requeue(&mut self, id: SubmissionId) {
@@ -114,7 +154,10 @@ impl BatchPipeline for TrackingPipeline {
     }
 
     fn flush(&mut self) -> Result<(), StepError> {
-        self.recorded.lock().unwrap().flush_count += 1;
+        let mut recorded = self.recorded.lock().unwrap();
+        recorded.flush_count += 1;
+        recorded.calls.push(PipelineCall::Flush);
+        drop(recorded);
         if let Some(error) = self.flush_error.take() {
             return Err(error);
         }
@@ -125,6 +168,7 @@ impl BatchPipeline for TrackingPipeline {
         let mut recorded = self.recorded.lock().unwrap();
         if l1_block > recorded.l1_heads.last().copied().unwrap_or_default() {
             recorded.l1_heads.push(l1_block);
+            recorded.calls.push(PipelineCall::AdvanceL1Head);
         }
     }
 
@@ -133,7 +177,10 @@ impl BatchPipeline for TrackingPipeline {
         safe_l2: BlockInfo,
         _: Option<u64>,
     ) -> DerivationReconciliation {
-        self.recorded.lock().unwrap().safe_numbers.push(safe_l2.number);
+        let mut recorded = self.recorded.lock().unwrap();
+        recorded.safe_numbers.push(safe_l2.number);
+        recorded.calls.push(PipelineCall::ReconcileDerivation);
+        drop(recorded);
         if !self.safe_head_matches {
             return DerivationReconciliation::SafeHeadMismatch;
         }
@@ -145,6 +192,7 @@ impl BatchPipeline for TrackingPipeline {
 
     fn reset(&mut self) {
         self.submissions.clear();
+        self.encoding_steps = 0;
         self.recorded.lock().unwrap().resets += 1;
     }
 

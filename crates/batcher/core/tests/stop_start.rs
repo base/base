@@ -8,16 +8,11 @@ use std::{
 use base_batcher_core::{
     AdminError,
     test_utils::{
-        BlockStub, DriverFixture, ImmediateConfirmTxManager, ManualConfirmTxManager, Recorded,
-        SubmissionStub, TrackingPipeline, TrackingSource,
+        BlockStub, DriverFixture, ImmediateConfirmTxManager, ManualConfirmTxManager, PipelineCall,
+        Recorded, SubmissionStub, TrackingPipeline, TrackingSource,
     },
 };
-use base_batcher_encoder::{
-    BatchPipeline, BatchSubmission, DerivationReconciliation, ReorgError, StepError, StepResult,
-    SubmissionId,
-};
 use base_batcher_source::{L2BlockEvent, test_utils::ChannelBlockSource};
-use base_common_consensus::BaseBlock;
 use base_protocol::BlockInfo;
 use base_runtime::{
     Cancellation, Clock, Spawner,
@@ -84,83 +79,36 @@ fn test_start_triggers_catchup_from_safe_head() {
     });
 }
 
-/// While stopped, `Block` source events must be dropped; the pipeline must not
-/// receive any blocks. Once started again, new blocks reach the pipeline.
+/// While stopped, the batcher does not read its source: the pipeline receives no blocks.
+/// Once started again, the blocks queued meanwhile reach the pipeline.
 #[test]
-fn test_stopped_drops_block_events() {
+fn test_stopped_leaves_the_source_unread() {
     Runner::start(Config::seeded(0), |ctx| async move {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
         let (source, source_tx) = ChannelBlockSource::new();
-
-        // Use a pipeline variant that counts add_block calls.
-        let add_block_calls = Arc::new(Mutex::new(0usize));
-        struct CountingPipeline {
-            calls: Arc<Mutex<usize>>,
-            inner: TrackingPipeline,
-        }
-        impl BatchPipeline for CountingPipeline {
-            fn add_block(&mut self, block: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)> {
-                *self.calls.lock().unwrap() += 1;
-                self.inner.add_block(block)
-            }
-            fn step(&mut self) -> Result<StepResult, StepError> {
-                self.inner.step()
-            }
-            fn next_submission(&mut self) -> Option<BatchSubmission> {
-                self.inner.next_submission()
-            }
-            fn confirm(&mut self, id: SubmissionId, n: u64) {
-                self.inner.confirm(id, n);
-            }
-            fn requeue(&mut self, id: SubmissionId) {
-                self.inner.requeue(id);
-            }
-            fn flush(&mut self) -> Result<(), StepError> {
-                self.inner.flush()
-            }
-            fn advance_l1_head(&mut self, n: u64) {
-                self.inner.advance_l1_head(n);
-            }
-            fn reconcile_derivation(
-                &mut self,
-                safe_l2: BlockInfo,
-                current_l1: Option<u64>,
-            ) -> DerivationReconciliation {
-                self.inner.reconcile_derivation(safe_l2, current_l1)
-            }
-            fn reset(&mut self) {
-                self.inner.reset();
-            }
-            fn da_backlog_bytes(&self) -> u64 {
-                self.inner.da_backlog_bytes()
-            }
-        }
-
-        let pipeline = CountingPipeline {
-            calls: Arc::clone(&add_block_calls),
-            inner: TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default()))),
+        let (driver, handles) = DriverFixture::new(
+            ctx.clone(),
+            TrackingPipeline::new(Arc::clone(&recorded)),
+            ImmediateConfirmTxManager { l1_block: 1 },
+        )
+        .source(source)
+        .build();
+        let handle = ctx.spawn(driver.run());
+        let blocks_added = || {
+            recorded.lock().unwrap().calls.iter().filter(|&&c| c == PipelineCall::AddBlock).count()
         };
 
-        let (driver, handles) =
-            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-                .source(source)
-                .build();
-        let handle = ctx.spawn(driver.run());
-
-        // Stop, then send a block: it must be dropped.
+        // Stop, then send a block: it stays in the source.
         handles.admin.stop().await.unwrap();
         source_tx.send(L2BlockEvent::Block(Box::new(BlockStub::with_number(1)))).unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
-        assert_eq!(
-            *add_block_calls.lock().unwrap(),
-            0,
-            "add_block must not be called while stopped"
-        );
+        assert_eq!(blocks_added(), 0, "a stopped batcher must not ingest blocks");
 
-        // Start, then send the next block: it must reach the pipeline.
+        // Start: the queued block and the next one reach the pipeline.
         handles.admin.start().await.unwrap();
         source_tx.send(L2BlockEvent::Block(Box::new(BlockStub::with_number(2)))).unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
-        assert_eq!(*add_block_calls.lock().unwrap(), 1, "add_block must be called once started");
+        assert_eq!(blocks_added(), 2, "a started batcher must ingest the queued blocks");
 
         ctx.cancel();
         assert!(handle.await.unwrap().is_ok());
