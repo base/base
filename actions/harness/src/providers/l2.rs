@@ -3,13 +3,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, map::HashMap};
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_consensus_derive::{L2ChainProvider, PipelineError, PipelineErrorKind};
-use base_protocol::{BatchValidationProvider, BlockInfo, L2BlockInfo};
+use base_protocol::{BatchValidationProvider, L2BlockInfo};
 
 /// Error type for [`ActionL2ChainProvider`].
 #[derive(Debug, thiserror::Error)]
@@ -62,19 +61,7 @@ impl ActionL2ChainProvider {
     pub fn from_genesis(rollup_config: &RollupConfig) -> Self {
         let provider = Self::default();
 
-        let genesis_l2 = L2BlockInfo {
-            block_info: BlockInfo {
-                hash: rollup_config.genesis.l2.hash,
-                number: rollup_config.genesis.l2.number,
-                parent_hash: Default::default(),
-                timestamp: rollup_config.genesis.l2_time,
-            },
-            l1_origin: BlockNumHash {
-                hash: rollup_config.genesis.l1.hash,
-                number: rollup_config.genesis.l1.number,
-            },
-            seq_num: 0,
-        };
+        let genesis_l2 = L2BlockInfo::from_l2_genesis(&rollup_config.genesis);
 
         // Use the rollup config's genesis system config, falling back to a harness
         // default with a non-zero gas_limit. `SystemConfig::default()` has gas_limit=0
@@ -178,6 +165,8 @@ impl L2ChainProvider for ActionL2ChainProvider {
 
 #[cfg(test)]
 mod tests {
+    use base_protocol::BlockInfo;
+
     use super::*;
 
     #[tokio::test]

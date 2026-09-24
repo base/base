@@ -249,7 +249,7 @@ mod tests {
     use base_common_genesis::ChainGenesis;
     use base_common_network::Base;
     use base_common_rpc_types::Transaction as BaseTransaction;
-    use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
+    use base_protocol::{L1BlockInfoBedrock, L2BlockInfo};
     #[cfg(feature = "metrics")]
     use metrics_exporter_prometheus::PrometheusBuilder;
 
@@ -355,16 +355,7 @@ mod tests {
         let forkchoice = super::find_starting_forkchoice(&rollup_config, &client)
             .await
             .expect("forkchoice should not require fetching the pruned L2 genesis block");
-        let expected_genesis = L2BlockInfo {
-            block_info: BlockInfo {
-                hash: rollup_config.genesis.l2.hash,
-                number: rollup_config.genesis.l2.number,
-                parent_hash: B256::ZERO,
-                timestamp: rollup_config.genesis.l2_time,
-            },
-            l1_origin: rollup_config.genesis.l1,
-            seq_num: 0,
-        };
+        let expected_genesis = L2BlockInfo::from_l2_genesis(&rollup_config.genesis);
 
         assert_eq!(forkchoice.un_safe.block_info.number, 1);
         assert_eq!(forkchoice.un_safe.block_info.hash, latest_hash);
