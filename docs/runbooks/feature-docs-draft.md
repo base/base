@@ -202,6 +202,16 @@ dispatched from `refs/heads/main`.
 
 ## 7. Snapshot drift
 
+Every privileged checkout in `collect`, `infer`, and `publish` uses a
+static, literal `repository: base/base` / `ref: refs/heads/main` (not the
+dynamic `control_sha`/`snapshot_sha` job output as the checkout `ref`), so
+an analyzer sees an explicitly trusted checkout rather than a dynamically
+controlled one. Immediately after each of those checkouts, an inline shell
+step re-derives `git rev-parse HEAD` and compares it against the 40-hex
+SHA `bootstrap` captured, failing closed with a replay diagnostic before
+any repo script or content read if the two disagree — preserving the same
+exact-captured-commit guarantee the dynamic ref used to provide.
+
 `publish` re-reads `main`'s tip immediately before rendering. If it no
 longer equals the `snapshot_sha` captured at bootstrap, the job **aborts**
 — it does not silently re-collect against the new tip and does not retry

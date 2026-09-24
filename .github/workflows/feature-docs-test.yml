@@ -5,6 +5,7 @@ on:
     paths:
       - etc/scripts/ci/feature_docs.py
       - etc/scripts/ci/feature_docs_schema.py
+      - etc/scripts/ci/checkout-guard-test.sh
       - .github/workflows/feature-docs-draft.yml
       - .github/workflows/feature-docs-test.yml
   push:
@@ -12,6 +13,7 @@ on:
     paths:
       - etc/scripts/ci/feature_docs.py
       - etc/scripts/ci/feature_docs_schema.py
+      - etc/scripts/ci/checkout-guard-test.sh
       - .github/workflows/feature-docs-draft.yml
       - .github/workflows/feature-docs-test.yml
 
@@ -32,3 +34,5 @@ jobs:
           persist-credentials: false
       - name: Run credential-free unit tests
         run: python3 etc/scripts/ci/feature_docs.py test
+      - name: Validate the inline post-checkout SHA guards (offline, temp git repos)
+        run: bash etc/scripts/ci/checkout-guard-test.sh

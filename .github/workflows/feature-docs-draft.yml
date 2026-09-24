@@ -117,12 +117,35 @@ jobs:
       - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
-      - name: Checkout immutable control revision (scripts only)
+      - name: Checkout main (statically trusted repository/ref; control SHA verified below)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ needs.bootstrap.outputs.control_sha }}
+          repository: base/base
+          ref: refs/heads/main
           fetch-depth: 1
           persist-credentials: false
+      - name: Verify checked-out HEAD matches the captured control SHA (inline, fail closed)
+        env:
+          EXPECTED_CONTROL_SHA: ${{ needs.bootstrap.outputs.control_sha }}
+          SOURCE_PR: ${{ needs.bootstrap.outputs.source_pr }}
+        run: |
+          set -euo pipefail
+          # The checkout step above is a static, literal repository/ref (not a
+          # dynamic job-output ref), which is what makes this checkout itself
+          # analyzer-trusted. This guard re-establishes the exact-SHA contract
+          # that a dynamic ref used to provide: main can advance between the
+          # bootstrap capture and this checkout, so we compare the actually
+          # checked-out commit to the SHA bootstrap captured and fail closed
+          # before any repo script runs on drift or an invalid capture.
+          if ! printf '%s' "$EXPECTED_CONTROL_SHA" | grep -Eiq '^[0-9a-f]{40}$'; then
+            echo "::error::captured control_sha is not a 40-hex SHA; refusing to run repo scripts"
+            exit 1
+          fi
+          actual_sha="$(git rev-parse HEAD)"
+          if [ "$actual_sha" != "$EXPECTED_CONTROL_SHA" ]; then
+            echo "::error::checked-out main HEAD ($actual_sha) does not match the captured control SHA ($EXPECTED_CONTROL_SHA); main advanced after bootstrap captured it. Replay with: gh workflow run feature-docs-draft.yml --ref main -f source_pr=$SOURCE_PR -F dry_run=false"
+            exit 1
+          fi
       - name: Collect read-only evidence
         id: collect
         env:
@@ -175,12 +198,32 @@ jobs:
             results-receiver.actions.githubusercontent.com:443
             *.blob.core.windows.net:443
             ${{ vars.LLM_GATEWAY_HOSTNAME }}:443
-      - name: Checkout immutable control revision (scripts only)
+      - name: Checkout main (statically trusted repository/ref; control SHA verified below)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ needs.bootstrap.outputs.control_sha }}
+          repository: base/base
+          ref: refs/heads/main
           fetch-depth: 1
           persist-credentials: false
+      - name: Verify checked-out HEAD matches the captured control SHA (inline, fail closed)
+        env:
+          EXPECTED_CONTROL_SHA: ${{ needs.bootstrap.outputs.control_sha }}
+          SOURCE_PR: ${{ needs.bootstrap.outputs.source_pr }}
+        run: |
+          set -euo pipefail
+          # See the identical guard in the `collect` job: the checkout above
+          # is a static, literal repository/ref; this step re-verifies the
+          # exact captured control SHA and fails closed before any repo
+          # script (including the model-facing inference script) runs.
+          if ! printf '%s' "$EXPECTED_CONTROL_SHA" | grep -Eiq '^[0-9a-f]{40}$'; then
+            echo "::error::captured control_sha is not a 40-hex SHA; refusing to run repo scripts"
+            exit 1
+          fi
+          actual_sha="$(git rev-parse HEAD)"
+          if [ "$actual_sha" != "$EXPECTED_CONTROL_SHA" ]; then
+            echo "::error::checked-out main HEAD ($actual_sha) does not match the captured control SHA ($EXPECTED_CONTROL_SHA); main advanced after bootstrap captured it. Replay with: gh workflow run feature-docs-draft.yml --ref main -f source_pr=$SOURCE_PR -F dry_run=false"
+            exit 1
+          fi
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: feature-docs-evidence-${{ github.run_id }}
@@ -221,12 +264,35 @@ jobs:
       - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
-      - name: Checkout immutable snapshot (scripts + page content, read-only)
+      - name: Checkout main (statically trusted repository/ref; snapshot SHA verified below)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ needs.bootstrap.outputs.snapshot_sha }}
+          repository: base/base
+          ref: refs/heads/main
           fetch-depth: 1
           persist-credentials: false
+      - name: Verify checked-out HEAD matches the captured snapshot SHA (inline, fail closed)
+        env:
+          EXPECTED_SNAPSHOT_SHA: ${{ needs.bootstrap.outputs.snapshot_sha }}
+          SOURCE_PR: ${{ needs.bootstrap.outputs.source_pr }}
+        run: |
+          set -euo pipefail
+          # See the identical guard in the `collect`/`infer` jobs: the checkout
+          # above is a static, literal repository/ref; this step re-verifies
+          # the exact captured snapshot SHA and fails closed before `prepare`
+          # or `publish` read any page/source content from this checkout.
+          # The later "Abort if main drifted" step re-checks drift against the
+          # live API before any write-capable token exists; this step
+          # additionally guarantees the checkout itself landed on that SHA.
+          if ! printf '%s' "$EXPECTED_SNAPSHOT_SHA" | grep -Eiq '^[0-9a-f]{40}$'; then
+            echo "::error::captured snapshot_sha is not a 40-hex SHA; refusing to read repo content"
+            exit 1
+          fi
+          actual_sha="$(git rev-parse HEAD)"
+          if [ "$actual_sha" != "$EXPECTED_SNAPSHOT_SHA" ]; then
+            echo "::error::checked-out main HEAD ($actual_sha) does not match the captured snapshot SHA ($EXPECTED_SNAPSHOT_SHA); main advanced after bootstrap captured it. Replay with: gh workflow run feature-docs-draft.yml --ref main -f source_pr=$SOURCE_PR -F dry_run=false"
+            exit 1
+          fi
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: feature-docs-evidence-${{ github.run_id }}
