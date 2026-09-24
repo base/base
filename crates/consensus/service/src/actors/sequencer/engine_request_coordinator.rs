@@ -6,6 +6,7 @@ use std::{
 };
 
 use alloy_eips::BlockNumberOrTag;
+use alloy_primitives::B256;
 use base_consensus_engine::{
     ConsolidateTask, EngineClient, EngineTask, EngineTaskError, EngineTaskErrorSeverity,
     EngineTaskErrors, FinalizeTask, Metrics as EngineMetrics, SealTaskError,
@@ -83,6 +84,53 @@ where
     /// Returns mutable sequencer routing state for test harness setup.
     pub const fn sequencer_state_mut(&mut self) -> &mut SequencerEngineState {
         &mut self.sequencer_state
+    }
+
+    /// Validates an authorized admin start against the serialized engine state.
+    ///
+    /// Conductor supplies its committed head to admin start even when it has no new payload to
+    /// post. That head can release an unobserved non-shadow catch-up, but cannot override known
+    /// gaps or conflicts. The caller must check conductor leadership before requesting activation.
+    pub fn prepare_sequencer_start(
+        &mut self,
+        expected_hash: B256,
+    ) -> Result<(), EngineClientError> {
+        let sync_state = self.processor.engine_state().sync_state;
+        let head = sync_state.unsafe_head();
+        if expected_hash == B256::ZERO || head.block_info.hash == B256::ZERO {
+            return Err(EngineClientError::RequestError(
+                "no prestate: unsafe head is uninitialized".to_string(),
+            ));
+        }
+        if expected_hash != head.block_info.hash {
+            return Err(EngineClientError::RequestError(format!(
+                "block hash mismatch: engine unsafe head is {}, caller requested {}",
+                head.block_info.hash, expected_hash
+            )));
+        }
+        if !self.processor.engine_state().el_sync_finished {
+            return Err(EngineClientError::ELSyncing);
+        }
+        match &self.sequencer_state {
+            SequencerEngineState::CatchingUp { shadow: true, .. }
+            | SequencerEngineState::ShadowActive(_) => {
+                return Err(EngineClientError::RequestError(
+                    "sequencer start handshake is unavailable in shadow mode".to_string(),
+                ));
+            }
+            SequencerEngineState::CatchingUp { catchup, .. } => {
+                if catchup.is_faulted() {
+                    return Err(EngineClientError::ShadowBufferFaulted);
+                }
+                if catchup.has_observations() && !catchup.is_complete(head, sync_state.safe_head())
+                {
+                    return Err(EngineClientError::ELSyncing);
+                }
+            }
+            SequencerEngineState::Regular => {}
+        }
+        self.sequencer_state = SequencerEngineState::Regular;
+        Ok(())
     }
 
     /// Returns whether this handler is configured as a shadow sequencer.
@@ -301,6 +349,12 @@ where
                 };
 
                 match request {
+                    EngineActorRequest::PrepareSequencerStart { expected_hash, result_tx } => {
+                        let result = self.prepare_sequencer_start(expected_hash);
+                        if result_tx.send(result).await.is_err() {
+                            warn!(target: "engine", "Sequencer start response receiver dropped");
+                        }
+                    }
                     EngineActorRequest::BuildRequest(build_request) => {
                         let BuildRequest { attributes, result_tx, otel_cx } = *build_request;
                         let client = Arc::clone(self.processor.client());
@@ -454,13 +508,14 @@ where
                     }
                     EngineActorRequest::ProcessAdminUnsafeL2BlockRequest(envelope) => {
                         match self.sequencer_state {
-                            SequencerEngineState::CatchingUp { .. } => {
+                            SequencerEngineState::CatchingUp { shadow: true, .. } => {
                                 warn!(target: "engine", "Ignoring admin unsafe payload during canonical catch-up");
                             }
                             SequencerEngineState::ShadowActive(_) => {
                                 warn!(target: "engine", "Ignoring admin unsafe payload on shadow sequencer");
                             }
-                            SequencerEngineState::Regular => {
+                            SequencerEngineState::Regular
+                            | SequencerEngineState::CatchingUp { shadow: false, .. } => {
                                 self.processor.handle_admin_unsafe_l2_block(*envelope);
                             }
                         }
@@ -705,18 +760,23 @@ where
 mod tests {
     use std::sync::Arc;
 
+    use alloy_primitives::B256;
+    use alloy_rpc_types_engine::ExecutionPayloadV1;
     use base_common_genesis::RollupConfig;
+    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_consensus_engine::{
         Engine, EngineState,
-        test_utils::{MockEngineClient, test_engine_client_builder},
+        test_utils::{MockEngineClient, TestEngineStateBuilder, test_engine_client_builder},
     };
-    use base_protocol::L2BlockInfo;
+    use base_protocol::{BlockInfo, L2BlockInfo};
     use jsonrpsee::core::ClientError;
+    use rstest::rstest;
     use tokio::sync::watch;
 
     use super::{BootstrapRole, SequencerEngineRequestCoordinator, SequencerEngineState};
     use crate::{
-        Conductor, ConductorError, EngineProcessor, MockConductor, MockEngineDerivationClient,
+        CanonicalUnsafeCatchup, Conductor, ConductorError, EngineProcessor, MockConductor,
+        MockEngineDerivationClient, ShadowReconciliationGate,
     };
 
     fn coordinator(
@@ -791,5 +851,91 @@ mod tests {
             .returning(|| Err(ConductorError::Rpc(ClientError::Custom("timeout".into()))));
         let coordinator = coordinator(false, false, Some(Arc::new(conductor)));
         assert_eq!(coordinator.resolve_bootstrap_role().await, BootstrapRole::ConductorFollower);
+    }
+
+    #[rstest]
+    #[case::no_observations(100, true, &[], false, true)]
+    #[case::caught_up(100, true, &[(100, 100)], false, true)]
+    #[case::wrong_hash(99, true, &[], false, false)]
+    #[case::zero_hash(0, true, &[], false, false)]
+    #[case::el_syncing(100, false, &[], false, false)]
+    #[case::gap(100, true, &[(102, 102)], false, false)]
+    #[case::different_branch(100, true, &[(100, 99)], false, false)]
+    #[case::private_tail(100, true, &[(99, 99)], false, false)]
+    #[case::faulted(100, true, &[(100, 100), (100, 99)], false, false)]
+    #[case::shadow_catchup(100, true, &[], true, false)]
+    #[case::shadow_caught_up(100, true, &[(100, 100)], true, false)]
+    fn prepare_start_preserves_catchup_safety(
+        #[case] requested_hash: u8,
+        #[case] el_synced: bool,
+        #[case] observations: &[(u64, u8)],
+        #[case] shadow: bool,
+        #[case] accepted: bool,
+    ) {
+        let head = L2BlockInfo {
+            block_info: BlockInfo {
+                number: 100,
+                hash: B256::with_last_byte(100),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let state = TestEngineStateBuilder::new()
+            .with_unsafe_head(head)
+            .with_safe_head(L2BlockInfo::default())
+            .with_el_sync_finished(el_synced)
+            .build();
+        let (state_tx, _) = watch::channel(state);
+        let (queue_tx, _) = watch::channel(0usize);
+        let processor = EngineProcessor::new(
+            Arc::new(test_engine_client_builder().build()),
+            Arc::new(RollupConfig::default()),
+            MockEngineDerivationClient::new(),
+            Engine::new(state, state_tx, queue_tx),
+        );
+        let (head_tx, _) = watch::channel(head);
+        let mut coordinator =
+            SequencerEngineRequestCoordinator::new(processor, shadow, None, true, head_tx);
+        let mut catchup = CanonicalUnsafeCatchup::default();
+        for &(number, hash) in observations {
+            catchup.buffer_payload(BaseExecutionPayloadEnvelope {
+                execution_payload: BaseExecutionPayload::V1(ExecutionPayloadV1 {
+                    block_number: number,
+                    block_hash: B256::with_last_byte(hash),
+                    parent_hash: B256::ZERO,
+                    fee_recipient: Default::default(),
+                    state_root: B256::ZERO,
+                    receipts_root: B256::ZERO,
+                    logs_bloom: Default::default(),
+                    prev_randao: B256::ZERO,
+                    gas_limit: 30_000_000,
+                    gas_used: 0,
+                    timestamp: number,
+                    extra_data: Default::default(),
+                    base_fee_per_gas: Default::default(),
+                    transactions: vec![],
+                }),
+                parent_beacon_block_root: None,
+            });
+        }
+        catchup.commit(head);
+        *coordinator.sequencer_state_mut() = SequencerEngineState::CatchingUp { shadow, catchup };
+
+        let result = coordinator.prepare_sequencer_start(B256::with_last_byte(requested_hash));
+        assert_eq!(result.is_ok(), accepted, "{result:?}");
+        assert_eq!(
+            matches!(coordinator.sequencer_state(), SequencerEngineState::Regular),
+            accepted
+        );
+        // Acceptance must remain idempotent; refusal must not discard the blocking evidence.
+        assert_eq!(
+            coordinator.prepare_sequencer_start(B256::with_last_byte(requested_hash)).is_ok(),
+            accepted
+        );
+
+        *coordinator.sequencer_state_mut() =
+            SequencerEngineState::ShadowActive(Box::new(ShadowReconciliationGate::new(head)));
+        assert!(coordinator.prepare_sequencer_start(head.block_info.hash).is_err());
+        assert!(matches!(coordinator.sequencer_state(), SequencerEngineState::ShadowActive(_)));
     }
 }

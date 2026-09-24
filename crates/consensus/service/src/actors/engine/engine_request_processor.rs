@@ -703,7 +703,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
     use alloy_consensus::transaction::Recovered;
     use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag, NumHash, eip2718::Encodable2718};
@@ -910,6 +910,123 @@ mod tests {
             admin.engine_state().sync_state.unsafe_head().block_info.number,
             if valid { 2 } else { 1 }
         );
+    }
+
+    #[rstest]
+    #[case::conductor_follower(false, true)]
+    #[case::shadow_follower(true, false)]
+    #[tokio::test]
+    async fn admin_payload_advances_catching_up_conductor_only_when_not_shadow(
+        #[case] shadow: bool,
+        #[case] should_advance: bool,
+    ) {
+        let parent = L2BlockInfo {
+            block_info: BlockInfo {
+                number: 10,
+                hash: B256::with_last_byte(10),
+                timestamp: 9,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut child = unsafe_payload_with_l1_info(11, parent.block_info.hash, B256::ZERO);
+        let child_hash =
+            child.execution_payload.clone().try_into_block::<BaseTxEnvelope>().unwrap().hash_slow();
+        if let BaseExecutionPayload::V1(payload) = &mut child.execution_payload {
+            payload.block_hash = child_hash;
+        }
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, parent)
+                .with_block_info_by_tag(BlockNumberOrTag::Safe, parent)
+                .with_block_info_by_tag(BlockNumberOrTag::Finalized, parent)
+                .with_new_payload_v2_response(PayloadStatus {
+                    status: PayloadStatusEnum::Valid,
+                    latest_valid_hash: Some(child_hash),
+                })
+                .with_fork_choice_updated_v3_response(valid_fcu())
+                .build(),
+        );
+        let mut derivation = MockEngineDerivationClient::new();
+        derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
+        derivation.expect_notify_sync_completed().returning(|_| Ok(()));
+        let initial_state = TestEngineStateBuilder::new()
+            .with_unsafe_head(parent)
+            .with_safe_head(parent)
+            .with_finalized_head(parent)
+            .with_el_sync_finished(true)
+            .build();
+        let (state_tx, _) = watch::channel(initial_state);
+        let (queue_tx, _) = watch::channel(0usize);
+        let processor = EngineProcessor::new(
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            derivation,
+            Engine::new(initial_state, state_tx, queue_tx),
+        );
+        let (unsafe_head_tx, mut unsafe_head_rx) = watch::channel(L2BlockInfo::default());
+        let (request_tx, request_rx) = mpsc::channel(4);
+        let mut coordinator =
+            SequencerEngineRequestCoordinator::new(processor, shadow, None, shadow, unsafe_head_tx);
+        *coordinator.sequencer_state_mut() =
+            SequencerEngineState::CatchingUp { shadow, catchup: Default::default() };
+        let handle = coordinator.start(request_rx);
+
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            unsafe_head_rx.wait_for(|head| *head == parent),
+        )
+        .await
+        .expect("timed out waiting for coordinator bootstrap")
+        .expect("unsafe head watch closed during bootstrap");
+        request_tx
+            .send(EngineActorRequest::ProcessAdminUnsafeL2BlockRequest(Box::new(child)))
+            .await
+            .expect("failed to send admin payload");
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        request_tx
+            .send(EngineActorRequest::PrepareSequencerStart {
+                expected_hash: parent.block_info.hash,
+                result_tx,
+            })
+            .await
+            .expect("failed to send barrier request");
+        let barrier = tokio::time::timeout(Duration::from_secs(1), result_rx.recv())
+            .await
+            .expect("timed out waiting for barrier response")
+            .expect("barrier response channel closed");
+
+        if should_advance {
+            assert_eq!(unsafe_head_rx.borrow().block_info.number, 11);
+            assert_eq!(unsafe_head_rx.borrow().block_info.hash, child_hash);
+            assert!(client.last_new_payload_v2().await.is_some());
+            assert!(matches!(barrier, Err(EngineClientError::RequestError(_))));
+
+            let (result_tx, mut result_rx) = mpsc::channel(1);
+            request_tx
+                .send(EngineActorRequest::PrepareSequencerStart {
+                    expected_hash: child_hash,
+                    result_tx,
+                })
+                .await
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(1), result_rx.recv())
+                .await
+                .unwrap()
+                .unwrap()
+                .expect("takeover must accept the inserted committed head");
+        } else {
+            assert!(matches!(barrier, Err(EngineClientError::RequestError(_))));
+            assert_eq!(*unsafe_head_rx.borrow(), parent);
+            assert!(client.last_new_payload_v2().await.is_none());
+        }
+
+        drop(request_tx);
+        let result = tokio::time::timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("timed out shutting down coordinator")
+            .expect("coordinator task panicked");
+        assert!(matches!(result, Err(crate::EngineError::ChannelClosed)));
     }
 
     #[rstest]
