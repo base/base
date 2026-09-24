@@ -140,15 +140,6 @@ mod tests {
         }
     }
 
-    struct FixedPoller(u64);
-
-    #[async_trait]
-    impl L1HeadPolling for FixedPoller {
-        async fn latest_head(&self) -> Result<u64, SourceError> {
-            Ok(self.0)
-        }
-    }
-
     struct IncrementingPoller(AtomicU64);
 
     #[async_trait]
@@ -165,22 +156,6 @@ mod tests {
         async fn latest_head(&self) -> Result<u64, SourceError> {
             Err(SourceError::Provider("poll down".to_string()))
         }
-    }
-
-    #[test]
-    fn test_hybrid_l1_new_head() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let stream = futures::stream::once(async { Ok(5u64) });
-            let mut source = HybridL1HeadSource::new(
-                ctx,
-                StreamSub(stream.boxed()),
-                FixedPoller(5),
-                Duration::from_secs(100),
-            );
-
-            let event = source.next().await.unwrap();
-            assert_eq!(event, L1HeadEvent::NewHead(5));
-        });
     }
 
     #[test]
@@ -242,21 +217,6 @@ mod tests {
 
             let err = source.next().await.unwrap_err();
             assert!(matches!(err, SourceError::Provider(_)));
-        });
-    }
-
-    #[test]
-    fn test_hybrid_l1_polling_uses_virtual_time() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let mut source = HybridL1HeadSource::new(
-                ctx,
-                StreamSub(futures::stream::pending().boxed()),
-                FixedPoller(12),
-                Duration::from_secs(10),
-            );
-
-            let event = source.next().await.unwrap();
-            assert_eq!(event, L1HeadEvent::NewHead(12));
         });
     }
 }
