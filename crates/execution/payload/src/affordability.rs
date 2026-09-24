@@ -65,7 +65,9 @@ impl CoinbaseTipAffordability {
             return false;
         };
         let sender = tx.sender();
-        let Some(payer) = signed.resolved_payer(sender) else {
+        // An open payer whose signature does not recover cannot be priced, so
+        // the transaction is unaffordable and block building skips it.
+        let Ok(payer) = signed.resolved_payer(sender) else {
             return true;
         };
         Self::unaffordable_tip(

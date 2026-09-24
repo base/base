@@ -378,15 +378,24 @@ impl Eip8130Signed {
 
     /// The account that pays gas: `resolved_sender` for self-pay, the named
     /// payer for sponsored pay, and the recovered signer in open payer mode.
-    /// Returns `None` only when an open-mode `payer_auth` does not recover.
+    ///
+    /// Returns [`RecoveryError`] when an open-mode `payer_auth` does not
+    /// recover. Included transactions have already passed payer verification,
+    /// so callers must handle that error instead of guessing what a missing
+    /// payer means.
+    ///
+    /// [`RecoveryError`]: alloy_consensus::crypto::RecoveryError
     #[cfg(feature = "k256")]
-    pub fn resolved_payer(&self, resolved_sender: Address) -> Option<Address> {
+    pub fn resolved_payer(
+        &self,
+        resolved_sender: Address,
+    ) -> Result<Address, alloy_consensus::crypto::RecoveryError> {
         match self.tx.payer {
-            None => Some(resolved_sender),
-            Some(_) if self.tx.is_open_payer() => {
-                self.recover_open_payer(resolved_sender).ok().flatten()
-            }
-            Some(payer) => Some(payer),
+            None => Ok(resolved_sender),
+            Some(_) if self.tx.is_open_payer() => self
+                .recover_open_payer(resolved_sender)?
+                .ok_or_else(alloy_consensus::crypto::RecoveryError::new),
+            Some(payer) => Ok(payer),
         }
     }
 

@@ -753,8 +753,9 @@ impl Eip8130Executor {
         let max_fee = tx.max_fee_per_gas;
         let max_priority = tx.max_priority_fee_per_gas;
         // Use the declared payer (sponsor); no signature is verified here. An
-        // open-mode placeholder `payer_auth` does not recover, so the sender
-        // stands in.
+        // open-mode placeholder `payer_auth` does not recover. Estimation
+        // charges the sender for that stub so `eth_estimateGas` still prices
+        // the transaction. Included transactions recover a real payer.
         let payer = signed.resolved_payer(sender).unwrap_or(sender);
 
         let internals = EvmInternals::from_context(ctx);
