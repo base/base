@@ -823,11 +823,15 @@ where
     /// When `no_tx_pool` is `false` the builder is composing a new block from mempool plus
     /// attribute pre-includes; pre-includes there may legitimately be skipped on `InvalidTx`,
     /// so the historical skip-and-continue behavior is preserved.
-    #[instrument(skip_all, fields(phase = "sequencer_txs"))]
+    #[instrument(
+        skip_all,
+        fields(phase = "sequencer_txs", block_number = tracing::field::Empty)
+    )]
     pub fn execute_sequencer_transactions(
         &self,
         builder: &mut impl BlockBuilder<Primitives = Evm::Primitives>,
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
+        tracing::Span::current().record("block_number", self.parent().number().saturating_add(1));
         let mut info = ExecutionInfo::new();
         let no_tx_pool = self.attributes().no_tx_pool();
         let resource_metering = &self.builder_config.resource_metering;
@@ -901,7 +905,6 @@ where
                 );
             }
         }
-
         Ok(info)
     }
 

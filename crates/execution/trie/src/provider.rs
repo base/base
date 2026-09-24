@@ -27,6 +27,7 @@ use reth_trie_common::{
 
 use crate::{
     BaseProofsStorage, BaseProofsStorageError, BaseProofsStore,
+    metrics::{StateMetrics, StateSeekKind},
     proof::{
         DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
         DatabaseTrieWitness,
@@ -92,13 +93,16 @@ impl<'a, Storage: BaseProofsStore + Clone> BaseProofsStateProviderRef<'a, Storag
         hashed_key: B256,
     ) -> ProviderResult<Option<StorageValue>> {
         let tx = self.ensure_tx()?;
-        Ok(self
+        let mut cursor = self
             .storage
             .storage_hashed_cursor_with_tx(&tx, keccak256(address.0), self.block_number)
-            .map_err(Into::<ProviderError>::into)?
-            .seek(hashed_key)
-            .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, val)| (key == hashed_key).then_some(val)))
+            .map_err(Into::<ProviderError>::into)?;
+        let found = StateMetrics::record_seek(
+            StateSeekKind::Storage,
+            || cursor.seek(hashed_key).map_err(Into::<ProviderError>::into),
+            |found| found.as_ref().is_some_and(|(key, _)| *key == hashed_key),
+        )?;
+        Ok(found.and_then(|(key, value)| (key == hashed_key).then_some(value)))
     }
 }
 
@@ -235,13 +239,16 @@ impl<'a, Storage: BaseProofsStore> AccountReader for BaseProofsStateProviderRef<
     fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
         let hashed_key = keccak256(address.0);
         let tx = self.ensure_tx()?;
-        Ok(self
+        let mut cursor = self
             .storage
             .account_hashed_cursor_with_tx(&tx, self.block_number)
-            .map_err(Into::<ProviderError>::into)?
-            .seek(hashed_key)
-            .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, account)| (key == hashed_key).then_some(account)))
+            .map_err(Into::<ProviderError>::into)?;
+        let found = StateMetrics::record_seek(
+            StateSeekKind::Account,
+            || cursor.seek(hashed_key).map_err(Into::<ProviderError>::into),
+            |found| found.as_ref().is_some_and(|(key, _)| *key == hashed_key),
+        )?;
+        Ok(found.and_then(|(key, account)| (key == hashed_key).then_some(account)))
     }
 }
 
