@@ -1,6 +1,9 @@
 //! ZK proof benchmark runner for completed load-test runs.
 
-use std::time::{Duration, Instant};
+use std::{
+    num::NonZeroU64,
+    time::{Duration, Instant},
+};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
@@ -153,7 +156,7 @@ impl ZkBenchRunner {
                     number_of_blocks_to_prove: 1,
                     sequence_window: None,
                     l1_head: Some(l1_head),
-                    intermediate_root_interval: None,
+                    intermediate_root_interval: NonZeroU64::MIN,
                     schedule_l2_block_number: None,
                     zk_vm: ZkVm::Sp1,
                     zk_backend,

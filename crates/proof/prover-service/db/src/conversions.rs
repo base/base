@@ -276,7 +276,7 @@ mod tests {
                 number_of_blocks_to_prove: 2,
                 sequence_window: None,
                 l1_head: None,
-                intermediate_root_interval: None,
+                intermediate_root_interval: 1.try_into().unwrap(),
                 schedule_l2_block_number: None,
                 zk_vm: ProtocolZkVm::Sp1,
                 zk_backend: ProtocolZkBackend::Cluster,

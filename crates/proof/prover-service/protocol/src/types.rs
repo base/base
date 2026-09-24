@@ -1,6 +1,6 @@
 //! JSON-RPC request and response types for the shared prover service protocol.
 
-use std::{collections::HashMap, fmt};
+use std::{collections::HashMap, fmt, num::NonZeroU64};
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_primitives::{ProofRequest as PrimitiveProofRequest, Proposal};
@@ -196,9 +196,8 @@ pub struct ZkProofRequest {
     /// Optional L1 head hash used for witness generation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub l1_head: Option<B256>,
-    /// Optional intermediate output root interval.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub intermediate_root_interval: Option<u64>,
+    /// Required checkpoint spacing in blocks, taken from the game being proven.
+    pub intermediate_root_interval: NonZeroU64,
     /// L2 block used to pin the upgrade schedule; defaults to the claimed block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schedule_l2_block_number: Option<u64>,
@@ -574,7 +573,7 @@ mod tests {
                     number_of_blocks_to_prove: 20,
                     sequence_window: None,
                     l1_head: Some(B256::repeat_byte(0xab)),
-                    intermediate_root_interval: Some(128),
+                    intermediate_root_interval: NonZeroU64::new(128).unwrap(),
                     schedule_l2_block_number: None,
                     zk_vm: ZkVm::Sp1,
                     zk_backend: ZkBackend::Cluster,
@@ -617,6 +616,7 @@ mod tests {
                     "payload": {
                         "start_block_number": 10,
                         "number_of_blocks_to_prove": 20,
+                        "intermediate_root_interval": 1,
                         "zk_vm": "sp1"
                     }
                 }
@@ -635,6 +635,7 @@ mod tests {
                 "payload": {
                     "start_block_number": 10,
                     "number_of_blocks_to_prove": 20,
+                    "intermediate_root_interval": 1,
                     "zk_vm": "sp1"
                 }
             }
@@ -925,6 +926,7 @@ mod tests {
         let request: ZkProofRequest = serde_json::from_value(json!({
             "start_block_number": 10,
             "number_of_blocks_to_prove": 20,
+            "intermediate_root_interval": 1,
             "zk_vm": "sp1"
         }))
         .expect("zk request should accept omitted optional fields");
@@ -936,12 +938,34 @@ mod tests {
                 number_of_blocks_to_prove: 20,
                 sequence_window: None,
                 l1_head: None,
-                intermediate_root_interval: None,
+                intermediate_root_interval: NonZeroU64::MIN,
                 schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             }
         );
+    }
+
+    #[test]
+    fn zk_request_requires_nonzero_checkpoint_interval() {
+        let mut payload = json!({
+            "start_block_number": 37,
+            "number_of_blocks_to_prove": 300,
+            "zk_vm": "sp1",
+            "zk_backend": "cluster"
+        });
+        assert!(serde_json::from_value::<ZkProofRequest>(payload.clone()).is_err());
+
+        for invalid in [json!(null), json!(0)] {
+            payload["intermediate_root_interval"] = invalid;
+            assert!(serde_json::from_value::<ZkProofRequest>(payload.clone()).is_err());
+        }
+        for interval in [1, 30, 300] {
+            payload["intermediate_root_interval"] = json!(interval);
+            let request: ZkProofRequest = serde_json::from_value(payload.clone()).unwrap();
+            assert_eq!(request.intermediate_root_interval.get(), interval);
+            assert_eq!(serde_json::to_value(request).unwrap(), payload);
+        }
     }
 
     #[test]
@@ -951,7 +975,7 @@ mod tests {
             number_of_blocks_to_prove: 20,
             sequence_window: None,
             l1_head: None,
-            intermediate_root_interval: None,
+            intermediate_root_interval: NonZeroU64::MIN,
             schedule_l2_block_number: Some(42),
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
@@ -971,6 +995,7 @@ mod tests {
             "start_block_number": 10,
             "number_of_blocks_to_prove": 20,
             "l1_head": "0xabc",
+            "intermediate_root_interval": 1,
             "zk_vm": "sp1"
         }));
 

@@ -2,13 +2,11 @@
 
 use std::{
     collections::HashMap,
-    num::NonZeroU64,
     sync::{Arc, Mutex},
 };
 
 use async_trait::async_trait;
 use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
-use base_proof_zk_utils::INTERMEDIATE_ROOT_INTERVAL;
 use base_prover_service_protocol::{
     ExecutionStats, ProofResult, SessionType, SnarkPlonkProofRequest, SnarkPlonkProofResult,
     ZkProofRequest, ZkProofResult, ZkVm,
@@ -157,10 +155,7 @@ impl DryRunZkProver {
             .checked_add(request.number_of_blocks_to_prove)
             .ok_or_else(|| backend_error!("proof range end block overflowed u64"))?;
         let sequence_window = request.sequence_window.unwrap_or(self.default_sequence_window);
-        let intermediate_root_interval = NonZeroU64::new(
-            request.intermediate_root_interval.unwrap_or(INTERMEDIATE_ROOT_INTERVAL),
-        )
-        .ok_or_else(|| backend_error!("intermediate_root_interval must be greater than zero"))?;
+        let intermediate_root_interval = request.intermediate_root_interval;
 
         info!(
             request_session_id = %request_session_id,

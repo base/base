@@ -901,7 +901,7 @@ impl DerivedProofRequestFields {
                 sequence_window: proof.sequence_window,
                 prover_address: None,
                 l1_head: proof.l1_head.map(|hash| format!("{hash:#x}")),
-                intermediate_root_interval: proof.intermediate_root_interval,
+                intermediate_root_interval: Some(proof.intermediate_root_interval.get()),
             }),
             ProtocolProofRequestKind::SnarkPlonk(request) => Ok(Self {
                 api_proof_type: ApiProofType::SnarkPlonk,
@@ -914,7 +914,7 @@ impl DerivedProofRequestFields {
                 sequence_window: request.proof.sequence_window,
                 prover_address: Some(format!("{:#x}", request.prover_address)),
                 l1_head: request.proof.l1_head.map(|hash| format!("{hash:#x}")),
-                intermediate_root_interval: request.proof.intermediate_root_interval,
+                intermediate_root_interval: Some(request.proof.intermediate_root_interval.get()),
             }),
             ProtocolProofRequestKind::Tee(request) => Ok(Self {
                 api_proof_type: ApiProofType::Tee,
@@ -1290,7 +1290,7 @@ mod tests {
                 number_of_blocks_to_prove: 5,
                 sequence_window: Some(50),
                 l1_head: None,
-                intermediate_root_interval: None,
+                intermediate_root_interval: 1.try_into().unwrap(),
                 schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,

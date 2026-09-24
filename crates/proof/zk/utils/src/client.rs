@@ -15,9 +15,6 @@ use base_proof_preimage::{CommsClient, PreimageKey};
 use base_protocol::L2BlockInfo;
 use tracing::{error, info, warn};
 
-/// Default interval (in blocks) at which the ZK range program records intermediate output roots.
-pub const INTERMEDIATE_ROOT_INTERVAL: u64 = 30;
-
 /// Fetches the safe head hash of the L2 chain based on the agreed upon L2 output root in the
 /// [`BootInfo`].
 pub(crate) async fn fetch_safe_head_hash<O>(

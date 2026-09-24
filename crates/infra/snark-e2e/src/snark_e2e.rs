@@ -6,6 +6,8 @@
 //! Talks to the JSON-RPC prover-service requester API (`prover_proveBlockRange`
 //! / `prover_getProof`), not the legacy zk gRPC service.
 
+use std::num::NonZeroU64;
+
 use alloy_primitives::Address;
 use alloy_provider::{Identity, Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
@@ -214,7 +216,7 @@ impl SnarkE2e {
                             number_of_blocks_to_prove: 1,
                             sequence_window: Some(SEQUENCE_WINDOW),
                             l1_head: None,
-                            intermediate_root_interval: None,
+                            intermediate_root_interval: NonZeroU64::MIN,
                             schedule_l2_block_number: None,
                             zk_vm: ZkVm::Sp1,
                             zk_backend: ZkBackend::Cluster,

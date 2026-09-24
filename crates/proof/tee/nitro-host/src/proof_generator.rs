@@ -639,7 +639,7 @@ mod tests {
                     number_of_blocks_to_prove: 1,
                     sequence_window: None,
                     l1_head: None,
-                    intermediate_root_interval: None,
+                    intermediate_root_interval: 1.try_into().unwrap(),
                     schedule_l2_block_number: None,
                     zk_vm: base_prover_service_protocol::ZkVm::Sp1,
                     zk_backend: base_prover_service_protocol::ZkBackend::Cluster,

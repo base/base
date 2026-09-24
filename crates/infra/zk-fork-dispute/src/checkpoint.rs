@@ -195,7 +195,7 @@ impl Checkpoint {
                 number_of_blocks_to_prove: self.block_count,
                 sequence_window: None,
                 l1_head: Some(l1_head),
-                intermediate_root_interval: Some(self.interval),
+                intermediate_root_interval: self.interval.try_into()?,
                 schedule_l2_block_number: Some(game_l2_block_number),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: config.zk_backend,

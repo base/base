@@ -1035,7 +1035,7 @@ impl ProofsProposeJson {
             start_block: request.pre_state_block.saturating_add(1),
             end_block: request.pre_state_block.saturating_add(request.num_blocks),
             num_blocks: request.num_blocks,
-            intermediate_root_interval: request.intermediate_root_interval,
+            intermediate_root_interval: request.intermediate_root_interval.get(),
             status: ProofOutputStatus::Submitted,
             error_message: None,
             result: None,
