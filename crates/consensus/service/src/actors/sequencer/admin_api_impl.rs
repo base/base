@@ -158,36 +158,46 @@ where
             }
         }
 
-        if !self.is_shadow_sequencer() {
-            self.engine_client.prepare_sequencer_start(unsafe_head).await.map_err(|e| {
-                error!(target: "sequencer", error = %e, "Engine rejected sequencer start");
-                SequencerAdminAPIError::RequestError(e.to_string())
-            })?;
-        } else {
-            let engine_head = self.engine_client.get_unsafe_head().await.map_err(|e| {
-                error!(target: "sequencer", error = %e, "Failed to fetch engine unsafe head");
-                SequencerAdminAPIError::RequestError(e.to_string())
-            })?;
-
-            if engine_head.block_info.hash == B256::ZERO {
-                return Err(SequencerAdminAPIError::RequestError(
-                    "no prestate: engine unsafe head is uninitialized, cannot safely start sequencer"
-                        .to_string(),
-                ));
-            }
-
-            if unsafe_head != engine_head.block_info.hash {
-                return Err(SequencerAdminAPIError::RequestError(format!(
-                    "block hash mismatch: engine unsafe head is {}, caller requested {}",
-                    engine_head.block_info.hash, unsafe_head,
-                )));
-            }
-        }
+        self.prepare_sequencer_start(unsafe_head).await?;
 
         info!(target: "sequencer", unsafe_head = %unsafe_head, "Starting sequencer");
         self.is_active = true;
 
         self.update_metrics();
+
+        Ok(())
+    }
+
+    /// Validates the start head and prepares non-shadow engine routing after leadership is checked.
+    pub async fn prepare_sequencer_start(
+        &self,
+        unsafe_head: B256,
+    ) -> Result<(), SequencerAdminAPIError> {
+        if !self.is_shadow_sequencer() {
+            return self.engine_client.prepare_sequencer_start(unsafe_head).await.map_err(|e| {
+                error!(target: "sequencer", error = %e, "Engine rejected sequencer start");
+                SequencerAdminAPIError::RequestError(e.to_string())
+            });
+        }
+
+        let engine_head = self.engine_client.get_unsafe_head().await.map_err(|e| {
+            error!(target: "sequencer", error = %e, "Failed to fetch engine unsafe head");
+            SequencerAdminAPIError::RequestError(e.to_string())
+        })?;
+
+        if engine_head.block_info.hash == B256::ZERO {
+            return Err(SequencerAdminAPIError::RequestError(
+                "no prestate: engine unsafe head is uninitialized, cannot safely start sequencer"
+                    .to_string(),
+            ));
+        }
+
+        if unsafe_head != engine_head.block_info.hash {
+            return Err(SequencerAdminAPIError::RequestError(format!(
+                "block hash mismatch: engine unsafe head is {}, caller requested {}",
+                engine_head.block_info.hash, unsafe_head,
+            )));
+        }
 
         Ok(())
     }
