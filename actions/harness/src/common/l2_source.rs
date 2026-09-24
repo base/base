@@ -5,9 +5,8 @@ use base_common_consensus::BaseBlock;
 /// A pre-built queue of [`BaseBlock`]s for the batcher to drain.
 ///
 /// Tests push fully-formed blocks into the source, which the batcher consumes one at a
-/// time via [`next_block`](Self::next_block). The batcher extracts the L1 epoch from the
-/// first (deposit) transaction in each block, filters out all deposit transactions, and
-/// encodes the remaining user transactions into a `SingleBatch` for submission.
+/// time via [`next_block`](Self::next_block). Each block must start with its L1-info
+/// deposit: the batcher reads the block's L1 epoch from it.
 #[derive(Debug, Default)]
 pub struct ActionL2Source {
     blocks: VecDeque<BaseBlock>,
