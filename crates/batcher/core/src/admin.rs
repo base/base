@@ -41,19 +41,21 @@ pub enum AdminError {
 pub type AdminResult<T> = Result<T, AdminError>;
 
 /// Commands the admin HTTP server can send to the running driver task.
+///
+/// Every command carries a reply channel, answered once the driver has applied it.
 #[derive(derive_more::Debug)]
 pub enum AdminCommand {
     /// Start block ingestion again after a [`Stop`](Self::Stop).
     Start {
-        /// Answered once the driver has applied the command.
+        /// Answered once ingestion is running.
         #[debug(skip)]
-        reply: oneshot::Sender<AdminResult<()>>,
+        reply: oneshot::Sender<()>,
     },
     /// Stop block ingestion; the driver task keeps running.
     Stop {
-        /// Answered once the driver has applied the command.
+        /// Answered once ingestion is stopped.
         #[debug(skip)]
-        reply: oneshot::Sender<AdminResult<()>>,
+        reply: oneshot::Sender<()>,
     },
     /// Flush the current encoding channel.
     Flush {
@@ -68,18 +70,25 @@ pub enum AdminCommand {
         /// The new throttle configuration to apply.
         #[debug(skip)]
         config: ThrottleConfig,
+        /// Answered once the new controller is in place.
+        #[debug(skip)]
+        reply: oneshot::Sender<()>,
     },
     /// Clear the throttle dedup cache so limits are re-applied unconditionally.
-    ResetThrottle,
-    /// Read current throttle state; reply sent via the embedded oneshot sender.
+    ResetThrottle {
+        /// Answered once the cache is cleared.
+        #[debug(skip)]
+        reply: oneshot::Sender<()>,
+    },
+    /// Read the current throttle state.
     GetThrottleInfo {
-        /// Channel to send the throttle info snapshot back on.
+        /// Answered with a snapshot of the throttle state.
         #[debug(skip)]
         reply: oneshot::Sender<ThrottleInfo>,
     },
-    /// Read current driver runtime state; reply sent via the embedded oneshot sender.
+    /// Read the current driver runtime state.
     GetStatus {
-        /// Channel to send the batcher status back on.
+        /// Answered with the batcher status.
         #[debug(skip)]
         reply: oneshot::Sender<BatcherStatus>,
     },
@@ -88,7 +97,9 @@ pub enum AdminCommand {
 /// Cloneable handle to the driver's admin command channel.
 ///
 /// Create with [`AdminHandle::channel`]; hand the returned [`mpsc::Receiver`] to the
-/// driver as [`BatchDriverInputs::admin_rx`](crate::BatchDriverInputs::admin_rx).
+/// driver as [`BatchDriverInputs::admin_rx`](crate::BatchDriverInputs::admin_rx). Every
+/// method returns once the driver has applied the command, or [`AdminError::ChannelClosed`]
+/// once the driver is gone.
 #[derive(Clone, Debug)]
 pub struct AdminHandle {
     tx: mpsc::Sender<AdminCommand>,
@@ -119,7 +130,7 @@ impl AdminHandle {
     /// Answered once the channel is closed, before its frames are submitted; it does not
     /// wait for L1 inclusion. Returns [`AdminError::Stopped`] if the batcher is stopped.
     pub async fn flush(&self) -> AdminResult<()> {
-        self.request(|reply| AdminCommand::Flush { reply }).await
+        self.request(|reply| AdminCommand::Flush { reply }).await?
     }
 
     /// Replace the throttle strategy and configuration.
@@ -128,32 +139,29 @@ impl AdminHandle {
     /// supported. Callers that want to change only one field should call
     /// [`get_throttle_info`](Self::get_throttle_info) first to read the
     /// current config, adjust the desired field, and pass the result here.
+    /// The new limits are pushed to the block builder right after.
     pub async fn set_throttle(
         &self,
         strategy: ThrottleStrategy,
         config: ThrottleConfig,
     ) -> AdminResult<()> {
-        self.send(AdminCommand::SetThrottle { strategy, config }).await
+        self.request(|reply| AdminCommand::SetThrottle { strategy, config, reply }).await
     }
 
-    /// Clear the throttle dedup cache so limits are re-applied unconditionally
-    /// on the next driver iteration.
+    /// Clear the throttle dedup cache, so the current limits are pushed to the block
+    /// builder again right after, even if they have not changed.
     pub async fn reset_throttle(&self) -> AdminResult<()> {
-        self.send(AdminCommand::ResetThrottle).await
+        self.request(|reply| AdminCommand::ResetThrottle { reply }).await
     }
 
     /// Read the current throttle controller state.
     pub async fn get_throttle_info(&self) -> AdminResult<ThrottleInfo> {
-        let (tx, rx) = oneshot::channel();
-        self.send(AdminCommand::GetThrottleInfo { reply: tx }).await?;
-        rx.await.map_err(|_| AdminError::ChannelClosed)
+        self.request(|reply| AdminCommand::GetThrottleInfo { reply }).await
     }
 
     /// Read the current driver runtime state.
     pub async fn get_status(&self) -> AdminResult<BatcherStatus> {
-        let (tx, rx) = oneshot::channel();
-        self.send(AdminCommand::GetStatus { reply: tx }).await?;
-        rx.await.map_err(|_| AdminError::ChannelClosed)
+        self.request(|reply| AdminCommand::GetStatus { reply }).await
     }
 
     /// Dynamic log level changes require a `tracing-subscriber` reload handle
@@ -166,18 +174,14 @@ impl AdminHandle {
         Err(AdminError::NotSupported("set_log_level"))
     }
 
-    async fn send(&self, cmd: AdminCommand) -> AdminResult<()> {
-        self.tx.send(cmd).await.map_err(|_| AdminError::ChannelClosed)
-    }
-
-    /// Send a command carrying a reply channel and wait for the driver's answer.
-    async fn request(
+    /// Send a command and wait for the driver's answer.
+    async fn request<T>(
         &self,
-        command: impl FnOnce(oneshot::Sender<AdminResult<()>>) -> AdminCommand,
-    ) -> AdminResult<()> {
+        command: impl FnOnce(oneshot::Sender<T>) -> AdminCommand,
+    ) -> AdminResult<T> {
         let (reply, rx) = oneshot::channel();
-        self.send(command(reply)).await?;
-        rx.await.map_err(|_| AdminError::ChannelClosed)?
+        self.tx.send(command(reply)).await.map_err(|_| AdminError::ChannelClosed)?;
+        rx.await.map_err(|_| AdminError::ChannelClosed)
     }
 }
 

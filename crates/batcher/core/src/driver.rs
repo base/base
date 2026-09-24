@@ -378,7 +378,7 @@ where
         self.stopped = false;
     }
 
-    /// Apply an admin command, and answer it when it carries a reply.
+    /// Apply an admin command and answer it.
     fn on_admin(&mut self, cmd: AdminCommand) -> Result<(), BatchDriverError> {
         match cmd {
             AdminCommand::Flush { reply } if self.stopped => {
@@ -391,18 +391,20 @@ where
             }
             AdminCommand::Stop { reply } => {
                 self.on_admin_stop();
-                let _ = reply.send(Ok(()));
+                let _ = reply.send(());
             }
             AdminCommand::Start { reply } => {
                 self.on_admin_start();
-                let _ = reply.send(Ok(()));
+                let _ = reply.send(());
             }
-            AdminCommand::SetThrottle { strategy, config } => {
+            AdminCommand::SetThrottle { strategy, config, reply } => {
                 self.throttle.set_controller(ThrottleController::new(config, strategy));
+                let _ = reply.send(());
                 info!("throttle controller replaced via admin");
             }
-            AdminCommand::ResetThrottle => {
+            AdminCommand::ResetThrottle { reply } => {
                 self.throttle.reset();
+                let _ = reply.send(());
                 info!("throttle controller reset via admin");
             }
             AdminCommand::GetThrottleInfo { reply } => {
