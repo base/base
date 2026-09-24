@@ -51,6 +51,8 @@ base_metrics::define_metrics! {
     pending_blocks: gauge,
     #[describe("Number of L1 transactions currently in-flight")]
     in_flight_submissions: gauge,
+    #[describe("Whether the L1 head WebSocket subscription is live (0: polling only)")]
+    l1_head_subscription_active: gauge,
     #[describe("Compression ratio for each closed channel")]
     channel_compression_ratio: histogram,
     #[describe("Channel lifetime in L1 blocks")]
