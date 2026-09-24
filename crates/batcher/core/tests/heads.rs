@@ -5,13 +5,12 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::B256;
 use base_batcher_core::{
-    BatchDriver, BatchDriverConfig, BatchDriverError, BatchDriverHeads, DaThrottle,
-    DerivationStatus, NoopThrottleClient, ThrottleController,
+    BatchDriverError, DerivationStatus,
     test_utils::{
-        DriverFixture, ImmediateConfirmTxManager, PendingL1HeadSource, PendingSource, Recorded,
-        SubmissionStub, TrackingPipeline, TrackingSource,
+        DriverFixture, ImmediateConfirmTxManager, Recorded, SubmissionStub, TrackingPipeline,
+        TrackingSource,
     },
 };
 use base_batcher_source::test_utils::ChannelL1HeadSource;
@@ -20,7 +19,6 @@ use base_runtime::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
 };
-use tokio::sync::mpsc;
 
 fn safe_head(number: u64) -> BlockInfo {
     BlockInfo { hash: B256::with_last_byte(number as u8), number, ..Default::default() }
@@ -36,20 +34,10 @@ fn test_l1_head_source_advances_pipeline() {
 
         let (l1_source, l1_tx) = ChannelL1HeadSource::new();
 
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            pipeline,
-            PendingSource,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
-            l1_source,
-        );
+        let (driver, _handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+                .l1_head_source(l1_source)
+                .build();
         let handle = ctx.spawn(driver.run());
 
         // Send a new L1 head via the channel.
@@ -72,29 +60,15 @@ fn test_safe_head_conflicts_reset_pipeline_and_source() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_safe_head_match(false);
-        let (status_tx, status_rx) = mpsc::channel(1);
         let (source, catchup_heads) = TrackingSource::new();
 
-        let driver = BatchDriver::new(
-            ctx.clone(),
-            pipeline,
-            source,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
-            BatchDriverHeads::new(
-                PendingL1HeadSource,
-                0,
-                DerivationStatus::from_safe_l2(safe_head(10)),
-                status_rx,
-            ),
-        );
+        let (driver, handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+                .source(source)
+                .safe_head(safe_head(10))
+                .build();
         let handle = ctx.spawn(driver.run());
+        let status_tx = handles.derivation_status_tx;
 
         let regressed = safe_head(5);
         let replacement =
@@ -118,30 +92,16 @@ fn test_derivation_cursor_advance_replays_stalled_channel() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_derivation_stalled(true);
-        let (status_tx, status_rx) = mpsc::channel(1);
         let (source, catchup_heads) = TrackingSource::new();
         let safe_l2 = safe_head(10);
 
-        let driver = BatchDriver::new(
-            ctx.clone(),
-            pipeline,
-            source,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
-            BatchDriverHeads::new(
-                PendingL1HeadSource,
-                0,
-                DerivationStatus::from_safe_l2(safe_l2),
-                status_rx,
-            ),
-        );
+        let (driver, handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+                .source(source)
+                .safe_head(safe_l2)
+                .build();
         let handle = ctx.spawn(driver.run());
+        let status_tx = handles.derivation_status_tx;
 
         status_tx.send(DerivationStatus::new(safe_l2, safe_head(50))).await.unwrap();
         ctx.sleep(Duration::from_millis(50)).await;
@@ -161,15 +121,16 @@ fn test_queued_safe_head_preempts_submission() {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
         pipeline.submissions.push_back(SubmissionStub::stub());
-        let (status_tx, status_rx) = mpsc::channel(1);
-        status_tx.send(DerivationStatus::from_safe_l2(safe_head(5))).await.unwrap();
 
-        let driver =
-            DriverFixture::build(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-                .with_derivation_status_rx(
-                    DerivationStatus::from_safe_l2(safe_head(10)),
-                    status_rx,
-                );
+        let (driver, handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+                .safe_head(safe_head(10))
+                .build();
+        handles
+            .derivation_status_tx
+            .send(DerivationStatus::from_safe_l2(safe_head(5)))
+            .await
+            .unwrap();
         let handle = ctx.spawn(driver.run());
         ctx.sleep(Duration::from_millis(50)).await;
         ctx.cancel();
@@ -186,10 +147,9 @@ fn test_derivation_status_sender_drop_is_fatal() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-        let (status_tx, status_rx) = mpsc::channel(1);
-        let driver = DriverFixture::build(ctx, pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-            .with_derivation_status_rx(DerivationStatus::from_safe_l2(safe_head(0)), status_rx);
-        drop(status_tx);
+        let (driver, handles) =
+            DriverFixture::new(ctx, pipeline, ImmediateConfirmTxManager { l1_block: 1 }).build();
+        drop(handles);
 
         assert!(matches!(driver.run().await, Err(BatchDriverError::DerivationStatusSourceClosed)));
     });
@@ -199,13 +159,12 @@ fn test_derivation_status_sender_drop_is_fatal() {
 fn test_derivation_status_sender_drop_during_shutdown_is_clean() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let pipeline = TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default())));
-        let (status_tx, status_rx) = mpsc::channel(1);
-        let driver =
-            DriverFixture::build(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-                .with_derivation_status_rx(DerivationStatus::from_safe_l2(safe_head(0)), status_rx);
+        let (driver, handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+                .build();
 
         ctx.cancel();
-        drop(status_tx);
+        drop(handles);
         assert!(driver.run().await.is_ok());
     });
 }

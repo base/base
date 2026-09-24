@@ -6,14 +6,12 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::Address;
 use async_trait::async_trait;
 use base_batcher_core::{
-    BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle, NoopThrottleClient,
-    ThrottleController,
+    BatchDriverError,
     test_utils::{
-        DriverFixture, ManualConfirmTxManager, NeverConfirmTxManager, PendingL1HeadSource,
-        Recorded, SubmissionStub, TrackingPipeline,
+        DriverFixture, ManualConfirmTxManager, NeverConfirmTxManager, Recorded, SubmissionStub,
+        TrackingPipeline,
     },
 };
 use base_batcher_encoder::{ChannelLimit, StepError, SubmissionId};
@@ -25,7 +23,7 @@ use base_runtime::{
 
 /// When cancellation fires while a submission is in-flight with a
 /// `NeverConfirmTxManager`, the drain timeout must fire and the driver must
-/// exit cleanly. This verifies the `runtime.sleep(drain_timeout)` fix.
+/// exit cleanly.
 #[test]
 fn test_drain_timeout_exits_with_in_flight_submissions() {
     Runner::start(Config::seeded(0), |ctx| async move {
@@ -33,7 +31,8 @@ fn test_drain_timeout_exits_with_in_flight_submissions() {
         let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
         pipeline.submissions.push_back(SubmissionStub::stub());
 
-        let driver = DriverFixture::build(ctx.clone(), pipeline, NeverConfirmTxManager);
+        let (driver, _handles) =
+            DriverFixture::new(ctx.clone(), pipeline, NeverConfirmTxManager).build();
         let handle = ctx.spawn(driver.run());
 
         ctx.sleep(Duration::from_millis(20)).await;
@@ -63,7 +62,8 @@ fn test_shutdown_drains_in_flight_before_returning_flush_error() {
         );
         pipeline.submissions.push_back(SubmissionStub::stub());
 
-        let driver = DriverFixture::build(ctx.clone(), pipeline, NeverConfirmTxManager);
+        let (driver, _handles) =
+            DriverFixture::new(ctx.clone(), pipeline, NeverConfirmTxManager).build();
         let handle = ctx.spawn(driver.run());
 
         ctx.sleep(Duration::from_millis(20)).await;
@@ -122,20 +122,8 @@ fn test_driver_finishes_pending_work_before_waiting_for_events() {
 
         // A single permit: the second submission can only leave the pipeline once the
         // receipt of the first one has been processed.
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            pipeline,
-            source,
-            tx_manager.clone(),
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
-            PendingL1HeadSource,
-        );
+        let (driver, _handles) =
+            DriverFixture::new(ctx.clone(), pipeline, tx_manager.clone()).source(source).build();
         let handle = ctx.spawn(driver.run());
 
         // Let the driver submit the first stub and wait on the source, then confirm that stub

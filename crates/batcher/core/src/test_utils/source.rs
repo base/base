@@ -6,6 +6,8 @@ use async_trait::async_trait;
 use base_batcher_source::{L1HeadSource, L2BlockEvent, UnsafeBlockSource};
 use base_protocol::BlockInfo;
 
+use crate::test_utils::BlockStub;
+
 /// [`UnsafeBlockSource`] that parks the select arm forever.
 ///
 /// Use this in tests that do not exercise the block-delivery path, so that
@@ -46,7 +48,7 @@ impl UnsafeBlockSource for TrackingSource {
     }
 }
 
-/// [`UnsafeBlockSource`] that delivers exactly one default block then parks forever.
+/// [`UnsafeBlockSource`] that delivers exactly one block, numbered 1, then parks forever.
 #[derive(Debug)]
 pub struct OneBlockSource {
     delivered: bool,
@@ -70,7 +72,7 @@ impl UnsafeBlockSource for OneBlockSource {
     async fn next(&mut self) -> L2BlockEvent {
         if !self.delivered {
             self.delivered = true;
-            L2BlockEvent::Block(Box::default())
+            L2BlockEvent::Block(Box::new(BlockStub::with_number(1)))
         } else {
             std::future::pending().await
         }

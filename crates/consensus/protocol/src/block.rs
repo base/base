@@ -41,6 +41,12 @@ impl BlockInfo {
         Self { hash, number, parent_hash, timestamp }
     }
 
+    /// Returns the [`BlockInfo`] of the L2 genesis block described by `genesis`, whose parent
+    /// hash is zero.
+    pub const fn from_l2_genesis(genesis: &ChainGenesis) -> Self {
+        Self::new(genesis.l2.hash, genesis.l2.number, B256::ZERO, genesis.l2_time)
+    }
+
     /// Returns the block ID.
     pub const fn id(&self) -> BlockNumHash {
         BlockNumHash { hash: self.hash, number: self.number }

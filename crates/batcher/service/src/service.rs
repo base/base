@@ -12,7 +12,7 @@ use backon::Retryable;
 use base_balance_monitor::BalanceMonitorLayer;
 use base_batcher_admin::AdminServer;
 use base_batcher_core::{
-    AdminHandle, BatchDriver, BatchDriverHeads, DaThrottle, NoopThrottleClient, ThrottleClient,
+    AdminHandle, BatchDriver, BatchDriverInputs, DaThrottle, NoopThrottleClient, ThrottleClient,
     ThrottleController, ThrottleStrategy,
 };
 use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
@@ -713,35 +713,37 @@ impl BatcherService {
         };
         background_tasks.push(("derivation status poller", derivation_status_handle));
 
-        // Build the driver — all fallible setup is complete at this point.
-        let mut driver = BatchDriver::new(
+        // Build the driver.
+        let (admin_handle, admin_rx) = AdminHandle::channel();
+        let driver = BatchDriver::new(
             runtime,
             encoder,
-            source,
             tx_manager,
             base_batcher_core::BatchDriverConfig {
                 inbox: effective_batch_inbox,
                 max_pending_transactions: self.config.max_pending_transactions,
                 drain_timeout,
                 force_blobs_when_throttling: self.config.force_blobs_when_throttling,
+                stopped: self.config.stopped,
             },
             DaThrottle::new(throttle, throttle_client),
-            BatchDriverHeads::new(
+            BatchDriverInputs {
+                source,
                 l1_head_source,
                 initial_l1_head,
-                initial_derivation_status,
+                initial_safe_head: safe_l2,
                 derivation_status_rx,
-            ),
-        )
-        .with_stopped(self.config.stopped);
+                admin_rx,
+            },
+        );
 
+        // Without an admin server, drop the handle: the driver's admin arm then stays quiet.
         let admin_server = match self.config.admin_addr {
-            Some(addr) => {
-                let (admin_handle, admin_rx) = AdminHandle::channel();
-                driver = driver.with_admin_rx(admin_rx);
-                Some(AdminServer::spawn(addr, admin_handle).await?)
+            Some(addr) => Some(AdminServer::spawn(addr, admin_handle).await?),
+            None => {
+                drop(admin_handle);
+                None
             }
-            None => None,
         };
 
         info!("batcher service components initialized");

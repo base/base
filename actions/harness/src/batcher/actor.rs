@@ -3,13 +3,14 @@ use std::{sync::Arc, time::Duration};
 use alloy_primitives::B256;
 use alloy_signer_local::PrivateKeySigner;
 use base_batcher_core::{
-    AdminError, AdminHandle, BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle,
-    NoopThrottleClient, ThrottleController,
+    AdminError, AdminHandle, BatchDriver, BatchDriverConfig, BatchDriverError, BatchDriverInputs,
+    DaThrottle, NoopThrottleClient, ThrottleController,
 };
 use base_batcher_encoder::{BatchEncoder, EncoderConfig};
 use base_batcher_source::{L2BlockEvent, test_utils::ChannelL1HeadSource};
 use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
+use base_protocol::BlockInfo;
 use base_runtime::TokioRuntime;
 use base_tx_manager::TxManager;
 use tokio::sync::{mpsc, oneshot};
@@ -136,12 +137,16 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Spawns the driver immediately. The driver will not process any events
     /// until the first [`advance`] call.
     ///
+    /// # Panics
+    ///
+    /// Panics if `config.encoder` is invalid, or if `config.batcher_address` is not the
+    /// address of `config.l1_signer`.
+    ///
     /// [`advance`]: Batcher::advance
     pub fn new(l2_source: S, rollup_config: &RollupConfig, config: BatcherConfig) -> Self {
         let l1_chain_id = rollup_config.l1_chain_id;
-        let rollup_config = Arc::new(rollup_config.clone());
-        let pipeline =
-            BatchEncoder::new(rollup_config, config.encoder.clone()).expect("valid encoder config");
+        let pipeline = BatchEncoder::new(Arc::new(rollup_config.clone()), config.encoder.clone())
+            .expect("valid encoder config");
 
         let (source, source_tx) = HarnessBlockSource::new();
         let (admin, admin_rx) = AdminHandle::channel();
@@ -162,11 +167,11 @@ impl<S: L2BlockProvider> Batcher<S> {
         let cancel = CancellationToken::new();
         let runtime = TokioRuntime::with_token(cancel.clone());
 
-        let throttle = ThrottleController::disabled();
-        let driver = BatchDriver::new_without_derivation_status(
+        let (derivation_status_tx, derivation_status_rx) = mpsc::channel(1);
+
+        let driver = BatchDriver::new(
             runtime,
             pipeline,
-            source,
             tx_manager.clone(),
             BatchDriverConfig {
                 inbox: config.inbox_address,
@@ -175,13 +180,26 @@ impl<S: L2BlockProvider> Batcher<S> {
                 max_pending_transactions: 16,
                 drain_timeout: Duration::from_secs(10),
                 force_blobs_when_throttling: true,
+                stopped: false,
             },
-            DaThrottle::new(throttle, Arc::new(NoopThrottleClient)),
-            l1_source,
-        )
-        .with_admin_rx(admin_rx);
+            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
+            BatchDriverInputs {
+                source,
+                l1_head_source: l1_source,
+                // The driver learns the L1 head from the blocks the tests mine.
+                initial_l1_head: 0,
+                initial_safe_head: BlockInfo::from_l2_genesis(&rollup_config.genesis),
+                derivation_status_rx,
+                admin_rx,
+            },
+        );
 
-        let driver_task = tokio::spawn(async move { driver.run().await });
+        // No action test exercises derivation status: the driver task keeps the sender, so
+        // the channel stays open, and silent, for as long as the driver runs.
+        let driver_task = tokio::spawn(async move {
+            let _derivation_status_tx = derivation_status_tx;
+            driver.run().await
+        });
 
         Self { l2_source, source_tx, admin, tx_manager, driver_task, cancel }
     }
