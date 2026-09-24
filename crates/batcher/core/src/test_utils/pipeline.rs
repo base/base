@@ -1,94 +1,175 @@
-//! Test [`BatchPipeline`] implementations for action-testing the batch driver.
+//! Test [`BatchPipeline`] implementation for the driver tests.
 //!
-//! Hand-rolled rather than mocked: the driver ordering tests need one call log ordered across
-//! several trait methods, and the pipelines hold state (queued submissions, steps to encode)
+//! Hand-rolled rather than mocked: the driver tests need one call log ordered across several
+//! trait methods, and the pipeline holds state (queued submissions, blocks left to encode)
 //! that the driver consumes while it runs.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use alloy_primitives::B256;
 use base_batcher_encoder::{
     BatchPipeline, BatchSubmission, DerivationReconciliation, ReorgError, StepError, StepResult,
-    SubmissionId,
+    SubmissionId, SubmissionPayload,
 };
 use base_common_consensus::BaseBlock;
 use base_protocol::BlockInfo;
 
-/// A [`BatchPipeline`] call recorded by [`TrackingPipeline`] for the ordering tests.
+/// A [`BatchPipeline`] call recorded by [`TrackingPipeline`], with the arguments the tests
+/// look at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PipelineCall {
-    /// `add_block`.
-    AddBlock,
-    /// `confirm`.
-    Confirm,
+    /// `add_block`, with the block number.
+    AddBlock(u64),
+    /// `step` encoded a block.
+    Step,
+    /// `next_submission` handed out this submission.
+    Dequeue(SubmissionId),
+    /// `confirm`, with the submission id and its L1 inclusion block.
+    Confirm(SubmissionId, u64),
+    /// `requeue`.
+    Requeue(SubmissionId),
     /// `flush`.
     Flush,
     /// `advance_l1_head`, recorded only when the head advances.
-    AdvanceL1Head,
-    /// `reconcile_derivation`.
-    ReconcileDerivation,
+    AdvanceL1Head(u64),
+    /// `reconcile_derivation`, with the safe L2 block number and the derivation cursor.
+    ReconcileDerivation {
+        /// The safe L2 block number.
+        safe_l2: u64,
+        /// The L1 block derivation is at, when known.
+        current_l1: Option<u64>,
+    },
+    /// `reset`.
+    Reset,
 }
 
-/// Shared recording state populated by the test pipeline implementations.
+/// The calls a [`TrackingPipeline`] received, in order.
 #[derive(Debug, Default)]
 pub struct Recorded {
-    /// L1 heads the pipeline advanced to, in order. Like [`BatchEncoder`], the pipeline
-    /// ignores a head that does not advance.
-    ///
-    /// [`BatchEncoder`]: base_batcher_encoder::BatchEncoder
-    pub l1_heads: Vec<u64>,
-    /// Submission IDs passed to `confirm` in order.
-    pub confirmed: Vec<SubmissionId>,
-    /// Submission IDs passed to `requeue` in order.
-    pub requeued: Vec<SubmissionId>,
-    /// Submission IDs dequeued via `next_submission` in order.
-    pub dequeued: Vec<SubmissionId>,
-    /// Number of times `reset()` was called.
-    pub resets: usize,
-    /// Safe L2 block numbers passed to `reconcile_derivation` in order.
-    pub safe_numbers: Vec<u64>,
-    /// Number of times `flush()` was called.
-    pub flush_count: usize,
-    /// The calls the ordering tests look at, in call order.
+    /// Every recorded call, in call order.
     pub calls: Vec<PipelineCall>,
-    /// Number of `step()` calls that encoded a block.
-    pub encoded_steps: usize,
 }
 
-/// [`BatchPipeline`] that records every significant method call into a shared [`Recorded`].
+impl Recorded {
+    /// The submission ids handed out by `next_submission`, in order.
+    pub fn dequeued(&self) -> Vec<SubmissionId> {
+        self.pick(|call| match call {
+            PipelineCall::Dequeue(id) => Some(*id),
+            _ => None,
+        })
+    }
+
+    /// The submission ids passed to `confirm`, in order.
+    pub fn confirmed(&self) -> Vec<SubmissionId> {
+        self.pick(|call| match call {
+            PipelineCall::Confirm(id, _) => Some(*id),
+            _ => None,
+        })
+    }
+
+    /// The submission ids passed to `requeue`, in order.
+    pub fn requeued(&self) -> Vec<SubmissionId> {
+        self.pick(|call| match call {
+            PipelineCall::Requeue(id) => Some(*id),
+            _ => None,
+        })
+    }
+
+    /// The L1 heads the pipeline advanced to, in order.
+    pub fn l1_heads(&self) -> Vec<u64> {
+        self.pick(|call| match call {
+            PipelineCall::AdvanceL1Head(l1_block) => Some(*l1_block),
+            _ => None,
+        })
+    }
+
+    /// The safe L2 block numbers passed to `reconcile_derivation`, in order.
+    pub fn reconciled(&self) -> Vec<u64> {
+        self.pick(|call| match call {
+            PipelineCall::ReconcileDerivation { safe_l2, .. } => Some(*safe_l2),
+            _ => None,
+        })
+    }
+
+    /// The number of `reset` calls.
+    pub fn resets(&self) -> usize {
+        self.count(PipelineCall::Reset)
+    }
+
+    /// The number of `flush` calls.
+    pub fn flushes(&self) -> usize {
+        self.count(PipelineCall::Flush)
+    }
+
+    /// The number of `step` calls that encoded a block.
+    pub fn encoded_steps(&self) -> usize {
+        self.count(PipelineCall::Step)
+    }
+
+    fn pick<T>(&self, pick: impl Fn(&PipelineCall) -> Option<T>) -> Vec<T> {
+        self.calls.iter().filter_map(pick).collect()
+    }
+
+    fn count(&self, call: PipelineCall) -> usize {
+        self.calls.iter().filter(|&&recorded| recorded == call).count()
+    }
+}
+
+/// [`BatchPipeline`] that records its calls into a shared [`Recorded`] and hands out the
+/// submissions queued in [`submissions`](Self::submissions).
 ///
-/// Submissions are pre-loaded by pushing into [`TrackingPipeline::submissions`] before
-/// handing the pipeline to the driver.
+/// Like the real pipeline, it returns a requeued submission before the queued ones, and
+/// ignores the confirmation or requeue of a submission dequeued before a reset.
 #[derive(Debug)]
 pub struct TrackingPipeline {
-    /// Shared recording state.
-    pub recorded: Arc<Mutex<Recorded>>,
-    /// Queue of submissions returned by `next_submission` in FIFO order.
-    pub submissions: std::collections::VecDeque<BatchSubmission>,
-    /// Value returned by `da_backlog_bytes`. Default: 0.
-    da_backlog_bytes_value: u64,
-    /// Whether derivation reconciliation reports a safe-head mismatch.
-    safe_head_matches: bool,
-    /// Whether derivation reconciliation reports a stalled channel.
-    derivation_stalled: bool,
+    recorded: Arc<Mutex<Recorded>>,
+    /// Submissions returned by `next_submission`, in FIFO order.
+    pub submissions: VecDeque<BatchSubmission>,
+    /// Value returned by `da_backlog_bytes`, shared so a test can change it while the driver
+    /// runs.
+    pub da_backlog_bytes: Arc<AtomicU64>,
+    /// Submissions handed out and neither confirmed nor requeued since.
+    in_flight: Vec<BatchSubmission>,
+    /// What `reconcile_derivation` answers.
+    reconciliation: DerivationReconciliation,
+    /// Whether `add_block` reports a parent mismatch.
+    add_block_reorgs: bool,
     /// When set, `flush` records the call then returns this error.
     flush_error: Option<StepError>,
     /// Blocks left to encode: `step` reports one encoded block per call while above zero.
     encoding_steps: usize,
 }
 
-impl TrackingPipeline {
-    /// Create a new pipeline that records into `recorded`.
-    pub fn new(recorded: Arc<Mutex<Recorded>>) -> Self {
+impl Default for TrackingPipeline {
+    fn default() -> Self {
         Self {
-            recorded,
-            submissions: Default::default(),
-            da_backlog_bytes_value: 0,
-            safe_head_matches: true,
-            derivation_stalled: false,
+            recorded: Arc::default(),
+            submissions: VecDeque::new(),
+            da_backlog_bytes: Arc::default(),
+            in_flight: Vec::new(),
+            reconciliation: DerivationReconciliation::Consistent,
+            add_block_reorgs: false,
             flush_error: None,
             encoding_steps: 0,
         }
+    }
+}
+
+impl TrackingPipeline {
+    /// Create a pipeline that answers every call as if it were consistent and idle.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The shared call log. Take it before handing the pipeline to the driver.
+    pub fn recorded(&self) -> Arc<Mutex<Recorded>> {
+        Arc::clone(&self.recorded)
     }
 
     /// Make `step` report `steps` encoded blocks before reporting idle.
@@ -98,20 +179,20 @@ impl TrackingPipeline {
     }
 
     /// Set the value returned by `da_backlog_bytes`.
-    pub const fn with_da_backlog(mut self, value: u64) -> Self {
-        self.da_backlog_bytes_value = value;
+    pub fn with_da_backlog(self, bytes: u64) -> Self {
+        self.da_backlog_bytes.store(bytes, Ordering::SeqCst);
         self
     }
 
-    /// Set whether safe-head validation succeeds.
-    pub const fn with_safe_head_match(mut self, matches: bool) -> Self {
-        self.safe_head_matches = matches;
+    /// Set what `reconcile_derivation` answers.
+    pub const fn with_reconciliation(mut self, reconciliation: DerivationReconciliation) -> Self {
+        self.reconciliation = reconciliation;
         self
     }
 
-    /// Set whether derivation-stall detection requests a replay.
-    pub const fn with_derivation_stalled(mut self, stalled: bool) -> Self {
-        self.derivation_stalled = stalled;
+    /// Make `add_block` report a parent mismatch.
+    pub const fn with_add_block_reorg(mut self) -> Self {
+        self.add_block_reorgs = true;
         self
     }
 
@@ -120,11 +201,32 @@ impl TrackingPipeline {
         self.flush_error = Some(error);
         self
     }
+
+    fn record(&self, call: PipelineCall) {
+        self.recorded.lock().unwrap().calls.push(call);
+    }
+}
+
+/// A copy of `submission`, which is not `Clone`: its frames are shared behind `Arc`s.
+fn duplicate(submission: &BatchSubmission) -> BatchSubmission {
+    match submission.payload() {
+        SubmissionPayload::Blobs(payloads) => {
+            BatchSubmission::blobs(submission.id, payloads.clone())
+        }
+        SubmissionPayload::Calldata(frame) => {
+            BatchSubmission::calldata(submission.id, Arc::clone(frame))
+        }
+    }
 }
 
 impl BatchPipeline for TrackingPipeline {
-    fn add_block(&mut self, _: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)> {
-        self.recorded.lock().unwrap().calls.push(PipelineCall::AddBlock);
+    fn add_block(&mut self, block: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)> {
+        self.record(PipelineCall::AddBlock(block.header.number));
+        if self.add_block_reorgs {
+            let error =
+                ReorgError::ParentMismatch { expected: B256::ZERO, got: B256::with_last_byte(1) };
+            return Err((error, Box::new(block)));
+        }
         Ok(())
     }
 
@@ -133,122 +235,58 @@ impl BatchPipeline for TrackingPipeline {
             return Ok(StepResult::Idle);
         }
         self.encoding_steps -= 1;
-        self.recorded.lock().unwrap().encoded_steps += 1;
+        self.record(PipelineCall::Step);
         Ok(StepResult::BlockEncoded)
     }
 
     fn next_submission(&mut self) -> Option<BatchSubmission> {
-        let sub = self.submissions.pop_front()?;
-        self.recorded.lock().unwrap().dequeued.push(sub.id);
-        Some(sub)
+        let submission = self.submissions.pop_front()?;
+        self.record(PipelineCall::Dequeue(submission.id));
+        self.in_flight.push(duplicate(&submission));
+        Some(submission)
     }
 
-    fn confirm(&mut self, id: SubmissionId, _: u64) {
-        let mut recorded = self.recorded.lock().unwrap();
-        recorded.confirmed.push(id);
-        recorded.calls.push(PipelineCall::Confirm);
+    fn confirm(&mut self, id: SubmissionId, l1_block: u64) {
+        self.record(PipelineCall::Confirm(id, l1_block));
+        self.in_flight.retain(|submission| submission.id != id);
     }
 
     fn requeue(&mut self, id: SubmissionId) {
-        self.recorded.lock().unwrap().requeued.push(id);
+        self.record(PipelineCall::Requeue(id));
+        if let Some(index) = self.in_flight.iter().position(|submission| submission.id == id) {
+            self.submissions.push_front(self.in_flight.remove(index));
+        }
     }
 
     fn flush(&mut self) -> Result<(), StepError> {
-        let mut recorded = self.recorded.lock().unwrap();
-        recorded.flush_count += 1;
-        recorded.calls.push(PipelineCall::Flush);
-        drop(recorded);
-        if let Some(error) = self.flush_error.take() {
-            return Err(error);
-        }
-        Ok(())
+        self.record(PipelineCall::Flush);
+        self.flush_error.take().map_or(Ok(()), Err)
     }
 
     fn advance_l1_head(&mut self, l1_block: u64) {
-        let mut recorded = self.recorded.lock().unwrap();
-        if l1_block > recorded.l1_heads.last().copied().unwrap_or_default() {
-            recorded.l1_heads.push(l1_block);
-            recorded.calls.push(PipelineCall::AdvanceL1Head);
+        let advanced = self.recorded.lock().unwrap().l1_heads().last().copied().unwrap_or(0);
+        if l1_block > advanced {
+            self.record(PipelineCall::AdvanceL1Head(l1_block));
         }
     }
 
     fn reconcile_derivation(
         &mut self,
         safe_l2: BlockInfo,
-        _: Option<u64>,
+        current_l1: Option<u64>,
     ) -> DerivationReconciliation {
-        let mut recorded = self.recorded.lock().unwrap();
-        recorded.safe_numbers.push(safe_l2.number);
-        recorded.calls.push(PipelineCall::ReconcileDerivation);
-        drop(recorded);
-        if !self.safe_head_matches {
-            return DerivationReconciliation::SafeHeadMismatch;
-        }
-        if self.derivation_stalled {
-            return DerivationReconciliation::StalledChannel;
-        }
-        DerivationReconciliation::Consistent
+        self.record(PipelineCall::ReconcileDerivation { safe_l2: safe_l2.number, current_l1 });
+        self.reconciliation
     }
 
     fn reset(&mut self) {
+        self.record(PipelineCall::Reset);
         self.submissions.clear();
+        self.in_flight.clear();
         self.encoding_steps = 0;
-        self.recorded.lock().unwrap().resets += 1;
     }
 
     fn da_backlog_bytes(&self) -> u64 {
-        self.da_backlog_bytes_value
-    }
-}
-
-/// [`BatchPipeline`] that always returns [`ReorgError`] from `add_block`.
-///
-/// Used to verify the driver's reorg-on-add path: it must reset the pipeline
-/// rather than propagating a fatal error.
-#[derive(Debug)]
-pub struct ReorgPipeline {
-    /// Shared recording state (only `resets` is incremented).
-    pub recorded: Arc<Mutex<Recorded>>,
-}
-
-impl ReorgPipeline {
-    /// Create a new pipeline that records resets into `recorded`.
-    pub const fn new(recorded: Arc<Mutex<Recorded>>) -> Self {
-        Self { recorded }
-    }
-}
-
-impl BatchPipeline for ReorgPipeline {
-    fn add_block(&mut self, block: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)> {
-        Err((
-            ReorgError::ParentMismatch { expected: B256::ZERO, got: B256::with_last_byte(1) },
-            Box::new(block),
-        ))
-    }
-
-    fn step(&mut self) -> Result<StepResult, StepError> {
-        Ok(StepResult::Idle)
-    }
-
-    fn next_submission(&mut self) -> Option<BatchSubmission> {
-        None
-    }
-
-    fn confirm(&mut self, _: SubmissionId, _: u64) {}
-    fn requeue(&mut self, _: SubmissionId) {}
-    fn flush(&mut self) -> Result<(), StepError> {
-        Ok(())
-    }
-    fn advance_l1_head(&mut self, _: u64) {}
-    fn reconcile_derivation(&mut self, _: BlockInfo, _: Option<u64>) -> DerivationReconciliation {
-        DerivationReconciliation::Consistent
-    }
-
-    fn reset(&mut self) {
-        self.recorded.lock().unwrap().resets += 1;
-    }
-
-    fn da_backlog_bytes(&self) -> u64 {
-        0
+        self.da_backlog_bytes.load(Ordering::SeqCst)
     }
 }

@@ -1,13 +1,9 @@
 //! Integration tests for reorg handling in [`BatchDriver`].
 
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::time::Duration;
 
 use base_batcher_core::test_utils::{
-    DriverFixture, ImmediateConfirmTxManager, ManualConfirmTxManager, OneBlockSource, Recorded,
-    ReorgPipeline, SubmissionStub, TrackingPipeline,
+    BlockStub, DriverFixture, ScriptedTxManager, SubmissionStub, TrackingPipeline,
 };
 use base_batcher_source::{L2BlockEvent, test_utils::ChannelBlockSource};
 use base_runtime::{
@@ -21,22 +17,24 @@ use base_runtime::{
 #[test]
 fn test_add_block_reorg_resets_pipeline_instead_of_fatal_error() {
     Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = ReorgPipeline::new(Arc::clone(&recorded));
+        let pipeline = TrackingPipeline::new().with_add_block_reorg();
+        let recorded = pipeline.recorded();
+        let (source, source_tx) = ChannelBlockSource::new();
 
         let (driver, _handles) =
-            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-                .source(OneBlockSource::new())
+            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                .source(source)
                 .build();
         let handle = ctx.spawn(driver.run());
 
+        source_tx.send(L2BlockEvent::Block(Box::new(BlockStub::with_number(1)))).unwrap();
         ctx.sleep(Duration::from_millis(50)).await;
         ctx.cancel();
 
         let result = handle.await.unwrap();
         assert!(result.is_ok(), "driver must not return a fatal error on add_block reorg");
         assert_eq!(
-            recorded.lock().unwrap().resets,
+            recorded.lock().unwrap().resets(),
             1,
             "pipeline.reset() must be called when add_block returns ReorgError"
         );
@@ -49,12 +47,12 @@ fn test_add_block_reorg_resets_pipeline_instead_of_fatal_error() {
 #[test]
 fn test_l2_reorg_event_resets_pipeline() {
     Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+        let pipeline = TrackingPipeline::new();
+        let recorded = pipeline.recorded();
         let (source, source_tx) = ChannelBlockSource::new();
 
         let (driver, _handles) =
-            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
                 .source(source)
                 .build();
         let handle = ctx.spawn(driver.run());
@@ -65,7 +63,7 @@ fn test_l2_reorg_event_resets_pipeline() {
 
         assert!(handle.await.unwrap().is_ok());
         assert_eq!(
-            recorded.lock().unwrap().resets,
+            recorded.lock().unwrap().resets(),
             1,
             "pipeline must be reset when source delivers a Reorg event"
         );
@@ -77,10 +75,10 @@ fn test_l2_reorg_event_resets_pipeline() {
 #[test]
 fn test_reorg_keeps_tracking_in_flight_submissions() {
     Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+        let mut pipeline = TrackingPipeline::new();
+        let recorded = pipeline.recorded();
         pipeline.submissions.push_back(SubmissionStub::stub());
-        let tx_manager = ManualConfirmTxManager::default();
+        let tx_manager = ScriptedTxManager::new([]);
         let (source, source_tx) = ChannelBlockSource::new();
         let (driver, handles) =
             DriverFixture::new(ctx.clone(), pipeline, tx_manager.clone()).source(source).build();
@@ -91,7 +89,7 @@ fn test_reorg_keeps_tracking_in_flight_submissions() {
         source_tx.send(L2BlockEvent::Reorg).unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
 
-        assert_eq!(recorded.lock().unwrap().resets, 1);
+        assert_eq!(recorded.lock().unwrap().resets(), 1);
         assert_eq!(
             handles.admin.get_status().await.unwrap().in_flight,
             1,
@@ -106,7 +104,7 @@ fn test_reorg_keeps_tracking_in_flight_submissions() {
             0,
             "the receipt must settle the submission after the reset"
         );
-        assert_eq!(recorded.lock().unwrap().l1_heads, vec![7]);
+        assert_eq!(recorded.lock().unwrap().l1_heads(), [7]);
 
         ctx.cancel();
         assert!(handle.await.unwrap().is_ok());

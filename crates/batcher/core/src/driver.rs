@@ -424,87 +424,50 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::VecDeque,
-        sync::{
-            Arc, Mutex,
-            atomic::{AtomicU64, Ordering},
-        },
-        time::Duration,
-    };
+    use std::{sync::Arc, time::Duration};
 
-    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
-    use alloy_primitives::{Address, B256, Bloom, Bytes};
-    use alloy_rpc_types_eth::TransactionReceipt;
+    use alloy_primitives::B256;
     use base_batcher_encoder::{
         BatchSubmission, BlobPayload, FrameEncoder, SubmissionId, SubmissionPayload,
     };
-    use base_batcher_source::{L1HeadSource, L2BlockEvent, UnsafeBlockSource};
+    use base_batcher_source::{
+        L2BlockEvent,
+        test_utils::{ChannelBlockSource, ChannelL1HeadSource},
+    };
     use base_blobs::{BlobDecoder, BlobEncoder};
     use base_protocol::{BlockInfo, Frame};
     use base_runtime::{
         Cancellation, Clock, Spawner,
         deterministic::{Config, Runner},
     };
-    use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
-    use tokio::sync::{mpsc, oneshot};
 
     use super::STEP_BUDGET;
     use crate::{
-        AdminCommand, BatchDriver, BatchDriverConfig, BatchDriverError, BatchDriverInputs,
-        DaThrottle, DerivationStatus, NoopThrottleClient, ThrottleController,
+        BatchDriverError, DerivationStatus,
         test_utils::{
-            BlockStub, DriverFixture, ImmediateConfirmTxManager, ImmediateFailTxManager,
-            NeverConfirmTxManager, PipelineCall, Recorded, SubmissionStub, TrackingPipeline,
+            BlockStub, DriverFixture, PipelineCall, ScriptedTxManager, SendOutcome, SubmissionStub,
+            TrackingPipeline,
         },
     };
 
-    #[derive(Debug)]
-    struct QueuedSource {
-        events: VecDeque<L2BlockEvent>,
-    }
-
-    impl QueuedSource {
-        fn new(events: impl IntoIterator<Item = L2BlockEvent>) -> Self {
-            Self { events: events.into_iter().collect() }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl UnsafeBlockSource for QueuedSource {
-        async fn next(&mut self) -> L2BlockEvent {
-            match self.events.pop_front() {
-                Some(event) => event,
-                None => std::future::pending().await,
-            }
-        }
-
-        fn reset_catchup(&mut self, _: BlockInfo) {}
-    }
-
-    #[derive(Debug)]
-    struct QueuedL1HeadSource {
-        heads: VecDeque<u64>,
-    }
-
-    impl QueuedL1HeadSource {
-        fn new(heads: impl IntoIterator<Item = u64>) -> Self {
-            Self { heads: heads.into_iter().collect() }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl L1HeadSource for QueuedL1HeadSource {
-        async fn next(&mut self) -> u64 {
-            match self.heads.pop_front() {
-                Some(head) => head,
-                None => std::future::pending().await,
-            }
-        }
-    }
-
     fn safe_head(number: u64) -> BlockInfo {
         BlockInfo { hash: B256::with_last_byte(number as u8), number, ..Default::default() }
+    }
+
+    /// Sources that deliver the given blocks and L1 heads, then park.
+    fn queued_sources(
+        blocks: impl IntoIterator<Item = u64>,
+        l1_heads: impl IntoIterator<Item = u64>,
+    ) -> (ChannelBlockSource, ChannelL1HeadSource) {
+        let (source, source_tx) = ChannelBlockSource::new();
+        for number in blocks {
+            source_tx.send(L2BlockEvent::Block(Box::new(BlockStub::with_number(number)))).unwrap();
+        }
+        let (l1_head_source, l1_head_tx) = ChannelL1HeadSource::new();
+        for head in l1_heads {
+            l1_head_tx.send(head).unwrap();
+        }
+        (source, l1_head_source)
     }
 
     /// The pipeline starts from the live L1 head, so channel duration is not measured from
@@ -512,33 +475,15 @@ mod tests {
     #[test]
     fn new_driver_seeds_pipeline_from_live_l1_head() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let (_admin_tx, admin_rx) = mpsc::channel(1);
-            let (_status_tx, status_rx) = mpsc::channel(1);
+            let pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
 
-            let _driver = BatchDriver::new(
-                ctx,
-                TrackingPipeline::new(Arc::clone(&recorded)),
-                NeverConfirmTxManager,
-                BatchDriverConfig {
-                    inbox: Address::ZERO,
-                    max_pending_transactions: 1,
-                    drain_timeout: Duration::from_millis(10),
-                    force_blobs_when_throttling: true,
-                    stopped: false,
-                },
-                DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
-                BatchDriverInputs {
-                    source: QueuedSource::new([]),
-                    l1_head_source: QueuedL1HeadSource::new([]),
-                    initial_l1_head: 50,
-                    initial_safe_head: safe_head(10),
-                    derivation_status_rx: status_rx,
-                    admin_rx,
-                },
-            );
+            let (_driver, _handles) = DriverFixture::new(ctx, pipeline, ScriptedTxManager::new([]))
+                .initial_l1_head(50)
+                .safe_head(safe_head(10))
+                .build();
 
-            assert_eq!(recorded.lock().unwrap().l1_heads, vec![50]);
+            assert_eq!(recorded.lock().unwrap().l1_heads(), [50]);
         });
     }
 
@@ -566,200 +511,59 @@ mod tests {
         )
     }
 
-    const fn stub_receipt(block_number: u64) -> TransactionReceipt {
-        let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
-            receipt: Receipt {
-                status: Eip658Value::Eip658(true),
-                cumulative_gas_used: 21_000,
-                logs: vec![],
-            },
-            logs_bloom: Bloom::ZERO,
-        });
-        TransactionReceipt {
-            inner,
-            transaction_hash: B256::ZERO,
-            transaction_index: Some(0),
-            block_hash: Some(B256::ZERO),
-            block_number: Some(block_number),
-            gas_used: 21_000,
-            effective_gas_price: 1_000_000_000,
-            blob_gas_used: None,
-            blob_gas_price: None,
-            from: Address::ZERO,
-            to: Some(Address::ZERO),
-            contract_address: None,
-        }
-    }
-
-    /// A driver whose source and L1 head source deliver the given events then park, with
-    /// the handles the test keeps to feed it and observe it.
-    struct QueuedDriver<R: base_runtime::Runtime, TM: TxManager> {
-        driver: BatchDriver<
-            R,
-            TrackingPipeline,
-            QueuedSource,
-            TM,
-            Arc<NoopThrottleClient>,
-            QueuedL1HeadSource,
-        >,
-        recorded: Arc<Mutex<Recorded>>,
-        admin_tx: mpsc::Sender<AdminCommand>,
-        status_tx: mpsc::Sender<DerivationStatus>,
-    }
-
-    fn queued_driver<R: base_runtime::Runtime, TM: TxManager>(
-        runtime: R,
-        blocks: impl IntoIterator<Item = u64>,
-        l1_heads: impl IntoIterator<Item = u64>,
-        tx_manager: TM,
-    ) -> QueuedDriver<R, TM> {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let (admin_tx, admin_rx) = mpsc::channel(1);
-        let (status_tx, status_rx) = mpsc::channel(1);
-        let driver =
-            BatchDriver::new(
-                runtime,
-                TrackingPipeline::new(Arc::clone(&recorded)),
-                tx_manager,
-                BatchDriverConfig {
-                    inbox: Address::ZERO,
-                    max_pending_transactions: 1,
-                    drain_timeout: Duration::from_millis(10),
-                    force_blobs_when_throttling: true,
-                    stopped: false,
-                },
-                DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
-                BatchDriverInputs {
-                    source: QueuedSource::new(blocks.into_iter().map(|number| {
-                        L2BlockEvent::Block(Box::new(BlockStub::with_number(number)))
-                    })),
-                    l1_head_source: QueuedL1HeadSource::new(l1_heads),
-                    initial_l1_head: 0,
-                    initial_safe_head: safe_head(0),
-                    derivation_status_rx: status_rx,
-                    admin_rx,
-                },
-            );
-        QueuedDriver { driver, recorded, admin_tx, status_tx }
-    }
-
-    #[derive(Debug, Default)]
-    struct TxpoolBlockedState {
-        sends: AtomicU64,
-        cancellations: AtomicU64,
-    }
-
-    #[derive(Debug, Clone)]
-    struct TxpoolBlockedOnceTxManager {
-        state: Arc<TxpoolBlockedState>,
-    }
-
-    impl TxManager for TxpoolBlockedOnceTxManager {
-        async fn send(&self, _: TxCandidate) -> SendResponse {
-            Err(TxManagerError::AlreadyReserved)
-        }
-
-        fn send_async(
-            &self,
-            _: TxCandidate,
-        ) -> impl std::future::Future<Output = SendHandle> + Send {
-            self.state.sends.fetch_add(1, Ordering::SeqCst);
-            let (tx, rx) = oneshot::channel();
-            let _ = tx.send(Err(TxManagerError::AlreadyReserved));
-            std::future::ready(SendHandle::new(rx))
-        }
-
-        fn cancel_tx(
-            &self,
-        ) -> impl std::future::Future<Output = base_tx_manager::TxManagerResult<()>> + Send
-        {
-            let state = Arc::clone(&self.state);
-            async move {
-                state.cancellations.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            }
-        }
-
-        fn sender_address(&self) -> Address {
-            Address::ZERO
-        }
-    }
-
-    #[derive(Debug)]
-    struct RecordedCandidate {
-        tx_data: Bytes,
-        decoded_blob_payloads: Vec<Bytes>,
-    }
-
-    #[derive(Debug, Clone)]
-    struct RecordingConfirmTxManager {
-        l1_block: u64,
-        candidates: Arc<Mutex<Vec<RecordedCandidate>>>,
-    }
-
-    impl TxManager for RecordingConfirmTxManager {
-        async fn send(&self, _: TxCandidate) -> SendResponse {
-            unreachable!()
-        }
-
-        fn send_async(
-            &self,
-            candidate: TxCandidate,
-        ) -> impl std::future::Future<Output = SendHandle> + Send {
-            let decoded_blob_payloads = candidate
-                .blobs
-                .iter()
-                .map(|blob| BlobDecoder::decode(blob).expect("blob payload should decode"))
-                .collect();
-            self.candidates
-                .lock()
-                .unwrap()
-                .push(RecordedCandidate { tx_data: candidate.tx_data, decoded_blob_payloads });
-            let l1_block = self.l1_block;
-            let (tx, rx) = oneshot::channel();
-            let _ = tx.send(Ok(stub_receipt(l1_block)));
-            std::future::ready(SendHandle::new(rx))
-        }
-
-        fn sender_address(&self) -> Address {
-            Address::ZERO
-        }
-    }
-
     // The loop polls its arms in priority order; each test below makes several arms ready at
-    // once and checks which one the driver serves first.
+    // once and checks which one the driver serves first. The shutdown flush ends every log.
 
     #[test]
     fn run_prioritizes_cancellation_over_ready_admin() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let queued =
-                queued_driver(ctx.clone(), [1], [9], ImmediateConfirmTxManager { l1_block: 1 });
-            let (reply, reply_rx) = oneshot::channel();
-            queued.admin_tx.send(AdminCommand::Flush { reply }).await.unwrap();
+            let pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
+            let (source, l1_head_source) = queued_sources([1], [9]);
+            let (driver, handles) =
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                    .source(source)
+                    .l1_head_source(l1_head_source)
+                    .build();
+
+            // Queue a flush, then cancel before the driver runs.
+            let admin = handles.admin.clone();
+            let flush = ctx.spawn(async move { admin.flush().await });
+            ctx.sleep(Duration::from_millis(1)).await;
             ctx.cancel();
 
-            assert!(queued.driver.run().await.is_ok());
-            assert!(reply_rx.await.is_err(), "a cancelled driver must not serve the flush");
-            assert!(!queued.recorded.lock().unwrap().calls.contains(&PipelineCall::AddBlock));
+            assert!(driver.run().await.is_ok());
+            assert!(flush.await.unwrap().is_err(), "a cancelled driver must not serve the flush");
+            assert!(!recorded.lock().unwrap().calls.contains(&PipelineCall::AddBlock(1)));
         });
     }
 
     #[test]
     fn run_prioritizes_admin_before_source() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let queued =
-                queued_driver(ctx.clone(), [1], [], ImmediateConfirmTxManager { l1_block: 1 });
-            let (reply, _reply_rx) = oneshot::channel();
-            queued.admin_tx.send(AdminCommand::Flush { reply }).await.unwrap();
+            let pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
+            let (source, l1_head_source) = queued_sources([1], []);
+            let (driver, handles) =
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                    .source(source)
+                    .l1_head_source(l1_head_source)
+                    .build();
 
-            let handle = ctx.spawn(queued.driver.run());
+            // Queue a flush before the driver runs.
+            let admin = handles.admin.clone();
+            let flush = ctx.spawn(async move { admin.flush().await });
+            ctx.sleep(Duration::from_millis(1)).await;
+
+            let handle = ctx.spawn(driver.run());
             ctx.sleep(Duration::from_millis(10)).await;
             ctx.cancel();
             assert!(handle.await.unwrap().is_ok());
+            assert!(flush.await.unwrap().is_ok());
 
-            let recorded = queued.recorded.lock().unwrap();
+            let recorded = recorded.lock().unwrap();
             assert!(
-                recorded.calls.starts_with(&[PipelineCall::Flush, PipelineCall::AddBlock]),
+                recorded.calls.starts_with(&[PipelineCall::Flush, PipelineCall::AddBlock(1)]),
                 "{:?}",
                 recorded.calls
             );
@@ -769,71 +573,105 @@ mod tests {
     #[test]
     fn run_prioritizes_source_before_receipts_and_heads() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let mut queued =
-                queued_driver(ctx.clone(), [1], [9], ImmediateConfirmTxManager { l1_block: 1 });
+            let mut pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
             // Submitted by the first CPU phase, so its receipt is ready at the first wait.
-            queued.driver.pipeline.submissions.push_back(SubmissionStub::stub());
+            pipeline.submissions.push_back(SubmissionStub::stub());
+            let (source, l1_head_source) = queued_sources([1], [9]);
+            let (driver, _handles) =
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                    .source(source)
+                    .l1_head_source(l1_head_source)
+                    .build();
 
-            let handle = ctx.spawn(queued.driver.run());
+            let handle = ctx.spawn(driver.run());
             ctx.sleep(Duration::from_millis(10)).await;
             ctx.cancel();
             assert!(handle.await.unwrap().is_ok());
 
-            let recorded = queued.recorded.lock().unwrap();
-            assert_eq!(
-                recorded.calls.first(),
-                Some(&PipelineCall::AddBlock),
+            // The receipt confirms at L1 block 1 before the source's head 9 arrives; the other
+            // way round, head 1 would not advance past 9.
+            let recorded = recorded.lock().unwrap();
+            assert!(
+                recorded.calls.starts_with(&[
+                    PipelineCall::Dequeue(SubmissionId(0)),
+                    PipelineCall::AddBlock(1),
+                    PipelineCall::Confirm(SubmissionId(0), 1),
+                    PipelineCall::AdvanceL1Head(1),
+                    PipelineCall::AdvanceL1Head(9),
+                ]),
                 "{:?}",
                 recorded.calls
             );
-            // The receipt confirms at L1 block 1 before the source's head 9 arrives; the other
-            // way round, head 1 would not advance past 9.
-            assert_eq!(recorded.l1_heads, [1, 9]);
         });
     }
 
     #[test]
     fn run_prioritizes_derivation_status_before_source_and_receipts() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let mut queued =
-                queued_driver(ctx.clone(), [6], [], ImmediateConfirmTxManager { l1_block: 42 });
-            queued.driver.pipeline.submissions.push_back(SubmissionStub::stub());
-            queued.status_tx.send(DerivationStatus::from_safe_l2(safe_head(5))).await.unwrap();
+            let mut pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
+            pipeline.submissions.push_back(SubmissionStub::stub());
+            let (source, l1_head_source) = queued_sources([6], []);
+            let (driver, handles) =
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(42))
+                    .source(source)
+                    .l1_head_source(l1_head_source)
+                    .build();
+            handles
+                .derivation_status_tx
+                .send(DerivationStatus::from_safe_l2(safe_head(5)))
+                .await
+                .unwrap();
 
-            let handle = ctx.spawn(queued.driver.run());
+            let handle = ctx.spawn(driver.run());
             ctx.sleep(Duration::from_millis(10)).await;
             ctx.cancel();
             assert!(handle.await.unwrap().is_ok());
 
-            let recorded = queued.recorded.lock().unwrap();
+            let recorded = recorded.lock().unwrap();
             assert!(
-                recorded
-                    .calls
-                    .starts_with(&[PipelineCall::ReconcileDerivation, PipelineCall::AddBlock]),
+                recorded.calls.starts_with(&[
+                    PipelineCall::Dequeue(SubmissionId(0)),
+                    PipelineCall::ReconcileDerivation { safe_l2: 5, current_l1: None },
+                    PipelineCall::AddBlock(6),
+                    PipelineCall::Confirm(SubmissionId(0), 42),
+                    PipelineCall::AdvanceL1Head(42),
+                ]),
                 "{:?}",
                 recorded.calls
             );
-            assert!(recorded.calls.contains(&PipelineCall::Confirm));
         });
     }
 
     #[test]
     fn run_prioritizes_derivation_status_before_l1_head() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let queued =
-                queued_driver(ctx.clone(), [], [9], ImmediateConfirmTxManager { l1_block: 1 });
-            queued.status_tx.send(DerivationStatus::from_safe_l2(safe_head(5))).await.unwrap();
+            let pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
+            let (source, l1_head_source) = queued_sources([], [9]);
+            let (driver, handles) =
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                    .source(source)
+                    .l1_head_source(l1_head_source)
+                    .build();
+            handles
+                .derivation_status_tx
+                .send(DerivationStatus::from_safe_l2(safe_head(5)))
+                .await
+                .unwrap();
 
-            let handle = ctx.spawn(queued.driver.run());
+            let handle = ctx.spawn(driver.run());
             ctx.sleep(Duration::from_millis(10)).await;
             ctx.cancel();
             assert!(handle.await.unwrap().is_ok());
 
-            let recorded = queued.recorded.lock().unwrap();
+            let recorded = recorded.lock().unwrap();
             assert!(
-                recorded
-                    .calls
-                    .starts_with(&[PipelineCall::ReconcileDerivation, PipelineCall::AdvanceL1Head]),
+                recorded.calls.starts_with(&[
+                    PipelineCall::ReconcileDerivation { safe_l2: 5, current_l1: None },
+                    PipelineCall::AdvanceL1Head(9),
+                ]),
                 "{:?}",
                 recorded.calls
             );
@@ -845,17 +683,17 @@ mod tests {
     fn run_finishes_a_backlog_larger_than_one_slice_without_events() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let blocks = 2 * STEP_BUDGET + 5;
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_encoding_steps(blocks);
+            let pipeline = TrackingPipeline::new().with_encoding_steps(blocks);
+            let recorded = pipeline.recorded();
             let (driver, _handles) =
-                DriverFixture::new(ctx.clone(), pipeline, NeverConfirmTxManager).build();
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::new([])).build();
 
             let handle = ctx.spawn(driver.run());
             ctx.sleep(Duration::from_millis(10)).await;
             ctx.cancel();
             assert!(handle.await.unwrap().is_ok());
 
-            assert_eq!(recorded.lock().unwrap().encoded_steps, blocks);
+            assert_eq!(recorded.lock().unwrap().encoded_steps(), blocks);
         });
     }
 
@@ -864,11 +702,10 @@ mod tests {
     #[test]
     fn run_serves_admin_between_encoding_slices() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let pipeline = TrackingPipeline::new(Arc::clone(&recorded))
-                .with_encoding_steps(2 * STEP_BUDGET + 5);
+            let pipeline = TrackingPipeline::new().with_encoding_steps(2 * STEP_BUDGET + 5);
+            let recorded = pipeline.recorded();
             let (driver, handles) =
-                DriverFixture::new(ctx.clone(), pipeline, NeverConfirmTxManager).build();
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::new([])).build();
 
             let handle = ctx.spawn(driver.run());
             // Stop resets the pipeline, which drops whatever was still to encode.
@@ -876,7 +713,7 @@ mod tests {
             ctx.cancel();
             assert!(handle.await.unwrap().is_ok());
 
-            assert_eq!(recorded.lock().unwrap().encoded_steps, STEP_BUDGET);
+            assert_eq!(recorded.lock().unwrap().encoded_steps(), STEP_BUDGET);
         });
     }
 
@@ -886,23 +723,22 @@ mod tests {
     fn run_yields_to_other_tasks_between_encoding_slices() {
         let config = Config { cycle_limit: Some(1_000_000), ..Config::seeded(0) };
         Runner::start(config, |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let pipeline =
-                TrackingPipeline::new(Arc::clone(&recorded)).with_encoding_steps(3 * STEP_BUDGET);
+            let pipeline = TrackingPipeline::new().with_encoding_steps(3 * STEP_BUDGET);
+            let recorded = pipeline.recorded();
             let (driver, handles) =
-                DriverFixture::new(ctx.clone(), pipeline, NeverConfirmTxManager).build();
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::new([])).build();
 
             let handle = ctx.spawn(driver.run());
             // Send the stop once the first slice is done: the driver must yield for this task
             // to observe that.
-            while recorded.lock().unwrap().encoded_steps < STEP_BUDGET {
+            while recorded.lock().unwrap().encoded_steps() < STEP_BUDGET {
                 tokio::task::yield_now().await;
             }
             handles.admin.stop().await.unwrap();
             ctx.cancel();
             assert!(handle.await.unwrap().is_ok());
 
-            let encoded = recorded.lock().unwrap().encoded_steps;
+            let encoded = recorded.lock().unwrap().encoded_steps();
             assert!(encoded < 3 * STEP_BUDGET, "the stop must not wait for the whole backlog");
         });
     }
@@ -912,16 +748,13 @@ mod tests {
     #[test]
     fn test_advance_l1_head_called_on_confirmation() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            let mut pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
             pipeline.submissions.push_back(SubmissionStub::stub());
 
-            let (driver, _handles) = DriverFixture::new(
-                ctx.clone(),
-                pipeline,
-                ImmediateConfirmTxManager { l1_block: 42 },
-            )
-            .build();
+            let (driver, _handles) =
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(42))
+                    .build();
             let handle = ctx.spawn(driver.run());
 
             ctx.sleep(Duration::from_millis(50)).await;
@@ -929,8 +762,8 @@ mod tests {
 
             assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
             assert_eq!(
-                recorded.lock().unwrap().l1_heads,
-                vec![42],
+                recorded.lock().unwrap().l1_heads(),
+                [42],
                 "advance_l1_head must be called with the confirmed L1 block"
             );
         });
@@ -941,12 +774,16 @@ mod tests {
     #[test]
     fn test_advance_l1_head_not_called_on_failure() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            let mut pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
             pipeline.submissions.push_back(SubmissionStub::stub());
 
-            let (driver, _handles) =
-                DriverFixture::new(ctx.clone(), pipeline, ImmediateFailTxManager).build();
+            let (driver, _handles) = DriverFixture::new(
+                ctx.clone(),
+                pipeline,
+                ScriptedTxManager::new([SendOutcome::Failed]),
+            )
+            .build();
             let handle = ctx.spawn(driver.run());
 
             ctx.sleep(Duration::from_millis(50)).await;
@@ -954,7 +791,7 @@ mod tests {
 
             assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
             assert!(
-                recorded.lock().unwrap().l1_heads.is_empty(),
+                recorded.lock().unwrap().l1_heads().is_empty(),
                 "advance_l1_head must NOT be called on submission failure"
             );
         });
@@ -965,7 +802,7 @@ mod tests {
     #[test]
     fn test_blob_encoding_failure_is_fatal() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let mut pipeline = TrackingPipeline::new(Arc::default());
+            let mut pipeline = TrackingPipeline::new();
             // A frame as large as a whole blob no longer fits once framed.
             pipeline.submissions.push_back(BatchSubmission::blobs(
                 SubmissionId(0),
@@ -975,12 +812,9 @@ mod tests {
                 })])],
             ));
 
-            let (driver, _handles) = DriverFixture::new(
-                ctx.clone(),
-                pipeline,
-                ImmediateConfirmTxManager { l1_block: 1 },
-            )
-            .build();
+            let (driver, _handles) =
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                    .build();
 
             let result = ctx.spawn(driver.run()).await.unwrap();
             assert!(matches!(result, Err(BatchDriverError::Blob(_))), "got {result:?}");
@@ -992,19 +826,15 @@ mod tests {
     #[test]
     fn test_submission_loop_submits_each_pipeline_submission_as_one_tx() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let candidates = Arc::new(Mutex::new(Vec::new()));
-            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            let mut pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
             pipeline.submissions.push_back(SubmissionStub::with_id(0));
             pipeline.submissions.push_back(SubmissionStub::with_id(1));
+            let tx_manager = ScriptedTxManager::confirming_at(10);
 
-            let (driver, _handles) = DriverFixture::new(
-                ctx.clone(),
-                pipeline,
-                RecordingConfirmTxManager { l1_block: 10, candidates: Arc::clone(&candidates) },
-            )
-            .max_pending(2)
-            .build();
+            let (driver, _handles) = DriverFixture::new(ctx.clone(), pipeline, tx_manager.clone())
+                .max_pending(2)
+                .build();
             let handle = ctx.spawn(driver.run());
 
             ctx.sleep(Duration::from_millis(50)).await;
@@ -1012,14 +842,14 @@ mod tests {
 
             assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
             let recorded = recorded.lock().unwrap();
-            assert_eq!(recorded.dequeued.len(), 2, "both submissions must be dequeued");
+            assert_eq!(recorded.dequeued().len(), 2, "both submissions must be dequeued");
             assert_eq!(
-                recorded.confirmed,
-                vec![SubmissionId(0), SubmissionId(1)],
+                recorded.confirmed(),
+                [SubmissionId(0), SubmissionId(1)],
                 "each pipeline submission should produce its own confirmation"
             );
             assert_eq!(
-                candidates.lock().unwrap().len(),
+                tx_manager.candidates().len(),
                 2,
                 "separate pipeline submissions must not be coalesced into one L1 tx"
             );
@@ -1032,9 +862,8 @@ mod tests {
     #[test]
     fn test_multi_frame_blob_submission_maps_frames_to_blobs() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let candidates = Arc::new(Mutex::new(Vec::new()));
-            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            let mut pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
             let submission = blob_filling_submission_with_frames(0, 3);
             let SubmissionPayload::Blobs(payloads) = submission.payload() else {
                 panic!("helper must create blob payloads");
@@ -1044,13 +873,10 @@ mod tests {
                 .map(|payload| FrameEncoder::to_calldata(&payload.frames()[0]))
                 .collect();
             pipeline.submissions.push_back(submission);
+            let tx_manager = ScriptedTxManager::confirming_at(10);
 
-            let (driver, _handles) = DriverFixture::new(
-                ctx.clone(),
-                pipeline,
-                RecordingConfirmTxManager { l1_block: 10, candidates: Arc::clone(&candidates) },
-            )
-            .build();
+            let (driver, _handles) =
+                DriverFixture::new(ctx.clone(), pipeline, tx_manager.clone()).build();
             let handle = ctx.spawn(driver.run());
 
             ctx.sleep(Duration::from_millis(50)).await;
@@ -1058,24 +884,29 @@ mod tests {
 
             assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
             let recorded = recorded.lock().unwrap();
-            assert_eq!(recorded.dequeued, vec![SubmissionId(0)], "submission must be dequeued");
+            assert_eq!(recorded.dequeued(), [SubmissionId(0)], "submission must be dequeued");
             assert!(
-                recorded.requeued.is_empty(),
+                recorded.requeued().is_empty(),
                 "multi-frame blob submission must not be requeued by blob encoding"
             );
             assert_eq!(
-                recorded.confirmed,
-                vec![SubmissionId(0)],
+                recorded.confirmed(),
+                [SubmissionId(0)],
                 "multi-frame blob submission should confirm once"
             );
-            let candidates = candidates.lock().unwrap();
+            let candidates = tx_manager.candidates();
             assert_eq!(candidates.len(), 1, "multi-frame submission should use one L1 tx");
             assert!(
                 candidates[0].tx_data.is_empty(),
                 "blob transactions must not also carry calldata"
             );
+            let decoded_blob_payloads: Vec<_> = candidates[0]
+                .blobs
+                .iter()
+                .map(|blob| BlobDecoder::decode(blob).expect("blob payload should decode"))
+                .collect();
             assert_eq!(
-                candidates[0].decoded_blob_payloads, expected_blob_payloads,
+                decoded_blob_payloads, expected_blob_payloads,
                 "each frame in the submission must become its own blob payload"
             );
         });
@@ -1086,13 +917,13 @@ mod tests {
     #[test]
     fn test_in_flight_limit_holds_back_further_submissions() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            let mut pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
             pipeline.submissions.push_back(blob_filling_submission(0));
             pipeline.submissions.push_back(blob_filling_submission(1));
 
             let (driver, _handles) =
-                DriverFixture::new(ctx.clone(), pipeline, NeverConfirmTxManager)
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::new([]))
                     .max_pending(1)
                     .build();
             let handle = ctx.spawn(driver.run());
@@ -1102,9 +933,9 @@ mod tests {
 
             assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
             let recorded = recorded.lock().unwrap();
-            assert_eq!(recorded.dequeued, vec![SubmissionId(0)], "only one tx may be in flight");
-            assert!(recorded.requeued.is_empty(), "a held-back submission is not requeued");
-            assert!(recorded.l1_heads.is_empty(), "the tx in flight never confirms");
+            assert_eq!(recorded.dequeued(), [SubmissionId(0)], "only one tx may be in flight");
+            assert!(recorded.requeued().is_empty(), "a held-back submission is not requeued");
+            assert!(recorded.l1_heads().is_empty(), "the tx in flight never confirms");
         });
     }
 
@@ -1113,19 +944,16 @@ mod tests {
     #[test]
     fn test_next_blob_tx_submitted_once_the_previous_settles() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            let mut pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
             pipeline.submissions.push_back(blob_filling_submission(0));
             pipeline.submissions.push_back(blob_filling_submission(1));
             pipeline.submissions.push_back(blob_filling_submission(2));
 
-            let (driver, _handles) = DriverFixture::new(
-                ctx.clone(),
-                pipeline,
-                ImmediateConfirmTxManager { l1_block: 7 },
-            )
-            .max_pending(1)
-            .build();
+            let (driver, _handles) =
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(7))
+                    .max_pending(1)
+                    .build();
             let handle = ctx.spawn(driver.run());
 
             ctx.sleep(Duration::from_millis(50)).await;
@@ -1133,8 +961,8 @@ mod tests {
 
             assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
             assert_eq!(
-                recorded.lock().unwrap().confirmed,
-                vec![SubmissionId(0), SubmissionId(1), SubmissionId(2)],
+                recorded.lock().unwrap().confirmed(),
+                [SubmissionId(0), SubmissionId(1), SubmissionId(2)],
                 "each queued submission must confirm as the tx before it settles"
             );
         });
@@ -1142,18 +970,18 @@ mod tests {
 
     /// `AlreadyReserved` means another transaction owns the sender nonce slot.
     /// The driver must requeue the submission, mark the txpool blocked, and
-    /// call `cancel_tx` before accepting more submissions.
+    /// call `cancel_tx` before accepting more submissions. Once the cancel
+    /// succeeds, the requeued submission is sent again.
     #[test]
     fn test_txpool_blocked_requeues_and_attempts_recovery() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            let mut pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
             pipeline.submissions.push_back(SubmissionStub::stub());
+            let tx_manager = ScriptedTxManager::new([SendOutcome::TxpoolBlocked]);
 
-            let state = Arc::new(TxpoolBlockedState::default());
-            let tx_manager = TxpoolBlockedOnceTxManager { state: Arc::clone(&state) };
-
-            let (driver, _handles) = DriverFixture::new(ctx.clone(), pipeline, tx_manager).build();
+            let (driver, _handles) =
+                DriverFixture::new(ctx.clone(), pipeline, tx_manager.clone()).build();
             let handle = ctx.spawn(driver.run());
 
             ctx.sleep(Duration::from_millis(50)).await;
@@ -1161,19 +989,19 @@ mod tests {
 
             assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
             assert_eq!(
-                recorded.lock().unwrap().requeued,
-                vec![SubmissionId(0)],
+                recorded.lock().unwrap().requeued(),
+                [SubmissionId(0)],
                 "txpool-blocked submissions must be requeued"
             );
             assert_eq!(
-                state.sends.load(Ordering::SeqCst),
-                1,
-                "driver must stop submitting while txpool is blocked"
-            );
-            assert_eq!(
-                state.cancellations.load(Ordering::SeqCst),
+                tx_manager.cancellations(),
                 1,
                 "driver must attempt txpool recovery with cancel_tx"
+            );
+            assert_eq!(
+                tx_manager.candidates().len(),
+                2,
+                "the requeued submission must be sent again once the txpool is unblocked"
             );
         });
     }
