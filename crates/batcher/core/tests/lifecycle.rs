@@ -105,7 +105,8 @@ impl UnsafeBlockSource for PollRecorder {
 }
 
 /// The driver does all the work it can before waiting for the next event: a receipt that
-/// frees a permit gets the next ready submission sent before any source is waited on again.
+/// frees an in-flight slot gets the next ready submission sent before any source is waited on
+/// again.
 #[test]
 fn test_driver_finishes_pending_work_before_waiting_for_events() {
     Runner::start(Config::seeded(0), |ctx| async move {
@@ -120,7 +121,7 @@ fn test_driver_finishes_pending_work_before_waiting_for_events() {
             dequeued_at_poll: Arc::clone(&dequeued_at_poll),
         };
 
-        // A single permit: the second submission can only leave the pipeline once the
+        // One tx in flight at most: the second submission can only leave the pipeline once the
         // receipt of the first one has been processed.
         let (driver, _handles) =
             DriverFixture::new(ctx.clone(), pipeline, tx_manager.clone()).source(source).build();

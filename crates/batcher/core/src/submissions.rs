@@ -8,16 +8,16 @@ use base_batcher_encoder::{
     SubmissionId, SubmissionPayload,
 };
 use base_blobs::{BlobEncodeError, BlobEncoder};
+use base_protocol::Frame;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use futures::stream::{FuturesUnordered, StreamExt};
-use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 use crate::TxOutcome;
 
-/// Type alias for the in-flight receipt future collection.
-type InFlight =
-    FuturesUnordered<Pin<Box<dyn Future<Output = (Vec<SubmissionId>, TxOutcome)> + Send>>>;
+/// Receipt futures of the transactions in flight, each resolving to the submission it
+/// carries and how its transaction settled.
+type InFlight = FuturesUnordered<Pin<Box<dyn Future<Output = (SubmissionId, TxOutcome)> + Send>>>;
 
 /// Builds L1 transaction candidates for batch submissions.
 #[derive(Debug)]
@@ -76,18 +76,30 @@ impl BatchTxCandidateBuilder {
             payload_size as u64,
         ))
     }
+
+    /// Build a calldata transaction candidate carrying one version-prefixed frame.
+    pub fn calldata_tx_candidate(inbox: Address, frame: &Frame) -> TxCandidate {
+        TxCandidate {
+            to: Some(inbox),
+            tx_data: FrameEncoder::to_calldata(frame),
+            value: U256::ZERO,
+            gas_limit: 0,
+            blobs: Arc::from([]),
+        }
+    }
 }
 
-/// Manages the full submission lifecycle for the batch driver.
+/// Sends ready submissions to L1, one transaction each, and tracks those transactions until
+/// they settle.
 ///
-/// Owns capacity management (semaphore), in-flight receipt tracking
-/// ([`FuturesUnordered`]), txpool blockage state, the [`TxManager`], and the
-/// batcher inbox address. These were previously loose fields on [`BatchDriver`].
+/// At most `max_pending` transactions are in flight at once. A
+/// [`TxOutcome::TxpoolBlocked`] outcome suspends sending until
+/// [`recover_txpool`](Self::recover_txpool) cancels the transaction holding the nonce slot.
 #[derive(Debug)]
 pub struct SubmissionQueue<TM: TxManager> {
     tx_manager: TM,
     in_flight: InFlight,
-    semaphore: Arc<Semaphore>,
+    max_pending: usize,
     inbox: Address,
     txpool_blocked: bool,
 }
@@ -98,78 +110,50 @@ impl<TM: TxManager> SubmissionQueue<TM> {
         Self {
             tx_manager,
             in_flight: FuturesUnordered::new(),
-            semaphore: Arc::new(Semaphore::new(max_pending)),
+            max_pending,
             inbox,
             txpool_blocked: false,
         }
     }
 
-    /// Submit all ready frames that fit within semaphore capacity.
+    /// Send ready submissions, one L1 transaction each, until `max_pending` transactions are
+    /// in flight, the pipeline has nothing ready, or the txpool is blocked.
     ///
-    /// For each available semaphore permit (= one L1 transaction), dequeues one
-    /// ready submission and encodes it as a blob or calldata transaction. Each
-    /// blob payload may contain frames from multiple channels.
-    /// Loops until the semaphore is exhausted, the pipeline has no ready submissions,
-    /// or the txpool is blocked.
-    pub async fn submit_pending<P: BatchPipeline>(&mut self, pipeline: &mut P) {
-        loop {
-            if self.txpool_blocked {
-                return;
-            }
-
-            let Ok(permit) = Arc::clone(&self.semaphore).try_acquire_owned() else {
-                return;
-            };
-
+    /// Fails when a blob submission cannot be built into a transaction.
+    pub async fn submit_pending<P: BatchPipeline>(
+        &mut self,
+        pipeline: &mut P,
+    ) -> Result<(), BatchTxCandidateError> {
+        while !self.txpool_blocked && self.in_flight.len() < self.max_pending {
             let Some(sub) = pipeline.next_submission() else {
-                drop(permit);
-                return;
+                return Ok(());
             };
 
-            // Convert the submission into its final L1 transaction payload before
-            // handing ownership to the asynchronous transaction manager.
-            let da_type = sub.da_type();
-            let da_type_label = match da_type {
+            // Build the transaction.
+            let da_type_label = match sub.da_type() {
                 DaType::Blob => BatcherMetrics::DA_TYPE_BLOB,
                 DaType::Calldata => BatcherMetrics::DA_TYPE_CALLDATA,
             };
-            let blob_payload_bytes;
-            let candidate = match sub.payload() {
+            let (candidate, blob_payload_bytes) = match sub.payload() {
                 SubmissionPayload::Blobs(payloads) => {
-                    match BatchTxCandidateBuilder::blob_tx_candidate(self.inbox, payloads) {
-                        Ok((candidate, payload_size)) => {
-                            blob_payload_bytes = Some(payload_size);
-                            BatcherMetrics::blobs_per_tx().record(payloads.len() as f64);
-                            for payload in payloads {
-                                BatcherMetrics::blob_fill_ratio().record(
-                                    payload.frame_bytes() as f64 / DaEgress::BLOB_CAPACITY as f64,
-                                );
-                            }
-                            candidate
-                        }
-                        Err(e) => {
-                            warn!(error = %e, "failed to encode frames to blob, requeueing");
-                            pipeline.requeue(sub.id);
-                            drop(permit);
-                            return;
-                        }
+                    let (candidate, payload_size) =
+                        BatchTxCandidateBuilder::blob_tx_candidate(self.inbox, payloads)?;
+                    BatcherMetrics::blobs_per_tx().record(payloads.len() as f64);
+                    for payload in payloads {
+                        BatcherMetrics::blob_fill_ratio()
+                            .record(payload.frame_bytes() as f64 / DaEgress::BLOB_CAPACITY as f64);
                     }
+                    (candidate, Some(payload_size))
                 }
                 SubmissionPayload::Calldata(frame) => {
-                    blob_payload_bytes = None;
-                    TxCandidate {
-                        to: Some(self.inbox),
-                        tx_data: FrameEncoder::to_calldata(frame),
-                        value: U256::ZERO,
-                        gas_limit: 0,
-                        blobs: vec![].into(),
-                    }
+                    (BatchTxCandidateBuilder::calldata_tx_candidate(self.inbox, frame), None)
                 }
             };
 
+            let id = sub.id;
             let frame_bytes = sub.frame_bytes();
             info!(
-                submissions = 1,
+                id = ?id,
                 da_type = %da_type_label,
                 frame_bytes = %frame_bytes,
                 "submitting batch frames to L1"
@@ -178,37 +162,34 @@ impl<TM: TxManager> SubmissionQueue<TM> {
             BatcherMetrics::da_bytes_submitted_total(da_type_label).increment(frame_bytes as u64);
             BatcherMetrics::in_flight_submissions().increment(1.0);
 
-            // Capture for the post-confirm metric: blob_used_bytes_total counts
-            // payload bytes that actually landed on L1, not bytes attempted, so
-            // we only increment after the tx confirms.
+            // Send it, and track its receipt until the transaction settles.
             let handle = self.tx_manager.send_async(candidate).await;
-            let fut: Pin<Box<dyn Future<Output = (Vec<SubmissionId>, TxOutcome)> + Send>> =
-                Box::pin(async move {
-                    let outcome = match handle.await {
-                        Ok(receipt) => {
-                            let l1_block = receipt.block_number.unwrap_or_else(|| {
-                                warn!("confirmed receipt missing block number; l1_head will not advance");
-                                0
-                            });
-                            if let Some(bytes) = blob_payload_bytes {
-                                BatcherMetrics::blob_used_bytes_total().increment(bytes);
-                            }
-                            TxOutcome::Confirmed { l1_block }
+            self.in_flight.push(Box::pin(async move {
+                let outcome = match handle.await {
+                    Ok(receipt) => {
+                        let l1_block = receipt.block_number.unwrap_or_else(|| {
+                            warn!(id = ?id, "confirmed receipt missing block number; l1_head will not advance");
+                            0
+                        });
+                        // Count blob bytes only once they land on L1, not when attempted.
+                        if let Some(bytes) = blob_payload_bytes {
+                            BatcherMetrics::blob_used_bytes_total().increment(bytes);
                         }
-                        Err(TxManagerError::AlreadyReserved) => {
-                            warn!("txpool nonce slot already reserved");
-                            TxOutcome::TxpoolBlocked
-                        }
-                        Err(e) => {
-                            warn!(error = %e, "submission failed");
-                            TxOutcome::Failed
-                        }
-                    };
-                    drop(permit);
-                    (vec![sub.id], outcome)
-                });
-            self.in_flight.push(fut);
+                        TxOutcome::Confirmed { l1_block }
+                    }
+                    Err(TxManagerError::AlreadyReserved) => {
+                        warn!(id = ?id, "txpool nonce slot already reserved");
+                        TxOutcome::TxpoolBlocked
+                    }
+                    Err(e) => {
+                        warn!(id = ?id, error = %e, "submission failed");
+                        TxOutcome::Failed
+                    }
+                };
+                (id, outcome)
+            }));
         }
+        Ok(())
     }
 
     /// Attempt to clear a txpool blockage by cancelling the stuck transaction.
@@ -230,101 +211,67 @@ impl<TM: TxManager> SubmissionQueue<TM> {
         }
     }
 
-    /// Handle a settled in-flight receipt.
+    /// Report a settled transaction to the pipeline.
     ///
-    /// On confirmation, calls `pipeline.confirm` for each submitted id and
-    /// `pipeline.advance_l1_head` once. On failure, requeues all. On txpool
-    /// blockage, requeues all and sets the blocked flag.
+    /// A confirmation confirms the submission and advances the pipeline's L1 head to the
+    /// inclusion block. A failure requeues the submission. A txpool blockage requeues it too,
+    /// and suspends sending until [`recover_txpool`](Self::recover_txpool) succeeds.
     pub fn handle_outcome<P: BatchPipeline>(
         &mut self,
         pipeline: &mut P,
-        ids: Vec<SubmissionId>,
+        id: SubmissionId,
         outcome: TxOutcome,
     ) {
         BatcherMetrics::in_flight_submissions().decrement(1.0);
         match outcome {
             TxOutcome::Confirmed { l1_block } => {
-                for id in &ids {
-                    pipeline.confirm(*id, l1_block);
-                }
+                pipeline.confirm(id, l1_block);
                 pipeline.advance_l1_head(l1_block);
-                BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_CONFIRMED)
-                    .increment(ids.len() as u64);
-                info!(submissions = %ids.len(), l1_block = %l1_block, "submission confirmed on L1");
+                BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_CONFIRMED).increment(1);
+                info!(id = ?id, l1_block = %l1_block, "submission confirmed on L1");
             }
             TxOutcome::Failed => {
-                let count = ids.len();
-                for id in ids {
-                    pipeline.requeue(id);
-                }
-                BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_FAILED)
-                    .increment(count as u64);
-                warn!(submissions = %count, "submission failed");
+                pipeline.requeue(id);
+                BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_FAILED).increment(1);
             }
             TxOutcome::TxpoolBlocked => {
-                let count = ids.len();
-                for id in ids {
-                    pipeline.requeue(id);
-                }
+                pipeline.requeue(id);
                 self.txpool_blocked = true;
-                BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_REQUEUED)
-                    .increment(count as u64);
-                warn!(submissions = %count, "submission blocked by txpool nonce slot");
+                BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_REQUEUED).increment(1);
             }
         }
     }
 
-    /// Drain all in-flight futures up to the given deadline.
+    /// Report the in-flight transactions to the pipeline as they settle, until none is left
+    /// or `timeout` fires.
     ///
-    /// Confirmed receipts call `pipeline.confirm` + `pipeline.advance_l1_head`.
-    /// Failed or txpool-blocked submissions are logged and abandoned — no requeue
-    /// because the process is shutting down.
+    /// Used on shutdown: the transactions still in flight at the timeout are abandoned.
     pub async fn drain<P: BatchPipeline>(
         &mut self,
         pipeline: &mut P,
-        mut timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
+        mut timeout: impl Future<Output = ()> + Unpin,
     ) {
-        loop {
-            if self.in_flight.is_empty() {
-                break;
-            }
+        while !self.in_flight.is_empty() {
             tokio::select! {
-                _ = &mut timeout_fut => {
-                    warn!(remaining = %self.in_flight.len(), "drain timeout reached, abandoning in-flight submissions");
-                    break;
+                () = &mut timeout => {
+                    warn!(
+                        remaining = %self.in_flight.len(),
+                        "drain timeout reached, abandoning in-flight submissions"
+                    );
+                    return;
                 }
-                Some((ids, outcome)) = self.in_flight.next() => {
-                    BatcherMetrics::in_flight_submissions().decrement(1.0);
-                    match outcome {
-                        TxOutcome::Confirmed { l1_block } => {
-                            for id in &ids {
-                                pipeline.confirm(*id, l1_block);
-                            }
-                            pipeline.advance_l1_head(l1_block);
-                            BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_CONFIRMED).increment(ids.len() as u64);
-                            info!(submissions = %ids.len(), l1_block = %l1_block, "submission confirmed on L1 during drain");
-                        }
-                        TxOutcome::Failed => {
-                            BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_FAILED).increment(ids.len() as u64);
-                            warn!(submissions = %ids.len(), "submission failed during drain, abandoning");
-                        }
-                        TxOutcome::TxpoolBlocked => {
-                            BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_REQUEUED).increment(ids.len() as u64);
-                            warn!(submissions = %ids.len(), "submission txpool-blocked during drain, abandoning");
-                        }
-                    }
+                Some((id, outcome)) = self.in_flight.next() => {
+                    self.handle_outcome(pipeline, id, outcome);
                 }
             }
         }
     }
 
-    /// Returns a future for the next settled `(ids, outcome)` pair.
+    /// Returns a future for the next settled `(id, outcome)` pair.
     ///
     /// Resolves immediately to `None` when in-flight is empty; safe to use as
     /// a `select!` arm with a `Some(...)` pattern guard.
-    pub fn next_settled(
-        &mut self,
-    ) -> impl Future<Output = Option<(Vec<SubmissionId>, TxOutcome)>> + '_ {
+    pub fn next_settled(&mut self) -> impl Future<Output = Option<(SubmissionId, TxOutcome)>> + '_ {
         self.in_flight.next()
     }
 

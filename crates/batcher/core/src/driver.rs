@@ -42,8 +42,8 @@ pub struct BatchDriverInputs<S, L> {
 /// an [`L1HeadSource`] (L1 chain head tracking), ordered [`DerivationStatus`] updates,
 /// and a [`TxManager`] (L1 submission) into a single `tokio::select!` task.
 ///
-/// Uses [`SubmissionQueue`] for concurrent receipt tracking and semaphore backpressure,
-/// and [`DaThrottle`] for DA backlog throttle management.
+/// Uses [`SubmissionQueue`] to send submissions and track their receipts, and
+/// [`DaThrottle`] for DA backlog throttle management.
 #[derive(Debug)]
 pub struct BatchDriver<R, P, S, TM, TC, L>
 where
@@ -60,7 +60,7 @@ where
     pipeline: P,
     /// The L2 block source.
     source: S,
-    /// Submission lifecycle manager (tx manager, in-flight tracking, semaphore, txpool state).
+    /// Submission lifecycle manager (tx manager, in-flight tracking, txpool state).
     submissions: SubmissionQueue<TM>,
     /// DA backlog throttle (controller, client, dedup cache).
     throttle: DaThrottle<TC>,
@@ -182,8 +182,8 @@ where
                     }
                 },
 
-                Some((ids, outcome)) = self.submissions.next_settled() => {
-                    self.submissions.handle_outcome(&mut self.pipeline, ids, outcome);
+                Some((id, outcome)) = self.submissions.next_settled() => {
+                    self.submissions.handle_outcome(&mut self.pipeline, id, outcome);
                 }
 
                 head = self.l1_head_source.next(), if !encoding_left => {
@@ -203,7 +203,8 @@ where
     /// The CPU phase: encode what is buffered, apply the DA throttle, recover the txpool and
     /// submit ready submissions up to the in-flight limit.
     ///
-    /// Returns `true` when the encoding step budget ran out, so encoding must continue.
+    /// Returns `true` when the encoding step budget ran out, so encoding must continue. Fails
+    /// on a fatal encoding error or a blob submission that cannot be built.
     async fn work(&mut self) -> Result<bool, BatchDriverError> {
         let encoding_left = self.drain_encoding()?;
 
@@ -213,14 +214,15 @@ where
         }
 
         self.submissions.recover_txpool().await;
-        self.submissions.submit_pending(&mut self.pipeline).await;
+        self.submissions.submit_pending(&mut self.pipeline).await?;
         Ok(encoding_left)
     }
 
     /// Flush the current channel, submit what it released, then wait for the in-flight
     /// submissions to settle, up to the drain timeout.
     ///
-    /// The drain always runs; a flush or encoding error is reported afterwards.
+    /// The drain always runs; an error from the flush or the final CPU phase is reported
+    /// afterwards.
     async fn shutdown(mut self) -> Result<(), BatchDriverError> {
         info!(
             in_flight = %self.submissions.in_flight_count(),
@@ -447,8 +449,8 @@ mod tests {
 
     use super::STEP_BUDGET;
     use crate::{
-        AdminCommand, BatchDriver, BatchDriverConfig, BatchDriverInputs, DaThrottle,
-        DerivationStatus, NoopThrottleClient, ThrottleController,
+        AdminCommand, BatchDriver, BatchDriverConfig, BatchDriverError, BatchDriverInputs,
+        DaThrottle, DerivationStatus, NoopThrottleClient, ThrottleController,
         test_utils::{
             BlockStub, DriverFixture, ImmediateConfirmTxManager, ImmediateFailTxManager,
             NeverConfirmTxManager, PipelineCall, Recorded, SubmissionStub, TrackingPipeline,
@@ -956,23 +958,17 @@ mod tests {
         });
     }
 
-    /// When blob encoding fails, the submission has already been dequeued and its frames marked
-    /// pending. Without a requeue those frames never become ready again, so the driver must
-    /// requeue the submission before retrying.
+    /// A blob submission that cannot be built into a transaction is fatal: a retry would fail
+    /// the same way and hold back every submission behind it.
     #[test]
-    fn test_blob_encoding_failure_requeues_submission() {
-        // Blob submission encoding feeds DERIVATION_VERSION_0 (1) + frame.encode()
-        // (23 + data.len()) into BlobEncoder::encode. It fails when > BLOB_MAX_DATA_SIZE
-        // (130_044), so data.len() >= 130_021 guarantees DataTooLarge.
-        const OVERSIZED: usize = 130_021;
-
+    fn test_blob_encoding_failure_is_fatal() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            let mut pipeline = TrackingPipeline::new(Arc::default());
+            // A frame as large as a whole blob no longer fits once framed.
             pipeline.submissions.push_back(BatchSubmission::blobs(
                 SubmissionId(0),
                 vec![BlobPayload::new(vec![Arc::new(Frame {
-                    data: vec![0u8; OVERSIZED],
+                    data: vec![0u8; BlobEncoder::BLOB_MAX_DATA_SIZE],
                     ..Frame::default()
                 })])],
             ));
@@ -983,23 +979,9 @@ mod tests {
                 ImmediateConfirmTxManager { l1_block: 1 },
             )
             .build();
-            let handle = ctx.spawn(driver.run());
 
-            ctx.sleep(Duration::from_millis(50)).await;
-            ctx.cancel();
-
-            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
-
-            let recorded = recorded.lock().unwrap();
-            assert_eq!(
-                recorded.requeued,
-                vec![SubmissionId(0)],
-                "requeue must be called when blob encoding fails so the channel is not stuck"
-            );
-            assert!(
-                recorded.l1_heads.is_empty(),
-                "advance_l1_head must not be called when blob encoding fails"
-            );
+            let result = ctx.spawn(driver.run()).await.unwrap();
+            assert!(matches!(result, Err(BatchDriverError::Blob(_))), "got {result:?}");
         });
     }
 
@@ -1097,11 +1079,10 @@ mod tests {
         });
     }
 
-    /// The semaphore must prevent more concurrent in-flight L1 txs than
-    /// `max_pending_transactions`. With max=1 and two submissions, the second
-    /// submission must not be dequeued while the first tx still holds the permit.
+    /// No more than `max_pending_transactions` L1 txs are in flight. With max=1 and two
+    /// submissions, the second submission must not be dequeued while the first tx is pending.
     #[test]
-    fn test_semaphore_prevents_excess_concurrent_submissions() {
+    fn test_in_flight_limit_holds_back_further_submissions() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
             let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
@@ -1119,17 +1100,16 @@ mod tests {
 
             assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
             let recorded = recorded.lock().unwrap();
-            assert_eq!(recorded.dequeued, vec![SubmissionId(0)], "only one permit is available");
-            assert!(recorded.requeued.is_empty(), "blocked submissions must not be dequeued");
-            // The semaphore (max=1) is occupied by blob 1 — no second tx was submitted.
-            assert!(recorded.l1_heads.is_empty(), "no confirmation while semaphore is full");
+            assert_eq!(recorded.dequeued, vec![SubmissionId(0)], "only one tx may be in flight");
+            assert!(recorded.requeued.is_empty(), "a held-back submission is not requeued");
+            assert!(recorded.l1_heads.is_empty(), "the tx in flight never confirms");
         });
     }
 
     /// With `max_pending_transactions`=1 and blob-filling submissions, the second
-    /// blob tx is only submitted once the first is confirmed (freeing the permit).
+    /// blob tx is only submitted once the first is confirmed.
     #[test]
-    fn test_second_blob_tx_submitted_after_permit_freed() {
+    fn test_next_blob_tx_submitted_once_the_previous_settles() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
             let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
@@ -1153,7 +1133,7 @@ mod tests {
             assert_eq!(
                 recorded.lock().unwrap().confirmed,
                 vec![SubmissionId(0), SubmissionId(1), SubmissionId(2)],
-                "each queued submission must confirm as permits are freed"
+                "each queued submission must confirm as the tx before it settles"
             );
         });
     }

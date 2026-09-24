@@ -81,9 +81,8 @@ impl TxManager for ImmediateFailTxManager {
 
 /// [`TxManager`] that never confirms any submission — the in-flight future parks forever.
 ///
-/// Used to test semaphore backpressure: permits are consumed but never released,
-/// so `try_acquire_owned` fails once the limit is reached and no further
-/// submissions are dequeued.
+/// Used to test the in-flight limit: a transaction sent never settles, so once the limit
+/// is reached no further submissions are dequeued.
 #[derive(Debug)]
 pub struct NeverConfirmTxManager;
 
