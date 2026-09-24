@@ -52,7 +52,7 @@ pub enum TxpoolOrdering {
     Timestamp,
 }
 
-/// Rejects an existing MDBX proofs directory because proofs history only supports RocksDB.
+/// Rejects an existing MDBX proofs directory because proofs history only supports `RocksDB`.
 pub fn ensure_rocksdb_storage_path(path: &Path) -> eyre::Result<()> {
     if path.join("mdbx.dat").exists() {
         return Err(eyre::eyre!(
