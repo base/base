@@ -1,5 +1,5 @@
 -- Replace the unpartitioned transaction_events table with one partitioned by
--- retention class, then by UTC day of event_time.
+-- retention class, then by UTC day of event_time (stored as event_date).
 --
 -- THIS MIGRATION DISCARDS EVERY EXISTING transaction_events ROW. Postgres is
 -- the operational query window, not the archive, and copying a bloated
@@ -24,14 +24,17 @@ SET LOCAL lock_timeout = '60s';
 
 DROP TABLE IF EXISTS transaction_events;
 
--- event_time and retention_class are in the primary key because Postgres
--- requires unique constraints to include the partition key. Both are fixed
--- per event (event_time comes from the producer, retention_class from
--- event_type), so a retried event still conflicts with its first insert.
+-- Postgres requires unique constraints to include the partition key, so the
+-- primary key adds retention_class and event_date to event_id. retention_class
+-- is fixed per event_type, and event_date is the UTC day of event_time. A
+-- producer that re-emits the same event_id with a new event_time on the same
+-- UTC day still dedupes, as it did when event_id alone was the key; only
+-- re-emissions that straddle midnight UTC store a second row.
 CREATE TABLE transaction_events (
     event_id TEXT NOT NULL,
     schema_version TEXT NOT NULL,
     event_time TIMESTAMPTZ NOT NULL,
+    event_date DATE NOT NULL,
     ingested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     retention_class TEXT NOT NULL,
     producer TEXT NOT NULL,
@@ -43,15 +46,15 @@ CREATE TABLE transaction_events (
     payload_id TEXT,
     request_id TEXT,
     data JSONB NOT NULL,
-    PRIMARY KEY (event_id, retention_class, event_time)
+    PRIMARY KEY (event_id, retention_class, event_date)
 ) PARTITION BY LIST (retention_class);
 
 CREATE TABLE transaction_events_hot PARTITION OF transaction_events
-    FOR VALUES IN ('hot') PARTITION BY RANGE (event_time);
+    FOR VALUES IN ('hot') PARTITION BY RANGE (event_date);
 CREATE TABLE transaction_events_warm PARTITION OF transaction_events
-    FOR VALUES IN ('warm') PARTITION BY RANGE (event_time);
+    FOR VALUES IN ('warm') PARTITION BY RANGE (event_date);
 CREATE TABLE transaction_events_cold PARTITION OF transaction_events
-    FOR VALUES IN ('cold') PARTITION BY RANGE (event_time);
+    FOR VALUES IN ('cold') PARTITION BY RANGE (event_date);
 
 -- Only indexes used by audit-archiver read APIs. The unused payload_id and
 -- producer/event_type indexes from 001 and the retention index from 002 are
@@ -119,8 +122,8 @@ BEGIN
         'ALTER TABLE public.%I ATTACH PARTITION public.%I FOR VALUES FROM (%L) TO (%L)',
         parent_name,
         partition_name,
-        to_char(p_day, 'YYYY-MM-DD') || ' 00:00:00+00',
-        to_char(p_day + 1, 'YYYY-MM-DD') || ' 00:00:00+00'
+        to_char(p_day, 'YYYY-MM-DD'),
+        to_char(p_day + 1, 'YYYY-MM-DD')
     );
     RETURN TRUE;
 END;
@@ -200,20 +203,24 @@ REVOKE ALL ON FUNCTION transaction_events_create_partition(TEXT, DATE) FROM PUBL
 REVOKE ALL ON FUNCTION transaction_events_detach_partition(TEXT, DATE) FROM PUBLIC;
 REVOKE ALL ON FUNCTION transaction_events_drop_detached_partition(TEXT, DATE) FROM PUBLIC;
 
--- Seed yesterday through three days ahead so ingest works before the first
--- runtime maintenance pass. Runtime maintenance backfills the rest of each
--- retention window and keeps creating days ahead.
+-- Seed each class's default retention window (hot 3, warm 7, cold 30 days)
+-- through three days ahead, so pods that go ready right after this migration
+-- can store any event ingest admits under the default config. Runtime
+-- maintenance keeps the windows current and fills any non-default window.
 DO $$
 DECLARE
-    retention_class TEXT;
-    day_offset INTEGER;
+    class_name TEXT;
+    window_days INTEGER;
+    today DATE := (now() AT TIME ZONE 'UTC')::date;
+    partition_day DATE;
 BEGIN
-    FOREACH retention_class IN ARRAY ARRAY['hot', 'warm', 'cold'] LOOP
-        FOR day_offset IN -1..3 LOOP
-            PERFORM transaction_events_create_partition(
-                retention_class,
-                (now() AT TIME ZONE 'UTC')::date + day_offset
-            );
+    FOR class_name, window_days IN
+        SELECT * FROM (VALUES ('hot', 3), ('warm', 7), ('cold', 30)) AS windows
+    LOOP
+        partition_day := ((now() - make_interval(days => window_days)) AT TIME ZONE 'UTC')::date;
+        WHILE partition_day <= today + 3 LOOP
+            PERFORM transaction_events_create_partition(class_name, partition_day);
+            partition_day := partition_day + 1;
         END LOOP;
     END LOOP;
 END $$;

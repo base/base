@@ -75,15 +75,16 @@ window or more than one hour in the future. Those events would have no
 partition, and one bad timestamp would otherwise fail the whole insert batch.
 Rejected events count toward `transaction_events_outside_retention_window`.
 
-Watch `transaction_event_partition_horizon_seconds` (alert well before it
-reaches zero), `transaction_event_partitions_created`,
+Watch `transaction_event_partition_horizon_seconds`, which every replica
+refreshes from the catalog each pass, net of the one-hour future skew (alert
+well before it reaches zero), `transaction_event_partitions_created`,
 `transaction_event_partitions_dropped`,
 `transaction_event_partition_lock_timeouts`, and
 `transaction_event_retention_failures`.
 
 ### Environment
 
-- `TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS` (default `3600`): seconds between partition maintenance passes
+- `TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS` (default `3600`, at most `86400`): seconds between partition maintenance passes
 - `TIPS_AUDIT_TRANSACTION_EVENT_HOT_RETENTION_DAYS` (default `3`)
 - `TIPS_AUDIT_TRANSACTION_EVENT_WARM_RETENTION_DAYS` (default `7`)
 - `TIPS_AUDIT_TRANSACTION_EVENT_COLD_RETENTION_DAYS` (default `30`, at most `90`)

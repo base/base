@@ -81,6 +81,10 @@ fn event_with_type(event_id: &str, event_type: &str) -> TransactionEvent {
     .unwrap()
 }
 
+fn utc_today_at(hour: u32, minute: u32, second: u32) -> chrono::DateTime<Utc> {
+    Utc::now().date_naive().and_hms_opt(hour, minute, second).unwrap().and_utc()
+}
+
 async fn cleanup(pool: &PgPool, event_id: &str) {
     let _ = pool
         .execute(sqlx::query("DELETE FROM transaction_events WHERE event_id = $1").bind(event_id))
@@ -338,9 +342,10 @@ async fn postgres_schema_is_partitioned_by_class_then_day() -> anyhow::Result<()
         vec!["transaction_events_cold", "transaction_events_hot", "transaction_events_warm"]
     );
 
-    // Migration 005 seeds yesterday through three days ahead.
+    // Migration 005 seeds each default retention window (hot is 3 days)
+    // through three days ahead.
     let today = Utc::now().date_naive();
-    let expected: Vec<String> = (-1..=3)
+    let expected: Vec<String> = (-3..=3)
         .map(|offset| {
             format!(
                 "transaction_events_hot_{}",
@@ -430,6 +435,28 @@ async fn postgres_sink_dedupes_retried_events_and_routes_by_class() -> anyhow::R
     let retry = sink.insert_events(&events).await?;
     assert!(retry.inserted_event_ids.is_empty(), "retried events must conflict");
 
+    let mut same_day = events[0].clone();
+    same_day.event_time = utc_today_at(0, 0, 10);
+    let mut later_same_day = same_day.clone();
+    later_same_day.event_time = utc_today_at(0, 0, 20);
+    let mut next_day = same_day.clone();
+    next_day.event_id = format!("{}-reemitted", unique_event_id());
+    next_day.event_time = utc_today_at(0, 0, 10) - chrono::Duration::days(1);
+    let mut reemitted = next_day.clone();
+    reemitted.event_time = utc_today_at(0, 0, 10);
+    assert_eq!(
+        sink.insert_events(&[same_day]).await?.inserted_event_ids.len(),
+        0,
+        "an event_id already stored today dedupes regardless of event_time"
+    );
+    assert!(sink.insert_events(&[later_same_day]).await?.inserted_event_ids.is_empty());
+    assert_eq!(sink.insert_events(&[next_day]).await?.inserted_event_ids.len(), 1);
+    assert_eq!(
+        sink.insert_events(&[reemitted]).await?.inserted_event_ids.len(),
+        1,
+        "dedupe is per UTC day, so a re-emission on another day stores a row"
+    );
+
     let classes: Vec<(String, String)> = sqlx::query_as(
         "SELECT event_id, tableoid::regclass::text FROM transaction_events \
          WHERE event_id LIKE $1 ORDER BY event_id",
@@ -451,6 +478,28 @@ async fn postgres_sink_dedupes_retried_events_and_routes_by_class() -> anyhow::R
 }
 
 #[tokio::test]
+async fn postgres_seeded_partitions_accept_every_default_admitted_day() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let event_prefix = unique_event_id();
+
+    // No maintenance pass has run: a pod that goes ready right after the
+    // migration must still store delayed events inside the default windows.
+    let mut old_hot = event(&format!("{event_prefix}-hot"));
+    old_hot.event_time = Utc::now() - chrono::Duration::days(3) + chrono::Duration::minutes(1);
+    let mut old_cold = event_with_type(&format!("{event_prefix}-cold"), "SIMULATION_FAILED");
+    old_cold.event_time = Utc::now() - chrono::Duration::days(30) + chrono::Duration::minutes(1);
+    let mut ahead = event(&format!("{event_prefix}-ahead"));
+    ahead.event_time = Utc::now() + chrono::Duration::minutes(59);
+
+    let outcome = sink.insert_events(&[old_hot, old_cold, ahead]).await?;
+    assert_eq!(outcome.inserted_event_ids.len(), 3);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn postgres_maintenance_backfills_window_and_drops_expired_days() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
     PgTransactionEventSink::migrate(&harness.database_url).await?;
@@ -461,11 +510,13 @@ async fn postgres_maintenance_backfills_window_and_drops_expired_days() -> anyho
     let first = sink.maintain_partitions_at(now).await?;
     assert!(first.lock_acquired);
     assert_eq!(first.partitions_dropped, 0);
-    // Default windows: hot 3, warm 7, cold 30 days back, plus three ahead.
-    // The migration already seeded yesterday through three days ahead.
-    assert!(first.partitions_created > 0, "maintenance backfills each retention window");
+    // The migration already seeded the default windows through three days
+    // ahead. Only the future-skew hour can reach one more day.
+    assert!(first.partitions_created <= 3);
     let second = sink.maintain_partitions_at(now).await?;
     assert_eq!(second.partitions_created, 0, "maintenance is idempotent");
+    let next_day = sink.maintain_partitions_at(now + chrono::Duration::days(1)).await?;
+    assert!(next_day.partitions_created > 0, "each pass extends the look-ahead");
 
     let event_prefix = unique_event_id();
     sink.insert_events(&[
@@ -643,7 +694,9 @@ async fn postgres_runtime_role_maintains_partitions_through_definer_functions() 
     let runtime_url = harness.url_for("audit_archiver", "runtime");
     let sink = PgTransactionEventSink::connect(&runtime_url, 1).await?;
     sink.check_schema_ready().await?;
-    assert!(sink.maintain_partitions().await?.partitions_created > 0);
+    assert!(sink.maintain_partitions().await?.lock_acquired);
+    let tomorrow = sink.maintain_partitions_at(Utc::now() + chrono::Duration::days(1)).await?;
+    assert!(tomorrow.partitions_created > 0, "runtime role can create partitions");
 
     let event_id = unique_event_id();
     sink.insert_events(&[event(&event_id)]).await?;
@@ -684,13 +737,14 @@ async fn postgres_insert_fails_fast_when_conflicting_row_is_locked() -> anyhow::
     let mut held = pool.begin().await?;
     sqlx::query(
         "INSERT INTO transaction_events \
-         (event_id, schema_version, event_time, retention_class, producer, event_type, network, \
-          data) \
-         VALUES ($1, 'transaction-event/v1', $2, 'hot', 'base-builder', 'BUILDER_ACCEPTED', \
-                 'base-mainnet', '{}'::jsonb)",
+         (event_id, schema_version, event_time, event_date, retention_class, producer, \
+          event_type, network, data) \
+         VALUES ($1, 'transaction-event/v1', $2, $3, 'hot', 'base-builder', \
+                 'BUILDER_ACCEPTED', 'base-mainnet', '{}'::jsonb)",
     )
     .bind(&event_id)
     .bind(pending.event_time)
+    .bind(pending.event_time.date_naive())
     .execute(&mut *held)
     .await?;
 

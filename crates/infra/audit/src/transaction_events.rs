@@ -26,7 +26,11 @@ use serde::{
     },
 };
 use serde_json::Value;
-use sqlx::{Connection, PgPool, QueryBuilder, Row, migrate::Migrator, postgres::PgPoolOptions};
+use sqlx::{
+    Connection, PgPool, QueryBuilder, Row,
+    migrate::{Migrate, Migrator},
+    postgres::PgPoolOptions,
+};
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing::{error, warn};
 
@@ -49,10 +53,9 @@ pub const DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES: usize = 8 * 1024 * 1024;
 
 /// Maximum events inserted in one Postgres statement.
 ///
-/// Each row uses 13 bind parameters, so this stays below Postgres' 65,535 bind
-/// parameter limit (5,000 x 13 = 65,000). Lower it before adding another
-/// column.
-pub const MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE: usize = 5_000;
+/// Each row uses 14 bind parameters, so this stays below Postgres' 65,535 bind
+/// parameter limit (4,000 x 14 = 56,000).
+pub const MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE: usize = 4_000;
 
 /// Session `lock_timeout` applied to each persist INSERT.
 const TRANSACTION_EVENT_LOCK_TIMEOUT_SQL: &str = "SET LOCAL lock_timeout = '1s'";
@@ -72,6 +75,12 @@ pub const DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS: u32 = 30;
 pub const MAX_TRANSACTION_EVENT_RETENTION_DAYS: u32 = 90;
 /// Default seconds between partition maintenance passes.
 pub const DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS: u64 = 3_600;
+/// Maximum seconds between partition maintenance passes.
+///
+/// Kept well under the [`TRANSACTION_EVENT_PARTITION_DAYS_AHEAD`] look-ahead so
+/// a pass, and a retry after a failed pass, always lands before ingest runs
+/// out of partitions.
+pub const MAX_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS: u64 = 86_400;
 /// Default Postgres `lock_timeout` for one partition create, detach, or drop.
 ///
 /// Detach takes an ACCESS EXCLUSIVE lock on the class partition, which queues
@@ -295,8 +304,8 @@ impl TransactionEventRetentionConfig {
             "transaction event partition lock timeout must be between 1ms and 60000ms"
         );
         anyhow::ensure!(
-            (1..=604_800).contains(&self.interval_secs),
-            "transaction event retention interval must be between 1 and 604800 seconds"
+            (1..=MAX_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS).contains(&self.interval_secs),
+            "transaction event retention interval must be between 1 and {MAX_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS} seconds"
         );
         Ok(self)
     }
@@ -636,11 +645,22 @@ impl PgTransactionEventSink {
     /// error, as it would be without retirement.
     pub async fn migrate(database_url: &str) -> Result<()> {
         let pool = PgPoolOptions::new().max_connections(1).connect(database_url).await?;
-        check_no_unknown_applied_migrations(&pool).await?;
-        let mut migrator = sqlx::migrate!("./migrations");
-        migrator.set_ignore_missing(true);
-        migrator.run(&pool).await?;
-        Ok(())
+        let mut conn = pool.acquire().await?;
+        // Hold sqlx's migration lock across the retired-migration check and the
+        // run, so a concurrent newer migrator cannot record a version between
+        // them. The lock is session-level and reentrant; run_direct takes it
+        // again and releases its own hold.
+        conn.lock().await?;
+        let result = async {
+            check_no_unknown_applied_migrations(&mut conn).await?;
+            let mut migrator = sqlx::migrate!("./migrations");
+            migrator.set_ignore_missing(true);
+            migrator.run_direct(&mut *conn).await?;
+            anyhow::Ok(())
+        }
+        .await;
+        conn.unlock().await?;
+        result
     }
 
     /// Creates a sink from an existing ingest pool. Retention uses the same pool.
@@ -742,6 +762,40 @@ impl PgTransactionEventSink {
         &self,
         now: DateTime<Utc>,
     ) -> Result<TransactionEventRetentionOutcome> {
+        let outcome = self.run_locked_partition_maintenance(now).await;
+        // Every replica refreshes the horizon from the catalog, so the gauge
+        // keeps falling if the lock holder stalls or its passes fail.
+        self.refresh_partition_horizon(now).await;
+        outcome
+    }
+
+    async fn refresh_partition_horizon(&self, now: DateTime<Utc>) {
+        let existing = match self.retention_pool.acquire().await {
+            Ok(mut conn) => list_day_partitions(&mut conn).await,
+            Err(err) => Err(err.into()),
+        };
+        match existing {
+            Ok(existing) => {
+                let attached: BTreeSet<DayPartition> = existing
+                    .iter()
+                    .filter(|partition| partition.attached)
+                    .map(|partition| partition.partition)
+                    .collect();
+                for class in TransactionEventRetentionClass::ALL {
+                    Metrics::transaction_event_partition_horizon_seconds(class.as_str())
+                        .set(partition_horizon_secs(now, class, &attached));
+                }
+            }
+            Err(err) => {
+                warn!(error = %err, "failed to refresh transaction event partition horizon");
+            }
+        }
+    }
+
+    async fn run_locked_partition_maintenance(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<TransactionEventRetentionOutcome> {
         let config = self.retention;
         let Some(mut lock) = RetentionAdvisoryLock::try_acquire(&self.retention_pool).await? else {
             return Ok(TransactionEventRetentionOutcome::default());
@@ -753,12 +807,6 @@ impl PgTransactionEventSink {
             let lock_timeout_sql = config.partition_lock_timeout_sql();
             let mut outcome =
                 TransactionEventRetentionOutcome { lock_acquired: true, ..Default::default() };
-            let mut attached: BTreeSet<DayPartition> = existing
-                .iter()
-                .filter(|partition| partition.attached)
-                .map(|partition| partition.partition)
-                .collect();
-
             // Leftovers from a pass that detached but failed to drop. Drop them
             // first so a same-named create cannot collide with them.
             for partition in plan.drop_detached {
@@ -790,7 +838,6 @@ impl PgTransactionEventSink {
                     outcome.partitions_created += 1;
                     Metrics::transaction_event_partitions_created(partition.class.as_str())
                         .increment(1);
-                    attached.insert(partition);
                 }
             }
 
@@ -806,7 +853,6 @@ impl PgTransactionEventSink {
                 if !detached {
                     continue;
                 }
-                attached.remove(&partition);
                 if run_partition_ddl(
                     lock.conn(),
                     &lock_timeout_sql,
@@ -822,10 +868,6 @@ impl PgTransactionEventSink {
                 }
             }
 
-            for class in TransactionEventRetentionClass::ALL {
-                Metrics::transaction_event_partition_horizon_seconds(class.as_str())
-                    .set(partition_horizon_secs(now, class, &attached));
-            }
             Ok(outcome)
         }
         .await;
@@ -864,8 +906,9 @@ impl PgTransactionEventSink {
         loop {
             let mut query_builder = QueryBuilder::new(
                 "INSERT INTO transaction_events \
-                 (event_id, schema_version, event_time, retention_class, producer, event_type, \
-                  network, tx_hash, block_hash, block_number, payload_id, request_id, data) ",
+                 (event_id, schema_version, event_time, event_date, retention_class, producer, \
+                  event_type, network, tx_hash, block_hash, block_number, payload_id, request_id, \
+                  data) ",
             );
             query_builder.push_values(
                 ordered.iter().copied().zip(block_numbers.iter().copied()),
@@ -881,6 +924,7 @@ impl PgTransactionEventSink {
                     row.push_bind(&event.event_id)
                         .push_bind(&event.schema_version)
                         .push_bind(event.event_time)
+                        .push_bind(event.event_time.date_naive())
                         .push_bind(retention_class)
                         .push_bind(producer)
                         .push_bind(event_type)
@@ -893,10 +937,10 @@ impl PgTransactionEventSink {
                         .push_bind(data);
                 },
             );
-            // The partitioned primary key includes retention_class and event_time;
-            // both are fixed per event, so retries still conflict.
+            // The partitioned primary key adds retention_class and event_date:
+            // retries and same-day re-emissions of an event_id still conflict.
             query_builder.push(
-                " ON CONFLICT (event_id, retention_class, event_time) DO NOTHING RETURNING event_id",
+                " ON CONFLICT (event_id, retention_class, event_date) DO NOTHING RETURNING event_id",
             );
 
             let result = async {
@@ -1190,10 +1234,10 @@ fn persist_retry_sqlstate(code: &str) -> Option<&'static str> {
 ///
 /// sqlx's own check is disabled so recorded 001-004 rows are accepted; this
 /// keeps the check for everything else.
-async fn check_no_unknown_applied_migrations(pool: &PgPool) -> Result<()> {
+async fn check_no_unknown_applied_migrations(conn: &mut sqlx::PgConnection) -> Result<()> {
     let migrations_table_exists: bool =
         sqlx::query_scalar("SELECT to_regclass('_sqlx_migrations') IS NOT NULL")
-            .fetch_one(pool)
+            .fetch_one(&mut *conn)
             .await?;
     if !migrations_table_exists {
         return Ok(());
@@ -1201,7 +1245,7 @@ async fn check_no_unknown_applied_migrations(pool: &PgPool) -> Result<()> {
 
     let applied: Vec<i64> =
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
-            .fetch_all(pool)
+            .fetch_all(&mut *conn)
             .await?;
     let embedded: HashSet<i64> =
         TRANSACTION_EVENT_MIGRATOR.iter().map(|migration| migration.version).collect();
@@ -1321,10 +1365,10 @@ fn plan_partition_maintenance(
     plan
 }
 
-/// Seconds until ingest for `class` would hit a missing partition.
+/// Seconds until ingest for `class` could admit an event with no partition.
 ///
-/// Counts contiguous attached days starting with today. Zero when today's
-/// partition is missing.
+/// Counts contiguous attached days starting with today, less the future
+/// skew ingest admits. Zero when that coverage has already run out.
 fn partition_horizon_secs(
     now: DateTime<Utc>,
     class: TransactionEventRetentionClass,
@@ -1337,8 +1381,9 @@ fn partition_horizon_secs(
     while attached.contains(&DayPartition { class, day: day + Duration::days(1) }) {
         day += Duration::days(1);
     }
-    let secs = (utc_midnight(day + Duration::days(1)) - now).num_seconds();
-    f64::from(i32::try_from(secs).unwrap_or(i32::MAX))
+    let coverage_end = utc_midnight(day + Duration::days(1));
+    let secs = (coverage_end - now).num_seconds() - MAX_TRANSACTION_EVENT_FUTURE_SKEW_SECS;
+    f64::from(i32::try_from(secs.max(0)).unwrap_or(i32::MAX))
 }
 
 async fn list_day_partitions(conn: &mut sqlx::PgConnection) -> Result<Vec<ExistingPartition>> {
@@ -2010,6 +2055,15 @@ mod tests {
                 .validate()
                 .is_err()
         );
+        assert!(
+            TransactionEventRetentionConfig {
+                interval_secs: MAX_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS + 1,
+                ..Default::default()
+            }
+            .validate()
+            .is_err(),
+            "an interval longer than a day could outrun the partition look-ahead"
+        );
     }
 
     #[test]
@@ -2126,8 +2180,14 @@ mod tests {
             .map(|value| partition(hot, value))
             .collect();
 
-        // Sep 26 is missing, so ingest runs out at Sep 26 00:00.
-        assert_eq!(partition_horizon_secs(now, hot, &attached), 2.5 * 86_400.0);
+        // Sep 26 is missing, so coverage ends at Sep 26 00:00, and ingest
+        // admits events up to an hour ahead.
+        assert_eq!(partition_horizon_secs(now, hot, &attached), 2.5 * 86_400.0 - 3_600.0);
+        assert_eq!(
+            partition_horizon_secs(at("2026-09-25T23:30:00Z"), hot, &attached),
+            0.0,
+            "coverage inside the future skew counts as exhausted"
+        );
         assert_eq!(
             partition_horizon_secs(now, TransactionEventRetentionClass::Warm, &attached),
             0.0
