@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use alloy_provider::{Network, RootProvider};
 use base_common_evm::BaseEvmFactory;
@@ -254,8 +254,13 @@ impl Host {
     }
 }
 
+const PROOF_NODE_RPC_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
 async fn rpc_provider<N: Network>(url: &str) -> Result<RootProvider<N>> {
-    RootProvider::connect(url)
-        .await
-        .map_err(|e| HostError::Custom(format!("failed to connect to RPC at {url}: {e}")))
+    let url = url.parse().map_err(|e| HostError::Custom(format!("invalid RPC url {url}: {e}")))?;
+    let client = reqwest::Client::builder()
+        .timeout(PROOF_NODE_RPC_TIMEOUT)
+        .build()
+        .map_err(|e| HostError::Custom(format!("failed to build RPC client: {e}")))?;
+    Ok(alloy_provider::builder().connect_reqwest(client, url))
 }
