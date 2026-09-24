@@ -119,8 +119,7 @@ impl<TM: TxManager> SubmissionQueue<TM> {
     /// Send ready submissions, one L1 transaction each, until `max_pending` transactions are
     /// in flight, the pipeline has nothing ready, or the txpool is blocked.
     ///
-    /// Fails when a blob submission cannot be built into a transaction. The encoder packs
-    /// blobs within protocol limits, so such a failure is a bug that a retry would repeat.
+    /// Fails when a blob submission cannot be built into a transaction.
     pub async fn submit_pending<P: BatchPipeline>(
         &mut self,
         pipeline: &mut P,
