@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashSet,
+    sync::{Arc, Mutex},
+};
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, map::HashMap};
@@ -143,19 +146,32 @@ impl L2ChainProvider for ActionL2ChainProvider {
         hash: B256,
         _rollup_config: Arc<RollupConfig>,
     ) -> Result<SystemConfig, L2ProviderError> {
-        let system_configs = self.system_configs.lock().expect("L2 system configs lock poisoned");
-        let blocks_by_hash = self.blocks_by_hash.lock().expect("L2 blocks by hash lock poisoned");
         let mut current_hash = hash;
+        let mut visited = HashSet::new();
 
         loop {
-            if let Some(config) = system_configs.get(&current_hash) {
-                return Ok(*config);
+            if let Some(config) = self
+                .system_configs
+                .lock()
+                .expect("L2 system configs lock poisoned")
+                .get(&current_hash)
+                .copied()
+            {
+                return Ok(config);
             }
 
-            let block = blocks_by_hash
+            if !visited.insert(current_hash) {
+                return Err(L2ProviderError::SystemConfigNotFound(hash));
+            }
+
+            current_hash = self
+                .blocks_by_hash
+                .lock()
+                .expect("L2 blocks by hash lock poisoned")
                 .get(&current_hash)
-                .ok_or(L2ProviderError::SystemConfigNotFound(hash))?;
-            current_hash = block.block_info.parent_hash;
+                .ok_or(L2ProviderError::SystemConfigNotFound(hash))?
+                .block_info
+                .parent_hash;
         }
     }
 }
@@ -189,5 +205,21 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(config.gas_limit, 123);
+    }
+
+    #[tokio::test]
+    async fn system_config_lookup_rejects_cyclic_test_ancestry() {
+        let provider = ActionL2ChainProvider::default();
+        let hash = B256::left_padding_from(&[1]);
+        provider.insert_block(L2BlockInfo {
+            block_info: BlockInfo { hash, parent_hash: hash, number: 1, ..Default::default() },
+            ..Default::default()
+        });
+
+        let mut provider = provider;
+        assert!(matches!(
+            provider.system_config_by_l2_hash(hash, Arc::new(RollupConfig::default())).await,
+            Err(L2ProviderError::SystemConfigNotFound(actual)) if actual == hash
+        ));
     }
 }

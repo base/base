@@ -256,13 +256,15 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
                 })?;
 
             if let Some(block) = block {
+                let block_hash = block.header.hash;
                 let block = Arc::new(
                     block
                         .map_header(|header| header.into_inner())
                         .into_consensus()
                         .map_transactions(|t| t.inner.inner.into_inner()),
                 );
-                self.block_by_hash_cache.put(block.header.hash_slow(), Arc::clone(&block));
+                self.verify_block_hash(&block.header, block_hash)?;
+                self.block_by_hash_cache.put(block_hash, Arc::clone(&block));
                 self.block_by_number_cache.put(number, Arc::clone(&block));
                 return Ok((*block).clone());
             }
