@@ -194,8 +194,6 @@ impl BatcherService {
     ///
     /// When `url` is `None`, or if connecting or subscribing fails, returns a stream that
     /// never yields so that [`HybridL1HeadSource`] relies on polling alone.
-    ///
-    /// [`HybridL1HeadSource`]: base_batcher_source::HybridL1HeadSource
     async fn build_l1_head_stream(
         url: Option<&Url>,
     ) -> BoxStream<'static, Result<u64, SourceError>> {
