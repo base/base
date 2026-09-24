@@ -228,6 +228,14 @@ mod tests {
     }
 
     #[test]
+    fn zkp_request_requires_nonzero_intermediate_root_interval() {
+        for proof_type in [ApiProofType::Compressed, ApiProofType::SnarkPlonk] {
+            assert!(validate_intermediate_root_interval(proof_type, 300, Some(0)).is_err());
+            assert!(validate_intermediate_root_interval(proof_type, 300, Some(300)).is_ok());
+        }
+    }
+
+    #[test]
     fn zkp_request_rejects_non_multiple_intermediate_root_interval() {
         let result = validate_intermediate_root_interval(ApiProofType::Compressed, 1, Some(30));
 

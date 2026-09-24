@@ -178,7 +178,7 @@ mod tests {
             number_of_blocks_to_prove: 300,
             sequence_window: Some(10),
             l1_head: Some(l1_head),
-            intermediate_root_interval: 150.try_into().unwrap(),
+            intermediate_root_interval: 150,
             schedule_l2_block_number: None,
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,

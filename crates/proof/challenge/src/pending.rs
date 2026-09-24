@@ -349,7 +349,6 @@ pub enum ProofUpdate {
 #[cfg(test)]
 mod tests {
     use std::{
-        num::NonZeroU64,
         sync::{Arc, Mutex},
         time::Duration,
     };
@@ -367,7 +366,7 @@ mod tests {
                 number_of_blocks_to_prove: 1,
                 sequence_window: None,
                 l1_head: None,
-                intermediate_root_interval: NonZeroU64::MIN,
+                intermediate_root_interval: 1,
                 schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,

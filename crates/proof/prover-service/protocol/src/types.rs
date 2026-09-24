@@ -1,6 +1,6 @@
 //! JSON-RPC request and response types for the shared prover service protocol.
 
-use std::{collections::HashMap, fmt, num::NonZeroU64};
+use std::{collections::HashMap, fmt};
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_primitives::{ProofRequest as PrimitiveProofRequest, Proposal};
@@ -197,7 +197,7 @@ pub struct ZkProofRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub l1_head: Option<B256>,
     /// Required checkpoint spacing in blocks, taken from the game being proven.
-    pub intermediate_root_interval: NonZeroU64,
+    pub intermediate_root_interval: u64,
     /// L2 block used to pin the upgrade schedule; defaults to the claimed block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schedule_l2_block_number: Option<u64>,
@@ -573,7 +573,7 @@ mod tests {
                     number_of_blocks_to_prove: 20,
                     sequence_window: None,
                     l1_head: Some(B256::repeat_byte(0xab)),
-                    intermediate_root_interval: NonZeroU64::new(128).unwrap(),
+                    intermediate_root_interval: 128,
                     schedule_l2_block_number: None,
                     zk_vm: ZkVm::Sp1,
                     zk_backend: ZkBackend::Cluster,
@@ -938,7 +938,7 @@ mod tests {
                 number_of_blocks_to_prove: 20,
                 sequence_window: None,
                 l1_head: None,
-                intermediate_root_interval: NonZeroU64::MIN,
+                intermediate_root_interval: 1,
                 schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
@@ -947,7 +947,7 @@ mod tests {
     }
 
     #[test]
-    fn zk_request_requires_nonzero_checkpoint_interval() {
+    fn zk_request_requires_checkpoint_interval() {
         let mut payload = json!({
             "start_block_number": 37,
             "number_of_blocks_to_prove": 300,
@@ -956,14 +956,13 @@ mod tests {
         });
         assert!(serde_json::from_value::<ZkProofRequest>(payload.clone()).is_err());
 
-        for invalid in [json!(null), json!(0)] {
-            payload["intermediate_root_interval"] = invalid;
-            assert!(serde_json::from_value::<ZkProofRequest>(payload.clone()).is_err());
-        }
+        payload["intermediate_root_interval"] = json!(null);
+        assert!(serde_json::from_value::<ZkProofRequest>(payload.clone()).is_err());
+
         for interval in [1, 30, 300] {
             payload["intermediate_root_interval"] = json!(interval);
             let request: ZkProofRequest = serde_json::from_value(payload.clone()).unwrap();
-            assert_eq!(request.intermediate_root_interval.get(), interval);
+            assert_eq!(request.intermediate_root_interval, interval);
             assert_eq!(serde_json::to_value(request).unwrap(), payload);
         }
     }
@@ -975,7 +974,7 @@ mod tests {
             number_of_blocks_to_prove: 20,
             sequence_window: None,
             l1_head: None,
-            intermediate_root_interval: NonZeroU64::MIN,
+            intermediate_root_interval: 1,
             schedule_l2_block_number: Some(42),
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,

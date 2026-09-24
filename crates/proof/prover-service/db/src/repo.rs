@@ -2437,7 +2437,7 @@ mod tests {
                 number_of_blocks_to_prove: 5,
                 sequence_window: Some(50),
                 l1_head: None,
-                intermediate_root_interval: 5.try_into().unwrap(),
+                intermediate_root_interval: 5,
                 schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
@@ -2461,7 +2461,7 @@ mod tests {
         assert_eq!(zk_request.start_block_number, 100);
         assert_eq!(zk_request.number_of_blocks_to_prove, 5);
         assert_eq!(zk_request.sequence_window, Some(50));
-        assert_eq!(zk_request.intermediate_root_interval.get(), 5);
+        assert_eq!(zk_request.intermediate_root_interval, 5);
         assert_eq!(zk_request.zk_vm, ZkVm::Sp1);
     }
 
@@ -2474,7 +2474,7 @@ mod tests {
                 number_of_blocks_to_prove: 5,
                 sequence_window: None,
                 l1_head: None,
-                intermediate_root_interval: 1.try_into().unwrap(),
+                intermediate_root_interval: 1,
                 schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
@@ -2688,7 +2688,7 @@ mod tests {
                 number_of_blocks_to_prove: 5,
                 sequence_window: None,
                 l1_head: None,
-                intermediate_root_interval: 1.try_into().unwrap(),
+                intermediate_root_interval: 1,
                 schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,

@@ -1,6 +1,6 @@
 //! Shared SP1 dry-run prove helpers for system tests.
 
-use std::{num::NonZeroU64, time::Duration};
+use std::time::Duration;
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
@@ -75,7 +75,7 @@ pub(crate) async fn prove_block_range_with_dry_run_stats(
                     number_of_blocks_to_prove: 1,
                     sequence_window: None,
                     l1_head: Some(l1_head),
-                    intermediate_root_interval: NonZeroU64::MIN,
+                    intermediate_root_interval: 1,
                     schedule_l2_block_number: None,
                     zk_vm: ZkVm::Sp1,
                     zk_backend: ZkBackend::DryRun,
