@@ -209,6 +209,31 @@ impl BaseProofsStore for TestRocksdbProofsStorage {
         self.storage.account_hashed_cursor_with_tx(tx, max_block_number)
     }
 
+    fn hashed_account_with_tx<'db>(
+        &self,
+        tx: &Self::Tx<'db>,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Account>>
+    where
+        Self: 'db,
+    {
+        self.storage.hashed_account_with_tx(tx, hashed_address, max_block_number)
+    }
+
+    fn hashed_storage_with_tx<'db>(
+        &self,
+        tx: &Self::Tx<'db>,
+        hashed_address: B256,
+        hashed_slot: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<U256>>
+    where
+        Self: 'db,
+    {
+        self.storage.hashed_storage_with_tx(tx, hashed_address, hashed_slot, max_block_number)
+    }
+
     fn store_trie_updates(
         &self,
         block_ref: BlockWithParent,
