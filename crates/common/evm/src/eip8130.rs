@@ -2009,6 +2009,55 @@ mod tests {
         assert_eq!(recipient_acc.info.balance, transfer, "recipient credited the call value");
     }
 
+    /// A value transfer to an empty account does not pay the 25,000
+    /// new-account gas. The protocol frame sets `charged_new_account_state_gas`
+    /// to false and bypasses the CALL opcode gas site, so revm neither charges
+    /// nor refunds that cost. Gas matches the same transfer to an existing
+    /// account.
+    #[test]
+    fn value_transfer_to_empty_account_matches_existing_account_gas() {
+        let key = signing_key(0x53);
+        let sender = eoa_address(&key);
+        let recipient = address!("0x00000000000000000000000000000000000000e3");
+        let transfer = U256::from(1_000_000u64);
+
+        let mut tx = base_tx();
+        tx.calls = vec![vec![Call { to: recipient, value: transfer, data: Bytes::new() }]];
+        let signed = eoa_signed(tx, &key);
+        let initial_balance = U256::from(10u64).pow(U256::from(18u64));
+
+        let mut empty = evm_with(initial_balance, sender);
+        let empty_outcome =
+            empty.transact_raw(into_base_tx(&signed)).expect("value transfer to an empty account");
+        assert!(
+            empty_outcome.result.is_success(),
+            "expected success, got {:?}",
+            empty_outcome.result
+        );
+        let created = empty_outcome.state.get(&recipient).expect("recipient in state");
+        assert_eq!(created.info.balance, transfer, "empty account credited the call value");
+
+        let mut existing = evm_with(initial_balance, sender);
+        existing.ctx_mut().journal_mut().db_mut().insert_account_info(
+            recipient,
+            AccountInfo { balance: U256::from(1u64), ..Default::default() },
+        );
+        let existing_outcome = existing
+            .transact_raw(into_base_tx(&signed))
+            .expect("value transfer to an existing account");
+        assert!(
+            existing_outcome.result.is_success(),
+            "expected success, got {:?}",
+            existing_outcome.result
+        );
+
+        assert_eq!(
+            empty_outcome.result.gas().tx_gas_used(),
+            existing_outcome.result.gas().tx_gas_used(),
+            "value transfer to an empty account must not pay the 25,000 new-account gas"
+        );
+    }
+
     /// A call whose `value` exceeds the sender's spendable balance (after the
     /// self-pay gas prepay) reverts its phase like any other `CALL`: the
     /// transaction is still included and charged gas, but the recipient is not
