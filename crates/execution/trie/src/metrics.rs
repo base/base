@@ -145,13 +145,13 @@ base_metrics::define_metrics! {
     base_trie.state,
     struct = StateMetrics,
     #[describe("Account and storage seeks")]
-    #[label(kind)]
+    #[label(name = "kind", default = ["account", "storage"])]
     reads: counter,
     #[describe("Seeks whose returned key was not the key requested")]
-    #[label(kind)]
+    #[label(name = "kind", default = ["account", "storage"])]
     misses: counter,
     #[describe("Time spent in account and storage seeks, in seconds")]
-    #[label(kind)]
+    #[label(name = "kind", default = ["account", "storage"])]
     seek_duration_seconds: histogram,
 }
 
