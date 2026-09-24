@@ -28,7 +28,8 @@
 //! gate), that phase's state changes are discarded and every later phase is
 //! skipped, but the gas already consumed is still charged and the transaction is
 //! still included (nonce consumed, fee paid). Each call is dispatched from
-//! `sender` to `call.to` with `msg.value == 0` and `tx.origin == sender`.
+//! `sender` to `call.to`, transferring `call.value` wei (`msg.value ==
+//! call.value`, `tx.origin == sender`).
 //!
 //! # Scope
 //!

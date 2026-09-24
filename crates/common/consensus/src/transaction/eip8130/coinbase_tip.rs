@@ -18,8 +18,12 @@ impl CoinbaseTip {
     ///
     /// EIP-8130 `calls` are grouped into phases. A revert discards that phase
     /// and skips later ones, so only a tip in **phase 0** is statically
-    /// meaningful. Protocol calls carry no value (`call = rlp([to, data])`);
-    /// ETH moves only when wallet bytecode issues a `CALL`.
+    /// meaningful. A protocol call is `rlp([to, value, data])` and transfers
+    /// `value` from the sender to `to` before the callee runs. On this path
+    /// `to` is the sender, so that transfer is checked against the sender's
+    /// balance and then credited back to the same account. The decoded amount
+    /// is the inner `DefaultAccount` transfer, which moves ETH when that
+    /// bytecode issues its `CALL`.
     ///
     /// Returns [`Some`] when the sender uses
     /// [`Eip8130Contracts::DEFAULT_ACCOUNT`] (EOA auto-delegation, or an
