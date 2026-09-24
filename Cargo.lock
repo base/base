@@ -3106,6 +3106,7 @@ dependencies = [
 name = "base-batcher-service"
 version = "0.0.0"
 dependencies = [
+ "alloy-node-bindings",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types-eth 2.4.1",

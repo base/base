@@ -742,6 +742,8 @@ impl BatcherService {
 mod tests {
     use std::sync::atomic::{AtomicU8, Ordering};
 
+    use alloy_node_bindings::Anvil;
+
     use super::*;
 
     fn test_retry() -> RetryConfig {
@@ -790,5 +792,19 @@ mod tests {
             error.to_string().contains("max_pending_transactions"),
             "error should name the setting, got {error}"
         );
+    }
+
+    #[tokio::test]
+    async fn l1_head_stream_outlives_its_builder() {
+        let anvil = Anvil::new().spawn();
+        let mut heads = BatcherService::build_l1_head_stream(Some(&anvil.ws_endpoint_url())).await;
+
+        // The builder has returned: the stream alone must keep the WS provider alive.
+        let miner = RootProvider::<Base>::new_http(anvil.endpoint_url());
+        for expected in 1..=2 {
+            miner.raw_request::<(), String>("evm_mine".into(), ()).await.unwrap();
+            let head = tokio::time::timeout(Duration::from_secs(5), heads.next()).await;
+            assert!(matches!(head.unwrap(), Some(Ok(head)) if head == expected));
+        }
     }
 }

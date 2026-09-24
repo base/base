@@ -42,6 +42,7 @@ jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 
 [dev-dependencies]
 httpmock.workspace = true
+alloy-node-bindings.workspace = true
 base-runtime = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
