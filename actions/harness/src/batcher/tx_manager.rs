@@ -223,16 +223,8 @@ impl L1MinerTxManager {
     /// yet confirmed) items are drained. This ensures no [`SendHandle`] is
     /// left dangling, which would block the driver's `in_flight.next()`.
     ///
-    /// # In-flight items
+    /// Submissions already confirmed through [`confirm_block`] are not revisited.
     ///
-    /// This method only covers items still in the `pending` or `staged`
-    /// queues. Items that have already been confirmed via [`confirm_block`]
-    /// and are living in the driver's own `in_flight` set are not touched.
-    /// Call this method *before* `confirm_staged` (or immediately after a
-    /// yield has let the driver drain `in_flight`) to avoid leaving the
-    /// driver in an inconsistent state.
-    ///
-    /// [`BatchDriver`]: base_batcher_core::BatchDriver
     /// [`SendHandle`]: base_tx_manager::SendHandle
     /// [`confirm_block`]: L1MinerTxManager::confirm_block
     pub fn reorg_to(&self, block_number: u64, l1: &mut L1Miner) {

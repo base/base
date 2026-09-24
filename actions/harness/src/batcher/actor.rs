@@ -100,8 +100,8 @@ pub enum BatcherError {
 /// 3. Flush through the admin channel, exactly as an operator would, to close and
 ///    release the current channel.
 /// 4. Wait for the driver to hand every resulting submission to the tx manager.
-/// 5. Mine one L1 block via the shared [`L1MinerTxManager`], firing all receipts and
-///    delivering the new L1 head to the driver.
+/// 5. Stage every pending submission, mine one L1 block, fire the receipts of the
+///    submissions it includes and deliver the new L1 head to the driver.
 /// 6. Wait for the driver to confirm the receipts and advance its L1 head.
 ///
 /// The driver's [`BatchEncoder`] state is persistent across `advance()` calls.
@@ -138,15 +138,12 @@ impl<S: L2BlockProvider + std::fmt::Debug> std::fmt::Debug for Batcher<S> {
 impl<S: L2BlockProvider> Batcher<S> {
     /// Create a new [`Batcher`] backed by a persistent [`BatchDriver`] task.
     ///
-    /// Spawns the driver immediately. The driver will not process any events
-    /// until the first [`advance`] call.
+    /// Spawns the driver immediately.
     ///
     /// # Panics
     ///
     /// Panics if `config.encoder` is invalid, or if `config.batcher_address` is not the
     /// address of `config.l1_signer`.
-    ///
-    /// [`advance`]: Batcher::advance
     pub fn new(l2_source: S, rollup_config: &RollupConfig, config: BatcherConfig) -> Self {
         let l1_chain_id = rollup_config.l1_chain_id;
         let pipeline = BatchEncoder::new(Arc::new(rollup_config.clone()), config.encoder.clone())
@@ -175,8 +172,9 @@ impl<S: L2BlockProvider> Batcher<S> {
             tx_manager.clone(),
             BatchDriverConfig {
                 inbox: config.inbox_address,
-                // `encode_only` returns after one submit pass, so a cycle must not produce
-                // more submissions than this. No action test comes close.
+                // Past this many transactions in flight the driver goes idle with submissions
+                // still in the pipeline, so `encode_only` would return before handing them all
+                // to the tx manager. No action test comes close.
                 max_pending_transactions: 16,
                 drain_timeout: Duration::from_secs(10),
                 force_blobs_when_throttling: true,
@@ -398,9 +396,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// item in `pending` and `staged`, delivers the new L1 head to the driver, and waits
     /// until the driver has requeued and resubmitted the failed frames.
     ///
-    /// Items already confirmed via [`confirm_staged`] (and thus living in
-    /// the driver's own `in_flight` set) are **not** covered — see
-    /// [`L1MinerTxManager::reorg_to`] for details.
+    /// Submissions already confirmed through [`confirm_staged`] are not revisited.
     ///
     /// # Panics
     ///
