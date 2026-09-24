@@ -16,8 +16,7 @@ use crate::{
     DerivationStatus, SubmissionQueue, ThrottleClient, ThrottleController,
 };
 
-/// Encoding steps per CPU phase. A larger backlog is encoded over several phases so the
-/// events that arrive meanwhile are served in between.
+/// Encoding steps per CPU phase.
 const STEP_BUDGET: usize = 128;
 
 /// The sources a [`BatchDriver`] listens to, and the L1 head and safe L2 head it starts from.
@@ -236,7 +235,8 @@ where
         self.submissions.drain(&mut self.pipeline, self.runtime.sleep(self.drain_timeout)).await;
 
         flushed?;
-        worked.map(drop)
+        worked?;
+        Ok(())
     }
 
     /// Run up to `STEP_BUDGET` encoding steps.
@@ -377,11 +377,6 @@ where
     }
 
     /// Apply an admin command, and answer it when it carries a reply.
-    ///
-    /// [`AdminCommand::Stop`] resets the pipeline, then the source is left
-    /// unpolled until [`AdminCommand::Start`] is received. On start the source is reset to
-    /// catch up sequentially from the last known safe L2 head. Stopping a stopped batcher
-    /// or starting a running one does nothing. A flush is refused while stopped.
     fn on_admin(&mut self, cmd: AdminCommand) -> Result<(), BatchDriverError> {
         match cmd {
             AdminCommand::Flush { reply } if self.stopped => {
