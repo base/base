@@ -292,7 +292,6 @@ pub trait BaseProofsBatchSession: Send + Sync + Debug {
 /// Storage that can open a [`BaseProofsBatchSession`] for amortized multi-block writes.
 ///
 /// **Atomicity is backend-dependent.** Callers must not rely on rollback:
-/// - `MDBX`: commits atomically on `Ok`, rolls back on `Err`.
 /// - `RocksDB`: each [`BaseProofsBatchSession::store_trie_updates`] call commits immediately;
 ///   if the closure returns `Err` after writing N blocks, those N blocks remain durable.
 /// - In-memory (test double): no transactional rollback; partial writes remain visible.

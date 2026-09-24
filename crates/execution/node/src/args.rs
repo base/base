@@ -8,10 +8,11 @@ use std::{
 };
 
 use alloy_primitives::Address;
-use base_execution_trie::{MdbxProofsStorageOptions, RocksdbProofsStorageOptions};
+use base_execution_trie::RocksdbProofsStorageOptions;
 use base_execution_txpool::{DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT};
 use base_upgrade_signal::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs};
 use clap::{ArgAction, ValueEnum, builder::ArgPredicate};
+use tracing::warn;
 
 /// Default proofs history window: 1 month of blocks at 2s block time.
 pub const DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS: u64 = 1_296_000;
@@ -52,77 +53,44 @@ pub enum TxpoolOrdering {
     Timestamp,
 }
 
-/// On-disk database backend for proofs history.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
-#[value(rename_all = "kebab-case")]
-pub enum ProofsHistoryDbBackend {
-    /// Store proofs history in `RocksDB`. Also accepted as `v2`.
-    #[value(alias = "v2")]
-    Rocksdb,
-    /// Store proofs history in `MDBX`.
-    #[default]
-    Mdbx,
-}
-
-impl ProofsHistoryDbBackend {
-    /// Returns an error if an existing proofs-history directory belongs to a different backend.
-    pub fn ensure_storage_path_matches(self, path: &Path) -> eyre::Result<()> {
-        if !path.exists() {
-            return Ok(());
-        }
-
-        let has_rocksdb_marker = path.join("CURRENT").exists();
-        let has_mdbx_marker = path.join("mdbx.dat").exists();
-
-        if has_rocksdb_marker && has_mdbx_marker {
-            return Err(eyre::eyre!(
-                "storage path contains both RocksDB marker CURRENT and MDBX marker mdbx.dat: {}",
-                path.display()
-            ));
-        }
-
-        match self {
-            Self::Rocksdb if has_mdbx_marker => Err(eyre::eyre!(
-                "proofs-history.db=rocksdb but storage path contains MDBX marker mdbx.dat: {}",
-                path.display()
-            )),
-            Self::Mdbx if has_rocksdb_marker => Err(eyre::eyre!(
-                "proofs-history.db=mdbx but storage path contains RocksDB marker CURRENT: {}",
-                path.display()
-            )),
-            _ => Ok(()),
-        }
+/// Rejects an existing MDBX proofs directory because proofs history only supports `RocksDB`.
+pub fn ensure_rocksdb_storage_path(path: &Path) -> eyre::Result<()> {
+    if path.join("mdbx.dat").exists() {
+        return Err(eyre::eyre!(
+            "MDBX proofs storage is no longer supported; migrate or replace the storage directory: {}",
+            path.display()
+        ));
     }
+
+    Ok(())
 }
 
-/// Runtime tuning options for the `MDBX` proofs history backend.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::Args)]
-pub struct ProofsHistoryMdbxArgs {
-    /// Maximum duration a read transaction can stay open.
+/// Deprecated proofs history database selection arguments.
+///
+/// Proofs history now always uses `RocksDB`; this only preserves CLI compatibility while
+/// operators remove the old option from their configurations.
+#[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
+pub struct DeprecatedProofsHistoryDbArgs {
+    /// Deprecated and ignored. Proofs history always uses `RocksDB`.
     #[arg(
-        long = "proofs-history.mdbx.max-read-transaction-duration",
-        value_name = "PROOFS_HISTORY_MDBX_MAX_READ_TRANSACTION_DURATION",
-        value_parser = parse_positive_duration,
+        long = "proofs-history.db",
+        visible_alias = "proofs.db",
+        value_name = "PROOFS_HISTORY_DB",
         hide = true
     )]
-    pub max_read_transaction_duration: Option<Duration>,
+    pub backend: Option<String>,
 }
 
-impl ProofsHistoryMdbxArgs {
-    /// Converts CLI arguments into storage options.
-    pub const fn storage_options(self) -> MdbxProofsStorageOptions {
-        MdbxProofsStorageOptions {
-            max_read_transaction_duration: self.max_read_transaction_duration,
+impl DeprecatedProofsHistoryDbArgs {
+    /// Emits a warning when the deprecated database-selection flag is provided.
+    pub fn warn_if_set(&self) {
+        if let Some(backend) = &self.backend {
+            warn!(
+                proofs_history_db = %backend,
+                "--proofs-history.db is deprecated and ignored; proofs history always uses RocksDB"
+            );
         }
     }
-}
-
-fn parse_positive_duration(s: &str) -> Result<Duration, String> {
-    let d = humantime::parse_duration(s).map_err(|e| e.to_string())?;
-    if d.is_zero() {
-        return Err("duration must be greater than zero".to_owned());
-    }
-    Ok(d)
 }
 
 /// Runtime tuning options for the `RocksDB` proofs history backend.
@@ -414,22 +382,13 @@ pub struct RollupArgs {
     )]
     pub proofs_history_storage_path: Option<PathBuf>,
 
-    /// The on-disk database backend for proofs history.
-    #[arg(
-        long = "proofs-history.db",
-        visible_alias = "proofs.db",
-        value_name = "PROOFS_HISTORY_DB",
-        default_value = "mdbx"
-    )]
-    pub proofs_history_db: ProofsHistoryDbBackend,
+    /// Deprecated proofs history database selection flags.
+    #[command(flatten)]
+    pub deprecated_proofs_history_db: DeprecatedProofsHistoryDbArgs,
 
     /// Runtime tuning options for the `RocksDB` proofs history backend.
     #[command(flatten)]
     pub proofs_history_rocksdb: ProofsHistoryRocksdbArgs,
-
-    /// Runtime tuning options for the `MDBX` proofs history backend.
-    #[command(flatten)]
-    pub proofs_history_mdbx: ProofsHistoryMdbxArgs,
 
     /// The window to span blocks for proofs history. Value is the number of blocks.
     /// Default is 1 month of blocks based on 2 seconds block time.
@@ -512,9 +471,8 @@ impl Default for RollupArgs {
             mempool_trusted_delegation_targets: Vec::new(),
             proofs_history: false,
             proofs_history_storage_path: None,
-            proofs_history_db: ProofsHistoryDbBackend::default(),
+            deprecated_proofs_history_db: Default::default(),
             proofs_history_rocksdb: Default::default(),
-            proofs_history_mdbx: Default::default(),
             proofs_history_window: DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS,
             proofs_history_prune_interval: Duration::from_secs(15),
             proofs_history_verification_interval: 0,
@@ -685,25 +643,10 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_proofs_history_db_default() {
-        let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
-        assert_eq!(args.proofs_history_db, ProofsHistoryDbBackend::Mdbx);
-    }
-
-    #[test]
-    fn test_parse_proofs_history_db_v2_alias() {
-        let args =
-            CommandParser::<RollupArgs>::parse_from(["reth", "--proofs-history.db", "v2"]).args;
-        assert_eq!(args.proofs_history_db, ProofsHistoryDbBackend::Rocksdb);
-    }
-
-    #[test]
     fn test_parse_proofs_short_aliases() {
         let args = CommandParser::<RollupArgs>::parse_from([
             "reth",
             "--proofs",
-            "--proofs.db",
-            "rocksdb",
             "--proofs.storage-path",
             "/tmp/proofs",
             "--proofs.window",
@@ -711,7 +654,6 @@ mod tests {
         ])
         .args;
         assert!(args.proofs_history);
-        assert_eq!(args.proofs_history_db, ProofsHistoryDbBackend::Rocksdb);
         assert_eq!(
             args.proofs_history_storage_path.as_deref(),
             Some(std::path::Path::new("/tmp/proofs"))
@@ -720,73 +662,17 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_proofs_history_db_mdbx() {
-        let args = CommandParser::<RollupArgs>::parse_from([
-            "reth",
-            "--proofs-history",
-            "--proofs-history.db",
-            "mdbx",
-        ])
-        .args;
-        assert!(args.proofs_history);
-        assert_eq!(args.proofs_history_db, ProofsHistoryDbBackend::Mdbx);
-    }
-
-    #[test]
-    fn test_parse_proofs_history_db_without_enabling_history() {
-        let args =
-            CommandParser::<RollupArgs>::parse_from(["reth", "--proofs-history.db", "mdbx"]).args;
-        assert!(!args.proofs_history);
-        assert_eq!(args.proofs_history_db, ProofsHistoryDbBackend::Mdbx);
-    }
-
-    #[test]
-    fn test_parse_proofs_history_mdbx_tuning_options() {
-        let args = CommandParser::<RollupArgs>::parse_from([
-            "reth",
-            "--proofs-history.mdbx.max-read-transaction-duration",
-            "30s",
-        ])
-        .args;
-
-        let options = args.proofs_history_mdbx.storage_options();
-        assert_eq!(options.max_read_transaction_duration, Some(Duration::from_secs(30)));
-    }
-
-    #[test]
-    fn test_proofs_history_mdbx_rejects_zero_duration() {
-        let result = CommandParser::<RollupArgs>::try_parse_from([
-            "reth",
-            "--proofs-history.mdbx.max-read-transaction-duration",
-            "0s",
-        ]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_proofs_history_db_rejects_ambiguous_storage_markers() {
+    fn test_mdbx_proofs_storage_is_rejected() {
         let dir = std::env::temp_dir().join(format!(
-            "proofs-history-markers-{}-{}",
+            "proofs-history-mdbx-{}-{}",
             std::process::id(),
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("CURRENT"), b"rocksdb").unwrap();
         std::fs::write(dir.join("mdbx.dat"), b"mdbx").unwrap();
 
-        let rocksdb_error =
-            ProofsHistoryDbBackend::Rocksdb.ensure_storage_path_matches(&dir).unwrap_err();
-        assert!(
-            rocksdb_error
-                .to_string()
-                .contains("both RocksDB marker CURRENT and MDBX marker mdbx.dat")
-        );
-
-        let mdbx_error =
-            ProofsHistoryDbBackend::Mdbx.ensure_storage_path_matches(&dir).unwrap_err();
-        assert!(
-            mdbx_error.to_string().contains("both RocksDB marker CURRENT and MDBX marker mdbx.dat")
-        );
+        let error = ensure_rocksdb_storage_path(&dir).unwrap_err();
+        assert!(error.to_string().contains("MDBX proofs storage is no longer supported"));
 
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -841,9 +727,21 @@ mod tests {
     }
 
     #[test]
+    fn test_deprecated_proofs_history_db_flags_remain_accepted() {
+        let args =
+            CommandParser::<RollupArgs>::parse_from(["reth", "--proofs-history.db", "mdbx"]).args;
+        assert_eq!(args.deprecated_proofs_history_db.backend.as_deref(), Some("mdbx"));
+
+        let args = CommandParser::<RollupArgs>::parse_from(["reth", "--proofs.db", "v2"]).args;
+        assert_eq!(args.deprecated_proofs_history_db.backend.as_deref(), Some("v2"));
+
+        let help = CommandParser::<RollupArgs>::command().render_help().to_string();
+        assert!(!help.contains("proofs-history.db"));
+    }
+
+    #[test]
     fn test_proofs_history_rocksdb_tuning_options_hidden_from_help() {
         let help = CommandParser::<RollupArgs>::command().render_help().to_string();
-        assert!(!help.contains("proofs-history.mdbx.max-read-transaction-duration"));
         assert!(!help.contains("proofs-history.rocksdb.compression"));
         assert!(!help.contains("proofs-history.rocksdb.max-background-jobs"));
         assert!(!help.contains("proofs-history.rocksdb.rate-limit-mib-per-sec"));

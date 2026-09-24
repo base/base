@@ -1,9 +1,7 @@
-//! MDBX implementation of [`BaseProofsStore`](crate::BaseProofsStore).
+//! Shared schema models for [`BaseProofsStore`](crate::BaseProofsStore).
 //!
-//! This module provides a complete MDBX implementation of the
-//! [`BaseProofsStore`](crate::BaseProofsStore) trait. It uses the [`reth_db`] crate for
-//! database interactions and defines the necessary tables and models for storing trie branches,
-//! accounts, and storage leaves.
+//! This module defines the keys and values used by the `RocksDB` proofs storage backend for
+//! storing trie branches, accounts, and storage leaves.
 
 mod block;
 pub use block::*;

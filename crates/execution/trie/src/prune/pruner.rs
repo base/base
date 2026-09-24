@@ -646,6 +646,5 @@ mod tests {
         };
     }
 
-    proof_storage_pruner_tests!(mdbx_tests, MdbxProofsStorage);
     proof_storage_pruner_tests!(rocksdb_tests, RocksdbProofsStorage);
 }

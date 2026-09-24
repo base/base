@@ -13,7 +13,7 @@ use reth_db_api as _;
 /// CLI argument parsing for the Base node.
 pub mod args;
 pub use args::{
-    DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, HasRollupArgs, ProofsHistoryDbBackend,
+    DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, DeprecatedProofsHistoryDbArgs, HasRollupArgs,
     ProofsHistoryRocksdbArgs, RollupArgs, TWELVE_HOURS_IN_BLOCKS, TxpoolOrdering,
 };
 

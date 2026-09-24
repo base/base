@@ -6,7 +6,6 @@ use test_case::test_case;
 use super::*;
 
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
 #[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_fetch_trie_updates_basic<S: BaseProofsStore + BaseProofsInitialStateStore>(
@@ -55,7 +54,6 @@ fn test_fetch_trie_updates_basic<S: BaseProofsStore + BaseProofsInitialStateStor
     Ok(())
 }
 
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
 #[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_store_trie_updates_out_of_order_rejects<
@@ -73,7 +71,6 @@ fn test_store_trie_updates_out_of_order_rejects<
     Ok(())
 }
 
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
 #[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_prune_earliest_state_comprehensive<S: BaseProofsStore + BaseProofsInitialStateStore>(
@@ -130,7 +127,6 @@ fn test_prune_earliest_state_comprehensive<S: BaseProofsStore + BaseProofsInitia
     Ok(())
 }
 
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
 #[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_prune_earliest_state_returns_correct_counts<
@@ -169,7 +165,6 @@ fn test_prune_earliest_state_returns_correct_counts<
     Ok(())
 }
 
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
 #[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_unwind_history_with_trie_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
@@ -199,7 +194,6 @@ fn test_unwind_history_with_trie_nodes<S: BaseProofsStore + BaseProofsInitialSta
     assert_account_branch_missing(&storage, 10, path_2)
 }
 
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
 #[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_unwind_history_comprehensive<S: BaseProofsStore + BaseProofsInitialStateStore>(
@@ -259,7 +253,6 @@ fn test_unwind_history_comprehensive<S: BaseProofsStore + BaseProofsInitialState
     Ok(())
 }
 
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
 #[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_unwind_history_idempotent<S: BaseProofsStore + BaseProofsInitialStateStore>(

@@ -1,7 +1,7 @@
 # Proof History Database Schema
 
 > Location: `crates/execution/trie/src/db`
-> Backend: **MDBX** (via `reth-db`)
+> Backend: **RocksDB**
 > Purpose: Serve **historical `eth_getProof`** by storing versioned trie data in a bounded window.
 
 ---
@@ -14,7 +14,7 @@ Each logical key is stored with **multiple historical versions**, each tagged by
 
 ### Core principles
 
-* History tables are **DupSort** tables
+* History tables are **versioned** tables
 * Each entry is versioned by `block_number`
 * Deletions are encoded as **tombstones**
 * A reverse index (`BlockChangeSet`) enables **range pruning**
@@ -56,7 +56,7 @@ An empty value represents **deletion at that block**.
 
 ---
 
-## 1. `AccountTrieHistory` (DupSort)
+## 1. `AccountTrieHistory` (versioned)
 
 Historical **branch nodes** of the **account trie**.
 
@@ -85,7 +85,7 @@ For a given trie path:
 
 ---
 
-## 2. `StorageTrieHistory` (DupSort)
+## 2. `StorageTrieHistory` (versioned)
 
 Historical **branch nodes** of **per-account storage tries**.
 
@@ -112,7 +112,7 @@ Ordering:
 
 ---
 
-## 3. `HashedAccountHistory` (DupSort)
+## 3. `HashedAccountHistory` (versioned)
 
 Historical **account leaf values**.
 
@@ -130,7 +130,7 @@ Stores nonce, balance, code hash, and storage root per account per block.
 
 ---
 
-## 4. `HashedStorageHistory` (DupSort)
+## 4. `HashedStorageHistory` (versioned)
 
 Historical **storage slot values**.
 

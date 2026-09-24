@@ -8,9 +8,7 @@ use base_execution_rpc::{
     debug::{DebugApiExt, DebugApiOverrideServer},
     eth::proofs::{EthApiExt, EthApiOverrideServer},
 };
-use base_execution_trie::{
-    BaseProofsBatchStore, BaseProofsStorage, MdbxProofsStorage, RocksdbProofsStorage,
-};
+use base_execution_trie::{BaseProofsBatchStore, BaseProofsStorage, RocksdbProofsStorage};
 use eyre::ErrReport;
 use futures::FutureExt;
 use reth_db::DatabaseEnv;
@@ -25,7 +23,7 @@ use tracing::info;
 
 use crate::{
     BaseNode, BaseNodeComponentBuilder,
-    args::{DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryDbBackend, RollupArgs},
+    args::{DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, RollupArgs, ensure_rocksdb_storage_path},
 };
 
 type ProofHistoryNodeTypes = RethFullAdapter<Arc<DatabaseEnv>, BaseNode>;
@@ -56,9 +54,8 @@ pub async fn launch_node_with_proof_history(
         mempool_trusted_delegation_targets,
         proofs_history,
         proofs_history_storage_path,
-        proofs_history_db,
+        deprecated_proofs_history_db,
         proofs_history_rocksdb,
-        proofs_history_mdbx,
         proofs_history_window,
         proofs_history_prune_interval,
         proofs_history_verification_interval,
@@ -79,9 +76,8 @@ pub async fn launch_node_with_proof_history(
         mempool_trusted_delegation_targets,
         proofs_history: false,
         proofs_history_storage_path: None,
-        proofs_history_db: ProofsHistoryDbBackend::default(),
+        deprecated_proofs_history_db: Default::default(),
         proofs_history_rocksdb: Default::default(),
-        proofs_history_mdbx: Default::default(),
         proofs_history_window: DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS,
         proofs_history_prune_interval: Duration::from_secs(15),
         proofs_history_verification_interval: 0,
@@ -89,47 +85,28 @@ pub async fn launch_node_with_proof_history(
         upgrade_signal_l1_rpc,
     }));
 
+    deprecated_proofs_history_db.warn_if_set();
+
     if proofs_history {
         let path = proofs_history_storage_path.ok_or_else(|| {
             eyre::eyre!("--proofs-history requires --proofs-history.storage-path")
         })?;
-        info!(target: "reth::cli", "Using on-disk storage for proofs history");
-        proofs_history_db.ensure_storage_path_matches(&path)?;
-
-        match proofs_history_db {
-            ProofsHistoryDbBackend::Rocksdb => {
-                let rocksdb = Arc::new(
-                    RocksdbProofsStorage::new_with_options(
-                        &path,
-                        proofs_history_rocksdb.storage_options()?,
-                    )
-                    .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
-                );
-                node_builder = install_proofs_history(
-                    node_builder,
-                    rocksdb,
-                    proofs_history_window,
-                    proofs_history_prune_interval,
-                    proofs_history_verification_interval,
-                );
-            }
-            ProofsHistoryDbBackend::Mdbx => {
-                let mdbx = Arc::new(
-                    MdbxProofsStorage::new_with_options(
-                        &path,
-                        proofs_history_mdbx.storage_options(),
-                    )
-                    .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))?,
-                );
-                node_builder = install_proofs_history(
-                    node_builder,
-                    mdbx,
-                    proofs_history_window,
-                    proofs_history_prune_interval,
-                    proofs_history_verification_interval,
-                );
-            }
-        }
+        info!(target: "reth::cli", "Using RocksDB storage for proofs history");
+        ensure_rocksdb_storage_path(&path)?;
+        let rocksdb = Arc::new(
+            RocksdbProofsStorage::new_with_options(
+                &path,
+                proofs_history_rocksdb.storage_options()?,
+            )
+            .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
+        );
+        node_builder = install_proofs_history(
+            node_builder,
+            rocksdb,
+            proofs_history_window,
+            proofs_history_prune_interval,
+            proofs_history_verification_interval,
+        );
     }
 
     // In all cases (with or without proofs), launch the node.

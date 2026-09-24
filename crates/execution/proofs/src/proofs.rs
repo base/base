@@ -5,10 +5,8 @@ use base_execution_rpc::{
     debug::{DebugApiExt, DebugApiOverrideServer},
     eth::proofs::{EthApiExt, EthApiOverrideServer},
 };
-use base_execution_trie::{
-    BaseProofsBatchStore, BaseProofsStorage, MdbxProofsStorage, RocksdbProofsStorage,
-};
-use base_node_core::args::{ProofsHistoryDbBackend, RollupArgs};
+use base_execution_trie::{BaseProofsBatchStore, BaseProofsStorage, RocksdbProofsStorage};
+use base_node_core::args::{RollupArgs, ensure_rocksdb_storage_path};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use reth_db::database_metrics::DatabaseMetrics;
 use reth_node_api::FullNodeComponents;
@@ -38,10 +36,10 @@ impl BaseNodeExtension for ProofsHistoryExtension {
     fn apply(self: Box<Self>, mut hooks: NodeHooks) -> NodeHooks {
         // TODO: if NodeHooks exposes the underlying Builder, we can call launch_node_with_proof_history
         let args = self.config;
+        args.deprecated_proofs_history_db.warn_if_set();
+
         let proofs_history_enabled = args.proofs_history;
-        let proofs_history_db = args.proofs_history_db;
         let proofs_history_rocksdb = args.proofs_history_rocksdb;
-        let proofs_history_mdbx = args.proofs_history_mdbx;
         let proofs_history_window = args.proofs_history_window;
         let proofs_history_prune_interval = args.proofs_history_prune_interval;
         let proofs_history_verification_interval = args.proofs_history_verification_interval;
@@ -56,68 +54,40 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                     Err(eyre::eyre!("--proofs-history requires --proofs-history.storage-path"))
                 });
             };
-            info!(target: "reth::cli", "Using on-disk storage for proofs history");
+            info!(target: "reth::cli", "Using RocksDB storage for proofs history");
 
-            if let Err(e) = proofs_history_db.ensure_storage_path_matches(&path) {
-                error!(target: "reth::cli", error = ?e, "Proofs history storage path does not match selected backend");
+            if let Err(e) = ensure_rocksdb_storage_path(&path) {
+                error!(target: "reth::cli", error = ?e, "MDBX proofs storage is unsupported");
                 return hooks.add_node_started_hook(move |_| Err(e));
             }
 
-            match proofs_history_db {
-                ProofsHistoryDbBackend::Rocksdb => {
-                    let storage_options = match proofs_history_rocksdb.storage_options() {
-                        Ok(options) => options,
-                        Err(e) => {
-                            error!(target: "reth::cli", error = ?e, "Invalid RocksDB proofs history options");
-                            return hooks.add_node_started_hook(move |_| Err(e));
-                        }
-                    };
-                    let rocksdb =
-                        match RocksdbProofsStorage::new_with_options(&path, storage_options)
-                            .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))
-                        {
-                            Ok(rocksdb) => rocksdb,
-                            Err(e) => {
-                                error!(
-                                    target: "reth::cli",
-                                    error = ?e,
-                                    "Failed to create RocksdbProofsStorage"
-                                );
-                                return hooks.add_node_started_hook(move |_| Err(e));
-                            }
-                        };
-                    hooks = install_proofs_history(
-                        hooks,
-                        Arc::new(rocksdb),
-                        proofs_history_window,
-                        proofs_history_prune_interval,
-                        proofs_history_verification_interval,
-                    );
+            let storage_options = match proofs_history_rocksdb.storage_options() {
+                Ok(options) => options,
+                Err(e) => {
+                    error!(target: "reth::cli", error = ?e, "Invalid RocksDB proofs history options");
+                    return hooks.add_node_started_hook(move |_| Err(e));
                 }
-                ProofsHistoryDbBackend::Mdbx => {
-                    let storage_options = proofs_history_mdbx.storage_options();
-                    let mdbx = match MdbxProofsStorage::new_with_options(&path, storage_options)
-                        .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))
-                    {
-                        Ok(mdbx) => mdbx,
-                        Err(e) => {
-                            error!(
-                                target: "reth::cli",
-                                error = ?e,
-                                "Failed to create MdbxProofsStorage"
-                            );
-                            return hooks.add_node_started_hook(move |_| Err(e));
-                        }
-                    };
-                    hooks = install_proofs_history(
-                        hooks,
-                        Arc::new(mdbx),
-                        proofs_history_window,
-                        proofs_history_prune_interval,
-                        proofs_history_verification_interval,
+            };
+            let rocksdb = match RocksdbProofsStorage::new_with_options(&path, storage_options)
+                .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))
+            {
+                Ok(rocksdb) => rocksdb,
+                Err(e) => {
+                    error!(
+                        target: "reth::cli",
+                        error = ?e,
+                        "Failed to create RocksdbProofsStorage"
                     );
+                    return hooks.add_node_started_hook(move |_| Err(e));
                 }
-            }
+            };
+            hooks = install_proofs_history(
+                hooks,
+                Arc::new(rocksdb),
+                proofs_history_window,
+                proofs_history_prune_interval,
+                proofs_history_verification_interval,
+            );
         }
         hooks
     }
