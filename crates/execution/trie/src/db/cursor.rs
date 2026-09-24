@@ -293,6 +293,18 @@ where
     pub const fn new(cursor: Cursor, block_number: u64, hashed_address: B256) -> Self {
         Self { inner: BlockNumberVersionedCursor::new(cursor, block_number), hashed_address }
     }
+
+    /// Returns the live, non-zero value of exactly slot `key` at or below the cursor's max block.
+    ///
+    /// Unlike [`HashedCursor::seek`], this never scans past `key`, so misses, tombstones, and
+    /// zero-valued slots cost a single point lookup.
+    pub fn seek_exact(&mut self, key: B256) -> Result<Option<U256>, DatabaseError> {
+        Ok(self
+            .inner
+            .seek_exact(HashedStorageKey::new(self.hashed_address, key))?
+            .map(|(_, value)| value.0)
+            .filter(|value| !value.is_zero()))
+    }
 }
 
 impl<Cursor> HashedCursor for MdbxStorageCursor<Cursor>
@@ -383,6 +395,14 @@ where
     /// Initializes new `MdbxAccountCursor`
     pub const fn new(cursor: Cursor, block_number: u64) -> Self {
         Self { inner: BlockNumberVersionedCursor::new(cursor, block_number) }
+    }
+
+    /// Returns the live account at exactly `key` at or below the cursor's max block.
+    ///
+    /// Unlike [`HashedCursor::seek`], this never scans past `key`, so misses and tombstones cost a
+    /// single point lookup.
+    pub fn seek_exact(&mut self, key: B256) -> Result<Option<Account>, DatabaseError> {
+        Ok(self.inner.seek_exact(key)?.map(|(_, account)| account))
     }
 }
 

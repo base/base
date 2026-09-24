@@ -177,6 +177,35 @@ pub trait BaseProofsStore: Send + Sync + Debug {
         Self: 'db,
         'db: 'tx;
 
+    /// Point lookup of the account at exactly `hashed_address`, reusing `tx`.
+    ///
+    /// Returns the newest version with block number <= `max_block_number`, or `None` if the key
+    /// is absent or that version is a tombstone. Unlike seeking an
+    /// [`AccountHashedCursor`](Self::AccountHashedCursor), this never scans neighboring keys.
+    fn hashed_account_with_tx<'db>(
+        &self,
+        tx: &Self::Tx<'db>,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Account>>
+    where
+        Self: 'db;
+
+    /// Point lookup of storage slot `hashed_slot` of `hashed_address`, reusing `tx`.
+    ///
+    /// Returns the newest version with block number <= `max_block_number`, or `None` if the slot
+    /// is absent, tombstoned, or zero. Unlike seeking a
+    /// [`StorageCursor`](Self::StorageCursor), this never scans neighboring slots.
+    fn hashed_storage_with_tx<'db>(
+        &self,
+        tx: &Self::Tx<'db>,
+        hashed_address: B256,
+        hashed_slot: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<U256>>
+    where
+        Self: 'db;
+
     /// Store a batch of trie updates.
     ///
     /// If wiped is true, the entire storage trie is wiped, but this is unsupported going forward,

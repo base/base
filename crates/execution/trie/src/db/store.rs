@@ -812,6 +812,33 @@ impl BaseProofsStore for MdbxProofsStorage {
         Ok(MdbxAccountCursor::new(cursor, max_block_number))
     }
 
+    fn hashed_account_with_tx<'db>(
+        &self,
+        tx: &Self::Tx<'db>,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Account>>
+    where
+        Self: 'db,
+    {
+        Ok(self.account_hashed_cursor_with_tx(tx, max_block_number)?.seek_exact(hashed_address)?)
+    }
+
+    fn hashed_storage_with_tx<'db>(
+        &self,
+        tx: &Self::Tx<'db>,
+        hashed_address: B256,
+        hashed_slot: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<U256>>
+    where
+        Self: 'db,
+    {
+        Ok(self
+            .storage_hashed_cursor_with_tx(tx, hashed_address, max_block_number)?
+            .seek_exact(hashed_slot)?)
+    }
+
     fn store_trie_updates(
         &self,
         block_ref: BlockWithParent,
