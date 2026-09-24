@@ -571,9 +571,9 @@ impl ClusterZkProver {
         request: &ZkProofRequest,
         request_session_id: &str,
     ) -> Result<String, ZkProverError> {
-        let intermediate_root_interval = NonZeroU64::new(request.intermediate_root_interval)
-            .ok_or_else(|| {
-                backend_error!("intermediate_root_interval must be greater than zero")
+        let intermediate_root_interval =
+            request.intermediate_root_interval.and_then(NonZeroU64::new).ok_or_else(|| {
+                backend_error!("intermediate_root_interval must be provided and greater than zero")
             })?;
         let (proof_id, existing_backend_session_id) = self
             .find_available_proof_id(request_session_id, "range", Self::proof_id_for_attempt)

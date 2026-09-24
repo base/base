@@ -156,9 +156,9 @@ impl DryRunZkProver {
             .checked_add(request.number_of_blocks_to_prove)
             .ok_or_else(|| backend_error!("proof range end block overflowed u64"))?;
         let sequence_window = request.sequence_window.unwrap_or(self.default_sequence_window);
-        let intermediate_root_interval = NonZeroU64::new(request.intermediate_root_interval)
-            .ok_or_else(|| {
-                backend_error!("intermediate_root_interval must be greater than zero")
+        let intermediate_root_interval =
+            request.intermediate_root_interval.and_then(NonZeroU64::new).ok_or_else(|| {
+                backend_error!("intermediate_root_interval must be provided and greater than zero")
             })?;
 
         info!(

@@ -128,7 +128,7 @@ fn compressed_request(session_id: &str, start_block_number: u64) -> CreateProofR
             number_of_blocks_to_prove: 1,
             sequence_window: None,
             l1_head: None,
-            intermediate_root_interval: 1,
+            intermediate_root_interval: None,
             schedule_l2_block_number: None,
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,

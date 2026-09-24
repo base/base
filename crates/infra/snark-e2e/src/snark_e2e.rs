@@ -214,7 +214,7 @@ impl SnarkE2e {
                             number_of_blocks_to_prove: 1,
                             sequence_window: Some(SEQUENCE_WINDOW),
                             l1_head: None,
-                            intermediate_root_interval: 1,
+                            intermediate_root_interval: Some(1),
                             schedule_l2_block_number: None,
                             zk_vm: ZkVm::Sp1,
                             zk_backend: ZkBackend::Cluster,
