@@ -6,26 +6,25 @@ use async_trait::async_trait;
 use base_runtime::Clock;
 use futures::{StreamExt, stream::BoxStream};
 
-use crate::{L1HeadEvent, L1HeadPolling, L1HeadSource, SourceError};
+use crate::{L1HeadPolling, L1HeadSource};
 
 /// An L1 head source that races a subscription stream against an interval-based poller.
 ///
-/// Deduplicates head numbers so that the same block number is only reported once.
-/// Stale reads (same or lower block number than last reported) are also silently dropped.
-///
-/// When the subscription stream ends, the source keeps delivering heads from the poller.
+/// Reports only heads strictly above the last one it reported, so a head seen by both the
+/// stream and the poller is reported once. When the subscription stream ends, the source
+/// keeps delivering heads from the poller.
 #[derive(derive_more::Debug)]
 pub struct HybridL1HeadSource<P> {
     /// Live head numbers pushed by the subscription; pending forever once it ends.
     #[debug(skip)]
-    sub: BoxStream<'static, Result<u64, SourceError>>,
+    sub: BoxStream<'static, u64>,
     /// Polling source for fetching the latest L1 head block number.
     #[debug(skip)]
     poller: P,
     /// Polling interval timer.
     #[debug(skip)]
     interval: BoxStream<'static, ()>,
-    /// Last reported head number for deduplication.
+    /// Last reported head number.
     last_head: Option<u64>,
 }
 
@@ -37,62 +36,44 @@ impl<P: L1HeadPolling> HybridL1HeadSource<P> {
     /// `poll_interval` tick.
     pub fn new(
         clock: impl Clock,
-        sub: BoxStream<'static, Result<u64, SourceError>>,
+        sub: BoxStream<'static, u64>,
         poller: P,
         poll_interval: Duration,
     ) -> Self {
         Self { sub, poller, interval: clock.interval(poll_interval), last_head: None }
     }
-
-    /// Process a received head number, returning an event if it is strictly newer.
-    ///
-    /// Drops duplicate or stale values (same or lower head number than last emitted).
-    fn process(&mut self, head: u64) -> Option<L1HeadEvent> {
-        if self.last_head.is_some_and(|last| last >= head) {
-            tracing::debug!(head, "stale or duplicate L1 head, skipping");
-            return None;
-        }
-        self.last_head = Some(head);
-        Some(L1HeadEvent::NewHead(head))
-    }
 }
 
 #[async_trait]
 impl<P: L1HeadPolling> L1HeadSource for HybridL1HeadSource<P> {
-    async fn next(&mut self) -> Result<L1HeadEvent, SourceError> {
+    async fn next(&mut self) -> u64 {
         loop {
-            tokio::select! {
-                head = self.sub.next() => {
-                    match head {
-                        Some(Ok(n)) => {
-                            if let Some(event) = self.process(n) {
-                                return Ok(event);
-                            }
-                            // Stale or duplicate — loop for next event.
-                        }
-                        Some(Err(e)) => return Err(e),
-                        None => {
-                            tracing::warn!("L1 head subscription ended; falling back to polling");
-                            self.sub = futures::stream::pending().boxed();
-                        }
+            // Take the next head from whichever of the stream and the poller answers first.
+            let head = tokio::select! {
+                next = self.sub.next() => match next {
+                    Some(head) => head,
+                    None => {
+                        tracing::warn!("L1 head subscription ended; falling back to polling");
+                        self.sub = futures::stream::pending().boxed();
+                        continue;
                     }
-                }
-                _ = self.interval.next() => {
-                    match self.poller.latest_head().await {
-                        Ok(n) => {
-                            if let Some(event) = self.process(n) {
-                                return Ok(event);
-                            }
-                            // Stale or duplicate — loop for next event.
-                        }
-                        Err(SourceError::Provider(msg)) => {
-                            tracing::warn!(error = %msg, "L1 head polling error, retrying on next tick");
-                            // Transient provider error — continue to next tick.
-                        }
-                        Err(e) => return Err(e),
+                },
+                _ = self.interval.next() => match self.poller.latest_head().await {
+                    Ok(head) => head,
+                    Err(error) => {
+                        tracing::warn!(error = %error, "L1 head polling error, retrying on next tick");
+                        continue;
                     }
-                }
+                },
+            };
+
+            // Report it only if it is newer than the last one.
+            if self.last_head.is_some_and(|last| last >= head) {
+                tracing::debug!(head, "stale or duplicate L1 head, skipping");
+                continue;
             }
+            self.last_head = Some(head);
+            return head;
         }
     }
 }
@@ -104,6 +85,7 @@ mod tests {
     use base_runtime::{Config, Runner};
 
     use super::*;
+    use crate::SourceError;
 
     struct IncrementingPoller(AtomicU64);
 
@@ -127,7 +109,7 @@ mod tests {
     fn test_hybrid_l1_stale_and_duplicate_heads_skipped() {
         Runner::start(Config::seeded(0), |ctx| async move {
             // Only the stream can produce heads: the poller always fails.
-            let stream = futures::stream::iter(vec![Ok(10u64), Ok(9u64), Ok(10u64), Ok(11u64)]);
+            let stream = futures::stream::iter(vec![10u64, 9, 10, 11]);
             let mut source = HybridL1HeadSource::new(
                 ctx,
                 stream.boxed(),
@@ -135,9 +117,9 @@ mod tests {
                 Duration::from_secs(100),
             );
 
-            assert_eq!(source.next().await.unwrap(), L1HeadEvent::NewHead(10));
+            assert_eq!(source.next().await, 10);
             // 9 is stale and the second 10 a duplicate: the next head is 11.
-            assert_eq!(source.next().await.unwrap(), L1HeadEvent::NewHead(11));
+            assert_eq!(source.next().await, 11);
         });
     }
 
@@ -148,7 +130,7 @@ mod tests {
             // poller keeps returning a new head on every call. Whichever arm `select!` polls
             // first, the other one's 5 is a duplicate and the heads that follow come from the
             // poller.
-            let stream = futures::stream::once(async { Ok(5u64) });
+            let stream = futures::stream::once(async { 5u64 });
             let mut source = HybridL1HeadSource::new(
                 ctx,
                 stream.boxed(),
@@ -158,30 +140,9 @@ mod tests {
 
             let mut heads = Vec::new();
             for _ in 0..3 {
-                let L1HeadEvent::NewHead(head) = source.next().await.unwrap();
-                heads.push(head);
+                heads.push(source.next().await);
             }
             assert_eq!(heads, [5, 6, 7]);
-        });
-    }
-
-    #[test]
-    fn test_hybrid_l1_stream_error() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let stream =
-                futures::stream::once(async { Err(SourceError::Provider("rpc down".to_string())) });
-            let mut source = HybridL1HeadSource::new(
-                ctx,
-                stream.boxed(),
-                // The virtual-time interval ticks immediately, and `select!` may poll this
-                // branch before the stream error. Keep the fallback poller from producing a
-                // head so the test only covers subscription error propagation.
-                ProviderErrorPoller,
-                Duration::from_secs(100),
-            );
-
-            let err = source.next().await.unwrap_err();
-            assert!(matches!(err, SourceError::Provider(_)));
         });
     }
 }

@@ -1,15 +1,11 @@
 //! Error types for the batch driver.
 
 use base_batcher_encoder::StepError;
-use base_batcher_source::SourceError;
 use base_blobs::BlobEncodeError;
 
 /// Errors produced by the [`BatchDriver`](crate::BatchDriver).
 #[derive(Debug, thiserror::Error)]
 pub enum BatchDriverError {
-    /// An error from the L2 block source.
-    #[error("source error: {0}")]
-    Source(#[from] SourceError),
     /// An error encoding frames into blobs.
     #[error("blob encoding error: {0}")]
     Blob(#[from] BlobEncodeError),

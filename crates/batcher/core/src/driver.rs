@@ -5,9 +5,7 @@ use std::time::Duration;
 use base_batcher_encoder::{
     BatchPipeline, BatcherMetrics, DerivationReconciliation, StepError, StepResult,
 };
-use base_batcher_source::{
-    L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
-};
+use base_batcher_source::{L1HeadSource, L2BlockEvent, UnsafeBlockSource};
 use base_common_consensus::BaseBlock;
 use base_protocol::BlockInfo;
 use base_runtime::Runtime;
@@ -82,10 +80,7 @@ where
     /// DA backlog throttle (controller, client, dedup cache).
     throttle: DaThrottle<TC>,
     /// L1 head source for chain head advancement.
-    ///
-    /// Set to `None` after the source returns [`SourceError::Closed`], causing the
-    /// driver to park that select arm forever.
-    l1_head_source: Option<L>,
+    l1_head_source: L,
     /// Last trusted L2 safe head.
     safe_head: Option<BlockInfo>,
     /// Ordered derivation-progress snapshots.
@@ -144,7 +139,7 @@ where
                 config.max_pending_transactions,
             ),
             throttle,
-            l1_head_source: Some(heads.l1_head_source),
+            l1_head_source: heads.l1_head_source,
             safe_head: initial_status.map(|status| status.safe_l2),
             derivation_status_rx,
             drain_timeout: config.drain_timeout,
@@ -474,10 +469,6 @@ where
     /// catch up sequentially from the last known safe L2 head. Stopping a stopped
     /// batcher or starting a running one does nothing. Each command is answered
     /// once it has been applied.
-    ///
-    /// L1 head source errors are handled internally to avoid polluting the return
-    /// type with a no-op variant: [`SourceError::Closed`] parks the arm for good,
-    /// any other error is logged and the source polled again.
     async fn next_event(&mut self) -> Result<DriverEvent, BatchDriverError> {
         loop {
             let event = tokio::select! {
@@ -541,7 +532,7 @@ where
                     }
                 }
 
-                event = self.source.next() => match event? {
+                event = self.source.next() => match event {
                     L2BlockEvent::Block(_) if self.stopped => continue,
                     L2BlockEvent::Block(block) => DriverEvent::Block(block),
                     L2BlockEvent::Reorg => DriverEvent::Reorg,
@@ -551,24 +542,7 @@ where
                     DriverEvent::Receipt(ids, outcome)
                 }
 
-                l1_event = async {
-                    if let Some(ref mut src) = self.l1_head_source {
-                        src.next().await
-                    } else {
-                        std::future::pending::<Result<L1HeadEvent, SourceError>>().await
-                    }
-                } => match l1_event {
-                    Ok(L1HeadEvent::NewHead(n)) => DriverEvent::L1Head(n),
-                    Err(SourceError::Closed) => {
-                        warn!("L1 head source closed, L1 head tracking stopped");
-                        self.l1_head_source = None;
-                        continue;
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "L1 head source error");
-                        continue;
-                    }
-                }
+                head = self.l1_head_source.next() => DriverEvent::L1Head(head),
             };
             return Ok(event);
         }
@@ -606,9 +580,7 @@ mod tests {
     use base_batcher_encoder::{
         BatchSubmission, BlobPayload, FrameEncoder, SubmissionId, SubmissionPayload,
     };
-    use base_batcher_source::{
-        L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
-    };
+    use base_batcher_source::{L1HeadSource, L2BlockEvent, UnsafeBlockSource};
     use base_blobs::{BlobDecoder, BlobEncoder};
     use base_protocol::{BlockInfo, Frame};
     use base_runtime::{
@@ -630,18 +602,18 @@ mod tests {
 
     #[derive(Debug)]
     struct QueuedSource {
-        events: VecDeque<Result<L2BlockEvent, SourceError>>,
+        events: VecDeque<L2BlockEvent>,
     }
 
     impl QueuedSource {
-        fn new(events: impl IntoIterator<Item = Result<L2BlockEvent, SourceError>>) -> Self {
+        fn new(events: impl IntoIterator<Item = L2BlockEvent>) -> Self {
             Self { events: events.into_iter().collect() }
         }
     }
 
     #[async_trait::async_trait]
     impl UnsafeBlockSource for QueuedSource {
-        async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
+        async fn next(&mut self) -> L2BlockEvent {
             match self.events.pop_front() {
                 Some(event) => event,
                 None => std::future::pending().await,
@@ -653,20 +625,20 @@ mod tests {
 
     #[derive(Debug)]
     struct QueuedL1HeadSource {
-        events: VecDeque<Result<L1HeadEvent, SourceError>>,
+        heads: VecDeque<u64>,
     }
 
     impl QueuedL1HeadSource {
-        fn new(events: impl IntoIterator<Item = Result<L1HeadEvent, SourceError>>) -> Self {
-            Self { events: events.into_iter().collect() }
+        fn new(heads: impl IntoIterator<Item = u64>) -> Self {
+            Self { heads: heads.into_iter().collect() }
         }
     }
 
     #[async_trait::async_trait]
     impl L1HeadSource for QueuedL1HeadSource {
-        async fn next(&mut self) -> Result<L1HeadEvent, SourceError> {
-            match self.events.pop_front() {
-                Some(event) => event,
+        async fn next(&mut self) -> u64 {
+            match self.heads.pop_front() {
+                Some(head) => head,
                 None => std::future::pending().await,
             }
         }
@@ -759,8 +731,8 @@ mod tests {
 
     fn driver_for_next_event<R: base_runtime::Runtime, TM: TxManager>(
         runtime: R,
-        source_events: impl IntoIterator<Item = Result<L2BlockEvent, SourceError>>,
-        l1_events: impl IntoIterator<Item = Result<L1HeadEvent, SourceError>>,
+        source_events: impl IntoIterator<Item = L2BlockEvent>,
+        l1_heads: impl IntoIterator<Item = u64>,
         tx_manager: TM,
     ) -> BatchDriver<
         R,
@@ -782,7 +754,7 @@ mod tests {
                 force_blobs_when_throttling: true,
             },
             DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
-            QueuedL1HeadSource::new(l1_events),
+            QueuedL1HeadSource::new(l1_heads),
         )
     }
 
@@ -881,8 +853,8 @@ mod tests {
 
             let mut driver = driver_for_next_event(
                 ctx.clone(),
-                [Ok(L2BlockEvent::Block(Box::default()))],
-                [Ok(L1HeadEvent::NewHead(9))],
+                [L2BlockEvent::Block(Box::default())],
+                [9],
                 ImmediateConfirmTxManager { l1_block: 1 },
             )
             .with_admin_rx(admin_rx);
@@ -906,8 +878,8 @@ mod tests {
 
             let mut driver = driver_for_next_event(
                 ctx,
-                [Ok(L2BlockEvent::Block(Box::default()))],
-                [Ok(L1HeadEvent::NewHead(9))],
+                [L2BlockEvent::Block(Box::default())],
+                [9],
                 ImmediateConfirmTxManager { l1_block: 1 },
             )
             .with_admin_rx(admin_rx);
@@ -923,8 +895,8 @@ mod tests {
             let (_status_tx, status_rx) = mpsc::channel(1);
             let mut driver = driver_for_next_event(
                 ctx,
-                [Ok(L2BlockEvent::Block(Box::default()))],
-                [Ok(L1HeadEvent::NewHead(9))],
+                [L2BlockEvent::Block(Box::default())],
+                [9],
                 ImmediateConfirmTxManager { l1_block: 1 },
             )
             .with_derivation_status_rx(DerivationStatus::from_safe_l2(safe_head(0)), status_rx);
@@ -947,8 +919,8 @@ mod tests {
 
             let mut driver = driver_for_next_event(
                 ctx,
-                [Ok(L2BlockEvent::Block(Box::default()))],
-                [Ok(L1HeadEvent::NewHead(9))],
+                [L2BlockEvent::Block(Box::default())],
+                [9],
                 ImmediateConfirmTxManager { l1_block: 42 },
             )
             .with_derivation_status_rx(DerivationStatus::from_safe_l2(safe_head(0)), status_rx);
@@ -972,13 +944,12 @@ mod tests {
                 .await
                 .expect("derivation-status receiver should be open");
 
-            let mut driver = driver_for_next_event(
-                ctx,
-                [],
-                [Ok(L1HeadEvent::NewHead(9))],
-                ImmediateConfirmTxManager { l1_block: 1 },
-            )
-            .with_derivation_status_rx(DerivationStatus::from_safe_l2(safe_head(0)), status_rx);
+            let mut driver =
+                driver_for_next_event(ctx, [], [9], ImmediateConfirmTxManager { l1_block: 1 })
+                    .with_derivation_status_rx(
+                        DerivationStatus::from_safe_l2(safe_head(0)),
+                        status_rx,
+                    );
 
             let event = driver.next_event().await.expect("next_event should succeed");
             assert!(matches!(

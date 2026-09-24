@@ -9,7 +9,6 @@ use alloy_eips::{eip4844::Blob, eip7594::BlobTransactionSidecarVariant};
 use alloy_primitives::{Address, B256, TxKind};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use base_batcher_source::L1HeadEvent;
 use base_tx_manager::{
     BlobTxBuilder, SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError,
     TxManagerResult,
@@ -85,8 +84,8 @@ pub struct Inner {
 /// [`BatchDriver`] and retain the other for [`mine_block`] calls from the test.
 ///
 /// When constructed with [`with_l1_head_tx`], [`mine_block`] automatically
-/// sends an [`L1HeadEvent::NewHead`] to a paired [`ChannelL1HeadSource`] so
-/// that the [`BatchDriver`] observes live L1 head updates.
+/// sends the new L1 head to a paired [`ChannelL1HeadSource`] so that the
+/// [`BatchDriver`] observes live L1 head updates.
 ///
 /// [`send_async`]: L1MinerTxManager::send_async
 /// [`mine_block`]: L1MinerTxManager::mine_block
@@ -100,13 +99,12 @@ pub struct L1MinerTxManager {
     inbox_address: Address,
     signer: PrivateKeySigner,
     chain_id: u64,
-    /// Optional L1 head channel sender. When set, [`mine_block`] publishes
-    /// `L1HeadEvent::NewHead(block_number)` so a paired [`ChannelL1HeadSource`]
-    /// can advance the driver's L1 head.
+    /// Optional L1 head channel sender. When set, [`mine_block`] publishes the mined
+    /// block number so a paired [`ChannelL1HeadSource`] can advance the driver's L1 head.
     ///
     /// [`mine_block`]: L1MinerTxManager::mine_block
     /// [`ChannelL1HeadSource`]: base_batcher_source::test_utils::ChannelL1HeadSource
-    l1_head_tx: Option<mpsc::UnboundedSender<L1HeadEvent>>,
+    l1_head_tx: Option<mpsc::UnboundedSender<u64>>,
 }
 
 impl L1MinerTxManager {
@@ -123,15 +121,14 @@ impl L1MinerTxManager {
 
     /// Attach an L1 head channel sender.
     ///
-    /// After each [`mine_block`] call, an [`L1HeadEvent::NewHead`] with the
-    /// mined block number is sent to this channel. A [`BatchDriver`] constructed
-    /// with the paired [`ChannelL1HeadSource`] will observe the update and advance
-    /// its pipeline's L1 head accordingly.
+    /// After each [`mine_block`] call, the mined block number is sent to this channel.
+    /// A [`BatchDriver`] constructed with the paired [`ChannelL1HeadSource`] will observe
+    /// the update and advance its pipeline's L1 head accordingly.
     ///
     /// [`mine_block`]: L1MinerTxManager::mine_block
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
     /// [`ChannelL1HeadSource`]: base_batcher_source::test_utils::ChannelL1HeadSource
-    pub fn with_l1_head_tx(mut self, tx: mpsc::UnboundedSender<L1HeadEvent>) -> Self {
+    pub fn with_l1_head_tx(mut self, tx: mpsc::UnboundedSender<u64>) -> Self {
         self.l1_head_tx = Some(tx);
         self
     }
@@ -216,13 +213,11 @@ impl L1MinerTxManager {
     }
 
     /// Fire receipt oneshots for staged items included in `block` and (if configured)
-    /// publish an [`L1HeadEvent::NewHead`].
+    /// publish the new L1 head.
     ///
     /// Staged items without receipts in `block` remain staged. This models the
     /// production transaction manager's receipt polling: RPC submission can succeed
     /// before the transaction is included by L1.
-    ///
-    /// [`BatchDriver`]: base_batcher_core::BatchDriver
     pub fn confirm_block(&self, block: &L1Block) {
         let responses = {
             let mut inner = self.inner.lock().unwrap();
@@ -249,7 +244,7 @@ impl L1MinerTxManager {
             let _ = responder.send(response);
         }
         if let Some(tx) = &self.l1_head_tx {
-            let _ = tx.send(L1HeadEvent::NewHead(block.number()));
+            let _ = tx.send(block.number());
         }
     }
 
@@ -258,8 +253,7 @@ impl L1MinerTxManager {
     /// Calls [`L1Miner::reorg_to`] to truncate the canonical chain, fires a
     /// failure receipt for every pending and staged submission (since their
     /// inclusion block has been discarded or they are no longer valid), and
-    /// publishes [`L1HeadEvent::NewHead`] so the [`BatchDriver`] observes
-    /// the reorg.
+    /// publishes the new L1 head so the [`BatchDriver`] observes the reorg.
     ///
     /// Both `pending` (not yet staged) and `staged` (submitted to L1 but not
     /// yet confirmed) items are drained. This ensures no [`SendHandle`] is
@@ -267,7 +261,7 @@ impl L1MinerTxManager {
     ///
     /// # Ordering
     ///
-    /// Failure receipts are fired *before* `L1HeadEvent::NewHead` is sent.
+    /// Failure receipts are fired *before* the new L1 head is sent.
     /// This is intentional: the driver's `select!` loop prioritises receipt
     /// processing over head events, so firing receipts first ensures the
     /// driver requeues any failed frames before it advances its L1 head.
@@ -297,7 +291,7 @@ impl L1MinerTxManager {
             let _ = p.responder.send(Err(TxManagerError::Rpc("reorg".to_string())));
         }
         if let Some(tx) = &self.l1_head_tx {
-            let _ = tx.send(L1HeadEvent::NewHead(block_number));
+            let _ = tx.send(block_number);
         }
         info!(block_number = %block_number, drained = %drained, "simulated L1 reorg");
     }
