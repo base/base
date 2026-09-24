@@ -31,9 +31,10 @@ pub use db::{
     MdbxAccountCursor, MdbxBatchSession, MdbxProofsStorage, MdbxProofsStorageOptions,
     MdbxStorageCursor, MdbxTrieCursor, ProofWindowValue, RocksDbHistoryTable,
     RocksDbLatestVersionResult, RocksdbAccountCursor, RocksdbBatchSession,
-    RocksdbHistoryDeleteBatch, RocksdbPreparedHistoryDeletes, RocksdbPreparedPrune,
-    RocksdbProofsStorage, RocksdbProofsStorageOptions, RocksdbPrunePlan, RocksdbReadSnapshot,
-    RocksdbReplacementState, RocksdbStorageCursor, RocksdbTrieCursor, RocksdbVersionedCursor,
+    RocksdbHistoryDeleteBatch, RocksdbHistoryIterator, RocksdbPreparedHistoryDeletes,
+    RocksdbPreparedPrune, RocksdbProofsStorage, RocksdbProofsStorageOptions, RocksdbPrunePlan,
+    RocksdbReadSnapshot, RocksdbReplacementState, RocksdbStorageCursor, RocksdbTrieCursor,
+    RocksdbVersionedCursor,
 };
 
 pub mod metrics;
