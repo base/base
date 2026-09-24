@@ -3052,7 +3052,7 @@ mod tests {
         let initial = U256::from(10u64).pow(U256::from(18u64));
 
         let mut tx = base_tx();
-        tx.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        tx.calls = vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]];
         tx.valid_before = NOW + 1;
         let signed = eoa_signed(tx, &key);
         let mut evm = evm_with_accounts(initial, sender, &[(target, bytes!("00"))]);
@@ -3065,7 +3065,7 @@ mod tests {
         // `(NOW - 1) * 1000` ms and is strictly past `now_ms`, so the inclusion
         // window rejects it.
         let mut tx = base_tx();
-        tx.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        tx.calls = vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]];
         tx.valid_before = NOW - 1;
         let signed = eoa_signed(tx, &key);
         let mut evm = evm_with_accounts(initial, sender, &[(target, bytes!("00"))]);
