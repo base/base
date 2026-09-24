@@ -925,7 +925,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV3 {
         Self::OPERATOR_ROLE
     }
 
-    // --- ERC-8056 scheduled multiplier (introduced at AssetV3, Cobalt) ---
+    // --- ERC-8056 scheduled multiplier (introduced at AssetV2, Cobalt) ---
 
     /// Lazy current multiplier: flips to a matured pending target once `now >= effectiveAt`.
     fn multiplier(&self, token: &B20AssetToken<S, A>) -> Result<U256> {
