@@ -2,12 +2,12 @@ use std::collections::VecDeque;
 
 use base_common_consensus::BaseBlock;
 
-use crate::L2BlockProvider;
-
 /// A pre-built queue of [`BaseBlock`]s for the batcher to drain.
 ///
-/// Tests push fully-formed blocks into the source, which the batcher
-/// consumes one at a time via [`L2BlockProvider::next_block`].
+/// Tests push fully-formed blocks into the source, which the batcher consumes one at a
+/// time via [`next_block`](Self::next_block). The batcher extracts the L1 epoch from the
+/// first (deposit) transaction in each block, filters out all deposit transactions, and
+/// encodes the remaining user transactions into a `SingleBatch` for submission.
 #[derive(Debug, Default)]
 pub struct ActionL2Source {
     blocks: VecDeque<BaseBlock>,
@@ -31,6 +31,11 @@ impl ActionL2Source {
         self.blocks.push_back(block);
     }
 
+    /// Return the next L2 block, or `None` if the source is exhausted.
+    pub fn next_block(&mut self) -> Option<BaseBlock> {
+        self.blocks.pop_front()
+    }
+
     /// Return the number of blocks remaining.
     pub fn remaining(&self) -> usize {
         self.blocks.len()
@@ -51,11 +56,5 @@ impl Extend<BaseBlock> for ActionL2Source {
 impl FromIterator<BaseBlock> for ActionL2Source {
     fn from_iter<T: IntoIterator<Item = BaseBlock>>(iter: T) -> Self {
         Self::from_blocks(iter)
-    }
-}
-
-impl L2BlockProvider for ActionL2Source {
-    fn next_block(&mut self) -> Option<BaseBlock> {
-        self.blocks.pop_front()
     }
 }
