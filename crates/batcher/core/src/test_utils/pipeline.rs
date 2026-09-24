@@ -14,6 +14,21 @@ use base_batcher_encoder::{
 use base_common_consensus::BaseBlock;
 use base_protocol::BlockInfo;
 
+/// A [`BatchPipeline`] call recorded by [`TrackingPipeline`] for the ordering tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PipelineCall {
+    /// `add_block`.
+    AddBlock,
+    /// `confirm`.
+    Confirm,
+    /// `flush`.
+    Flush,
+    /// `advance_l1_head`, recorded only when the head advances.
+    AdvanceL1Head,
+    /// `reconcile_derivation`.
+    ReconcileDerivation,
+}
+
 /// Shared recording state populated by the test pipeline implementations.
 #[derive(Debug, Default)]
 pub struct Recorded {
@@ -34,9 +49,8 @@ pub struct Recorded {
     pub safe_numbers: Vec<u64>,
     /// Number of times `flush()` was called.
     pub flush_count: usize,
-    /// The calls the ordering tests look at (`add_block`, `confirm`, `flush`,
-    /// `advance_l1_head` when the head advances, `reconcile_derivation`), in call order.
-    pub calls: Vec<&'static str>,
+    /// The calls the ordering tests look at, in call order.
+    pub calls: Vec<PipelineCall>,
     /// Number of `step()` calls that encoded a block.
     pub encoded_steps: usize,
 }
@@ -110,7 +124,7 @@ impl TrackingPipeline {
 
 impl BatchPipeline for TrackingPipeline {
     fn add_block(&mut self, _: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)> {
-        self.recorded.lock().unwrap().calls.push("add_block");
+        self.recorded.lock().unwrap().calls.push(PipelineCall::AddBlock);
         Ok(())
     }
 
@@ -132,7 +146,7 @@ impl BatchPipeline for TrackingPipeline {
     fn confirm(&mut self, id: SubmissionId, _: u64) {
         let mut recorded = self.recorded.lock().unwrap();
         recorded.confirmed.push(id);
-        recorded.calls.push("confirm");
+        recorded.calls.push(PipelineCall::Confirm);
     }
 
     fn requeue(&mut self, id: SubmissionId) {
@@ -142,7 +156,7 @@ impl BatchPipeline for TrackingPipeline {
     fn flush(&mut self) -> Result<(), StepError> {
         let mut recorded = self.recorded.lock().unwrap();
         recorded.flush_count += 1;
-        recorded.calls.push("flush");
+        recorded.calls.push(PipelineCall::Flush);
         drop(recorded);
         if let Some(error) = self.flush_error.take() {
             return Err(error);
@@ -154,7 +168,7 @@ impl BatchPipeline for TrackingPipeline {
         let mut recorded = self.recorded.lock().unwrap();
         if l1_block > recorded.l1_heads.last().copied().unwrap_or_default() {
             recorded.l1_heads.push(l1_block);
-            recorded.calls.push("advance_l1_head");
+            recorded.calls.push(PipelineCall::AdvanceL1Head);
         }
     }
 
@@ -165,7 +179,7 @@ impl BatchPipeline for TrackingPipeline {
     ) -> DerivationReconciliation {
         let mut recorded = self.recorded.lock().unwrap();
         recorded.safe_numbers.push(safe_l2.number);
-        recorded.calls.push("reconcile_derivation");
+        recorded.calls.push(PipelineCall::ReconcileDerivation);
         drop(recorded);
         if !self.safe_head_matches {
             return DerivationReconciliation::SafeHeadMismatch;

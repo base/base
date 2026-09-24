@@ -451,7 +451,7 @@ mod tests {
         DerivationStatus, NoopThrottleClient, ThrottleController,
         test_utils::{
             BlockStub, DriverFixture, ImmediateConfirmTxManager, ImmediateFailTxManager,
-            NeverConfirmTxManager, Recorded, SubmissionStub, TrackingPipeline,
+            NeverConfirmTxManager, PipelineCall, Recorded, SubmissionStub, TrackingPipeline,
         },
     };
 
@@ -736,7 +736,7 @@ mod tests {
 
             assert!(queued.driver.run().await.is_ok());
             assert!(reply_rx.await.is_err(), "a cancelled driver must not serve the flush");
-            assert!(!queued.recorded.lock().unwrap().calls.contains(&"add_block"));
+            assert!(!queued.recorded.lock().unwrap().calls.contains(&PipelineCall::AddBlock));
         });
     }
 
@@ -754,7 +754,11 @@ mod tests {
             assert!(handle.await.unwrap().is_ok());
 
             let recorded = queued.recorded.lock().unwrap();
-            assert!(recorded.calls.starts_with(&["flush", "add_block"]), "{:?}", recorded.calls);
+            assert!(
+                recorded.calls.starts_with(&[PipelineCall::Flush, PipelineCall::AddBlock]),
+                "{:?}",
+                recorded.calls
+            );
         });
     }
 
@@ -772,7 +776,12 @@ mod tests {
             assert!(handle.await.unwrap().is_ok());
 
             let recorded = queued.recorded.lock().unwrap();
-            assert_eq!(recorded.calls.first(), Some(&"add_block"), "{:?}", recorded.calls);
+            assert_eq!(
+                recorded.calls.first(),
+                Some(&PipelineCall::AddBlock),
+                "{:?}",
+                recorded.calls
+            );
             // The receipt confirms at L1 block 1 before the source's head 9 arrives; the other
             // way round, head 1 would not advance past 9.
             assert_eq!(recorded.l1_heads, [1, 9]);
@@ -794,11 +803,13 @@ mod tests {
 
             let recorded = queued.recorded.lock().unwrap();
             assert!(
-                recorded.calls.starts_with(&["reconcile_derivation", "add_block"]),
+                recorded
+                    .calls
+                    .starts_with(&[PipelineCall::ReconcileDerivation, PipelineCall::AddBlock]),
                 "{:?}",
                 recorded.calls
             );
-            assert!(recorded.calls.contains(&"confirm"));
+            assert!(recorded.calls.contains(&PipelineCall::Confirm));
         });
     }
 
@@ -816,7 +827,9 @@ mod tests {
 
             let recorded = queued.recorded.lock().unwrap();
             assert!(
-                recorded.calls.starts_with(&["reconcile_derivation", "advance_l1_head"]),
+                recorded
+                    .calls
+                    .starts_with(&[PipelineCall::ReconcileDerivation, PipelineCall::AdvanceL1Head]),
                 "{:?}",
                 recorded.calls
             );

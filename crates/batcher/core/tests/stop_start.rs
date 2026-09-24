@@ -8,8 +8,8 @@ use std::{
 use base_batcher_core::{
     AdminError,
     test_utils::{
-        BlockStub, DriverFixture, ImmediateConfirmTxManager, ManualConfirmTxManager, Recorded,
-        SubmissionStub, TrackingPipeline, TrackingSource,
+        BlockStub, DriverFixture, ImmediateConfirmTxManager, ManualConfirmTxManager, PipelineCall,
+        Recorded, SubmissionStub, TrackingPipeline, TrackingSource,
     },
 };
 use base_batcher_source::{L2BlockEvent, test_utils::ChannelBlockSource};
@@ -94,8 +94,9 @@ fn test_stopped_leaves_the_source_unread() {
         .source(source)
         .build();
         let handle = ctx.spawn(driver.run());
-        let blocks_added =
-            || recorded.lock().unwrap().calls.iter().filter(|&&c| c == "add_block").count();
+        let blocks_added = || {
+            recorded.lock().unwrap().calls.iter().filter(|&&c| c == PipelineCall::AddBlock).count()
+        };
 
         // Stop, then send a block: it stays in the source.
         handles.admin.stop().await.unwrap();
