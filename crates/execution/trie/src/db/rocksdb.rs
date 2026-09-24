@@ -2546,19 +2546,17 @@ where
             // `before_start` filter below then skips the equal-key row).
             let start_block = if exclusive { 0 } else { u64::MAX };
             let start_key = encode_history_key::<T>(&key, start_block)?;
-            let iter = self.snapshot.snapshot().iterator_cf_opt(
-                &cf,
-                read_options,
-                IteratorMode::From(&start_key, Direction::Forward),
-            );
+            let mut iter = self.snapshot.snapshot().raw_iterator_cf_opt(&cf, read_options);
+            iter.seek(&start_key);
             let mut last_candidate = None;
             let mut found = None;
 
-            for item in iter {
-                let (raw_key, _) = item.map_err(rocksdb_error)?;
+            while let Some(item) = iter.item() {
+                let (raw_key, _) = item;
                 let (candidate, _) = decode_history_key::<T>(&raw_key)?;
                 let before_start = if exclusive { candidate <= key } else { candidate < key };
                 if before_start || last_candidate.as_ref() == Some(&candidate) {
+                    iter.next();
                     continue;
                 }
 
@@ -2568,6 +2566,17 @@ where
                 {
                     found = Some((live_key, value));
                     break;
+                }
+
+                // after 0 is the next key because block number is reverse order
+                let next_key = encode_history_key::<T>(&candidate, 0)?;
+
+                iter.seek(next_key);
+                if let Some(key) = iter.key()
+                    && decode_history_key::<T>(key)? == (candidate, 0)
+                {
+                    // if a 0 key does exist here, go to the next key
+                    iter.next();
                 }
             }
 
