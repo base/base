@@ -29,7 +29,6 @@ sol! {
         uint64 l2BlockNumber;
         bytes32 rollupConfigHash;
         bytes32 scheduleId;
-        uint64 intermediateBlockInterval;
         bytes intermediateRoots;
     }
 }
@@ -57,7 +56,6 @@ impl BootInfoStruct {
             l2BlockNumber: l2_block_number,
             rollupConfigHash: hash_rollup_config(&boot_info.rollup_config),
             scheduleId: boot_info.schedule_id,
-            intermediateBlockInterval: boot_info.intermediate_block_interval,
             intermediateRoots: Bytes::from(
                 intermediate_roots
                     .iter()
@@ -103,13 +101,11 @@ mod tests {
 
     #[test]
     fn boot_info_struct_uses_derived_l2_block_number() {
-        let mut boot = boot_info(20);
-        boot.intermediate_block_interval = 300;
+        let boot = boot_info(20);
         let boot_info_struct = BootInfoStruct::new(boot, 10, 20, vec![B256::repeat_byte(0x44)]);
 
         assert_eq!(boot_info_struct.l2PreBlockNumber, 10);
         assert_eq!(boot_info_struct.l2BlockNumber, 20);
-        assert_eq!(boot_info_struct.intermediateBlockInterval, 300);
         assert_eq!(
             boot_info_struct.intermediateRoots,
             Bytes::from(B256::repeat_byte(0x44).to_vec())

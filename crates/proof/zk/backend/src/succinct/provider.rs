@@ -24,8 +24,6 @@ pub struct WitnessParams<'a> {
     pub l1_head: L1HeadSource<'a>,
     /// L2 block number whose timestamp determines the activated upgrade schedule.
     pub schedule_l2_block_number: Option<u64>,
-    /// Number of blocks between intermediate output roots.
-    pub intermediate_root_interval: u64,
 }
 
 /// Source used to select the L1 head hash for witness generation.
@@ -212,19 +210,12 @@ impl OpSuccinctWitnessProvider {
         &self,
         params: WitnessParams<'_>,
     ) -> Result<SP1Stdin, WitnessError> {
-        let WitnessParams {
-            start_block,
-            end_block,
-            l1_head,
-            schedule_l2_block_number,
-            intermediate_root_interval,
-        } = params;
+        let WitnessParams { start_block, end_block, l1_head, schedule_l2_block_number } = params;
 
         info!(
             start_block = start_block,
             end_block = end_block,
             l1_head_source = l1_head.variant_name(),
-            intermediate_root_interval = intermediate_root_interval,
             "starting witness generation"
         );
 
@@ -232,14 +223,7 @@ impl OpSuccinctWitnessProvider {
             L1HeadSource::Pinned(hash) => {
                 info!(hash = %hash, "using caller-provided l1_head");
                 self.host
-                    .fetch(
-                        start_block,
-                        end_block,
-                        Some(hash),
-                        false,
-                        schedule_l2_block_number,
-                        intermediate_root_interval,
-                    )
+                    .fetch(start_block, end_block, Some(hash), false, schedule_l2_block_number)
                     .await
                     .map_err(|source| WitnessError::PinnedHostFetch {
                         source: source.into_boxed_dyn_error(),
@@ -267,7 +251,6 @@ impl OpSuccinctWitnessProvider {
                         Some(l1_head_hash),
                         false,
                         schedule_l2_block_number,
-                        intermediate_root_interval,
                     )
                     .await
                     .map_err(|source| WitnessError::SequenceWindowHostFetch {

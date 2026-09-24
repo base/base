@@ -140,7 +140,7 @@ where
 
     /// Run derivation and block execution to produce the proven boot info and derived L2 block.
     ///
-    /// Intermediate roots are sampled at the interval supplied in `boot`.
+    /// Intermediate roots are sampled every [`crate::INTERMEDIATE_ROOT_INTERVAL`] blocks.
     pub async fn run<DP, P>(
         &self,
         boot: BootInfo,
@@ -168,9 +168,6 @@ where
             None,
         );
         let mut driver = Driver::new(cursor, executor, pipeline);
-        if boot.intermediate_block_interval == 0 {
-            return Err(anyhow!("intermediate block interval must be greater than zero"));
-        }
         // Run the derivation pipeline until we are able to produce the output root of the claimed
         // L2 block.
 
@@ -181,7 +178,6 @@ where
             &mut driver,
             rollup_config.as_ref(),
             Some(boot.claimed_l2_block_number),
-            boot.intermediate_block_interval,
         )
         .await?;
         #[cfg(target_os = "zkvm")]

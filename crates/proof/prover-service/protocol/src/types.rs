@@ -196,8 +196,7 @@ pub struct ZkProofRequest {
     /// Optional L1 head hash used for witness generation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub l1_head: Option<B256>,
-    /// Intermediate output root interval. Required and nonzero for new requests;
-    /// optional when decoding stored legacy requests.
+    /// Optional intermediate output root interval.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intermediate_root_interval: Option<u64>,
     /// L2 block used to pin the upgrade schedule; defaults to the claimed block.

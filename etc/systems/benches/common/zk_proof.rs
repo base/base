@@ -124,7 +124,7 @@ impl ZkProofBench {
                         number_of_blocks_to_prove,
                         sequence_window: None,
                         l1_head: Some(l1_head),
-                        intermediate_root_interval: Some(number_of_blocks_to_prove),
+                        intermediate_root_interval: None,
                         schedule_l2_block_number: None,
                         zk_vm: ZkVm::Sp1,
                         zk_backend: ZkBackend::DryRun,

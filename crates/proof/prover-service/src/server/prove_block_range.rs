@@ -167,8 +167,6 @@ fn validate_intermediate_root_interval(
                 "Invalid number_of_blocks_to_prove ({number_of_blocks_to_prove}): must be a multiple of intermediate_root_interval ({interval})",
             )));
         }
-    } else {
-        return Err(invalid_argument("Missing intermediate_root_interval"));
     }
 
     Ok(())
@@ -227,15 +225,6 @@ mod tests {
         let parsed = parse_session_id(session_id).unwrap();
 
         assert_eq!(parsed, session_id);
-    }
-
-    #[test]
-    fn zkp_request_requires_nonzero_intermediate_root_interval() {
-        for proof_type in [ApiProofType::Compressed, ApiProofType::SnarkPlonk] {
-            assert!(validate_intermediate_root_interval(proof_type, 300, None).is_err());
-            assert!(validate_intermediate_root_interval(proof_type, 300, Some(0)).is_err());
-            assert!(validate_intermediate_root_interval(proof_type, 300, Some(300)).is_ok());
-        }
     }
 
     #[test]
