@@ -309,6 +309,11 @@ impl BaseChainSpec {
         ))
     }
 
+    /// Returns whether Denim is active at `timestamp` under the live runtime schedule.
+    pub fn is_denim_active_at_timestamp(&self, timestamp: u64) -> bool {
+        Upgrades::is_denim_active_at_timestamp(self, timestamp)
+    }
+
     /// Activates or updates the given upgrade condition in-place.
     pub fn set_fork<H: Hardfork>(&mut self, fork: H, condition: ForkCondition) {
         self.inner.hardforks.insert(fork, condition);

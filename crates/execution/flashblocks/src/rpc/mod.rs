@@ -1,5 +1,8 @@
 //! RPC trait definitions and implementations for flashblocks.
 
+mod cutover;
+pub use cutover::FlashblocksRpcCutover;
+
 mod eth;
 mod pubsub;
 mod types;

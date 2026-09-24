@@ -82,7 +82,7 @@ use tokio::{sync::broadcast::error::RecvError, time};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::{debug, trace, warn};
 
-use crate::{FlashblocksAPI, PendingBlocksAPI, metrics::Metrics};
+use crate::{FlashblocksAPI, FlashblocksRpcCutover, PendingBlocksAPI, metrics::Metrics};
 
 /// Max configured timeout for `eth_sendRawTransactionSync` in milliseconds.
 const MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS: u64 = 6_000;
@@ -176,12 +176,18 @@ pub struct EthApiExt<Eth: EthApiTypes, FB> {
     eth_api: Eth,
     eth_filter: EthFilter<Eth>,
     flashblocks_state: Arc<FB>,
+    cutover: FlashblocksRpcCutover,
 }
 
 impl<Eth: EthApiTypes, FB> EthApiExt<Eth, FB> {
     /// Creates a new extended Eth API instance with flashblocks support.
-    pub const fn new(eth_api: Eth, eth_filter: EthFilter<Eth>, flashblocks_state: Arc<FB>) -> Self {
-        Self { eth_api, eth_filter, flashblocks_state }
+    pub const fn new(
+        eth_api: Eth,
+        eth_filter: EthFilter<Eth>,
+        flashblocks_state: Arc<FB>,
+        cutover: FlashblocksRpcCutover,
+    ) -> Self {
+        Self { eth_api, eth_filter, flashblocks_state, cutover }
     }
 }
 
@@ -213,6 +219,10 @@ where
             message = "rpc::block_by_number",
             block_number = ?number
         );
+
+        if self.cutover.is_active() {
+            return EthBlocks::rpc_block(&self.eth_api, number.into(), full).await.map_err(Into::into);
+        }
 
         if number.is_pending() {
             Metrics::rpc_get_block_by_number().increment(1);
@@ -246,6 +256,10 @@ where
             return Ok(Some(canonical_receipt));
         }
 
+        if self.cutover.is_active() {
+            return Ok(None);
+        }
+
         // Fall back to flashblocks for pending transactions
         let pending_blocks = self.flashblocks_state.get_pending_blocks();
         if let Some(fb_receipt) = pending_blocks.get_transaction_receipt(tx_hash) {
@@ -266,6 +280,9 @@ where
             address = %address
         );
         let block_id = block_number.unwrap_or_default();
+        if self.cutover.is_active() {
+            return EthState::balance(&self.eth_api, address, block_number).await.map_err(Into::into);
+        }
         if block_id.is_pending() {
             Metrics::rpc_get_balance().increment(1);
             let pending_blocks = self.flashblocks_state.get_pending_blocks();
@@ -290,6 +307,18 @@ where
         );
 
         let block_id = block_number.unwrap_or_default();
+
+        if self.cutover.is_active() {
+            if let Some(key) = nonce_key
+                && key != U256::ZERO
+            {
+                Eip8130ZenithGate::check(&self.eth_api, block_id)?;
+                return ChannelNonceReader::read(&self.eth_api, address, key, block_id, None).await;
+            }
+            return EthState::transaction_count(&self.eth_api, address, block_number)
+                .await
+                .map_err(Into::into);
+        }
 
         // EIP-8130 channel read. Only `nonce_key != 0` uses the precompile
         // path.
@@ -356,6 +385,10 @@ where
             return Ok(Some(canonical_tx));
         }
 
+        if self.cutover.is_active() {
+            return Ok(None);
+        }
+
         // Fall back to flashblocks for pending transactions
         let pending_blocks = self.flashblocks_state.get_pending_blocks();
         if let Some(fb_transaction) = pending_blocks.get_transaction_by_hash(tx_hash) {
@@ -372,6 +405,10 @@ where
         timeout_ms: Option<u64>,
     ) -> RpcResult<RpcReceipt<Base>> {
         debug!(message = "rpc::send_raw_transaction_sync");
+
+        if self.cutover.is_active() {
+            return Err(ErrorObjectOwned::owned(-32601, "method not found", None::<()>));
+        }
 
         let timeout_ms = match timeout_ms {
             Some(ms) if ms > MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS => {
@@ -439,6 +476,16 @@ where
 
         let mut block_id = block_number.unwrap_or_default();
         let mut pending_overrides = EvmOverrides::default();
+        if self.cutover.is_active() {
+            return EthCall::call(
+                &self.eth_api,
+                transaction,
+                Some(block_id),
+                EvmOverrides::new(state_overrides, block_overrides),
+            )
+            .await
+            .map_err(Into::into);
+        }
         // If the call is to pending block use cached override (if it exists)
         if block_id.is_pending() {
             Metrics::rpc_call().increment(1);
@@ -480,6 +527,26 @@ where
 
         let mut block_id = block_number.unwrap_or_default();
         let mut pending_overrides = EvmOverrides::default();
+        if self.cutover.is_active() {
+            if transaction.as_eip8130().is_some() {
+                Eip8130ZenithGate::check(&self.eth_api, block_id)?;
+                return Eip8130GasEstimator::estimate(
+                    &self.eth_api,
+                    transaction,
+                    block_id,
+                    EvmOverrides::state(overrides),
+                )
+                .await;
+            }
+            return EthCall::estimate_gas_at(
+                &self.eth_api,
+                transaction,
+                block_id,
+                EvmOverrides::state(overrides),
+            )
+            .await
+            .map_err(Into::into);
+        }
         // If the call is to pending block use cached override (if it exists)
         if block_id.is_pending() {
             Metrics::rpc_estimate_gas().increment(1);
@@ -531,6 +598,10 @@ where
         let mut block_id = block_number.unwrap_or_default();
         let mut pending_overrides = EvmOverrides::default();
 
+        if self.cutover.is_active() {
+            return EthCall::simulate_v1(&self.eth_api, opts, Some(block_id)).await.map_err(Into::into);
+        }
+
         // If the call is to pending block use cached override (if it exists)
         if block_id.is_pending() {
             Metrics::rpc_simulate_v1().increment(1);
@@ -562,6 +633,10 @@ where
             message = "rpc::get_logs",
             address = ?filter.address
         );
+
+        if self.cutover.is_active() {
+            return self.eth_filter.logs(filter).await;
+        }
 
         // Check if this is a mixed query (toBlock is pending)
         let (from_block, to_block) = match &filter.block_option {
@@ -626,6 +701,13 @@ where
             message = "rpc::get_block_transaction_count_by_number",
             block_number = ?number
         );
+
+        if self.cutover.is_active() {
+            return EthBlocks::block_transaction_count(&self.eth_api, number.into())
+                .await
+                .map(|opt| opt.map(U256::from))
+                .map_err(Into::into);
+        }
 
         if number.is_pending() {
             Metrics::rpc_get_block_transaction_count_by_number().increment(1);
