@@ -966,7 +966,7 @@ mod tests {
                 beryl: Some(12),
                 cobalt: Some(13),
                 denim: Some(14),
-                everest: None,
+                everest: Some(15),
                 zenith: None,
             },
         };
