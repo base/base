@@ -23,9 +23,6 @@ base-common-consensus = { workspace = true, default-features = false }
 # misc
 thiserror.workspace = true
 
-[dev-dependencies]
-alloy-sol-types.workspace = true
-
 [features]
 default = [ "std" ]
 std = [ "alloy-primitives/std", "base-common-consensus/std", "thiserror/std" ]

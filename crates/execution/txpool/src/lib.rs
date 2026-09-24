@@ -23,7 +23,7 @@ mod limits;
 pub use limits::{InflightCounters, PayerBook};
 
 mod validator;
-pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError, LimitClassCache};
+pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError};
 
 mod best;
 

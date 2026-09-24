@@ -3571,7 +3571,6 @@ dependencies = [
  "alloy-serde 2.4.1",
  "alloy-signer 2.4.1",
  "alloy-signer-local 2.4.1",
- "alloy-sol-types",
  "arbitrary",
  "bincode 2.0.1",
  "bytes",
@@ -3594,7 +3593,6 @@ name = "base-common-eip8130"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "alloy-sol-types",
  "base-common-consensus",
  "thiserror 2.0.19",
 ]
@@ -4377,17 +4375,12 @@ name = "base-execution-eip8130"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "alloy-sol-types",
  "base-common-consensus",
  "base-common-eip8130",
  "base-common-precompiles",
- "base-precompile-macros",
  "base-precompile-storage",
- "base64 0.22.1",
  "k256 0.13.4",
- "p256 0.13.2",
  "revm",
- "sha2 0.10.9",
  "thiserror 2.0.19",
 ]
 
@@ -4706,7 +4699,6 @@ dependencies = [
  "derive_more 2.1.1",
  "futures",
  "jsonrpsee",
- "lru 0.16.4",
  "metrics",
  "metrics-util",
  "parking_lot",

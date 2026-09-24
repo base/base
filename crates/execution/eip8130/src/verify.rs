@@ -1,198 +1,114 @@
-//! Transaction-level actor authorization: resolve and scope-gate the sender and
-//! payer actors of an [`Eip8130Signed`].
+//! Transaction-level secp256k1 actor authentication: resolve the sender and
+//! payer of an [`Eip8130Signed`] to full-authority owners.
 
 use alloy_primitives::Address;
 use base_common_consensus::Eip8130Signed;
 
-use crate::{
-    AccountConfigurationStorage, ActorAuthorizer, Operation, RecoveredActorId, ResolvedActor,
-    TxAuthError,
-};
+use crate::{ActorAuthorizer, RecoveredActorId, TxAuthError};
 
-/// A resolved transaction actor together with the account it was authorized
-/// against (the sender or payer account, not the actor id).
+/// A resolved transaction actor: the account it authenticated as.
+///
+/// With the Keystore removed every actor is a full-authority owner, so an
+/// authorized actor carries only its account address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct AuthorizedActor {
-    /// The account the actor was authorized against.
+    /// The account the actor authenticated as (the sender or payer account).
     pub account: Address,
-    /// The resolved actor and its authorization surface.
-    pub resolved: ResolvedActor,
 }
 
 /// The authorized actors of an EIP-8130 transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TxActors {
-    /// The transaction sender, scope-gated for [`Operation::Sender`].
+    /// The transaction sender.
     pub sender: AuthorizedActor,
-    /// The gas payer, scope-gated for [`Operation::SelfPayer`] (explicit
-    /// self-pay) or [`Operation::SponsorPayer`] (distinct sponsor), or `None`
-    /// when the sender implicitly pays (`tx.payer == None`).
+    /// The gas payer, or `None` when the sender implicitly pays (`tx.payer ==
+    /// None`).
     pub payer: Option<AuthorizedActor>,
 }
 
-/// Authorizes the sender and payer actors of an [`Eip8130Signed`] against the
-/// [`AccountConfigurationStorage`].
+/// Authenticates the sender and payer of an [`Eip8130Signed`] as secp256k1
+/// owners.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ActorTxVerifier;
 
 impl ActorTxVerifier {
-    /// Resolves and scope-gates the transaction's sender and (optional) payer.
+    /// Resolves the transaction's sender and (optional) payer.
     ///
-    /// `now` is the timestamp used for actor expiry (block timestamp at
-    /// inclusion, wall-clock in the pool). Returns the authorized [`TxActors`],
-    /// or the first [`TxAuthError`] encountered (sender checked before payer).
-    pub fn verify(
-        signed: &Eip8130Signed,
-        storage: &AccountConfigurationStorage<'_>,
-        now: u64,
-    ) -> Result<TxActors, TxAuthError> {
-        Self::verify_with_recovered_sender(signed, storage, now, None)
+    /// Returns the authorized [`TxActors`], or the first [`TxAuthError`]
+    /// encountered (sender checked before payer).
+    pub fn verify(signed: &Eip8130Signed) -> Result<TxActors, TxAuthError> {
+        Self::verify_with_recovered_sender(signed, None)
     }
 
     /// Like [`Self::verify`], but accepts an already-recovered EOA sender token
     /// to avoid a second secp256k1 recovery on the EOA path (`tx.sender ==
-    /// None`). The caller resolving the sender address up front (e.g.
-    /// `TransactionAuthorizer::authorize_and_apply`) passes the recovered token
-    /// through so the expensive ecrecover runs exactly once per transaction.
-    /// `recovered_sender` is ignored on the configured path (`tx.sender ==
+    /// None`). `recovered_sender` is ignored on the named path (`tx.sender ==
     /// Some`), and falls back to recovery here when `None`.
     pub fn verify_with_recovered_sender(
         signed: &Eip8130Signed,
-        storage: &AccountConfigurationStorage<'_>,
-        now: u64,
         recovered_sender: Option<RecoveredActorId>,
     ) -> Result<TxActors, TxAuthError> {
         let tx = signed.tx();
-        let sender = Self::verify_sender(signed, storage, now, recovered_sender)?;
+        let sender = Self::verify_sender(signed, recovered_sender)?;
 
         let payer = match tx.payer {
-            None => {
-                // Implicit self-pay: the sender covers its own gas, so its actor
-                // must be granted SELF_PAYER (or be admin).
-                if !Operation::SelfPayer.is_granted(&sender.resolved) {
-                    return Err(TxAuthError::Scope {
-                        operation: Operation::SelfPayer,
-                        scope: sender.resolved.scope,
-                    });
-                }
-                None
-            }
+            // Implicit self-pay: the sender covers its own gas.
+            None => None,
+            // Open mode: whoever signs the payer hash pays. The hash binds to the
+            // resolved sender, so the signature cannot be reused for another
+            // sender's identical body.
             Some(_) if tx.is_open_payer() => {
-                // Open mode: whoever signs the payer hash pays. The hash binds to
-                // the resolved sender, so the signature cannot be reused for
-                // another sender's identical body.
                 let hash = tx.payer_signature_hash(sender.account);
-                let recovered = RecoveredActorId::recover_k1(hash, signed.payer_auth())
+                let account = ActorAuthorizer::recover_bare_k1(signed.payer_auth(), hash)
                     .map_err(|_| TxAuthError::PayerRecovery)?;
-                let account = recovered.address();
-                let resolved = ActorAuthorizer::authorize_k1(storage, account, recovered, now)?;
-                let operation = if account == sender.account {
-                    Operation::SelfPayer
-                } else {
-                    Operation::SponsorPayer
-                };
-                if !operation.is_granted(&resolved) {
-                    return Err(TxAuthError::Scope { operation, scope: resolved.scope });
-                }
-                Some(AuthorizedActor { account, resolved })
+                Some(AuthorizedActor { account })
             }
+            // Explicit self-pay (`payer == sender`) or a bound sponsor: a named
+            // `K1_AUTHENTICATOR || sig` blob whose signer must be the named payer.
             Some(account) => {
-                // The payer digest binds to the resolved sender account.
                 let hash = tx.payer_signature_hash(sender.account);
-                // `payer == sender` is explicit self-pay (SELF_PAYER); a distinct
-                // payer is sponsorship (SPONSOR_PAYER).
-                let operation = if account == sender.account {
-                    Operation::SelfPayer
-                } else {
-                    Operation::SponsorPayer
-                };
-                let resolved = Self::authorize_scoped(
-                    storage,
-                    account,
-                    hash,
-                    signed.payer_auth(),
-                    operation,
-                    now,
-                )?;
-                Some(AuthorizedActor { account, resolved })
+                let recovered = ActorAuthorizer::recover_named_k1(signed.payer_auth(), hash)?;
+                if recovered != account {
+                    return Err(TxAuthError::PayerMismatch { expected: account, recovered });
+                }
+                Some(AuthorizedActor { account })
             }
         };
 
         Ok(TxActors { sender, payer })
     }
 
-    /// Resolves and scope-gates the sender, handling both the configured-account
-    /// path (`tx.sender == Some`) and the EOA path (`tx.sender == None`).
+    /// Resolves the sender for both the named path (`tx.sender == Some`) and the
+    /// EOA path (`tx.sender == None`).
     fn verify_sender(
         signed: &Eip8130Signed,
-        storage: &AccountConfigurationStorage<'_>,
-        now: u64,
         recovered_sender: Option<RecoveredActorId>,
     ) -> Result<AuthorizedActor, TxAuthError> {
         if let Some(account) = signed.explicit_sender() {
-            // Configured account: `sender_auth` is already `authenticator(20) || data`.
-            let resolved = Self::authorize_scoped(
-                storage,
-                account,
-                signed.tx().sender_signature_hash(),
+            // Named account: `sender_auth` is `K1_AUTHENTICATOR(20) || r||s||v`.
+            let recovered = ActorAuthorizer::recover_named_k1(
                 signed.sender_auth(),
-                Operation::Sender,
-                now,
+                signed.tx().sender_signature_hash(),
             )?;
-            if !resolved.can_use_nonce_key(signed.tx().nonce_key) {
-                return Err(TxAuthError::Scope {
-                    operation: Operation::Sender,
-                    scope: resolved.scope,
-                });
+            if recovered != account {
+                return Err(TxAuthError::SenderMismatch { expected: account, recovered });
             }
-            return Ok(AuthorizedActor { account, resolved });
+            return Ok(AuthorizedActor { account });
         }
 
         // EOA path: recover the sender exactly once with the checked (EIP-2
-        // low-s) recovery. The recovered address *is* the signer, so the
-        // `RecoveredActorId` token doubles as the account and feeds the k1
-        // resolution directly — no second ecrecover. The inline self config
-        // governs: a full-owner self resolves to the unrestricted owner, a
-        // scoped self to its inline scope/policy, and a disabled
-        // (`DEFAULT_EOA_REVOKED`) self is rejected. A caller that already
-        // recovered the sender (to resolve its address before applying account
-        // changes) passes the token in so the ecrecover is not repeated.
+        // low-s) recovery. A caller that already recovered the sender passes the
+        // token in so the ecrecover is not repeated.
         let recovered = match recovered_sender {
             Some(recovered) => recovered,
             None => RecoveredActorId::recover_eoa_sender(signed)
                 .map_err(|_| TxAuthError::SenderRecovery)?
                 .ok_or(TxAuthError::SenderRecovery)?,
         };
-        let account = recovered.address();
-
-        let resolved = ActorAuthorizer::authorize_k1(storage, account, recovered, now)?;
-        if !Operation::Sender.is_granted(&resolved) {
-            return Err(TxAuthError::Scope { operation: Operation::Sender, scope: resolved.scope });
-        }
-        if !resolved.can_use_nonce_key(signed.tx().nonce_key) {
-            return Err(TxAuthError::Scope { operation: Operation::Sender, scope: resolved.scope });
-        }
-        Ok(AuthorizedActor { account, resolved })
-    }
-
-    /// Authorizes `auth` against `account`/`hash`, then enforces that the
-    /// resolved actor's scope grants `operation`.
-    fn authorize_scoped(
-        storage: &AccountConfigurationStorage<'_>,
-        account: Address,
-        hash: alloy_primitives::B256,
-        auth: &[u8],
-        operation: Operation,
-        now: u64,
-    ) -> Result<ResolvedActor, TxAuthError> {
-        let resolved = ActorAuthorizer::authenticate_actor(storage, account, hash, auth, now)?;
-        if !operation.is_granted(&resolved) {
-            return Err(TxAuthError::Scope { operation, scope: resolved.scope });
-        }
-        Ok(resolved)
+        Ok(AuthorizedActor { account: recovered.address() })
     }
 }
 
@@ -200,13 +116,11 @@ impl ActorTxVerifier {
 mod tests {
     use alloy_primitives::{B256, Bytes, U256, address, keccak256};
     use base_common_consensus::{Eip8130Constants, TxEip8130};
-    use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
     use k256::ecdsa::SigningKey as K256SigningKey;
 
     use super::*;
-    use crate::AuthorizeError;
+    use crate::AuthError;
 
-    const NOW: u64 = 1_000;
     const K1: Address = Eip8130Constants::K1_AUTHENTICATOR;
 
     fn key(byte: u8) -> K256SigningKey {
@@ -218,11 +132,6 @@ mod tests {
         Address::from_slice(&keccak256(&point.as_bytes()[1..])[12..])
     }
 
-    fn actor_id(account: Address) -> B256 {
-        AccountConfigurationStorage::self_actor_id(account)
-    }
-
-    /// 65-byte `r || s || v` signature over `hash`, `v` in `{27, 28}`, low-s.
     fn sig(key: &K256SigningKey, hash: B256) -> Vec<u8> {
         let (signature, recid) = key.sign_prehash_recoverable(hash.as_slice()).unwrap();
         let mut out = vec![0u8; 65];
@@ -231,20 +140,11 @@ mod tests {
         out
     }
 
-    /// `authenticator(20) || data`.
     fn auth_blob(authenticator: Address, data: &[u8]) -> Bytes {
         let mut out = Vec::with_capacity(20 + data.len());
         out.extend_from_slice(authenticator.as_slice());
         out.extend_from_slice(data);
         Bytes::from(out)
-    }
-
-    /// Canonical Solidity packing of `ActorConfig` (authenticator 0..160, expiry
-    /// 160..208, scope 208..224).
-    fn pack(authenticator: Address, scope: u16, expiry: u64) -> U256 {
-        U256::from_be_slice(authenticator.as_slice())
-            | (U256::from(expiry) << 160)
-            | (U256::from(scope) << 208)
     }
 
     fn base_tx(sender: Option<Address>, payer: Option<Address>) -> TxEip8130 {
@@ -265,119 +165,62 @@ mod tests {
         }
     }
 
-    fn with_storage<R>(body: impl FnOnce(&mut AccountConfigurationStorage<'_>) -> R) -> R {
-        let mut storage = HashMapStorageProvider::new(1);
-        StorageCtx::enter(&mut storage, |ctx| body(&mut AccountConfigurationStorage::new(ctx)))
-    }
-
     #[test]
-    fn eoa_sender_authorizes_as_unrestricted_owner() {
+    fn eoa_sender_resolves_to_recovered_address() {
         let k = key(0x11);
         let account = addr(&k);
         let tx = base_tx(None, None);
         let hash = tx.sender_signature_hash();
         let signed = Eip8130Signed::new(tx, Bytes::from(sig(&k, hash)), Bytes::new());
-        with_storage(|acc| {
-            let actors = ActorTxVerifier::verify(&signed, acc, NOW).unwrap();
-            assert_eq!(actors.sender.account, account);
-            assert!(actors.sender.resolved.is_admin());
-            assert!(actors.payer.is_none());
-        });
+        let actors = ActorTxVerifier::verify(&signed).unwrap();
+        assert_eq!(actors.sender.account, account);
+        assert!(actors.payer.is_none());
     }
 
     #[test]
-    fn configured_sender_resolves_with_scope() {
+    fn named_sender_resolves_when_signer_matches() {
         let k = key(0x22);
-        let account = address!("0x00000000000000000000000000000000000000aa");
-        let id = actor_id(addr(&k));
+        let account = addr(&k);
         let tx = base_tx(Some(account), None);
         let hash = tx.sender_signature_hash();
         let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
-        with_storage(|acc| {
-            acc.actors
-                .at_mut(&id)
-                .at_mut(&account)
-                .write(pack(
-                    K1,
-                    Eip8130Constants::SCOPE_OPERATOR
-                        | Eip8130Constants::SCOPE_SELF_PAYER
-                        | Eip8130Constants::SCOPE_NONCE,
-                    0,
-                ))
-                .unwrap();
-            let actors = ActorTxVerifier::verify(&signed, acc, NOW).unwrap();
-            assert_eq!(actors.sender.account, account);
-            assert_eq!(
-                actors.sender.resolved.scope,
-                Eip8130Constants::SCOPE_OPERATOR
-                    | Eip8130Constants::SCOPE_SELF_PAYER
-                    | Eip8130Constants::SCOPE_NONCE
-            );
-            assert!(actors.payer.is_none());
-        });
+        let actors = ActorTxVerifier::verify(&signed).unwrap();
+        assert_eq!(actors.sender.account, account);
     }
 
     #[test]
-    fn self_pay_sender_without_payer_scope_is_rejected() {
+    fn named_sender_wrong_signer_is_rejected() {
         let k = key(0x22);
-        let account = address!("0x00000000000000000000000000000000000000aa");
-        let id = actor_id(addr(&k));
-        let tx = base_tx(Some(account), None);
+        let named = address!("0x00000000000000000000000000000000000000aa");
+        let tx = base_tx(Some(named), None);
         let hash = tx.sender_signature_hash();
         let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
-        with_storage(|acc| {
-            acc.actors
-                .at_mut(&id)
-                .at_mut(&account)
-                .write(pack(
-                    K1,
-                    Eip8130Constants::SCOPE_OPERATOR | Eip8130Constants::SCOPE_NONCE,
-                    0,
-                ))
-                .unwrap();
-            assert_eq!(
-                ActorTxVerifier::verify(&signed, acc, NOW),
-                Err(TxAuthError::Scope {
-                    operation: Operation::SelfPayer,
-                    scope: Eip8130Constants::SCOPE_OPERATOR | Eip8130Constants::SCOPE_NONCE,
-                }),
-            );
-        });
+        assert!(matches!(
+            ActorTxVerifier::verify(&signed),
+            Err(TxAuthError::SenderMismatch { expected, .. }) if expected == named
+        ));
     }
 
     #[test]
-    fn sender_without_sender_scope_is_rejected() {
+    fn named_sender_non_canonical_authenticator_is_rejected() {
         let k = key(0x22);
-        let account = address!("0x00000000000000000000000000000000000000aa");
-        let id = actor_id(addr(&k));
+        let account = addr(&k);
+        let bogus = address!("0x00000000000000000000000000000000deadbeef");
         let tx = base_tx(Some(account), None);
         let hash = tx.sender_signature_hash();
-        let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
-        with_storage(|acc| {
-            // Bound, non-zero scope that lacks SCOPE_OPERATOR.
-            acc.actors
-                .at_mut(&id)
-                .at_mut(&account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SELF_PAYER, 0))
-                .unwrap();
-            assert_eq!(
-                ActorTxVerifier::verify(&signed, acc, NOW),
-                Err(TxAuthError::Scope {
-                    operation: Operation::Sender,
-                    scope: Eip8130Constants::SCOPE_SELF_PAYER,
-                }),
-            );
-        });
+        let signed = Eip8130Signed::new(tx, auth_blob(bogus, &sig(&k, hash)), Bytes::new());
+        assert_eq!(
+            ActorTxVerifier::verify(&signed),
+            Err(TxAuthError::Authenticate(AuthError::NotCanonical(bogus)))
+        );
     }
 
     #[test]
     fn sponsored_payer_resolves_against_payer_hash() {
         let sk = key(0x22);
-        let sender_account = address!("0x00000000000000000000000000000000000000aa");
-        let sid = actor_id(addr(&sk));
+        let sender_account = addr(&sk);
         let pk = key(0x33);
-        let payer_account = address!("0x00000000000000000000000000000000000000cc");
-        let pid = actor_id(addr(&pk));
+        let payer_account = addr(&pk);
 
         let tx = base_tx(Some(sender_account), Some(payer_account));
         let sender_hash = tx.sender_signature_hash();
@@ -387,38 +230,16 @@ mod tests {
             auth_blob(K1, &sig(&sk, sender_hash)),
             auth_blob(K1, &sig(&pk, payer_hash)),
         );
-        with_storage(|acc| {
-            acc.actors
-                .at_mut(&sid)
-                .at_mut(&sender_account)
-                .write(pack(
-                    K1,
-                    Eip8130Constants::SCOPE_OPERATOR | Eip8130Constants::SCOPE_NONCE,
-                    0,
-                ))
-                .unwrap();
-            acc.actors
-                .at_mut(&pid)
-                .at_mut(&payer_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SPONSOR_PAYER, 0))
-                .unwrap();
-            let actors = ActorTxVerifier::verify(&signed, acc, NOW).unwrap();
-            let payer = actors.payer.expect("payer present");
-            assert_eq!(payer.account, payer_account);
-            assert_eq!(payer.resolved.scope, Eip8130Constants::SCOPE_SPONSOR_PAYER);
-        });
+        let actors = ActorTxVerifier::verify(&signed).unwrap();
+        assert_eq!(actors.payer.expect("payer present").account, payer_account);
     }
 
     #[test]
     fn eoa_sender_with_sponsored_payer_binds_recovered_address() {
-        // The sender is wire-invisible (tx.sender == None): it must be recovered
-        // before the payer digest can be computed, since `payer_signature_hash`
-        // binds to the recovered sender account.
         let sk = key(0x44);
         let sender_account = addr(&sk);
         let pk = key(0x55);
-        let payer_account = address!("0x00000000000000000000000000000000000000cc");
-        let pid = actor_id(addr(&pk));
+        let payer_account = addr(&pk);
 
         let tx = base_tx(None, Some(payer_account));
         let sender_hash = tx.sender_signature_hash();
@@ -428,21 +249,9 @@ mod tests {
             Bytes::from(sig(&sk, sender_hash)),
             auth_blob(K1, &sig(&pk, payer_hash)),
         );
-        with_storage(|acc| {
-            // Sender is an implicit-EOA owner (self-slot empty); only the payer
-            // actor needs seeding.
-            acc.actors
-                .at_mut(&pid)
-                .at_mut(&payer_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SPONSOR_PAYER, 0))
-                .unwrap();
-            let actors = ActorTxVerifier::verify(&signed, acc, NOW).unwrap();
-            assert_eq!(actors.sender.account, sender_account);
-            assert!(actors.sender.resolved.is_admin());
-            let payer = actors.payer.expect("payer present");
-            assert_eq!(payer.account, payer_account);
-            assert_eq!(payer.resolved.scope, Eip8130Constants::SCOPE_SPONSOR_PAYER);
-        });
+        let actors = ActorTxVerifier::verify(&signed).unwrap();
+        assert_eq!(actors.sender.account, sender_account);
+        assert_eq!(actors.payer.expect("payer present").account, payer_account);
     }
 
     #[test]
@@ -460,35 +269,9 @@ mod tests {
             Bytes::from(sig(&sk, sender_hash)),
             Bytes::from(sig(&pk, payer_hash)),
         );
-        with_storage(|acc| {
-            let actors = ActorTxVerifier::verify(&signed, acc, NOW).unwrap();
-            assert_eq!(actors.sender.account, sender_account);
-            let payer = actors.payer.expect("open payer resolves");
-            assert_eq!(payer.account, payer_account);
-            assert!(payer.resolved.is_admin());
-        });
-    }
-
-    #[test]
-    fn open_payer_signature_bound_to_another_sender_resolves_elsewhere() {
-        // The open-mode payer hash binds to the resolved sender, so a signature
-        // issued for another sender recovers to an unrelated address.
-        let sk = key(0x47);
-        let pk = key(0x58);
-        let payer_account = addr(&pk);
-
-        let tx = base_tx(None, Some(Eip8130Constants::OPEN_PAYER));
-        let sender_hash = tx.sender_signature_hash();
-        let foreign_hash = tx.payer_signature_hash(Address::repeat_byte(0x99));
-        let signed = Eip8130Signed::new(
-            tx,
-            Bytes::from(sig(&sk, sender_hash)),
-            Bytes::from(sig(&pk, foreign_hash)),
-        );
-        with_storage(|acc| {
-            let actors = ActorTxVerifier::verify(&signed, acc, NOW).unwrap();
-            assert_ne!(actors.payer.expect("recovers some signer").account, payer_account);
-        });
+        let actors = ActorTxVerifier::verify(&signed).unwrap();
+        assert_eq!(actors.sender.account, sender_account);
+        assert_eq!(actors.payer.expect("open payer resolves").account, payer_account);
     }
 
     #[test]
@@ -505,117 +288,36 @@ mod tests {
             Bytes::from(sig(&sk, sender_hash)),
             auth_blob(K1, &sig(&pk, payer_hash)),
         );
-        with_storage(|acc| {
-            assert_eq!(
-                ActorTxVerifier::verify(&signed, acc, NOW).unwrap_err(),
-                TxAuthError::PayerRecovery
-            );
-        });
+        // A 20-byte-prefixed blob is not a valid bare 65-byte signature.
+        assert_eq!(ActorTxVerifier::verify(&signed).unwrap_err(), TxAuthError::PayerRecovery);
     }
 
     #[test]
-    fn payer_signature_bound_to_wrong_sender_is_rejected() {
-        // Same as above, but the payer signs over a digest bound to a *different*
-        // sender than the one recovered from the wire. The payer signature must
-        // not authenticate, proving the binding is enforced.
+    fn named_payer_wrong_signer_is_rejected() {
         let sk = key(0x44);
         let pk = key(0x55);
         let payer_account = address!("0x00000000000000000000000000000000000000cc");
-        let pid = actor_id(addr(&pk));
-        let wrong_sender = address!("0x00000000000000000000000000000000000000ee");
 
         let tx = base_tx(None, Some(payer_account));
         let sender_hash = tx.sender_signature_hash();
-        let wrong_payer_hash = tx.payer_signature_hash(wrong_sender);
-        let signed = Eip8130Signed::new(
-            tx,
-            Bytes::from(sig(&sk, sender_hash)),
-            auth_blob(K1, &sig(&pk, wrong_payer_hash)),
-        );
-        with_storage(|acc| {
-            acc.actors
-                .at_mut(&pid)
-                .at_mut(&payer_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SPONSOR_PAYER, 0))
-                .unwrap();
-            // The payer signs the wrong digest, so it recovers a different actor
-            // that is not bound on the payer account.
-            assert!(matches!(
-                ActorTxVerifier::verify(&signed, acc, NOW),
-                Err(TxAuthError::Authorize(AuthorizeError::AuthenticatorMismatch { .. })),
-            ));
-        });
-    }
-
-    #[test]
-    fn payer_without_payer_scope_is_rejected() {
-        let sk = key(0x22);
-        let sender_account = address!("0x00000000000000000000000000000000000000aa");
-        let sid = actor_id(addr(&sk));
-        let pk = key(0x33);
-        let payer_account = address!("0x00000000000000000000000000000000000000cc");
-        let pid = actor_id(addr(&pk));
-
-        let tx = base_tx(Some(sender_account), Some(payer_account));
-        let sender_hash = tx.sender_signature_hash();
+        // Payer signs the correct digest but is not the named payer account.
+        let sender_account = addr(&sk);
         let payer_hash = tx.payer_signature_hash(sender_account);
         let signed = Eip8130Signed::new(
             tx,
-            auth_blob(K1, &sig(&sk, sender_hash)),
+            Bytes::from(sig(&sk, sender_hash)),
             auth_blob(K1, &sig(&pk, payer_hash)),
         );
-        with_storage(|acc| {
-            acc.actors
-                .at_mut(&sid)
-                .at_mut(&sender_account)
-                .write(pack(
-                    K1,
-                    Eip8130Constants::SCOPE_OPERATOR | Eip8130Constants::SCOPE_NONCE,
-                    0,
-                ))
-                .unwrap();
-            // Payer actor bound but lacking SCOPE_SPONSOR_PAYER.
-            acc.actors
-                .at_mut(&pid)
-                .at_mut(&payer_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_OPERATOR, 0))
-                .unwrap();
-            assert_eq!(
-                ActorTxVerifier::verify(&signed, acc, NOW),
-                Err(TxAuthError::Scope {
-                    operation: Operation::SponsorPayer,
-                    scope: Eip8130Constants::SCOPE_OPERATOR,
-                }),
-            );
-        });
+        assert!(matches!(
+            ActorTxVerifier::verify(&signed),
+            Err(TxAuthError::PayerMismatch { expected, .. }) if expected == payer_account
+        ));
     }
 
     #[test]
     fn malformed_eoa_sender_signature_is_rejected() {
         let tx = base_tx(None, None);
-        // 64 bytes is one short of a valid r||s||v payload.
         let signed = Eip8130Signed::new(tx, Bytes::from(vec![0u8; 64]), Bytes::new());
-        with_storage(|acc| {
-            assert_eq!(
-                ActorTxVerifier::verify(&signed, acc, NOW),
-                Err(TxAuthError::SenderRecovery),
-            );
-        });
-    }
-
-    #[test]
-    fn unbound_configured_sender_propagates_authorize_error() {
-        let k = key(0x22);
-        let account = address!("0x00000000000000000000000000000000000000aa");
-        let tx = base_tx(Some(account), None);
-        let hash = tx.sender_signature_hash();
-        let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
-        with_storage(|acc| {
-            // No actor seeded: the sender actor is not bound on the account.
-            assert!(matches!(
-                ActorTxVerifier::verify(&signed, acc, NOW),
-                Err(TxAuthError::Authorize(AuthorizeError::AuthenticatorMismatch { .. })),
-            ));
-        });
+        assert_eq!(ActorTxVerifier::verify(&signed), Err(TxAuthError::SenderRecovery));
     }
 }

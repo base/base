@@ -43,51 +43,6 @@ impl Eip8130Constants {
     /// and replay protection relies on `valid_before` (which must be non-zero).
     pub const NONCE_KEY_MAX: U256 = U256::MAX;
 
-    /// Actor scope bit: ungated `sender_auth` validation context (the "operator"
-    /// grant); may originate transactions to any `call.to`. Renamed from `SENDER`
-    /// to reflect that it is the more permissive grant: length decides what gets
-    /// stored; POLICY decides whether the sender is gated; OPERATOR overrides
-    /// POLICY.
-    pub const SCOPE_OPERATOR: u16 = 0x0001;
-
-    /// Actor scope bit: self-pay gas; authorizes paying the account's own gas
-    /// when `payer == sender`.
-    pub const SCOPE_SELF_PAYER: u16 = 0x0002;
-
-    /// Actor scope bit: sponsor gas; authorizes acting as `payer_auth` for a
-    /// different sender (`payer != sender`).
-    pub const SCOPE_SPONSOR_PAYER: u16 = 0x0004;
-
-    /// Actor scope bit: policy-gated sender context; may originate transactions
-    /// only to the actor's `policy_manager`. Optional grant — a chain with no
-    /// policy system leaves this bit unused.
-    pub const SCOPE_POLICY: u16 = 0x0008;
-
-    /// Actor scope bit: nonce authorization context; permits a restricted actor
-    /// to use sequenced `nonce_key`s (otherwise nonceless-only). Optional grant.
-    pub const SCOPE_NONCE: u16 = 0x0010;
-
-    /// Whether `scope` gates the sender to its policy manager.
-    ///
-    /// Length decides what gets stored; POLICY decides whether the sender is
-    /// gated; OPERATOR overrides POLICY. The protocol gates on `SCOPE_POLICY`
-    /// (not on whether policy bytes were attached); `SCOPE_OPERATOR` is not
-    /// suppressed by `SCOPE_POLICY`.
-    #[must_use]
-    pub const fn sender_is_policy_gated(scope: u16) -> bool {
-        scope & Self::SCOPE_POLICY != 0 && scope & Self::SCOPE_OPERATOR == 0
-    }
-
-    // Core grants occupy bits 0-2 so a chain may omit POLICY/NONCE without
-    // renumbering anything else; the optional POLICY and NONCE grants trail them.
-    // ERC-1271 signing rides on operational authority (admin `scope == 0x00`, or
-    // an OPERATOR actor); it is not its own scope bit, so there is no
-    // `SCOPE_SIGNATURE`. The remaining bits of the `uint16` scope are spare,
-    // reserved for future pure grants. Length decides what gets stored; POLICY
-    // decides whether the sender is gated; OPERATOR overrides POLICY. The
-    // Keystore attaches policy by payload length (empty vs 52 bytes) and stores
-    // `scope` verbatim. The protocol node gates `sender_auth` on `SCOPE_POLICY`.
-
     /// Domain-separation prefix for the `replay_id` preimage
     /// (`keccak256(REPLAY_ID_TYPE || rlp([...])`).
     ///
@@ -98,9 +53,6 @@ impl Eip8130Constants {
     /// can never coincide with a valid list header and the preimage spaces cannot
     /// collide.
     pub const REPLAY_ID_TYPE: [u8; 2] = [0x79, 0x01];
-
-    /// Unrestricted scope value (actor is valid in all contexts).
-    pub const SCOPE_UNRESTRICTED: u16 = 0x0000;
 
     /// [EIP-7702]-style delegation indicator code prefix.
     ///
@@ -116,65 +68,15 @@ impl Eip8130Constants {
     /// [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
     pub const DELEGATION_INDICATOR_SIZE: usize = 23;
 
-    /// `account_changes` entry type byte: account creation.
-    ///
-    /// Still decoded on this wire. A follow-up deletes `Create` rather than
-    /// gating it behind a feature.
-    pub const ACCOUNT_CHANGE_TYPE_CREATE: u8 = 0x00;
-
     /// `account_changes` entry type byte: code delegation.
     ///
-    /// The launch wire keeps delegation, so it takes the low `0x01` slot.
-    /// `Create` stays at `0x00` and `ConfigChange` moves to `0x02` until the
-    /// follow-ups that delete them.
+    /// The launch wire supports delegation as the sole account-change, so it
+    /// takes the low `0x01` slot.
     pub const ACCOUNT_CHANGE_TYPE_DELEGATION: u8 = 0x01;
-
-    /// `account_changes` entry type byte: a signed account-change batch
-    /// (`SignedAccountChanges`, applied via `applySignedAccountChanges`).
-    ///
-    /// Still decoded on this wire. A follow-up deletes `ConfigChange` rather
-    /// than gating it behind a feature.
-    pub const ACCOUNT_CHANGE_TYPE_CONFIG: u8 = 0x02;
-
-    /// `SignedAccountChanges.channel` byte: the Local channel (binds
-    /// `block.chainid`; carries epoch + sequence and the unsequenced JIT mode).
-    pub const CHANNEL_LOCAL: u8 = 0x00;
-
-    /// `SignedAccountChanges.channel` byte: the Multichain channel (binds
-    /// `chain_id == 0`; a plain monotonic counter with no epoch or JIT mode).
-    pub const CHANNEL_MULTICHAIN: u8 = 0x01;
-
-    /// `ChangeType` op byte: authorize (upsert) an actor. Payload is
-    /// `abi.encode(bytes32 actorId, ActorConfig cfg, bytes policyData)`.
-    pub const CHANGE_TYPE_AUTHORIZE_ACTOR: u8 = 0x00;
-
-    /// `ChangeType` op byte: revoke an actor. Payload is `abi.encode(bytes32 actorId)`.
-    pub const CHANGE_TYPE_REVOKE_ACTOR: u8 = 0x01;
-
-    /// `ChangeType` op byte: increment the local epoch (either channel; empty
-    /// payload). Invalidates every unlanded local signature at a prior epoch.
-    pub const CHANGE_TYPE_INCREMENT_LOCAL_EPOCH: u8 = 0x02;
-
-    /// `ChangeType` op byte: lock the account (Local channel only; standalone;
-    /// payload is `abi.encode(uint16 unlockDelay)`).
-    pub const CHANGE_TYPE_LOCK: u8 = 0x03;
-
-    /// `ChangeType` op byte: unlock the account (Local channel only; standalone;
-    /// empty payload).
-    pub const CHANGE_TYPE_UNLOCK: u8 = 0x04;
-
-    /// Local-channel sequence low-half sentinel (`type(uint32).max`) marking an
-    /// unsequenced (JIT) batch: it consumes no sequence and stays replayable
-    /// until the local epoch moves. Sequenced batches may run up to
-    /// `UNSEQUENCED - 2`.
-    pub const UNSEQUENCED: u32 = u32::MAX;
 
     /// The single canonical secp256k1 ("k1") authenticator, fixed at
     /// `address(1)`. Native `ecrecover`: the protocol recovers from the `data`
-    /// blob (`r || s || v`) rather than `STATICCALL`-ing a contract. The same
-    /// identity serves both the implicit default EOA and any explicitly
-    /// registered k1 actor; the `actor_config` slot alone distinguishes a
-    /// full-owner EOA from a scoped key.
+    /// blob (`r || s || v`) rather than `STATICCALL`-ing a contract.
     ///
     /// `address(0)` is reserved as the empty / "no actor configured" sentinel and
     /// is never a valid authenticator selector; addresses below this are reserved.
@@ -185,65 +87,6 @@ impl Eip8130Constants {
     /// `payer_auth` over the payer signature hash. A 20-byte zero address is
     /// not a valid wire `payer`.
     pub const OPEN_PAYER: Address = Address::ZERO;
-
-    /// `AccountState.flags` bit that disables the implicit default-EOA path.
-    ///
-    /// The implicit default EOA is a [`Self::K1_AUTHENTICATOR`] signature whose
-    /// recovered signer equals the account; with no explicit `actor_config` it
-    /// resolves to a full owner, gated solely on this flag. Set by
-    /// `createAccount`/`importAccount` (disabled by default), and by authorizing
-    /// or revoking the self-actor; once set it is never cleared (monotonic), so
-    /// an explicit self-actor entry always implies the flag is set.
-    pub const DEFAULT_EOA_REVOKED: u8 = 0x01;
-
-    /// `AccountState.flags` bit (spec `LOCKED`): when set, actor configuration is
-    /// frozen — every config change and delegation is rejected on both the native
-    /// and EVM paths. The only permitted operation is `applySignedLockChanges`'s
-    /// unlock op. Set/cleared exclusively through the EVM `applySignedLockChanges`
-    /// entry point.
-    pub const FLAG_LOCKED: u8 = 0x02;
-
-    /// `AccountState.flags` bit (spec `UNLOCK_INITIATED`): selects how the packed
-    /// `lock_union` field is interpreted. While clear, `lock_union` holds the
-    /// configured `unlock_delay` (seconds, `uint16` range); while set, it holds
-    /// `unlocks_at` (the timestamp at which the pending unlock takes effect). Only
-    /// meaningful when [`Self::FLAG_LOCKED`] is set.
-    pub const FLAG_UNLOCK_INITIATED: u8 = 0x04;
-
-    /// Exact byte length of a policy-bearing actor's `policyData`:
-    /// `manager (20) || commitment (32)`. Required when `scope & SCOPE_POLICY`
-    /// is set; `policyData` MUST be empty otherwise.
-    pub const POLICY_DATA_LEN: usize = 52;
-
-    /// Maximum number of `ConfigChange` entries the mempool accepts in a single
-    /// transaction. The spec marks this as a node policy ("Nodes SHOULD enforce
-    /// a configurable per-transaction limit"); we pin a conservative default
-    /// here that downstream operators can revisit once the spec finalises.
-    pub const MAX_CONFIG_CHANGES_PER_TX: usize = 10;
-
-    /// Maximum number of `account_changes` entries (of any kind: `Create`,
-    /// `ConfigChange`, `Delegation`) the mempool accepts in a single
-    /// transaction. This is an **interim** total-entry admission cap that keeps
-    /// per-transaction admission work (and the in-memory overlay it applies
-    /// against) small and bounded while the interleaved authorize-and-apply
-    /// admission flow beds in.
-    ///
-    /// Relationship to the per-type caps ([`Self::MAX_CONFIG_CHANGES_PER_TX`]
-    /// and the implicit ≤1 `Create` / ≤1 `Delegation` structural limits):
-    ///
-    /// - **While this cap is the smallest** (3 < 10 today), it is the *binding*
-    ///   admission constraint — a transaction can never reach
-    ///   `MAX_CONFIG_CHANGES_PER_TX` config changes because the total cap stops
-    ///   it first. The per-type caps are effectively dormant.
-    /// - **Once this is raised to or above `MAX_CONFIG_CHANGES_PER_TX`**, the
-    ///   per-type caps become the binding constraints: `MAX_CONFIG_CHANGES_PER_TX`
-    ///   bounds config changes, and the ≤1 `Create` / ≤1 `Delegation` structural
-    ///   rules bound the rest. Raising this cap therefore *relaxes* admission up
-    ///   to (but never beyond) the per-type ceilings.
-    ///
-    /// Keep this value `<= MAX_CONFIG_CHANGES_PER_TX + 2` (one create + one
-    /// delegation) if the intent is for the total cap to stay the binding limit.
-    pub const MAX_ACCOUNT_CHANGES_PER_TX: usize = 3;
 
     /// Maximum validity-window span (in **milliseconds** beyond the current
     /// reference time, i.e. `valid_before - now`) the mempool accepts for
@@ -309,19 +152,6 @@ impl Eip8130Constants {
         }
     }
 
-    /// Maximum number of actor entries the mempool accepts in a single
-    /// `Create.initial_actors` slice. Bounds per-transaction memory and CPU
-    /// spent on duplicate-actor_id detection at admission time.
-    pub const MAX_ACTORS_PER_ENTRY: usize = 32;
-
-    /// Maximum number of `actorChanges` the mempool accepts within a single
-    /// `ConfigChange` entry. An interim conservative cap that keeps the
-    /// per-config-change work (ABI decode, duplicate detection, authenticator
-    /// validation) small and bounded. Deliberately lower than
-    /// [`Self::MAX_ACTORS_PER_ENTRY`]; can be raised toward that value once
-    /// the interleaved admission flow is proven out.
-    pub const MAX_ACTOR_CHANGES_PER_CONFIG: usize = 5;
-
     /// Maximum number of call phases accepted in one transaction.
     ///
     /// Each phase occupies an in-memory [`alloc::vec::Vec`] even when its RLP
@@ -329,11 +159,6 @@ impl Eip8130Constants {
     /// of single-byte empty RLP lists from amplifying into unbounded allocations
     /// before transaction-pool admission limits run.
     pub const MAX_CALL_PHASES_PER_TX: usize = 1_024;
-
-    /// Maximum runtime bytecode size for a create entry, matching EIP-170's
-    /// `MAX_CODE_SIZE` limit. EIP-8130 places runtime code directly, so the
-    /// mempool rejects oversized code before execution.
-    pub const MAX_CODE_SIZE: usize = 24_576;
 }
 
 #[cfg(test)]
@@ -354,41 +179,6 @@ mod tests {
         assert_ne!(Eip8130Constants::EIP8130_TX_TYPE, EIP1559_TX_TYPE);
         assert_ne!(Eip8130Constants::EIP8130_TX_TYPE, EIP7702_TX_TYPE);
         assert_ne!(Eip8130Constants::EIP8130_TX_TYPE, DEPOSIT_TX_TYPE);
-    }
-
-    #[test]
-    fn scope_bits_are_orthogonal() {
-        let bits = [
-            Eip8130Constants::SCOPE_OPERATOR,
-            Eip8130Constants::SCOPE_POLICY,
-            Eip8130Constants::SCOPE_NONCE,
-            Eip8130Constants::SCOPE_SELF_PAYER,
-            Eip8130Constants::SCOPE_SPONSOR_PAYER,
-        ];
-        let mut acc: u16 = 0;
-        for b in bits {
-            assert_eq!(b.count_ones(), 1, "scope bit must be a single bit");
-            assert_eq!(acc & b, 0, "scope bits must be orthogonal");
-            acc |= b;
-        }
-        assert_eq!(Eip8130Constants::SCOPE_UNRESTRICTED, 0);
-    }
-
-    #[test]
-    fn scope_bit_values_match_the_keystore_ordering() {
-        // Core grants lead (bits 0-2); optional POLICY/NONCE trail (bits 3-4).
-        // Pinned to the EIP-8130 `Scopes` library ordering (base/eip-8130 #95).
-        assert_eq!(Eip8130Constants::SCOPE_OPERATOR, 0x0001);
-        assert_eq!(Eip8130Constants::SCOPE_SELF_PAYER, 0x0002);
-        assert_eq!(Eip8130Constants::SCOPE_SPONSOR_PAYER, 0x0004);
-        assert_eq!(Eip8130Constants::SCOPE_POLICY, 0x0008);
-        assert_eq!(Eip8130Constants::SCOPE_NONCE, 0x0010);
-        assert!(Eip8130Constants::sender_is_policy_gated(Eip8130Constants::SCOPE_POLICY));
-        assert!(!Eip8130Constants::sender_is_policy_gated(Eip8130Constants::SCOPE_OPERATOR));
-        assert!(!Eip8130Constants::sender_is_policy_gated(
-            Eip8130Constants::SCOPE_OPERATOR | Eip8130Constants::SCOPE_POLICY
-        ));
-        assert!(!Eip8130Constants::sender_is_policy_gated(0));
     }
 
     #[test]
