@@ -4,7 +4,7 @@ use alloy_primitives::B256;
 use alloy_signer_local::PrivateKeySigner;
 use base_batcher_core::{
     AdminError, AdminHandle, BatchDriver, BatchDriverConfig, BatchDriverError, BatchDriverInputs,
-    DaThrottle, DerivationStatus, NoopThrottleClient, ThrottleController,
+    DaThrottle, NoopThrottleClient, ThrottleController,
 };
 use base_batcher_encoder::{BatchEncoder, EncoderConfig};
 use base_batcher_source::{L2BlockEvent, test_utils::ChannelL1HeadSource};
@@ -120,9 +120,6 @@ pub struct Batcher<S: L2BlockProvider> {
     driver_task: tokio::task::JoinHandle<Result<(), BatchDriverError>>,
     /// Token used to cancel the background driver on drop.
     cancel: CancellationToken,
-    /// Keeps the driver's derivation-status channel open. No action test exercises derivation
-    /// status, so nothing is ever sent on it.
-    _derivation_status_tx: mpsc::Sender<DerivationStatus>,
 }
 
 impl<S: L2BlockProvider + std::fmt::Debug> std::fmt::Debug for Batcher<S> {
@@ -140,16 +137,14 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Spawns the driver immediately. The driver will not process any events
     /// until the first [`advance`] call.
     ///
+    /// # Panics
+    ///
+    /// Panics if `config.encoder` is invalid, or if `config.batcher_address` is not the
+    /// address of `config.l1_signer`.
+    ///
     /// [`advance`]: Batcher::advance
     pub fn new(l2_source: S, rollup_config: &RollupConfig, config: BatcherConfig) -> Self {
         let l1_chain_id = rollup_config.l1_chain_id;
-        // Anchor the safe head at the L2 genesis.
-        let genesis = BlockInfo {
-            hash: rollup_config.genesis.l2.hash,
-            number: rollup_config.genesis.l2.number,
-            parent_hash: B256::ZERO,
-            timestamp: rollup_config.genesis.l2_time,
-        };
         let pipeline = BatchEncoder::new(Arc::new(rollup_config.clone()), config.encoder.clone())
             .expect("valid encoder config");
 
@@ -193,23 +188,20 @@ impl<S: L2BlockProvider> Batcher<S> {
                 l1_head_source: l1_source,
                 // The driver learns the L1 head from the blocks the tests mine.
                 initial_l1_head: 0,
-                initial_safe_head: genesis,
+                initial_safe_head: BlockInfo::from_l2_genesis(&rollup_config.genesis),
                 derivation_status_rx,
                 admin_rx,
             },
         );
 
-        let driver_task = tokio::spawn(async move { driver.run().await });
+        // No action test exercises derivation status: the driver task keeps the sender, so
+        // the channel stays open, and silent, for as long as the driver runs.
+        let driver_task = tokio::spawn(async move {
+            let _derivation_status_tx = derivation_status_tx;
+            driver.run().await
+        });
 
-        Self {
-            l2_source,
-            source_tx,
-            admin,
-            tx_manager,
-            driver_task,
-            cancel,
-            _derivation_status_tx: derivation_status_tx,
-        }
+        Self { l2_source, source_tx, admin, tx_manager, driver_task, cancel }
     }
 
     /// Drain the L2 source and forward all blocks to the driver, then flush.
