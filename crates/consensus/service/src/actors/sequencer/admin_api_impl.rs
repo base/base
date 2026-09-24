@@ -143,16 +143,18 @@ where
         }
 
         if let Some(conductor) = &self.conductor {
-            let is_leader = conductor.leader().await.map_err(|err| {
-                error!(target: "sequencer", error = %err, "Failed to check conductor leadership");
-                Metrics::sequencer_start_rejected_total("leadership_check_failed").increment(1);
-                SequencerAdminAPIError::RequestError(err.to_string())
-            })?;
-
-            if !is_leader {
-                warn!(target: "sequencer", "Not the conductor leader, refusing to start sequencer");
-                Metrics::sequencer_start_rejected_total("not_leader").increment(1);
-                return Err(SequencerAdminAPIError::NotLeader);
+            match conductor.leader().await {
+                Ok(true) => {}
+                Ok(false) => {
+                    warn!(target: "sequencer", "Not the conductor leader, refusing to start sequencer");
+                    Metrics::sequencer_start_rejected_total("not_leader").increment(1);
+                    return Err(SequencerAdminAPIError::NotLeader);
+                }
+                Err(err) => {
+                    error!(target: "sequencer", error = %err, "Failed to check conductor leadership");
+                    Metrics::sequencer_start_rejected_total("leadership_check_failed").increment(1);
+                    return Err(SequencerAdminAPIError::RequestError(err.to_string()));
+                }
             }
         }
 
