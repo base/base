@@ -1107,7 +1107,13 @@ where
                 _ => "intrinsic gas computation failed",
             })
         })?;
-        if intrinsic.execution_gas_available(signed.tx().gas_limit).is_none() {
+        // EIP-7623 calldata floor: a `gas_limit` below the floor branch is
+        // invalid. Sender-intrinsic gas is checked too, matching execution, so
+        // a floor rate repriced below the standard data rate cannot admit an
+        // underfunded transaction.
+        if signed.tx().gas_limit < intrinsic.sender_floor()
+            || intrinsic.execution_gas_available(signed.tx().gas_limit).is_none()
+        {
             return Err(InvalidTransactionError::GasTooLow.into());
         }
 
