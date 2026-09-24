@@ -42,6 +42,8 @@ impl From<L2ProviderError> for PipelineErrorKind {
 pub struct ActionL2ChainProvider {
     /// L2 blocks by block number.
     blocks: Arc<Mutex<HashMap<u64, L2BlockInfo>>>,
+    /// L2 blocks by block hash, used to walk a particular fork's ancestry.
+    blocks_by_hash: Arc<Mutex<HashMap<B256, L2BlockInfo>>>,
     /// Base blocks (headers + txs) by block number, needed for batch validation.
     base_blocks: Arc<Mutex<HashMap<u64, BaseBlock>>>,
     /// System configs by L2 block hash.
@@ -89,6 +91,10 @@ impl ActionL2ChainProvider {
     /// Insert a known L2 block into the provider.
     pub fn insert_block(&self, block: L2BlockInfo) {
         self.blocks.lock().expect("L2 blocks lock poisoned").insert(block.block_info.number, block);
+        self.blocks_by_hash
+            .lock()
+            .expect("L2 blocks by hash lock poisoned")
+            .insert(block.block_info.hash, block);
     }
 
     /// Insert a known L2 block with transactions into the provider.
@@ -138,6 +144,50 @@ impl L2ChainProvider for ActionL2ChainProvider {
         _rollup_config: Arc<RollupConfig>,
     ) -> Result<SystemConfig, L2ProviderError> {
         let system_configs = self.system_configs.lock().expect("L2 system configs lock poisoned");
-        system_configs.get(&hash).copied().ok_or(L2ProviderError::SystemConfigNotFound(hash))
+        let blocks_by_hash = self.blocks_by_hash.lock().expect("L2 blocks by hash lock poisoned");
+        let mut current_hash = hash;
+
+        loop {
+            if let Some(config) = system_configs.get(&current_hash) {
+                return Ok(*config);
+            }
+
+            let block = blocks_by_hash
+                .get(&current_hash)
+                .ok_or(L2ProviderError::SystemConfigNotFound(hash))?;
+            current_hash = block.block_info.parent_hash;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn system_config_lookup_walks_the_requested_fork_by_hash() {
+        let provider = ActionL2ChainProvider::default();
+        let genesis_hash = B256::left_padding_from(&[1]);
+        let child_hash = B256::left_padding_from(&[2]);
+        provider.insert_system_config(
+            genesis_hash,
+            SystemConfig { gas_limit: 123, ..Default::default() },
+        );
+        provider.insert_block(L2BlockInfo {
+            block_info: BlockInfo {
+                hash: child_hash,
+                parent_hash: genesis_hash,
+                number: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        let mut provider = provider;
+        let config = provider
+            .system_config_by_l2_hash(child_hash, Arc::new(RollupConfig::default()))
+            .await
+            .unwrap();
+        assert_eq!(config.gas_limit, 123);
     }
 }

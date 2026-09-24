@@ -25,6 +25,7 @@ use tower::ServiceBuilder;
 use crate::Metrics;
 
 const L2_BLOCK_REF_BY_NUMBER_METHOD: &str = "l2_block_ref_by_number";
+const L2_BLOCK_REF_BY_HASH_METHOD: &str = "l2_block_ref_by_hash";
 const L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS: usize = 5;
 const L2_BLOCK_VISIBILITY_RETRY_DELAY: Duration = Duration::from_millis(20);
 
@@ -96,26 +97,51 @@ impl AlloyL2ChainProvider {
             return Ok(Arc::clone(block));
         }
 
-        const METHOD: &str = "l2_block_by_hash";
-        Metrics::l2_chain_requests(METHOD).increment(1);
-        let block = base_metrics::time!(Metrics::request_duration(METHOD), {
-            self.inner.get_block_by_hash(hash).full().await
-        })
-        .map_err(|e| {
-            Metrics::l2_chain_errors(METHOD).increment(1);
-            AlloyL2ChainProviderError::Transport(e)
-        })?
-        .ok_or(AlloyL2ChainProviderError::BlockHashNotFound(hash))?
-        .map_header(|header| header.into_inner())
-        .into_consensus()
-        .map_transactions(|t| t.inner.inner.into_inner());
+        for attempt in 1..=L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS {
+            Metrics::l2_chain_requests(L2_BLOCK_REF_BY_HASH_METHOD).increment(1);
+            let block =
+                base_metrics::time!(Metrics::request_duration(L2_BLOCK_REF_BY_HASH_METHOD), {
+                    self.inner.get_block_by_hash(hash).full().await
+                })
+                .map_err(|e| {
+                    Metrics::l2_chain_errors(L2_BLOCK_REF_BY_HASH_METHOD).increment(1);
+                    AlloyL2ChainProviderError::Transport(e)
+                })?;
 
-        self.verify_block_hash(&block.header, hash)?;
-        let block = Arc::new(block);
-        // A block found by hash carries no claim to being canonical at its height, so do not
-        // seed the number-keyed cache from this lookup.
-        self.block_by_hash_cache.put(hash, Arc::clone(&block));
-        Ok(block)
+            if let Some(block) = block {
+                let block = block
+                    .map_header(|header| header.into_inner())
+                    .into_consensus()
+                    .map_transactions(|t| t.inner.inner.into_inner());
+                self.verify_block_hash(&block.header, hash)?;
+                let block = Arc::new(block);
+                // A block found by hash carries no claim to being canonical at its height, so do
+                // not seed the number-keyed cache from this lookup.
+                self.block_by_hash_cache.put(hash, Arc::clone(&block));
+                return Ok(block);
+            }
+
+            if attempt < L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS {
+                Metrics::l2_block_visibility_retries().increment(1);
+                tracing::debug!(
+                    target: "l2_chain_provider",
+                    ?hash,
+                    attempt,
+                    attempts = L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS,
+                    delay = ?L2_BLOCK_VISIBILITY_RETRY_DELAY,
+                    "L2 block not visible yet; retrying"
+                );
+                tokio::time::sleep(L2_BLOCK_VISIBILITY_RETRY_DELAY).await;
+            }
+        }
+
+        tracing::warn!(
+            target: "l2_chain_provider",
+            ?hash,
+            attempts = L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS,
+            "L2 block not visible after exhausting retry budget"
+        );
+        Err(AlloyL2ChainProviderError::BlockHashNotFound(hash))
     }
 
     /// Verifies that a header hashes to the expected hash when `trust_rpc` is false.
