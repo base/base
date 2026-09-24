@@ -10,7 +10,10 @@
 
 use std::{
     fmt,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -59,6 +62,7 @@ const SLEEP_TIME: u64 = 10;
 pub struct FlashblocksParts {
     sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
     state: Arc<FlashblocksState>,
+    cutover_active: Arc<AtomicBool>,
 }
 
 impl fmt::Debug for FlashblocksParts {
@@ -80,6 +84,11 @@ impl FlashblocksParts {
         rx.await.map_err(|err| eyre::eyre!(err))?;
         Ok(())
     }
+
+    /// Activates the Denim RPC cutover for the test node.
+    pub fn activate_cutover(&self) {
+        self.cutover_active.store(true, Ordering::Release);
+    }
 }
 
 /// Test extension for flashblocks functionality.
@@ -96,6 +105,7 @@ struct FlashblocksTestExtensionInner {
     #[allow(clippy::type_complexity)]
     receiver: Arc<Mutex<Option<mpsc::Receiver<(Flashblock, oneshot::Sender<()>)>>>>,
     state: Arc<FlashblocksState>,
+    cutover_active: Arc<AtomicBool>,
     process_canonical: bool,
 }
 
@@ -118,6 +128,7 @@ impl FlashblocksTestExtension {
             sender,
             receiver: Arc::new(Mutex::new(Some(receiver))),
             state: Arc::new(FlashblocksState::new(5)),
+            cutover_active: Arc::new(AtomicBool::new(false)),
             process_canonical,
         };
         Self { inner: Arc::new(inner) }
@@ -128,6 +139,7 @@ impl FlashblocksTestExtension {
         Ok(FlashblocksParts {
             sender: self.inner.sender.clone(),
             state: Arc::clone(&self.inner.state),
+            cutover_active: Arc::clone(&self.inner.cutover_active),
         })
     }
 }
@@ -137,6 +149,7 @@ impl BaseNodeExtension for FlashblocksTestExtension {
         let state = Arc::clone(&self.inner.state);
         let receiver = Arc::clone(&self.inner.receiver);
         let process_canonical = self.inner.process_canonical;
+        let cutover_active = Arc::clone(&self.inner.cutover_active);
 
         let state_for_start = Arc::clone(&state);
         let state_for_rpc = state;
@@ -180,12 +193,15 @@ impl BaseNodeExtension for FlashblocksTestExtension {
 
         hooks.add_rpc_module(move |ctx| {
             let fb = state_for_rpc;
+            let active_for_eth = Arc::clone(&cutover_active);
+            let cutover =
+                FlashblocksRpcCutover::new(move || active_for_eth.load(Ordering::Acquire));
 
             let api_ext = EthApiExt::new(
                 ctx.registry.eth_api().clone(),
                 ctx.registry.eth_handlers().filter.clone(),
                 Arc::clone(&fb),
-                FlashblocksRpcCutover::new(|| false),
+                cutover.clone(),
             );
             ctx.modules.replace_configured(api_ext.into_rpc())?;
 
@@ -196,6 +212,7 @@ impl BaseNodeExtension for FlashblocksTestExtension {
                 ctx.registry.eth_api().clone(),
                 ctx.node().task_executor.clone(),
                 Arc::clone(&fb),
+                cutover,
             );
             ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
 
@@ -299,6 +316,11 @@ impl FlashblocksHarness {
     /// Get a handle to the in-memory Flashblocks state backing the harness.
     pub fn flashblocks_state(&self) -> Arc<FlashblocksState> {
         self.parts.state()
+    }
+
+    /// Activates the Denim RPC cutover for the test node.
+    pub fn activate_cutover(&self) {
+        self.parts.activate_cutover();
     }
 
     /// Send a single flashblock through the harness.

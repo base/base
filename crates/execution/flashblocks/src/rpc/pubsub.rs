@@ -64,6 +64,7 @@ pub struct EthPubSub<Eth, FB> {
     inner: RethEthPubSub<Eth>,
     /// Flashblocks state for accessing pending blocks stream
     flashblocks_state: Arc<FB>,
+    cutover: crate::FlashblocksRpcCutover,
 }
 
 impl<Eth, FB> EthPubSub<Eth, FB> {
@@ -72,8 +73,13 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
         eth_api: Eth,
         subscription_task_spawner: Runtime,
         flashblocks_state: Arc<FB>,
+        cutover: crate::FlashblocksRpcCutover,
     ) -> Self {
-        Self { inner: RethEthPubSub::new(eth_api, subscription_task_spawner), flashblocks_state }
+        Self {
+            inner: RethEthPubSub::new(eth_api, subscription_task_spawner),
+            flashblocks_state,
+            cutover,
+        }
     }
 
     /// Returns a stream that yields all new flashblocks as RPC blocks
@@ -247,6 +253,21 @@ where
         if let Some(standard_kind) = kind.as_standard() {
             return RethEthPubSubApiServer::subscribe(&self.inner, pending, standard_kind, params)
                 .await;
+        }
+
+        // Standard subscriptions are always backed by reth's own tasks, so existing
+        // subscriptions survive the cutover without replacing the RPC module or their IDs.
+        // Flashblocks-specific streams have no equivalent standard subscription and are no
+        // longer admitted after Denim.
+        if self.cutover.is_active() {
+            pending
+                .reject(jsonrpsee_types::ErrorObjectOwned::owned(
+                    -32602,
+                    "Flashblocks subscriptions are unavailable after Denim",
+                    None::<()>,
+                ))
+                .await;
+            return Ok(());
         }
 
         // Handle flashblocks-specific subscriptions

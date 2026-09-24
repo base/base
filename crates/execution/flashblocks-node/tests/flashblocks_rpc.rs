@@ -1386,3 +1386,134 @@ async fn test_pending_block_header_fields() -> Result<()> {
 
     Ok(())
 }
+
+/// A standard `eth_subscribe` task belongs to reth, not the Flashblocks stream. It must retain
+/// its server-issued subscription ID across Denim while new Flashblocks-only streams are rejected.
+#[tokio::test]
+async fn test_eth_subscribe_survives_denim_cutover() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let ws_url = setup.harness.ws_url();
+    let (mut ws_stream, _) = connect_async(&ws_url).await?;
+
+    ws_stream
+        .send(Message::Text(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "eth_subscribe",
+                "params": ["newHeads"]
+            })
+            .to_string()
+            .into(),
+        ))
+        .await?;
+    let response = ws_stream.next().await.unwrap()?;
+    let subscribed: serde_json::Value = serde_json::from_str(response.to_text()?)?;
+    let subscription_id =
+        subscribed["result"].as_str().expect("standard subscription ID expected").to_owned();
+
+    setup.harness.activate_cutover();
+    setup.harness.build_block_from_transactions(vec![]).await?;
+
+    let notification = ws_stream.next().await.unwrap()?;
+    let notification: serde_json::Value = serde_json::from_str(notification.to_text()?)?;
+    assert_eq!(notification["method"], "eth_subscription");
+    assert_eq!(notification["params"]["subscription"], subscription_id);
+
+    ws_stream
+        .send(Message::Text(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "eth_subscribe",
+                "params": ["newFlashblocks"]
+            })
+            .to_string()
+            .into(),
+        ))
+        .await?;
+    let rejected = loop {
+        let response = ws_stream.next().await.unwrap()?;
+        let response: serde_json::Value = serde_json::from_str(response.to_text()?)?;
+        if response["id"] == 2 {
+            break response;
+        }
+        assert_eq!(response["method"], "eth_subscription");
+        assert_eq!(response["params"]["subscription"], subscription_id);
+    };
+    assert_eq!(rejected["error"]["code"], -32602);
+
+    ws_stream
+        .send(Message::Text(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "eth_sendRawTransactionSync",
+                "params": ["0x", null]
+            })
+            .to_string()
+            .into(),
+        ))
+        .await?;
+    let method_not_found = loop {
+        let response = ws_stream.next().await.unwrap()?;
+        let response: serde_json::Value = serde_json::from_str(response.to_text()?)?;
+        if response["id"] == 3 {
+            break response;
+        }
+        assert_eq!(response["method"], "eth_subscription");
+        assert_eq!(response["params"]["subscription"], subscription_id);
+    };
+    assert_eq!(method_not_found["error"]["code"], -32601);
+
+    ws_stream
+        .send(Message::Text(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "eth_unsubscribe",
+                "params": [subscription_id]
+            })
+            .to_string()
+            .into(),
+        ))
+        .await?;
+    let unsubscribed = loop {
+        let response = ws_stream.next().await.unwrap()?;
+        let response: serde_json::Value = serde_json::from_str(response.to_text()?)?;
+        if response["id"] == 4 {
+            break response;
+        }
+        assert_eq!(response["method"], "eth_subscription");
+        assert_eq!(response["params"]["subscription"], subscription_id);
+    };
+    assert_eq!(unsubscribed["result"], true);
+
+    Ok(())
+}
+
+/// Pending Flashblocks state must cease to influence normal RPC reads the moment Denim activates.
+#[tokio::test]
+async fn test_pending_rpc_data_is_not_served_after_denim_cutover() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let provider = setup.harness.provider();
+
+    setup.send_test_payloads().await?;
+    let before_transaction =
+        provider.get_transaction_by_hash(setup.txn_details.alice_eth_transfer_hash).await?;
+    assert!(before_transaction.is_some(), "Flashblocks transaction should be visible before Denim");
+    let before_receipt =
+        provider.get_transaction_receipt(setup.txn_details.alice_eth_transfer_hash).await?;
+    assert!(before_receipt.is_some(), "Flashblocks receipt should be visible before Denim");
+
+    setup.harness.activate_cutover();
+
+    let after_transaction =
+        provider.get_transaction_by_hash(setup.txn_details.alice_eth_transfer_hash).await?;
+    assert!(after_transaction.is_none(), "Flashblocks transaction must not be visible after Denim");
+    let after_receipt =
+        provider.get_transaction_receipt(setup.txn_details.alice_eth_transfer_hash).await?;
+    assert!(after_receipt.is_none(), "Flashblocks receipt must not be visible after Denim");
+
+    Ok(())
+}

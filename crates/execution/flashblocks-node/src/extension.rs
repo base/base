@@ -84,7 +84,7 @@ impl BaseNodeExtension for FlashblocksExtension {
                 ctx.registry.eth_api().clone(),
                 ctx.registry.eth_handlers().filter.clone(),
                 Arc::clone(&state_for_rpc),
-                cutover,
+                cutover.clone(),
             );
             ctx.modules.replace_configured(api_ext.into_rpc())?;
 
@@ -95,6 +95,7 @@ impl BaseNodeExtension for FlashblocksExtension {
                 ctx.registry.eth_api().clone(),
                 ctx.node().task_executor.clone(),
                 state_for_rpc,
+                cutover,
             );
             ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
 
