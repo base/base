@@ -416,12 +416,12 @@ mod tests {
     impl L2ChainProvider for ResettingL2ChainProvider {
         type Error = ResetError;
 
-        async fn system_config_by_number(
+        async fn system_config_by_l2_hash(
             &mut self,
-            number: u64,
+            hash: alloy_primitives::B256,
             _: Arc<RollupConfig>,
         ) -> Result<SystemConfig, <Self as L2ChainProvider>::Error> {
-            Err(ResetError::BlockNotFound(BlockId::Number(number.into())))
+            Err(ResetError::BlockNotFound(BlockId::Hash(hash.into())))
         }
     }
 

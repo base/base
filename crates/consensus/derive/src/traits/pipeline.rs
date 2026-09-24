@@ -3,6 +3,7 @@
 use alloc::boxed::Box;
 use core::iter::Iterator;
 
+use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{AttributesWithParent, L2BlockInfo};
@@ -21,9 +22,9 @@ pub trait Pipeline: OriginProvider + Iterator<Item = AttributesWithParent> {
     /// Returns the rollup config.
     fn rollup_config(&self) -> &RollupConfig;
 
-    /// Returns the [`SystemConfig`] by L2 number.
-    async fn system_config_by_number(
+    /// Returns the [`SystemConfig`] for the L2 block with the given hash.
+    async fn system_config_by_l2_hash(
         &mut self,
-        number: u64,
+        hash: B256,
     ) -> Result<SystemConfig, PipelineErrorKind>;
 }

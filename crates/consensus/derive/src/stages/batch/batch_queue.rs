@@ -545,9 +545,9 @@ mod tests {
     impl L2ChainProvider for PendingL2ChainProvider {
         type Error = TestProviderError;
 
-        async fn system_config_by_number(
+        async fn system_config_by_l2_hash(
             &mut self,
-            _: u64,
+            _: alloy_primitives::B256,
             _: Arc<RollupConfig>,
         ) -> Result<SystemConfig, <Self as L2ChainProvider>::Error> {
             unreachable!()

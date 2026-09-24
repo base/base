@@ -4,6 +4,7 @@ use alloc::{boxed::Box, collections::VecDeque, string::ToString, sync::Arc};
 use core::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
+use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{AttributesWithParent, BatchValidationProvider, BlockInfo, L2BlockInfo};
@@ -92,7 +93,7 @@ where
 
         let system_config = self
             .l2_chain_provider
-            .system_config_by_number(current.block_info.number, Arc::clone(&self.rollup_config))
+            .system_config_by_l2_hash(current.block_info.hash, Arc::clone(&self.rollup_config))
             .await
             .map_err(Into::into)?;
 
@@ -195,13 +196,13 @@ where
         &self.rollup_config
     }
 
-    /// Returns the [`SystemConfig`] by L2 number.
-    async fn system_config_by_number(
+    /// Returns the [`SystemConfig`] for the L2 block with the given hash.
+    async fn system_config_by_l2_hash(
         &mut self,
-        number: u64,
+        hash: B256,
     ) -> Result<SystemConfig, PipelineErrorKind> {
         self.l2_chain_provider
-            .system_config_by_number(number, Arc::clone(&self.rollup_config))
+            .system_config_by_l2_hash(hash, Arc::clone(&self.rollup_config))
             .await
             .map_err(Into::into)
     }
@@ -362,7 +363,7 @@ mod tests {
     async fn test_derivation_pipeline_signal_activation() {
         let rollup_config = Arc::new(RollupConfig::default());
         let mut l2_chain_provider = TestL2ChainProvider::default();
-        l2_chain_provider.system_configs.insert(0, SystemConfig::default());
+        l2_chain_provider.system_configs.insert(B256::ZERO, SystemConfig::default());
         let attributes = TestNextAttributes::default();
         let mut pipeline = DerivationPipeline::new(attributes, rollup_config, l2_chain_provider);
 
@@ -399,7 +400,7 @@ mod tests {
     async fn test_derivation_pipeline_signal_reset_ok() {
         let rollup_config = Arc::new(RollupConfig::default());
         let mut l2_chain_provider = TestL2ChainProvider::default();
-        l2_chain_provider.system_configs.insert(0, SystemConfig::default());
+        l2_chain_provider.system_configs.insert(B256::ZERO, SystemConfig::default());
         let attributes = TestNextAttributes::default();
         let mut pipeline = DerivationPipeline::new(attributes, rollup_config, l2_chain_provider);
 
@@ -415,7 +416,7 @@ mod tests {
             ..Default::default()
         });
         let mut l2_chain_provider = TestL2ChainProvider::default();
-        l2_chain_provider.system_configs.insert(0, SystemConfig::default());
+        l2_chain_provider.system_configs.insert(B256::ZERO, SystemConfig::default());
         let attributes = TestNextAttributes::default();
         let mut pipeline = DerivationPipeline::new(attributes, rollup_config, l2_chain_provider);
 
@@ -426,6 +427,32 @@ mod tests {
         };
         let result = pipeline.initial_reset(l2_safe_head).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_initial_reset_uses_system_config_for_exact_block_hash() {
+        let canonical_hash = B256::left_padding_from(&[1]);
+        let reorged_hash = B256::left_padding_from(&[2]);
+        let mut l2_chain_provider = TestL2ChainProvider::default();
+        l2_chain_provider
+            .system_configs
+            .insert(canonical_hash, SystemConfig { gas_limit: 123, ..Default::default() });
+        l2_chain_provider
+            .system_configs
+            .insert(reorged_hash, SystemConfig { gas_limit: 456, ..Default::default() });
+        let mut pipeline = DerivationPipeline::new(
+            TestNextAttributes::default(),
+            Arc::new(RollupConfig::default()),
+            l2_chain_provider,
+        );
+
+        // The reset target is the reorged block at the same height as the canonical block.
+        let safe_head = L2BlockInfo {
+            block_info: BlockInfo { hash: reorged_hash, ..Default::default() },
+            ..Default::default()
+        };
+        let (_, system_config) = pipeline.initial_reset(safe_head).await.unwrap();
+        assert_eq!(system_config.gas_limit, 456);
     }
 
     /// On a Granite-straddle safe head — L2 timestamp post-Granite while its L1 origin
@@ -479,11 +506,11 @@ mod tests {
             });
         }
         l2_chain_provider.system_configs.insert(
-            SPEC_STOP_L1_ORIGIN,
+            B256::with_last_byte((SPEC_STOP_L1_ORIGIN & 0xff) as u8),
             SystemConfig { batcher_address: BATCHER_AT_SPEC_STOP, ..Default::default() },
         );
         l2_chain_provider.system_configs.insert(
-            CODE_STOP_L1_ORIGIN,
+            B256::with_last_byte((CODE_STOP_L1_ORIGIN & 0xff) as u8),
             SystemConfig { batcher_address: BATCHER_AT_CODE_STOP, ..Default::default() },
         );
 
