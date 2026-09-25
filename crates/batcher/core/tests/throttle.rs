@@ -156,7 +156,7 @@ fn test_step_strategy_full_intensity_applies_lower_limits() {
 
 /// Verifies that when the DA backlog transitions from above the threshold
 /// (throttle active) to zero (throttle inactive), the driver makes exactly
-/// two RPC calls: one with reduced limits and one resetting to upper limits.
+/// two RPC calls: one with the lower limits and one resetting to the upper limits.
 #[test]
 fn test_throttle_transitions_from_active_to_inactive() {
     Runner::start(Config::seeded(0), |ctx| async move {
@@ -189,23 +189,8 @@ fn test_throttle_transitions_from_active_to_inactive() {
         assert!(handle.await.unwrap().is_ok());
 
         let calls = throttle_recorded.lock().unwrap();
-        assert!(
-            calls.len() >= 2,
-            "expected at least 2 throttle calls (activate + deactivate), got {}",
-            calls.len()
-        );
-
-        // First call must have reduced limits (throttle active, backlog was high).
-        let (first_tx, first_block) = calls[0];
-        assert!(
-            first_block < 130_000,
-            "first call should apply throttled block limit, got {first_block}"
-        );
-        assert!(first_tx < 20_000, "first call should apply throttled tx limit, got {first_tx}");
-
-        // Last call must reset to upper limits (throttle deactivated).
-        let (last_tx, last_block) = *calls.last().unwrap();
-        assert_eq!(last_block, 130_000, "last call should reset block limit to upper bound");
-        assert_eq!(last_tx, 20_000, "last call should reset tx limit to upper bound");
+        // Twice the threshold is full intensity, so the lower limits first, then the upper
+        // limits once the backlog is gone.
+        assert_eq!(*calls, [(150, 2_000), (20_000, 130_000)]);
     });
 }

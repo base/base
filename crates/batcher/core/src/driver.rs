@@ -512,7 +512,8 @@ mod tests {
     }
 
     // The loop polls its arms in priority order; each test below makes several arms ready at
-    // once and checks which one the driver serves first. The shutdown flush ends every log.
+    // once and checks which one the driver serves first. Each test checks the start of the
+    // call log: the shutdown flush always ends it.
 
     #[test]
     fn run_prioritizes_cancellation_over_ready_admin() {
@@ -589,8 +590,8 @@ mod tests {
             ctx.cancel();
             assert!(handle.await.unwrap().is_ok());
 
-            // The receipt confirms at L1 block 1 before the source's head 9 arrives; the other
-            // way round, head 1 would not advance past 9.
+            // The receipt confirms at L1 block 1 before the L1 head source's head 9 arrives; the
+            // other way round, head 1 would not advance past 9.
             let recorded = recorded.lock().unwrap();
             assert!(
                 recorded.calls.starts_with(&[

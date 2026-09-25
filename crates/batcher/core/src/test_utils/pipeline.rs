@@ -57,6 +57,14 @@ pub struct Recorded {
 }
 
 impl Recorded {
+    /// The block numbers passed to `add_block`, in order.
+    pub fn added_blocks(&self) -> Vec<u64> {
+        self.pick(|call| match call {
+            PipelineCall::AddBlock(number) => Some(*number),
+            _ => None,
+        })
+    }
+
     /// The submission ids handed out by `next_submission`, in order.
     pub fn dequeued(&self) -> Vec<SubmissionId> {
         self.pick(|call| match call {

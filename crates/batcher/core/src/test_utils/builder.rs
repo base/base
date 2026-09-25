@@ -49,11 +49,11 @@ impl SubmissionStub {
     }
 }
 
-/// Builds a [`BatchDriver`] for tests, with a parked source, a parked L1 head source, a
-/// disabled throttle and at most one in-flight transaction unless told otherwise.
+/// Builds a [`BatchDriver`] for tests.
 ///
-/// Unless told otherwise, the driver starts from L1 head 0 and from the L2 genesis (block 0)
-/// as safe head, so it drops blocks numbered 0 as already safe.
+/// Unless told otherwise, the driver has a parked source, a parked L1 head source, a disabled
+/// throttle and at most one in-flight transaction. It starts from L1 head 0 and from the L2
+/// genesis (block 0) as safe head, so it drops blocks numbered 0 as already safe.
 ///
 /// [`build`](Self::build) also creates the derivation-status and admin channels and hands
 /// their sending sides back as [`DriverHandles`]. Keep them alive while the driver runs:

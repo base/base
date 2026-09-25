@@ -43,11 +43,7 @@ fn test_l1_head_source_advances_pipeline() {
         ctx.cancel();
 
         assert!(handle.await.unwrap().is_ok());
-        let l1_heads = recorded.lock().unwrap().l1_heads();
-        assert!(
-            l1_heads.contains(&42),
-            "advance_l1_head must be called with the source value, got {l1_heads:?}"
-        );
+        assert_eq!(recorded.lock().unwrap().l1_heads(), [42]);
     });
 }
 
