@@ -11,10 +11,11 @@ use base_builder_metering::MeteringStore;
 use base_execution_cli::ShadowIndexerArgs;
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_observability_events::{
-    DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
+    DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY,
+    GlobalTransactionEventWriter, GlobalTransactionEventWriterInitStatus, TransactionEventProducer,
     TransactionEventWriterConfig,
 };
-use tracing::warn;
+use tracing::{info, warn};
 
 /// Parameters for Flashblocks configuration.
 ///
@@ -130,6 +131,51 @@ impl TransactionEventsArgs {
             producer: TransactionEventProducer::BaseBuilder,
             network: self.network.clone(),
         }
+    }
+
+    /// Returns the process-global writer config when the journal is enabled.
+    ///
+    /// Returns `None` when the journal is disabled so callers leave any previously initialized
+    /// global writer untouched.
+    pub fn global_writer_config(&self) -> Option<TransactionEventWriterConfig> {
+        self.enabled.then(|| self.writer_config())
+    }
+
+    /// Initializes the process-global builder transaction event writer and logs the outcome.
+    ///
+    /// Both standalone `base-builder` and unified `base sequencer` must call this: builder
+    /// emitters silently no-op while no global writer is registered. The outcome is logged so a
+    /// missing or shadowed journal is visible at startup without inspecting the journal directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `required` is set and the journal cannot be opened, or when the
+    /// global init lock is poisoned. With the default `required = false`, open failures warn and
+    /// fall back to a disabled writer instead of failing startup.
+    pub fn init_global_writer(&self) -> eyre::Result<GlobalTransactionEventWriterInitStatus> {
+        let status = GlobalTransactionEventWriter::init(self.global_writer_config())?;
+        match status {
+            GlobalTransactionEventWriterInitStatus::Initialized => {
+                info!(
+                    path = %self.file_path.display(),
+                    network = %self.network,
+                    "initialized builder transaction event journal"
+                );
+            }
+            GlobalTransactionEventWriterInitStatus::NotConfigured => {
+                info!(
+                    path = %self.file_path.display(),
+                    "builder transaction event journal disabled"
+                );
+            }
+            GlobalTransactionEventWriterInitStatus::AlreadyInitialized => {
+                warn!(
+                    path = %self.file_path.display(),
+                    "builder transaction event journal ignored; global writer already initialized"
+                );
+            }
+        }
+        Ok(status)
     }
 }
 
@@ -791,5 +837,43 @@ mod tests {
         assert_eq!(config.block_time_leeway, Duration::from_secs(10));
         assert_eq!(config.flashblocks_interval, Duration::from_millis(200));
         assert_eq!(config.flashblocks_leeway_time, Duration::from_millis(50));
+    }
+
+    #[test]
+    fn transaction_events_global_writer_config_is_none_when_disabled() {
+        let args = TransactionEventsArgs::default();
+
+        assert!(!args.enabled);
+        assert!(args.global_writer_config().is_none());
+    }
+
+    #[test]
+    fn transaction_events_global_writer_config_carries_builder_identity_when_enabled() {
+        let args = TransactionEventsArgs {
+            enabled: true,
+            file_path: PathBuf::from("/tmp/builder-events.jsonl"),
+            required: true,
+            network: "base-sepolia".to_string(),
+            ..Default::default()
+        };
+
+        let config = args.global_writer_config().expect("enabled journal should yield a config");
+
+        assert!(config.enabled);
+        assert!(config.required);
+        assert_eq!(config.file_path, PathBuf::from("/tmp/builder-events.jsonl"));
+        assert_eq!(config.producer, TransactionEventProducer::BaseBuilder);
+        assert_eq!(config.network, "base-sepolia");
+    }
+
+    #[test]
+    fn transaction_events_init_global_writer_reports_not_configured_when_disabled() {
+        // The enabled path registers a process-global writer, so it is covered by the devnet
+        // transaction-events smoke test instead of unit tests.
+        let status = TransactionEventsArgs::default()
+            .init_global_writer()
+            .expect("disabled journal init should succeed");
+
+        assert_eq!(status, GlobalTransactionEventWriterInitStatus::NotConfigured);
     }
 }
