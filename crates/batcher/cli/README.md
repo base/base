@@ -43,9 +43,9 @@ A shadow verifier must therefore use accepted inbox and signer inputs that match
 the shadow submissions. Do not add permanent production consensus bypass logic
 just to support this rollout.
 
-Outside shadow mode, `base batcher` therefore refuses to start unless its signer
-is the current `SystemConfig` batcher address, since derivation would ignore
-every batch it posts. Shadow mode skips this check.
+Outside shadow mode, `base batcher` refuses to start unless its signer is the
+current `SystemConfig` batcher address, since derivation would ignore every
+batch it posts.
 
 Shadow deployments use an isolated parity validator to derive their submitted
 data. The batcher compares its derived L2 block hashes with the canonical

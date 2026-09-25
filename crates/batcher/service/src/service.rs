@@ -917,7 +917,7 @@ mod tests {
         // The first L1 read after the check: once it is served, setup went past the check.
         let l1_head = mock_rpc(&server, r#"{"method":"eth_blockNumber"}"#, r#""0x1""#.into()).await;
 
-        // Setup fails later, on the rollup calls this test does not mock.
+        // Setup fails later, on the reads this test does not mock.
         let _ =
             BatcherService::new(mocked_config(&server, signer)).setup(TokioRuntime::new()).await;
 
@@ -936,7 +936,7 @@ mod tests {
             ..mocked_config(&server, Address::repeat_byte(0x51))
         };
 
-        // Setup fails later, on the rollup calls this test does not mock.
+        // Setup fails later, on the reads this test does not mock.
         let _ = BatcherService::new(config).setup(TokioRuntime::new()).await;
 
         assert!(l1_head.calls_async().await > 0, "setup must reach the L1 head read");
