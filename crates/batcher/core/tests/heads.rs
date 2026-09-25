@@ -5,7 +5,9 @@ use std::time::Duration;
 use alloy_primitives::B256;
 use base_batcher_core::{
     BatchDriverError, DerivationStatus,
-    test_utils::{DriverFixture, ScriptedTxManager, TrackingPipeline, TrackingSource},
+    test_utils::{
+        DriverFixture, PipelineCall, ScriptedTxManager, TrackingPipeline, TrackingSource,
+    },
 };
 use base_batcher_encoder::DerivationReconciliation;
 use base_batcher_source::test_utils::ChannelL1HeadSource;
@@ -105,7 +107,13 @@ fn test_derivation_cursor_advance_replays_stalled_channel() {
 
         assert!(handle.await.unwrap().is_ok());
         let recorded = recorded.lock().unwrap();
-        assert_eq!(recorded.reconciled(), [safe_l2.number]);
+        assert_eq!(
+            recorded.calls.first(),
+            Some(&PipelineCall::ReconcileDerivation {
+                safe_l2: safe_l2.number,
+                current_l1: Some(50)
+            })
+        );
         assert_eq!(recorded.resets(), 1);
         assert_eq!(*catchup_heads.lock().unwrap(), [safe_l2]);
     });

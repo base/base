@@ -27,7 +27,7 @@ pub enum PipelineCall {
     /// `add_block`, with the block number.
     AddBlock(u64),
     /// `step` encoded a block.
-    Step,
+    BlockEncoded,
     /// `next_submission` handed out this submission.
     Dequeue(SubmissionId),
     /// `confirm`, with the submission id and its L1 inclusion block.
@@ -110,7 +110,7 @@ impl Recorded {
 
     /// The number of `step` calls that encoded a block.
     pub fn encoded_steps(&self) -> usize {
-        self.count(PipelineCall::Step)
+        self.count(PipelineCall::BlockEncoded)
     }
 
     fn pick<T>(&self, pick: impl Fn(&PipelineCall) -> Option<T>) -> Vec<T> {
@@ -125,8 +125,9 @@ impl Recorded {
 /// [`BatchPipeline`] that records its calls into a shared [`Recorded`] and hands out the
 /// submissions queued in [`submissions`](Self::submissions).
 ///
-/// Like the real pipeline, it returns a requeued submission before the queued ones, and
-/// ignores the confirmation or requeue of a submission dequeued before a reset.
+/// Like the real pipeline, it returns a requeued submission before the queued ones (here
+/// under its original id), and ignores the confirmation or requeue of a submission dequeued
+/// before a reset.
 #[derive(Debug)]
 pub struct TrackingPipeline {
     recorded: Arc<Mutex<Recorded>>,
@@ -137,6 +138,9 @@ pub struct TrackingPipeline {
     pub da_backlog_bytes: Arc<AtomicU64>,
     /// Submissions handed out and neither confirmed nor requeued since.
     in_flight: Vec<BatchSubmission>,
+    /// The L1 head the pipeline is at. Like the real encoder, a head that does not advance is
+    /// ignored.
+    l1_head: u64,
     /// What `reconcile_derivation` answers.
     reconciliation: DerivationReconciliation,
     /// Whether `add_block` reports a parent mismatch.
@@ -154,6 +158,7 @@ impl Default for TrackingPipeline {
             submissions: VecDeque::new(),
             da_backlog_bytes: Arc::default(),
             in_flight: Vec::new(),
+            l1_head: 0,
             reconciliation: DerivationReconciliation::Consistent,
             add_block_reorgs: false,
             flush_error: None,
@@ -208,7 +213,7 @@ impl TrackingPipeline {
     }
 }
 
-/// A copy of `submission`, which is not `Clone`: its frames are shared behind `Arc`s.
+/// A copy of `submission`, which is not `Clone`. The copy shares its frames, held behind `Arc`s.
 fn duplicate(submission: &BatchSubmission) -> BatchSubmission {
     match submission.payload() {
         SubmissionPayload::Blobs(payloads) => {
@@ -236,7 +241,7 @@ impl BatchPipeline for TrackingPipeline {
             return Ok(StepResult::Idle);
         }
         self.encoding_steps -= 1;
-        self.record(PipelineCall::Step);
+        self.record(PipelineCall::BlockEncoded);
         Ok(StepResult::BlockEncoded)
     }
 
@@ -265,8 +270,8 @@ impl BatchPipeline for TrackingPipeline {
     }
 
     fn advance_l1_head(&mut self, l1_block: u64) {
-        let advanced = self.recorded.lock().unwrap().l1_heads().last().copied().unwrap_or(0);
-        if l1_block > advanced {
+        if l1_block > self.l1_head {
+            self.l1_head = l1_block;
             self.record(PipelineCall::AdvanceL1Head(l1_block));
         }
     }

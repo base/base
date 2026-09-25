@@ -27,7 +27,8 @@ impl UnsafeBlockSource for PendingSource {
 /// [`UnsafeBlockSource`] fed by a channel, which records the safe heads the driver asks it
 /// to catch up from.
 ///
-/// Hand-rolled rather than mocked: `reset_catchup` is recorded while the driver runs.
+/// Hand-rolled rather than mocked: `next` awaits a channel the test feeds while the driver
+/// runs, which `mockall` expectations cannot express.
 #[derive(Debug)]
 pub struct TrackingSource {
     events: ChannelBlockSource,
