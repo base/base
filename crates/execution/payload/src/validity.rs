@@ -95,6 +95,19 @@ impl ValidityPredicateEvaluation {
     }
 }
 
+/// Counts parked transactions by their current blocker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct ParkedPredicateCounts {
+    /// Transactions blocked on account balance.
+    pub(crate) balance: usize,
+    /// Transactions blocked on a storage slot.
+    pub(crate) storage: usize,
+    /// Transactions blocked on block number.
+    pub(crate) block_number: usize,
+    /// Transactions blocked on flashblock index.
+    pub(crate) flashblock_index: usize,
+}
+
 /// Predicate-parked transactions indexed by one currently unsatisfied state location.
 ///
 /// Buckets start as compact hash sets. Once a state bucket reaches `ordered_threshold`, it is
@@ -157,6 +170,20 @@ impl<T> ParkedPredicateIndex<T> {
     /// Returns whether no transactions are indexed.
     pub fn is_empty(&self) -> bool {
         self.transactions.is_empty()
+    }
+
+    /// Counts each parked transaction once by its current first-unsatisfied predicate.
+    pub(crate) fn parked_counts(&self) -> ParkedPredicateCounts {
+        let mut counts = ParkedPredicateCounts::default();
+        for entry in self.transactions.values() {
+            match entry.blocker {
+                ValidityPredicateKey::Balance(_) => counts.balance += 1,
+                ValidityPredicateKey::Storage(_, _) => counts.storage += 1,
+                ValidityPredicateKey::BlockNumber => counts.block_number += 1,
+                ValidityPredicateKey::FlashblockIndex => counts.flashblock_index += 1,
+            }
+        }
+        counts
     }
 
     /// Adds a parked transaction under its currently unsatisfied predicate.
@@ -507,7 +534,7 @@ mod tests {
     use base_execution_txpool::{ValidityOperator, ValidityPredicate};
     use revm::state::{Account, EvmState, EvmStorageSlot};
 
-    use super::{ParkedPredicateIndex, StateChangeEffects};
+    use super::{ParkedPredicateCounts, ParkedPredicateIndex, StateChangeEffects};
 
     fn balance(address: Address, op: ValidityOperator, value: u64) -> ValidityPredicate {
         ValidityPredicate::Balance { address, op, value: U256::from(value) }
@@ -680,6 +707,55 @@ mod tests {
         assert_eq!(
             effects,
             StateChangeEffects { affected_transactions: vec![hash], woken_buckets: 1 }
+        );
+    }
+
+    #[test]
+    fn parked_counts_track_reindexing_and_removal() {
+        let address = Address::with_last_byte(1);
+        let slot = U256::from(5);
+        let balance_hash = B256::with_last_byte(1);
+        let storage_hash = B256::with_last_byte(2);
+        let block_hash = B256::with_last_byte(3);
+        let flashblock_hash = B256::with_last_byte(4);
+
+        let mut index = ParkedPredicateIndex::default();
+        assert_eq!(index.parked_counts(), ParkedPredicateCounts::default());
+
+        index.park(balance_hash, (), balance(address, ValidityOperator::GreaterThan, 10));
+        index.park(storage_hash, (), storage(address, slot, ValidityOperator::Equal, 20));
+        index.park(
+            block_hash,
+            (),
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::GreaterThan,
+                value: U256::from(100),
+            },
+        );
+        index.park(
+            flashblock_hash,
+            (),
+            ValidityPredicate::FlashblockIndex {
+                op: ValidityOperator::Equal,
+                value: U256::from(1),
+            },
+        );
+
+        assert_eq!(
+            index.parked_counts(),
+            ParkedPredicateCounts { balance: 1, storage: 1, block_number: 1, flashblock_index: 1 }
+        );
+
+        assert!(index.reindex(block_hash, balance(address, ValidityOperator::GreaterThan, 30)));
+        assert_eq!(
+            index.parked_counts(),
+            ParkedPredicateCounts { balance: 2, storage: 1, block_number: 0, flashblock_index: 1 }
+        );
+
+        assert_eq!(index.remove(balance_hash), Some(()));
+        assert_eq!(
+            index.parked_counts(),
+            ParkedPredicateCounts { balance: 1, storage: 1, block_number: 0, flashblock_index: 1 }
         );
     }
 }

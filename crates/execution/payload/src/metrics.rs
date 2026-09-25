@@ -40,6 +40,11 @@ base_metrics::define_metrics! {
     )]
     predicate_bucket_depth: histogram,
     #[describe(
+        "Transactions left parked after each build, grouped by current blocker"
+    )]
+    #[label(name = "blocker", default = ["balance", "storage", "block_number", "flashblock_index"])]
+    validity_predicate_parked_per_build: histogram,
+    #[describe(
         "Accounts read while evaluating validity predicates per block, counting every read"
     )]
     predicate_accounts_loaded_total: histogram,
@@ -123,12 +128,20 @@ impl ValidityMetrics {
         Self::predicate_slots_loaded_unique().record(tracker.unique_slots() as f64);
     }
 
-    /// Records validity-predicate index bucket wakeups and depth distribution for one build.
+    /// Records index wakeups, bucket depths, and parked transaction counts after each build.
+    /// The native builder rejects flashblock-index predicates before they reach this index.
     pub fn record_predicate_index_diagnostics<T>(wakeups: u64, index: &ParkedPredicateIndex<T>) {
         Self::predicate_bucket_wakeups().record(wakeups as f64);
         for depth in index.bucket_depths() {
             Self::predicate_bucket_depth().record(depth as f64);
         }
+        let counts = index.parked_counts();
+        Self::validity_predicate_parked_per_build("balance").record(counts.balance as f64);
+        Self::validity_predicate_parked_per_build("storage").record(counts.storage as f64);
+        Self::validity_predicate_parked_per_build("block_number")
+            .record(counts.block_number as f64);
+        Self::validity_predicate_parked_per_build("flashblock_index")
+            .record(counts.flashblock_index as f64);
     }
 }
 
@@ -224,6 +237,18 @@ mod tests {
         assert!(rendered.contains("base_builder_predicate_slots_loaded_unique_sum 1"));
         assert!(rendered.contains("base_builder_predicate_bucket_wakeups_sum 3"));
         assert!(rendered.contains("base_builder_predicate_bucket_depth_sum 1"));
+        assert!(rendered.contains(
+            "base_builder_validity_predicate_parked_per_build_sum{blocker=\"balance\"} 1"
+        ));
+        assert!(rendered.contains(
+            "base_builder_validity_predicate_parked_per_build_sum{blocker=\"storage\"} 0"
+        ));
+        assert!(rendered.contains(
+            "base_builder_validity_predicate_parked_per_build_sum{blocker=\"block_number\"} 0"
+        ));
+        assert!(rendered.contains(
+            "base_builder_validity_predicate_parked_per_build_sum{blocker=\"flashblock_index\"} 0"
+        ));
     }
 
     #[test]
