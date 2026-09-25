@@ -1082,7 +1082,11 @@ impl Eip8130Executor {
                 if Self::creates_account(evm, outcome.sender, call.to, call.value)? {
                     let Some(left) = remaining.checked_sub(Eip8130GasSchedule::NEW_ACCOUNT_COST)
                     else {
-                        remaining = 0;
+                        // The charge does not fit. Leave `remaining` at the
+                        // unspent balance: `call_gas_spent` is
+                        // `pool - remaining` for the whole transaction, so
+                        // zeroing it would bill the entire call pool, including
+                        // gas this phase never consumed.
                         phase_reverted = true;
                         break;
                     };
@@ -1878,6 +1882,52 @@ mod tests {
             gas_used(&[]) - gas_used(&[(recipient, bytes!("00"))]),
             Eip8130GasSchedule::NEW_ACCOUNT_COST
         );
+    }
+
+    /// A new-account charge that does not fit in the remaining call pool reverts
+    /// the phase and bills only the gas already consumed. Zeroing the shared
+    /// remainder would report the whole pool as spent.
+    #[test]
+    fn unaffordable_new_account_charge_does_not_burn_the_unspent_pool() {
+        let key = signing_key(0x54);
+        let sender = eoa_address(&key);
+        let recipient = address!("0x00000000000000000000000000000000000000e4");
+        let mut tx = base_tx();
+        tx.calls = vec![vec![Call { to: recipient, value: U256::from(1u64), data: Bytes::new() }]];
+
+        let shortfall = Eip8130GasSchedule::NEW_ACCOUNT_COST - 1;
+        let mut gas_limit = shortfall;
+        let mut signed = eoa_signed(tx.clone(), &key);
+        let mut sender_intrinsic = 0;
+        for _ in 0..8 {
+            let mut trial = tx.clone();
+            trial.gas_limit = gas_limit;
+            signed = eoa_signed(trial, &key);
+            let envelope = BaseTxEnvelope::Eip8130(signed.clone());
+            let encoded: Bytes = alloy_eips::eip2718::Encodable2718::encoded_2718(&envelope).into();
+            let intrinsic =
+                IntrinsicGas::compute(&signed, &encoded, &IntrinsicGasInput::new(sender, true))
+                    .expect("intrinsic gas");
+            sender_intrinsic = intrinsic.sender_intrinsic();
+            let next = sender_intrinsic.saturating_add(shortfall);
+            if next == gas_limit {
+                break;
+            }
+            gas_limit = next;
+        }
+        assert_eq!(gas_limit, sender_intrinsic + shortfall, "gas limit did not converge");
+
+        let initial_balance = U256::from(10u64).pow(U256::from(18u64));
+        let mut evm = evm_with(initial_balance, sender);
+        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("tx should be included");
+
+        assert!(!outcome.result.is_success(), "phase should revert when creation gas does not fit");
+        assert_eq!(
+            outcome.result.tx_gas_used(),
+            sender_intrinsic,
+            "unspent call gas must not be billed"
+        );
+        assert!(outcome.result.tx_gas_used() < signed.tx().gas_limit);
     }
 
     /// A call whose `value` exceeds the sender's spendable balance (after the
