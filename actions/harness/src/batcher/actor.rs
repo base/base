@@ -157,12 +157,10 @@ impl Batcher {
             "BatcherConfig::batcher_address must match BatcherConfig::l1_signer"
         );
 
-        let runtime = TokioRuntime::new();
-
         let (derivation_status_tx, derivation_status_rx) = mpsc::channel(1);
 
         let driver = BatchDriver::new(
-            runtime,
+            TokioRuntime::new(),
             pipeline,
             tx_manager.clone(),
             BatchDriverConfig {
