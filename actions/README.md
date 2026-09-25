@@ -172,8 +172,10 @@ failed, or reorged.
 For the common happy path, call `batcher.advance(&mut h.l1).await`: it drains
 the L2 source, flushes the encoder, mines one L1 block, and confirms the
 resulting receipts. For more exact scenarios, use `encode_only`,
-`stage_n_frames`, `confirm_staged`, `fail_next_n_submissions`, `reorg`, and
-`wait_until_requeued`.
+`stage_n_frames`, `confirm_staged`, `mine_pending`, `fail_next_n_submissions`
+and `reorg`.
+Every `async` method of `Batcher` returns once the driver is idle again, so the
+test can read the tx manager's queues right after.
 
 
 ## Writing a test
