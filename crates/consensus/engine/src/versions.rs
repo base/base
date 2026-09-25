@@ -124,6 +124,7 @@ mod tests {
                     beryl: Some(50),
                     cobalt: Some(60),
                     denim: None,
+                    everest: None,
                     zenith: None,
                 },
                 ..Default::default()

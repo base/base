@@ -86,6 +86,13 @@ pub trait Upgrades: EthereumHardforks {
         self.fork_condition(BaseUpgrade::Denim).active_at_timestamp(timestamp)
     }
 
+    /// Returns `true` if [`Everest`](BaseUpgrade::Everest) is active at given block timestamp.
+    /// Everest is unscheduled by default, so this returns `false` until an activation time is
+    /// configured via genesis or the L1 upgrade signal.
+    fn is_everest_active_at_timestamp(&self, timestamp: u64) -> bool {
+        self.fork_condition(BaseUpgrade::Everest).active_at_timestamp(timestamp)
+    }
+
     /// Returns `true` if the [`Zenith`](BaseUpgrade::Zenith) gate is active at the given block
     /// timestamp. Zenith is the permanently unscheduled gate for future hardfork feature
     /// testing: it is never contract-backed, so it can only be activated through genesis
@@ -145,6 +152,10 @@ impl Upgrades for RollupConfig {
                 .unwrap_or(ForkCondition::Never),
             BaseUpgrade::Denim => self
                 .upgrade_activation_timestamp(BaseUpgrade::Denim)
+                .map(ForkCondition::Timestamp)
+                .unwrap_or(ForkCondition::Never),
+            BaseUpgrade::Everest => self
+                .upgrade_activation_timestamp(BaseUpgrade::Everest)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             // Zenith is the genesis-only gate for future hardfork feature testing: the runtime

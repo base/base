@@ -47,7 +47,7 @@ impl From<BaseSpecId> for SpecId {
             | BaseUpgrade::Holocene
             | BaseUpgrade::PectraBlobSchedule => Self::CANCUN,
             BaseUpgrade::Isthmus | BaseUpgrade::Jovian => Self::PRAGUE,
-            // Azul, Beryl, Cobalt, Denim, Zenith, and newer upgrades inherit the latest known
+            // Azul, Beryl, Cobalt, Denim, Everest, Zenith, and newer upgrades inherit the latest known
             // Ethereum spec until explicitly mapped.
             _ => Self::OSAKA,
         }
