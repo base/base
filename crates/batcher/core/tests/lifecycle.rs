@@ -39,9 +39,9 @@ fn test_drain_timeout_exits_with_in_flight_submissions() {
             result.is_ok(),
             "driver must exit after drain timeout even with in-flight submissions"
         );
-        let r = recorded.lock().unwrap();
-        assert_eq!(r.dequeued(), [SubmissionId(0)], "submission must have been dequeued");
-        assert_eq!(r.flushes(), 1, "flush must be called on shutdown");
+        let recorded = recorded.lock().unwrap();
+        assert_eq!(recorded.dequeued(), [SubmissionId(0)], "submission must have been dequeued");
+        assert_eq!(recorded.flushes(), 1, "flush must be called on shutdown");
     });
 }
 
@@ -74,9 +74,9 @@ fn test_shutdown_drains_in_flight_before_returning_flush_error() {
             ctx.now().saturating_sub(cancelled_at) >= Duration::from_millis(10),
             "in-flight receipts must be drained before the flush error is returned"
         );
-        let r = recorded.lock().unwrap();
-        assert_eq!(r.dequeued(), [SubmissionId(0)]);
-        assert_eq!(r.flushes(), 1);
+        let recorded = recorded.lock().unwrap();
+        assert_eq!(recorded.dequeued(), [SubmissionId(0)]);
+        assert_eq!(recorded.flushes(), 1);
     });
 }
 

@@ -5,8 +5,8 @@ use std::time::Duration;
 use base_batcher_core::{
     AdminError,
     test_utils::{
-        BlockStub, DriverFixture, PipelineCall, ScriptedTxManager, SubmissionStub,
-        TrackingPipeline, TrackingSource,
+        BlockStub, DriverFixture, ScriptedTxManager, SubmissionStub, TrackingPipeline,
+        TrackingSource,
     },
 };
 use base_batcher_source::{L2BlockEvent, test_utils::ChannelBlockSource};
@@ -88,22 +88,25 @@ fn test_stopped_leaves_the_source_unread() {
                 .source(source)
                 .build();
         let handle = ctx.spawn(driver.run());
-        let blocks_added = || {
-            let recorded = recorded.lock().unwrap();
-            recorded.calls.iter().filter(|c| matches!(c, PipelineCall::AddBlock(_))).count()
-        };
 
         // Stop, then send a block: it stays in the source.
         handles.admin.stop().await.unwrap();
         source_tx.send(L2BlockEvent::Block(Box::new(BlockStub::with_number(1)))).unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
-        assert_eq!(blocks_added(), 0, "a stopped batcher must not ingest blocks");
+        assert!(
+            recorded.lock().unwrap().added_blocks().is_empty(),
+            "a stopped batcher must not ingest blocks"
+        );
 
         // Start: the queued block and the next one reach the pipeline.
         handles.admin.start().await.unwrap();
         source_tx.send(L2BlockEvent::Block(Box::new(BlockStub::with_number(2)))).unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
-        assert_eq!(blocks_added(), 2, "a started batcher must ingest the queued blocks");
+        assert_eq!(
+            recorded.lock().unwrap().added_blocks(),
+            [1, 2],
+            "a started batcher must ingest the queued blocks"
+        );
 
         ctx.cancel();
         assert!(handle.await.unwrap().is_ok());
