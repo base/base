@@ -68,12 +68,16 @@ pub const L1_CONFIG_KEY: U256 = uint!(7_U256);
 /// so on-chain verification can match it against the actual `msg.sender`.
 pub const PROPOSER_KEY: U256 = uint!(8_U256);
 
+/// Number of L2 blocks between intermediate output root checkpoints.
+///
+/// The host writes this into [`INTERMEDIATE_BLOCK_INTERVAL_KEY`]. Callers do not
+/// supply it on a proof request.
+pub const INTERMEDIATE_BLOCK_INTERVAL: u64 = 300;
+
 /// The local key identifier for the intermediate block interval.
 ///
-/// This key retrieves the number of L2 blocks between intermediate output root
-/// checkpoints. The enclave uses this to sample the correct intermediate roots
-/// when constructing the aggregate proof journal, matching the on-chain
-/// `AggregateVerifier`'s `INTERMEDIATE_BLOCK_INTERVAL`.
+/// This key retrieves [`INTERMEDIATE_BLOCK_INTERVAL`]. The enclave uses it to
+/// sample intermediate roots when constructing the aggregate proof journal.
 pub const INTERMEDIATE_BLOCK_INTERVAL_KEY: U256 = uint!(9_U256);
 
 /// The local key identifier for the L1 head block number.

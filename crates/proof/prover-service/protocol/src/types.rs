@@ -196,9 +196,6 @@ pub struct ZkProofRequest {
     /// Optional L1 head hash used for witness generation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub l1_head: Option<B256>,
-    /// Optional intermediate output root interval.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub intermediate_root_interval: Option<u64>,
     /// L2 block used to pin the upgrade schedule; defaults to the claimed block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schedule_l2_block_number: Option<u64>,
@@ -574,7 +571,6 @@ mod tests {
                     number_of_blocks_to_prove: 20,
                     sequence_window: None,
                     l1_head: Some(B256::repeat_byte(0xab)),
-                    intermediate_root_interval: Some(128),
                     schedule_l2_block_number: None,
                     zk_vm: ZkVm::Sp1,
                     zk_backend: ZkBackend::Cluster,
@@ -596,7 +592,6 @@ mod tests {
                             "start_block_number": 10,
                             "number_of_blocks_to_prove": 20,
                             "l1_head": format!("{:#x}", B256::repeat_byte(0xab)),
-                            "intermediate_root_interval": 128,
                             "zk_vm": "sp1",
                             "zk_backend": "cluster"
                         }
@@ -696,7 +691,6 @@ mod tests {
                 claimed_l2_output_root: B256::repeat_byte(4),
                 claimed_l2_block_number: 5,
                 proposer: address!("0000000000000000000000000000000000000006"),
-                intermediate_block_interval: 7,
                 l1_head_number: 8,
                 schedule_l2_block_number: None,
             },
@@ -715,7 +709,6 @@ mod tests {
                     "claimed_l2_output_root": format!("{:#x}", B256::repeat_byte(4)),
                     "claimed_l2_block_number": 5,
                     "proposer": "0x0000000000000000000000000000000000000006",
-                    "intermediate_block_interval": 7,
                     "l1_head_number": 8,
                 },
                 "tee_kind": "aws_nitro",
@@ -857,7 +850,6 @@ mod tests {
             claimed_l2_output_root: B256::repeat_byte(4),
             claimed_l2_block_number: 5,
             proposer: address!("0000000000000000000000000000000000000006"),
-            intermediate_block_interval: 7,
             l1_head_number: 8,
             schedule_l2_block_number: None,
         };
@@ -873,7 +865,6 @@ mod tests {
                 "claimed_l2_output_root": format!("{:#x}", B256::repeat_byte(4)),
                 "claimed_l2_block_number": 5,
                 "proposer": "0x0000000000000000000000000000000000000006",
-                "intermediate_block_interval": 7,
                 "l1_head_number": 8,
             })
         );
@@ -929,6 +920,15 @@ mod tests {
         }))
         .expect("zk request should accept omitted optional fields");
 
+        let with_legacy_interval: ZkProofRequest = serde_json::from_value(json!({
+            "start_block_number": 10,
+            "number_of_blocks_to_prove": 20,
+            "intermediate_root_interval": 30,
+            "zk_vm": "sp1"
+        }))
+        .expect("zk request should ignore a legacy intermediate root interval");
+        assert_eq!(with_legacy_interval, request);
+
         assert_eq!(
             request,
             ZkProofRequest {
@@ -936,7 +936,6 @@ mod tests {
                 number_of_blocks_to_prove: 20,
                 sequence_window: None,
                 l1_head: None,
-                intermediate_root_interval: None,
                 schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
@@ -951,7 +950,6 @@ mod tests {
             number_of_blocks_to_prove: 20,
             sequence_window: None,
             l1_head: None,
-            intermediate_root_interval: None,
             schedule_l2_block_number: Some(42),
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,

@@ -178,7 +178,6 @@ mod tests {
             number_of_blocks_to_prove: 300,
             sequence_window: Some(10),
             l1_head: Some(l1_head),
-            intermediate_root_interval: Some(150),
             schedule_l2_block_number: None,
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
@@ -207,7 +206,6 @@ mod tests {
             claimed_l2_output_root: root,
             claimed_l2_block_number: 600,
             proposer: Address::repeat_byte(0x04),
-            intermediate_block_interval: 300,
             l1_head_number: 1200,
             schedule_l2_block_number: None,
         };
