@@ -137,10 +137,15 @@ first, which current deployments do not: B is not a registered TEE proposer, so
 Path 4 takes the ZK-fallback branch and the run ends there. This scenario stages
 the Path 3 shape directly instead of waiting for it.
 
-Game B is given a real SNARK of its canonical roots as in step 5, then patched
-as in step 6. A then drops B's TEE proof through the game's own
-`nullify(TEE, ...)`, so the game reaches the exact state a real TEE
-nullification produces — `proofCount` and `expectedResolution` included —
+Game B is given a real SNARK of its canonical roots as in step 5. A then drops
+B's TEE proof through the game's own `nullify(TEE, ...)`, and only then patches
+the root. The order is load-bearing: the challenger is already scanning, so
+patching first would expose an invalid `InvalidDualProposal` until the nullify
+landed, and a proof started against that shape could clear the game afterwards
+and satisfy every assertion below without `InvalidZkProposal` ever being
+classified. A valid ZK-only game is not actionable, so dropping TEE first is
+invisible to the scanner. Going through `nullify` rather than a storage write
+means the game reaches the exact state a real TEE nullification produces — `proofCount` and `expectedResolution` included —
 rather than the approximation a storage write would leave. A has no enclave to
 sign with, so the game's `TEE_VERIFIER()` is replaced with a runtime that
 returns `true` for the duration of that one transaction and restored
@@ -159,7 +164,11 @@ watch set of step 7 — `snapshot_bystanders` excludes both games under test, an
 without that A would be the one valid game nobody re-reads. One further bound
 covers disputes that revert, which move no game state and are therefore
 invisible to every state comparison: clearing Path 3 takes exactly one dispute
-submission, so the run fails if the challenger submitted more.
+submission, so the run fails if the challenger submitted more. That count is
+re-read after a further quiet window, because on its own it is sampled the
+moment B's ZK proof disappears and says nothing about the scans that follow —
+and by then the whole fork is quiet, B included, since a fully-nullified game is
+terminal to the scanner.
 
 Each destructive scenario ends by nullifying a *global* verifier, so they
 cannot share a fork: run `all`, `path1-path2` and `path3` in separate pods.
