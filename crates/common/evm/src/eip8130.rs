@@ -127,6 +127,17 @@ pub struct Eip8130Outcome {
     pub bump_protocol_nonce: bool,
 }
 
+impl Eip8130Outcome {
+    /// Applies the EIP-7623 floor to the sender portion of metered gas.
+    ///
+    /// Every path that reports or charges sender gas goes through this, so the
+    /// floor is applied the same way in estimation and settlement.
+    #[must_use]
+    pub const fn floored_sender_gas(&self, sender_gas: u64) -> u64 {
+        if sender_gas < self.sender_floor { self.sender_floor } else { sender_gas }
+    }
+}
+
 /// The result of dispatching an EIP-8130 transaction's `calls`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CallsResult {
@@ -534,9 +545,9 @@ impl Eip8130Executor {
             // on a revert, so the reported gas reflects the minimum a data-heavy
             // transaction is metered.
             let gross = outcome
-                .sender_intrinsic
-                .saturating_add(final_calls.call_gas_spent)
-                .max(outcome.sender_floor)
+                .floored_sender_gas(
+                    outcome.sender_intrinsic.saturating_add(final_calls.call_gas_spent),
+                )
                 .saturating_add(outcome.payer_auth);
             Self::end_inspection(
                 evm,
@@ -606,9 +617,7 @@ impl Eip8130Executor {
         // EIP-7623 floor raises the returned limit for a data-heavy transaction so
         // it is never rejected at admission (`gas_limit >= sender_floor`).
         let estimate_gas = outcome
-            .sender_intrinsic
-            .saturating_add(feasible_pool)
-            .max(outcome.sender_floor)
+            .floored_sender_gas(outcome.sender_intrinsic.saturating_add(feasible_pool))
             .saturating_add(outcome.payer_auth);
         Self::end_inspection(
             evm,
@@ -803,21 +812,20 @@ impl Eip8130Executor {
             //    three-reset worst case regardless of which slots are empty). The
             //    monotonic, body-derivable nonce first-use cost stays resolved.
             //    Execution reprices the discount precisely against real state.
-            let (sender_intrinsic, sender_floor, payer_auth, execution_gas_available) =
-                Self::resolve_execution_gas(
-                    signed,
-                    encoded,
-                    &IntrinsicGasInput::worst_case(sender, nonce_key_first_use),
-                    gas_limit,
-                )?;
+            let (intrinsic, execution_gas_available) = Self::resolve_execution_gas(
+                signed,
+                encoded,
+                &IntrinsicGasInput::worst_case(sender, nonce_key_first_use),
+                gas_limit,
+            )?;
 
             Ok(Eip8130Outcome {
                 sender,
                 payer,
                 gas_limit,
-                sender_intrinsic,
-                sender_floor,
-                payer_auth,
+                sender_intrinsic: intrinsic.sender_intrinsic(),
+                sender_floor: intrinsic.sender_floor(),
+                payer_auth: intrinsic.payer_auth,
                 execution_gas_available,
                 effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
                 base_fee,
@@ -973,14 +981,13 @@ impl Eip8130Executor {
                 };
 
             // 4. Intrinsic gas under the EIP-8130 schedule.
-            let (sender_intrinsic, sender_floor, payer_auth, execution_gas_available) =
-                Self::resolve_execution_gas(
-                    signed,
-                    encoded,
-                    &IntrinsicGasInput::new(sender, nonce_key_first_use)
-                        .with_revoke_discount_slots(applied_tx.revoke_discount_slots),
-                    gas_limit,
-                )?;
+            let (intrinsic, execution_gas_available) = Self::resolve_execution_gas(
+                signed,
+                encoded,
+                &IntrinsicGasInput::new(sender, nonce_key_first_use)
+                    .with_revoke_discount_slots(applied_tx.revoke_discount_slots),
+                gas_limit,
+            )?;
 
             // 5. Fee caps and payer balance.
             FeeCheck::validate_fees(max_fee, max_priority, base_fee)
@@ -988,16 +995,16 @@ impl Eip8130Executor {
             let payer_balance = sctx
                 .with_account_info(payer, |info| Ok(info.balance))
                 .map_err(BaseTransactionError::eip8130)?;
-            FeeCheck::validate_balance(payer_balance, gas_limit, payer_auth, max_fee)
+            FeeCheck::validate_balance(payer_balance, gas_limit, intrinsic.payer_auth, max_fee)
                 .map_err(BaseTransactionError::eip8130)?;
 
             Ok(Eip8130Outcome {
                 sender,
                 payer,
                 gas_limit,
-                sender_intrinsic,
-                sender_floor,
-                payer_auth,
+                sender_intrinsic: intrinsic.sender_intrinsic(),
+                sender_floor: intrinsic.sender_floor(),
+                payer_auth: intrinsic.payer_auth,
                 execution_gas_available,
                 effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
                 base_fee,
@@ -1570,8 +1577,7 @@ impl Eip8130Executor {
         let gross_used = outcome.sender_intrinsic.saturating_add(calls.call_gas_spent);
         let refund = Self::capped_refund(calls.refund, gross_used);
         let net_used = gross_used.saturating_sub(refund);
-        let sender_metered = net_used.max(outcome.sender_floor);
-        sender_metered.saturating_add(outcome.payer_auth)
+        outcome.floored_sender_gas(net_used).saturating_add(outcome.payer_auth)
     }
 
     /// Applies the transaction's account-configuration changes and installs the
@@ -1674,44 +1680,32 @@ impl Eip8130Executor {
         sctx.set_code(address, bytecode).map_err(BaseTransactionError::eip8130)
     }
 
-    /// Computes the EIP-8130 intrinsic gas and the gas left for `calls`, returning
-    /// `(sender_intrinsic, sender_floor, payer_auth, execution_gas_available)`.
+    /// Computes the EIP-8130 intrinsic gas and the gas left for `calls`.
     /// Shared by both pipelines so intrinsic pricing is computed identically for
-    /// execution and estimation. Errors when the EIP-7623 sender-side calldata
-    /// floor exceeds the gas limit (which also covers sender-intrinsic gas, since
-    /// `sender_floor >= sender_intrinsic`).
+    /// execution and estimation.
+    ///
+    /// Errors when `gas_limit` is below either the EIP-7623 sender floor or
+    /// sender-intrinsic gas. Both are checked: the floor dominates intrinsic gas
+    /// only while the floor rate is at least the standard data rate, and a
+    /// repriced schedule must be rejected rather than panic.
     fn resolve_execution_gas(
         signed: &base_common_consensus::Eip8130Signed,
         encoded: &[u8],
         input: &IntrinsicGasInput,
         gas_limit: u64,
-    ) -> Result<(u64, u64, u64, u64), BaseTransactionError> {
+    ) -> Result<(IntrinsicGas, u64), BaseTransactionError> {
         let intrinsic =
             IntrinsicGas::compute(signed, encoded, input).map_err(BaseTransactionError::eip8130)?;
-        // EIP-7623: a transaction whose `gas_limit` is below the calldata-floor
-        // branch is invalid. The floor dominates sender-intrinsic gas, so this
-        // single check subsumes the underfunded-intrinsic case.
-        let sender_floor = intrinsic.sender_floor();
-        debug_assert!(
-            sender_floor >= intrinsic.sender_intrinsic(),
-            "EIP-7623 sender floor is at least sender-intrinsic gas"
-        );
-        if gas_limit < sender_floor {
+        if gas_limit < intrinsic.sender_floor() {
             return Err(BaseTransactionError::eip8130(
                 "EIP-8130 gas limit is below the EIP-7623 calldata floor",
             ));
         }
-        // Infallible: `gas_limit >= sender_floor >= sender_intrinsic` (the
-        // floor formula, asserted above, plus the check just above).
-        let execution_gas_available = intrinsic
-            .execution_gas_available(gas_limit)
-            .expect("gas_limit >= sender_floor >= sender_intrinsic after the floor check");
-        Ok((
-            intrinsic.sender_intrinsic(),
-            sender_floor,
-            intrinsic.payer_auth,
-            execution_gas_available,
-        ))
+        let execution_gas_available =
+            intrinsic.execution_gas_available(gas_limit).ok_or_else(|| {
+                BaseTransactionError::eip8130("EIP-8130 gas limit is below intrinsic gas")
+            })?;
+        Ok((intrinsic, execution_gas_available))
     }
 }
 
@@ -2020,6 +2014,7 @@ mod tests {
         let mut gas_limit = shortfall;
         let mut signed = eoa_signed(tx.clone(), &key);
         let mut sender_intrinsic = 0;
+        let mut sender_floor = 0;
         for _ in 0..8 {
             let mut trial = tx.clone();
             trial.gas_limit = gas_limit;
@@ -2030,6 +2025,7 @@ mod tests {
                 IntrinsicGas::compute(&signed, &encoded, &IntrinsicGasInput::new(sender, true))
                     .expect("intrinsic gas");
             sender_intrinsic = intrinsic.sender_intrinsic();
+            sender_floor = intrinsic.sender_floor();
             let next = sender_intrinsic.saturating_add(shortfall);
             if next == gas_limit {
                 break;
@@ -2043,9 +2039,11 @@ mod tests {
         let outcome = evm.transact_raw(into_base_tx(&signed)).expect("tx should be included");
 
         assert!(!outcome.result.is_success(), "phase should revert when creation gas does not fit");
+        // No call gas was spent, so the bill is sender-intrinsic gas raised to
+        // the EIP-7623 floor.
         assert_eq!(
             outcome.result.tx_gas_used(),
-            sender_intrinsic,
+            sender_intrinsic.max(sender_floor),
             "unspent call gas must not be billed"
         );
         assert!(outcome.result.tx_gas_used() < signed.tx().gas_limit);
