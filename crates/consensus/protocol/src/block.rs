@@ -191,19 +191,29 @@ impl L2BlockInfo {
         block: &Block<T>,
         genesis: &ChainGenesis,
     ) -> Result<Self, FromBlockError> {
-        let block_info = BlockInfo::from(block);
+        Self::from_block_info_and_first_tx(
+            BlockInfo::from(block),
+            block.body.transactions.first().map(AsRef::as_ref),
+            genesis,
+        )
+    }
 
+    /// Constructs an [`L2BlockInfo`] without requiring the remaining transaction bodies.
+    ///
+    /// The first transaction must be the L1 info deposit, except at genesis where only
+    /// the block hash is validated. A missing first transaction on other blocks is an error.
+    pub fn from_block_info_and_first_tx(
+        block_info: BlockInfo,
+        first_tx: Option<&BaseTxEnvelope>,
+        genesis: &ChainGenesis,
+    ) -> Result<Self, FromBlockError> {
         let (l1_origin, sequence_number) = if block_info.number == genesis.l2.number {
             if block_info.hash != genesis.l2.hash {
                 return Err(FromBlockError::InvalidGenesisHash);
             }
             (genesis.l1, 0)
         } else {
-            if block.body.transactions.is_empty() {
-                return Err(FromBlockError::MissingL1InfoDeposit(block_info.hash));
-            }
-
-            let tx = block.body.transactions[0].as_ref();
+            let tx = first_tx.ok_or(FromBlockError::MissingL1InfoDeposit(block_info.hash))?;
             let Some(tx) = tx.as_deposit() else {
                 return Err(FromBlockError::FirstTxNonDeposit(tx.tx_type() as u8));
             };

@@ -4,7 +4,6 @@ use std::time::Instant;
 
 use alloy_eips::BlockNumberOrTag;
 use base_common_genesis::RollupConfig;
-use base_protocol::L2BlockInfo;
 
 mod forkchoice;
 pub use forkchoice::L2ForkchoiceState;
@@ -145,20 +144,11 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
                 ));
             }
 
-            let l2_parent_hash = current_fc.un_safe.block_info.parent_hash.into();
-            let l2_parent = engine_client
-                .get_l2_block(l2_parent_hash)
-                .full()
+            let l2_parent_hash = current_fc.un_safe.block_info.parent_hash;
+            current_fc.un_safe = engine_client
+                .l2_block_info_by_hash(l2_parent_hash)
                 .await?
-                .ok_or(SyncStartError::BlockNotFound(l2_parent_hash))?;
-
-            current_fc.un_safe = L2BlockInfo::from_block_and_genesis(
-                &l2_parent
-                    .map_header(|header| header.into_inner())
-                    .into_consensus()
-                    .map_transactions(|tx| tx.inner.inner.into_inner()),
-                &cfg.genesis,
-            )?;
+                .ok_or(SyncStartError::BlockNotFound(l2_parent_hash.into()))?;
             unsafe_walked_blocks = unsafe_walked_blocks.saturating_add(1);
         }
     }
@@ -211,18 +201,10 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
                 safe_walked_blocks = safe_walked_blocks.saturating_add(1);
                 continue;
             }
-            let block = engine_client
-                .get_l2_block(safe_cursor.block_info.parent_hash.into())
-                .full()
+            safe_cursor = engine_client
+                .l2_block_info_by_hash(safe_cursor.block_info.parent_hash)
                 .await?
                 .ok_or(SyncStartError::BlockNotFound(safe_cursor.block_info.parent_hash.into()))?;
-            safe_cursor = L2BlockInfo::from_block_and_genesis(
-                &block
-                    .map_header(|header| header.into_inner())
-                    .into_consensus()
-                    .map_transactions(|tx| tx.inner.inner.into_inner()),
-                &cfg.genesis,
-            )?;
             safe_walked_blocks = safe_walked_blocks.saturating_add(1);
         }
     }
@@ -642,6 +624,7 @@ mod tests {
         visible_l1_head.header.inner.number = unsafe_origin.number;
 
         let client = test_engine_client_builder()
+            .with_config(std::sync::Arc::new(rollup_config.clone()))
             .with_l2_block(BlockNumberOrTag::Latest.into(), unsafe_head)
             .with_l2_block(parent_hash.into(), parent)
             .with_l2_block(genesis_hash.into(), genesis)

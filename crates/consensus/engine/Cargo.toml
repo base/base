@@ -62,6 +62,7 @@ arbitrary.workspace = true
 tokio-tungstenite.workspace = true
 base-common-chains.workspace = true
 metrics-exporter-prometheus.workspace = true
+tower = { workspace = true, features = ["util"] }
 rand = {workspace = true, features = ["thread_rng"]}
 base-common-rpc-types = {workspace = true, features = ["arbitrary", "k256"]}
 
