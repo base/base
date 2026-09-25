@@ -9,6 +9,8 @@ pub use base_time::BaseTimeCache;
 
 mod block;
 mod call;
+mod pending_env;
+pub use pending_env::BasePendingEnvBuilder;
 mod pending_block;
 mod pubsub;
 
