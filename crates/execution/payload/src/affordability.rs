@@ -11,13 +11,20 @@ use revm::Database;
 pub struct CoinbaseTipAffordability;
 
 impl CoinbaseTipAffordability {
-    /// Returns `true` when `sender` and `payer` cannot cover worst-case gas plus
-    /// the phase-0 self-call from the balances currently in `db`.
+    /// The balance the sender must hold for a phase-0 self-call tip.
     ///
     /// `tip` is the inner vault transfer. `call_value` is the protocol call's
     /// value on that same self-call. The value is checked against the sender
     /// and then credited back to the sender before the vault transfer, so both
-    /// holds observe one balance and the sender must cover the larger of them.
+    /// observe one balance and the sender must cover the larger of them.
+    #[must_use]
+    pub fn sender_hold(tip: U256, call_value: U256) -> U256 {
+        tip.max(call_value)
+    }
+
+    /// Returns `true` when `sender` and `payer` cannot cover worst-case gas plus
+    /// `sender_hold` (see [`Self::sender_hold`]) from the balances currently in
+    /// `db`.
     ///
     /// A failed account read is treated as affordable so a transient DB error
     /// does not drop an otherwise-valid candidate.
@@ -27,8 +34,7 @@ impl CoinbaseTipAffordability {
         gas_limit: u64,
         payer_auth: u64,
         max_fee: u128,
-        tip: U256,
-        call_value: U256,
+        sender_hold: U256,
         db: &mut DB,
     ) -> bool {
         let Ok(payer_info) = db.basic(payer) else {
@@ -43,9 +49,6 @@ impl CoinbaseTipAffordability {
             };
             sender_info.map_or(U256::ZERO, |info| info.balance)
         };
-        // Self-call: `call_value` returns to the sender before the tip leaves,
-        // so the two amounts do not add.
-        let sender_hold = tip.max(call_value);
         FeeCheck::validate_gas_and_tip(
             payer_balance,
             sender_balance,
@@ -93,8 +96,7 @@ impl CoinbaseTipAffordability {
             tx.gas_limit(),
             payer_auth,
             tx.max_fee_per_gas(),
-            tip,
-            call_value,
+            Self::sender_hold(tip, call_value),
             db,
         )
     }
@@ -161,8 +163,7 @@ mod tests {
             21_000,
             0,
             2,
-            TIP,
-            U256::ZERO,
+            CoinbaseTipAffordability::sender_hold(TIP, U256::ZERO),
             &mut db
         ));
     }
@@ -178,8 +179,7 @@ mod tests {
             21_000,
             0,
             2,
-            TIP,
-            U256::ZERO,
+            CoinbaseTipAffordability::sender_hold(TIP, U256::ZERO),
             &mut db
         ));
     }
@@ -194,8 +194,7 @@ mod tests {
             21_000,
             0,
             2,
-            TIP,
-            U256::ZERO,
+            CoinbaseTipAffordability::sender_hold(TIP, U256::ZERO),
             &mut db
         ));
     }
@@ -211,8 +210,7 @@ mod tests {
             21_000,
             0,
             2,
-            TIP,
-            U256::ZERO,
+            CoinbaseTipAffordability::sender_hold(TIP, U256::ZERO),
             &mut db
         ));
     }
@@ -228,8 +226,7 @@ mod tests {
             21_000,
             0,
             2,
-            TIP,
-            U256::ZERO,
+            CoinbaseTipAffordability::sender_hold(TIP, U256::ZERO),
             &mut db
         ));
     }
@@ -246,8 +243,7 @@ mod tests {
             21_000,
             0,
             2,
-            TIP,
-            U256::from(500u64),
+            CoinbaseTipAffordability::sender_hold(TIP, U256::from(500u64)),
             &mut db
         ));
     }
@@ -263,8 +259,7 @@ mod tests {
             21_000,
             0,
             2,
-            TIP,
-            U256::from(1_500u64),
+            CoinbaseTipAffordability::sender_hold(TIP, U256::from(1_500u64)),
             &mut db
         ));
     }
@@ -280,8 +275,7 @@ mod tests {
             21_000,
             0,
             2,
-            TIP,
-            U256::from(1_500u64),
+            CoinbaseTipAffordability::sender_hold(TIP, U256::from(1_500u64)),
             &mut db
         ));
     }
@@ -297,8 +291,7 @@ mod tests {
             21_000,
             0,
             2,
-            TIP,
-            U256::from(1_500u64),
+            CoinbaseTipAffordability::sender_hold(TIP, U256::from(1_500u64)),
             &mut db
         ));
     }
@@ -311,8 +304,7 @@ mod tests {
             21_000,
             0,
             2,
-            TIP,
-            U256::ZERO,
+            CoinbaseTipAffordability::sender_hold(TIP, U256::ZERO),
             &mut FailingDatabase
         ));
     }
