@@ -15,11 +15,12 @@ mod engine;
 #[cfg(test)]
 pub use engine::MockEngineDerivationClient;
 pub use engine::{
-    BuildRequest, EngineActor, EngineActorRequest, EngineClientError, EngineClientResult,
-    EngineConfig, EngineDerivationClient, EngineError, EngineProcessor, EngineRequestReceiver,
-    EngineRpcProcessor, EngineRpcRequest, GetPayloadRequest, InsertUnsafePayloadRequest,
-    QueuedEngineDerivationClient, ReconcileShadowRequest, ResetOrigin, ResetOutcome, ResetReason,
-    ResetRequest, ResetRequestOutcome, ValidatorEngineRequestHandler,
+    BuildRequest, DisabledEngineDerivationClient, EngineActor, EngineActorRequest,
+    EngineClientError, EngineClientResult, EngineConfig, EngineDerivationClient, EngineError,
+    EngineProcessor, EngineRequestReceiver, EngineRpcProcessor, EngineRpcRequest,
+    GetPayloadRequest, InsertUnsafePayloadRequest, QueuedEngineDerivationClient,
+    ReconcileShadowRequest, ResetOrigin, ResetOutcome, ResetReason, ResetRequest,
+    ResetRequestOutcome, ValidatorEngineRequestHandler,
 };
 
 mod rpc;

@@ -75,7 +75,7 @@ async fn el_invalid_unsafe_payload_does_not_block_following_payload() -> Result<
     let processor = EngineProcessor::new_with_checkpoint(
         Arc::clone(&client),
         Arc::clone(&config),
-        NoopDerivationClient,
+        Box::new(NoopDerivationClient),
         Engine::new(initial_state, state_tx, queue_tx),
         Arc::new(base_consensus_engine::NoopForkchoiceCheckpointReader),
         Arc::new(NoopCheckpointWriter),
