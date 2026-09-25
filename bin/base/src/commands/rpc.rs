@@ -8,6 +8,7 @@ use base_consensus_cli::{
 };
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
+use base_observability_events::{DEFAULT_SHUTDOWN_TIMEOUT, GlobalTransactionEventWriter};
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::Args;
 use reth_cli_runner::CliRunner;
@@ -69,6 +70,10 @@ impl RpcCommand {
         let mut rollup_config = consensus_args.load_rollup_config()?;
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
+            // Declared before the node so it drains after the node is dropped.
+            let _transaction_event_journal =
+                GlobalTransactionEventWriter::drain_on_drop(DEFAULT_SHUTDOWN_TIMEOUT);
+
             execution
                 .standard
                 .rollup_args

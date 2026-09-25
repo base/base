@@ -37,6 +37,35 @@ producer-specific prefix:
 | `producer` | string | One of the producer identities below. |
 | `network` | string | Network label, for example `base-mainnet` or `base-sepolia`. |
 
+## Shutdown
+
+Rust producers emit through a process-global bounded lossy queue. Emit stays
+non-blocking: a full queue drops the event with reason `backpressure`. Process
+exit does **not** drop the static writer, so queued events are not drained by
+destructor.
+
+Graceful termination (`SIGTERM` / `SIGINT` after event-producing tasks stop):
+
+- `GlobalTransactionEventWriter::shutdown(timeout)` stops accepting new events
+  atomically.
+- Events already accepted are drained, the active file is flushed (without
+  `fsync`), and the file is closed.
+- Write or flush errors are returned to the caller. The wait cannot exceed
+  `timeout` (default 5 seconds). A blocked writer returns a timeout rather than
+  hanging process shutdown.
+- Emits that race with shutdown, or happen after it, do not panic and do not
+  write through a closed backend. They increment drop reason `shutdown`.
+
+Forced termination (`SIGKILL`, OOM, abort, panic that skips destructors, or a
+shutdown timeout while the worker is stuck) may lose queued events and can
+leave a partial last line. Collectors already skip malformed JSONL.
+
+`base-reth-node` and `base-builder` bind
+`GlobalTransactionEventWriter::drain_on_drop(timeout)` in the scope that owns the
+process lifecycle, so the drain runs on every exit path rather than at one
+hand-written call per return. The guard is declared before the event producers,
+so Rust drop order runs the drain after they have stopped.
+
 For Go/proxyd, mirror the same names in TOML:
 
 ```toml

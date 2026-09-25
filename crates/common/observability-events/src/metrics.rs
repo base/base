@@ -5,7 +5,10 @@ base_metrics::define_metrics! {
     #[describe("Transaction event journal entries submitted to the writer")]
     submitted_events: counter,
     #[describe("Transaction event journal entries dropped before enqueue")]
-    #[label(name = "reason", default = ["disabled", "backpressure", "serialization", "validation"])]
+    #[label(
+        name = "reason",
+        default = ["disabled", "backpressure", "serialization", "validation", "shutdown"]
+    )]
     dropped_events: counter,
     #[describe("Transaction event journal write or flush errors")]
     #[label(name = "operation", default = ["write", "flush"])]

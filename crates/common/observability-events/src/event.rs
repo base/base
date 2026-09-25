@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, time::Duration};
 
 use alloy_primitives::{B256, TxHash};
 use chrono::{DateTime, Utc};
@@ -17,6 +17,14 @@ pub const DEFAULT_MAX_FILE_BYTES: u64 = 128 * 1024 * 1024;
 
 /// Default number of transaction event journal segments to retain, including the active file.
 pub const DEFAULT_MAX_FILES: usize = 8;
+
+/// Default bound for graceful transaction event writer shutdown.
+///
+/// Shutdown stops accepting new events, drains already queued events, and
+/// flushes the active file. If the worker is blocked (for example on a stalled
+/// write), shutdown returns [`crate::ShutdownError::Timeout`] instead of waiting
+/// indefinitely.
+pub const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 const MAX_DATA_VALIDATION_DEPTH: usize = 16;
 

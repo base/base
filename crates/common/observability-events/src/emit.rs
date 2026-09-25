@@ -1,15 +1,18 @@
 //! Transaction event emission helpers and process-global writer access.
 
-use std::sync::{Mutex, OnceLock};
+use std::{
+    sync::{Mutex, OnceLock},
+    time::Duration,
+};
 
 use alloy_primitives::{B256, TxHash};
 use chrono::Utc;
 use serde_json::{Map, Value};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::{
-    EventIdBuilder, TransactionEvent, TransactionEventProducer, TransactionEventType,
-    TransactionEventWriter, TransactionEventWriterConfig, WriteEventError,
+    EventIdBuilder, ShutdownError, TransactionEvent, TransactionEventProducer,
+    TransactionEventType, TransactionEventWriter, TransactionEventWriterConfig, WriteEventError,
 };
 
 static GLOBAL_TRANSACTION_EVENT_WRITER: OnceLock<TransactionEventWriter> = OnceLock::new();
@@ -78,6 +81,44 @@ impl GlobalTransactionEventWriter {
     #[cfg(any(test, feature = "test-utils"))]
     pub fn get_or_init(writer: TransactionEventWriter) -> &'static TransactionEventWriter {
         GLOBAL_TRANSACTION_EVENT_WRITER.get_or_init(|| writer)
+    }
+
+    /// Stops accepting events, drains queued events, and flushes the active file.
+    ///
+    /// This does not drop the process-global slot. After shutdown, later emits
+    /// are rejected with [`WriteEventError::Shutdown`]. Repeated calls are
+    /// idempotent. If no writer is configured, this is a no-op.
+    pub fn shutdown(timeout: Duration) -> Result<(), ShutdownError> {
+        Self::get().map_or(Ok(()), |writer| writer.shutdown(timeout))
+    }
+
+    /// Returns a guard that drains the journal when it is dropped.
+    ///
+    /// Bind this once in the scope that owns the process lifecycle, before the
+    /// event producers are started. The guard then drains on every exit path,
+    /// including `?` propagation and unwinding, so no error path can skip it.
+    pub const fn drain_on_drop(timeout: Duration) -> TransactionEventJournalGuard {
+        TransactionEventJournalGuard { timeout }
+    }
+}
+
+/// Drains the process-global transaction event journal when dropped.
+///
+/// Drop order makes the drain happen after the producers declared later in the
+/// same scope have been dropped, which is the ordering `shutdown` requires.
+/// Binding to `_` instead of a named variable drops the guard immediately and
+/// drains before the producers run.
+#[derive(Debug)]
+#[must_use = "the journal is drained when this guard is dropped, so it must be bound to a name"]
+pub struct TransactionEventJournalGuard {
+    timeout: Duration,
+}
+
+impl Drop for TransactionEventJournalGuard {
+    fn drop(&mut self) {
+        if let Err(err) = GlobalTransactionEventWriter::shutdown(self.timeout) {
+            warn!(error = %err, "transaction event writer shutdown failed");
+        }
     }
 }
 
