@@ -27,6 +27,13 @@ pub const FRAMED_ZSTD_CHUNK_SIZE: usize = 16 * 1024 * 1024;
 /// untrusted header cannot request an arbitrarily large allocation.
 const MAX_PREALLOCATED_FRAME_SIZE: u64 = 1024 * 1024 * 1024;
 
+/// Largest compressed frame accepted by [`FramedZstdDecoder`].
+///
+/// Frames written by [`FramedZstdEncoder`] never exceed zstd's compression bound for one
+/// [`FRAMED_ZSTD_CHUNK_SIZE`] chunk. The limit leaves room for frames produced by `pzstd` at high
+/// compression levels while rejecting corrupted headers before they drive large reads.
+const MAX_COMPRESSED_FRAME_LEN: usize = 256 * 1024 * 1024;
+
 /// Zstd compression level used for snapshot archives (`0` selects zstd's default level).
 const ARCHIVE_COMPRESSION_LEVEL: i32 = 0;
 
@@ -94,6 +101,9 @@ impl FramedZstdHeader {
 /// Input is split into [`FRAMED_ZSTD_CHUNK_SIZE`] chunks. Up to `batch_frames` chunks are
 /// buffered, compressed concurrently, and written in input order, so peak memory is roughly
 /// `2 * batch_frames * FRAMED_ZSTD_CHUNK_SIZE`.
+///
+/// Call [`Self::finish`] to write the final frames: dropping the encoder discards any input that
+/// has not been emitted yet, matching [`zstd::Encoder`].
 #[derive(Debug)]
 pub struct FramedZstdEncoder<W: Write> {
     inner: W,
@@ -168,7 +178,11 @@ impl<W: Write> Write for FramedZstdEncoder<W> {
         Ok(len)
     }
 
-    /// Emits every buffered byte as complete frames, then flushes the inner writer.
+    /// Emits every buffered byte as frames, then flushes the inner writer.
+    ///
+    /// This honors the [`Write::flush`] contract, so a flush mid-stream ends the current frame
+    /// early. `tar::Builder` only flushes when a caller flushes an entry writer, which snapshot
+    /// packaging never does.
     fn flush(&mut self) -> io::Result<()> {
         self.write_pending_frames()?;
         self.inner.flush()
@@ -241,8 +255,23 @@ impl<R: Read> FramedZstdDecoder<R> {
             ));
         }
 
-        let mut frame = vec![0; FramedZstdHeader::frame_len(&header)?];
-        self.inner.read_exact(&mut frame)?;
+        let frame_len = FramedZstdHeader::frame_len(&header)?;
+        if frame_len > MAX_COMPRESSED_FRAME_LEN {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "framed zstd archive frame exceeds the maximum compressed length",
+            ));
+        }
+        // Grow the buffer with the bytes actually read so a truncated archive fails without
+        // allocating the full declared length.
+        let mut frame = Vec::new();
+        (&mut self.inner).take(frame_len as u64).read_to_end(&mut frame)?;
+        if frame.len() < frame_len {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "truncated framed zstd archive frame",
+            ));
+        }
         Ok(Some(frame))
     }
 
@@ -487,6 +516,16 @@ mod tests {
             .read_to_end(&mut Vec::new())
             .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn framed_decoder_rejects_oversized_frame_headers() {
+        let header = FramedZstdHeader::encode(u32::MAX);
+
+        let error = FramedZstdDecoder::new(Cursor::new(header), 1)
+            .read_to_end(&mut Vec::new())
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
