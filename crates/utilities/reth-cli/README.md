@@ -8,6 +8,9 @@ Reth-specific CLI utilities for Base execution layer binaries.
 - **Snapshot manifests**: Provides the Base-owned archive generator shared by the execution node's
   `snapshot-manifest` command and the snapshotter sidecar. Existing archives can be reused without
   recompression after verifying their uncompressed BLAKE3 hashes.
+- **Framed zstd archives**: Writes and reads `pzstd`-compatible archives made of independent
+  zstd frames. The proofs archive uses this layout so Base's downloader can decompress it in
+  parallel, while standard zstd decoders still read it sequentially.
 
 ## Usage
 

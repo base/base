@@ -62,7 +62,6 @@ base-upgrade-signal = { workspace = true, features = ["metrics"] }
 
 # misc
 tar.workspace = true
-zstd.workspace = true
 eyre.workspace = true
 humantime.workspace = true
 url.workspace = true
@@ -86,6 +85,7 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 [dev-dependencies]
 alloy-primitives.workspace = true
 base-common-genesis.workspace = true
+zstd.workspace = true
 rstest.workspace = true
 tempfile.workspace = true
 axum = { workspace = true, features = ["tokio", "http1"] }

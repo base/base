@@ -6,7 +6,7 @@
 
 use std::{
     ffi::OsString,
-    io::{Read, SeekFrom},
+    io::{BufReader, Read, SeekFrom},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -16,7 +16,7 @@ use std::{
 };
 
 use base_execution_chainspec::BaseChainSpec;
-use base_reth_cli::ProgressDisplay;
+use base_reth_cli::{ProgressDisplay, ZstdArchiveReader};
 use clap::Parser;
 use eyre::Result;
 use futures::{StreamExt, future::try_join_all};
@@ -1015,12 +1015,15 @@ impl ProofsDownloader {
     }
 
     /// Extracts a `.tar.zst` archive into the target directory.
+    ///
+    /// Framed archives are decompressed in parallel; single-frame archives published by older
+    /// snapshotters are decompressed sequentially.
     fn extract_tar_zst(archive_path: &Path, target_dir: &Path) -> Result<()> {
         let file = std::fs::File::open(archive_path)
             .map_err(|e| eyre::eyre!("failed to open {}: {e}", archive_path.display()))?;
         let archive_size = file.metadata()?.len();
         let progress = ExtractionProgress::new(file, archive_size);
-        let decoder = zstd::Decoder::new(progress)?;
+        let decoder = ZstdArchiveReader::new(BufReader::new(progress))?;
         let mut archive = tar::Archive::new(decoder);
         archive.unpack(target_dir)?;
         Ok(())
@@ -1717,6 +1720,37 @@ mod tests {
         let extracted = dest.path().join("proofs/data.mdb");
         assert!(extracted.exists(), "extracted file should exist");
         assert_eq!(std::fs::read(&extracted).unwrap(), b"proof-data-contents");
+    }
+
+    #[test]
+    fn extract_tar_zst_decodes_framed_archives() {
+        let src = tempfile::tempdir().unwrap();
+        let dest = tempfile::tempdir().unwrap();
+        // Larger than one frame so extraction spans several independently compressed frames.
+        let data: Vec<u8> = (0..base_reth_cli::FRAMED_ZSTD_CHUNK_SIZE * 2 + 17)
+            .map(|index| (index % 251) as u8 ^ (index / 4096) as u8)
+            .collect();
+
+        let mut builder = tar::Builder::new(
+            base_reth_cli::ZstdArchiveEncoder::new(
+                Vec::new(),
+                base_reth_cli::ArchiveCompression::Framed { workers: 3 },
+            )
+            .unwrap(),
+        );
+        let mut header = tar::Header::new_gnu();
+        header.set_size(data.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder.append_data(&mut header, "proofs/000001.sst", data.as_slice()).unwrap();
+        let archive = builder.into_inner().unwrap().finish().unwrap();
+        assert!(base_reth_cli::FramedZstdHeader::matches(&archive));
+
+        let archive_path = src.path().join("proofs.tar.zst");
+        std::fs::write(&archive_path, archive).unwrap();
+        ProofsDownloader::extract_tar_zst(&archive_path, dest.path()).unwrap();
+
+        assert_eq!(std::fs::read(dest.path().join("proofs/000001.sst")).unwrap(), data);
     }
 
     #[test]
