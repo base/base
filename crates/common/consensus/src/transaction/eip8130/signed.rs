@@ -368,12 +368,25 @@ impl Eip8130Signed {
         if !self.tx.is_open_payer() {
             return Ok(None);
         }
-        let signature = Self::parse_raw_k1_signature(self.payer_auth.as_ref())?;
-        alloy_consensus::crypto::secp256k1::recover_signer(
-            &signature,
+        Self::recover_raw_k1(
             self.tx.payer_signature_hash(resolved_sender),
+            self.payer_auth.as_ref(),
         )
         .map(Some)
+    }
+
+    /// Recovers a signer from a raw 65-byte `r || s || v` blob over `hash`.
+    ///
+    /// Requires `v in {27, 28}` and EIP-2 low-`s`. This is the single checked
+    /// recovery for a raw k1 blob: open-payer resolution and
+    /// `RecoveredActorId::recover_k1` both go through it.
+    #[cfg(feature = "k256")]
+    pub fn recover_raw_k1(
+        hash: B256,
+        raw: &[u8],
+    ) -> Result<Address, alloy_consensus::crypto::RecoveryError> {
+        let signature = Self::parse_raw_k1_signature(raw)?;
+        alloy_consensus::crypto::secp256k1::recover_signer(&signature, hash)
     }
 
     /// The account that pays gas: `resolved_sender` for self-pay, the named
