@@ -26,8 +26,8 @@ use base_protocol::BlockInfo;
 pub enum PipelineCall {
     /// `add_block`, with the block number.
     AddBlock(u64),
-    /// `step` encoded a block.
-    BlockEncoded,
+    /// `step`, recorded only when it encodes a block.
+    Step,
     /// `next_submission` handed out this submission.
     Dequeue(SubmissionId),
     /// `confirm`, with the submission id and its L1 inclusion block.
@@ -109,7 +109,7 @@ impl Recorded {
 
     /// The number of `step` calls that encoded a block.
     pub fn encoded_steps(&self) -> usize {
-        self.count(PipelineCall::BlockEncoded)
+        self.count(PipelineCall::Step)
     }
 
     fn pick<T>(&self, pick: impl Fn(&PipelineCall) -> Option<T>) -> Vec<T> {
@@ -242,7 +242,7 @@ impl BatchPipeline for TrackingPipeline {
             return Ok(StepResult::Idle);
         }
         self.encoding_steps -= 1;
-        self.record(PipelineCall::BlockEncoded);
+        self.record(PipelineCall::Step);
         Ok(StepResult::BlockEncoded)
     }
 
