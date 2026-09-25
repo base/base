@@ -48,6 +48,8 @@ bincode = { workspace = true, features = ["serde"] }
 
 # misc
 tracing.workspace = true
+rayon.workspace = true
+dashmap.workspace = true
 thiserror.workspace = true
 auto_impl.workspace = true
 parking_lot.workspace = true
