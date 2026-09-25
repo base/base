@@ -25,6 +25,8 @@ pub use reth_cli_commands::download::manifest::{
 };
 use tracing::info;
 
+use crate::{ArchiveCompression, ZstdArchiveEncoder};
+
 /// Default blocks per static file segment.
 const DEFAULT_BLOCKS_PER_FILE: u64 = 500_000;
 
@@ -443,11 +445,21 @@ impl SnapshotGenerator {
             }
         }
 
-        let mut single_components =
-            vec![("state", "state.tar.zst", state_source_files(params.source_datadir)?)];
+        // Stream archives receive their zstd worker count once all components are known.
+        let mut single_components = vec![(
+            "state",
+            "state.tar.zst",
+            state_source_files(params.source_datadir)?,
+            ArchiveCompression::Stream { workers: 0 },
+        )];
         let rocksdb_files = rocksdb_source_files(params.source_datadir)?;
         if !rocksdb_files.is_empty() {
-            single_components.push(("rocksdb_indices", "rocksdb_indices.tar.zst", rocksdb_files));
+            single_components.push((
+                "rocksdb_indices",
+                "rocksdb_indices.tar.zst",
+                rocksdb_files,
+                ArchiveCompression::Stream { workers: 0 },
+            ));
         }
 
         let proofs_files = if params.upload_proofs {
@@ -456,7 +468,15 @@ impl SnapshotGenerator {
             Vec::new()
         };
         if !proofs_files.is_empty() {
-            single_components.push(("proofs", "proofs.tar.zst", proofs_files));
+            // The proofs database is restored by Base's own downloader, which decodes framed
+            // archives in parallel. Standard zstd decoders, including older downloaders, still
+            // read the framed layout sequentially.
+            single_components.push((
+                "proofs",
+                "proofs.tar.zst",
+                proofs_files,
+                ArchiveCompression::Framed,
+            ));
         }
 
         // Each archive needs one Rayon worker to read and tar its files. Divide the remaining
@@ -473,13 +493,19 @@ impl SnapshotGenerator {
         // Rayon pool so the snapshotter's `--snapshot-threads` limit applies to this work too.
         let packaged_single_components = single_components
             .into_par_iter()
-            .map(|(component, archive_name, files)| {
+            .map(|(component, archive_name, files, compression)| {
+                let compression = match compression {
+                    ArchiveCompression::Stream { .. } => {
+                        ArchiveCompression::Stream { workers: zstd_workers_per_archive }
+                    }
+                    ArchiveCompression::Framed => ArchiveCompression::Framed,
+                };
                 let (size, output_files) = package_single_component(
                     archive_sink,
                     component,
                     archive_name,
                     &files,
-                    zstd_workers_per_archive,
+                    compression,
                 )?;
                 let decompressed_size = output_files.iter().map(|file| file.size).sum();
                 info!(
@@ -753,7 +779,7 @@ fn package_single_component(
     component: &str,
     archive_name: &str,
     files: &[PlannedFile],
-    zstd_workers: u32,
+    compression: ArchiveCompression,
 ) -> Result<(u64, Vec<OutputFileChecksum>)> {
     if files.is_empty() {
         bail!("cannot package empty archive: {archive_name}");
@@ -765,7 +791,7 @@ fn package_single_component(
         component = %component,
         raw_size = %ProgressDisplay::bytes(raw_size as f64),
         file_count = files.len(),
-        zstd_workers,
+        compression = ?compression,
         "packaging database component"
     );
     let compressed_bytes = Arc::new(AtomicU64::new(0));
@@ -777,7 +803,7 @@ fn package_single_component(
         files,
         Some(&mut progress),
         compressed_bytes,
-        zstd_workers,
+        compression,
     )?;
     Ok((packaged.size, packaged.output_files))
 }
@@ -805,7 +831,7 @@ fn write_chunk_archive(
         &planned,
         None,
         Arc::new(AtomicU64::new(0)),
-        0,
+        ArchiveCompression::Stream { workers: 0 },
     )
 }
 
@@ -833,14 +859,10 @@ fn write_archive_from_planned_files(
     files: &[PlannedFile],
     progress: Option<&mut CompressionProgress>,
     compressed_bytes: Arc<AtomicU64>,
-    zstd_workers: u32,
+    compression: ArchiveCompression,
 ) -> Result<PackagedArchive> {
     let writer = CountingWriter::new(archive_sink.create_archive(archive_name)?, compressed_bytes);
-    let mut encoder = zstd::Encoder::new(writer, 0)?;
-    encoder.include_checksum(true)?;
-    if zstd_workers > 0 {
-        encoder.multithread(zstd_workers)?;
-    }
+    let encoder = ZstdArchiveEncoder::new(writer, compression)?;
     let mut builder = tar::Builder::new(encoder);
 
     let output_files =
@@ -867,7 +889,7 @@ struct CountingWriter<W> {
 
 /// Tar builder that writes Zstandard-compressed bytes to a snapshot archive sink.
 type SnapshotArchiveBuilder<'a> =
-    tar::Builder<zstd::Encoder<'a, CountingWriter<Box<dyn SnapshotArchiveWriter>>>>;
+    tar::Builder<ZstdArchiveEncoder<'a, CountingWriter<Box<dyn SnapshotArchiveWriter>>>>;
 
 impl<W> CountingWriter<W> {
     const fn new(inner: W, compressed_bytes: Arc<AtomicU64>) -> Self {

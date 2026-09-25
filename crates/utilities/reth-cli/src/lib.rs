@@ -20,3 +20,9 @@ pub use snapshot_manifest::{
     SnapshotArchiveSink, SnapshotArchiveWriter, SnapshotGenerator, SnapshotManifest,
     SnapshotManifestExt,
 };
+
+mod zstd_archive;
+pub use zstd_archive::{
+    ArchiveCompression, FRAMED_ZSTD_CHUNK_SIZE, FramedZstdDecoder, FramedZstdEncoder,
+    FramedZstdHeader, ZstdArchiveEncoder, ZstdArchiveReader,
+};
