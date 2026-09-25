@@ -148,9 +148,9 @@ in-memory.
 The batcher actor needs to read L2 blocks in order to know what to batch.
 `ActionL2Source` is a `VecDeque<BaseBlock>`. Tests usually fill it with blocks
 produced by `L2Sequencer`, which uses the production L1 origin selector,
-attributes builder, and in-process engine client. Each block therefore contains a real
-L1-info deposit transaction and signed user transactions, rather than a
-batcher-only mock shape.
+attributes builder, and in-process engine client. Each block therefore
+contains a real L1-info deposit transaction and signed user transactions,
+rather than a batcher-only mock shape.
 
 `ActionTestHarness::create_l2_source(n)` is the shortcut for building a source
 with `n` sequenced blocks. Tests that need precise block contents can create

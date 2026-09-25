@@ -1,3 +1,5 @@
+//! [`Batcher`] actor driving a production [`BatchDriver`] through [`L1Miner`].
+
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
@@ -193,6 +195,13 @@ impl Batcher {
         });
 
         Self { l2_source, source_tx, l1_head_tx, admin, tx_manager, driver_task }
+    }
+
+    /// Push a block into the L2 source for the next [`advance`] call.
+    ///
+    /// [`advance`]: Batcher::advance
+    pub fn push_block(&mut self, block: BaseBlock) {
+        self.l2_source.push(block);
     }
 
     /// Drain the L2 source and forward all blocks to the driver, then flush.
@@ -433,13 +442,6 @@ impl Batcher {
     /// [`try_advance`]: Batcher::try_advance
     pub async fn advance(&mut self, l1: &mut L1Miner) {
         self.try_advance(l1).await.unwrap_or_else(|e| panic!("Batcher::advance failed: {e}"))
-    }
-
-    /// Push a block into the L2 source for the next [`advance`] call.
-    ///
-    /// [`advance`]: Batcher::advance
-    pub fn push_block(&mut self, block: BaseBlock) {
-        self.l2_source.push(block);
     }
 
     /// Fallible variant of [`advance`] — returns an error instead of panicking.
