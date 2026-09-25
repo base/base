@@ -29,4 +29,7 @@ pub enum BasePayloadBuilderError {
     /// executor.
     #[error("sequencer transaction commit was refused")]
     SequencerTransactionCommitRefused,
+    /// Thrown when the job was cancelled, e.g. because the requesting client went away.
+    #[error("payload job cancelled")]
+    Cancelled,
 }

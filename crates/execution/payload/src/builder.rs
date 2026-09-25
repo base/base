@@ -255,10 +255,13 @@ where
     }
 
     /// Computes the witness for the payload.
+    ///
+    /// Stops early with [`BasePayloadBuilderError::Cancelled`] once `cancel` is cancelled.
     pub fn payload_witness(
         &self,
         parent: SealedHeader<N::BlockHeader>,
         attributes: Attrs::RpcPayloadAttributes,
+        cancel: CancelOnDrop,
     ) -> Result<ExecutionWitness, PayloadBuilderError>
     where
         Attrs: Attributes,
@@ -273,7 +276,7 @@ where
             builder_config: self.config.clone(),
             chain_spec: self.client.chain_spec(),
             config,
-            cancel: Default::default(),
+            cancel,
             best_payload: Default::default(),
         };
 
@@ -556,6 +559,10 @@ impl<Txs> Builder<'_, Txs> {
         ctx.execute_sequencer_transactions(&mut builder)?;
         builder.into_executor().apply_post_execution_changes()?;
 
+        if ctx.cancel.is_cancelled() {
+            return Err(PayloadBuilderError::other(BasePayloadBuilderError::Cancelled));
+        }
+
         if ctx.chain_spec.is_isthmus_active_at_timestamp(ctx.attributes().timestamp()) {
             // force load `L2ToL1MessagePasser.sol` so l2 withdrawals root can be computed even if
             // no l2 withdrawals in block
@@ -837,6 +844,10 @@ where
         let resource_metering = &self.builder_config.resource_metering;
 
         for sequencer_tx in self.attributes().sequencer_transactions() {
+            if self.cancel.is_cancelled() {
+                return Err(PayloadBuilderError::other(BasePayloadBuilderError::Cancelled));
+            }
+
             // A sequencer's block should never contain blob transactions.
             if sequencer_tx.value().is_eip4844() {
                 return Err(PayloadBuilderError::other(
@@ -2098,6 +2109,30 @@ mod tests {
             build_pool_payload(ctx, NoopPayloadTransactions::<BasePooledTransaction>::default()),
             BuildOutcomeKind::Cancelled
         ));
+    }
+
+    #[test]
+    fn cancelled_ctx_stops_sequencer_execution_and_witness() {
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        ctx.config.attributes.transactions = vec![sequencer_attribute_tx(&pool_transaction(0))];
+        drop(ctx.cancel.clone());
+
+        let provider = test_state_provider();
+        let mut db = State::builder()
+            .with_database(StateProviderDatabase::new(&provider))
+            .with_bundle_update()
+            .build();
+        let mut builder = ctx.block_builder(&mut db).expect("block builder");
+        builder.apply_pre_execution_changes().expect("pre-execution changes");
+        let err = ctx.execute_sequencer_transactions(&mut builder).unwrap_err();
+        assert!(err.to_string().contains("cancelled"), "{err}");
+        drop(builder);
+
+        ctx.config.attributes.transactions.clear();
+        let err = Builder::new(|_| NoopPayloadTransactions::<BasePooledTransaction>::default())
+            .witness(test_state_provider(), NoopProvider::default(), &ctx)
+            .unwrap_err();
+        assert!(err.to_string().contains("cancelled"), "{err}");
     }
 
     #[derive(Debug)]

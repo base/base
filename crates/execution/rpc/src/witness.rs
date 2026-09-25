@@ -13,6 +13,7 @@ use reth_chainspec::ChainSpecProvider;
 use reth_evm::ConfigureEvm;
 use reth_node_api::{BuildNextEnv, NodePrimitives};
 use reth_primitives_traits::{SealedHeader, TxTy};
+use reth_revm::cancelled::CancelOnDrop;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use reth_storage_api::{
     BlockReaderIdExt, NodePrimitivesProvider, StateProviderFactory,
@@ -102,10 +103,13 @@ where
 
         let parent_header = self.parent_header(parent_block_hash).to_rpc_result()?;
 
+        // Cancels the blocking task if this future is dropped (e.g. the client disconnected).
+        let cancel = CancelOnDrop::default();
+        let task_cancel = cancel.clone();
         let (tx, rx) = oneshot::channel();
         let this = self.clone();
         self.inner.task_spawner.spawn_blocking_task(async move {
-            let res = this.inner.builder.payload_witness(parent_header, attributes);
+            let res = this.inner.builder.payload_witness(parent_header, attributes, task_cancel);
             let _ = tx.send(res);
         });
 
