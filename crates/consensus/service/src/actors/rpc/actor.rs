@@ -203,6 +203,9 @@ where
                 _ = cancellation.cancelled() => {
                     // The cancellation token has been triggered, so we should stop the server.
                     handle.stop().map_err(|_| RpcActorError::StopFailed)?;
+                    // Open connections keep the listener alive; wait for them to drain so a
+                    // node restarted in the same process can rebind the RPC port.
+                    handle.stopped().await;
                     // Since the RPC Server didn't originate the error, we should return Ok.
                     return Ok(());
                 }
@@ -219,7 +222,10 @@ where
 mod tests {
     use std::{net::SocketAddr, num::NonZeroUsize, time::Duration};
 
+    use base_consensus_safedb::DisabledSafeDB;
+
     use super::*;
+    use crate::{QueuedEngineRpcClient, QueuedSequencerAdminAPIClient};
 
     #[tokio::test]
     async fn test_launch_no_modules() {
@@ -257,5 +263,57 @@ mod tests {
 
         let result = launch_rpc_server(&launcher, modules).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancelled_actor_releases_rpc_port() {
+        let port = std::net::TcpListener::bind(("127.0.0.1", 0))
+            .and_then(|listener| listener.local_addr())
+            .expect("free tcp port")
+            .port();
+        let socket = SocketAddr::from(([127, 0, 0, 1], port));
+        let launcher = RpcBuilder {
+            socket,
+            no_restart: false,
+            enable_admin: false,
+            admin_persistence: None,
+            ws_enabled: false,
+            dev_enabled: false,
+            http_timeout: Duration::from_secs(60),
+            max_concurrent_requests: NonZeroUsize::new(1024).expect("nonzero"),
+        };
+        let (engine_rpc_request_tx, _engine_rpc_request_rx) = mpsc::channel(1);
+        let (l1_watcher_queries, _l1_watcher_queries_rx) = mpsc::channel(1);
+        let actor = RpcActor::<_, QueuedSequencerAdminAPIClient>::new(
+            launcher,
+            QueuedEngineRpcClient::new(engine_rpc_request_tx),
+            None,
+            Arc::new(DisabledSafeDB),
+            None,
+            None,
+        );
+        let cancellation = CancellationToken::new();
+        let running = tokio::spawn(actor.start(RpcContext {
+            p2p_network: None,
+            network_admin: None,
+            isolated_sequencer: false,
+            l1_watcher_queries,
+            cancellation: cancellation.clone(),
+        }));
+        let _open_connection = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(stream) = tokio::net::TcpStream::connect(socket).await {
+                    break stream;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("rpc server should start listening");
+
+        cancellation.cancel();
+        running.await.expect("rpc actor task").expect("rpc actor should stop cleanly");
+
+        std::net::TcpListener::bind(socket).expect("rpc port should be free once the actor exits");
     }
 }
