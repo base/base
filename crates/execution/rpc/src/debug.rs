@@ -38,6 +38,7 @@ use tokio::sync::{Semaphore, oneshot};
 use crate::{
     metrics::{DebugApiExtMetrics, DebugApis},
     state::BaseStateProviderFactory,
+    witness::witness_concurrency,
 };
 
 /// Represents the current proofs sync status.
@@ -137,7 +138,7 @@ where
             eth_api,
             evm_config,
             task_spawner,
-            semaphore: Semaphore::new(3),
+            semaphore: Semaphore::new(witness_concurrency()),
             _attrs: PhantomData,
         }
     }
