@@ -140,6 +140,7 @@ where
 
             // Keep task state current before reconcile decisions each cycle.
             proof_tasks.reap_finished_tasks();
+            self.signer_manager.reap_finished_cleanup_tasks().await;
 
             match discovery {
                 Ok(_) if self.config.cancel.is_cancelled() => {}
@@ -185,6 +186,7 @@ where
         }
 
         proof_tasks.drain_proof_tasks().await;
+        self.signer_manager.drain_deregistration_tasks().await;
 
         info!("registration driver stopped");
         Ok(())
@@ -557,22 +559,19 @@ mod tests {
         cancel: CancellationToken,
         instance_cache_ttl_cycles: u32,
     ) -> TestDriver {
-        let signer_manager = Arc::new(
-            SignerManager::new(
-                (),
-                (),
-                NoopTxManager,
-                SignerManagerConfig {
-                    registry_address: TEST_REGISTRY_ADDRESS,
-                    max_concurrency: DEFAULT_MAX_CONCURRENCY,
-                    max_tx_retries: DEFAULT_MAX_TX_RETRIES,
-                    tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
-                    max_attestation_age: TEST_MAX_ATTESTATION_AGE,
-                    crl_checks_enabled: false,
-                },
-            )
-            .unwrap(),
-        );
+        let signer_manager = Arc::new(SignerManager::new(
+            (),
+            (),
+            NoopTxManager,
+            None,
+            SignerManagerConfig {
+                registry_address: TEST_REGISTRY_ADDRESS,
+                max_concurrency: DEFAULT_MAX_CONCURRENCY,
+                max_tx_retries: DEFAULT_MAX_TX_RETRIES,
+                tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+                max_attestation_age: TEST_MAX_ATTESTATION_AGE,
+            },
+        ));
 
         RegistrationDriver::new(
             instances,

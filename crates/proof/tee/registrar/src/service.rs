@@ -25,8 +25,8 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    AwsTargetGroupDiscovery, DriverConfig, ProverClient, RegistrarError, RegistrarMetrics,
-    RegistrationDriver, Result, SignerManager, SignerManagerConfig,
+    AwsTargetGroupDiscovery, CrlChecker, CrlSource, DriverConfig, ProverClient, RegistrarError,
+    RegistrarMetrics, RegistrationDriver, Result, SignerManager, SignerManagerConfig,
 };
 
 /// Configuration needed to run the registrar service.
@@ -197,19 +197,29 @@ impl RegistrarConfig {
         let health_handle =
             tokio::spawn(HealthServer::serve(self.health_addr, Arc::clone(&ready), cancel.clone()));
 
+        let crl_source = self
+            .crl_nitro_verifier_address
+            .is_some()
+            .then(CrlChecker::new)
+            .transpose()?
+            .map(|checker| Box::new(checker) as Box<dyn CrlSource>);
+        if crl_source.is_none() {
+            warn!("AWS CRL checking is disabled; certificate revocation relies on CertManager");
+        }
+
         let signer_manager = Arc::new(SignerManager::new(
             registry,
             cert_manager,
             tx_manager.clone(),
+            crl_source,
             SignerManagerConfig {
                 registry_address: self.tee_prover_registry_address,
                 max_concurrency: self.max_concurrency,
                 max_tx_retries: self.max_tx_retries,
                 tx_retry_delay: self.tx_retry_delay,
                 max_attestation_age: self.max_attestation_age,
-                crl_checks_enabled: self.crl_nitro_verifier_address.is_some(),
             },
-        )?);
+        ));
         let driver = RegistrationDriver::new(
             discovery,
             ProverClient::new(self.prover_timeout),

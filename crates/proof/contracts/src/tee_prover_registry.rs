@@ -3,7 +3,7 @@
 //! Used by the registrar to manage signer registration and deregistration,
 //! and by the proposer to validate signers before on-chain submission.
 
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::RootProvider;
 use alloy_sol_types::{SolCall, sol};
 use async_trait::async_trait;
@@ -61,6 +61,9 @@ sol! {
 
         /// Returns all currently registered signer addresses.
         function getRegisteredSigners() external view returns (address[]);
+
+        /// Returns the image hash accepted by the current `AggregateVerifier`.
+        function getExpectedImageHash() external view returns (bytes32);
     }
 }
 
@@ -83,6 +86,9 @@ pub trait TEEProverRegistryClient: Send + Sync {
 
     /// Fetches the complete set of registered signer addresses.
     async fn get_registered_signers(&self) -> Result<Vec<Address>, ContractError>;
+
+    /// Returns the image hash accepted by the current `AggregateVerifier`.
+    async fn expected_image_hash(&self) -> Result<B256, ContractError>;
 }
 
 /// Concrete implementation backed by Alloy's sol-generated contract bindings.
@@ -126,6 +132,10 @@ impl TEEProverRegistryClient for TEEProverRegistryContractClient {
 
     async fn get_registered_signers(&self) -> Result<Vec<Address>, ContractError> {
         contract_call!(self.contract.getRegisteredSigners().call(), "getRegisteredSigners()")
+    }
+
+    async fn expected_image_hash(&self) -> Result<B256, ContractError> {
+        contract_call!(self.contract.getExpectedImageHash().call(), "getExpectedImageHash()")
     }
 }
 
@@ -193,5 +203,6 @@ mod tests {
         assert_ne!(ITEEProverRegistry::isValidSignerCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::isRegisteredSignerCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::getRegisteredSignersCall::SELECTOR, [0u8; 4]);
+        assert_ne!(ITEEProverRegistry::getExpectedImageHashCall::SELECTOR, [0u8; 4]);
     }
 }
