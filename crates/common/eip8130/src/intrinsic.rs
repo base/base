@@ -362,12 +362,13 @@ impl IntrinsicGas {
 
         // `payload` and its EIP-7623 floor are priced over the sender-billed
         // bytes: the encoding with an empty `payer_auth`. `payer_auth` bytes are
-        // metered separately (outside the sender's `gas_limit`).
-        let (payload, payload_floor) = if signed.payer_auth().is_empty() {
-            Self::payload_costs(encoded)
-        } else {
-            Self::payload_costs(&signed.encoded_2718_without_payer_auth())
-        };
+        // metered separately (outside the sender's `gas_limit`). The fold
+        // rewrites the list header in place instead of re-encoding the body.
+        let (payload, payload_floor) =
+            signed.fold_sender_billed_bytes(encoded, (0u64, 0u64), |costs, byte| {
+                let (standard, floor) = Self::byte_payload_costs(byte);
+                (costs.0.saturating_add(standard), costs.1.saturating_add(floor))
+            });
 
         Ok(Self {
             base: Eip8130GasSchedule::AA_BASE_COST,
@@ -417,46 +418,27 @@ impl IntrinsicGas {
         Ok(cost)
     }
 
-    /// EIP-2028 data cost of `bytes` (the standard per-byte rate, no floor).
-    fn data_cost(bytes: &[u8]) -> u64 {
-        bytes.iter().fold(0u64, |acc, &byte| {
-            let cost = if byte == 0 {
-                Eip8130GasSchedule::TX_DATA_ZERO_BYTE
-            } else {
-                Eip8130GasSchedule::TX_DATA_NONZERO_BYTE
-            };
-            acc.saturating_add(cost)
-        })
+    /// Standard EIP-2028 cost and EIP-7623 floor cost of one payload byte.
+    ///
+    /// A zero byte is one token (`TX_DATA_ZERO_BYTE` / `TX_TOTAL_COST_FLOOR_PER_TOKEN`).
+    /// A non-zero byte is four tokens.
+    const fn byte_payload_costs(byte: u8) -> (u64, u64) {
+        if byte == 0 {
+            (
+                Eip8130GasSchedule::TX_DATA_ZERO_BYTE,
+                Eip8130GasSchedule::TX_TOTAL_COST_FLOOR_PER_TOKEN,
+            )
+        } else {
+            (
+                Eip8130GasSchedule::TX_DATA_NONZERO_BYTE,
+                Eip8130GasSchedule::TX_TOTAL_COST_FLOOR_PER_TOKEN.saturating_mul(4),
+            )
+        }
     }
 
-    /// The standard EIP-2028 data-availability cost and the EIP-7623 calldata
-    /// *floor* over the caller-supplied EIP-2718 serialization
-    /// (`type_byte || rlp([..fields.., sender_auth, payer_auth])`), computed in a
-    /// single pass.
-    ///
-    /// Each byte is one EIP-7623 token if zero and four if non-zero. The standard
-    /// cost charges `TX_DATA_ZERO_BYTE`/`TX_DATA_NONZERO_BYTE` per byte (4 / 16);
-    /// the floor charges `TX_TOTAL_COST_FLOOR_PER_TOKEN` per token (10 / 40). The
-    /// floor is always `>= standard` per byte, so the returned floor is
-    /// `>= standard` overall.
-    fn payload_costs(encoded: &[u8]) -> (u64, u64) {
-        // EIP-7623 weights a non-zero byte as four tokens and a zero byte as one.
-        const NONZERO_TOKENS: u64 = 4;
-        encoded.iter().fold((0u64, 0u64), |(standard, floor), &byte| {
-            let (standard_cost, floor_cost) = if byte == 0 {
-                (
-                    Eip8130GasSchedule::TX_DATA_ZERO_BYTE,
-                    Eip8130GasSchedule::TX_TOTAL_COST_FLOOR_PER_TOKEN,
-                )
-            } else {
-                (
-                    Eip8130GasSchedule::TX_DATA_NONZERO_BYTE,
-                    Eip8130GasSchedule::TX_TOTAL_COST_FLOOR_PER_TOKEN
-                        .saturating_mul(NONZERO_TOKENS),
-                )
-            };
-            (standard.saturating_add(standard_cost), floor.saturating_add(floor_cost))
-        })
+    /// EIP-2028 data cost of `bytes` (the standard per-byte rate, no floor).
+    fn data_cost(bytes: &[u8]) -> u64 {
+        bytes.iter().fold(0u64, |acc, &byte| acc.saturating_add(Self::byte_payload_costs(byte).0))
     }
 
     /// Cost of authenticating one auth blob: authenticator execution gas plus the
@@ -1417,10 +1399,15 @@ mod tests {
         payer_auth.extend_from_slice(&[0x00; 4_000]);
         let signed_tx = signed(tx, configured_auth(K1), payer_auth);
         let gas = intrinsic(&signed_tx, &EXISTING_KEY);
-        assert_eq!(
-            gas.payload,
-            IntrinsicGas::data_cost(&signed_tx.encoded_2718_without_payer_auth())
+        let (payload, payload_floor) = signed_tx.encoded_2718_without_payer_auth().iter().fold(
+            (0u64, 0u64),
+            |costs, &byte| {
+                let (standard, floor) = IntrinsicGas::byte_payload_costs(byte);
+                (costs.0.saturating_add(standard), costs.1.saturating_add(floor))
+            },
         );
+        assert_eq!(gas.payload, payload);
+        assert_eq!(gas.payload_floor, payload_floor);
     }
 
     #[test]
