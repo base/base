@@ -75,6 +75,18 @@ where
                 };
 
                 match request {
+                    EngineActorRequest::PrepareSequencerStart { result_tx, .. } => {
+                        if result_tx
+                            .send(Err(EngineClientError::RequestError(
+                                "sequencer start is unsupported by validator engine handler"
+                                    .to_string(),
+                            )))
+                            .await
+                            .is_err()
+                        {
+                            warn!(target: "engine", "Sequencer start response receiver dropped");
+                        }
+                    }
                     EngineActorRequest::BuildRequest(request) => {
                         let BuildRequest { attributes, result_tx, otel_cx } = *request;
                         let client = Arc::clone(self.processor.client());

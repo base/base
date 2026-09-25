@@ -20,6 +20,7 @@ use std::{
 
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_eips::{eip2718::Encodable2718, eip7685::Requests};
+use alloy_primitives::B256;
 use alloy_provider::{Identity, ProviderBuilder};
 use alloy_rpc_types_engine::PayloadId;
 use async_trait::async_trait;
@@ -131,6 +132,14 @@ impl BuilderBackedEngineClient {
 /// `newPayload` + canonical `forkchoiceUpdated` to import it.
 #[async_trait]
 impl SequencerEngineClient for BuilderBackedEngineClient {
+    async fn prepare_sequencer_start(&self, expected_hash: B256) -> EngineClientResult<()> {
+        let head = self.head.lock().expect("head lock").block_info.hash;
+        if expected_hash == B256::ZERO || expected_hash != head {
+            return Err(EngineClientError::RequestError("unsafe head mismatch".to_string()));
+        }
+        Ok(())
+    }
+
     async fn reset_engine_forkchoice(&self, _reason: ResetReason) -> EngineClientResult<()> {
         let head = self.head.lock().expect("head lock").block_info.hash;
         self.engine()

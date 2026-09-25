@@ -1,3 +1,4 @@
+use alloy_primitives::B256;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_engine::{
@@ -63,6 +64,13 @@ pub enum EngineClientError {
 /// Inbound requests that the [`crate::EngineActor`] can process.
 #[derive(Debug)]
 pub enum EngineActorRequest {
+    /// Request to atomically validate and prepare a stopped sequencer for activation.
+    PrepareSequencerStart {
+        /// Unsafe head hash supplied by the administrator.
+        expected_hash: B256,
+        /// Channel on which readiness or rejection is returned.
+        result_tx: mpsc::Sender<EngineClientResult<()>>,
+    },
     /// Request to build.
     BuildRequest(Box<BuildRequest>),
     /// Request to get the sealed payload without inserting it.

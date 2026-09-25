@@ -985,6 +985,17 @@ impl BaseEngineApi for ActionEngineClient {
 
 #[async_trait]
 impl SequencerEngineClient for ActionEngineClient {
+    async fn prepare_sequencer_start(
+        &self,
+        expected_hash: B256,
+    ) -> Result<(), NodeEngineClientError> {
+        let head = self.inner.lock().expect("action engine inner lock poisoned").canonical_head;
+        if expected_hash == B256::ZERO || expected_hash != head.block_info.hash {
+            return Err(NodeEngineClientError::RequestError("unsafe head mismatch".to_string()));
+        }
+        Ok(())
+    }
+
     async fn reset_engine_forkchoice(
         &self,
         _reason: ResetReason,
