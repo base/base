@@ -4,7 +4,7 @@ use alloy_primitives::{
     Address, B256, Bytes, keccak256,
     map::{B256Map, HashMap},
 };
-use rayon::iter::{ParallelBridge, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use reth_db::DatabaseError;
 use reth_execution_errors::{StateProofError, StateRootError, StorageRootError, TrieWitnessError};
 use reth_trie::{
@@ -17,18 +17,15 @@ use reth_trie::{
 };
 use reth_trie_common::{
     AccountProof, ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, HashedStorage,
-    MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
+    MultiProof, MultiProofTargets, MultiProofTargetsV2, StorageMultiProof, StorageProof, TrieInput,
     updates::TrieUpdates,
 };
 
 use crate::{
     BaseProofsHashedAccountCursorFactory, BaseProofsStorage, BaseProofsStore,
-    BaseProofsTrieCursorFactory,
+    BaseProofsTrieCursorFactory, CachedHashedCursorFactory, CachedTrieCursorFactory,
+    CursorResultCache,
 };
-
-/// Accounts plus storage slots per parallel witness prewarm job; reth's default multiproof chunk
-/// size.
-const WITNESS_PREWARM_CHUNK_SIZE: usize = 5;
 
 /// Build the trie + hashed cursor factories sharing one read transaction at the given block.
 const fn from_tx<'tx, 'db, S>(
@@ -413,26 +410,53 @@ where
         let nodes_sorted = input.nodes.into_sorted();
         let state_sorted = input.state.into_sorted();
         let (trie_factory, hashed_factory) = from_tx(storage, tx, block_number);
-        // Trie reads are serial and IO-bound. Compute the witness's initial multiproof in parallel
-        // chunks first so the serial walk below mostly hits the storage cache; results are
-        // discarded and any error resurfaces from the witness itself.
+        // Every cursor below reads the same snapshot at the same block, so their results are
+        // shared through one cache for the whole request.
+        let cache = CursorResultCache::default();
+        let trie_factory = CachedTrieCursorFactory::new(trie_factory, &cache);
+        let hashed_factory = CachedHashedCursorFactory::new(hashed_factory, &cache);
+        let overlay_trie_factory =
+            InMemoryTrieCursorFactory::new(trie_factory.clone(), &nodes_sorted);
+        let overlay_hashed_factory =
+            HashedPostStateCursorFactory::new(hashed_factory.clone(), &state_sorted);
+        // The witness walk below reads the trie serially. Compute each target account's share of
+        // its initial multiproof in parallel first, with the same proof algorithm, overlay, and
+        // prefix sets, so the serial walk issues the same cursor operations and replays cached
+        // results; proofs are discarded and any error resurfaces from the witness itself.
         tracing::info_span!("witness_prewarm").in_scope(|| {
-            target.multi_proof_targets().chunks(WITNESS_PREWARM_CHUNK_SIZE).par_bridge().for_each(
-                |targets| {
-                    let _ = Proof::new(trie_factory.clone(), hashed_factory.clone())
-                        .multiproof(targets);
+            target.multi_proof_targets().into_iter().collect::<Vec<_>>().into_par_iter().for_each(
+                |(hashed_address, slots)| {
+                    let mut targets = MultiProofTargetsV2 {
+                        account_targets: vec![hashed_address.into()],
+                        ..Default::default()
+                    };
+                    if !slots.is_empty() {
+                        targets
+                            .storage_targets
+                            .insert(hashed_address, slots.into_iter().map(Into::into).collect());
+                    }
+                    let _ =
+                        Proof::new(overlay_trie_factory.clone(), overlay_hashed_factory.clone())
+                            .with_prefix_sets_mut(input.prefix_sets.clone())
+                            .multiproof_v2(targets);
                 },
             );
         });
-        TrieWitness::new(trie_factory.clone(), hashed_factory.clone())
-            .with_trie_cursor_factory(InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted))
-            .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
-                hashed_factory,
-                &state_sorted,
-            ))
+        let (prewarm_hits, prewarm_misses) = (cache.hits(), cache.misses());
+        let witness = TrieWitness::new(trie_factory, hashed_factory)
+            .with_trie_cursor_factory(overlay_trie_factory)
+            .with_hashed_cursor_factory(overlay_hashed_factory)
             .with_prefix_sets_mut(input.prefix_sets)
             .always_include_root_node()
             .with_execution_witness_mode(mode)
-            .compute(target)
+            .compute(target);
+        tracing::debug!(
+            prewarm_hits,
+            prewarm_misses,
+            witness_hits = cache.hits() - prewarm_hits,
+            witness_misses = cache.misses() - prewarm_misses,
+            "witness cursor cache"
+        );
+        witness
     }
 }
