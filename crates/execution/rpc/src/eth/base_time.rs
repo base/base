@@ -9,7 +9,8 @@ use alloy_primitives::BlockHash;
 use base_common_consensus::BaseTransaction;
 use base_protocol::BaseTimeUpdateTx;
 use lru::LruCache;
-use reth_storage_api::{TransactionsProvider, errors::ProviderError};
+use reth_primitives_traits::BlockBody as _;
+use reth_storage_api::{BlockReader, errors::ProviderError};
 
 /// Cache of validated `BaseTime` timestamps keyed by block hash.
 #[derive(Clone, Debug)]
@@ -39,7 +40,7 @@ impl BaseTimeCache {
     ) -> Result<Option<u64>, ProviderError>
     where
         T: BaseTransaction,
-        Provider: TransactionsProvider<Transaction = T>,
+        Provider: BlockReader<Transaction = T>,
     {
         if let Some(timestamp_ms) =
             self.timestamps.lock().unwrap_or_else(PoisonError::into_inner).get(&block_hash).copied()
@@ -47,13 +48,31 @@ impl BaseTimeCache {
             return Ok(timestamp_ms);
         }
 
-        let transactions = match provider.transactions_by_block(block_hash.into()) {
-            Ok(Some(transactions)) => transactions,
-            Ok(None) | Err(ProviderError::BlockExpired { .. }) => return Ok(None),
+        match provider.transactions_by_block(block_hash.into()) {
+            Ok(Some(transactions)) => {
+                return Ok(self.insert_from_transactions(
+                    block_hash,
+                    block_number,
+                    block_timestamp,
+                    &transactions,
+                ));
+            }
+            Ok(None) | Err(ProviderError::BlockExpired { .. }) => {}
             Err(error) => return Err(error),
+        }
+
+        // Transaction lookups exclude executed payloads until forkchoice makes them canonical.
+        let Some(block) = provider.pending_block()?.filter(|block| block.hash() == block_hash)
+        else {
+            return Ok(None);
         };
 
-        Ok(self.insert_from_transactions(block_hash, block_number, block_timestamp, &transactions))
+        Ok(self.insert_from_transactions(
+            block_hash,
+            block_number,
+            block_timestamp,
+            block.body().transactions(),
+        ))
     }
 
     /// Validates, caches, and returns a block's millisecond timestamp from its transactions.
