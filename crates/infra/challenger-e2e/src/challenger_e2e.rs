@@ -148,10 +148,28 @@ impl ChallengerE2e {
                 .await?;
         }
 
-        // Staged before the challenger is released: Path 3 needs an invalid
-        // game on the fork from the first scan, so there is no quiet window to
-        // observe first.
+        Self::release_challenger(&fork_url, &challenger)?;
+        Self::await_first_scan(&config).await?;
+
+        Self::assert_quiet_on_valid_games(&config).await?;
+
+        // After the quiet window, not before it. B is a valid dual-proof game
+        // until `stage_path3` patches it, so this scenario gets the same
+        // positive case as every other one: a challenger that disputes valid
+        // games fails above rather than reaching Path 3 at all.
         if config.scenario == Scenario::Path3 {
+            // Game A is never corrupted in this scenario, so it is a valid game
+            // the challenger must leave alone — but `snapshot_bystanders`
+            // excludes both games under test. Watching it here is what makes
+            // the collateral-damage check cover it.
+            let mut untouched = bystanders;
+            untouched
+                .push((game_a.address, Self::read_game_state(&verifier, game_a.address).await?));
+
+            // Zero, because `assert_quiet_on_valid_games` above asserts these
+            // counters are still absolutely zero once the first scan completes.
+            let submitted = Self::disputes_submitted(&config).await?;
+
             let nonce = Self::stage_path3(
                 &config,
                 &fork_url,
@@ -162,17 +180,11 @@ impl ChallengerE2e {
                 game_b,
             )
             .await?;
-            Self::release_challenger(&fork_url, &challenger)?;
-            Self::await_first_scan(&config).await?;
-            Self::await_path3(&config, &verifier, &provider, &challenger, game_b, nonce).await?;
-            Self::assert_bystanders_untouched(&verifier, &bystanders).await?;
+            Self::await_path3(&config, &verifier, &provider, &challenger, game_b, nonce, submitted)
+                .await?;
+            Self::assert_bystanders_untouched(&verifier, &untouched).await?;
             return Ok(());
         }
-
-        Self::release_challenger(&fork_url, &challenger)?;
-        Self::await_first_scan(&config).await?;
-
-        Self::assert_quiet_on_valid_games(&config).await?;
 
         let (path1, checkpoint) =
             Self::run_path1(&config, &fork_url, &verifier, &provider, &driver, &challenger, game_a)
@@ -561,6 +573,11 @@ impl ChallengerE2e {
     }
 
     /// Path 3: the challenger must ZK-nullify the invalid ZK-only proposal.
+    ///
+    /// `submitted_before` is the dispute-submission count from before the game
+    /// was patched. Exactly one dispute clears Path 3, so anything above that
+    /// went somewhere this scenario never corrupted — and a dispute that
+    /// reverts moves no game state, so the per-game assertions cannot see it.
     async fn await_path3(
         config: &Config,
         verifier: &AggregateVerifierContractClient,
@@ -568,6 +585,7 @@ impl ChallengerE2e {
         challenger: &PrivateKeySigner,
         game: Candidate,
         nonce: u64,
+        submitted_before: f64,
     ) -> Result<()> {
         let state = Self::poll_until(
             config,
@@ -599,8 +617,27 @@ impl ChallengerE2e {
         )
         .await?;
 
-        info!(game = %game.address, "Path 3: invalid ZK proposal nullified");
+        let submitted = Self::disputes_submitted(config).await? - submitted_before;
+        ensure!(
+            submitted <= 1.0,
+            "the challenger submitted {submitted} disputes to clear Path 3, which takes one; the \
+             extra ones went to a game this scenario never corrupted, and a dispute that reverts \
+             leaves its game state untouched"
+        );
+
+        info!(game = %game.address, disputes = submitted, "Path 3: invalid ZK proposal nullified");
         Ok(())
+    }
+
+    /// Total dispute transactions the challenger has submitted, reverted or not.
+    ///
+    /// Counted at submission rather than from game state: a dispute that
+    /// reverts moves nothing on-chain, so it is invisible to every other
+    /// assertion in this test.
+    async fn disputes_submitted(config: &Config) -> Result<f64> {
+        let scrape = Scrape::fetch(&config.challenger_metrics_url).await?;
+        Ok(scrape.sum("base_challenger_nullify_tx_submitted_total")
+            + scrape.sum("base_challenger_challenge_tx_submitted_total"))
     }
 
     /// Hands the fork and a funded key to the challenger sidecar, which is

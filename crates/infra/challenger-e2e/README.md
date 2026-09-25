@@ -152,6 +152,15 @@ What is left is `(teeProver == 0, zkProver != 0, counteredIndex == 0)` over an
 invalid root — `InvalidZkProposal`. The challenger must clear `zkProver`,
 leave `counteredIndex` at 0, and move B's nonce.
 
+Staging happens *after* the quiet window of step 2, not before it: B is a valid
+dual-proof game until it is patched, so this scenario gets the same positive
+case as every other one. Game A is never corrupted here, so it is added to the
+watch set of step 7 — `snapshot_bystanders` excludes both games under test, and
+without that A would be the one valid game nobody re-reads. One further bound
+covers disputes that revert, which move no game state and are therefore
+invisible to every state comparison: clearing Path 3 takes exactly one dispute
+submission, so the run fails if the challenger submitted more.
+
 Each destructive scenario ends by nullifying a *global* verifier, so they
 cannot share a fork: run `all`, `path1-path2` and `path3` in separate pods.
 
