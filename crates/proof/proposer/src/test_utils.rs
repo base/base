@@ -531,9 +531,10 @@ impl ProofRequesterProvider for MockProofRequester {
             ));
         };
         let target = tee_request.proof.claimed_l2_block_number;
-        // Proof requests no longer carry the checkpoint stride. Proposer tests that
-        // complete a TEE proof use a 100-block game, so the fake proof covers that span.
-        let start = target.saturating_sub(100);
+        // Proof requests no longer carry a stride. This fake covers one game at the
+        // mock verifier's default block interval, which is what proposer tests use.
+        let span = MockAggregateVerifier::default().block_interval.max(1);
+        let start = target.saturating_sub(span);
         let proposals = ((start + 1)..=target).map(test_proposal).collect::<Vec<_>>();
         let aggregate_proposal = Proposal {
             output_root: tee_request.proof.claimed_l2_output_root,
