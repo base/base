@@ -137,15 +137,25 @@ first, which current deployments do not: B is not a registered TEE proposer, so
 Path 4 takes the ZK-fallback branch and the run ends there. This scenario stages
 the Path 3 shape directly instead of waiting for it.
 
-Game B is given a real SNARK of its canonical roots as in step 5. A then drops
-B's TEE proof through the game's own `nullify(TEE, ...)`, and only then patches
-the root. The order is load-bearing: the challenger is already scanning, so
-patching first would expose an invalid `InvalidDualProposal` until the nullify
-landed, and a proof started against that shape could clear the game afterwards
-and satisfy every assertion below without `InvalidZkProposal` ever being
-classified. A valid ZK-only game is not actionable, so dropping TEE first is
-invisible to the scanner. Going through `nullify` rather than a storage write
-means the game reaches the exact state a real TEE nullification produces — `proofCount` and `expectedResolution` included —
+Game B is given a real SNARK of its canonical roots as in step 5, is patched as
+in step 6, and A then drops B's TEE proof through the game's own
+`nullify(TEE, ...)`. That order is forced, not chosen: `nullify` refutes a
+checkpoint by proving a root that *differs* from the stored one, and
+`_checkIntermediateRoot` reverts with `IntermediateRootSameAsProposed()` when
+they match — so the root has to be corrupted first. The game is therefore an
+invalid `InvalidDualProposal` for one Anvil write plus one transaction, with no
+proof request in between.
+
+That window is asserted shut rather than argued about:
+`invalid_dual_proposal_detected_total` must not move across staging. Without it,
+a challenger that scanned mid-window could have a Path 4 proof in flight, and its
+later ZK nullification would clear the game while satisfying every assertion
+below — a green run that never reached `InvalidZkProposal`. The end state is
+ambiguous about how it was reached, so the path is confirmed positively too:
+`invalid_zk_proposal_detected_total` must have advanced.
+
+Going through `nullify` rather than a storage write means the game reaches the
+exact state a real TEE nullification produces — `proofCount` and `expectedResolution` included —
 rather than the approximation a storage write would leave. A has no enclave to
 sign with, so the game's `TEE_VERIFIER()` is replaced with a runtime that
 returns `true` for the duration of that one transaction and restored
