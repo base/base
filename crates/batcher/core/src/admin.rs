@@ -189,6 +189,8 @@ impl AdminHandle {
 
 #[cfg(test)]
 mod tests {
+    use futures::FutureExt;
+
     use super::*;
 
     #[tokio::test]
@@ -212,7 +214,12 @@ mod tests {
         let (handle, mut rx) = AdminHandle::channel();
         let config = ThrottleConfig { max_intensity: 2.0, ..ThrottleConfig::default() };
 
-        let err = handle.set_throttle(ThrottleStrategy::Linear, config).await.unwrap_err();
+        // Rejected before any wait on the driver, which never answers here.
+        let err = handle
+            .set_throttle(ThrottleStrategy::Linear, config)
+            .now_or_never()
+            .expect("an invalid config must be rejected without waiting on the driver")
+            .unwrap_err();
 
         assert!(matches!(err, AdminError::InvalidThrottleConfig(_)));
         assert!(rx.try_recv().is_err(), "the driver must not receive the command");
