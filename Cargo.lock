@@ -4646,6 +4646,7 @@ dependencies = [
  "mockall",
  "parking_lot",
  "rand 0.8.7",
+ "rayon",
  "reth-chainspec",
  "reth-codecs",
  "reth-db",

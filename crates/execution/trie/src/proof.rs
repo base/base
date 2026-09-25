@@ -4,6 +4,7 @@ use alloy_primitives::{
     Address, B256, Bytes, keccak256,
     map::{B256Map, HashMap},
 };
+use rayon::iter::{ParallelBridge, ParallelIterator};
 use reth_db::DatabaseError;
 use reth_execution_errors::{StateProofError, StateRootError, StorageRootError, TrieWitnessError};
 use reth_trie::{
@@ -24,6 +25,10 @@ use crate::{
     BaseProofsHashedAccountCursorFactory, BaseProofsStorage, BaseProofsStore,
     BaseProofsTrieCursorFactory,
 };
+
+/// Accounts plus storage slots per parallel witness prewarm job; reth's default multiproof chunk
+/// size.
+const WITNESS_PREWARM_CHUNK_SIZE: usize = 5;
 
 /// Build the trie + hashed cursor factories sharing one read transaction at the given block.
 const fn from_tx<'tx, 'db, S>(
@@ -408,6 +413,17 @@ where
         let nodes_sorted = input.nodes.into_sorted();
         let state_sorted = input.state.into_sorted();
         let (trie_factory, hashed_factory) = from_tx(storage, tx, block_number);
+        // Trie reads are serial and IO-bound. Compute the witness's initial multiproof in parallel
+        // chunks first so the serial walk below mostly hits the storage cache; results are
+        // discarded and any error resurfaces from the witness itself.
+        tracing::info_span!("witness_prewarm").in_scope(|| {
+            target.multi_proof_targets().chunks(WITNESS_PREWARM_CHUNK_SIZE).par_bridge().for_each(
+                |targets| {
+                    let _ = Proof::new(trie_factory.clone(), hashed_factory.clone())
+                        .multiproof(targets);
+                },
+            );
+        });
         TrieWitness::new(trie_factory.clone(), hashed_factory.clone())
             .with_trie_cursor_factory(InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted))
             .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
