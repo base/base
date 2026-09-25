@@ -167,6 +167,17 @@ pin-reth-test:
 reth-prepare-release *args:
     python3 etc/scripts/local/pin-reth.py prepare {{ args }}
 
+# Run unit tests for the automatic feature-verification doc draft script
+# Workflow: docs/runbooks/feature-docs-draft.md
+feature-docs-test:
+    python3 etc/scripts/ci/feature_docs.py test
+
+# Offline validation of the feature-docs-draft.yml inline post-checkout SHA
+# guards, extracted byte-for-byte from the workflow and run against temp git
+# repos. Workflow: docs/runbooks/feature-docs-draft.md
+checkout-guard-test:
+    bash etc/scripts/ci/checkout-guard-test.sh
+
 # Fixes any formatting issues
 format-fix:
     BASE_SUCCINCT_ELF_STUB=1 cargo fix --allow-dirty --allow-staged --workspace

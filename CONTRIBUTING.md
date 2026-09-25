@@ -78,6 +78,8 @@ If you want to work on something that doesn't have an issue yet, open an issue f
 2. Link to the related issue
 3. Describe what your changes do and why
 
+**Automation exception (exact scope):** pull requests opened by the first-party feature-verification-docs automation App (see `docs/runbooks/feature-docs-draft.md`) are exempt from the assigned-issue requirement above. This exception applies only to that specific App identity — it does not extend to any other bot, script, or contributor. Those PRs are always opened as **drafts**, still require ordinary human review before merge, and are never auto-merged.
+
 ### After Submitting
 
 - Respond to feedback and requests for changes
