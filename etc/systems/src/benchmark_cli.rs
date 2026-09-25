@@ -773,6 +773,7 @@ impl AggregateBenchmarkArgs {
         Self::versioned_pages_at(runs, Utc::now())
     }
 
+    /// Same as [`Self::versioned_pages`], using `now` as the week-window origin.
     fn versioned_pages_at(
         runs: Vec<VisualizerRun>,
         now: DateTime<Utc>,
@@ -852,6 +853,7 @@ impl AggregateBenchmarkArgs {
         Ok(pages)
     }
 
+    /// Identity used to pick one latest-page run per workload cell.
     fn latest_benchmark_key(run: &VisualizerRun) -> Result<String> {
         let scenario = Self::config_component(run, "Scenario")?;
         let block_time = Self::config_component(run, "BlockTimeMilliseconds")?;
@@ -859,6 +861,7 @@ impl AggregateBenchmarkArgs {
         Ok(format!("{scenario}\0{block_time}\0{payload}"))
     }
 
+    /// Reads a string or numeric `testConfig` field as a stable identity component.
     fn config_component(run: &VisualizerRun, key: &str) -> Result<String> {
         let value = run
             .test_config
