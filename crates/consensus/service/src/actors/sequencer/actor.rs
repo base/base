@@ -46,18 +46,12 @@ pub type PendingStopSender = oneshot::Sender<Result<B256, SequencerAdminAPIError
 /// and scheduling them to be signed and gossipped by the P2P layer, extending the L2 chain with new
 /// blocks.
 #[derive(Debug)]
-pub struct SequencerActor<
-    AttributesBuilder_,
-    Conductor_,
-    OriginSelector_,
-    SequencerEngineClient_,
-    UnsafePayloadGossipClient_,
-> where
+pub struct SequencerActor<AttributesBuilder_, Conductor_, OriginSelector_, SequencerEngineClient_>
+where
     AttributesBuilder_: AttributesBuilder,
     Conductor_: Conductor,
     OriginSelector_: OriginSelector,
     SequencerEngineClient_: SequencerEngineClient,
-    UnsafePayloadGossipClient_: UnsafePayloadGossipClient,
 {
     /// Receiver for admin API requests.
     pub admin_api_rx: mpsc::Receiver<SequencerAdminQuery>,
@@ -85,7 +79,7 @@ pub struct SequencerActor<
     /// [`SequencerConfig::seal_offset`]: crate::SequencerConfig::seal_offset
     pub seal_offset: Duration,
     /// A client to asynchronously sign and gossip built payloads to the network actor.
-    pub unsafe_payload_gossip_client: UnsafePayloadGossipClient_,
+    pub unsafe_payload_gossip_client: Box<dyn UnsafePayloadGossipClient>,
     /// In-flight seal pipeline. [`Some`] while a sealed payload is being committed,
     /// gossiped, and inserted. [`None`] when idle.
     pub sealer: Option<PayloadSealer>,
@@ -94,26 +88,13 @@ pub struct SequencerActor<
     pub pending_stop: Option<PendingStopSender>,
 }
 
-impl<
-    AttributesBuilder_,
-    Conductor_,
-    OriginSelector_,
-    SequencerEngineClient_,
-    UnsafePayloadGossipClient_,
->
-    SequencerActor<
-        AttributesBuilder_,
-        Conductor_,
-        OriginSelector_,
-        SequencerEngineClient_,
-        UnsafePayloadGossipClient_,
-    >
+impl<AttributesBuilder_, Conductor_, OriginSelector_, SequencerEngineClient_>
+    SequencerActor<AttributesBuilder_, Conductor_, OriginSelector_, SequencerEngineClient_>
 where
     AttributesBuilder_: AttributesBuilder,
     Conductor_: Conductor,
     OriginSelector_: OriginSelector,
     SequencerEngineClient_: SequencerEngineClient,
-    UnsafePayloadGossipClient_: UnsafePayloadGossipClient,
 {
     /// Returns whether this actor is running as a shadow sequencer.
     pub const fn is_shadow_sequencer(&self) -> bool {
@@ -646,26 +627,13 @@ where
 }
 
 #[async_trait]
-impl<
-    AttributesBuilder_,
-    Conductor_,
-    OriginSelector_,
-    SequencerEngineClient_,
-    UnsafePayloadGossipClient_,
-> NodeActor
-    for SequencerActor<
-        AttributesBuilder_,
-        Conductor_,
-        OriginSelector_,
-        SequencerEngineClient_,
-        UnsafePayloadGossipClient_,
-    >
+impl<AttributesBuilder_, Conductor_, OriginSelector_, SequencerEngineClient_> NodeActor
+    for SequencerActor<AttributesBuilder_, Conductor_, OriginSelector_, SequencerEngineClient_>
 where
     AttributesBuilder_: AttributesBuilder + Sync + 'static,
     Conductor_: Conductor + Sync + 'static,
     OriginSelector_: OriginSelector + Sync + 'static,
     SequencerEngineClient_: SequencerEngineClient + Sync + 'static,
-    UnsafePayloadGossipClient_: UnsafePayloadGossipClient + Sync + 'static,
 {
     type Error = SequencerActorError;
     type StartData = ();
@@ -763,26 +731,13 @@ where
     }
 }
 
-impl<
-    AttributesBuilder_,
-    Conductor_,
-    OriginSelector_,
-    SequencerEngineClient_,
-    UnsafePayloadGossipClient_,
-> CancellableContext
-    for SequencerActor<
-        AttributesBuilder_,
-        Conductor_,
-        OriginSelector_,
-        SequencerEngineClient_,
-        UnsafePayloadGossipClient_,
-    >
+impl<AttributesBuilder_, Conductor_, OriginSelector_, SequencerEngineClient_> CancellableContext
+    for SequencerActor<AttributesBuilder_, Conductor_, OriginSelector_, SequencerEngineClient_>
 where
     AttributesBuilder_: AttributesBuilder,
     Conductor_: Conductor,
     OriginSelector_: OriginSelector,
     SequencerEngineClient_: SequencerEngineClient,
-    UnsafePayloadGossipClient_: UnsafePayloadGossipClient,
 {
     fn cancelled(&self) -> WaitForCancellationFuture<'_> {
         self.cancellation_token.cancelled()
