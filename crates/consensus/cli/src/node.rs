@@ -727,14 +727,15 @@ impl ConsensusNodeArgs {
             }
             head = sync.wait(&validator_cancellation) => head,
         };
-        validator_cancellation.cancel();
-        validator
-            .await
-            .map_err(|e| eyre::eyre!(e).wrap_err("isolated startup sync validator failed"))?;
-
         let Some(head) = synced_head else {
             return Ok(false);
         };
+        validator_cancellation.cancel();
+        // Actors that are mid-request when cancelled can fail on channels their peers already
+        // closed. The sync already succeeded, so those teardown races are not fatal.
+        if let Err(error) = validator.await {
+            warn!(target: "rollup_node", error = %error, "Isolated startup sync validator reported an error while stopping");
+        }
         info!(
             target: "rollup_node",
             head = head.block_info.number,
