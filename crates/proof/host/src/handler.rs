@@ -26,7 +26,7 @@ use base_proof::{Hint, HintType, ROOTS_OF_UNITY};
 use base_proof_preimage::{PreimageKey, PreimageKeyType};
 use base_protocol::{BlockInfo, OutputRoot};
 use futures::FutureExt;
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, watch};
 use tracing::{debug, error, warn};
 
 use crate::{
@@ -59,6 +59,9 @@ struct PayloadWitnessPrefetchState {
     scheduled_block_order: VecDeque<u64>,
     scheduled_lookaheads: HashSet<B256>,
     scheduled_lookahead_order: VecDeque<B256>,
+    // Bounded by `PAYLOAD_WITNESS_PREFETCH_MAX_IN_FLIGHT` since entries are only added while a
+    // semaphore permit is held. Waiters are woken when the sender in `InFlightGuard` is dropped.
+    in_flight: HashMap<B256, (B256, watch::Receiver<()>)>,
 }
 
 #[derive(Debug)]
@@ -102,6 +105,41 @@ impl PayloadWitnessPrefetcher {
         state.ready.remove(&parent_block_hash);
         state.ready_order.retain(|hash| hash != &parent_block_hash);
         true
+    }
+
+    /// Like [`Self::take_ready`], but first waits for an in-flight prefetch of the same parent
+    /// block hash and payload attributes digest to finish instead of duplicating its RPC.
+    async fn take_ready_or_wait(
+        &self,
+        parent_block_hash: B256,
+        payload_attributes_digest: B256,
+    ) -> bool {
+        let in_flight = self
+            .lock_state()
+            .in_flight
+            .get(&parent_block_hash)
+            .filter(|(digest, _)| *digest == payload_attributes_digest)
+            .map(|(_, rx)| rx.clone());
+        if let Some(mut rx) = in_flight {
+            // The sender never sends; this resolves once the prefetch drops its in-flight guard,
+            // which happens after it has marked the witness ready (on success).
+            let _ = rx.changed().await;
+        }
+        self.take_ready(parent_block_hash, payload_attributes_digest)
+    }
+
+    fn mark_in_flight(
+        &self,
+        parent_block_hash: B256,
+        payload_attributes_digest: B256,
+    ) -> Option<InFlightGuard> {
+        let mut state = self.lock_state();
+        if state.in_flight.contains_key(&parent_block_hash) {
+            return None;
+        }
+        let (tx, rx) = watch::channel(());
+        state.in_flight.insert(parent_block_hash, (payload_attributes_digest, rx));
+        Some(InFlightGuard { prefetcher: self.clone(), parent_block_hash, _tx: tx })
     }
 
     pub(crate) async fn schedule_lookahead(
@@ -367,6 +405,14 @@ impl PayloadWitnessPrefetcher {
             }
         };
 
+        // Lets a foreground request for the same payload wait for this prefetch instead of
+        // issuing a duplicate RPC. Dropped after `mark_ready`, or on any failure path.
+        let Some(_in_flight_guard) =
+            self.mark_in_flight(parent_block_hash, payload_attributes_digest)
+        else {
+            return false;
+        };
+
         let execute_payload_response =
             match base_metrics::time!(Metrics::l2_proof_node_rpc_latency_seconds(), {
                 fetch_payload_witness(
@@ -406,6 +452,20 @@ impl PayloadWitnessPrefetcher {
         self.mark_ready(parent_block_hash, payload_attributes_digest);
 
         true
+    }
+}
+
+#[derive(Debug)]
+struct InFlightGuard {
+    prefetcher: PayloadWitnessPrefetcher,
+    parent_block_hash: B256,
+    _tx: watch::Sender<()>,
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        // `_tx` is dropped after this runs, waking waiters once the entry is gone.
+        self.prefetcher.lock_state().in_flight.remove(&self.parent_block_hash);
     }
 }
 
@@ -1282,7 +1342,9 @@ async fn handle_hint_inner(
             let encoded_payload_attributes = &hint.data[32..];
 
             if let Some(prefetcher) = payload_witness_prefetcher.as_ref()
-                && prefetcher.take_ready(parent_block_hash, keccak256(encoded_payload_attributes))
+                && prefetcher
+                    .take_ready_or_wait(parent_block_hash, keccak256(encoded_payload_attributes))
+                    .await
             {
                 // Prefetched preimages are written into the same proof-session KV store, which is
                 // append-only for the lifetime of a proof request. The guest emits this hint with
@@ -1680,6 +1742,40 @@ mod tests {
         let error = handle_hint(hint, &cfg, &providers, kv).await.unwrap_err();
 
         assert!(matches!(error, HostError::Transport(_)));
+    }
+
+    #[tokio::test]
+    async fn test_payload_witness_foreground_waits_for_in_flight_prefetch() {
+        // No responses are queued, so any foreground RPC would fail the hint.
+        let l2 = provider_builder::<Base>().connect_mocked_client(Asserter::new());
+        let providers = test_providers(l2);
+        let prefetcher = test_prefetcher();
+        let kv: SharedKeyValueStore = Arc::new(RwLock::new(MemoryKeyValueStore::new()));
+        let mut cfg = test_cfg();
+        cfg.prover.enable_experimental_witness_endpoint = true;
+        let encoded_attributes = serde_json::to_vec(&BasePayloadAttributes::default()).unwrap();
+        let digest = keccak256(&encoded_attributes);
+        let hint = HintType::L2PayloadWitness
+            .with_data(&[TEST_HASH.as_slice(), encoded_attributes.as_slice()]);
+
+        let in_flight_guard = prefetcher.mark_in_flight(TEST_HASH, digest).unwrap();
+        let foreground = tokio::spawn({
+            let prefetcher = prefetcher.clone();
+            async move {
+                handle_hint_with_prefetchers(hint, &cfg, &providers, kv, Some(prefetcher), None)
+                    .await
+            }
+        });
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        assert!(!foreground.is_finished());
+
+        prefetcher.mark_ready(TEST_HASH, digest);
+        drop(in_flight_guard);
+
+        foreground.await.unwrap().unwrap();
+        assert!(prefetcher.lock_state().in_flight.is_empty());
     }
 
     #[tokio::test]
