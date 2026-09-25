@@ -41,6 +41,13 @@ base_metrics::define_metrics! {
     #[describe("Latency in seconds for debug_executePayload RPC calls to the L2 proof node")]
     l2_proof_node_rpc_latency_seconds: histogram,
 
+    #[describe("Payload witness cache lookups")]
+    #[label(name = "outcome", default = ["hit", "miss", "error"])]
+    payload_witness_cache_lookups_total: counter,
+
+    #[describe("Latency in seconds for payload witness cache lookups")]
+    payload_witness_cache_latency_seconds: histogram,
+
     #[describe("End-to-end proof generation duration")]
     proof_duration_seconds: histogram,
 
@@ -80,6 +87,15 @@ impl Metrics {
 
     /// Nitro TEE prover label for witness metrics.
     pub const PROVER_NITRO: &str = "nitro";
+
+    /// Payload witness cache lookup hit.
+    pub const PAYLOAD_CACHE_HIT: &str = "hit";
+
+    /// Payload witness cache lookup miss.
+    pub const PAYLOAD_CACHE_MISS: &str = "miss";
+
+    /// Payload witness cache lookup error.
+    pub const PAYLOAD_CACHE_ERROR: &str = "error";
 }
 
 /// RAII guard for in-flight proof tracking.

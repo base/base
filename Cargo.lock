@@ -5366,6 +5366,7 @@ dependencies = [
  "base-proof-preimage",
  "base-proof-primitives",
  "base-protocol",
+ "base-witness-cache",
  "futures",
  "metrics",
  "proptest",
@@ -6635,6 +6636,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-witness-cache"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips 2.4.1",
+ "alloy-network 2.4.1",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types",
+ "alloy-transport",
+ "axum 0.8.9",
+ "base-common-consensus",
+ "base-common-genesis",
+ "base-common-network",
+ "base-common-rpc-types-engine",
+ "base-metrics",
+ "bytes",
+ "metrics",
+ "reqwest 0.13.4",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tower 0.5.3",
+ "tracing",
+]
+
+[[package]]
 name = "base-witness-diff"
 version = "0.0.0"
 dependencies = [
@@ -6652,6 +6679,24 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "base-witness-sidecar"
+version = "0.0.0"
+dependencies = [
+ "alloy-provider",
+ "base-cli-utils",
+ "base-common-chains",
+ "base-common-network",
+ "base-witness-cache",
+ "clap",
+ "eyre",
+ "serde",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
 ]
 
 [[package]]

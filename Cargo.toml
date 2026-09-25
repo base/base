@@ -248,6 +248,7 @@ base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-submission = { path = "crates/proof/submission" }
 base-proof-zk-backend = { path = "crates/proof/zk/backend", default-features = false }
 base-proof-zk-witness = { path = "crates/proof/zk/witness" }
+base-witness-cache = { path = "crates/proof/witness-cache", default-features = false }
 base-prover-service = { path = "crates/proof/prover-service" }
 base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }
 base-prover-service-db = { path = "crates/proof/prover-service/db" }

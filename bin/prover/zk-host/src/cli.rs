@@ -75,6 +75,11 @@ struct WorkerArgs {
     #[arg(long, env = "L2_NODE_ADDRESS")]
     l2_node_address: Option<Url>,
 
+    /// Base URL of the payload witness cache. When set, payload witnesses are read from this
+    /// cache before the proof node.
+    #[arg(long, env = "WITNESS_CACHE_URL")]
+    witness_cache_url: Option<String>,
+
     /// Default sequence window for L1 head calculations.
     #[arg(long, env = "DEFAULT_SEQUENCE_WINDOW", default_value_t = 50)]
     default_sequence_window: u64,
@@ -186,6 +191,7 @@ impl WorkerArgs {
             aggregation_gas_limit: self.aggregation_gas_limit,
             l1_config_dir: None,
             l2_config_dir: None,
+            witness_cache_url: self.witness_cache_url.clone().filter(|url| !url.is_empty()),
         }
     }
 }

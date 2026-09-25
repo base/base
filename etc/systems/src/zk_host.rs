@@ -87,6 +87,7 @@ impl InProcessZkHost {
             aggregation_gas_limit: RANGE_GAS_LIMIT,
             l1_config_dir: Some(config_dir.path().join("L1")),
             l2_config_dir: Some(config_dir.path().join("L2")),
+            witness_cache_url: None,
         };
         let Some(provers) = config
             .build_until_cancelled(&cancel)

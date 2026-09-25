@@ -42,6 +42,9 @@ pub struct ProverConfig {
     pub l1_config: ChainConfig,
     /// Enables `debug_executePayload` for execution witness collection.
     pub enable_experimental_witness_endpoint: bool,
+    /// Base URL of the payload witness cache. When set, `L2PayloadWitness` reads this cache
+    /// before calling the proof node.
+    pub witness_cache_url: Option<String>,
 }
 
 /// Configuration for the proof host.

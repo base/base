@@ -83,6 +83,9 @@ pub struct RPCConfig {
     ///
     /// When unset, [`Self::l2_config_directory`] falls back to `L2_CONFIG_DIR`, then `configs/L2`.
     pub l2_config_dir: Option<PathBuf>,
+    /// Base URL of the payload witness cache. When set, payload witnesses are read from this
+    /// cache before the proof node.
+    pub witness_cache_url: Option<String>,
 }
 
 impl RPCConfig {
@@ -143,6 +146,7 @@ pub fn get_rpcs_from_env() -> RPCConfig {
         l2_node_rpc: Url::parse(&l2_node_rpc).expect("L2_NODE_RPC must be a valid URL"),
         l1_config_dir: None,
         l2_config_dir: None,
+        witness_cache_url: env::var("WITNESS_CACHE_URL").ok().filter(|url| !url.is_empty()),
     }
 }
 
@@ -863,6 +867,7 @@ impl OPSuccinctDataFetcher {
             rollup_config: rollup_config.clone(),
             l1_config,
             enable_experimental_witness_endpoint: true,
+            witness_cache_url: self.rpc_config.witness_cache_url.clone(),
         };
 
         Ok(HostConfig { request, prover, data_dir: None })
@@ -881,6 +886,7 @@ mod tests {
             l2_node_rpc: "http://l2-node".parse().unwrap(),
             l1_config_dir: l1,
             l2_config_dir: l2,
+            witness_cache_url: None,
         }
     }
 

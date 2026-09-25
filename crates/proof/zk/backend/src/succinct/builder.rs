@@ -108,6 +108,8 @@ pub struct SuccinctRpcConfig {
     ///
     /// When unset, the witness fetcher falls back to `L2_CONFIG_DIR`, then `configs/L2`.
     pub l2_config_dir: Option<PathBuf>,
+    /// Base URL of the payload witness cache.
+    pub witness_cache_url: Option<String>,
 }
 
 /// Configuration for all Succinct proving backends available to one worker.
@@ -153,6 +155,8 @@ pub struct SuccinctZkProversConfig {
     ///
     /// When unset, the witness fetcher falls back to `L2_CONFIG_DIR`, then `configs/L2`.
     pub l2_config_dir: Option<PathBuf>,
+    /// Base URL of the payload witness cache.
+    pub witness_cache_url: Option<String>,
 }
 
 impl fmt::Debug for SuccinctZkProversConfig {
@@ -242,6 +246,7 @@ impl SuccinctZkProversConfig {
                     default_sequence_window: self.default_sequence_window,
                     l1_config_dir: self.l1_config_dir.clone(),
                     l2_config_dir: self.l2_config_dir.clone(),
+                    witness_cache_url: self.witness_cache_url.clone(),
                 }))
             }
             _ => Err(SuccinctZkProverBuildError::config(
@@ -424,6 +429,7 @@ impl SuccinctZkProverBuilder {
             l2_node_rpc: rpc.base_consensus_rpc,
             l1_config_dir: rpc.l1_config_dir,
             l2_config_dir: rpc.l2_config_dir,
+            witness_cache_url: rpc.witness_cache_url,
         };
         let Some(fetcher) = Self::complete_unless_cancelled(
             cancel,
@@ -495,6 +501,7 @@ mod tests {
             aggregation_gas_limit: 1_000_000_000_000,
             l1_config_dir: None,
             l2_config_dir: None,
+            witness_cache_url: None,
         }
     }
 
