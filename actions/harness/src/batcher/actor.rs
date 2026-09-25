@@ -90,10 +90,10 @@ pub enum BatcherError {
 /// and an admin channel. This mirrors the production batcher architecture: the driver owns
 /// its encoding pipeline and transaction manager and runs its own async loop.
 ///
-/// Every method that feeds the driver returns once the driver is idle again, that is once it
-/// has taken what it was given, encoded it, handed the resulting submissions to the tx
-/// manager and applied every receipt. The harness waits for that with a marker queued in the
-/// L1 head source; see [`L1HeadItem::Marker`].
+/// Every `async` method returns once the driver is idle again, that is once it has taken
+/// what it was given, encoded it, handed the resulting submissions to the tx manager and
+/// applied every receipt. The harness waits for that with a marker queued in the L1 head
+/// source; see [`L1HeadItem::Marker`].
 ///
 /// Each call to [`advance`] drives one complete batch cycle:
 /// 1. Drain the L2 source and forward each block to the driver via the block source.
@@ -376,7 +376,8 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Drop the first `n` pending frame submissions without staging them to L1.
     ///
     /// Returns the actual number dropped. Use this to skip specific frame
-    /// positions when testing non-sequential frame submission scenarios.
+    /// positions when testing non-sequential frame submission scenarios. The driver sees
+    /// each dropped submission fail and resubmits it on its next `async` call.
     pub fn drop_n_frames(&self, n: usize) -> usize {
         self.tx_manager.drop_n(n)
     }
