@@ -24,6 +24,8 @@ pub enum BatchDropReason {
     EpochTooFarInFuture,
     /// Batch epoch hash does not match the L1 origin.
     EpochHashMismatch,
+    /// Batch changes L1 origin within a whole second after Denim activation.
+    SameSecondOriginChange,
 
     // === Timestamp/origin relationship drops ===
     /// Batch timestamp is before the L1 origin timestamp.
@@ -86,6 +88,9 @@ impl core::fmt::Display for BatchDropReason {
             Self::EpochTooOld => write!(f, "batch epoch is too old"),
             Self::EpochTooFarInFuture => write!(f, "batch epoch is too far in the future"),
             Self::EpochHashMismatch => write!(f, "batch epoch hash does not match L1 origin"),
+            Self::SameSecondOriginChange => {
+                write!(f, "batch changes L1 origin within the same whole second")
+            }
             Self::TimestampBeforeL1Origin => {
                 write!(f, "batch timestamp is before L1 origin timestamp")
             }

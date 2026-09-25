@@ -151,6 +151,8 @@ where
         let force_empty_batches = expiry_epoch <= stage_origin.number;
         let first_of_epoch = epoch.number == parent.l1_origin.number + 1;
         let next_timestamp = self.cfg.l2_block_timestamp(parent.block_info.number + 1);
+        let same_second = self.cfg.is_denim_active(next_timestamp)
+            && next_timestamp == parent.block_info.timestamp;
 
         // If the sequencer window did not expire,
         // there is still room to receive batches for the current epoch.
@@ -167,9 +169,9 @@ where
         let next_epoch = self.l1_blocks[1];
 
         // Fill with empty L2 blocks of the same epoch until we meet the time of the next L1 origin,
-        // to preserve that L2 time >= L1 time. If this is the first block of the epoch, always
-        // generate a batch to ensure that we at least have one batch per epoch.
-        if next_timestamp < next_epoch.timestamp || first_of_epoch {
+        // to preserve that L2 time >= L1 time. Finish a Denim whole second on its current origin.
+        // If this is the first block of the epoch, always generate at least one batch per epoch.
+        if next_timestamp < next_epoch.timestamp || first_of_epoch || same_second {
             info!(target: "batch_validator", epoch_number = epoch.number, "Generating empty batch for epoch");
             return Ok(SingleBatch {
                 parent_hash: parent.block_info.hash,
