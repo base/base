@@ -18,12 +18,8 @@ use reth_revm::{
     primitives::{Address, B256, Bytes, StorageValue, alloy_primitives::BlockNumber},
 };
 use reth_trie::{
-    StateRoot, StorageRoot, TrieType,
-    hashed_cursor::{HashedCursor, HashedPostStateCursorFactory},
-    metrics::TrieRootMetrics,
-    proof,
-    trie_cursor::InMemoryTrieCursorFactory,
-    witness::TrieWitness,
+    StateRoot, StorageRoot, TrieType, hashed_cursor::HashedPostStateCursorFactory,
+    metrics::TrieRootMetrics, proof, trie_cursor::InMemoryTrieCursorFactory, witness::TrieWitness,
 };
 use reth_trie_common::{
     AccountProof, ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, HashedStorage,
@@ -32,7 +28,7 @@ use reth_trie_common::{
 };
 
 use crate::{
-    BaseProofsBatchHashedAccountCursorFactory, BaseProofsBatchTrieCursorFactory,
+    BaseProofsBatchHashedAccountCursorFactory, BaseProofsBatchTrieCursorFactory, HashedExactCursor,
     api::BaseProofsBatchSession,
     metrics::{StateMetrics, StateSeekKind},
 };
@@ -284,12 +280,11 @@ impl<S: BaseProofsBatchSession> AccountReader for BaseProofsBatchStateProviderRe
             .session
             .account_hashed_cursor(self.block_number)
             .map_err(Into::<ProviderError>::into)?;
-        let found = StateMetrics::record_seek(
+        StateMetrics::record_seek(
             StateSeekKind::Account,
-            || cursor.seek(hashed_key).map_err(Into::<ProviderError>::into),
-            |found| found.as_ref().is_some_and(|(key, _)| *key == hashed_key),
-        )?;
-        Ok(found.and_then(|(key, account)| (key == hashed_key).then_some(account)))
+            || cursor.seek_exact(hashed_key).map_err(Into::<ProviderError>::into),
+            Option::is_some,
+        )
     }
 }
 
@@ -300,12 +295,11 @@ impl<S: BaseProofsBatchSession> StateProvider for BaseProofsBatchStateProviderRe
             .session
             .storage_hashed_cursor(keccak256(address.0), self.block_number)
             .map_err(Into::<ProviderError>::into)?;
-        let found = StateMetrics::record_seek(
+        StateMetrics::record_seek(
             StateSeekKind::Storage,
-            || cursor.seek(hashed_key).map_err(Into::<ProviderError>::into),
-            |found| found.as_ref().is_some_and(|(key, _)| *key == hashed_key),
-        )?;
-        Ok(found.and_then(|(key, storage)| (key == hashed_key).then_some(storage)))
+            || cursor.seek_exact(hashed_key).map_err(Into::<ProviderError>::into),
+            Option::is_some,
+        )
     }
 }
 

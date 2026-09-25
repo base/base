@@ -6,6 +6,7 @@ use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256};
 use auto_impl::auto_impl;
 use derive_more::{AddAssign, Constructor};
+use reth_db::DatabaseError;
 use reth_primitives_traits::Account;
 use reth_trie::{
     hashed_cursor::{HashedCursor, HashedStorageCursor},
@@ -64,6 +65,15 @@ pub struct OperationDurations {
     pub state_root_duration_seconds: Duration,
     /// Time spent writing trie updates to storage in seconds
     pub write_duration_seconds: Duration,
+}
+
+/// A [`HashedCursor`] that can read a single key without walking to the next live key.
+pub trait HashedExactCursor: HashedCursor {
+    /// Returns the live value stored at exactly `key`, or `None` if it is absent or deleted.
+    ///
+    /// Unlike [`HashedCursor::seek`], a miss returns immediately instead of scanning forward
+    /// past deleted entries, so use this for point reads and `seek` for trie walks.
+    fn seek_exact(&mut self, key: B256) -> Result<Option<Self::Value>, DatabaseError>;
 }
 
 /// Trait for reading trie nodes from the database.
@@ -266,12 +276,12 @@ pub trait BaseProofsBatchSession: Send + Sync + Debug {
         Self: 'a;
 
     /// Cursor for iterating over storage leaves in the active session.
-    type StorageCursor<'a>: HashedStorageCursor<Value = U256> + Send + Sync + 'a
+    type StorageCursor<'a>: HashedStorageCursor<Value = U256> + HashedExactCursor + Send + Sync + 'a
     where
         Self: 'a;
 
     /// Cursor for iterating over account leaves in the active session.
-    type AccountHashedCursor<'a>: HashedCursor<Value = Account> + Send + Sync + 'a
+    type AccountHashedCursor<'a>: HashedExactCursor<Value = Account> + Send + Sync + 'a
     where
         Self: 'a;
 

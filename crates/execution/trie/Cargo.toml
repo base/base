@@ -105,6 +105,10 @@ harness = false
 name = "dead_key_reads"
 harness = false
 
+[[bench]]
+name = "exex_point_reads"
+harness = false
+
 [features]
 serde-bincode-compat = [
 	"alloy-consensus/serde-bincode-compat",

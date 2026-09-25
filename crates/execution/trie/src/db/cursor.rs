@@ -15,7 +15,7 @@ use reth_trie::{
 use reth_trie_common::{BranchNodeCompact, Nibbles, StoredNibbles};
 
 use crate::{
-    BaseProofsStorageResult,
+    BaseProofsStorageResult, HashedExactCursor,
     db::{
         AccountTrieHistory, HashedAccountHistory, HashedStorageHistory, HashedStorageKey,
         MaybeDeleted, StorageTrieHistory, StorageTrieKey, VersionedValue,
@@ -369,6 +369,15 @@ where
     }
 }
 
+impl<Cursor> HashedExactCursor for MdbxStorageCursor<Cursor>
+where
+    Cursor: DbCursorRO<HashedStorageHistory> + DbDupCursorRO<HashedStorageHistory> + Send + Sync,
+{
+    fn seek_exact(&mut self, key: B256) -> Result<Option<U256>, DatabaseError> {
+        Self::seek_exact(self, key)
+    }
+}
+
 impl<Cursor> HashedStorageCursor for MdbxStorageCursor<Cursor>
 where
     Cursor: DbCursorRO<HashedStorageHistory> + DbDupCursorRO<HashedStorageHistory> + Send + Sync,
@@ -422,6 +431,15 @@ where
 
     fn reset(&mut self) {
         // Database cursors are stateless, no reset needed
+    }
+}
+
+impl<Cursor> HashedExactCursor for MdbxAccountCursor<Cursor>
+where
+    Cursor: DbCursorRO<HashedAccountHistory> + DbDupCursorRO<HashedAccountHistory> + Send + Sync,
+{
+    fn seek_exact(&mut self, key: B256) -> Result<Option<Account>, DatabaseError> {
+        Self::seek_exact(self, key)
     }
 }
 

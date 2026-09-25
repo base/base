@@ -39,7 +39,7 @@ use super::{BlockNumberHash, ProofWindow, ProofWindowKey};
 use crate::{
     BaseProofsStorageError,
     BaseProofsStorageError::NoBlocksFound,
-    BaseProofsStorageResult, BaseProofsStore, BlockStateDiff,
+    BaseProofsStorageResult, BaseProofsStore, BlockStateDiff, HashedExactCursor,
     api::{
         BaseProofsBatchSession, BaseProofsBatchStore, BaseProofsInitialStateStore,
         InitialStateAnchor, InitialStateStatus, WriteCounts,
@@ -2947,6 +2947,12 @@ impl HashedCursor for RocksdbStorageCursor<'_> {
     }
 }
 
+impl HashedExactCursor for RocksdbStorageCursor<'_> {
+    fn seek_exact(&mut self, key: B256) -> Result<Option<U256>, DatabaseError> {
+        Self::seek_exact(self, key)
+    }
+}
+
 impl HashedStorageCursor for RocksdbStorageCursor<'_> {
     fn is_storage_empty(&mut self) -> Result<bool, DatabaseError> {
         let current_key = self.inner.current_key.clone();
@@ -2996,6 +3002,12 @@ impl HashedCursor for RocksdbAccountCursor<'_> {
 
     fn reset(&mut self) {
         self.inner.current_key = None;
+    }
+}
+
+impl HashedExactCursor for RocksdbAccountCursor<'_> {
+    fn seek_exact(&mut self, key: B256) -> Result<Option<Account>, DatabaseError> {
+        Self::seek_exact(self, key)
     }
 }
 

@@ -9,6 +9,7 @@ use base_execution_trie::{
     BaseProofsBatchSession, BaseProofsBatchStore, BaseProofsStore, BlockStateDiff,
     MdbxProofsStorage,
 };
+use reth_primitives_traits::Account;
 use reth_trie::{
     BranchNodeCompact, HashedPostState, HashedStorage, Nibbles,
     hashed_cursor::HashedCursor,
@@ -215,4 +216,52 @@ fn batch_session_rejects_out_of_order_block() {
 
     let (latest, _) = store.get_latest_block_number().expect("latest").expect("some");
     assert_eq!(latest, 0, "any error in batch must abort the entire transaction");
+}
+
+/// A batch point read returns that key's live version, and a miss or tombstone stays empty.
+#[test]
+fn batch_session_point_read_returns_exact_key() {
+    let (_dir, store) = setup();
+    let missing = b256(0x10);
+    let dead = b256(0x20);
+    let live = b256(0x30);
+    let hashed_address = b256(0x40);
+    let slot = b256(0x50);
+    let account = Account { nonce: 1, balance: U256::from(1), bytecode_hash: None };
+
+    for (number, dead_account, slot_value) in
+        [(1, Some(account), U256::from(1)), (2, None, U256::ZERO)]
+    {
+        let mut post_state = HashedPostState::default();
+        if number == 1 {
+            post_state.accounts.insert(live, Some(account));
+        }
+        post_state.accounts.insert(dead, dead_account);
+        let mut storage = HashedStorage::default();
+        storage.storage.insert(slot, slot_value);
+        post_state.storages.insert(hashed_address, storage);
+        store
+            .store_trie_updates(
+                block(number),
+                BlockStateDiff {
+                    sorted_trie_updates: TrieUpdatesSorted::default(),
+                    sorted_post_state: post_state.into_sorted(),
+                },
+            )
+            .expect("store block");
+    }
+
+    store
+        .with_batch_session(|session| {
+            assert_eq!(session.account_hashed_cursor(1)?.seek_exact(dead)?, Some(account));
+            assert_eq!(session.account_hashed_cursor(2)?.seek_exact(dead)?, None);
+            assert_eq!(session.account_hashed_cursor(2)?.seek_exact(missing)?, None);
+            assert_eq!(
+                session.account_hashed_cursor(2)?.seek(missing)?.map(|(key, _)| key),
+                Some(live)
+            );
+            assert_eq!(session.storage_hashed_cursor(hashed_address, 2)?.seek_exact(slot)?, None);
+            Ok(())
+        })
+        .expect("batch read");
 }

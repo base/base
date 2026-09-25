@@ -17,6 +17,7 @@ use reth_trie_common::{
 
 use crate::{
     BaseProofsStorageError, BaseProofsStorageResult, BaseProofsStore, BlockStateDiff,
+    HashedExactCursor,
     api::{
         BaseProofsBatchSession, BaseProofsBatchStore, BaseProofsInitialStateStore,
         InitialStateAnchor, InitialStateStatus, WriteCounts,
@@ -460,6 +461,13 @@ impl HashedCursor for InMemoryStorageCursor {
     }
 }
 
+impl HashedExactCursor for InMemoryStorageCursor {
+    fn seek_exact(&mut self, key: B256) -> Result<Option<U256>, DatabaseError> {
+        self.ensure_entries_populated()?;
+        Ok(self.entries.binary_search_by_key(&key, |(k, _)| *k).ok().map(|i| self.entries[i].1))
+    }
+}
+
 impl HashedStorageCursor for InMemoryStorageCursor {
     fn is_storage_empty(&mut self) -> Result<bool, DatabaseError> {
         Ok(self.seek(B256::ZERO)?.is_none())
@@ -534,6 +542,12 @@ impl HashedCursor for InMemoryAccountCursor {
 
     fn reset(&mut self) {
         // no reset needed
+    }
+}
+
+impl HashedExactCursor for InMemoryAccountCursor {
+    fn seek_exact(&mut self, key: B256) -> Result<Option<Account>, DatabaseError> {
+        Ok(self.entries.binary_search_by_key(&key, |(k, _)| *k).ok().map(|i| self.entries[i].1))
     }
 }
 

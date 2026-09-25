@@ -150,7 +150,7 @@ base_metrics::define_metrics! {
     #[describe("Account and storage seeks")]
     #[label(name = "kind", default = ["account", "storage"])]
     reads: counter,
-    #[describe("Seeks whose returned key was not the key requested")]
+    #[describe("Seeks that found no live value for the requested key")]
     #[label(name = "kind", default = ["account", "storage"])]
     misses: counter,
     #[describe("Time spent in account and storage seeks, in seconds")]
