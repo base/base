@@ -15,6 +15,15 @@ BINARY="./base-reth-node"
 RETH_HISTORICAL_PROOFS="${RETH_HISTORICAL_PROOFS:-false}"
 RETH_HISTORICAL_PROOFS_STORAGE_PATH="${RETH_HISTORICAL_PROOFS_STORAGE_PATH:-}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
+# The debug namespace is only on by default when the proofs ExEx is enabled, since that is
+# what serves debug_executionWitness / debug_executePayload / debug_proofsSyncStatus.
+if [[ "$RETH_HISTORICAL_PROOFS" == "true" ]]; then
+    DEFAULT_RPC_API="web3,debug,eth,net,txpool"
+else
+    DEFAULT_RPC_API="web3,eth,net,txpool"
+fi
+RETH_HTTP_API="${RETH_HTTP_API:-$DEFAULT_RPC_API}"
+RETH_WS_API="${RETH_WS_API:-$DEFAULT_RPC_API}"
 
 if [[ -z "${RETH_CHAIN:-}" ]]; then
     echo "expected RETH_CHAIN to be set" 1>&2
@@ -81,12 +90,12 @@ exec "$BINARY" node \
   --ws.origins="*" \
   --ws.addr=0.0.0.0 \
   --ws.port="$WS_PORT" \
-  --ws.api=web3,debug,eth,net,txpool \
+  --ws.api="$RETH_WS_API" \
   --http \
   --http.corsdomain="*" \
   --http.addr=0.0.0.0 \
   --http.port="$RPC_PORT" \
-  --http.api=web3,debug,eth,net,txpool,miner \
+  --http.api="$RETH_HTTP_API" \
   --ipcpath="$IPC_PATH" \
   --authrpc.addr=0.0.0.0 \
   --authrpc.port="$AUTHRPC_PORT" \
