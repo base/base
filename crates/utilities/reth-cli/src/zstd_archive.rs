@@ -21,11 +21,12 @@ use zstd::zstd_safe::CParameter;
 /// Smaller frames parallelize better but lose some compression context at every boundary.
 pub const FRAMED_ZSTD_CHUNK_SIZE: usize = 16 * 1024 * 1024;
 
-/// Largest frame content size decoded into a single up-front allocation.
+/// Largest decompressed frame accepted by [`FramedZstdDecoder`].
 ///
-/// Frames declaring a larger size, or no size, are decoded through a growing buffer so an
-/// untrusted header cannot request an arbitrarily large allocation.
-const MAX_PREALLOCATED_FRAME_SIZE: u64 = 1024 * 1024 * 1024;
+/// Frames written by [`FramedZstdEncoder`] hold one [`FRAMED_ZSTD_CHUNK_SIZE`] chunk. The limit
+/// leaves room for the larger chunks `pzstd` uses at high compression levels while bounding the
+/// memory a corrupted or crafted frame can make each concurrent decompression allocate.
+const MAX_DECOMPRESSED_FRAME_SIZE: u64 = 1024 * 1024 * 1024;
 
 /// Largest compressed frame accepted by [`FramedZstdDecoder`].
 ///
@@ -278,16 +279,34 @@ impl<R: Read> FramedZstdDecoder<R> {
         Ok(Some(frame))
     }
 
-    /// Decompresses one complete zstd frame.
+    /// Decompresses one complete zstd frame of at most [`MAX_DECOMPRESSED_FRAME_SIZE`] bytes.
     fn decompress_frame(frame: &[u8]) -> io::Result<Vec<u8>> {
+        let too_large = || {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "framed zstd archive frame exceeds the maximum decompressed size",
+            )
+        };
         match zstd::zstd_safe::get_frame_content_size(frame) {
-            Ok(Some(size)) if size <= MAX_PREALLOCATED_FRAME_SIZE => {
-                let capacity = usize::try_from(size).map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidData, "frame content size overflow")
-                })?;
+            Ok(Some(size)) => {
+                if size > MAX_DECOMPRESSED_FRAME_SIZE {
+                    return Err(too_large());
+                }
+                let capacity = usize::try_from(size).map_err(|_| too_large())?;
                 zstd::bulk::decompress(frame, capacity)
             }
-            _ => zstd::stream::decode_all(frame),
+            _ => {
+                // Without a declared size, stop reading one byte past the limit so an
+                // oversized frame is rejected instead of growing without bound.
+                let mut decoded = Vec::new();
+                zstd::Decoder::with_buffer(frame)?
+                    .take(MAX_DECOMPRESSED_FRAME_SIZE + 1)
+                    .read_to_end(&mut decoded)?;
+                if decoded.len() as u64 > MAX_DECOMPRESSED_FRAME_SIZE {
+                    return Err(too_large());
+                }
+                Ok(decoded)
+            }
         }
     }
 }
@@ -520,6 +539,21 @@ mod tests {
             .read_to_end(&mut Vec::new())
             .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn framed_decoder_decodes_frames_without_content_size() {
+        let input = sample_input(100_000);
+        // Streaming compression does not record the content size in the frame header.
+        let mut encoder = zstd::Encoder::new(Vec::new(), 0).unwrap();
+        encoder.write_all(&input).unwrap();
+        let frame = encoder.finish().unwrap();
+        assert_eq!(zstd::zstd_safe::get_frame_content_size(&frame).unwrap(), None);
+
+        let mut archive = FramedZstdHeader::encode(frame.len() as u32).to_vec();
+        archive.extend_from_slice(&frame);
+
+        assert_eq!(read_all(FramedZstdDecoder::new(Cursor::new(&archive), 1)), input);
     }
 
     #[test]
