@@ -17,11 +17,20 @@
 - Every crate and binary manifest must inherit workspace lints with `[lints] workspace = true`.
 - Do not enable dependency features in the workspace root `Cargo.toml`. Enable them only in the crates or binaries that need them to prevent feature leakage into `no_std` crates.
 
+## Product Direction
+
+- Read [`docs/FEATURE_MAP.md`](docs/FEATURE_MAP.md) before proposing or implementing product, protocol, builder, Flashblocks, proof, or operator work. It defines the active roadmap, deprecation commitments, and PR decision rules.
+- Base is moving from Flashblocks to 200 ms blocks. Follow the feature map for the migration and removal of the Flashblock builder by October 31, 2026 after 200 ms blocks are activated.
+- For legacy Optimism/pre-Holocene, upgrade, derivation, execution, and operator work, use the feature map to favor removing obsolete special cases and making supported state transitions, ownership, observability, and hardfork planning explicit.
+
 ## Documentation and Lints
 
 - Use `#![doc = include_str!("../README.md")]` for crate documentation in `lib.rs`; never use `//!` comments there.
 - Begin every `mod.rs` file with a `//!` module doc comment describing its contents.
 - Do not suppress Clippy warnings with `#![allow(missing_docs)]` or other allow-lints. Fix the underlying issue.
+- Default to substantive product work. A change proposed without an explicit documentation request must deliver a real, observable improvement for users or operators: for example, a correctness, reliability, security, performance, usability, or operability improvement. Identify the affected user, the problem, the expected behavioral outcome, and focused validation before implementation.
+- Documentation is supporting material, not a substitute for product work. Do not open a documentation-only PR, a review report, or a prose-only cleanup from an exploratory task unless the user explicitly requested documentation. A documentation correction may accompany a substantive change when it is needed to use or operate that change correctly.
+- When documentation is explicitly requested or is necessary alongside a substantive change, it must explain durable intent, non-obvious invariants, public contracts, operational procedures, or decisions that clear code, tests, and concise local comments cannot convey. Do not narrate straightforward code, satisfy a superficial documentation goal, or record a non-finding.
 
 ## Rust Structure and Style
 

@@ -1,0 +1,36 @@
+name: Feature map token budget
+
+on:
+  pull_request:
+    paths:
+      - docs/FEATURE_MAP.md
+      - etc/scripts/ci/check_feature_map_tokens.cjs
+      - .github/workflows/feature-map-size.yml
+  push:
+    branches: [main]
+    paths:
+      - docs/FEATURE_MAP.md
+      - etc/scripts/ci/check_feature_map_tokens.cjs
+      - .github/workflows/feature-map-size.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: feature-map-token-budget-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Verify token budget
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install tokenizer
+        run: npm install --no-save --prefix "$RUNNER_TEMP/feature-map-tokenizer" tiktoken@1.0.22
+
+      - name: Measure feature map
+        env:
+          NODE_PATH: ${{ runner.temp }}/feature-map-tokenizer/node_modules
+        run: node etc/scripts/ci/check_feature_map_tokens.cjs
