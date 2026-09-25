@@ -23,6 +23,17 @@ use reth_tasks::Runtime;
 use reth_transaction_pool::TransactionPool;
 use tokio::sync::{Semaphore, oneshot};
 
+/// Minimum number of concurrent witness/payload executions allowed.
+const MIN_WITNESS_CONCURRENCY: usize = 3;
+
+/// Returns the permit count for witness/payload execution semaphores, sized to the
+/// available parallelism and never below [`MIN_WITNESS_CONCURRENCY`].
+pub(crate) fn witness_concurrency() -> usize {
+    std::thread::available_parallelism()
+        .map_or(MIN_WITNESS_CONCURRENCY, |n| n.get())
+        .max(MIN_WITNESS_CONCURRENCY)
+}
+
 #[cfg_attr(not(test), rpc(server, namespace = "debug"))]
 #[cfg_attr(test, rpc(server, client, namespace = "debug"))]
 /// RPC trait for the `debug_executePayload` endpoint.
@@ -36,9 +47,6 @@ pub trait DebugExecutionWitnessApi<Attributes> {
     ) -> RpcResult<ExecutionWitness>;
 }
 
-/// Maximum number of payload executions a debug RPC runs concurrently.
-pub const MAX_CONCURRENT_PAYLOAD_EXECUTIONS: usize = 3;
-
 /// An extension to the `debug_` namespace of the RPC API.
 pub struct BaseDebugWitnessApi<Pool, Provider, EvmConfig, Attrs> {
     inner: Arc<BaseDebugWitnessApiInner<Pool, Provider, EvmConfig, Attrs>>,
@@ -51,7 +59,7 @@ impl<Pool, Provider, EvmConfig, Attrs> BaseDebugWitnessApi<Pool, Provider, EvmCo
         task_spawner: Runtime,
         builder: BasePayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
     ) -> Self {
-        let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_PAYLOAD_EXECUTIONS));
+        let semaphore = Arc::new(Semaphore::new(witness_concurrency()));
         let inner = BaseDebugWitnessApiInner { provider, builder, task_spawner, semaphore };
         Self { inner: Arc::new(inner) }
     }

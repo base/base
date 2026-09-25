@@ -41,7 +41,7 @@ use tokio::sync::{Semaphore, oneshot};
 use crate::{
     metrics::{DebugApiExtMetrics, DebugApis},
     state::BaseStateProviderFactory,
-    witness::MAX_CONCURRENT_PAYLOAD_EXECUTIONS,
+    witness::witness_concurrency,
 };
 
 /// Version byte mixed into the payload ID derived for `debug_executePayload` attributes.
@@ -144,7 +144,7 @@ where
             eth_api,
             evm_config,
             task_spawner,
-            semaphore: Semaphore::new(MAX_CONCURRENT_PAYLOAD_EXECUTIONS),
+            semaphore: Semaphore::new(witness_concurrency()),
             _attrs: PhantomData,
         }
     }
