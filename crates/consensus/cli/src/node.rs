@@ -8,7 +8,7 @@ use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::{
-    EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder,
+    EngineConfig, IsolatedStartupSync, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder,
     UpgradeSignalBuilderConfig,
 };
 use base_upgrade_signal::{
@@ -655,6 +655,21 @@ impl ConsensusNodeArgs {
             cancellation,
             upgrade_signal_startup_mode,
         } = options;
+        if self.config.node_mode.is_sequencer() && self.config.sequencer_flags.isolated {
+            self.validate_sequencer_key()?;
+            let synced = self
+                .isolated_startup_sync_args()
+                .sync_isolated_sequencer(
+                    rollup_config.clone(),
+                    overrides.clone(),
+                    upgrade_signal_startup_mode,
+                    &cancellation,
+                )
+                .await?;
+            if !synced {
+                return Ok(());
+            }
+        }
         self.build_rollup_node_with_overrides_and_upgrade_signal_startup(
             rollup_config,
             overrides,
@@ -667,6 +682,66 @@ impl ConsensusNodeArgs {
             error!(target: "rollup_node", error = %e, "Failed to start rollup node service");
             eyre::eyre!(e)
         })
+    }
+
+    /// Returns the validator configuration an isolated sequencer runs while it syncs to the
+    /// canonical chain: the same node with consensus P2P and derivation enabled and no sequencer.
+    pub fn isolated_startup_sync_args(&self) -> Self {
+        let mut args = self.clone();
+        args.config.node_mode = NodeMode::Validator;
+        args.config.sequencer_flags.isolated = false;
+        args
+    }
+
+    /// Runs this validator configuration until the execution head rejoins the canonical chain,
+    /// then stops it.
+    ///
+    /// An isolated sequencer has no canonical ingress, so without this it would resume sealing
+    /// on the private fork its previous run left in the datadir. Returns `false` if the node was
+    /// shut down before the sync finished.
+    pub async fn sync_isolated_sequencer(
+        &self,
+        rollup_config: RollupConfig,
+        overrides: ConsensusNodeOverrides,
+        upgrade_signal_startup_mode: UpgradeSignalStartupMode,
+        cancellation: &CancellationToken,
+    ) -> eyre::Result<bool> {
+        let node = self
+            .build_rollup_node_with_overrides_and_upgrade_signal_startup(
+                rollup_config,
+                overrides,
+                upgrade_signal_startup_mode,
+            )
+            .await?;
+        let engine = Arc::new(node.engine_config.clone().build_engine_client().await?);
+        let sync = IsolatedStartupSync::capture(engine).await?;
+        info!(target: "rollup_node", "Syncing isolated sequencer to the canonical chain before sequencing");
+
+        let validator_cancellation = cancellation.child_token();
+        let validator = node.start_with_cancellation(validator_cancellation.clone());
+        tokio::pin!(validator);
+        let synced_head = tokio::select! {
+            result = &mut validator => {
+                result.map_err(|e| eyre::eyre!(e).wrap_err("isolated startup sync validator failed"))?;
+                return Ok(false);
+            }
+            head = sync.wait(&validator_cancellation) => head,
+        };
+        validator_cancellation.cancel();
+        validator
+            .await
+            .map_err(|e| eyre::eyre!(e).wrap_err("isolated startup sync validator failed"))?;
+
+        let Some(head) = synced_head else {
+            return Ok(false);
+        };
+        info!(
+            target: "rollup_node",
+            head = head.block_info.number,
+            head_hash = %head.block_info.hash,
+            "Isolated sequencer synced to the canonical chain; starting isolated sequencing"
+        );
+        Ok(true)
     }
 
     /// Returns the configured genesis signer address for the selected L2 chain.
@@ -1010,6 +1085,25 @@ mod tests {
         );
 
         assert!(args.validate_sequencer_key().is_ok());
+    }
+
+    #[test]
+    fn isolated_startup_sync_runs_as_a_valid_validator() {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs {
+                node_mode: NodeMode::Sequencer,
+                sequencer_flags: SequencerArgs { isolated: true, ..SequencerArgs::default() },
+                ..default_node_config_args()
+            },
+        );
+
+        let sync_args = args.isolated_startup_sync_args();
+
+        assert!(sync_args.config.node_mode.is_validator());
+        assert!(!sync_args.config.sequencer_flags.config().isolated);
+        assert!(sync_args.validate_sequencer_key().is_ok());
+        assert!(sync_args.validate_shadow_funding().is_ok());
     }
 
     #[rstest]

@@ -52,6 +52,9 @@ pub struct SequencerArgs {
     pub recover: bool,
 
     /// Run the sequencer without canonical-chain ingress or payload publication.
+    ///
+    /// On startup the node first runs as a validator until its execution head rejoins the
+    /// canonical chain, then starts sequencing isolated from that head.
     #[arg(
         long = "sequencer.isolated",
         default_value = "false",
