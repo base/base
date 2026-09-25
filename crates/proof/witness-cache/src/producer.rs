@@ -1,6 +1,9 @@
 //! Follows the L2 tip and fills the witness cache.
 
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
@@ -13,6 +16,15 @@ use base_common_rpc_types_engine::BasePayloadAttributes;
 use tracing::{Instrument, error, info, info_span, warn};
 
 use crate::{Metrics, PayloadAttributes, WitnessCache, WitnessKey};
+
+/// Same bound the proof host uses for `debug_executePayload`.
+const EXECUTE_PAYLOAD_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Failures of one block before the follower moves on.
+///
+/// A transient error is still retried. After this many failures the block is left for the proof
+/// node and later blocks are cached.
+const MAX_INGEST_ATTEMPTS: u32 = 3;
 
 /// Calls `debug_executePayload` for each new L2 block and stores the response.
 ///
@@ -39,9 +51,12 @@ impl WitnessFollower {
     /// Follows the canonical head until the future is dropped.
     ///
     /// A failed head read, including the first one, is retried. The process keeps running so a
-    /// proof node that is briefly unreachable does not look like a clean shutdown.
+    /// proof node that is briefly unreachable does not look like a clean shutdown. One block that
+    /// keeps failing `debug_executePayload` is skipped after [`MAX_INGEST_ATTEMPTS`] so later
+    /// blocks are still cached. `tip_lag_blocks` stays elevated while a block is being retried.
     pub async fn run(self) {
         let mut next = None;
+        let mut attempts = IngestAttempts::default();
         // A down proof node would otherwise log once per poll.
         let mut head_down = false;
         loop {
@@ -58,12 +73,20 @@ impl WitnessFollower {
                     while block_number <= head {
                         let lag_blocks = head.saturating_sub(block_number);
                         Metrics::tip_lag_blocks().set(lag_blocks as f64);
-                        if !self
+                        let ingested = self
                             .ingest(block_number, lag_blocks)
                             .instrument(info_span!("payload_witness", block_number, lag_blocks))
-                            .await
-                        {
+                            .await;
+                        if !attempts.advance(block_number, ingested) {
                             break;
+                        }
+                        if !ingested {
+                            Metrics::ingest_attempts_total(Metrics::INGEST_SKIPPED).increment(1);
+                            error!(
+                                block_number,
+                                attempts = MAX_INGEST_ATTEMPTS,
+                                "skipping block after repeated payload witness failures"
+                            );
                         }
                         block_number += 1;
                     }
@@ -132,17 +155,17 @@ impl WitnessFollower {
 
         let started = Instant::now();
         let result = base_metrics::time!(Metrics::execute_payload_duration_seconds(), {
-            execute_payload(&self.provider, parent_hash, payload_attributes)
-                .instrument(info_span!(
-                    "debug_executePayload",
-                    block_number,
-                    parent_hash = %parent_hash,
-                ))
-                .await
+            tokio::time::timeout(
+                EXECUTE_PAYLOAD_TIMEOUT,
+                execute_payload(&self.provider, parent_hash, payload_attributes).instrument(
+                    info_span!("debug_executePayload", block_number, parent_hash = %parent_hash,),
+                ),
+            )
+            .await
         });
         let elapsed_ms = started.elapsed().as_millis();
         match result {
-            Ok(witness) => {
+            Ok(Ok(witness)) => {
                 self.cache.insert(WitnessKey { parent_hash, attributes_digest }, witness);
                 Metrics::cached_blocks().set(self.cache.len() as f64);
                 Metrics::ingest_attempts_total(Metrics::INGEST_CACHED).increment(1);
@@ -155,7 +178,7 @@ impl WitnessFollower {
                 );
                 true
             }
-            Err(error) => {
+            Ok(Err(error)) => {
                 Metrics::ingest_attempts_total(Metrics::INGEST_RETRY).increment(1);
                 error!(
                     block_number,
@@ -167,7 +190,41 @@ impl WitnessFollower {
                 );
                 false
             }
+            Err(_) => {
+                Metrics::ingest_attempts_total(Metrics::INGEST_RETRY).increment(1);
+                error!(
+                    block_number,
+                    parent_hash = %parent_hash,
+                    elapsed_ms,
+                    lag_blocks,
+                    timeout_secs = EXECUTE_PAYLOAD_TIMEOUT.as_secs(),
+                    "debug_executePayload timed out"
+                );
+                false
+            }
         }
+    }
+}
+
+/// Consecutive ingest failures for one L2 block.
+#[derive(Debug, Default)]
+struct IngestAttempts {
+    block_number: Option<u64>,
+    attempts: u32,
+}
+
+impl IngestAttempts {
+    /// Returns true when the follower should move to the next block.
+    ///
+    /// A successful ingest advances immediately. A failing block advances only after
+    /// [`MAX_INGEST_ATTEMPTS`]. Switching blocks resets the count.
+    fn advance(&mut self, block_number: u64, ingested: bool) -> bool {
+        if self.block_number != Some(block_number) {
+            self.block_number = Some(block_number);
+            self.attempts = 0;
+        }
+        self.attempts = self.attempts.saturating_add(1);
+        ingested || self.attempts >= MAX_INGEST_ATTEMPTS
     }
 }
 
