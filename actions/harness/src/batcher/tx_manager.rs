@@ -50,7 +50,9 @@ impl std::fmt::Debug for Pending {
 /// Internal mutable state for [`L1MinerTxManager`]: pending and staged submissions.
 #[derive(Debug, Default)]
 pub struct Inner {
+    /// Signed submissions not yet handed to the miner.
     pending: Vec<Pending>,
+    /// Submissions in the miner's queue, waiting for a receipt.
     staged: Vec<Pending>,
     /// Next nonce to use for signed production-mode transactions.
     next_nonce: u64,
@@ -90,9 +92,13 @@ pub struct Inner {
 /// [`Batcher`]: crate::Batcher
 #[derive(Debug, Clone)]
 pub struct L1MinerTxManager {
+    /// Pending and staged submissions, shared with the driver's clone.
     inner: Arc<Mutex<Inner>>,
+    /// Default `to` for candidates that do not name one.
     inbox_address: Address,
+    /// Signs every submission. Its address is the batcher's sender.
     signer: PrivateKeySigner,
+    /// L1 chain id stamped on every signed transaction.
     chain_id: u64,
 }
 

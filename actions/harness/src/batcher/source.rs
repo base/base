@@ -12,9 +12,10 @@ use tokio::sync::{mpsc, oneshot};
 pub enum L1HeadItem {
     /// Delivered to the driver as is.
     Head(u64),
-    /// Answered when the driver is idle: the L1 head arm is the last one of the driver's
-    /// biased `select!`, so it is only polled once every other input is waiting and the
-    /// buffered work is encoded and submitted.
+    /// Answered when the driver is idle: the L1 head arm is the lowest-priority input of
+    /// the driver's biased `select!` and is disabled while encoding is in progress, so it is
+    /// only polled once the buffered work is encoded and submitted and every other input
+    /// is waiting.
     Marker(oneshot::Sender<()>),
 }
 
