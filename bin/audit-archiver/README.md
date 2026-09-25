@@ -59,7 +59,8 @@ Each pass, for each class:
   a one-hour grace period
 
 The runtime role does not own the table, so partition DDL goes through
-`SECURITY DEFINER` functions created by migration 005 and executable only by
+`SECURITY DEFINER` functions created by the baseline migration
+(`001_transaction_events_partitioned.sql`) and executable only by
 `audit_archiver`. Create uses `CREATE TABLE` + `ATTACH PARTITION`, which only
 takes a `SHARE UPDATE EXCLUSIVE` lock on the class partition. Drop detaches
 first (a brief `ACCESS EXCLUSIVE` lock on the class partition, which queues

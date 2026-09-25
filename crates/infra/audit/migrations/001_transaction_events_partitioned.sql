@@ -1,28 +1,16 @@
--- Replace the unpartitioned transaction_events table with one partitioned by
--- retention class, then by UTC day of event_time (stored as event_date).
---
--- THIS MIGRATION DISCARDS EVERY EXISTING transaction_events ROW. Postgres is
--- the operational query window, not the archive, and copying a bloated
--- multi-terabyte table into partitions would cost more I/O than the database
--- can spare. Only audit-owned objects are dropped: the database, schema,
--- roles, and _sqlx_migrations history stay intact.
+-- Baseline transaction_events schema, partitioned by retention class, then by
+-- UTC day of event_time (stored as event_date).
 --
 -- Retention drops whole day partitions instead of deleting rows, so expiry
 -- no longer produces dead tuples, index bloat, or long vacuums. Each day's
 -- random-key indexes (event_id, tx_hash, ...) stay small enough to cache.
 --
--- This is the baseline schema. The pre-partition migrations 001-004 are no
--- longer embedded; audit-archiver ignores their _sqlx_migrations rows, so a
--- database reaches this schema from any state they left behind, including a
--- 004 index build that never recorded. Dropping the table removes every
--- object they created.
---
--- Bound the DROP's lock wait so a long-running vacuum or query on the old
--- table fails this migration quickly instead of queueing ingest behind it.
--- The migrator can simply be retried.
-SET LOCAL lock_timeout = '60s';
-
-DROP TABLE IF EXISTS transaction_events;
+-- This replaces the pre-partition migrations 001-004 (legacy_migrations/).
+-- Before applying it to a database that recorded them, audit-archiver drops
+-- the old table and deletes their _sqlx_migrations rows in the same
+-- transaction, so every database starts from this migration. That discards
+-- every existing transaction_events row: Postgres is the operational query
+-- window, not the archive.
 
 -- Postgres requires unique constraints to include the partition key, so the
 -- primary key adds retention_class and event_date to event_id. retention_class

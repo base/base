@@ -27,12 +27,12 @@ use serde::{
 };
 use serde_json::Value;
 use sqlx::{
-    Connection, PgPool, QueryBuilder, Row,
-    migrate::{Migrate, Migrator},
+    Connection, PgConnection, PgPool, QueryBuilder, Row,
+    migrate::{Migrate, Migration, Migrator},
     postgres::PgPoolOptions,
 };
 use tower_http::limit::RequestBodyLimitLayer;
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 use crate::Metrics;
 
@@ -472,26 +472,24 @@ pub const MAX_TRANSACTION_EVENT_QUERY_LIMIT: i64 = 2_000;
 const REQUIRED_TRANSACTION_EVENT_MIGRATION_DESCRIPTION: &str = "transaction events partitioned";
 static TRANSACTION_EVENT_MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
-/// Versions of the pre-partition migrations (001-004) that migration 005
-/// replaced.
+/// Pre-partition migrations 001-004, which the partitioned baseline replaced.
 ///
-/// They are no longer embedded, so databases that recorded them are migrated
-/// straight to 005, whatever state those migrations left behind. 005 drops
-/// every object they created.
-const RETIRED_TRANSACTION_EVENT_MIGRATION_VERSIONS: std::ops::RangeInclusive<i64> = 1..=4;
+/// They are embedded only so their recorded `_sqlx_migrations` rows can be
+/// recognized by version and checksum and reset. They are never applied.
+static LEGACY_TRANSACTION_EVENT_MIGRATOR: Migrator = sqlx::migrate!("./legacy_migrations");
 
-/// Required sqlx migration version for transaction event storage.
-fn required_transaction_event_migration_version() -> Result<i64, &'static str> {
+/// Migration that creates the transaction event storage schema.
+fn required_transaction_event_migration() -> Result<&'static Migration, &'static str> {
     let mut matching_migrations = TRANSACTION_EVENT_MIGRATOR.iter().filter(|migration| {
         migration.description.as_ref() == REQUIRED_TRANSACTION_EVENT_MIGRATION_DESCRIPTION
     });
     let migration = matching_migrations.next().ok_or(
-        "transaction event migration 005_transaction_events_partitioned.sql must be embedded in audit migrator",
+        "transaction event migration 001_transaction_events_partitioned.sql must be embedded in audit migrator",
     )?;
     if matching_migrations.next().is_some() {
         return Err("transaction event migration description must be unique");
     }
-    Ok(migration.version)
+    Ok(migration)
 }
 
 /// Persisted transaction event row returned by audit read APIs.
@@ -545,7 +543,7 @@ pub enum TransactionEventSchemaReadinessError {
     MigrationTableMissing,
     /// The transaction event migration has not completed successfully.
     #[error(
-        "transaction-event Postgres schema is not ready: required sqlx migration version {required_version} for 005_transaction_events_partitioned.sql has not been applied successfully; run `audit-archiver migrate up` or the audit migration WorkflowTemplate before enabling TIPS_AUDIT_POSTGRES_URL"
+        "transaction-event Postgres schema is not ready: required sqlx migration version {required_version} for 001_transaction_events_partitioned.sql has not been applied successfully; run `audit-archiver migrate up` or the audit migration WorkflowTemplate before enabling TIPS_AUDIT_POSTGRES_URL"
     )]
     RequiredMigrationMissing {
         /// Required sqlx migration version.
@@ -558,7 +556,7 @@ pub enum TransactionEventSchemaReadinessError {
     TransactionEventsRelationMissing,
     /// The expected table exists but cannot be queried by the runtime role.
     #[error(
-        "transaction-event Postgres schema is not ready: runtime role cannot query public.transaction_events; verify audit_archiver privileges from 005_transaction_events_partitioned.sql"
+        "transaction-event Postgres schema is not ready: runtime role cannot query public.transaction_events; verify audit_archiver privileges from 001_transaction_events_partitioned.sql"
     )]
     TransactionEventsRelationUnavailable {
         /// Underlying database error.
@@ -616,7 +614,7 @@ pub struct PgTransactionEventSink {
 impl PgTransactionEventSink {
     /// Required sqlx migration version for transaction event storage.
     pub fn required_migration_version() -> Result<i64, &'static str> {
-        required_transaction_event_migration_version()
+        required_transaction_event_migration().map(|migration| migration.version)
     }
 
     /// Connects to Postgres without running migrations.
@@ -640,22 +638,43 @@ impl PgTransactionEventSink {
 
     /// Runs pending Postgres migrations.
     ///
-    /// Databases may still record the retired 001-004 migrations. Those are
-    /// ignored, but any other applied migration missing from this binary is an
-    /// error, as it would be without retirement.
+    /// A database that recorded the pre-partition migrations 001-004 is reset
+    /// first. Its old table and their `_sqlx_migrations` rows are dropped in the
+    /// transaction that applies the partitioned baseline, so the reset commits
+    /// only if the baseline does. Every other database gets sqlx's standard
+    /// checks.
     pub async fn migrate(database_url: &str) -> Result<()> {
         let pool = PgPoolOptions::new().max_connections(1).connect(database_url).await?;
         let mut conn = pool.acquire().await?;
-        // Hold sqlx's migration lock across the retired-migration check and the
-        // run, so a concurrent newer migrator cannot record a version between
+        // Hold sqlx's migration lock across the legacy-history check and the
+        // run, so a concurrent migrator cannot change the history between
         // them. The lock is session-level and reentrant; run_direct takes it
         // again and releases its own hold.
         conn.lock().await?;
         let result = async {
-            check_no_unknown_applied_migrations(&mut conn).await?;
-            let mut migrator = sqlx::migrate!("./migrations");
-            migrator.set_ignore_missing(true);
-            migrator.run_direct(&mut *conn).await?;
+            let legacy_versions = legacy_transaction_event_migration_versions(&mut conn).await?;
+            if legacy_versions.is_empty() {
+                TRANSACTION_EVENT_MIGRATOR.run_direct(&mut *conn).await?;
+                return anyhow::Ok(());
+            }
+
+            let mut tx = conn.begin().await?;
+            // Bound the DROP's lock wait so a long-running vacuum or query on
+            // the old table fails the migration quickly instead of queueing
+            // ingest behind it. The migrator can simply be retried.
+            sqlx::query("SET LOCAL lock_timeout = '60s'").execute(&mut *tx).await?;
+            sqlx::query("DROP TABLE IF EXISTS transaction_events").execute(&mut *tx).await?;
+            sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ANY($1)")
+                .bind(&legacy_versions)
+                .execute(&mut *tx)
+                .await?;
+            // sqlx applies each migration in a savepoint of this transaction.
+            TRANSACTION_EVENT_MIGRATOR.run_direct(&mut *tx).await?;
+            tx.commit().await?;
+            info!(
+                legacy_versions = ?legacy_versions,
+                "reset legacy transaction event migration history"
+            );
             anyhow::Ok(())
         }
         .await;
@@ -706,19 +725,23 @@ impl PgTransactionEventSink {
             return Err(TransactionEventSchemaReadinessError::MigrationTableMissing);
         }
 
-        let required_version =
-            required_transaction_event_migration_version().map_err(|source| {
-                TransactionEventSchemaReadinessError::MigrationMetadataInvalid { reason: source }
-            })?;
-        let migration_applied: Option<bool> =
-            sqlx::query_scalar("SELECT success FROM _sqlx_migrations WHERE version = $1")
-                .bind(required_version)
+        let required_migration = required_transaction_event_migration().map_err(|source| {
+            TransactionEventSchemaReadinessError::MigrationMetadataInvalid { reason: source }
+        })?;
+        let applied: Option<(bool, Vec<u8>)> =
+            sqlx::query_as("SELECT success, checksum FROM _sqlx_migrations WHERE version = $1")
+                .bind(required_migration.version)
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|source| TransactionEventSchemaReadinessError::QueryFailed { source })?;
-        if !matches!(migration_applied, Some(true)) {
+        // The checksum distinguishes the partitioned baseline from the legacy
+        // migration that also recorded version 1.
+        let applied = applied.is_some_and(|(success, checksum)| {
+            success && checksum == required_migration.checksum.as_ref()
+        });
+        if !applied {
             return Err(TransactionEventSchemaReadinessError::RequiredMigrationMissing {
-                required_version,
+                required_version: required_migration.version,
             });
         }
 
@@ -1229,38 +1252,36 @@ fn persist_retry_sqlstate(code: &str) -> Option<&'static str> {
     }
 }
 
-/// Fails if the database records a migration this binary does not embed,
-/// other than the retired pre-partition migrations.
+/// Versions of the recorded pre-partition migrations 001-004.
 ///
-/// sqlx's own check is disabled so recorded 001-004 rows are accepted; this
-/// keeps the check for everything else.
-async fn check_no_unknown_applied_migrations(conn: &mut sqlx::PgConnection) -> Result<()> {
+/// A row counts only if both its version and checksum match a legacy
+/// migration. A database that records legacy migrations alongside anything
+/// else fails, so the reset never deletes history it does not recognize.
+async fn legacy_transaction_event_migration_versions(conn: &mut PgConnection) -> Result<Vec<i64>> {
     let migrations_table_exists: bool =
         sqlx::query_scalar("SELECT to_regclass('_sqlx_migrations') IS NOT NULL")
             .fetch_one(&mut *conn)
             .await?;
     if !migrations_table_exists {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
-    let applied: Vec<i64> =
-        sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+    let applied: Vec<(i64, Vec<u8>)> =
+        sqlx::query_as("SELECT version, checksum FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&mut *conn)
             .await?;
-    let embedded: HashSet<i64> =
-        TRANSACTION_EVENT_MIGRATOR.iter().map(|migration| migration.version).collect();
-    let unknown: Vec<i64> = applied
-        .into_iter()
-        .filter(|version| {
-            !embedded.contains(version)
-                && !RETIRED_TRANSACTION_EVENT_MIGRATION_VERSIONS.contains(version)
+    let (legacy, other): (Vec<_>, Vec<_>) = applied.into_iter().partition(|(version, checksum)| {
+        LEGACY_TRANSACTION_EVENT_MIGRATOR.iter().any(|migration| {
+            migration.version == *version && migration.checksum.as_ref() == checksum.as_slice()
         })
-        .collect();
+    });
+    let legacy: Vec<i64> = legacy.into_iter().map(|(version, _)| version).collect();
+    let other: Vec<i64> = other.into_iter().map(|(version, _)| version).collect();
     anyhow::ensure!(
-        unknown.is_empty(),
-        "database records transaction event migrations {unknown:?} that this audit-archiver does not embed; deploy a newer migrator"
+        legacy.is_empty() || other.is_empty(),
+        "database records legacy transaction event migrations {legacy:?} alongside unrecognized migrations {other:?}; refusing to reset migration history"
     );
-    Ok(())
+    Ok(legacy)
 }
 
 fn is_lock_timeout(err: &sqlx::Error) -> bool {
@@ -1280,7 +1301,7 @@ struct DayPartition {
 }
 
 impl DayPartition {
-    /// Table name used by the partition functions in migration 005.
+    /// Table name used by the partition functions in the baseline migration.
     fn table_name(self) -> String {
         format!("transaction_events_{}_{}", self.class.as_str(), self.day.format("%Y%m%d"))
     }
