@@ -839,7 +839,7 @@ mod tests {
         )
         .unwrap();
         let rpc = SendRawTransactionValidityApiImpl::new(
-            pre_zenith_provider(),
+            pre_everest_provider(),
             test_transaction_sender(),
         )
         .with_sequencer_client(client);
@@ -866,7 +866,7 @@ mod tests {
         });
         let client = SequencerClient::new_http_with_headers(sequencer.base_url(), vec![]).unwrap();
         let rpc = SendRawTransactionValidityApiImpl::new(
-            pre_zenith_provider(),
+            pre_everest_provider(),
             test_transaction_sender(),
         )
         .with_sequencer_client(client);
