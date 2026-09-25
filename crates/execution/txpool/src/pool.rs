@@ -371,8 +371,9 @@ where
         }
     }
 
-    /// Evicts validity-predicate transactions whose last valid block is before
-    /// the newly committed `block_number`.
+    /// Evicts validity-predicate transactions whose last valid block is at or
+    /// before the newly committed `committed_block`, since none of them can be
+    /// included in the next block to be built.
     ///
     /// This is the pool-side, block-granular half of validity expiry (the
     /// builder enforces the finer flashblock deadline). Driven from
@@ -380,9 +381,9 @@ where
     /// transactions removed by other paths (inclusion, replacement) are cleaned
     /// up lazily when their own expiry block is reached, bounding index growth to
     /// the furthest live block bound.
-    fn expire_by_block(&self, block_number: u64) {
+    fn expire_by_block(&self, committed_block: u64) {
         let _admission_guard = self.protocol_admission_lock.lock();
-        let expired = self.block_expiry.write().drain_expired(block_number);
+        let expired = self.block_expiry.write().drain_expired(committed_block.saturating_add(1));
         let removed = self.remove_dropped_across_pools(expired);
         // Release any guard slots directly rather than deferring to the
         // reconciliation sweep: an EIP-8130 transaction may carry block_number
@@ -393,7 +394,7 @@ where
             GuardMetrics::record_block_expiry_invalidations(removed.len());
             debug!(
                 count = removed.len(),
-                block = block_number,
+                block = committed_block,
                 "validity transactions invalidated by block expiry"
             );
         }
@@ -2526,9 +2527,13 @@ mod tests {
         assert_eq!(pool.block_expiry.read().len(), 1);
         assert!(pool.get(&hash).is_some());
 
-        // Once the last valid block is behind the tip, block-expiry eviction
-        // removes it and releases any guard capacity it held.
-        pool.expire_by_block(101);
+        // The transaction stays while its last valid block can still be built.
+        pool.expire_by_block(99);
+        assert!(pool.get(&hash).is_some());
+
+        // Once its last valid block is committed, the next block cannot include it,
+        // so block-expiry eviction removes it and releases any guard capacity it held.
+        pool.expire_by_block(100);
         assert!(pool.get(&hash).is_none());
         assert!(!pool.guard.read().contains(&hash));
     }
