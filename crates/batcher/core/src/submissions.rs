@@ -9,7 +9,7 @@ use base_batcher_encoder::{
 };
 use base_blobs::{BlobEncodeError, BlobEncoder};
 use base_protocol::Frame;
-use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
+use base_tx_manager::{TxCandidate, TxManager};
 use futures::stream::{FuturesUnordered, StreamExt};
 use tracing::{info, warn};
 
@@ -92,39 +92,30 @@ impl BatchTxCandidateBuilder {
 /// Sends ready submissions to L1, one transaction each, and tracks those transactions until
 /// they settle.
 ///
-/// At most `max_pending` transactions are in flight at once. A
-/// [`TxOutcome::TxpoolBlocked`] outcome suspends sending until
-/// [`recover_txpool`](Self::recover_txpool) cancels the transaction holding the nonce slot.
+/// At most `max_pending` transactions are in flight at once.
 #[derive(Debug)]
 pub struct SubmissionQueue<TM: TxManager> {
     tx_manager: TM,
     in_flight: InFlight,
     max_pending: usize,
     inbox: Address,
-    txpool_blocked: bool,
 }
 
 impl<TM: TxManager> SubmissionQueue<TM> {
     /// Create a new [`SubmissionQueue`].
     pub fn new(tx_manager: TM, inbox: Address, max_pending: usize) -> Self {
-        Self {
-            tx_manager,
-            in_flight: FuturesUnordered::new(),
-            max_pending,
-            inbox,
-            txpool_blocked: false,
-        }
+        Self { tx_manager, in_flight: FuturesUnordered::new(), max_pending, inbox }
     }
 
     /// Send ready submissions, one L1 transaction each, until `max_pending` transactions are
-    /// in flight, the pipeline has nothing ready, or the txpool is blocked.
+    /// in flight or the pipeline has nothing ready.
     ///
     /// Fails when a blob submission cannot be built into a transaction.
     pub async fn submit_pending<P: BatchPipeline>(
         &mut self,
         pipeline: &mut P,
     ) -> Result<(), BatchTxCandidateError> {
-        while !self.txpool_blocked && self.in_flight.len() < self.max_pending {
+        while self.in_flight.len() < self.max_pending {
             let Some(sub) = pipeline.next_submission() else {
                 return Ok(());
             };
@@ -177,10 +168,6 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                         }
                         TxOutcome::Confirmed { l1_block }
                     }
-                    Err(TxManagerError::AlreadyReserved) => {
-                        warn!(id = ?id, "txpool nonce slot already reserved");
-                        TxOutcome::TxpoolBlocked
-                    }
                     Err(e) => {
                         warn!(id = ?id, error = %e, "submission failed");
                         TxOutcome::Failed
@@ -192,30 +179,10 @@ impl<TM: TxManager> SubmissionQueue<TM> {
         Ok(())
     }
 
-    /// Attempt to clear a txpool blockage by cancelling the stuck transaction.
-    ///
-    /// No-op if the txpool is not currently blocked. On success, clears the
-    /// blocked flag so submission can resume.
-    pub async fn recover_txpool(&mut self) {
-        if !self.txpool_blocked {
-            return;
-        }
-        match self.tx_manager.cancel_tx().await {
-            Ok(()) => {
-                self.txpool_blocked = false;
-                info!("txpool unblocked after cancellation tx");
-            }
-            Err(e) => {
-                warn!(error = %e, "cancel_tx failed, txpool remains blocked");
-            }
-        }
-    }
-
     /// Report a settled transaction to the pipeline.
     ///
     /// A confirmation confirms the submission and advances the pipeline's L1 head to the
-    /// inclusion block. A failure requeues the submission. A txpool blockage requeues it too,
-    /// and suspends sending until [`recover_txpool`](Self::recover_txpool) succeeds.
+    /// inclusion block. A failure requeues the submission.
     pub fn handle_outcome<P: BatchPipeline>(
         &mut self,
         pipeline: &mut P,
@@ -233,11 +200,6 @@ impl<TM: TxManager> SubmissionQueue<TM> {
             TxOutcome::Failed => {
                 pipeline.requeue(id);
                 BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_FAILED).increment(1);
-            }
-            TxOutcome::TxpoolBlocked => {
-                pipeline.requeue(id);
-                self.txpool_blocked = true;
-                BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_REQUEUED).increment(1);
             }
         }
     }

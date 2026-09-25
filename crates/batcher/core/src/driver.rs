@@ -60,7 +60,7 @@ where
     pipeline: P,
     /// The L2 block source.
     source: S,
-    /// Submission lifecycle manager (tx manager, in-flight tracking, txpool state).
+    /// Submission lifecycle manager (tx manager, in-flight tracking).
     submissions: SubmissionQueue<TM>,
     /// DA backlog throttle (controller, client, dedup cache).
     throttle: DaThrottle<TC>,
@@ -129,8 +129,8 @@ where
     /// Run the batch driver loop.
     ///
     /// Each iteration has two phases:
-    /// 1. **CPU phase** (`work`): drain encoding, apply throttle, recover txpool, submit
-    ///    ready submissions up to the in-flight limit.
+    /// 1. **CPU phase** (`work`): drain encoding, apply throttle, submit ready submissions up
+    ///    to the in-flight limit.
     /// 2. **I/O phase**: block on a biased `tokio::select!` until an event fires, and apply it.
     ///
     /// Every event is therefore followed by a CPU phase before the driver waits again, so the
@@ -200,8 +200,8 @@ where
         self.shutdown().await
     }
 
-    /// The CPU phase: encode what is buffered, apply the DA throttle, recover the txpool and
-    /// submit ready submissions up to the in-flight limit.
+    /// The CPU phase: encode what is buffered, apply the DA throttle and submit ready
+    /// submissions up to the in-flight limit.
     ///
     /// Returns `true` when the encoding step budget ran out, so encoding must continue. Fails
     /// on a fatal encoding error or a blob submission that cannot be built.
@@ -213,7 +213,6 @@ where
             self.pipeline.set_blob_override(is_throttling);
         }
 
-        self.submissions.recover_txpool().await;
         self.submissions.submit_pending(&mut self.pipeline).await?;
         Ok(encoding_left)
     }
@@ -966,44 +965,6 @@ mod tests {
                 recorded.lock().unwrap().confirmed(),
                 [SubmissionId(0), SubmissionId(1), SubmissionId(2)],
                 "each queued submission must confirm as the tx before it settles"
-            );
-        });
-    }
-
-    /// `AlreadyReserved` means another transaction owns the sender nonce slot.
-    /// The driver must requeue the submission, mark the txpool blocked, and
-    /// call `cancel_tx` before accepting more submissions. Once the cancel
-    /// succeeds, the requeued submission is sent again.
-    #[test]
-    fn test_txpool_blocked_requeues_and_attempts_recovery() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let mut pipeline = TrackingPipeline::new();
-            let recorded = pipeline.recorded();
-            pipeline.submissions.push_back(SubmissionStub::stub());
-            let tx_manager = ScriptedTxManager::new([SendOutcome::TxpoolBlocked]);
-
-            let (driver, _handles) =
-                DriverFixture::new(ctx.clone(), pipeline, tx_manager.clone()).build();
-            let handle = ctx.spawn(driver.run());
-
-            ctx.sleep(Duration::from_millis(50)).await;
-            ctx.cancel();
-
-            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
-            assert_eq!(
-                recorded.lock().unwrap().requeued(),
-                [SubmissionId(0)],
-                "txpool-blocked submissions must be requeued"
-            );
-            assert_eq!(
-                tx_manager.cancellations(),
-                1,
-                "driver must attempt txpool recovery with cancel_tx"
-            );
-            assert_eq!(
-                tx_manager.candidates().len(),
-                2,
-                "the requeued submission must be sent again once the txpool is unblocked"
             );
         });
     }
