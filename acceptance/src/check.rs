@@ -34,6 +34,8 @@ pub struct ObservationState<'a> {
     pub count: u64,
     /// Number of failed RPC observations, including recovered failures.
     pub errors: u64,
+    /// Whether infrastructure prevented complete evaluation.
+    pub infrastructure_error: bool,
     /// Machine-readable expected value.
     pub expected: Value,
     /// Machine-readable latest observation and failure thresholds.
@@ -44,8 +46,6 @@ pub struct ObservationState<'a> {
     pub origin: Instant,
     /// Whether the sample collection reached its fixed report limit.
     pub samples_truncated: bool,
-    /// Whether the terminal failure was caused by unavailable observations.
-    pub observation_unavailable: bool,
 }
 
 impl<'a> ObservationState<'a> {
@@ -54,12 +54,12 @@ impl<'a> ObservationState<'a> {
         Self {
             count: 0,
             errors: 0,
+            infrastructure_error: false,
             expected,
             observed: json!({}),
             samples,
             origin,
             samples_truncated: false,
-            observation_unavailable: false,
         }
     }
 
@@ -88,6 +88,12 @@ impl<'a> ObservationState<'a> {
     pub fn failure(&mut self, endpoint: &str) {
         self.errors += 1;
         self.sample(endpoint, None);
+    }
+
+    /// Records a fatal RPC gap that prevents complete evaluation.
+    pub fn infrastructure_failure(&mut self, endpoint: &str) {
+        self.failure(endpoint);
+        self.infrastructure_error = true;
     }
 }
 
@@ -145,11 +151,7 @@ impl RpcObserver {
         let evaluation = self.evaluate(check, endpoints, deadline, &mut state).await;
         let (status, message) = match evaluation {
             Ok(message) => (Status::Passed, message),
-            Err(error)
-                if state.observation_unavailable || (state.count == 0 && state.errors > 0) =>
-            {
-                (Status::Error, error.to_string())
-            }
+            Err(error) if state.infrastructure_error => (Status::Error, error.to_string()),
             Err(error) => (Status::Failed, error.to_string()),
         };
         if state.samples_truncated {
@@ -198,6 +200,7 @@ impl RpcObserver {
                     }
                     Err(error) => {
                         state.errors += 1;
+                        state.infrastructure_error = true;
                         Err(error)
                     }
                 }
@@ -242,6 +245,221 @@ impl RpcObserver {
                 )
                 .await
             }
+            AcceptanceCheck::HeadsHealthy {
+                endpoints: roles,
+                warmup,
+                duration,
+                minimum_blocks,
+                maximum_age,
+                max_lag_blocks,
+                ..
+            } => {
+                state.expected = json!({
+                    "roles": roles,
+                    "warmup_ms": warmup.0.as_millis(),
+                    "duration_ms": duration.0.as_millis(),
+                    "minimum_blocks_per_node": minimum_blocks,
+                    "maximum_age_seconds": maximum_age.0.as_secs(),
+                    "max_lag_blocks": max_lag_blocks,
+                    "guarantee": "sampled health window; not proof of zero restarts between samples"
+                });
+                self.healthy(
+                    endpoints,
+                    roles,
+                    (warmup.0, duration.0, *minimum_blocks, maximum_age.0, *max_lag_blocks),
+                    deadline,
+                    state,
+                )
+                .await
+            }
+        }
+    }
+
+    /// Samples all L2 roles for a complete shared window and requires sustained health.
+    pub async fn healthy(
+        &self,
+        map: &BTreeMap<String, String>,
+        roles: &[String],
+        settings: (Duration, Duration, u64, Duration, u64),
+        deadline: Instant,
+        state: &mut ObservationState<'_>,
+    ) -> Result<String> {
+        let (warmup, duration, minimum, maximum_age, max_lag) = settings;
+        let observation_start =
+            Instant::now().checked_add(warmup).ok_or_else(|| eyre!("health warmup overflow"))?;
+        tokio::time::sleep_until(observation_start).await;
+        let mut baselines = BTreeMap::new();
+        let mut latest = BTreeMap::new();
+        let mut worst_ages = BTreeMap::new();
+        let mut worst_lag = 0;
+        let mut rounds = 0_u64;
+        let mut until = None;
+        loop {
+            let mut heads = Vec::with_capacity(roles.len());
+            for role in roles {
+                let block = match self.block(Self::endpoint(map, role)?, "latest", deadline).await {
+                    Ok(block) => block,
+                    Err(error) => {
+                        state.infrastructure_failure(role);
+                        state.observed = json!({
+                            "completed_rounds": rounds,
+                            "partial_round_role": role,
+                            "baselines": baselines,
+                            "latest": latest,
+                            "gaps": state.errors,
+                        });
+                        return Err(error.wrap_err(format!("health sample unavailable for {role}")));
+                    }
+                };
+                state.success(role, &block);
+                baselines.entry(role.clone()).or_insert(block.number);
+                latest.insert(role.clone(), block.number);
+                let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                // Match the L2 gossip validator's five-second future timestamp allowance.
+                if block.timestamp.saturating_sub(now) > 5 {
+                    state.observed = json!({
+                        "role": role,
+                        "timestamp": block.timestamp,
+                        "host_timestamp": now,
+                        "maximum_future_seconds": 5,
+                    });
+                    bail!("{role} head timestamp exceeds the five-second future allowance");
+                }
+                let age = now.saturating_sub(block.timestamp);
+                worst_ages
+                    .entry(role.clone())
+                    .and_modify(|value: &mut u64| *value = (*value).max(age))
+                    .or_insert(age);
+                if age > maximum_age.as_secs() {
+                    state.observed = json!({
+                        "completed_rounds": rounds,
+                        "baselines": baselines,
+                        "latest": latest,
+                        "worst_age_seconds": worst_ages,
+                        "worst_lag_blocks": worst_lag,
+                        "gaps": state.errors,
+                    });
+                    bail!("{role} head age {age}s exceeds freshness limit");
+                }
+                heads.push((role, block));
+            }
+            let low = heads.iter().map(|(_, block)| block.number).min().unwrap_or_default();
+            let high = heads.iter().map(|(_, block)| block.number).max().unwrap_or_default();
+            let lag = high.saturating_sub(low);
+            worst_lag = worst_lag.max(lag);
+            if lag > max_lag {
+                state.observed = json!({
+                    "completed_rounds": rounds,
+                    "baselines": baselines,
+                    "latest": latest,
+                    "worst_age_seconds": worst_ages,
+                    "worst_lag_blocks": worst_lag,
+                    "gaps": state.errors,
+                });
+                bail!("head lag {lag} blocks exceeds limit {max_lag}");
+            }
+            let mut common_hash: Option<String> = None;
+            let mut compared = Vec::with_capacity(heads.len());
+            for (role, sampled) in &heads {
+                let historical = match self
+                    .block(Self::endpoint(map, role)?, &format!("0x{low:x}"), deadline)
+                    .await
+                {
+                    Ok(block) => block,
+                    Err(error) => {
+                        state.infrastructure_failure(role);
+                        state.observed = json!({
+                            "completed_rounds": rounds,
+                            "partial_round_role": role,
+                            "common_height": low,
+                            "baselines": baselines,
+                            "latest": latest,
+                            "gaps": state.errors,
+                        });
+                        return Err(
+                            error.wrap_err(format!("canonical hash unavailable for {role}"))
+                        );
+                    }
+                };
+                state.count += 1;
+                let comparison = json!({
+                    "role": role,
+                    "height": low,
+                    "sampled_height": sampled.number,
+                    "sampled_hash": sampled.hash,
+                    "canonical_hash": historical.hash,
+                });
+                if sampled.number == low && sampled.hash != historical.hash {
+                    state.observed = json!({
+                        "completed_rounds": rounds,
+                        "baselines": baselines,
+                        "latest": latest,
+                        "canonical_comparisons": [comparison],
+                        "gaps": state.errors,
+                    });
+                    bail!(
+                        "{role} sampled hash {} disagrees with canonical hash {} at height {low}",
+                        sampled.hash,
+                        historical.hash
+                    );
+                }
+                if common_hash.as_ref().is_some_and(|hash| hash != &historical.hash) {
+                    compared.push(comparison);
+                    state.observed = json!({
+                        "completed_rounds": rounds,
+                        "baselines": baselines,
+                        "latest": latest,
+                        "canonical_comparisons": compared,
+                        "gaps": state.errors,
+                    });
+                    bail!("node canonical hashes disagree at common height {low}");
+                }
+                common_hash = Some(historical.hash.clone());
+                compared.push(comparison);
+            }
+            rounds += 1;
+            if until.is_none() {
+                let end = Instant::now()
+                    .checked_add(duration)
+                    .ok_or_else(|| eyre!("health duration overflow"))?;
+                if end >= deadline {
+                    bail!(
+                        "health window leaves no reserved final round RPC budget before deadline"
+                    );
+                }
+                until = Some(end);
+            }
+            let until = until.expect("health window initialized after baseline round");
+            let deltas: BTreeMap<_, _> = latest
+                .iter()
+                .map(|(role, number)| (role, number.saturating_sub(baselines[role])))
+                .collect();
+            state.observed = json!({
+                "baselines": baselines,
+                "latest": latest,
+                "deltas": deltas,
+                "worst_age_seconds": worst_ages,
+                "worst_lag_blocks": worst_lag,
+                "completed_rounds": rounds,
+                "gaps": state.errors,
+                "last_common_height": low,
+            });
+            if Instant::now() >= until {
+                let stalled: Vec<_> = deltas
+                    .iter()
+                    .filter(|(_, delta)| **delta < minimum)
+                    .map(|(role, delta)| format!("{role} advanced {delta}"))
+                    .collect();
+                if !stalled.is_empty() {
+                    bail!(
+                        "insufficient independent progress: {}; required {minimum} blocks per node",
+                        stalled.join(", ")
+                    );
+                }
+                return Ok("all nodes remained available, fresh, canonical, within lag, and advanced independently for the sampled window".into());
+            }
+            tokio::time::sleep(self.poll.min(until.saturating_duration_since(Instant::now())))
+                .await;
         }
     }
 
@@ -265,7 +483,7 @@ impl RpcObserver {
                 Err(error) => {
                     state.failure(&sample_role);
                     if !self.wait(deadline).await {
-                        state.observation_unavailable = true;
+                        state.infrastructure_error = true;
                         return Err(error);
                     }
                 }
@@ -280,7 +498,7 @@ impl RpcObserver {
         loop {
             if !self.wait(deadline).await {
                 if let Some(error) = observation_error {
-                    state.observation_unavailable = true;
+                    state.infrastructure_error = true;
                     return Err(error);
                 }
                 let delta = state.observed["delta"].as_u64().unwrap_or_default();
@@ -390,7 +608,7 @@ impl RpcObserver {
             }
             if !self.wait(deadline).await {
                 if let Some(error) = observation_error {
-                    state.observation_unavailable = true;
+                    state.infrastructure_error = true;
                     return Err(error);
                 }
                 bail!("heads did not converge before deadline");
@@ -439,8 +657,7 @@ impl RpcObserver {
                     }
                 }
                 Err(error) => {
-                    state.failure(role);
-                    state.observation_unavailable = true;
+                    state.infrastructure_failure(role);
                     return Err(error.wrap_err("freshness sample unavailable"));
                 }
             }
@@ -652,6 +869,14 @@ mod tests {
         })
     }
 
+    fn block_at(number: u64, hash: char, timestamp: u64) -> Value {
+        json!({
+            "number": format!("0x{number:x}"),
+            "timestamp": format!("0x{timestamp:x}"),
+            "hash": format!("0x{}", hash.to_string().repeat(64)),
+        })
+    }
+
     fn replies(values: &[Value]) -> Vec<Reply> {
         values
             .iter()
@@ -672,6 +897,42 @@ mod tests {
             timeout: Span(timeout),
             start: None,
         }
+    }
+
+    fn healthy(duration: Duration, maximum_age: Duration) -> AcceptanceCheck {
+        AcceptanceCheck::HeadsHealthy {
+            id: "health".into(),
+            endpoints: vec!["builder".into(), "validator".into()],
+            warmup: Span(Duration::ZERO),
+            duration: Span(duration),
+            minimum_blocks: 1,
+            maximum_age: Span(maximum_age),
+            max_lag_blocks: 1,
+            timeout: Span(Duration::from_millis(60)),
+            start: None,
+        }
+    }
+
+    async fn run_health(
+        left: Vec<Reply>,
+        right: Vec<Reply>,
+        duration: Duration,
+        maximum_age: Duration,
+    ) -> crate::CheckResult {
+        let map = BTreeMap::from([
+            ("builder".into(), server(left).await),
+            ("validator".into(), server(right).await),
+        ]);
+        let mut samples = Vec::new();
+        observer()
+            .run(
+                &healthy(duration, maximum_age),
+                &map,
+                &mut samples,
+                Instant::now(),
+                Instant::now() + Duration::from_millis(80),
+            )
+            .await
     }
 
     #[tokio::test]
@@ -941,5 +1202,101 @@ mod tests {
         assert_eq!(result.status, Status::Error);
         assert!(result.rpc_errors > 0);
         assert!(samples.iter().all(|sample| sample.number.is_none()));
+    }
+
+    #[tokio::test]
+    async fn health_rejects_late_failure_and_stalled_fresh_heads() {
+        let late_left = replies(&[block(10, 'a'), block(10, 'a'), block(11, 'b'), block(11, 'b')]);
+        let late_right = replies(&[block(10, 'a'), block(10, 'a'), block(11, 'b'), block(11, 'c')]);
+        let result =
+            run_health(late_left, late_right, Duration::from_millis(20), Duration::from_secs(2))
+                .await;
+        assert_eq!(result.status, Status::Failed);
+        assert!(result.message.contains("sampled hash") || result.message.contains("disagree"));
+        assert_eq!(result.observed["completed_rounds"], 1);
+        assert_eq!(result.observed["canonical_comparisons"][0]["role"], "validator");
+        assert_eq!(result.observed["canonical_comparisons"][0]["height"], 11);
+        assert_eq!(
+            result.observed["canonical_comparisons"][0]["sampled_hash"],
+            format!("0x{}", "b".repeat(64))
+        );
+        assert_eq!(
+            result.observed["canonical_comparisons"][0]["canonical_hash"],
+            format!("0x{}", "c".repeat(64))
+        );
+
+        let static_blocks: Vec<_> = (0..20).map(|_| block(100, 'a')).collect();
+        let result = run_health(
+            replies(&static_blocks),
+            replies(&static_blocks),
+            Duration::from_millis(6),
+            Duration::from_secs(2),
+        )
+        .await;
+        assert_eq!(result.status, Status::Failed);
+        assert!(result.message.contains("insufficient independent progress"));
+    }
+
+    #[tokio::test]
+    async fn health_window_starts_after_the_baseline_round() {
+        let delayed_baseline =
+            |hash| Reply { delay: Duration::from_millis(6), body: rpc(block(10, hash)) };
+        let mut left =
+            vec![delayed_baseline('a'), Reply { delay: Duration::ZERO, body: rpc(block(10, 'a')) }];
+        left.extend(replies(&vec![block(11, 'b'); 20]));
+        let right = left.clone();
+        let started = Instant::now();
+        let result =
+            run_health(left, right, Duration::from_millis(10), Duration::from_secs(2)).await;
+
+        assert_eq!(result.status, Status::Passed);
+        assert!(started.elapsed() >= Duration::from_millis(20));
+        assert!(result.observed["completed_rounds"].as_u64().unwrap() >= 2);
+    }
+
+    #[tokio::test]
+    async fn health_classifies_partial_unavailability_as_error() {
+        let left = replies(&[block(10, 'a'), block(10, 'a'), block(11, 'b'), block(11, 'b')]);
+        let right = replies(&[block(10, 'a'), block(10, 'a'), Value::Null]);
+        let result =
+            run_health(left, right, Duration::from_millis(8), Duration::from_secs(2)).await;
+        assert_eq!(result.status, Status::Error);
+        assert!(result.rpc_errors > 0);
+        assert_eq!(result.observed["completed_rounds"], 1);
+        assert_eq!(result.observed["partial_round_role"], "validator");
+    }
+
+    #[tokio::test]
+    async fn health_enforces_freshness_and_request_deadline_edges() {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let mut advancing = vec![block_at(10, 'a', now + 5); 2];
+        advancing.extend(vec![block_at(11, 'b', now + 5); 20]);
+        let result = run_health(
+            replies(&advancing),
+            replies(&advancing),
+            Duration::from_millis(4),
+            Duration::from_secs(2),
+        )
+        .await;
+        assert_eq!(result.status, Status::Passed);
+        let future = replies(&[block_at(10, 'a', now + 10)]);
+        let result =
+            run_health(future.clone(), future, Duration::from_millis(4), Duration::from_secs(2))
+                .await;
+        assert_eq!(result.status, Status::Failed);
+        assert!(result.message.contains("future allowance"));
+        let stale = replies(&[block_at(10, 'a', now - 3)]);
+        let result =
+            run_health(stale.clone(), stale, Duration::from_millis(4), Duration::from_secs(2))
+                .await;
+        assert_eq!(result.status, Status::Failed);
+        assert!(result.message.contains("freshness limit"));
+
+        let delayed = vec![Reply { delay: Duration::from_millis(70), body: rpc(block(10, 'a')) }];
+        let result =
+            run_health(delayed.clone(), delayed, Duration::from_millis(4), Duration::from_secs(2))
+                .await;
+        assert_eq!(result.status, Status::Error);
+        assert!(result.rpc_errors > 0);
     }
 }
