@@ -547,6 +547,10 @@ impl<Txs> Builder<'_, Txs> {
         Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = N::SignedTx>>,
         Attrs: Attributes<Transaction = N::SignedTx>,
     {
+        if ctx.cancel.is_cancelled() {
+            return Err(PayloadBuilderError::other(BasePayloadBuilderError::Cancelled));
+        }
+
         let mut db = State::builder()
             .with_database(StateProviderDatabase::new(&state_provider))
             .with_bundle_update()
@@ -844,10 +848,6 @@ where
         let resource_metering = &self.builder_config.resource_metering;
 
         for sequencer_tx in self.attributes().sequencer_transactions() {
-            if self.cancel.is_cancelled() {
-                return Err(PayloadBuilderError::other(BasePayloadBuilderError::Cancelled));
-            }
-
             // A sequencer's block should never contain blob transactions.
             if sequencer_tx.value().is_eip4844() {
                 return Err(PayloadBuilderError::other(
@@ -2112,23 +2112,11 @@ mod tests {
     }
 
     #[test]
-    fn cancelled_ctx_stops_sequencer_execution_and_witness() {
+    fn cancelled_ctx_stops_witness() {
         let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
         ctx.config.attributes.transactions = vec![sequencer_attribute_tx(&pool_transaction(0))];
         drop(ctx.cancel.clone());
 
-        let provider = test_state_provider();
-        let mut db = State::builder()
-            .with_database(StateProviderDatabase::new(&provider))
-            .with_bundle_update()
-            .build();
-        let mut builder = ctx.block_builder(&mut db).expect("block builder");
-        builder.apply_pre_execution_changes().expect("pre-execution changes");
-        let err = ctx.execute_sequencer_transactions(&mut builder).unwrap_err();
-        assert!(err.to_string().contains("cancelled"), "{err}");
-        drop(builder);
-
-        ctx.config.attributes.transactions.clear();
         let err = Builder::new(|_| NoopPayloadTransactions::<BasePooledTransaction>::default())
             .witness(test_state_provider(), NoopProvider::default(), &ctx)
             .unwrap_err();
