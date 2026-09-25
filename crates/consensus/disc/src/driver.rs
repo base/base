@@ -281,8 +281,12 @@ impl Discv5Driver {
                                     }
                                 },
                             }
+                            // Every handler is gone, so nothing can reach this service. Returning
+                            // drops `Discv5`, whose `Drop` shuts it down and releases the UDP
+                            // socket, so a restarted node can rebind the same discovery port.
                             None => {
-                                trace!(target: "discovery", "Receiver `None` peer enr");
+                                info!(target: "discovery", "All discovery handlers dropped; stopping discv5");
+                                return;
                             }
                         }
                     }
@@ -421,6 +425,38 @@ mod tests {
         drop(rx);
 
         assert!(!try_forward_enr(&tx, test_enr()));
+    }
+
+    #[tokio::test]
+    async fn dropping_all_handlers_releases_discovery_socket() {
+        let port = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+            .and_then(|socket| socket.local_addr())
+            .expect("free udp port")
+            .port();
+        let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+        let CombinedKey::Secp256k1(secret_key) = CombinedKey::generate_secp256k1() else {
+            unreachable!()
+        };
+        let discovery = Discv5Driver::builder(
+            LocalNode::new(secret_key, IpAddr::V4(Ipv4Addr::LOCALHOST), port, port),
+            ChainConfig::sepolia().chain_id,
+            ConfigBuilder::new(socket.into()).build(),
+        )
+        .build()
+        .expect("Failed to build discovery service");
+
+        let (handle, _enrs) = discovery.start();
+        handle.peer_count().await.expect("discovery service should be running");
+        assert!(std::net::UdpSocket::bind(socket).is_err(), "discv5 should hold the port");
+
+        drop(handle);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while std::net::UdpSocket::bind(socket).is_err() {
+                sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("discovery port should be released after all handlers drop");
     }
 
     #[tokio::test]
