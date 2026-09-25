@@ -5,8 +5,7 @@ Runs Base flashblocks and Base basic payload builders in parallel behind a singl
 
 ## Overview
 
-- with cutover mode enabled, fans out `BuildNewPayload` requests to both builders, skipping the
-  shadow builder when it already has eight unacknowledged shadow requests,
+- with cutover mode enabled, fans out every `BuildNewPayload` request to both builders,
 - selects flashblocks before Denim and basic at and after Denim,
 - routes reads (`BestPayload`, `PayloadTimestamp`, `Resolve`, `Subscribe`) to the builder
   selected for each payload,
