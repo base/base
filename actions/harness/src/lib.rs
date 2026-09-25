@@ -4,7 +4,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod action;
-pub use action::{Action, L2BlockProvider};
+pub use action::Action;
 
 mod conductor;
 pub use conductor::{ConductorState, TestConductor, TestConductorHandle};

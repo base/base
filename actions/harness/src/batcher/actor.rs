@@ -1,3 +1,5 @@
+//! [`Batcher`] actor driving a production [`BatchDriver`] through [`L1Miner`].
+
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
@@ -14,12 +16,8 @@ use base_protocol::BlockInfo;
 use base_runtime::TokioRuntime;
 use base_tx_manager::TxManager;
 use tokio::sync::{mpsc, oneshot};
-use tokio_util::sync::CancellationToken;
 
-use crate::{
-    ActionL2Source, HarnessL1HeadSource, L1Block, L1HeadItem, L1Miner, L1MinerTxManager,
-    L2BlockProvider,
-};
+use crate::{ActionL2Source, HarnessL1HeadSource, L1Block, L1HeadItem, L1Miner, L1MinerTxManager};
 
 /// Configuration for the [`Batcher`] actor.
 #[derive(Debug, Clone)]
@@ -110,9 +108,10 @@ pub enum BatcherError {
 ///
 /// [`advance`]: Batcher::advance
 /// [`BatchDriver`]: base_batcher_core::BatchDriver
-pub struct Batcher<S: L2BlockProvider> {
+#[derive(Debug)]
+pub struct Batcher {
     /// The L2 block source to drain on each [`advance`](Batcher::advance) cycle.
-    l2_source: S,
+    l2_source: ActionL2Source,
     /// Feeds the driver's block source with block and reorg events.
     source_tx: mpsc::UnboundedSender<L2BlockEvent>,
     /// Feeds the driver's L1 head source with mined heads, and with markers.
@@ -121,22 +120,11 @@ pub struct Batcher<S: L2BlockProvider> {
     admin: AdminHandle,
     /// Shared tx manager — used to stage submissions and fire their receipts.
     tx_manager: L1MinerTxManager,
-    /// Background driver task handle.
+    /// Background driver task, aborted on drop.
     driver_task: tokio::task::JoinHandle<Result<(), BatchDriverError>>,
-    /// Token used to cancel the background driver on drop.
-    cancel: CancellationToken,
 }
 
-impl<S: L2BlockProvider + std::fmt::Debug> std::fmt::Debug for Batcher<S> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Batcher")
-            .field("l2_source", &self.l2_source)
-            .field("tx_manager", &self.tx_manager)
-            .finish_non_exhaustive()
-    }
-}
-
-impl<S: L2BlockProvider> Batcher<S> {
+impl Batcher {
     /// How long a method waits for the driver to go idle before giving up.
     pub const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -148,7 +136,11 @@ impl<S: L2BlockProvider> Batcher<S> {
     ///
     /// Panics if `config.encoder` is invalid, or if `config.batcher_address` is not the
     /// address of `config.l1_signer`.
-    pub fn new(l2_source: S, rollup_config: &RollupConfig, config: BatcherConfig) -> Self {
+    pub fn new(
+        l2_source: ActionL2Source,
+        rollup_config: &RollupConfig,
+        config: BatcherConfig,
+    ) -> Self {
         let l1_chain_id = rollup_config.l1_chain_id;
         let pipeline = BatchEncoder::new(Arc::new(rollup_config.clone()), config.encoder.clone())
             .expect("valid encoder config");
@@ -165,13 +157,10 @@ impl<S: L2BlockProvider> Batcher<S> {
             "BatcherConfig::batcher_address must match BatcherConfig::l1_signer"
         );
 
-        let cancel = CancellationToken::new();
-        let runtime = TokioRuntime::with_token(cancel.clone());
-
         let (derivation_status_tx, derivation_status_rx) = mpsc::channel(1);
 
         let driver = BatchDriver::new(
-            runtime,
+            TokioRuntime::new(),
             pipeline,
             tx_manager.clone(),
             BatchDriverConfig {
@@ -203,7 +192,14 @@ impl<S: L2BlockProvider> Batcher<S> {
             driver.run().await
         });
 
-        Self { l2_source, source_tx, l1_head_tx, admin, tx_manager, driver_task, cancel }
+        Self { l2_source, source_tx, l1_head_tx, admin, tx_manager, driver_task }
+    }
+
+    /// Push a block into the L2 source for the next [`advance`] call.
+    ///
+    /// [`advance`]: Batcher::advance
+    pub fn push_block(&mut self, block: BaseBlock) {
+        self.l2_source.push(block);
     }
 
     /// Drain the L2 source and forward all blocks to the driver, then flush.
@@ -460,18 +456,8 @@ impl<S: L2BlockProvider> Batcher<S> {
     }
 }
 
-impl Batcher<ActionL2Source> {
-    /// Push a block into the L2 source for the next [`advance`] call.
-    ///
-    /// [`advance`]: Batcher::advance
-    pub fn push_block(&mut self, block: BaseBlock) {
-        self.l2_source.push(block);
-    }
-}
-
-impl<S: L2BlockProvider> Drop for Batcher<S> {
+impl Drop for Batcher {
     fn drop(&mut self) {
-        self.cancel.cancel();
         self.driver_task.abort();
     }
 }
