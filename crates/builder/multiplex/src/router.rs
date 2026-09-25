@@ -16,12 +16,13 @@ use futures::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnordered}
 use reth_payload_builder::{BuildNewPayload, PayloadBuilderHandle, PayloadServiceCommand};
 use reth_payload_builder_primitives::{Events, PayloadBuilderError};
 use reth_payload_primitives::{PayloadAttributes, PayloadKind, PayloadTypes};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{Semaphore, broadcast, mpsc};
 use tracing::{error, info, warn};
 
 const FLASHBLOCKS_BUILDER: &str = "flashblocks";
 const BASIC_BUILDER: &str = "basic";
 const MAX_PAYLOAD_ROUTES: usize = 128;
+const MAX_PENDING_SHADOW_BUILDS: usize = 8;
 
 /// Shared health state for one inner service.
 #[derive(Debug, Clone)]
@@ -84,6 +85,10 @@ pub struct MultiplexRouter {
     pub flashblocks_health: HealthState,
     /// Basic health state.
     pub basic_health: HealthState,
+    /// Permits for flashblocks builds dispatched as unselected shadow work.
+    pub flashblocks_shadow_builds: Arc<Semaphore>,
+    /// Permits for basic builds dispatched as unselected shadow work.
+    pub basic_shadow_builds: Arc<Semaphore>,
     /// Chain spec that owns the Denim activation condition.
     pub chain_spec: Arc<BaseChainSpec>,
     /// Whether recent payload IDs are routed to the basic builder, ordered oldest first.
@@ -92,7 +97,7 @@ pub struct MultiplexRouter {
 
 impl MultiplexRouter {
     /// Creates a new router.
-    pub const fn new(
+    pub fn new(
         flashblocks_handle: PayloadBuilderHandle<BaseEngineTypes>,
         basic_handle: PayloadBuilderHandle<BaseEngineTypes>,
         flashblocks_health: HealthState,
@@ -104,6 +109,8 @@ impl MultiplexRouter {
             basic_handle,
             flashblocks_health,
             basic_health,
+            flashblocks_shadow_builds: Arc::new(Semaphore::new(MAX_PENDING_SHADOW_BUILDS)),
+            basic_shadow_builds: Arc::new(Semaphore::new(MAX_PENDING_SHADOW_BUILDS)),
             chain_spec,
             payload_routes: VecDeque::new(),
         }
@@ -205,41 +212,46 @@ impl MultiplexRouter {
             parent_hash: input.parent_hash,
             resources: Default::default(),
         };
-        let (flashblocks_input, basic_input) =
-            if selected_basic { (shadow_input, input) } else { (input, shadow_input) };
-
-        Self::inc_dispatch_metric(FLASHBLOCKS_BUILDER);
-        Self::inc_dispatch_metric(BASIC_BUILDER);
-
-        let flashblocks_rx = self.flashblocks_handle.send_new_payload(flashblocks_input);
-        let basic_rx = self.basic_handle.send_new_payload(basic_input);
-
         let (
-            selected_rx,
+            selected_handle,
             selected_health,
             selected_builder,
-            shadow_rx,
+            shadow_handle,
             shadow_health,
             shadow_builder,
+            shadow_builds,
         ) = if selected_basic {
             (
-                basic_rx,
+                &self.basic_handle,
                 self.basic_health.clone(),
                 BASIC_BUILDER,
-                flashblocks_rx,
+                &self.flashblocks_handle,
                 self.flashblocks_health.clone(),
                 FLASHBLOCKS_BUILDER,
+                Arc::clone(&self.flashblocks_shadow_builds),
             )
         } else {
             (
-                flashblocks_rx,
+                &self.flashblocks_handle,
                 self.flashblocks_health.clone(),
                 FLASHBLOCKS_BUILDER,
-                basic_rx,
+                &self.basic_handle,
                 self.basic_health.clone(),
                 BASIC_BUILDER,
+                Arc::clone(&self.basic_shadow_builds),
             )
         };
+
+        Self::inc_dispatch_metric(selected_builder);
+        let selected_rx = selected_handle.send_new_payload(input);
+        // Hold capacity until the ack; dropping its receiver does not cancel queued work.
+        let shadow = shadow_builds.try_acquire_owned().ok().map(|permit| {
+            Self::inc_dispatch_metric(shadow_builder);
+            (shadow_handle.send_new_payload(shadow_input), permit)
+        });
+        if shadow.is_none() {
+            metrics::counter!("mux_shadow_skipped_total", "builder" => shadow_builder).increment(1);
+        }
 
         Self::inc_selected_build_metric(selected_builder);
         async move {
@@ -259,11 +271,15 @@ impl MultiplexRouter {
                 let _ = tx.send(selected_result);
             };
             let shadow_response = async move {
+                let Some((shadow_rx, shadow_permit)) = shadow else {
+                    return;
+                };
                 let shadow_result = shadow_rx.await.unwrap_or_else(|_| {
                     shadow_health.mark_unavailable();
                     Self::set_service_health_metric(shadow_builder, false);
                     Err(Self::unavailable_error(shadow_builder))
                 });
+                drop(shadow_permit);
                 Self::inc_shadow_metric(shadow_builder, shadow_result.is_ok());
                 info!(
                     builder = shadow_builder,
@@ -540,6 +556,7 @@ mod tests {
     use super::*;
 
     const DENIM_TIMESTAMP: u64 = 10;
+    const SHADOW_LIMIT: usize = 8;
 
     fn test_router() -> (
         MultiplexRouter,
@@ -799,6 +816,106 @@ mod tests {
             drop(handle);
             router_task.await.expect("router task");
         }
+    }
+
+    #[tokio::test]
+    async fn shadow_dispatch_is_bounded_and_resumes_after_ack() {
+        for (timestamp, selected_basic) in [(DENIM_TIMESTAMP - 1, false), (DENIM_TIMESTAMP, true)] {
+            for outcome in [Some(true), Some(false), None] {
+                let (mut router, mut flash_rx, mut basic_rx) = test_router();
+                let (selected_rx, shadow_rx) = if selected_basic {
+                    (&mut basic_rx, &mut flash_rx)
+                } else {
+                    (&mut flash_rx, &mut basic_rx)
+                };
+                let mut responses = FuturesUnordered::new();
+                for index in 0..SHADOW_LIMIT + 2 {
+                    let mut input = sample_input(timestamp);
+                    input.parent_hash = B256::repeat_byte(index as u8);
+                    let payload_id = input.payload_id();
+                    let (tx, mut rx) = tokio::sync::oneshot::channel();
+                    responses.push(router.handle_build_new_payload(input, tx));
+                    let PayloadServiceCommand::BuildNewPayload(_, _, tx) =
+                        selected_rx.try_recv().expect("selected dispatch")
+                    else {
+                        panic!("expected BuildNewPayload");
+                    };
+                    tx.send(Ok(payload_id)).expect("selected ack");
+                    let _ = futures::poll!(responses.next());
+                    assert_eq!(
+                        rx.try_recv().expect("selected reply").expect("success"),
+                        payload_id
+                    );
+                    assert_eq!(shadow_rx.len(), (index + 1).min(SHADOW_LIMIT));
+                }
+                assert_eq!(responses.len(), SHADOW_LIMIT);
+                assert!(router.flashblocks_health.is_healthy());
+                assert!(router.basic_health.is_healthy());
+
+                let PayloadServiceCommand::BuildNewPayload(input, _, tx) =
+                    shadow_rx.try_recv().expect("pending shadow")
+                else {
+                    panic!("expected BuildNewPayload");
+                };
+                match outcome {
+                    Some(ok) => tx
+                        .send(if ok {
+                            Ok(input.payload_id())
+                        } else {
+                            Err(PayloadBuilderError::MissingPayload)
+                        })
+                        .expect("shadow ack"),
+                    None => drop(tx),
+                }
+                assert!(futures::poll!(responses.next()).is_ready());
+                assert_eq!(responses.len(), SHADOW_LIMIT - 1);
+
+                let (tx, _rx) = tokio::sync::oneshot::channel();
+                let response = router.handle_build_new_payload(sample_input(timestamp), tx);
+                assert_eq!(selected_rx.len(), 1);
+                assert_eq!(shadow_rx.len(), SHADOW_LIMIT);
+                drop(response);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn saturated_shadow_becomes_selected_at_denim() {
+        let (mut router, mut flash_rx, mut basic_rx) = test_router();
+        let mut responses = FuturesUnordered::new();
+        let mut stalled = Vec::new();
+        for index in 0..SHADOW_LIMIT {
+            let mut input = sample_input(DENIM_TIMESTAMP - 1);
+            input.parent_hash = B256::repeat_byte(index as u8);
+            let payload_id = input.payload_id();
+            let (tx, mut rx) = tokio::sync::oneshot::channel();
+            responses.push(router.handle_build_new_payload(input, tx));
+            let PayloadServiceCommand::BuildNewPayload(_, _, tx) =
+                flash_rx.try_recv().expect("selected flashblocks")
+            else {
+                panic!("expected BuildNewPayload");
+            };
+            stalled.push(basic_rx.try_recv().expect("basic shadow"));
+            tx.send(Ok(payload_id)).expect("selected ack");
+            assert!(futures::poll!(responses.next()).is_pending());
+            assert_eq!(rx.try_recv().expect("selected reply").expect("success"), payload_id);
+        }
+
+        let input = sample_input(DENIM_TIMESTAMP);
+        let payload_id = input.payload_id();
+        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        responses.push(router.handle_build_new_payload(input, tx));
+        let PayloadServiceCommand::BuildNewPayload(input, _, tx) =
+            basic_rx.try_recv().expect("selected basic bypasses its saturated shadow limit")
+        else {
+            panic!("expected BuildNewPayload");
+        };
+        assert!(!input.attributes.no_tx_pool);
+        tx.send(Ok(payload_id)).expect("selected basic ack");
+        assert!(futures::poll!(responses.next()).is_pending());
+        assert_eq!(rx.try_recv().expect("selected reply").expect("success"), payload_id);
+        assert_eq!(flash_rx.len(), 1, "new shadow has independent capacity");
+        drop(stalled);
     }
 
     #[tokio::test]
