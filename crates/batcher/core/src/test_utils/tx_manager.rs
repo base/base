@@ -70,7 +70,7 @@ impl ScriptedTxManager {
     /// Confirm the oldest pending transaction at `l1_block`.
     pub fn confirm_next(&self, l1_block: u64) {
         let tx = self.script.lock().unwrap().pending.pop_front().expect("a transaction is pending");
-        let _ = tx.send(Ok(stub_receipt(l1_block)));
+        let _ = tx.send(Ok(Self::stub_receipt(l1_block)));
     }
 
     /// The candidates sent so far, in order.
@@ -81,6 +81,32 @@ impl ScriptedTxManager {
     /// The number of `cancel_tx` calls so far.
     pub fn cancellations(&self) -> usize {
         self.script.lock().unwrap().cancellations
+    }
+
+    /// A successful receipt for a transaction included in `block_number`.
+    const fn stub_receipt(block_number: u64) -> TransactionReceipt {
+        let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
+            receipt: Receipt {
+                status: Eip658Value::Eip658(true),
+                cumulative_gas_used: 21_000,
+                logs: vec![],
+            },
+            logs_bloom: Bloom::ZERO,
+        });
+        TransactionReceipt {
+            inner,
+            transaction_hash: B256::ZERO,
+            transaction_index: Some(0),
+            block_hash: Some(B256::ZERO),
+            block_number: Some(block_number),
+            gas_used: 21_000,
+            effective_gas_price: 1_000_000_000,
+            blob_gas_used: None,
+            blob_gas_price: None,
+            from: Address::ZERO,
+            to: Some(Address::ZERO),
+            contract_address: None,
+        }
     }
 }
 
@@ -100,7 +126,7 @@ impl TxManager for ScriptedTxManager {
         let (tx, rx) = oneshot::channel();
         match outcome {
             SendOutcome::Confirmed(l1_block) => {
-                let _ = tx.send(Ok(stub_receipt(l1_block)));
+                let _ = tx.send(Ok(Self::stub_receipt(l1_block)));
             }
             SendOutcome::Failed => {
                 let _ = tx.send(Err(TxManagerError::ChannelClosed));
@@ -120,30 +146,5 @@ impl TxManager for ScriptedTxManager {
 
     fn sender_address(&self) -> Address {
         Address::ZERO
-    }
-}
-
-const fn stub_receipt(block_number: u64) -> TransactionReceipt {
-    let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
-        receipt: Receipt {
-            status: Eip658Value::Eip658(true),
-            cumulative_gas_used: 21_000,
-            logs: vec![],
-        },
-        logs_bloom: Bloom::ZERO,
-    });
-    TransactionReceipt {
-        inner,
-        transaction_hash: B256::ZERO,
-        transaction_index: Some(0),
-        block_hash: Some(B256::ZERO),
-        block_number: Some(block_number),
-        gas_used: 21_000,
-        effective_gas_price: 1_000_000_000,
-        blob_gas_used: None,
-        blob_gas_price: None,
-        from: Address::ZERO,
-        to: Some(Address::ZERO),
-        contract_address: None,
     }
 }

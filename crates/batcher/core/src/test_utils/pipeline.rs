@@ -129,6 +129,7 @@ impl Recorded {
 /// before a reset.
 #[derive(Debug)]
 pub struct TrackingPipeline {
+    /// The call log, shared with the test through [`recorded`](Self::recorded).
     recorded: Arc<Mutex<Recorded>>,
     /// Submissions returned by `next_submission`, in FIFO order.
     pub submissions: VecDeque<BatchSubmission>,
@@ -210,16 +211,17 @@ impl TrackingPipeline {
     fn record(&self, call: PipelineCall) {
         self.recorded.lock().unwrap().calls.push(call);
     }
-}
 
-/// A copy of `submission`, which is not `Clone`. The copy shares its frames, held behind `Arc`s.
-fn duplicate(submission: &BatchSubmission) -> BatchSubmission {
-    match submission.payload() {
-        SubmissionPayload::Blobs(payloads) => {
-            BatchSubmission::blobs(submission.id, payloads.clone())
-        }
-        SubmissionPayload::Calldata(frame) => {
-            BatchSubmission::calldata(submission.id, Arc::clone(frame))
+    /// A copy of `submission`, which is not `Clone`. The copy shares its frames, held behind
+    /// `Arc`s.
+    fn duplicate(submission: &BatchSubmission) -> BatchSubmission {
+        match submission.payload() {
+            SubmissionPayload::Blobs(payloads) => {
+                BatchSubmission::blobs(submission.id, payloads.clone())
+            }
+            SubmissionPayload::Calldata(frame) => {
+                BatchSubmission::calldata(submission.id, Arc::clone(frame))
+            }
         }
     }
 }
@@ -247,7 +249,7 @@ impl BatchPipeline for TrackingPipeline {
     fn next_submission(&mut self) -> Option<BatchSubmission> {
         let submission = self.submissions.pop_front()?;
         self.record(PipelineCall::Dequeue(submission.id));
-        self.in_flight.push(duplicate(&submission));
+        self.in_flight.push(Self::duplicate(&submission));
         Some(submission)
     }
 
