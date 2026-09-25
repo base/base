@@ -102,15 +102,15 @@ fn test_derivation_cursor_advance_replays_stalled_channel() {
         ctx.cancel();
 
         assert!(handle.await.unwrap().is_ok());
-        let recorded = recorded.lock().unwrap();
+        // Reconciliation runs once, the reset follows, and the shutdown flush ends the log.
         assert_eq!(
-            recorded.calls.first(),
-            Some(&PipelineCall::ReconcileDerivation {
-                safe_l2: safe_l2.number,
-                current_l1: Some(50)
-            })
+            recorded.lock().unwrap().calls,
+            [
+                PipelineCall::ReconcileDerivation { safe_l2: safe_l2.number, current_l1: Some(50) },
+                PipelineCall::Reset,
+                PipelineCall::Flush,
+            ]
         );
-        assert_eq!(recorded.resets(), 1);
         assert_eq!(*catchup_heads.lock().unwrap(), [safe_l2]);
     });
 }
