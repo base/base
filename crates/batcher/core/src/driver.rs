@@ -535,7 +535,8 @@ mod tests {
 
             assert!(driver.run().await.is_ok());
             assert!(flush.await.unwrap().is_err(), "a cancelled driver must not serve the flush");
-            assert!(!recorded.lock().unwrap().calls.contains(&PipelineCall::AddBlock(1)));
+            // Only the shutdown flush: neither the admin flush, the block nor the head is served.
+            assert_eq!(recorded.lock().unwrap().calls, [PipelineCall::Flush]);
         });
     }
 
