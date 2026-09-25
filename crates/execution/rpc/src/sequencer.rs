@@ -1,6 +1,10 @@
 //! Helpers for Base-specific RPC implementations.
 
-use std::{str::FromStr, sync::Arc, time::Instant};
+use std::{
+    str::FromStr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use alloy_json_rpc::{RpcRecv, RpcSend};
 use alloy_primitives::{B256, hex};
@@ -10,6 +14,10 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::{SequencerClientError, metrics::SequencerMetrics};
+
+/// Upper bound for a single HTTP request to the sequencer, so a stalled endpoint can't hold a
+/// forwarding call open indefinitely.
+const SEQUENCER_HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Sequencer client error
 #[derive(Error, Debug)]
@@ -87,6 +95,14 @@ impl SequencerClient {
         sequencer_endpoint: impl Into<String>,
         headers: Vec<String>,
     ) -> Result<Self, Error> {
+        Self::new_http_with_headers_and_timeout(sequencer_endpoint, headers, SEQUENCER_HTTP_TIMEOUT)
+    }
+
+    fn new_http_with_headers_and_timeout(
+        sequencer_endpoint: impl Into<String>,
+        headers: Vec<String>,
+        timeout: Duration,
+    ) -> Result<Self, Error> {
         let sequencer_endpoint = sequencer_endpoint.into();
         if !matches!(
             BuiltInConnectionString::from_str(&sequencer_endpoint)?,
@@ -94,21 +110,25 @@ impl SequencerClient {
         ) {
             return Err(Error::InvalidScheme(sequencer_endpoint));
         }
-        let mut builder = alloy_reqwest::Client::builder().use_rustls_tls();
+        let mut builder = alloy_reqwest::Client::builder().use_rustls_tls().timeout(timeout);
         if !headers.is_empty() {
             let mut header_map = alloy_reqwest::header::HeaderMap::new();
             for header in headers {
-                if let Some((key, value)) = header.split_once('=') {
-                    header_map.insert(
-                        key.trim()
-                            .parse::<alloy_reqwest::header::HeaderName>()
-                            .map_err(|err| Error::InvalidHeader(err.to_string()))?,
-                        value
-                            .trim()
-                            .parse::<alloy_reqwest::header::HeaderValue>()
-                            .map_err(|err| Error::InvalidHeader(err.to_string()))?,
-                    );
-                }
+                // Don't echo the entry itself, it usually carries a credential.
+                let Some((key, value)) = header.split_once('=') else {
+                    return Err(Error::InvalidHeader(
+                        "expected `name=value`, found an entry without `=`".to_string(),
+                    ));
+                };
+                header_map.insert(
+                    key.trim()
+                        .parse::<alloy_reqwest::header::HeaderName>()
+                        .map_err(|err| Error::InvalidHeader(err.to_string()))?,
+                    value
+                        .trim()
+                        .parse::<alloy_reqwest::header::HeaderValue>()
+                        .map_err(|err| Error::InvalidHeader(err.to_string()))?,
+                );
             }
             builder = builder.default_headers(header_map);
         }
@@ -210,6 +230,51 @@ mod tests {
             body,
             r#"{"method":"eth_getBlockByNumber","params":["0xa"],"id":0,"jsonrpc":"2.0"}"#
         );
+    }
+
+    #[test]
+    fn http_headers_require_name_value_form() {
+        let err = SequencerClient::new_http_with_headers(
+            "http://localhost:8545",
+            vec!["Authorization: Bearer secret-token".to_string()],
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::InvalidHeader(_)));
+        assert!(!err.to_string().contains("secret-token"));
+
+        SequencerClient::new_http_with_headers(
+            "http://localhost:8545",
+            vec!["Authorization=Bearer secret-token".to_string()],
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn http_request_times_out_on_stalled_sequencer() {
+        // Accepts connections and never answers.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for stream in listener.incoming().flatten() {
+                held.push(stream);
+            }
+        });
+
+        let client = SequencerClient::new_http_with_headers_and_timeout(
+            format!("http://{addr}"),
+            vec![],
+            Duration::from_millis(200),
+        )
+        .unwrap();
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            client.request::<_, U64>("eth_chainId", ()),
+        )
+        .await
+        .expect("request should fail on its own timeout, not hang");
+        assert!(result.is_err());
     }
 
     #[tokio::test]
