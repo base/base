@@ -92,8 +92,8 @@ impl ActionTestHarness {
         block_info_from(self.l1.tip())
     }
 
-    /// Return the L2 genesis [`L2BlockInfo`] anchored to the L1 genesis block of this
-    /// harness's L1 chain.
+    /// Return the L2 genesis [`L2BlockInfo`] with, as L1 origin, this harness's L1 block at
+    /// the rollup genesis L1 number, or its first L1 block if that one is not mined yet.
     pub fn l2_genesis(&self) -> L2BlockInfo {
         let genesis_l1_number = self.rollup_config.genesis.l1.number;
         let genesis_l1 =

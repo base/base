@@ -321,9 +321,7 @@ impl SequencerEngineBackend for BuilderBackedEngineClient {
 #[cfg(test)]
 mod tests {
     use alloy_eips::BlockNumberOrTag;
-    use alloy_primitives::B256;
     use base_common_genesis::UpgradeConfig;
-    use base_protocol::BlockInfo;
 
     use super::*;
     use crate::TestRollupConfigBuilder;
@@ -346,22 +344,8 @@ mod tests {
             ..Default::default()
         };
         config.genesis.l2_time = 0;
+        config.genesis.l2.hash = ActionEngineClient::compute_l2_genesis_hash(&config);
         Arc::new(config)
-    }
-
-    /// The genesis head anchored at the harness-derived genesis hash.
-    fn genesis_head(rollup_config: &RollupConfig) -> L2BlockInfo {
-        let cg = &rollup_config.genesis;
-        L2BlockInfo::new(
-            BlockInfo::new(
-                ActionEngineClient::compute_l2_genesis_hash(rollup_config),
-                cg.l2.number,
-                B256::ZERO,
-                cg.l2_time,
-            ),
-            cg.l1,
-            0,
-        )
     }
 
     /// The in-process builder node must initialize the exact genesis the harness derives from the
@@ -374,7 +358,7 @@ mod tests {
 
         let backend = BuilderBackedEngineClient::new(
             Arc::clone(&rollup_config),
-            genesis_head(&rollup_config),
+            L2BlockInfo::from_l2_genesis(&rollup_config.genesis),
         )
         .await?;
         let driver = backend.driver().await?;
@@ -407,7 +391,7 @@ mod tests {
         let rollup_config = jovian_rollup_config();
         let backend = BuilderBackedEngineClient::new(
             Arc::clone(&rollup_config),
-            genesis_head(&rollup_config),
+            L2BlockInfo::from_l2_genesis(&rollup_config.genesis),
         )
         .await?;
 
