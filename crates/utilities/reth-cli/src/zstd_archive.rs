@@ -49,7 +49,10 @@ pub enum ArchiveCompression {
     },
     /// Independent `pzstd`-compatible frames compressed on the Rayon pool, which can be
     /// decompressed in parallel.
-    Framed,
+    Framed {
+        /// Number of frames compressed concurrently in addition to the calling thread's.
+        workers: u32,
+    },
 }
 
 /// The skippable frame that precedes every zstd frame in a framed archive.
@@ -345,8 +348,9 @@ impl<W: Write> ZstdArchiveEncoder<'static, W> {
                 }
                 Ok(Self::Stream(encoder))
             }
-            ArchiveCompression::Framed => {
-                Ok(Self::Framed(FramedZstdEncoder::new(writer, rayon::current_num_threads())))
+            ArchiveCompression::Framed { workers } => {
+                let batch_frames = usize::try_from(workers).unwrap_or(usize::MAX).saturating_add(1);
+                Ok(Self::Framed(FramedZstdEncoder::new(writer, batch_frames)))
             }
         }
     }

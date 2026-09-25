@@ -1734,7 +1734,7 @@ mod tests {
         let mut builder = tar::Builder::new(
             base_reth_cli::ZstdArchiveEncoder::new(
                 Vec::new(),
-                base_reth_cli::ArchiveCompression::Framed,
+                base_reth_cli::ArchiveCompression::Framed { workers: 3 },
             )
             .unwrap(),
         );

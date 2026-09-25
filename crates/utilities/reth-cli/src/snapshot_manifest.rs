@@ -475,12 +475,13 @@ impl SnapshotGenerator {
                 "proofs",
                 "proofs.tar.zst",
                 proofs_files,
-                ArchiveCompression::Framed,
+                ArchiveCompression::Framed { workers: 0 },
             ));
         }
 
         // Each archive needs one Rayon worker to read and tar its files. Divide the remaining
-        // thread budget between zstd's native worker pools so all database archives continue to
+        // thread budget between the archives' compression workers (zstd's native pools for stream
+        // archives, Rayon frame batches for framed archives) so all database archives continue to
         // compress and stream concurrently without multiplying the configured CPU limit.
         let zstd_workers_per_archive = rayon::current_num_threads()
             .checked_div(single_components.len())
@@ -498,7 +499,9 @@ impl SnapshotGenerator {
                     ArchiveCompression::Stream { .. } => {
                         ArchiveCompression::Stream { workers: zstd_workers_per_archive }
                     }
-                    ArchiveCompression::Framed => ArchiveCompression::Framed,
+                    ArchiveCompression::Framed { .. } => {
+                        ArchiveCompression::Framed { workers: zstd_workers_per_archive }
+                    }
                 };
                 let (size, output_files) = package_single_component(
                     archive_sink,
