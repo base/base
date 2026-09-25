@@ -11,7 +11,7 @@ pub use builder::{
 pub use crate::follow::{FollowNode, FollowNodeConfig};
 
 mod mode;
-pub use mode::NodeMode;
+pub use mode::{NodeMode, NodeOperatingMode};
 
 mod node;
 pub use node::{HEAD_STREAM_POLL_INTERVAL, L1Config, RollupNode};

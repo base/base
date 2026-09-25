@@ -12,7 +12,9 @@ use alloy_rpc_types_engine::JwtSecret;
 use base_builder_core::test_utils::get_available_port;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
-use base_consensus_node::{EngineConfig, FollowNode, FollowNodeConfig, NodeMode, RemoteL2Client};
+use base_consensus_node::{
+    EngineConfig, FollowNode, FollowNodeConfig, NodeOperatingMode, RemoteL2Client,
+};
 use base_consensus_providers::L1RpcProvider;
 use base_consensus_rpc::RpcBuilder;
 use base_upgrade_signal::{
@@ -111,7 +113,7 @@ impl InProcessFollowConsensus {
             l2_jwt_secret: config.jwt_secret,
             l1_url: l1_rpc_url.clone(),
             l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
-            mode: NodeMode::Validator,
+            mode: NodeOperatingMode::Validator,
         };
         let engine_client = Arc::new(
             engine_config

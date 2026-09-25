@@ -287,7 +287,7 @@ impl HarnessBuilder {
                         .start(engine_actor_request_rx)
                         .await
                 }
-                NodeMode::Sequencer => {
+                NodeMode::Sequencer | NodeMode::ShadowSequencer | NodeMode::IsolatedSequencer => {
                     let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
                     SequencerEngineRequestCoordinator::new(
                         engine_processor,

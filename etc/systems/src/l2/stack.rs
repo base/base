@@ -248,7 +248,7 @@ impl L2Stack {
             l1_rpc_url: l1_rpc_url.clone(),
             l1_beacon_url: l1_beacon_url.clone(),
             l2_engine_url: builder.engine_url()?,
-            mode: NodeMode::Sequencer,
+            mode: NodeMode::ShadowSequencer,
             sequencer_key: Some(config.sequencer_key),
             p2p_key: Some(config.p2p_key),
             rpc_port: container_config.and_then(|c| c.builder_consensus_rpc_port),
