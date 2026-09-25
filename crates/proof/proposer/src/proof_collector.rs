@@ -574,7 +574,6 @@ mod tests {
         let proof_request = ProofRequest {
             claimed_l2_output_root: claimed_root,
             claimed_l2_block_number: target_block,
-            intermediate_block_interval: BLOCK_INTERVAL,
             l1_head_number: 1000,
             ..Default::default()
         };
@@ -612,7 +611,6 @@ mod tests {
             let proof_request = ProofRequest {
                 claimed_l2_output_root: claimed_root,
                 claimed_l2_block_number: target_block,
-                intermediate_block_interval: BLOCK_INTERVAL,
                 l1_head_number: 1000,
                 ..Default::default()
             };
@@ -676,7 +674,6 @@ mod tests {
         let proof_request = ProofRequest {
             claimed_l2_output_root: claimed_root,
             claimed_l2_block_number: target_block,
-            intermediate_block_interval: BLOCK_INTERVAL,
             l1_head_number: 1000,
             ..Default::default()
         };
@@ -690,7 +687,6 @@ mod tests {
             .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(ProofRequest {
                 claimed_l2_output_root: later_root,
                 claimed_l2_block_number: target_block + BLOCK_INTERVAL,
-                intermediate_block_interval: BLOCK_INTERVAL,
                 l1_head_number: 1000,
                 ..Default::default()
             }))
@@ -727,7 +723,6 @@ mod tests {
         let proof_request = ProofRequest {
             claimed_l2_output_root: claimed_root,
             claimed_l2_block_number: target_block,
-            intermediate_block_interval: BLOCK_INTERVAL,
             l1_head_number: 1000,
             ..Default::default()
         };
@@ -762,7 +757,6 @@ mod tests {
         let proof_request = ProofRequest {
             claimed_l2_output_root: stale_root,
             claimed_l2_block_number: target_block,
-            intermediate_block_interval: BLOCK_INTERVAL,
             l1_head_number: 1000,
             ..Default::default()
         };
