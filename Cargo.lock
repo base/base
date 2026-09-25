@@ -4572,6 +4572,7 @@ dependencies = [
  "base-common-consensus",
  "base-common-evm",
  "base-common-flz",
+ "base-common-genesis",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
  "base-execution-chainspec",
