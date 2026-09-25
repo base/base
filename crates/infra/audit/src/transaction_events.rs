@@ -678,7 +678,12 @@ impl PgTransactionEventSink {
             anyhow::Ok(())
         }
         .await;
-        conn.unlock().await?;
+        // Keep the migration's own error. A failed unlock is harmless: this
+        // pool closes when migrate returns, which ends the session and releases
+        // the lock.
+        if let Err(err) = conn.unlock().await {
+            warn!(error = %err, "failed to release transaction event migration lock");
+        }
         result
     }
 
