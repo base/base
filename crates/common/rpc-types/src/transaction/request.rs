@@ -17,22 +17,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::Transaction;
 
-/// An enshrined EIP-8130 authenticator an estimate can price as a flat leaf.
+/// Named EIP-8130 authenticator selectors.
 ///
-/// Estimation never verifies a signature: the scheme only selects which
-/// enshrined authenticator the intrinsic-gas schedule charges (the
-/// authenticator's execution gas plus the calldata cost of its authentication
-/// payload), and provides the default secp256k1 authorization used when a
-/// blob is absent.
-///
-/// This does **not** enumerate every authenticator selector a `sender_auth` /
-/// `payer_auth` blob's prefix may recognize — see
-/// [`base_common_consensus::Eip8130Contracts::DELEGATE_AUTHENTICATOR`], a
-/// recognized selector that is a structured 3-segment blob (delegate
-/// account + a nested leaf authenticator) rather than a flat leaf, so it
-/// can't be a variant here. Prefix recognition (`is_prefixed_auth` in
-/// `crate::reth`) checks the protocol's actual canonical authenticator set
-/// instead of this enum for that reason.
+/// [`Self::Secp256k1`] sizes the default authorization when a blob is absent
+/// and is the only selector launch-wire simulation prices. P256, WebAuthn, and
+/// the delegate authenticator are rejected by `eth_call` / `eth_estimateGas`,
+/// matching txpool admission.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Eip8130AuthScheme {
@@ -77,11 +67,8 @@ impl Eip8130AuthScheme {
     /// `eip8130_auth_scheme_all_lists_every_variant` test for the
     /// compile-time guard that keeps this in sync with the enum.
     ///
-    /// This is *not* the full set of authenticator selectors a `sender_auth`
-    /// / `payer_auth` blob's prefix may recognize — see
-    /// [`base_common_consensus::Eip8130Contracts::DELEGATE_AUTHENTICATOR`],
-    /// which prefix recognition (`is_prefixed_auth` in `crate::reth`) checks
-    /// for separately since it isn't a flat leaf scheme.
+    /// Simulation prices only [`Self::Secp256k1`]. The other variants name
+    /// authenticators the launch wire rejects.
     pub const ALL: [Self; 3] = [Self::Secp256k1, Self::P256, Self::WebAuthn];
 }
 
@@ -146,10 +133,10 @@ pub struct Eip8130RequestFields {
     ///
     /// - A bare secp256k1 signature prices the default-EOA path: the account
     ///   authenticates with a k1 key, exactly as for a 1559 transaction.
-    /// - `authenticator(20) || data` prefixed with a recognized enshrined
-    ///   authenticator (k1, [`Eip8130AuthScheme::P256`] / `WebAuthn`, or
-    ///   [`base_common_consensus::Eip8130Contracts::DELEGATE_AUTHENTICATOR`])
+    /// - `authenticator(20) || data` prefixed with the native k1 authenticator
     ///   prices the configured-account path.
+    /// - A prefix that names P256, WebAuthn, or the delegate authenticator is
+    ///   rejected, matching txpool admission.
     ///
     /// An absent blob defaults by intent: a declared `sender` synthesizes a
     /// k1-prefixed configured-account authorization; a `from`-only request
@@ -166,11 +153,9 @@ pub struct Eip8130RequestFields {
     /// Raw payer authentication blob (`authenticator(20) || data`) whose shape
     /// is priced when a `payer` is declared. Absent defaults to a representative
     /// secp256k1 payer authorization. Unlike `sender_auth`, a supplied blob is
-    /// always the prefixed form and its leading 20 bytes must be a recognized
-    /// enshrined authenticator selector (k1, [`Eip8130AuthScheme::P256`] /
-    /// `WebAuthn`, or
-    /// [`base_common_consensus::Eip8130Contracts::DELEGATE_AUTHENTICATOR`]); an
-    /// unrecognized selector is rejected as `INVALID_PARAMS` rather than priced.
+    /// always the prefixed form and its leading 20 bytes must be the native k1
+    /// authenticator. Any other selector, including P256, WebAuthn, and the
+    /// delegate authenticator, is rejected as `INVALID_PARAMS` rather than priced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer_auth: Option<Bytes>,
     /// Optional acting-actor hint for simulation. Estimation never recovers a
