@@ -77,7 +77,8 @@ pub enum BatcherError {
     /// The end-of-cycle flush failed, for example because the driver is stopped.
     #[error("flush failed: {0}")]
     Flush(#[from] AdminError),
-    /// The driver exited, or did not catch up with the harness within the timeout.
+    /// The driver exited, or did not catch up with the harness within
+    /// [`Batcher::IDLE_TIMEOUT`].
     #[error("the batch driver exited or stalled")]
     DriverUnavailable,
 }
@@ -136,6 +137,9 @@ impl<S: L2BlockProvider + std::fmt::Debug> std::fmt::Debug for Batcher<S> {
 }
 
 impl<S: L2BlockProvider> Batcher<S> {
+    /// How long a method waits for the driver to go idle before giving up.
+    pub const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+
     /// Create a new [`Batcher`] backed by a persistent [`BatchDriver`] task.
     ///
     /// Spawns the driver immediately.
@@ -204,10 +208,8 @@ impl<S: L2BlockProvider> Batcher<S> {
 
     /// Drain the L2 source and forward all blocks to the driver, then flush.
     ///
-    /// Performs steps 1–4 of [`advance`] without mining. After this returns, every frame
-    /// resulting from the flush (not just the first) has been handed to the tx manager, so
-    /// [`pending_count`] reflects the *complete* set of frame transactions waiting, even
-    /// when a cycle produces more than one frame.
+    /// Performs steps 1–4 of [`advance`] without mining. Once it returns, every frame the
+    /// flush released has been handed to the tx manager, so [`pending_count`] counts them all.
     ///
     /// # Panics
     ///
@@ -263,7 +265,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     async fn wait_until_idle(&self) -> Result<(), BatcherError> {
         let (reached_tx, reached_rx) = oneshot::channel();
         self.send_l1_head_item(L1HeadItem::Marker(reached_tx))?;
-        match tokio::time::timeout(Duration::from_secs(10), reached_rx).await {
+        match tokio::time::timeout(Self::IDLE_TIMEOUT, reached_rx).await {
             Ok(Ok(())) => Ok(()),
             _ => Err(BatcherError::DriverUnavailable),
         }
@@ -363,7 +365,8 @@ impl<S: L2BlockProvider> Batcher<S> {
     ///
     /// # Panics
     ///
-    /// Panics if the driver task has exited, or did not catch up within the timeout.
+    /// Panics if the driver task has exited, or did not catch up within
+    /// [`IDLE_TIMEOUT`](Self::IDLE_TIMEOUT).
     pub async fn mine_pending(&self, l1: &mut L1Miner) -> u64 {
         self.try_mine_pending(l1)
             .await
@@ -383,7 +386,8 @@ impl<S: L2BlockProvider> Batcher<S> {
     ///
     /// # Panics
     ///
-    /// Panics if the driver task has exited, or did not catch up within the timeout.
+    /// Panics if the driver task has exited, or did not catch up within
+    /// [`IDLE_TIMEOUT`](Self::IDLE_TIMEOUT).
     pub async fn confirm_staged(&self, block: &L1Block) {
         self.try_confirm_staged(block)
             .await
@@ -402,7 +406,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     ///
     /// Panics if `block_number` exceeds the current L1 chain tip
     /// (`ReorgError::BeyondTip`), or if the driver task has exited or did not catch up
-    /// within the timeout.
+    /// within [`IDLE_TIMEOUT`](Self::IDLE_TIMEOUT).
     ///
     /// [`confirm_staged`]: Batcher::confirm_staged
     pub async fn reorg(&self, block_number: u64, l1: &mut L1Miner) {
@@ -420,7 +424,8 @@ impl<S: L2BlockProvider> Batcher<S> {
     ///
     /// # Panics
     ///
-    /// Panics if the driver task has exited, or did not apply the reorg within the timeout.
+    /// Panics if the driver task has exited, or did not apply the reorg within
+    /// [`IDLE_TIMEOUT`](Self::IDLE_TIMEOUT).
     ///
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
     pub async fn signal_reorg(&self) {

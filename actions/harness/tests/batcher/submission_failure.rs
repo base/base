@@ -4,7 +4,7 @@
 //!   sequencer → batcher (submission fails) → batcher requeues → derivation
 //!
 //! The [`BatchDriver`] reacts to a failed [`SendHandle`] by calling
-//! `pipeline.requeue_frame()` and retrying on the next loop iteration.
+//! `pipeline.requeue(id)` and retrying on the next loop iteration.
 //! The [`L1MinerTxManager`]'s `fail_next_n` mechanism fires an immediate
 //! [`TxManagerError::Rpc`] receipt so this path is exercised without any
 //! real L1 interaction.

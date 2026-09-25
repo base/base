@@ -22,6 +22,7 @@ pub enum L1HeadItem {
 /// [`L1HeadSource`] fed by the harness through a channel.
 #[derive(Debug)]
 pub struct HarnessL1HeadSource {
+    /// Heads and markers queued by the harness, in order.
     rx: mpsc::UnboundedReceiver<L1HeadItem>,
 }
 

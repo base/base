@@ -226,8 +226,8 @@ impl L1MinerTxManager {
     /// inclusion block has been discarded or they are no longer valid.
     ///
     /// Both `pending` (not yet staged) and `staged` (submitted to L1 but not
-    /// yet confirmed) items are drained. This ensures no [`SendHandle`] is
-    /// left dangling, which would block the driver's `in_flight.next()`.
+    /// yet confirmed) items are drained, so every [`SendHandle`] resolves and no
+    /// submission holds an in-flight slot forever.
     ///
     /// Submissions already confirmed through [`confirm_block`] are not revisited.
     ///
