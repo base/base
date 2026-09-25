@@ -31,7 +31,7 @@ base_metrics::define_metrics! {
     )]
     pipeline_reset_total: counter,
     #[describe("Total number of L1 batch submissions")]
-    #[label(name = "outcome", default = ["submitted", "confirmed", "failed", "requeued"])]
+    #[label(name = "outcome", default = ["submitted", "confirmed", "failed"])]
     submission_total: counter,
     #[describe("Total bytes of frame payload submitted to the DA layer")]
     #[label(name = "da_type", default = ["blob", "calldata"])]

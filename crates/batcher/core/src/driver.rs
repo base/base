@@ -770,31 +770,32 @@ mod tests {
         });
     }
 
-    /// `advance_l1_head` must NOT be called when a submission fails — we have no
-    /// confirmed L1 block to report.
+    /// A failed submission is requeued and resent, and `advance_l1_head` is not called: there
+    /// is no confirmed L1 block to report.
     #[test]
-    fn test_advance_l1_head_not_called_on_failure() {
+    fn test_failed_submission_is_resent_without_advancing_l1_head() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let mut pipeline = TrackingPipeline::new();
             let recorded = pipeline.recorded();
             pipeline.submissions.push_back(SubmissionStub::stub());
 
-            let (driver, _handles) = DriverFixture::new(
-                ctx.clone(),
-                pipeline,
-                ScriptedTxManager::new([SendOutcome::Failed]),
-            )
-            .build();
+            let tx_manager = ScriptedTxManager::new([SendOutcome::Failed]);
+            let (driver, _handles) =
+                DriverFixture::new(ctx.clone(), pipeline, tx_manager.clone()).build();
             let handle = ctx.spawn(driver.run());
 
             ctx.sleep(Duration::from_millis(50)).await;
             ctx.cancel();
 
             assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
+            let recorded = recorded.lock().unwrap();
             assert!(
-                recorded.lock().unwrap().l1_heads().is_empty(),
+                recorded.l1_heads().is_empty(),
                 "advance_l1_head must NOT be called on submission failure"
             );
+            // The failure requeues the submission and the next CPU phase resends it.
+            assert_eq!(recorded.requeued(), [SubmissionId(0)]);
+            assert_eq!(tx_manager.candidates().len(), 2, "the failed submission must be resent");
         });
     }
 
