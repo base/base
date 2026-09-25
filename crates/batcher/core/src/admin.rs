@@ -2,7 +2,7 @@
 
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{ThrottleConfig, ThrottleInfo, ThrottleStrategy};
+use crate::{ThrottleConfig, ThrottleConfigError, ThrottleInfo, ThrottleStrategy};
 
 /// Capacity of the admin command channel.
 ///
@@ -35,6 +35,9 @@ pub enum AdminError {
     /// The operation needs a running batcher, but it is stopped.
     #[error("batcher is stopped")]
     Stopped,
+    /// The requested throttle configuration is invalid.
+    #[error("invalid throttle config: {0}")]
+    InvalidThrottleConfig(#[from] ThrottleConfigError),
 }
 
 /// Result type alias for admin operations.
@@ -135,16 +138,15 @@ impl AdminHandle {
 
     /// Replace the throttle strategy and configuration.
     ///
-    /// The full [`ThrottleConfig`] is required — partial updates are not
-    /// supported. Callers that want to change only one field should call
-    /// [`get_throttle_info`](Self::get_throttle_info) first to read the
-    /// current config, adjust the desired field, and pass the result here.
-    /// The new limits are pushed to the block builder right after.
+    /// The full [`ThrottleConfig`] is required: partial updates are not supported. The new
+    /// limits are pushed to the block builder right after. An invalid `config` is rejected
+    /// with [`AdminError::InvalidThrottleConfig`] before reaching the driver.
     pub async fn set_throttle(
         &self,
         strategy: ThrottleStrategy,
         config: ThrottleConfig,
     ) -> AdminResult<()> {
+        config.validate()?;
         self.request(|reply| AdminCommand::SetThrottle { strategy, config, reply }).await
     }
 
@@ -203,6 +205,17 @@ mod tests {
         drop(rx);
         let err = handle.get_status().await.unwrap_err();
         assert!(matches!(err, AdminError::ChannelClosed));
+    }
+
+    #[tokio::test]
+    async fn set_throttle_rejects_an_invalid_config_before_the_driver() {
+        let (handle, mut rx) = AdminHandle::channel();
+        let config = ThrottleConfig { max_intensity: 2.0, ..ThrottleConfig::default() };
+
+        let err = handle.set_throttle(ThrottleStrategy::Linear, config).await.unwrap_err();
+
+        assert!(matches!(err, AdminError::InvalidThrottleConfig(_)));
+        assert!(rx.try_recv().is_err(), "the driver must not receive the command");
     }
 
     #[test]

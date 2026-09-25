@@ -32,7 +32,8 @@ pub trait BatcherAdminApi {
 
     /// Replace the throttle strategy and configuration.
     ///
-    /// `config` sets the full throttle configuration; all fields are required.
+    /// `config` sets the full throttle configuration; all fields are required. Fails if
+    /// `config` is invalid, see [`ThrottleConfig::validate`].
     #[method(name = "setThrottleController")]
     async fn set_throttle_controller(
         &self,
@@ -71,6 +72,7 @@ impl BatcherAdminApiServerImpl {
             AdminError::NotSupported(_) => -32601,
             AdminError::ChannelClosed => -32001,
             AdminError::Stopped => -32002,
+            AdminError::InvalidThrottleConfig(_) => -32602,
         };
         ErrorObjectOwned::owned(code, e.to_string(), None::<()>)
     }
@@ -137,5 +139,12 @@ mod tests {
     fn admin_error_stopped_uses_invalid_state_code() {
         let err = BatcherAdminApiServerImpl::admin_error(AdminError::Stopped);
         assert_eq!(err.code(), -32002);
+    }
+
+    #[test]
+    fn admin_error_invalid_throttle_config_uses_invalid_params_code() {
+        let config = ThrottleConfig { max_intensity: 2.0, ..ThrottleConfig::default() };
+        let err = BatcherAdminApiServerImpl::admin_error(config.validate().unwrap_err().into());
+        assert_eq!(err.code(), -32602);
     }
 }
