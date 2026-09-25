@@ -3,8 +3,8 @@
 #[path = "common/balance.rs"]
 mod balance;
 mod common;
-#[path = "common/zenith.rs"]
-mod zenith;
+#[path = "common/everest.rs"]
+mod everest;
 #[path = "common/zk_dry_run.rs"]
 mod zk_dry_run;
 
@@ -28,10 +28,10 @@ use eyre::{Result, WrapErr, ensure};
 /// EIP-8130 transaction type byte.
 const EIP8130_TX_TYPE: u8 = 0x79;
 
-/// Mines a minimal EOA-path EIP-8130 transaction on the Zenith system-test stack.
+/// Mines a minimal EOA-path EIP-8130 transaction on the Everest system-test stack.
 #[tokio::test]
 async fn eip8130_transaction_is_mined() -> Result<()> {
-    let (_system, provider) = zenith::start_zenith_system().await?;
+    let (_system, provider) = everest::start_everest_system().await?;
     let (_tx_hash, receipt) = send_minimal_eip8130(&provider).await?;
 
     assert!(receipt.status(), "EIP-8130 transaction receipt must report success");
@@ -63,7 +63,7 @@ async fn eip8130_block_dry_run_proves() -> Result<()> {
     );
 
     let (system, provider) =
-        zenith::start_zenith_stack(SystemTestStackBuilder::new().with_force_batch_submission())
+        everest::start_everest_stack(SystemTestStackBuilder::new().with_force_batch_submission())
             .await?;
     let (_tx_hash, receipt) = send_minimal_eip8130(&provider).await?;
     let block_number =

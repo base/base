@@ -1,4 +1,4 @@
-//! Zenith stack helper. Path-included only by tests that activate Zenith.
+//! Everest stack helper. Path-included only by tests that activate Everest.
 
 use alloy_provider::RootProvider;
 use base_common_network::Base;
@@ -11,18 +11,18 @@ use super::common::{
 };
 
 pub(crate) const BASE_COBALT_ACTIVATION_BLOCK: u64 = 5;
-pub(crate) const BASE_ZENITH_ACTIVATION_BLOCK: u64 = 7;
+pub(crate) const BASE_EVEREST_ACTIVATION_BLOCK: u64 = 7;
 
-/// Starts a system test stack with Zenith active at block 7 and waits for block 8.
+/// Starts a system test stack with Everest active at block 7 and waits for block 8.
 ///
 /// The returned [`SystemTestStack`] must be kept alive for the duration of the test;
 /// dropping it shuts down the underlying containers.
-pub(crate) async fn start_zenith_system() -> Result<(SystemTestStack, RootProvider<Base>)> {
-    start_zenith_stack(SystemTestStackBuilder::new()).await
+pub(crate) async fn start_everest_system() -> Result<(SystemTestStack, RootProvider<Base>)> {
+    start_everest_stack(SystemTestStackBuilder::new()).await
 }
 
-/// Same as [`start_zenith_system`], with extra [`SystemTestStackBuilder`] options applied first.
-pub(crate) async fn start_zenith_stack(
+/// Same as [`start_everest_system`], with extra [`SystemTestStackBuilder`] options applied first.
+pub(crate) async fn start_everest_stack(
     builder: SystemTestStackBuilder,
 ) -> Result<(SystemTestStack, RootProvider<Base>)> {
     let system = builder
@@ -31,10 +31,10 @@ pub(crate) async fn start_zenith_stack(
         .with_base_azul_activation_block(BASE_AZUL_ACTIVATION_BLOCK)
         .with_base_beryl_activation_block(BASE_BERYL_ACTIVATION_BLOCK)
         .with_base_cobalt_activation_block(BASE_COBALT_ACTIVATION_BLOCK)
-        .with_base_zenith_activation_block(BASE_ZENITH_ACTIVATION_BLOCK)
+        .with_base_everest_activation_block(BASE_EVEREST_ACTIVATION_BLOCK)
         .build()
         .await?;
     let provider = system.l2_builder_provider()?;
-    wait_for_block(&provider, BASE_ZENITH_ACTIVATION_BLOCK + 1).await?;
+    wait_for_block(&provider, BASE_EVEREST_ACTIVATION_BLOCK + 1).await?;
     Ok((system, provider))
 }

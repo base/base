@@ -498,12 +498,12 @@ impl SpanBatch {
                     return BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus);
                 }
 
-                // If Zenith is not active yet and the transaction is an 8130, drop the batch.
-                if !cfg.is_zenith_active(batch.timestamp)
+                // If Everest is not active yet and the transaction is an 8130, drop the batch.
+                if !cfg.is_everest_active(batch.timestamp)
                     && tx.as_ref().first() == Some(&(OpTxType::Eip8130 as u8))
                 {
-                    warn!(target: "batch_span", tx_index = i, "EIP-8130 transactions are not supported pre-Zenith");
-                    return BatchValidity::Drop(BatchDropReason::Eip8130PreZenith);
+                    warn!(target: "batch_span", tx_index = i, "EIP-8130 transactions are not supported pre-Everest");
+                    return BatchValidity::Drop(BatchDropReason::Eip8130PreEverest);
                 }
             }
         }
@@ -2228,27 +2228,27 @@ mod tests {
         };
         assert_eq!(
             batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
-            BatchValidity::Drop(BatchDropReason::Eip8130PreZenith)
+            BatchValidity::Drop(BatchDropReason::Eip8130PreEverest)
         );
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
         assert!(
-            logs[0].contains("EIP-8130 transactions are not supported pre-Zenith")
+            logs[0].contains("EIP-8130 transactions are not supported pre-Everest")
                 && logs[0].contains("tx_index")
                 && logs[0].contains('0')
         );
     }
 
     #[tokio::test]
-    async fn test_check_batch_rejects_eip8130_span_post_zenith() {
-        // Zenith enables EIP-8130 after Denim has disabled Span batches, so
+    async fn test_check_batch_rejects_eip8130_span_post_everest() {
+        // Everest enables EIP-8130 after Denim has disabled Span batches, so
         // EIP-8130 transactions must use singular batches.
         let cfg = RollupConfig {
             seq_window_size: 100,
             max_sequencer_drift: 100,
             upgrades: UpgradeConfig {
                 delta_time: Some(0),
-                base: BaseUpgradeConfig { denim: Some(0), zenith: Some(0), ..Default::default() },
+                base: BaseUpgradeConfig { denim: Some(0), everest: Some(0), ..Default::default() },
                 ..Default::default()
             },
             block_time: 10,

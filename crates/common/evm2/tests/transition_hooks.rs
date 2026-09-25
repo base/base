@@ -1,9 +1,9 @@
 //! Transition-block hook tests for `base-common-evm2`.
 //!
-//! Validates the Canyon create2-deployer, Denim `BaseTime`, and Zenith EIP-8130 system-account
+//! Validates the Canyon create2-deployer, Denim `BaseTime`, and Everest EIP-8130 system-account
 //! irregular state transitions applied by [`BaseBlockExecutor::apply_transition_hooks`]: their
 //! fork gating, the state they install, and their idempotency. Each hook's parity with the revm
-//! reference (`base-common-evm`'s `canyon`/`zenith`/`base_time` modules) is in the shape of the
+//! reference (`base-common-evm`'s `canyon`/`everest`/`base_time` modules) is in the shape of the
 //! installed code/storage, asserted here against the same addresses and constants.
 
 use alloy_primitives::{Address, B256, Bytes, KECCAK256_EMPTY, U256, address, b256, uint};
@@ -89,9 +89,9 @@ fn canyon_is_skipped_after_the_activation_block() {
 }
 
 #[test]
-fn zenith_plants_stub_on_codeless_nonce_manager() {
-    let mut executor = executor(BaseUpgrade::Zenith, 1000, db_with_valid_proxy());
-    executor.apply_transition_hooks(&schedule(BaseUpgrade::Zenith, 1000)).expect("hooks apply");
+fn everest_plants_stub_on_codeless_nonce_manager() {
+    let mut executor = executor(BaseUpgrade::Everest, 1000, db_with_valid_proxy());
+    executor.apply_transition_hooks(&schedule(BaseUpgrade::Everest, 1000)).expect("hooks apply");
     let (mut evm, _, _) = executor.finish();
 
     let stub_hash = Bytecode::new_legacy(Bytes::from_static(&[0xEF])).hash_slow();
@@ -100,26 +100,26 @@ fn zenith_plants_stub_on_codeless_nonce_manager() {
 }
 
 #[test]
-fn zenith_does_not_overwrite_existing_code() {
+fn everest_does_not_overwrite_existing_code() {
     let real = Bytecode::new_raw(Bytes::from_static(&[0x60, 0x00]));
     let real_hash = real.hash_slow();
     let mut db = db_with_valid_proxy();
     db.insert_account_info(&NONCE_MANAGER, evm2::AccountInfo::new(U256::ZERO, 0, real_hash, real));
-    let mut executor = executor(BaseUpgrade::Zenith, 1000, db);
-    executor.apply_transition_hooks(&schedule(BaseUpgrade::Zenith, 1000)).expect("hooks apply");
+    let mut executor = executor(BaseUpgrade::Everest, 1000, db);
+    executor.apply_transition_hooks(&schedule(BaseUpgrade::Everest, 1000)).expect("hooks apply");
     let (mut evm, _, _) = executor.finish();
 
     assert_eq!(code_hash(&mut evm, NONCE_MANAGER), real_hash, "existing deployment preserved");
 }
 
 #[test]
-fn zenith_is_skipped_before_activation() {
+fn everest_is_skipped_before_activation() {
     let mut executor = executor(BaseUpgrade::Isthmus, 1000, db_with_valid_proxy());
-    // Zenith is scheduled far in the future; at ts=1000 it is inactive.
-    executor.apply_transition_hooks(&schedule(BaseUpgrade::Zenith, 10_000)).expect("hooks apply");
+    // Everest is scheduled far in the future; at ts=1000 it is inactive.
+    executor.apply_transition_hooks(&schedule(BaseUpgrade::Everest, 10_000)).expect("hooks apply");
     let (mut evm, _, _) = executor.finish();
 
-    assert_eq!(code_hash(&mut evm, NONCE_MANAGER), KECCAK256_EMPTY, "no stub before Zenith");
+    assert_eq!(code_hash(&mut evm, NONCE_MANAGER), KECCAK256_EMPTY, "no stub before Everest");
 }
 
 /// Seeds a valid `BaseTime` proxy (with code and the canonical admin) so the transition can link

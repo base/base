@@ -34,7 +34,7 @@ image cannot bypass the integrated offline generator. Bump the tag in the setup
 container, smoke test, Justfile, and Compose files when changing this interface.
 
 Compose devnets and the system-test stack use `op-deployer`, built from
-[`base/optimism` at `0066b17c`](https://github.com/base/optimism/tree/0066b17c3fe0cbb5ea935de6d5b18d4fc86dc439).
+[`base/optimism` at `896142b3`](https://github.com/base/optimism/tree/896142b334ea20220aa552e9478e5ec406716911).
 The binary generates both chains offline in one process, applies Base activation
 settings, merges L1 contract allocations with the prefunded genesis template, and
 writes the final execution and rollup configs. Contract artifacts are unpacked
@@ -190,8 +190,15 @@ Denim. Native payload building supports balance,
 storage, and block-number predicates; `flashblock_index` predicates remain specific
 to the Flashblocks builder and are rejected after the Denim cutover.
 
+Everest enables EIP-8130 account-abstraction transactions. Everest mode additionally
+activates Everest at block 100:
+
+```bash
+just devnet up everest
+```
+
 Zenith is the permanently unscheduled, genesis-only gate for future hardfork feature testing.
-Zenith mode additionally activates Zenith at block 100:
+Zenith mode additionally activates Everest and Zenith at block 100:
 
 ```bash
 just devnet up zenith

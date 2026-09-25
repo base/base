@@ -1,6 +1,6 @@
 //! Differential parity harness for the transition-block hooks.
 //!
-//! Runs each Base transition hook (Canyon create2-deployer, Zenith EIP-8130 system-account stub,
+//! Runs each Base transition hook (Canyon create2-deployer, Everest EIP-8130 system-account stub,
 //! Denim `BaseTime` predeploy) through the `base-common-evm2` executor and, on an equivalent
 //! database, through the revm-based `base-common-evm` reference function, asserting the two engines
 //! install byte-identical state (the affected account code hashes and, for `BaseTime`, the linked
@@ -104,18 +104,18 @@ fn canyon_create2_deployer_matches_revm() {
 }
 
 #[test]
-fn zenith_system_account_stub_matches_revm() {
-    // evm2 (Canyon active-at-0 so it does not re-fire; only Zenith does).
-    let mut schedule = evm2_schedule(BaseUpgrade::Zenith);
+fn everest_system_account_stub_matches_revm() {
+    // evm2 (Canyon active-at-0 so it does not re-fire; only Everest does).
+    let mut schedule = evm2_schedule(BaseUpgrade::Everest);
     schedule.set_activation_timestamp(BaseUpgrade::Canyon, 0);
-    let mut executor = evm2_executor(BaseUpgrade::Zenith, evm2_db_with_valid_base_time_proxy());
+    let mut executor = evm2_executor(BaseUpgrade::Everest, evm2_db_with_valid_base_time_proxy());
     executor.apply_transition_hooks(&schedule).expect("hooks apply");
     let (mut evm, _, _) = executor.finish();
     let evm2_hash = evm2_code_hash(&mut evm, NONCE_MANAGER);
 
     // revm reference.
     let mut db = RevmDb::default();
-    ensure_eip8130_system_accounts(revm_schedule(BaseUpgrade::Zenith), ACTIVATION_TS, &mut db)
+    ensure_eip8130_system_accounts(revm_schedule(BaseUpgrade::Everest), ACTIVATION_TS, &mut db)
         .expect("reference applies");
     let revm_hash = revm_code_hash(&mut db, NONCE_MANAGER);
 
