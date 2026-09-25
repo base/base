@@ -466,12 +466,26 @@ async fn test_pending_without_flashblocks_snapshot() -> Result<()> {
         client.request("eth_getBlockByNumber", json!(["latest", false])).await?;
     assert_eq!(latest["hash"], json!(prepared.parent_hash));
 
-    // Once FCU consumes the executed pending block, the regular fallback is latest again.
+    // Block retrieval still falls back to latest after FCU consumes the pending block.
     harness.engine().update_forkchoice(prepared.parent_hash, prepared.new_block_hash, None).await?;
     harness.wait_for_header(prepared.new_block_hash, prepared.new_block_number).await?;
     let pending: serde_json::Value =
         client.request("eth_getBlockByNumber", json!(["pending", false])).await?;
     assert_eq!(pending["hash"], json!(prepared.new_block_hash));
+
+    // Calls without either pending source forecast the next block on latest's post-state.
+    // Revert unless TIMESTAMP == 5 and NUMBER == 2, then return TIMESTAMP.
+    let overrides = json!({ (contract.to_string()): {
+        "code": "0x42600514436002141660115760006000fd5b4260005260206000f3"
+    } });
+    let output: Bytes = client.request("eth_call", json!([call, "pending", overrides])).await?;
+    assert_eq!(output, Bytes::copy_from_slice(&U256::from(5).to_be_bytes::<32>()));
+    let gas: U256 = client.request("eth_estimateGas", json!([call, "pending", overrides])).await?;
+    assert!(gas > U256::from(21_000));
+    let latest_gas: Result<U256, _> =
+        client.request("eth_estimateGas", json!([call, "latest", overrides])).await;
+    assert_eq!(latest_gas.unwrap_err().as_error_resp().unwrap().code, 3);
+
     let logs: Vec<serde_json::Value> = client
         .request("eth_getLogs", json!([{ "fromBlock": "pending", "toBlock": "pending" }]))
         .await?;

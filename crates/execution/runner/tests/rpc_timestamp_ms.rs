@@ -2,9 +2,11 @@
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use alloy_eips::Encodable2718;
-use alloy_primitives::Bytes;
+use alloy_eips::{Encodable2718, eip1559::BaseFeeParams};
+use alloy_primitives::{B256, Bytes};
 use alloy_rpc_client::RpcClient;
+use base_common_consensus::{JovianExtraData, Predeploys};
+use base_common_evm::BaseTime;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
 use base_protocol::BaseTimeUpdateTx;
@@ -40,6 +42,167 @@ fn receipt_logs(receipts: &Value, transaction_hash: &str) -> Value {
         .find(|receipt| receipt["transactionHash"] == transaction_hash)
         .expect("log-emitting transaction receipt should be present")["logs"]
         .clone()
+}
+
+#[tokio::test]
+async fn pending_calls_use_the_selected_blocks_environment_and_state() -> eyre::Result<()> {
+    let mut genesis = build_test_genesis();
+    genesis.config.extra_fields.insert("base".into(), json!({ "denim": 3 }));
+    // The general test genesis has placeholder extra data; successor fees need valid parameters.
+    genesis.extra_data = JovianExtraData::encode([0; 8].into(), BaseFeeParams::new(50, 6), 0)?;
+    genesis.alloc.remove(&BaseTime::IMPLEMENTATION_ADDRESS);
+    genesis
+        .alloc
+        .get_mut(&Predeploys::BASE_TIME)
+        .unwrap()
+        .storage
+        .as_mut()
+        .unwrap()
+        .remove(&B256::from(BaseTime::IMPLEMENTATION_SLOT));
+    let harness = TestHarness::builder()
+        .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(genesis)))
+        .build()
+        .await?;
+    let client = harness.rpc_client()?;
+    let probe = Account::Alice.address();
+    // Return TIMESTAMP, NUMBER, and BASEFEE, in that order.
+    let environment_code = "0x42600052436020524860405260606000f3";
+    // STATICCALL BaseTime.timestampMs() and revert unless it equals the first calldata word.
+    let time_guard_code = concat!(
+        "0x635745a67760e01b600052602060006004600073",
+        "4200000000000000000000000000000000000030",
+        "5afa5060005160003514603a5760006000fd5b00"
+    );
+
+    let base_time_call = |tag| json!([{ "to": Predeploys::BASE_TIME, "data": "0x5745a677" }, tag]);
+
+    // Without an executed pending block, simulate the scheduled successor. Once a payload
+    // exists, use its environment and post-state until forkchoice consumes it.
+    for stage in 0..3 {
+        let block = request(&client, "eth_getBlockByNumber", json!(["pending", false])).await?;
+        let timestamp = 3_u64;
+        let number = if stage == 2 { 2_u64 } else { 1 };
+        // Empty genesis reduces 1 gwei by 1/50. The harness's first payload then sets a
+        // 1 gwei minimum in its extra data, which takes effect for its successor.
+        let base_fee = [980_000_000_u64, 980_000_000, 1_000_000_000][stage];
+        let output = request(
+            &client,
+            "eth_call",
+            json!([
+                { "from": Account::Bob.address(), "to": probe, "gas": "0x186a0", "gasPrice": block["baseFeePerGas"] },
+                "pending",
+                { (probe.to_string()): { "code": environment_code } }
+            ]),
+        )
+        .await?;
+        assert_eq!(
+            output,
+            json!(format!("0x{timestamp:064x}{number:064x}{base_fee:064x}")),
+            "stage {stage}"
+        );
+
+        let timestamp_ms = [3_000_u64, 3_600, 3_200][stage];
+        let output = request(
+            &client,
+            "eth_call",
+            json!([{ "to": Predeploys::BASE_TIME, "data": "0x5745a677" }, "pending"]),
+        )
+        .await?;
+        assert_eq!(output, json!(format!("0x{timestamp_ms:064x}")), "stage {stage}");
+
+        let call =
+            json!({ "to": probe, "data": format!("0x{timestamp_ms:064x}"), "gas": "0x186a0" });
+        let overrides = json!({ (probe.to_string()): { "code": time_guard_code } });
+        let gas = request(&client, "eth_estimateGas", json!([call, "pending", overrides])).await?;
+        assert!(u64::from_str_radix(gas.as_str().unwrap().trim_start_matches("0x"), 16)? > 21_000);
+        let stale_timestamp_ms = [1_000, 3_000, 3_600][stage];
+        let wrong_time = json!({
+            "to": probe,
+            "data": format!("0x{stale_timestamp_ms:064x}"),
+            "gas": "0x186a0"
+        });
+        let result: Result<Value, _> =
+            client.request("eth_estimateGas", json!([wrong_time, "pending", overrides])).await;
+        assert_eq!(
+            result.unwrap_err().as_error_resp().unwrap().code,
+            3,
+            "the mismatched timestamp must revert"
+        );
+
+        // Protocol initialization supplies the temporary state first; user state overrides win.
+        let overridden = request(
+            &client,
+            "eth_call",
+            json!([
+                { "to": Predeploys::BASE_TIME, "data": "0x5745a677" },
+                "pending",
+                { (Predeploys::BASE_TIME.to_string()): {
+                    "stateDiff": {
+                        "0x0000000000000000000000000000000000000000000000000000000000000000":
+                            "0x000000000000000000000000000000000000000000000000000000000000012c"
+                    }
+                } }
+            ]),
+        )
+        .await?;
+        assert_eq!(overridden, json!(format!("0x{:064x}", timestamp * 1_000 + 300)));
+
+        let block_overridden = request(
+            &client,
+            "eth_call",
+            json!([
+                { "from": Account::Bob.address(), "to": probe, "gas": "0x186a0", "gasPrice": "0xb" },
+                "pending",
+                { (probe.to_string()): { "code": environment_code } },
+                { "timestamp": "0x9", "number": "0x7", "baseFeePerGas": "0xb" }
+            ]),
+        )
+        .await?;
+        assert_eq!(block_overridden, json!(format!("0x{:064x}{:064x}{:064x}", 9, 7, 11)));
+
+        for tag in ["0x0", "latest"] {
+            let result: Result<Value, _> = client.request("eth_call", base_time_call(tag)).await;
+            if tag == "latest" && stage == 2 {
+                assert_eq!(result?, json!(format!("0x{:064x}", 3_600)));
+            } else {
+                let error = result.unwrap_err();
+                let error = error.as_error_resp().unwrap();
+                assert_eq!(error.code, 3);
+                assert!(error.message.contains("implementation not initialized"));
+            }
+        }
+
+        if stage == 0 {
+            // Deliberately differ from the forecast: real pending must use executed metadata.
+            let base_time = BaseTimeUpdateTx::new(600)?.into_deposit_tx(1);
+            harness
+                .prepare_unsafe_block(vec![
+                    L1_BLOCK_INFO_DEPOSIT_TX,
+                    base_time.encoded_2718().into(),
+                ])
+                .await?;
+        } else if stage == 1 {
+            // Promote the real pending block; the fallback must now forecast its successor.
+            let hash = serde_json::from_value(block["hash"].clone())?;
+            let parent = serde_json::from_value(block["parentHash"].clone())?;
+            harness.engine().update_forkchoice(parent, hash, None).await?;
+            harness.wait_for_header(hash, 1).await?;
+        }
+    }
+
+    let historical = request(
+        &client,
+        "eth_call",
+        json!([
+            { "from": Account::Bob.address(), "to": probe, "gas": "0x186a0", "gasPrice": "0x3b9aca00" },
+            "0x0",
+            { (probe.to_string()): { "code": environment_code } }
+        ]),
+    )
+    .await?;
+    assert_eq!(historical, json!(format!("0x{:064x}{:064x}{:064x}", 1, 0, 1_000_000_000)));
+
+    Ok(())
 }
 
 #[tokio::test]

@@ -5103,6 +5103,7 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-rpc-types-engine",
  "base-common-consensus",
+ "base-common-evm",
  "base-common-network",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
