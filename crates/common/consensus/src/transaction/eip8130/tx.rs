@@ -144,7 +144,7 @@ impl TxEip8130 {
         match raw.as_ref() {
             [] => Ok(None),
             [0] => Ok(Some(Eip8130Constants::OPEN_PAYER)),
-            bytes if bytes.len() == 20 && bytes.iter().any(|&b| b != 0) => {
+            bytes if bytes.len() == 20 && bytes != [0u8; 20] => {
                 Ok(Some(Address::from_slice(bytes)))
             }
             _ => Err(alloy_rlp::Error::Custom("invalid EIP-8130 payer encoding")),
