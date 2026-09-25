@@ -135,11 +135,11 @@ async fn batcher_reorg_during_submission() {
     chain.push(h.l1.tip().clone());
 
     // --- L1 reorg back to genesis (frames still in staged) ---
-    // reorg_to fires Err(TxManagerError::Rpc("reorg")) for every staged item and
-    // sends L1 head 0. The driver handles each failed receipt with
-    // pipeline.requeue(id), rewinding the channel cursor without re-encoding.
-    batcher.reorg(0, &mut h.l1);
-    batcher.wait_until_requeued(1).await;
+    // Every staged item gets a failure receipt and the driver learns of L1 head 0. It
+    // handles each failed receipt with pipeline.requeue(id), rewinding the channel cursor
+    // without re-encoding, then resubmits the frame.
+    batcher.reorg(0, &mut h.l1).await;
+    assert_eq!(batcher.pending_count(), 1, "the reorged frame must be resubmitted");
 
     // Mine an empty replacement block on the new fork, then resubmit the
     // requeued frames using the same Batcher (no drop/recreate required).

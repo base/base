@@ -41,7 +41,7 @@ actions/
 └── harness/        base-action-harness crate
     src/
     ├── lib.rs                  public API (re-exports)
-    ├── action.rs               Action trait, L2BlockProvider trait
+    ├── action.rs               Action trait
     ├── harness.rs              ActionTestHarness
     ├── matrix.rs               ForkMatrix (upgrade combinations)
     ├── test_rollup_config.rs   TestRollupConfigBuilder
@@ -146,12 +146,11 @@ in-memory.
 ## ActionL2Source and BaseBlock
 
 The batcher actor needs to read L2 blocks in order to know what to batch.
-`ActionL2Source` is a `VecDeque<BaseBlock>` that implements
-`L2BlockProvider`. Tests usually fill it with blocks produced by
-`L2Sequencer`, which uses the production L1 origin selector, attributes
-builder, and in-process engine client. Each block therefore contains a real
-L1-info deposit transaction and signed user transactions, rather than a
-batcher-only mock shape.
+`ActionL2Source` is a `VecDeque<BaseBlock>`. Tests usually fill it with blocks
+produced by `L2Sequencer`, which uses the production L1 origin selector,
+attributes builder, and in-process engine client. Each block therefore
+contains a real L1-info deposit transaction and signed user transactions,
+rather than a batcher-only mock shape.
 
 `ActionTestHarness::create_l2_source(n)` is the shortcut for building a source
 with `n` sequenced blocks. Tests that need precise block contents can create
@@ -161,7 +160,7 @@ manually.
 
 ## Batcher actor
 
-`Batcher` drains `BaseBlock`s from an `L2BlockProvider` and forwards them to a
+`Batcher` drains `BaseBlock`s from an `ActionL2Source` and forwards them to a
 production `BatchDriver` running in a background tokio task. The driver owns a
 `BatchEncoder`, channel manager behavior, calldata/blob frame construction,
 and submission flow. The harness-owned boundary is `L1MinerTxManager`, which
@@ -172,8 +171,10 @@ failed, or reorged.
 For the common happy path, call `batcher.advance(&mut h.l1).await`: it drains
 the L2 source, flushes the encoder, mines one L1 block, and confirms the
 resulting receipts. For more exact scenarios, use `encode_only`,
-`stage_n_frames`, `confirm_staged`, `fail_next_n_submissions`, `reorg`, and
-`wait_until_requeued`.
+`stage_n_frames`, `confirm_staged`, `mine_pending`, `fail_next_n_submissions`
+and `reorg`.
+Every `async` method of `Batcher` returns once the driver is idle again, so the
+test can read the tx manager's queues right after.
 
 
 ## Writing a test

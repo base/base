@@ -63,7 +63,7 @@ async fn txpool_blocked_recovers_via_cancel_tx_and_derives() {
 
     // Driver path: TxpoolBlocked receipt → requeue → recover_txpool → cancel_tx
     // → resubmit. The frame returns to pending only after the blockage clears.
-    batcher.wait_until_requeued(1).await;
+    assert_eq!(batcher.pending_count(), 1, "the blocked frame must be resubmitted");
 
     assert_eq!(
         batcher.cancellation_count(),
@@ -112,7 +112,7 @@ async fn consecutive_txpool_blocks_recover_and_derive() {
     batcher.block_next_n_submissions(2);
     batcher.encode_only().await;
 
-    batcher.wait_until_requeued(1).await;
+    assert_eq!(batcher.pending_count(), 1, "the blocked frame must be resubmitted");
 
     assert_eq!(
         batcher.cancellation_count(),
