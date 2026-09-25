@@ -8,13 +8,27 @@
 use std::time::Duration;
 
 use alloy_primitives::Address;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use url::Url;
+
+/// E2E scenario to execute.
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, ValueEnum)]
+pub enum Scenario {
+    /// Existing combined Path 1, Path 2 skip, and Path 4 run.
+    #[default]
+    All,
+    /// Path 1 followed by both the skip and dispute halves of Path 2.
+    Path1Path2,
+}
 
 /// Runtime configuration for [`crate::ChallengerE2e`].
 #[derive(Debug, Parser)]
 #[command(name = "challenger-e2e", version, about, long_about = None)]
 pub struct Config {
+    /// E2E scenario to execute.
+    #[arg(long, env = "CHALLENGER_E2E_SCENARIO", default_value = "all")]
+    pub scenario: Scenario,
+
     /// L1 RPC that Anvil forks. Only ever read from.
     #[arg(long = "l1-eth-rpc", env = "BASE_CHALLENGER_L1_ETH_RPC")]
     pub l1_eth_rpc: Url,
@@ -103,4 +117,14 @@ pub struct Config {
         value_parser = humantime::parse_duration
     )]
     pub poll_interval: Duration,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_path1_path2_scenario() {
+        assert_eq!(Scenario::from_str("path1-path2", false), Ok(Scenario::Path1Path2));
+    }
 }
