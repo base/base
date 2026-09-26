@@ -65,6 +65,7 @@ impl SequencerCommand {
         consensus_config.upgrade_signal = builder.rollup_args.upgrade_signal.clone();
         let consensus_args = ConsensusNodeArgs::new(consensus_chain, consensus_config);
         let mut rollup_config = consensus_args.load_rollup_config()?;
+        Arc::make_mut(&mut execution_chain).block_time = Some(rollup_config.block_time);
 
         let rollup_args = builder.rollup_args.clone();
         let sequencer_rpc = rollup_args.sequencer.clone();

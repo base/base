@@ -7,7 +7,7 @@ use base_common_consensus::{
     BaseTimeDepositSource, BaseTransaction, DepositSourceDomain, Predeploys, SystemAddresses,
     TxDeposit,
 };
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{BlockTimestampSchedule, RollupConfig};
 
 use crate::REGOLITH_SYSTEM_TX_GAS;
 
@@ -125,16 +125,25 @@ impl BaseTimeUpdateTx {
         block_number: u64,
         timestamp: u64,
     ) -> Result<(), BaseTimeScheduleError> {
-        let Some(denim_activation_block) = rollup_config.denim_activation_block_number() else {
+        let Some(schedule) = rollup_config.block_timestamp_schedule() else {
             return Ok(());
         };
-        let blocks_since_genesis = block_number.saturating_sub(rollup_config.genesis.l2.number);
-        if blocks_since_genesis < denim_activation_block {
+        Self::validate_timestamp_schedule(&schedule, transactions, block_number, timestamp)
+    }
+
+    /// Validates a Denim block's timestamp against a shared timestamp schedule.
+    pub fn validate_timestamp_schedule<T: BaseTransaction>(
+        schedule: &BlockTimestampSchedule,
+        transactions: &[T],
+        block_number: u64,
+        timestamp: u64,
+    ) -> Result<(), BaseTimeScheduleError> {
+        if !schedule.is_denim_active_at_block(block_number) {
             return Ok(());
         }
 
         let (expected_timestamp, expected_millis_part) =
-            rollup_config.l2_block_timestamp_parts(block_number);
+            schedule.block_timestamp_parts(block_number);
         if timestamp != expected_timestamp {
             return Err(BaseTimeScheduleError::InvalidTimestamp {
                 expected: expected_timestamp,

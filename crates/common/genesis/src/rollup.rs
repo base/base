@@ -1,12 +1,14 @@
 //! Rollup Config Types
 
+use core::num::NonZeroU64;
+
 use alloy_chains::Chain;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
 
 use crate::{
-    BaseUpgrade, ChainGenesis, FeeConfig, RuntimeUpgradeRegistry, UpgradeActivation,
-    UpgradeActivationSink, UpgradeConfig,
+    BaseUpgrade, BlockTimestampSchedule, ChainGenesis, FeeConfig, RuntimeUpgradeRegistry,
+    UpgradeActivation, UpgradeActivationSink, UpgradeConfig,
 };
 
 /// The Rollup configuration.
@@ -372,14 +374,17 @@ impl RollupConfig {
     ///
     /// If Denim is not configured or the block time is zero, returns [`None`].
     pub fn denim_activation_block_number(&self) -> Option<u64> {
-        let denim_timestamp = self.upgrade_activation_timestamp(BaseUpgrade::Denim)?;
-        let block_time = self.block_time;
+        self.block_timestamp_schedule().map(|schedule| schedule.denim_activation_block_number())
+    }
 
-        if block_time == 0 {
-            return None;
-        }
-
-        Some(denim_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(block_time))
+    /// Returns the shared timestamp schedule when Denim and a nonzero block time are configured.
+    pub fn block_timestamp_schedule(&self) -> Option<BlockTimestampSchedule> {
+        Some(BlockTimestampSchedule {
+            genesis_block_number: self.genesis.l2.number,
+            genesis_timestamp: self.genesis.l2_time,
+            legacy_block_interval: NonZeroU64::new(self.block_time)?,
+            denim_activation_timestamp: self.upgrade_activation_timestamp(BaseUpgrade::Denim)?,
+        })
     }
 
     /// Returns the L2 block number at which the genesis-only Zenith testing gate activates.
@@ -405,32 +410,15 @@ impl RollupConfig {
     /// block number (`self.genesis.l2.number`), which is non-zero for chains whose L2 genesis
     /// was anchored at a later block.
     pub fn l2_block_timestamp_millis(&self, block_number: u64) -> u64 {
-        let blocks_since_genesis = block_number.saturating_sub(self.genesis.l2.number);
-
-        let legacy_seconds = self
-            .genesis
-            .l2_time
-            .saturating_add(blocks_since_genesis.saturating_mul(self.block_time));
-        let legacy_millis = legacy_seconds.saturating_mul(1_000);
-
-        let Some(denim_activation_block) = self.denim_activation_block_number() else {
-            return legacy_millis;
-        };
-
-        if blocks_since_genesis < denim_activation_block {
-            return legacy_millis;
+        if let Some(schedule) = self.block_timestamp_schedule() {
+            return schedule.block_timestamp_millis(block_number);
         }
-
-        let denim_activation_seconds = self
-            .genesis
+        self.genesis
             .l2_time
-            .saturating_add(denim_activation_block.saturating_mul(self.block_time));
-        let denim_activation_full_millis = denim_activation_seconds.saturating_mul(1_000);
-        denim_activation_full_millis.saturating_add(
-            blocks_since_genesis
-                .saturating_sub(denim_activation_block)
-                .saturating_mul(Self::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS),
-        )
+            .saturating_add(
+                block_number.saturating_sub(self.genesis.l2.number).saturating_mul(self.block_time),
+            )
+            .saturating_mul(1_000)
     }
 
     /// Returns the deterministic whole-second timestamp of an L2 block.
@@ -491,7 +479,8 @@ impl RollupConfig {
     pub const GRANITE_CHANNEL_TIMEOUT: u64 = 50;
 
     /// The fixed cadence once subsecond blocks activates.
-    pub const NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS: u64 = 200;
+    pub const NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS: u64 =
+        BlockTimestampSchedule::DENIM_BLOCK_INTERVAL_MILLIS;
 
     /// The number of Denim blocks produced in one legacy two-second block interval.
     pub const DENIM_GAS_PARAMETER_SCALING_FACTOR: u32 = 10;

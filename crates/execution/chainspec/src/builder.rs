@@ -16,6 +16,8 @@ pub struct BaseChainSpecBuilder {
     inner: ChainSpecBuilder,
     /// Activation registry admin address.
     activation_admin_address: Option<Address>,
+    /// Legacy L2 block interval in seconds.
+    block_time: Option<u64>,
 }
 
 impl BaseChainSpecBuilder {
@@ -27,7 +29,11 @@ impl BaseChainSpecBuilder {
             .genesis(base_mainnet.genesis.clone());
         let forks = base_mainnet.hardforks.clone();
         inner = inner.with_forks(forks);
-        Self { inner, activation_admin_address: base_mainnet.activation_admin_address }
+        Self {
+            inner,
+            activation_admin_address: base_mainnet.activation_admin_address,
+            block_time: base_mainnet.block_time,
+        }
     }
 
     /// Set the chain ID.
@@ -38,6 +44,13 @@ impl BaseChainSpecBuilder {
 
     /// Set the genesis block.
     pub fn genesis(mut self, genesis: Genesis) -> Self {
+        // Report malformed intervals in `try_build`, keeping this setter infallible.
+        self.block_time = genesis
+            .config
+            .extra_fields
+            .get_deserialized("blockTime")
+            .and_then(Result::ok)
+            .or(self.block_time);
         self.inner = self.inner.genesis(genesis);
         self
     }
@@ -63,6 +76,12 @@ impl BaseChainSpecBuilder {
     /// Set or clear the activation registry admin address.
     pub const fn optional_activation_admin_address(mut self, address: Option<Address>) -> Self {
         self.activation_admin_address = address;
+        self
+    }
+
+    /// Set the legacy L2 block interval in seconds.
+    pub const fn block_time(mut self, block_time: u64) -> Self {
+        self.block_time = Some(block_time);
         self
     }
 
@@ -167,6 +186,8 @@ impl BaseChainSpecBuilder {
     /// [`Self::genesis`]).
     pub fn try_build(self) -> Result<BaseChainSpec, BaseChainSpecError> {
         let mut inner = self.inner.build();
+        let _ =
+            inner.genesis.config.extra_fields.get_deserialized::<u64>("blockTime").transpose()?;
         BaseChainSpec::validate_beryl_activation_admin(
             &inner.hardforks,
             self.activation_admin_address,
@@ -176,7 +197,11 @@ impl BaseChainSpecBuilder {
             &inner.genesis,
             &inner.hardforks,
         ));
-        Ok(BaseChainSpec { inner, activation_admin_address: self.activation_admin_address })
+        Ok(BaseChainSpec {
+            inner,
+            activation_admin_address: self.activation_admin_address,
+            block_time: self.block_time,
+        })
     }
 
     /// Build the resulting [`BaseChainSpec`].
@@ -184,8 +209,9 @@ impl BaseChainSpecBuilder {
     /// # Panics
     ///
     /// This function panics if the chain ID and genesis is not set ([`Self::chain`] and
-    /// [`Self::genesis`]), or if Beryl is scheduled without an activation registry admin address.
+    /// [`Self::genesis`]), if `config.blockTime` is malformed, or if Beryl is scheduled without
+    /// an activation registry admin address.
     pub fn build(self) -> BaseChainSpec {
-        self.try_build().expect("Beryl-enabled chain spec requires activation admin")
+        self.try_build().expect("chain spec configuration must be valid")
     }
 }
