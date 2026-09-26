@@ -1,7 +1,7 @@
 //! HTTP ingest path for transaction observability events.
 
 use std::{
-    collections::HashSet,
+    collections::{BTreeSet, HashSet},
     sync::Arc,
     time::{Duration as StdDuration, Instant},
 };
@@ -17,7 +17,7 @@ use axum::{
     routing::post,
 };
 use base_observability_events::{TransactionEvent, TransactionEventProducer, TransactionEventType};
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{
     Deserialize, Serialize,
     de::{
@@ -26,9 +26,13 @@ use serde::{
     },
 };
 use serde_json::Value;
-use sqlx::{Connection, PgPool, QueryBuilder, Row, migrate::Migrator, postgres::PgPoolOptions};
+use sqlx::{
+    Connection, PgConnection, PgPool, QueryBuilder, Row,
+    migrate::{Migrate, Migration, Migrator},
+    postgres::PgPoolOptions,
+};
 use tower_http::limit::RequestBodyLimitLayer;
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 use crate::Metrics;
 
@@ -49,14 +53,14 @@ pub const DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES: usize = 8 * 1024 * 1024;
 
 /// Maximum events inserted in one Postgres statement.
 ///
-/// Each row uses 12 bind parameters, so this stays below Postgres' 65,535 bind
-/// parameter limit with room for future columns.
-pub const MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE: usize = 5_000;
+/// Each row uses 14 bind parameters, so this stays below Postgres' 65,535 bind
+/// parameter limit (4,000 x 14 = 56,000).
+pub const MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE: usize = 4_000;
 
 /// Session `lock_timeout` applied to each persist INSERT.
 const TRANSACTION_EVENT_LOCK_TIMEOUT_SQL: &str = "SET LOCAL lock_timeout = '1s'";
 
-/// Attempts per INSERT chunk or expire DELETE batch, including the first try.
+/// Attempts per INSERT chunk, including the first try.
 const TRANSACTION_EVENT_DB_MAX_ATTEMPTS: u32 = 3;
 
 /// Default days to keep high-volume proxy and builder-decision events.
@@ -65,20 +69,39 @@ pub const DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS: u32 = 3;
 pub const DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS: u32 = 7;
 /// Default days to keep failures, drops, inclusion, and flashblock events.
 pub const DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS: u32 = 30;
-/// Default number of expired rows deleted in one statement.
-pub const DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE: u32 = 10_000;
-/// Default maximum delete statements per retention pass.
+/// Maximum configurable retention days for any class.
 ///
-/// Shared across hot, then warm, then cold. A large hot backlog can consume
-/// the whole budget and defer warmer expiry until a later pass.
-pub const DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES: u32 = 1_000;
-/// Default seconds between retention passes. Also the maximum wall-clock age
-/// of one expire scan cycle before it is restarted at the configured LIMIT.
+/// Bounds the number of day partitions per class.
+pub const MAX_TRANSACTION_EVENT_RETENTION_DAYS: u32 = 90;
+/// Default seconds between partition maintenance passes.
 pub const DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS: u64 = 3_600;
-/// Default Postgres statement timeout for one retention delete.
+/// Maximum seconds between partition maintenance passes.
 ///
-/// Bounds a sparse `doomed` scan so it cannot hold the advisory lock for hours.
-pub const DEFAULT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS: u64 = 30_000;
+/// Kept well under the [`TRANSACTION_EVENT_PARTITION_DAYS_AHEAD`] look-ahead so
+/// a pass, and a retry after a failed pass, always lands before ingest runs
+/// out of partitions.
+pub const MAX_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS: u64 = 86_400;
+/// Default Postgres `lock_timeout` for one partition create, detach, or drop.
+///
+/// Detach takes an ACCESS EXCLUSIVE lock on the class partition, which queues
+/// inserts for that class behind it. A short timeout keeps a blocked detach
+/// from stalling ingest; the next pass retries it.
+pub const DEFAULT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS: u64 = 5_000;
+/// Whole UTC days of partitions kept ahead of the current day.
+///
+/// Ingest keeps working this long if partition maintenance stops.
+pub const TRANSACTION_EVENT_PARTITION_DAYS_AHEAD: u32 = 3;
+/// Maximum amount an event's `event_time` may be ahead of the server clock.
+///
+/// Later events are rejected instead of failing the batch with a missing
+/// partition.
+pub const MAX_TRANSACTION_EVENT_FUTURE_SKEW_SECS: i64 = 3_600;
+/// Extra age a day partition must reach past its retention window before it
+/// is dropped.
+///
+/// Ingest admits events up to exactly the retention window, so the grace
+/// period keeps an in-flight insert from racing its partition's drop.
+const TRANSACTION_EVENT_PARTITION_DROP_GRACE_SECS: i64 = 3_600;
 const TRANSACTION_EVENT_RETENTION_ACQUIRE_TIMEOUT: StdDuration = StdDuration::from_secs(1);
 const TRANSACTION_EVENT_RETENTION_LOCK_ID: i64 = 744_697_762_131_337_711;
 
@@ -143,8 +166,8 @@ impl Drop for RetentionAdvisoryLock {
     }
 }
 
-/// Retention class used to pick a delete cutoff for an event type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Retention class used to pick an event's partition and retention window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TransactionEventRetentionClass {
     /// High-volume success-path and repeated builder-decision events.
     Hot,
@@ -155,7 +178,11 @@ pub enum TransactionEventRetentionClass {
 }
 
 impl TransactionEventRetentionClass {
-    /// Stable lowercase value used as a bounded metric label.
+    /// Every retention class, in maintenance order.
+    pub const ALL: [Self; 3] = [Self::Hot, Self::Warm, Self::Cold];
+
+    /// Stable lowercase value used as a bounded metric label and as the
+    /// Postgres `retention_class` partition value.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Hot => "hot",
@@ -164,7 +191,12 @@ impl TransactionEventRetentionClass {
         }
     }
 
-    /// Classifies a transaction event at expiry.
+    /// Parses the Postgres `retention_class` value.
+    pub fn from_label(label: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|class| class.as_str() == label)
+    }
+
+    /// Classifies a transaction event at ingest.
     ///
     /// The match is exhaustive so new `TransactionEventType` variants fail to
     /// compile until they are assigned a retention class deliberately.
@@ -217,53 +249,27 @@ impl TransactionEventRetentionClass {
         }
     }
 
-    /// Event-type labels stored in Postgres for this class.
-    fn event_type_labels(self) -> Vec<String> {
-        self.event_types().map(|event_type| event_type.to_string()).collect()
-    }
-
+    #[cfg(test)]
     fn event_types(self) -> impl Iterator<Item = TransactionEventType> {
         TransactionEventType::all()
             .filter(move |event_type| Self::for_event_type(*event_type) == self)
     }
 }
 
-/// Configuration for one transaction event retention pass.
+/// Configuration for transaction event retention and partition maintenance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransactionEventRetentionConfig {
-    /// Days to keep hot event types after `ingested_at`.
+    /// Days to keep hot event types after `event_time`.
     pub hot_days: u32,
-    /// Days to keep warm event types after `ingested_at`.
+    /// Days to keep warm event types after `event_time`.
     pub warm_days: u32,
-    /// Days to keep cold event types after `ingested_at`.
+    /// Days to keep cold event types after `event_time`.
     pub cold_days: u32,
-    /// Maximum rows deleted in one statement.
-    pub delete_batch_size: u32,
-    /// Maximum delete statements in one locked pass.
-    ///
-    /// Shared across hot, then warm, then cold. A large hot backlog can
-    /// consume the whole budget and defer warmer expiry until a later pass.
-    /// Raise this if warm or cold expiry stalls behind hot deletes.
-    pub max_batches: u32,
-    /// Postgres `statement_timeout` applied to each expire DELETE, in
+    /// Postgres `lock_timeout` for one partition DDL statement, in
     /// milliseconds.
-    pub statement_timeout_ms: u64,
-    /// Seconds between retention passes. A scan cycle older than this is
-    /// restarted so a bisected LIMIT cannot crawl forever. The first batch of
-    /// a cycle always runs, even when this interval is shorter than one
-    /// statement. A queued `LIMIT 1` after statement timeout also runs before
-    /// the cycle restarts.
+    pub partition_lock_timeout_ms: u64,
+    /// Seconds between partition maintenance passes.
     pub interval_secs: u64,
-    /// Test-only sleep injected into hot expire statements so a short
-    /// `statement_timeout_ms` can cancel a statement without failing the pass.
-    ///
-    /// Leave this `None` in production. The serve binary never sets it.
-    #[doc(hidden)]
-    pub test_hot_sleep_ms: Option<u64>,
-    /// When set with `test_hot_sleep_ms`, sleep only if the batch LIMIT is at
-    /// least this value. `None` sleeps on every hot statement.
-    #[doc(hidden)]
-    pub test_hot_sleep_min_limit: Option<u32>,
 }
 
 impl Default for TransactionEventRetentionConfig {
@@ -272,18 +278,14 @@ impl Default for TransactionEventRetentionConfig {
             hot_days: DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS,
             warm_days: DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS,
             cold_days: DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS,
-            delete_batch_size: DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE,
-            max_batches: DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES,
-            statement_timeout_ms: DEFAULT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS,
+            partition_lock_timeout_ms: DEFAULT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS,
             interval_secs: DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS,
-            test_hot_sleep_ms: None,
-            test_hot_sleep_min_limit: None,
         }
     }
 }
 
 impl TransactionEventRetentionConfig {
-    /// Validates retention bounds before deleting expired rows.
+    /// Validates retention bounds before ingest or partition maintenance.
     pub fn validate(self) -> Result<Self> {
         anyhow::ensure!(
             self.hot_days > 0 && self.hot_days <= self.warm_days,
@@ -294,26 +296,22 @@ impl TransactionEventRetentionConfig {
             "transaction event warm retention days must be at most cold days"
         );
         anyhow::ensure!(
-            (1..=100_000).contains(&self.delete_batch_size),
-            "transaction event retention delete batch size must be between 1 and 100000"
+            self.cold_days <= MAX_TRANSACTION_EVENT_RETENTION_DAYS,
+            "transaction event cold retention days must be at most {MAX_TRANSACTION_EVENT_RETENTION_DAYS}"
         );
         anyhow::ensure!(
-            (1..=1_000).contains(&self.max_batches),
-            "transaction event retention max batches must be between 1 and 1000"
+            (1..=60_000).contains(&self.partition_lock_timeout_ms),
+            "transaction event partition lock timeout must be between 1ms and 60000ms"
         );
         anyhow::ensure!(
-            (1..=300_000).contains(&self.statement_timeout_ms),
-            "transaction event retention statement timeout must be between 1ms and 300000ms"
-        );
-        anyhow::ensure!(
-            (1..=604_800).contains(&self.interval_secs),
-            "transaction event retention interval must be between 1 and 604800 seconds"
+            (1..=MAX_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS).contains(&self.interval_secs),
+            "transaction event retention interval must be between 1 and {MAX_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS} seconds"
         );
         Ok(self)
     }
 
-    fn statement_timeout_sql(self) -> String {
-        format!("SET LOCAL statement_timeout = '{}ms'", self.statement_timeout_ms)
+    fn partition_lock_timeout_sql(self) -> String {
+        format!("SET LOCAL lock_timeout = '{}ms'", self.partition_lock_timeout_ms)
     }
 
     const fn class_days(self, class: TransactionEventRetentionClass) -> u32 {
@@ -323,21 +321,73 @@ impl TransactionEventRetentionConfig {
             TransactionEventRetentionClass::Cold => self.cold_days,
         }
     }
+
+    fn retention_window(self, class: TransactionEventRetentionClass) -> Duration {
+        Duration::days(i64::from(self.class_days(class)))
+    }
+
+    /// Checks that ingest can store an event with this `event_time` now.
+    ///
+    /// Events older than their class's retention window would be dropped with
+    /// their partition anyway, and events too far in the future have no
+    /// partition yet. Rejecting both keeps one bad timestamp from failing a
+    /// whole insert batch.
+    fn admit_event_time(
+        self,
+        class: TransactionEventRetentionClass,
+        event_time: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> std::result::Result<(), EventTimeRejection> {
+        if event_time < now - self.retention_window(class) {
+            return Err(EventTimeRejection::Expired);
+        }
+        if event_time >= now + Duration::seconds(MAX_TRANSACTION_EVENT_FUTURE_SKEW_SECS) {
+            return Err(EventTimeRejection::Future);
+        }
+        Ok(())
+    }
 }
 
-/// Result of one locked retention pass.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Why ingest refused an event's `event_time`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EventTimeRejection {
+    /// Older than the event's retention window.
+    Expired,
+    /// Further ahead of the server clock than the allowed skew.
+    Future,
+}
+
+impl EventTimeRejection {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Expired => "expired",
+            Self::Future => "future",
+        }
+    }
+
+    fn reason(self, class: TransactionEventRetentionClass) -> String {
+        match self {
+            Self::Expired => {
+                format!("event_time is older than the {} retention window", class.as_str())
+            }
+            Self::Future => format!(
+                "event_time is more than {MAX_TRANSACTION_EVENT_FUTURE_SKEW_SECS} seconds in the future"
+            ),
+        }
+    }
+}
+
+/// Result of one locked partition maintenance pass.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TransactionEventRetentionOutcome {
-    /// Expired rows deleted in this pass.
-    pub rows_deleted: u64,
-    /// Delete statements executed in this pass.
-    pub batches: u64,
-    /// Expired hot rows deleted in this pass.
-    pub hot_rows_deleted: u64,
-    /// Expired warm rows deleted in this pass.
-    pub warm_rows_deleted: u64,
-    /// Expired cold rows deleted in this pass.
-    pub cold_rows_deleted: u64,
+    /// Whether this replica held the retention lock and ran the pass.
+    pub lock_acquired: bool,
+    /// Day partitions created in this pass.
+    pub partitions_created: u64,
+    /// Expired day partitions dropped in this pass.
+    pub partitions_dropped: u64,
+    /// Partition DDL statements skipped after hitting the lock timeout.
+    pub lock_timeouts: u64,
 }
 
 /// Configuration for transaction event HTTP ingest.
@@ -419,21 +469,27 @@ pub struct TransactionEventInsertOutcome {
 pub const DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT: i64 = 500;
 /// Hard maximum query result count for read APIs.
 pub const MAX_TRANSACTION_EVENT_QUERY_LIMIT: i64 = 2_000;
-const REQUIRED_TRANSACTION_EVENT_MIGRATION_DESCRIPTION: &str = "transaction events";
+const REQUIRED_TRANSACTION_EVENT_MIGRATION_DESCRIPTION: &str = "transaction events partitioned";
 static TRANSACTION_EVENT_MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
-/// Required sqlx migration version for transaction event storage.
-fn required_transaction_event_migration_version() -> Result<i64, &'static str> {
+/// Pre-partition migrations 001-004, which the partitioned baseline replaced.
+///
+/// They are embedded only so their recorded `_sqlx_migrations` rows can be
+/// recognized by version and checksum and reset. They are never applied.
+static LEGACY_TRANSACTION_EVENT_MIGRATOR: Migrator = sqlx::migrate!("./legacy_migrations");
+
+/// Migration that creates the transaction event storage schema.
+fn required_transaction_event_migration() -> Result<&'static Migration, &'static str> {
     let mut matching_migrations = TRANSACTION_EVENT_MIGRATOR.iter().filter(|migration| {
         migration.description.as_ref() == REQUIRED_TRANSACTION_EVENT_MIGRATION_DESCRIPTION
     });
     let migration = matching_migrations.next().ok_or(
-        "transaction event migration 001_transaction_events.sql must be embedded in audit migrator",
+        "transaction event migration 001_transaction_events_partitioned.sql must be embedded in audit migrator",
     )?;
     if matching_migrations.next().is_some() {
         return Err("transaction event migration description must be unique");
     }
-    Ok(migration.version)
+    Ok(migration)
 }
 
 /// Persisted transaction event row returned by audit read APIs.
@@ -487,7 +543,7 @@ pub enum TransactionEventSchemaReadinessError {
     MigrationTableMissing,
     /// The transaction event migration has not completed successfully.
     #[error(
-        "transaction-event Postgres schema is not ready: required sqlx migration version {required_version} for 001_transaction_events.sql has not been applied successfully; run `audit-archiver migrate up` or the audit migration WorkflowTemplate before enabling TIPS_AUDIT_POSTGRES_URL"
+        "transaction-event Postgres schema is not ready: required sqlx migration version {required_version} for 001_transaction_events_partitioned.sql has not been applied successfully; run `audit-archiver migrate up` or the audit migration WorkflowTemplate before enabling TIPS_AUDIT_POSTGRES_URL"
     )]
     RequiredMigrationMissing {
         /// Required sqlx migration version.
@@ -500,7 +556,7 @@ pub enum TransactionEventSchemaReadinessError {
     TransactionEventsRelationMissing,
     /// The expected table exists but cannot be queried by the runtime role.
     #[error(
-        "transaction-event Postgres schema is not ready: runtime role cannot query public.transaction_events; verify audit_archiver privileges from 001_transaction_events.sql"
+        "transaction-event Postgres schema is not ready: runtime role cannot query public.transaction_events; verify audit_archiver privileges from 001_transaction_events_partitioned.sql"
     )]
     TransactionEventsRelationUnavailable {
         /// Underlying database error.
@@ -532,6 +588,19 @@ pub trait TransactionEventSink: Send + Sync {
         &self,
         events: &[TransactionEvent],
     ) -> std::result::Result<TransactionEventInsertOutcome, TransactionEventStorageError>;
+
+    /// Checks whether the sink can store a validated event right now.
+    ///
+    /// Returns a rejection reason for events the sink would refuse, such as an
+    /// `event_time` outside the partitions it keeps. The default admits
+    /// everything.
+    fn admit_event(
+        &self,
+        _event: &TransactionEvent,
+        _now: DateTime<Utc>,
+    ) -> std::result::Result<(), String> {
+        Ok(())
+    }
 }
 
 /// Postgres-backed transaction event sink.
@@ -539,19 +608,22 @@ pub trait TransactionEventSink: Send + Sync {
 pub struct PgTransactionEventSink {
     pool: PgPool,
     retention_pool: PgPool,
+    retention: TransactionEventRetentionConfig,
 }
 
 impl PgTransactionEventSink {
     /// Required sqlx migration version for transaction event storage.
     pub fn required_migration_version() -> Result<i64, &'static str> {
-        required_transaction_event_migration_version()
+        required_transaction_event_migration().map(|migration| migration.version)
     }
 
     /// Connects to Postgres without running migrations.
     ///
     /// The ingest pool is used for persist, RPC reads, and `/readyz`.
-    /// Retention uses a dedicated one-connection pool with a short acquire
-    /// timeout so lock losers do not occupy ingest connections.
+    /// Partition maintenance uses a dedicated one-connection pool with a short
+    /// acquire timeout so lock losers do not occupy ingest connections. The
+    /// sink starts with the default retention config; see
+    /// [`Self::with_retention_config`].
     pub async fn connect(database_url: &str, max_connections: u32) -> Result<Self> {
         let max_connections = max_connections.max(1);
         let pool =
@@ -561,24 +633,83 @@ impl PgTransactionEventSink {
             .acquire_timeout(TRANSACTION_EVENT_RETENTION_ACQUIRE_TIMEOUT)
             .connect(database_url)
             .await?;
-        Ok(Self { pool, retention_pool })
+        Ok(Self::new_with_retention_pool(pool, retention_pool))
     }
 
     /// Runs pending Postgres migrations.
+    ///
+    /// A database that recorded the pre-partition migrations 001-004 is reset
+    /// first. Its old table and their `_sqlx_migrations` rows are dropped in the
+    /// transaction that applies the partitioned baseline, so the reset commits
+    /// only if the baseline does. Every other database gets sqlx's standard
+    /// checks.
     pub async fn migrate(database_url: &str) -> Result<()> {
         let pool = PgPoolOptions::new().max_connections(1).connect(database_url).await?;
-        TRANSACTION_EVENT_MIGRATOR.run(&pool).await?;
-        Ok(())
+        let mut conn = pool.acquire().await?;
+        // Hold sqlx's migration lock across the legacy-history check and the
+        // run, so a concurrent migrator cannot change the history between
+        // them. The lock is session-level and reentrant; run_direct takes it
+        // again and releases its own hold.
+        conn.lock().await?;
+        let result = async {
+            let legacy_versions = legacy_transaction_event_migration_versions(&mut conn).await?;
+            if legacy_versions.is_empty() {
+                TRANSACTION_EVENT_MIGRATOR.run_direct(&mut *conn).await?;
+                return anyhow::Ok(());
+            }
+
+            let mut tx = conn.begin().await?;
+            // Bound the DROP's lock wait so a long-running vacuum or query on
+            // the old table fails the migration quickly instead of queueing
+            // ingest behind it. The migrator can simply be retried.
+            sqlx::query("SET LOCAL lock_timeout = '60s'").execute(&mut *tx).await?;
+            sqlx::query("DROP TABLE IF EXISTS transaction_events").execute(&mut *tx).await?;
+            sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ANY($1)")
+                .bind(&legacy_versions)
+                .execute(&mut *tx)
+                .await?;
+            // sqlx applies each migration in a savepoint of this transaction.
+            TRANSACTION_EVENT_MIGRATOR.run_direct(&mut *tx).await?;
+            tx.commit().await?;
+            info!(
+                legacy_versions = ?legacy_versions,
+                "reset legacy transaction event migration history"
+            );
+            anyhow::Ok(())
+        }
+        .await;
+        // Keep the migration's own error. A failed unlock is harmless: this
+        // pool closes when migrate returns, which ends the session and releases
+        // the lock.
+        if let Err(err) = conn.unlock().await {
+            warn!(error = %err, "failed to release transaction event migration lock");
+        }
+        result
     }
 
     /// Creates a sink from an existing ingest pool. Retention uses the same pool.
     pub fn new(pool: PgPool) -> Self {
-        Self { pool: pool.clone(), retention_pool: pool }
+        Self::new_with_retention_pool(pool.clone(), pool)
     }
 
     /// Creates a sink with a dedicated retention pool.
-    pub const fn new_with_retention_pool(pool: PgPool, retention_pool: PgPool) -> Self {
-        Self { pool, retention_pool }
+    pub fn new_with_retention_pool(pool: PgPool, retention_pool: PgPool) -> Self {
+        Self { pool, retention_pool, retention: TransactionEventRetentionConfig::default() }
+    }
+
+    /// Sets the retention windows used for ingest admission and partition
+    /// maintenance.
+    pub fn with_retention_config(
+        mut self,
+        retention: TransactionEventRetentionConfig,
+    ) -> Result<Self> {
+        self.retention = retention.validate()?;
+        Ok(self)
+    }
+
+    /// Retention windows used for ingest admission and partition maintenance.
+    pub const fn retention_config(&self) -> TransactionEventRetentionConfig {
+        self.retention
     }
 
     /// Checks whether transaction event Postgres storage is ready for runtime use.
@@ -599,19 +730,23 @@ impl PgTransactionEventSink {
             return Err(TransactionEventSchemaReadinessError::MigrationTableMissing);
         }
 
-        let required_version =
-            required_transaction_event_migration_version().map_err(|source| {
-                TransactionEventSchemaReadinessError::MigrationMetadataInvalid { reason: source }
-            })?;
-        let migration_applied: Option<bool> =
-            sqlx::query_scalar("SELECT success FROM _sqlx_migrations WHERE version = $1")
-                .bind(required_version)
+        let required_migration = required_transaction_event_migration().map_err(|source| {
+            TransactionEventSchemaReadinessError::MigrationMetadataInvalid { reason: source }
+        })?;
+        let applied: Option<(bool, Vec<u8>)> =
+            sqlx::query_as("SELECT success, checksum FROM _sqlx_migrations WHERE version = $1")
+                .bind(required_migration.version)
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|source| TransactionEventSchemaReadinessError::QueryFailed { source })?;
-        if !matches!(migration_applied, Some(true)) {
+        // The checksum distinguishes the partitioned baseline from the legacy
+        // migration that also recorded version 1.
+        let applied = applied.is_some_and(|(success, checksum)| {
+            success && checksum == required_migration.checksum.as_ref()
+        });
+        if !applied {
             return Err(TransactionEventSchemaReadinessError::RequiredMigrationMissing {
-                required_version,
+                required_version: required_migration.version,
             });
         }
 
@@ -628,142 +763,140 @@ impl PgTransactionEventSink {
         Ok(())
     }
 
-    /// Deletes expired `transaction_events` rows in bounded batches.
+    /// Creates upcoming day partitions and drops expired ones.
     ///
-    /// Uses a session advisory lock so only one replica expires rows at a time.
-    /// Returns a zeroed outcome when another replica already holds the lock, or
-    /// when the retention pool times out waiting for a connection.
-    /// The lock is released after the pass, including when a batch fails. If
-    /// unlock itself fails, the connection is detached so the session lock
-    /// cannot leak onto a reused pool connection.
-    /// Each class resumes a descending keyset on this lock holder. A statement
-    /// timeout commits a `LIMIT 1` progress step when possible, then bisects
-    /// the batch LIMIT. A cycle older than `interval_secs` restarts at the
-    /// configured LIMIT after at least one returned attempt, but not while a
-    /// `LIMIT 1` fallback is queued. A `LIMIT 1` timeout stops that class and
-    /// continues the pass with the next class.
-    /// Scan progress is in memory for this pass; the next pass starts new
-    /// cycles.
-    /// Hot rows are expired first so high-churn types free space before colder
-    /// types consume the shared batch budget. That can starve warm and cold
-    /// deletes in one pass; raise `max_batches` if they stall.
-    pub async fn expire_old_events(
-        &self,
-        config: TransactionEventRetentionConfig,
-    ) -> Result<TransactionEventRetentionOutcome> {
-        // Public API: validate here so tests and other callers cannot skip it.
-        let config = config.validate()?;
-        let classes = [
-            TransactionEventRetentionClass::Hot,
-            TransactionEventRetentionClass::Warm,
-            TransactionEventRetentionClass::Cold,
-        ];
+    /// Uses a session advisory lock so only one replica changes partitions at
+    /// a time. Returns an outcome with `lock_acquired = false` when another
+    /// replica holds the lock or the retention pool times out waiting for a
+    /// connection. The lock is released after the pass, including when a
+    /// statement fails. If unlock itself fails, the connection is detached so
+    /// the session lock cannot leak onto a reused pool connection.
+    ///
+    /// Each class keeps day partitions from the start of its retention window
+    /// through [`TRANSACTION_EVENT_PARTITION_DAYS_AHEAD`] days after today. A
+    /// day is dropped once all of it is older than the retention window plus
+    /// a one-hour grace period. Each DDL statement runs in its own transaction
+    /// under the configured `lock_timeout`; a statement that times out is
+    /// skipped and retried on the next pass.
+    pub async fn maintain_partitions(&self) -> Result<TransactionEventRetentionOutcome> {
+        self.maintain_partitions_at(Utc::now()).await
+    }
 
+    /// Runs [`Self::maintain_partitions`] as if the current time were `now`.
+    ///
+    /// Tests use this to move the retention window without waiting for days.
+    #[doc(hidden)]
+    pub async fn maintain_partitions_at(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<TransactionEventRetentionOutcome> {
+        let outcome = self.run_locked_partition_maintenance(now).await;
+        // Every replica refreshes the horizon from the catalog, so the gauge
+        // keeps falling if the lock holder stalls or its passes fail.
+        self.refresh_partition_horizon(now).await;
+        outcome
+    }
+
+    async fn refresh_partition_horizon(&self, now: DateTime<Utc>) {
+        let existing = match self.retention_pool.acquire().await {
+            Ok(mut conn) => list_day_partitions(&mut conn).await,
+            Err(err) => Err(err.into()),
+        };
+        match existing {
+            Ok(existing) => {
+                let attached: BTreeSet<DayPartition> = existing
+                    .iter()
+                    .filter(|partition| partition.attached)
+                    .map(|partition| partition.partition)
+                    .collect();
+                for class in TransactionEventRetentionClass::ALL {
+                    Metrics::transaction_event_partition_horizon_seconds(class.as_str())
+                        .set(partition_horizon_secs(now, class, &attached));
+                }
+            }
+            Err(err) => {
+                warn!(error = %err, "failed to refresh transaction event partition horizon");
+            }
+        }
+    }
+
+    async fn run_locked_partition_maintenance(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<TransactionEventRetentionOutcome> {
+        let config = self.retention;
         let Some(mut lock) = RetentionAdvisoryLock::try_acquire(&self.retention_pool).await? else {
-            return Ok(TransactionEventRetentionOutcome {
-                rows_deleted: 0,
-                batches: 0,
-                hot_rows_deleted: 0,
-                warm_rows_deleted: 0,
-                cold_rows_deleted: 0,
-            });
+            return Ok(TransactionEventRetentionOutcome::default());
         };
 
         let outcome = async {
-            let mut rows_deleted = 0u64;
-            let mut batches = 0u64;
-            let mut hot_rows_deleted = 0u64;
-            let mut warm_rows_deleted = 0u64;
-            let mut cold_rows_deleted = 0u64;
-            for class in classes {
-                let event_types = class.event_type_labels();
-                let mut progress = RetentionClassProgress::new_cycle(Utc::now(), &config, class);
-                while batches < u64::from(config.max_batches) {
-                    let now = Utc::now();
-                    if progress.should_end_cycle(now, config.interval_secs) {
-                        warn!(
-                            retention_class = class.as_str(),
-                            cycle_age_secs = progress.cycle_age_secs(now),
-                            batches_this_cycle = progress.batches_this_cycle,
-                            "ending transaction event expire cycle after retention interval"
-                        );
-                        Metrics::transaction_event_retention_cycles_ended(
-                            class.as_str(),
-                            "interval",
-                        )
+            let existing = list_day_partitions(lock.conn()).await?;
+            let plan = plan_partition_maintenance(now, config, &existing);
+            let lock_timeout_sql = config.partition_lock_timeout_sql();
+            let mut outcome =
+                TransactionEventRetentionOutcome { lock_acquired: true, ..Default::default() };
+            // Leftovers from a pass that detached but failed to drop. Drop them
+            // first so a same-named create cannot collide with them.
+            for partition in plan.drop_detached {
+                if run_partition_ddl(
+                    lock.conn(),
+                    &lock_timeout_sql,
+                    PartitionDdl::DropDetached,
+                    partition,
+                    &mut outcome,
+                )
+                .await?
+                {
+                    outcome.partitions_dropped += 1;
+                    Metrics::transaction_event_partitions_dropped(partition.class.as_str())
                         .increment(1);
-                        progress = RetentionClassProgress::new_cycle(now, &config, class);
-                    }
-                    let batch_limit = expire_batch_limit(
-                        config.delete_batch_size,
-                        progress.limit_lo,
-                        progress.limit_hi,
-                        progress.needs_limit_one,
-                    );
-                    Metrics::transaction_event_retention_effective_batch_limit(class.as_str())
-                        .set(f64::from(batch_limit));
-                    let outcome = delete_expired_event_batch(
-                        lock.conn(),
-                        &event_types,
-                        &progress,
-                        batch_limit,
-                        class,
-                        &config,
-                    )
-                    .await?;
-                    progress.batches_this_cycle = progress.batches_this_cycle.saturating_add(1);
-                    batches += 1;
-                    match outcome {
-                        ExpireBatchOutcome::StatementTimeout => {
-                            if batch_limit <= 1 {
-                                progress.needs_limit_one = true;
-                                break;
-                            }
-                            progress.needs_limit_one = true;
-                            progress.limit_hi = Some(batch_limit);
-                        }
-                        ExpireBatchOutcome::Deleted { selected, cursor } => {
-                            if selected == 0 {
-                                Metrics::transaction_event_retention_cycles_ended(
-                                    class.as_str(),
-                                    "exhausted",
-                                )
-                                .increment(1);
-                                break;
-                            }
-                            rows_deleted += selected;
-                            match class {
-                                TransactionEventRetentionClass::Hot => hot_rows_deleted += selected,
-                                TransactionEventRetentionClass::Warm => {
-                                    warm_rows_deleted += selected
-                                }
-                                TransactionEventRetentionClass::Cold => {
-                                    cold_rows_deleted += selected
-                                }
-                            }
-                            Metrics::transaction_events_expired(class.as_str()).increment(selected);
-                            if selected < u64::from(batch_limit) {
-                                Metrics::transaction_event_retention_cycles_ended(
-                                    class.as_str(),
-                                    "exhausted",
-                                )
-                                .increment(1);
-                                break;
-                            }
-                            progress.needs_limit_one = false;
-                            progress.limit_lo = batch_limit;
-                            progress.cursor = cursor;
-                        }
-                    }
                 }
             }
-            Ok(TransactionEventRetentionOutcome {
-                rows_deleted,
-                batches,
-                hot_rows_deleted,
-                warm_rows_deleted,
-                cold_rows_deleted,
-            })
+
+            for partition in plan.create {
+                if run_partition_ddl(
+                    lock.conn(),
+                    &lock_timeout_sql,
+                    PartitionDdl::Create,
+                    partition,
+                    &mut outcome,
+                )
+                .await?
+                {
+                    outcome.partitions_created += 1;
+                    Metrics::transaction_event_partitions_created(partition.class.as_str())
+                        .increment(1);
+                }
+            }
+
+            for partition in plan.detach {
+                let detached = run_partition_ddl(
+                    lock.conn(),
+                    &lock_timeout_sql,
+                    PartitionDdl::Detach,
+                    partition,
+                    &mut outcome,
+                )
+                .await?;
+                if !detached {
+                    continue;
+                }
+                if run_partition_ddl(
+                    lock.conn(),
+                    &lock_timeout_sql,
+                    PartitionDdl::DropDetached,
+                    partition,
+                    &mut outcome,
+                )
+                .await?
+                {
+                    outcome.partitions_dropped += 1;
+                    Metrics::transaction_event_partitions_dropped(partition.class.as_str())
+                        .increment(1);
+                }
+            }
+
+            Ok(outcome)
         }
         .await;
 
@@ -801,8 +934,9 @@ impl PgTransactionEventSink {
         loop {
             let mut query_builder = QueryBuilder::new(
                 "INSERT INTO transaction_events \
-                 (event_id, schema_version, event_time, producer, event_type, network, tx_hash, \
-                  block_hash, block_number, payload_id, request_id, data) ",
+                 (event_id, schema_version, event_time, event_date, retention_class, producer, \
+                  event_type, network, tx_hash, block_hash, block_number, payload_id, request_id, \
+                  data) ",
             );
             query_builder.push_values(
                 ordered.iter().copied().zip(block_numbers.iter().copied()),
@@ -811,11 +945,15 @@ impl PgTransactionEventSink {
                     let block_hash = event.block_hash.map(|hash| format!("{hash:#x}"));
                     let producer = event.producer.to_string();
                     let event_type = event.event_type.to_string();
+                    let retention_class =
+                        TransactionEventRetentionClass::for_event_type(event.event_type).as_str();
                     let data = Value::Object(event.data.clone());
 
                     row.push_bind(&event.event_id)
                         .push_bind(&event.schema_version)
                         .push_bind(event.event_time)
+                        .push_bind(event.event_time.date_naive())
+                        .push_bind(retention_class)
                         .push_bind(producer)
                         .push_bind(event_type)
                         .push_bind(&event.network)
@@ -827,7 +965,11 @@ impl PgTransactionEventSink {
                         .push_bind(data);
                 },
             );
-            query_builder.push(" ON CONFLICT (event_id) DO NOTHING RETURNING event_id");
+            // The partitioned primary key adds retention_class and event_date:
+            // retries and same-day re-emissions of an event_id still conflict.
+            query_builder.push(
+                " ON CONFLICT (event_id, retention_class, event_date) DO NOTHING RETURNING event_id",
+            );
 
             let result = async {
                 let mut tx = self.pool.begin().await?;
@@ -1115,220 +1257,249 @@ fn persist_retry_sqlstate(code: &str) -> Option<&'static str> {
     }
 }
 
-fn is_statement_timeout(err: &sqlx::Error) -> bool {
-    matches!(err, sqlx::Error::Database(database) if database.code().as_deref() == Some("57014"))
-}
+/// Versions of the recorded pre-partition migrations 001-004.
+///
+/// A row counts only if both its version and checksum match a legacy
+/// migration. A database that records legacy migrations alongside anything
+/// else fails, so the reset never deletes history it does not recognize.
+async fn legacy_transaction_event_migration_versions(conn: &mut PgConnection) -> Result<Vec<i64>> {
+    let migrations_table_exists: bool =
+        sqlx::query_scalar("SELECT to_regclass('_sqlx_migrations') IS NOT NULL")
+            .fetch_one(&mut *conn)
+            .await?;
+    if !migrations_table_exists {
+        return Ok(Vec::new());
+    }
 
-fn record_expire_statement_timeout(
-    err: &sqlx::Error,
-    class: TransactionEventRetentionClass,
-    attempted_batch_limit: u32,
-) {
-    warn!(
-        error = %err,
-        retention_class = class.as_str(),
-        attempted_batch_limit,
-        "transaction event expire statement timed out"
+    let applied: Vec<(i64, Vec<u8>)> =
+        sqlx::query_as("SELECT version, checksum FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&mut *conn)
+            .await?;
+    let (legacy, other): (Vec<_>, Vec<_>) = applied.into_iter().partition(|(version, checksum)| {
+        LEGACY_TRANSACTION_EVENT_MIGRATOR.iter().any(|migration| {
+            migration.version == *version && migration.checksum.as_ref() == checksum.as_slice()
+        })
+    });
+    let legacy: Vec<i64> = legacy.into_iter().map(|(version, _)| version).collect();
+    let other: Vec<i64> = other.into_iter().map(|(version, _)| version).collect();
+    anyhow::ensure!(
+        legacy.is_empty() || other.is_empty(),
+        "database records legacy transaction event migrations {legacy:?} alongside unrecognized migrations {other:?}; refusing to reset migration history"
     );
-    Metrics::transaction_events_expire_statement_timeouts(class.as_str()).increment(1);
+    Ok(legacy)
 }
 
-/// Next DELETE LIMIT after timeouts (`hi`) and full successes (`lo`).
-fn expire_batch_limit(configured: u32, lo: u32, hi: Option<u32>, needs_limit_one: bool) -> u32 {
-    if needs_limit_one {
-        return 1;
-    }
-    let configured = configured.max(1);
-    let Some(hi) = hi else {
-        return configured;
-    };
-    let lo = lo.max(1).min(configured);
-    let hi = hi.max(1);
-    if lo.saturating_mul(2) >= hi {
-        return lo;
-    }
-    let mid = lo.saturating_add(hi) / 2;
-    mid.clamp(lo, configured).min(hi.saturating_sub(1)).max(1)
+fn is_lock_timeout(err: &sqlx::Error) -> bool {
+    matches!(err, sqlx::Error::Database(database) if database.code().as_deref() == Some("55P03"))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RetentionScanCursor {
-    event_type: String,
-    ingested_at: DateTime<Utc>,
-    event_id: String,
+/// Midnight UTC at the start of `day`.
+const fn utc_midnight(day: NaiveDate) -> DateTime<Utc> {
+    day.and_time(chrono::NaiveTime::MIN).and_utc()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RetentionClassProgress {
-    scan_cutoff: DateTime<Utc>,
-    cursor: Option<RetentionScanCursor>,
-    limit_lo: u32,
-    limit_hi: Option<u32>,
-    needs_limit_one: bool,
-    cycle_started_at: DateTime<Utc>,
-    batches_this_cycle: u32,
-}
-
-impl RetentionClassProgress {
-    fn new_cycle(
-        now: DateTime<Utc>,
-        config: &TransactionEventRetentionConfig,
-        class: TransactionEventRetentionClass,
-    ) -> Self {
-        Self {
-            scan_cutoff: now - Duration::days(i64::from(config.class_days(class))),
-            cursor: None,
-            limit_lo: 0,
-            limit_hi: None,
-            needs_limit_one: false,
-            cycle_started_at: now,
-            batches_this_cycle: 0,
-        }
-    }
-
-    fn cycle_age_secs(&self, now: DateTime<Utc>) -> i64 {
-        (now - self.cycle_started_at).num_seconds()
-    }
-
-    fn should_end_cycle(&self, now: DateTime<Utc>, interval_secs: u64) -> bool {
-        if self.needs_limit_one || self.batches_this_cycle == 0 {
-            return false;
-        }
-        let Ok(interval_secs) = i64::try_from(interval_secs) else {
-            return false;
-        };
-        (now - self.cycle_started_at) >= Duration::seconds(interval_secs)
-    }
-}
-
-enum ExpireBatchOutcome {
-    Deleted { selected: u64, cursor: Option<RetentionScanCursor> },
-    StatementTimeout,
-}
-
-async fn delete_expired_event_batch(
-    conn: &mut sqlx::PgConnection,
-    event_types: &[String],
-    progress: &RetentionClassProgress,
-    batch_limit: u32,
+/// One UTC day partition of one retention class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct DayPartition {
     class: TransactionEventRetentionClass,
-    config: &TransactionEventRetentionConfig,
-) -> Result<ExpireBatchOutcome> {
-    let cutoff = progress.scan_cutoff;
-    let timeout_sql = config.statement_timeout_sql();
-    let mut attempt = 1u32;
-    loop {
-        let mut tx = conn.begin().await?;
-        sqlx::query(&timeout_sql).execute(&mut *tx).await?;
-        let should_sleep = class == TransactionEventRetentionClass::Hot
-            && config.test_hot_sleep_ms.is_some()
-            && config.test_hot_sleep_min_limit.is_none_or(|min_limit| batch_limit >= min_limit);
-        if should_sleep && let Some(sleep_ms) = config.test_hot_sleep_ms {
-            let sleep_secs = sleep_ms as f64 / 1_000.0;
-            if let Err(err) =
-                sqlx::query("SELECT pg_sleep($1)").bind(sleep_secs).execute(&mut *tx).await
-            {
-                let _ = tx.rollback().await;
-                if is_statement_timeout(&err) {
-                    record_expire_statement_timeout(&err, class, batch_limit);
-                    return Ok(ExpireBatchOutcome::StatementTimeout);
-                }
-                return Err(err.into());
+    day: NaiveDate,
+}
+
+impl DayPartition {
+    /// Table name used by the partition functions in the baseline migration.
+    fn table_name(self) -> String {
+        format!("transaction_events_{}_{}", self.class.as_str(), self.day.format("%Y%m%d"))
+    }
+
+    fn from_table_name(name: &str) -> Option<Self> {
+        let (class, day) = name.strip_prefix("transaction_events_")?.split_once('_')?;
+        if day.len() != 8 {
+            return None;
+        }
+        Some(Self {
+            class: TransactionEventRetentionClass::from_label(class)?,
+            day: NaiveDate::parse_from_str(day, "%Y%m%d").ok()?,
+        })
+    }
+
+    /// Exclusive upper bound of the partition's `event_time` range.
+    fn end(self) -> DateTime<Utc> {
+        utc_midnight(self.day + Duration::days(1))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ExistingPartition {
+    partition: DayPartition,
+    /// Whether the table is still attached to its class partition.
+    attached: bool,
+}
+
+/// Partition DDL for one maintenance pass, in execution order.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct PartitionPlan {
+    /// Tables left detached by an earlier pass that failed before dropping.
+    drop_detached: Vec<DayPartition>,
+    /// Missing days in each class's retention window and look-ahead.
+    create: Vec<DayPartition>,
+    /// Attached days entirely older than the retention window plus grace.
+    detach: Vec<DayPartition>,
+}
+
+/// Plans which day partitions to create and drop at `now`.
+fn plan_partition_maintenance(
+    now: DateTime<Utc>,
+    config: TransactionEventRetentionConfig,
+    existing: &[ExistingPartition],
+) -> PartitionPlan {
+    let attached: BTreeSet<DayPartition> = existing
+        .iter()
+        .filter(|partition| partition.attached)
+        .map(|partition| partition.partition)
+        .collect();
+    let mut plan = PartitionPlan {
+        drop_detached: existing
+            .iter()
+            .filter(|partition| !partition.attached)
+            .map(|partition| partition.partition)
+            .collect(),
+        ..Default::default()
+    };
+
+    let last_day = (now + Duration::seconds(MAX_TRANSACTION_EVENT_FUTURE_SKEW_SECS)).date_naive()
+        + Duration::days(i64::from(TRANSACTION_EVENT_PARTITION_DAYS_AHEAD));
+    for class in TransactionEventRetentionClass::ALL {
+        let window = config.retention_window(class);
+        let mut day = (now - window).date_naive();
+        while day <= last_day {
+            let partition = DayPartition { class, day };
+            if !attached.contains(&partition) {
+                plan.create.push(partition);
+            }
+            day += Duration::days(1);
+        }
+
+        let drop_before =
+            now - window - Duration::seconds(TRANSACTION_EVENT_PARTITION_DROP_GRACE_SECS);
+        plan.detach.extend(
+            attached
+                .iter()
+                .filter(|partition| partition.class == class && partition.end() <= drop_before)
+                .copied(),
+        );
+    }
+    plan
+}
+
+/// Seconds until ingest for `class` could admit an event with no partition.
+///
+/// Counts contiguous attached days starting with today, less the future
+/// skew ingest admits. Zero when that coverage has already run out.
+fn partition_horizon_secs(
+    now: DateTime<Utc>,
+    class: TransactionEventRetentionClass,
+    attached: &BTreeSet<DayPartition>,
+) -> f64 {
+    let mut day = now.date_naive();
+    if !attached.contains(&DayPartition { class, day }) {
+        return 0.0;
+    }
+    while attached.contains(&DayPartition { class, day: day + Duration::days(1) }) {
+        day += Duration::days(1);
+    }
+    let coverage_end = utc_midnight(day + Duration::days(1));
+    let secs = (coverage_end - now).num_seconds() - MAX_TRANSACTION_EVENT_FUTURE_SKEW_SECS;
+    f64::from(i32::try_from(secs.max(0)).unwrap_or(i32::MAX))
+}
+
+async fn list_day_partitions(conn: &mut sqlx::PgConnection) -> Result<Vec<ExistingPartition>> {
+    let rows: Vec<(String, bool)> = sqlx::query_as(
+        "SELECT c.relname::text, c.relispartition \
+         FROM pg_class c \
+         JOIN pg_namespace n ON n.oid = c.relnamespace \
+         WHERE n.nspname = 'public' \
+           AND c.relkind = 'r' \
+           AND c.relname ~ '^transaction_events_(hot|warm|cold)_[0-9]{8}$'",
+    )
+    .fetch_all(conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(name, attached)| {
+            DayPartition::from_table_name(&name)
+                .map(|partition| ExistingPartition { partition, attached })
+        })
+        .collect())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PartitionDdl {
+    Create,
+    Detach,
+    DropDetached,
+}
+
+impl PartitionDdl {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Create => "create",
+            Self::Detach => "detach",
+            Self::DropDetached => "drop",
+        }
+    }
+
+    const fn sql(self) -> &'static str {
+        match self {
+            Self::Create => "SELECT public.transaction_events_create_partition($1, $2)",
+            Self::Detach => "SELECT public.transaction_events_detach_partition($1, $2)",
+            Self::DropDetached => {
+                "SELECT public.transaction_events_drop_detached_partition($1, $2)"
             }
         }
-        // Delete by ctid via Tid Scan so the batch is not a second primary-key
-        // lookup. ANY(ARRAY(ctid)) keeps that plan as catch-up shrinks the heap;
-        // USING ctid can seq-scan. FOR UPDATE SKIP LOCKED skips rows held by a
-        // concurrent writer instead of waiting. MATERIALIZED so the keyset
-        // cursor is read from the selected set, not a rewritten join. The
-        // resume key is the smallest selected tuple (last in DESC order) so
-        // the next `WHERE key < cursor` scan does not walk just-deleted dead
-        // index entries.
-        let result = sqlx::query(
-            "WITH doomed AS MATERIALIZED ( \
-                SELECT ctid, event_type, ingested_at, event_id \
-                FROM transaction_events \
-                WHERE event_type = ANY($1) \
-                  AND ingested_at < $2 \
-                  AND ( \
-                    $3::text IS NULL \
-                    OR (event_type, ingested_at, event_id) < ($3, $4, $5) \
-                  ) \
-                ORDER BY event_type DESC, ingested_at DESC, event_id DESC \
-                FOR UPDATE SKIP LOCKED \
-                LIMIT $6 \
-             ), \
-             deleted AS ( \
-                DELETE FROM transaction_events \
-                WHERE ctid = ANY (ARRAY(SELECT ctid FROM doomed)::tid[]) \
-                RETURNING ctid \
-             ) \
-             SELECT \
-                (SELECT COUNT(*) FROM doomed)::bigint, \
-                (SELECT COUNT(*) FROM deleted)::bigint, \
-                (SELECT event_type FROM doomed \
-                 ORDER BY event_type ASC, ingested_at ASC, event_id ASC LIMIT 1), \
-                (SELECT ingested_at FROM doomed \
-                 ORDER BY event_type ASC, ingested_at ASC, event_id ASC LIMIT 1), \
-                (SELECT event_id FROM doomed \
-                 ORDER BY event_type ASC, ingested_at ASC, event_id ASC LIMIT 1)",
-        )
-        .bind(event_types)
-        .bind(cutoff)
-        .bind(progress.cursor.as_ref().map(|cursor| cursor.event_type.as_str()))
-        .bind(progress.cursor.as_ref().map(|cursor| cursor.ingested_at))
-        .bind(progress.cursor.as_ref().map(|cursor| cursor.event_id.as_str()))
-        .bind(i64::from(batch_limit))
+    }
+}
+
+/// Runs one partition function in its own transaction.
+///
+/// Returns whether the function changed anything. A lock timeout is counted
+/// and reported as unchanged so the pass can continue; the next pass retries.
+async fn run_partition_ddl(
+    conn: &mut sqlx::PgConnection,
+    lock_timeout_sql: &str,
+    ddl: PartitionDdl,
+    partition: DayPartition,
+    outcome: &mut TransactionEventRetentionOutcome,
+) -> Result<bool> {
+    let mut tx = conn.begin().await?;
+    sqlx::query(lock_timeout_sql).execute(&mut *tx).await?;
+    let result: std::result::Result<bool, sqlx::Error> = sqlx::query_scalar(ddl.sql())
+        .bind(partition.class.as_str())
+        .bind(partition.day)
         .fetch_one(&mut *tx)
         .await;
-        match result {
-            Ok(row) => {
-                let selected: i64 = row.try_get(0)?;
-                let deleted: i64 = row.try_get(1)?;
-                if selected != deleted {
-                    let _ = tx.rollback().await;
-                    anyhow::bail!(
-                        "transaction event expire selected {selected} rows but deleted {deleted}"
-                    );
-                }
-                let cursor = match (
-                    row.try_get::<Option<String>, _>(2)?,
-                    row.try_get::<Option<DateTime<Utc>>, _>(3)?,
-                    row.try_get::<Option<String>, _>(4)?,
-                ) {
-                    (Some(event_type), Some(ingested_at), Some(event_id)) => {
-                        Some(RetentionScanCursor { event_type, ingested_at, event_id })
-                    }
-                    _ => None,
-                };
-                tx.commit().await?;
-                return Ok(ExpireBatchOutcome::Deleted {
-                    selected: u64::try_from(selected).unwrap_or(0),
-                    cursor,
-                });
-            }
-            Err(err) => {
-                let _ = tx.rollback().await;
-                if is_statement_timeout(&err) {
-                    record_expire_statement_timeout(&err, class, batch_limit);
-                    return Ok(ExpireBatchOutcome::StatementTimeout);
-                }
-                let Some(reason) = persist_retry_reason(&err) else {
-                    return Err(err.into());
-                };
-                if attempt >= TRANSACTION_EVENT_DB_MAX_ATTEMPTS {
-                    return Err(err.into());
-                }
+    match result {
+        Ok(changed) => {
+            tx.commit().await?;
+            Ok(changed)
+        }
+        Err(err) => {
+            let _ = tx.rollback().await;
+            if is_lock_timeout(&err) {
                 warn!(
-                    attempt,
-                    reason,
                     error = %err,
-                    "retrying transaction event expire"
+                    action = ddl.as_str(),
+                    partition = %partition.table_name(),
+                    "transaction event partition DDL hit lock timeout; retrying next pass"
                 );
-                Metrics::transaction_events_persist_retries(reason).increment(1);
-                tokio::time::sleep(StdDuration::from_millis(25 * u64::from(attempt))).await;
-                attempt += 1;
+                outcome.lock_timeouts += 1;
+                Metrics::transaction_event_partition_lock_timeouts(ddl.as_str()).increment(1);
+                return Ok(false);
             }
+            Err(anyhow::Error::new(err).context(format!(
+                "failed to {} transaction event partition {}",
+                ddl.as_str(),
+                partition.table_name()
+            )))
         }
     }
 }
@@ -1349,6 +1520,18 @@ impl TransactionEventSink for PgTransactionEventSink {
         }
 
         Ok(TransactionEventInsertOutcome { inserted_event_ids })
+    }
+
+    fn admit_event(
+        &self,
+        event: &TransactionEvent,
+        now: DateTime<Utc>,
+    ) -> std::result::Result<(), String> {
+        let class = TransactionEventRetentionClass::for_event_type(event.event_type);
+        self.retention.admit_event_time(class, event.event_time, now).map_err(|rejection| {
+            Metrics::transaction_events_outside_retention_window(rejection.as_str()).increment(1);
+            rejection.reason(class)
+        })
     }
 }
 
@@ -1434,8 +1617,15 @@ async fn ingest_transaction_event_batch(
 
     let mut seen = HashSet::new();
     let mut valid_events = Vec::new();
+    let now = Utc::now();
     for raw_event in events {
-        match validate_transaction_event(raw_event, &state.config) {
+        let admitted = validate_transaction_event(raw_event, &state.config).and_then(|event| {
+            match state.sink.admit_event(&event, now) {
+                Ok(()) => Ok(event),
+                Err(reason) => Err(ValidationRejection { event_id: Some(event.event_id), reason }),
+            }
+        });
+        match admitted {
             Ok(event) => {
                 if seen.insert(event.event_id.clone()) {
                     results.push(TransactionEventItemResult {
@@ -1701,6 +1891,47 @@ mod tests {
         }
     }
 
+    /// Fake sink that applies the real retention-window admission check.
+    #[derive(Debug, Default)]
+    struct RetentionWindowSink {
+        inner: FakeSink,
+        retention: TransactionEventRetentionConfig,
+    }
+
+    #[async_trait]
+    impl TransactionEventSink for RetentionWindowSink {
+        async fn insert_events(
+            &self,
+            events: &[TransactionEvent],
+        ) -> std::result::Result<TransactionEventInsertOutcome, TransactionEventStorageError>
+        {
+            self.inner.insert_events(events).await
+        }
+
+        fn admit_event(
+            &self,
+            event: &TransactionEvent,
+            now: DateTime<Utc>,
+        ) -> std::result::Result<(), String> {
+            let class = TransactionEventRetentionClass::for_event_type(event.event_type);
+            self.retention
+                .admit_event_time(class, event.event_time, now)
+                .map_err(|rejection| rejection.reason(class))
+        }
+    }
+
+    fn at(value: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(value).unwrap().with_timezone(&Utc)
+    }
+
+    fn day(value: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(value, "%Y-%m-%d").unwrap()
+    }
+
+    fn partition(class: TransactionEventRetentionClass, value: &str) -> DayPartition {
+        DayPartition { class, day: day(value) }
+    }
+
     fn config() -> TransactionEventIngestConfig {
         TransactionEventIngestConfig {
             path: DEFAULT_TRANSACTION_EVENT_BATCH_PATH.to_string(),
@@ -1825,64 +2056,168 @@ mod tests {
             .is_err()
         );
         assert!(
-            TransactionEventRetentionConfig { delete_batch_size: 0, ..Default::default() }
+            TransactionEventRetentionConfig {
+                cold_days: MAX_TRANSACTION_EVENT_RETENTION_DAYS + 1,
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            TransactionEventRetentionConfig { partition_lock_timeout_ms: 0, ..Default::default() }
                 .validate()
                 .is_err()
         );
         assert!(
-            TransactionEventRetentionConfig { max_batches: 0, ..Default::default() }
-                .validate()
-                .is_err()
-        );
-        assert!(
-            TransactionEventRetentionConfig { statement_timeout_ms: 0, ..Default::default() }
-                .validate()
-                .is_err()
-        );
-        assert!(
-            TransactionEventRetentionConfig { statement_timeout_ms: 300_001, ..Default::default() }
-                .validate()
-                .is_err()
+            TransactionEventRetentionConfig {
+                partition_lock_timeout_ms: 60_001,
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
         );
         assert!(
             TransactionEventRetentionConfig { interval_secs: 0, ..Default::default() }
                 .validate()
                 .is_err()
         );
+        assert!(
+            TransactionEventRetentionConfig {
+                interval_secs: MAX_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS + 1,
+                ..Default::default()
+            }
+            .validate()
+            .is_err(),
+            "an interval longer than a day could outrun the partition look-ahead"
+        );
     }
 
     #[test]
-    fn bisects_expire_batch_limit_below_the_timed_out_size() {
-        assert_eq!(expire_batch_limit(10_000, 0, None, false), 10_000);
-        assert_eq!(expire_batch_limit(10_000, 1, Some(10_000), true), 1);
-        assert_eq!(expire_batch_limit(10_000, 1, Some(10_000), false), 5_000);
-        assert_eq!(expire_batch_limit(10_000, 5_000, Some(10_000), false), 5_000);
-        assert_eq!(expire_batch_limit(10_000, 1, Some(5_000), false), 2_500);
-        assert_eq!(expire_batch_limit(10_000, 2_500, Some(5_000), false), 2_500);
-        assert_eq!(expire_batch_limit(10_000, 1, Some(2), false), 1);
+    fn admits_event_times_inside_the_retention_window() {
+        let config = TransactionEventRetentionConfig::default();
+        let now = at("2026-09-23T12:00:00Z");
+        let hot = TransactionEventRetentionClass::Hot;
+
+        assert_eq!(config.admit_event_time(hot, now, now), Ok(()));
+        assert_eq!(config.admit_event_time(hot, now - Duration::days(3), now), Ok(()));
+        assert_eq!(
+            config.admit_event_time(hot, now - Duration::days(3) - Duration::seconds(1), now),
+            Err(EventTimeRejection::Expired)
+        );
+        assert_eq!(
+            config.admit_event_time(
+                TransactionEventRetentionClass::Cold,
+                now - Duration::days(29),
+                now
+            ),
+            Ok(()),
+            "cold events keep the longer window"
+        );
+        assert_eq!(config.admit_event_time(hot, now + Duration::minutes(59), now), Ok(()));
+        assert_eq!(
+            config.admit_event_time(hot, now + Duration::hours(1), now),
+            Err(EventTimeRejection::Future)
+        );
     }
 
     #[test]
-    fn time_boxes_expire_cycle_after_the_first_returned_batch() {
-        let now = Utc::now();
-        let mut progress = RetentionClassProgress::new_cycle(
-            now - Duration::seconds(10),
-            &TransactionEventRetentionConfig::default(),
-            TransactionEventRetentionClass::Hot,
+    fn round_trips_day_partition_table_names() {
+        let hot = partition(TransactionEventRetentionClass::Hot, "2026-09-23");
+        assert_eq!(hot.table_name(), "transaction_events_hot_20260923");
+        assert_eq!(DayPartition::from_table_name(&hot.table_name()), Some(hot));
+        assert_eq!(hot.end(), at("2026-09-24T00:00:00Z"));
+
+        for name in [
+            "transaction_events",
+            "transaction_events_hot",
+            "transaction_events_tepid_20260923",
+            "transaction_events_hot_2026092",
+            "transaction_events_hot_20261341",
+        ] {
+            assert_eq!(DayPartition::from_table_name(name), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn plans_each_class_window_plus_days_ahead() {
+        let config = TransactionEventRetentionConfig::default();
+        let now = at("2026-09-23T12:00:00Z");
+
+        let plan = plan_partition_maintenance(now, config, &[]);
+
+        let first_and_last = |class| {
+            let days: Vec<_> =
+                plan.create.iter().filter(|p| p.class == class).map(|p| p.day).collect();
+            (days.len(), days.first().copied(), days.last().copied())
+        };
+        assert_eq!(
+            first_and_last(TransactionEventRetentionClass::Hot),
+            (7, Some(day("2026-09-20")), Some(day("2026-09-26")))
+        );
+        assert_eq!(
+            first_and_last(TransactionEventRetentionClass::Warm),
+            (11, Some(day("2026-09-16")), Some(day("2026-09-26")))
+        );
+        assert_eq!(
+            first_and_last(TransactionEventRetentionClass::Cold),
+            (34, Some(day("2026-08-24")), Some(day("2026-09-26")))
+        );
+        assert!(plan.detach.is_empty());
+        assert!(plan.drop_detached.is_empty());
+    }
+
+    #[test]
+    fn plans_drops_after_the_window_and_grace_period() {
+        let config = TransactionEventRetentionConfig::default();
+        let hot = TransactionEventRetentionClass::Hot;
+        let existing = [
+            // Ends at the window start on Sep 20 00:00; dropped once the grace
+            // period has also passed.
+            ExistingPartition { partition: partition(hot, "2026-09-19"), attached: true },
+            ExistingPartition { partition: partition(hot, "2026-09-20"), attached: true },
+            ExistingPartition {
+                partition: partition(TransactionEventRetentionClass::Cold, "2026-07-01"),
+                attached: false,
+            },
+        ];
+
+        let within_grace =
+            plan_partition_maintenance(at("2026-09-23T00:30:00Z"), config, &existing);
+        assert!(within_grace.detach.is_empty(), "grace period keeps the partition");
+
+        let plan = plan_partition_maintenance(at("2026-09-23T12:00:00Z"), config, &existing);
+        assert_eq!(plan.detach, vec![partition(hot, "2026-09-19")]);
+        assert_eq!(
+            plan.drop_detached,
+            vec![partition(TransactionEventRetentionClass::Cold, "2026-07-01")]
         );
         assert!(
-            !progress.should_end_cycle(now, 1),
-            "a cycle with no returned batch must still run once"
+            !plan.create.contains(&partition(hot, "2026-09-20")),
+            "attached partitions are not recreated"
         );
-        progress.batches_this_cycle = 1;
-        progress.needs_limit_one = true;
-        assert!(
-            !progress.should_end_cycle(now, 1),
-            "a queued LIMIT 1 after timeout must run before the cycle restarts"
+    }
+
+    #[test]
+    fn measures_contiguous_partition_horizon_from_today() {
+        let hot = TransactionEventRetentionClass::Hot;
+        let now = at("2026-09-23T12:00:00Z");
+        let attached: BTreeSet<_> = ["2026-09-23", "2026-09-24", "2026-09-25", "2026-09-27"]
+            .into_iter()
+            .map(|value| partition(hot, value))
+            .collect();
+
+        // Sep 26 is missing, so coverage ends at Sep 26 00:00, and ingest
+        // admits events up to an hour ahead.
+        assert_eq!(partition_horizon_secs(now, hot, &attached), 2.5 * 86_400.0 - 3_600.0);
+        assert_eq!(
+            partition_horizon_secs(at("2026-09-25T23:30:00Z"), hot, &attached),
+            0.0,
+            "coverage inside the future skew counts as exhausted"
         );
-        progress.needs_limit_one = false;
-        assert!(progress.should_end_cycle(now, 1));
-        assert!(!progress.should_end_cycle(now, 3_600));
+        assert_eq!(
+            partition_horizon_secs(now, TransactionEventRetentionClass::Warm, &attached),
+            0.0
+        );
     }
 
     #[test]
@@ -1986,6 +2321,35 @@ mod tests {
         assert_eq!(response.status, TransactionEventBatchStatus::Partial);
         assert_eq!(response.accepted, 1);
         assert_eq!(response.rejected, 1);
+    }
+
+    #[tokio::test]
+    async fn rejects_events_outside_the_retention_window() {
+        let state = state(Arc::new(RetentionWindowSink::default()));
+        let mut expired = event("expired-event");
+        expired["event_time"] = json!(Utc::now() - Duration::days(4));
+        let mut future = event("future-event");
+        future["event_time"] = json!(Utc::now() + Duration::days(1));
+
+        let (status, Json(response)) = ingest_transaction_event_batch(
+            &state,
+            ndjson(vec![event("fresh-event"), expired, future]),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(response.status, TransactionEventBatchStatus::Partial);
+        assert_eq!(response.accepted, 1);
+        assert_eq!(response.rejected, 2);
+        let reasons: Vec<_> =
+            response.results.iter().filter_map(|result| result.reason.as_deref()).collect();
+        assert_eq!(
+            reasons,
+            vec![
+                "event_time is older than the hot retention window",
+                "event_time is more than 3600 seconds in the future"
+            ]
+        );
     }
 
     #[tokio::test]
