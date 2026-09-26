@@ -140,8 +140,11 @@ pub struct AggregateBenchmarkArgs {
     /// One or more self-contained snapshot run output directories to include.
     #[arg(required = true, value_name = "RUN_OUTPUT_DIR")]
     pub run_output_dirs: Vec<PathBuf>,
-    /// Emit one report page per client version plus a stable `latest` page for
-    /// each configured benchmark cohort.
+    /// Emit one report page per client version plus a stable `latest` page.
+    /// Latest keeps the newest run from the last seven days for each
+    /// Scenario / block-time / transaction-payload identity and is stamped
+    /// 1ms after the newest selected run so the visualizer Latest option
+    /// resolves to this page.
     #[arg(long)]
     pub versioned_pages: bool,
 }
@@ -767,6 +770,14 @@ impl AggregateBenchmarkArgs {
     /// a `latest` alias. Sidecar artifacts remain immutable and are referenced
     /// by both the version page and its latest alias.
     fn versioned_pages(runs: Vec<VisualizerRun>) -> Result<Vec<VisualizerRun>> {
+        Self::versioned_pages_at(runs, Utc::now())
+    }
+
+    /// Same as [`Self::versioned_pages`], using `now` as the week-window origin.
+    fn versioned_pages_at(
+        runs: Vec<VisualizerRun>,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<VisualizerRun>> {
         let mut by_cohort = BTreeMap::<String, Vec<VisualizerRun>>::new();
         for run in runs {
             let cohort = run
@@ -778,21 +789,21 @@ impl AggregateBenchmarkArgs {
             by_cohort.entry(cohort).or_default().push(run);
         }
 
+        let window_start = now - chrono::TimeDelta::days(7);
         let mut pages = Vec::new();
         for (cohort, cohort_runs) in by_cohort {
-            let latest_version = cohort_runs
+            let newest = cohort_runs
                 .iter()
-                .max_by(|left, right| {
-                    Self::parse_created_at(left)
-                        .expect("selected run was validated")
-                        .cmp(&Self::parse_created_at(right).expect("selected run was validated"))
-                        .then_with(|| left.result.client_version.cmp(&right.result.client_version))
-                })
-                .map(|run| run.result.client_version.clone())
+                .map(Self::parse_created_at)
+                .collect::<Result<Vec<_>>>()?
+                .into_iter()
+                .max()
                 .expect("non-empty cohort");
+            let latest_created_at = (newest + chrono::TimeDelta::milliseconds(1))
+                .to_rfc3339_opts(SecondsFormat::Millis, true);
 
-            for run in cohort_runs.iter().cloned() {
-                let mut version_page = run;
+            for run in &cohort_runs {
+                let mut version_page = run.clone();
                 version_page.test_config.insert(
                     "BenchmarkRun".to_owned(),
                     serde_json::Value::String(format!(
@@ -801,20 +812,71 @@ impl AggregateBenchmarkArgs {
                         Self::page_component(&version_page.result.client_version)
                     )),
                 );
+                version_page.test_name =
+                    format!("{} - {}", run.test_name, run.result.client_version);
                 pages.push(version_page);
             }
-            for run in
-                cohort_runs.into_iter().filter(|run| run.result.client_version == latest_version)
-            {
+
+            let mut latest_by_benchmark = BTreeMap::<String, VisualizerRun>::new();
+            for run in cohort_runs {
+                let created_at = Self::parse_created_at(&run)?;
+                if created_at < window_start {
+                    continue;
+                }
+                let identity = Self::latest_benchmark_key(&run)?;
+                let replace = match latest_by_benchmark.get(&identity) {
+                    Some(existing) => created_at
+                        .cmp(&Self::parse_created_at(existing).expect("selected run was validated"))
+                        .then_with(|| {
+                            run.result.client_version.cmp(&existing.result.client_version)
+                        })
+                        .is_ge(),
+                    None => true,
+                };
+                if replace {
+                    latest_by_benchmark.insert(identity, run);
+                }
+            }
+
+            for run in latest_by_benchmark.into_values() {
+                let original_name = run.test_name.clone();
                 let mut latest_page = run;
                 latest_page.test_config.insert(
                     "BenchmarkRun".to_owned(),
                     serde_json::Value::String(format!("{cohort}--latest")),
                 );
+                latest_page.test_name = format!("Latest - {original_name}");
+                latest_page.created_at = latest_created_at.clone();
                 pages.push(latest_page);
             }
         }
         Ok(pages)
+    }
+
+    /// Identity used to pick one latest-page run per workload cell.
+    fn latest_benchmark_key(run: &VisualizerRun) -> Result<String> {
+        let scenario = Self::config_component(run, "Scenario")?;
+        let block_time = Self::config_component(run, "BlockTimeMilliseconds")?;
+        let payload = Self::config_component(run, "TransactionPayload")?;
+        Ok(format!("{scenario}\0{block_time}\0{payload}"))
+    }
+
+    /// Reads a string or numeric `testConfig` field as a stable identity component.
+    fn config_component(run: &VisualizerRun, key: &str) -> Result<String> {
+        let value = run
+            .test_config
+            .get(key)
+            .ok_or_else(|| eyre::eyre!("run {} is missing testConfig.{key}", run.id))?;
+        if let Some(text) = value.as_str() {
+            return Ok(text.to_owned());
+        }
+        if let Some(number) = value.as_i64() {
+            return Ok(number.to_string());
+        }
+        if let Some(number) = value.as_u64() {
+            return Ok(number.to_string());
+        }
+        Err(eyre::eyre!("run {} testConfig.{key} is not a string or number", run.id))
     }
 
     fn page_component(value: &str) -> String {
@@ -1277,11 +1339,40 @@ mod tests {
         assert!(output.path().is_dir());
         assert!(!stale.exists());
     }
+    fn rfc3339(ts: DateTime<Utc>) -> String {
+        ts.to_rfc3339_opts(SecondsFormat::Millis, true)
+    }
+
+    fn latest_page_runs(runs: &[serde_json::Value]) -> Vec<&serde_json::Value> {
+        runs.iter()
+            .filter(|run| run["testConfig"]["BenchmarkRun"] == "sepolia-transfer-100mgas--latest")
+            .collect()
+    }
 
     fn write_aggregate_run(
         root: &std::path::Path,
         id: &str,
         scenario: &str,
+        client_version: &str,
+        created_at: &str,
+    ) -> std::path::PathBuf {
+        write_aggregate_run_detailed(
+            root,
+            id,
+            scenario,
+            "transfer",
+            200,
+            client_version,
+            created_at,
+        )
+    }
+
+    fn write_aggregate_run_detailed(
+        root: &std::path::Path,
+        id: &str,
+        scenario: &str,
+        transaction_payload: &str,
+        block_time_milliseconds: u64,
         client_version: &str,
         created_at: &str,
     ) -> std::path::PathBuf {
@@ -1306,10 +1397,10 @@ mod tests {
                     "BenchmarkRun": "sepolia-transfer-100mgas",
                     "Scenario": scenario,
                     "ChainId": 84532,
-                    "BlockTimeMilliseconds": 200,
+                    "BlockTimeMilliseconds": block_time_milliseconds,
                     "GasLimit": 400000000,
                     "NodeType": "base-reth-node",
-                    "TransactionPayload": "transfer",
+                    "TransactionPayload": transaction_payload,
                     "ClientVersion": client_version
                 },
                 "result": {
@@ -1616,27 +1707,23 @@ real_token_setup:
     #[test]
     fn aggregate_versioned_pages_preserve_history_and_add_latest_alias() {
         let root = tempfile::tempdir().unwrap();
+        let now = Utc::now();
         let old = write_aggregate_run(
             root.path(),
             "old",
             "transfer-2s",
             "base/old",
-            "2026-09-23T00:00:00.000Z",
+            &rfc3339(now - chrono::TimeDelta::hours(2)),
         );
         let newest_200ms = write_aggregate_run(
             root.path(),
             "new-200ms",
             "transfer-200ms",
             "base/new",
-            "2026-09-23T00:01:00.000Z",
+            &rfc3339(now - chrono::TimeDelta::hours(1)),
         );
-        let newest_2s = write_aggregate_run(
-            root.path(),
-            "new-2s",
-            "transfer-2s",
-            "base/new",
-            "2026-09-23T00:02:00.000Z",
-        );
+        let newest_2s =
+            write_aggregate_run(root.path(), "new-2s", "transfer-2s", "base/new", &rfc3339(now));
 
         AggregateBenchmarkArgs {
             output_dir: root.path().to_path_buf(),
@@ -1651,17 +1738,77 @@ real_token_setup:
                 .unwrap();
         let runs = metadata["runs"].as_array().unwrap();
         assert_eq!(runs.len(), 5);
-        assert!(
-            runs.iter()
-                .any(|run| run["testConfig"]["BenchmarkRun"] == "sepolia-transfer-100mgas--latest")
+        let latest = latest_page_runs(runs);
+        assert_eq!(latest.len(), 2);
+        assert!(latest.iter().all(|run| {
+            run["testName"] == "Latest - Base Sepolia snapshot throughput"
+                && run["createdAt"] == rfc3339(now + chrono::TimeDelta::milliseconds(1))
+                && run["result"]["clientVersion"] == "base/new"
+        }));
+        assert!(runs.iter().any(|run| {
+            run["testConfig"]["BenchmarkRun"] == "sepolia-transfer-100mgas--base-old"
+                && run["testName"] == "Base Sepolia snapshot throughput - base/old"
+        }));
+    }
+
+    #[test]
+    fn aggregate_versioned_pages_latest_uses_week_window_per_benchmark() {
+        let root = tempfile::tempdir().unwrap();
+        let now = Utc::now();
+        let stale_eth = write_aggregate_run_detailed(
+            root.path(),
+            "stale-eth",
+            "unlimited",
+            "eth-transfer-existing",
+            2000,
+            "base/old",
+            &rfc3339(now - chrono::TimeDelta::days(8)),
         );
-        assert!(runs.iter().any(|run| run["result"]["clientVersion"] == "base/old"));
+        let fresh_eth = write_aggregate_run_detailed(
+            root.path(),
+            "fresh-eth",
+            "unlimited",
+            "eth-transfer-existing",
+            2000,
+            "base/new",
+            &rfc3339(now),
+        );
+        let week_b20 = write_aggregate_run_detailed(
+            root.path(),
+            "week-b20",
+            "unlimited",
+            "b20-transfer-existing",
+            2000,
+            "base/old",
+            &rfc3339(now - chrono::TimeDelta::days(2)),
+        );
+
+        AggregateBenchmarkArgs {
+            output_dir: root.path().to_path_buf(),
+            run_output_dirs: vec![stale_eth, fresh_eth, week_b20],
+            versioned_pages: true,
+        }
+        .run()
+        .unwrap();
+
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("metadata.json")).unwrap())
+                .unwrap();
+        let runs = metadata["runs"].as_array().unwrap();
+        assert_eq!(runs.len(), 5);
+        let latest = latest_page_runs(runs);
+        assert_eq!(latest.len(), 2);
+        assert!(latest.iter().any(|run| {
+            run["id"] == "fresh-eth" && run["result"]["clientVersion"] == "base/new"
+        }));
+        assert!(latest.iter().any(|run| {
+            run["id"] == "week-b20" && run["result"]["clientVersion"] == "base/old"
+        }));
+        assert!(latest.iter().all(|run| run["id"] != "stale-eth"));
         assert!(
-            runs.iter()
-                .filter(
-                    |run| run["testConfig"]["BenchmarkRun"] == "sepolia-transfer-100mgas--latest"
-                )
-                .all(|run| run["result"]["clientVersion"] == "base/new")
+            latest.iter().all(|run| {
+                run["createdAt"] == rfc3339(now + chrono::TimeDelta::milliseconds(1))
+            })
         );
     }
 
