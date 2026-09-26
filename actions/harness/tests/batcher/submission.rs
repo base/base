@@ -1,8 +1,8 @@
 //! Action tests for L2 batch submission via the Batcher actor.
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, BatcherError, L1MinerConfig,
-    NodeStepResult, SharedL1Chain, TestRollupConfigBuilder,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, NodeStepResult,
+    SharedL1Chain, TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 
@@ -17,7 +17,7 @@ async fn batcher_mines_block_with_submissions() {
     let cfg = BatcherConfig::default();
 
     let source = h.create_l2_source(3).await;
-    let mut batcher = Batcher::new(source, &h.rollup_config, cfg);
+    let batcher = Batcher::new(source, &h.rollup_config, cfg);
     batcher.advance(&mut h.l1).await;
 
     assert!(h.l1.latest_number() >= 1, "at least one L1 block should be mined");
@@ -28,20 +28,8 @@ async fn batcher_mines_block_with_submissions() {
     );
 }
 
-/// `try_advance` fails with `NoBlocks` when the source has no L2 block to batch.
-#[tokio::test]
-async fn batcher_errors_when_no_l2_blocks_async() {
-    let mut h = ActionTestHarness::default();
-    let cfg = BatcherConfig::default();
-
-    let source = ActionL2Source::new(); // empty
-    let mut batcher = Batcher::new(source, &h.rollup_config, cfg);
-    let err = batcher.try_advance(&mut h.l1).await.expect_err("should fail with no blocks");
-    assert!(matches!(err, BatcherError::NoBlocks));
-}
-
-/// A one-byte compressed size target makes every block close its own calldata channel, and
-/// derivation still makes the four blocks safe one by one, in order.
+/// With a one-byte compressed size target, derivation still makes the four blocks safe one by
+/// one, in order.
 #[tokio::test]
 async fn batcher_soft_channel_target_derives_exact_blocks() {
     const BLOCK_COUNT: u64 = 4;
@@ -132,7 +120,7 @@ async fn batcher_reorg_during_submission() {
     // below fires failure receipts for them.
     let mut source = ActionL2Source::new();
     source.push(block);
-    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg);
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg);
     batcher.encode_only().await;
     batcher.stage_n_frames(&mut h.l1, usize::MAX);
     h.l1.mine_block(); // L1 block 1 (original, about to be reorged)

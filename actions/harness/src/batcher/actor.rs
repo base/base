@@ -5,11 +5,10 @@ use std::{sync::Arc, time::Duration};
 use alloy_primitives::B256;
 use alloy_signer_local::PrivateKeySigner;
 use base_batcher_core::{
-    AdminError, AdminHandle, BatchDriver, BatchDriverConfig, BatchDriverError, BatchDriverInputs,
-    DaThrottle, NoopThrottleClient, ThrottleController,
+    AdminHandle, BatchDriver, BatchDriverConfig, BatchDriverError, BatchDriverInputs, DaThrottle,
+    NoopThrottleClient, ThrottleController,
 };
 use base_batcher_encoder::{BatchEncoder, EncoderConfig};
-use base_batcher_source::{L2BlockEvent, test_utils::ChannelBlockSource};
 use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
 use base_protocol::BlockInfo;
@@ -17,7 +16,10 @@ use base_runtime::TokioRuntime;
 use base_tx_manager::TxManager;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{ActionL2Source, HarnessL1HeadSource, L1Block, L1HeadItem, L1Miner, L1MinerTxManager};
+use crate::{
+    ActionL2Source, HarnessBlockSource, HarnessL1HeadSource, L1Block, L1HeadItem, L1Miner,
+    L1MinerTxManager, SharedL2Chain,
+};
 
 /// Configuration for the [`Batcher`] actor.
 #[derive(Debug, Clone)]
@@ -35,6 +37,11 @@ pub struct BatcherConfig {
     /// signer address becomes [`batcher_address`](BatcherConfig::batcher_address)
     /// so production calldata/blob sources can recover the expected sender.
     pub l1_signer: PrivateKeySigner,
+    /// The safe L2 head the batcher starts from, as its node would report it: it posts the
+    /// blocks above it. `None` is the parent of the first block given to [`Batcher::new`], or
+    /// the L2 genesis of the rollup config when none is: a batcher created without blocks
+    /// starts at genesis, so the first block pushed to it must be block 1.
+    pub initial_safe_head: Option<BlockInfo>,
 }
 
 impl Default for BatcherConfig {
@@ -45,6 +52,7 @@ impl Default for BatcherConfig {
             inbox_address: alloy_primitives::Address::repeat_byte(0xCA),
             encoder: EncoderConfig::default(),
             l1_signer,
+            initial_safe_head: None,
         }
     }
 }
@@ -63,56 +71,41 @@ impl BatcherConfig {
     }
 }
 
-/// Errors returned by [`Batcher`] methods.
-#[derive(Debug, thiserror::Error)]
-pub enum BatcherError {
-    /// The L2 source was exhausted before any blocks could be batched.
-    #[error("no L2 blocks available to batch")]
-    NoBlocks,
-    /// A new batch cycle was started before prior submissions were mined.
-    #[error("cannot start a batch cycle with outstanding frame submissions")]
-    OutstandingSubmissions,
-    /// The end-of-cycle flush failed, for example because the driver is stopped.
-    #[error("flush failed: {0}")]
-    Flush(#[from] AdminError),
-    /// The driver exited, or did not catch up with the harness within
-    /// [`Batcher::IDLE_TIMEOUT`].
-    #[error("the batch driver exited or stalled")]
-    DriverUnavailable,
-}
-
 /// Batcher actor that drives a persistent [`BatchDriver`] through [`L1Miner`].
 ///
 /// On construction, `Batcher` spawns a [`BatchDriver`] as a background tokio task backed by
-/// a [`ChannelBlockSource`] for L2 block delivery, a [`HarnessL1HeadSource`] for L1 heads,
-/// and an admin channel. This mirrors the production batcher architecture: the driver owns
-/// its encoding pipeline and transaction manager and runs its own async loop.
+/// a [`HarnessBlockSource`] polling the L2 chain the test builds, a [`HarnessL1HeadSource`]
+/// for L1 heads, and an admin channel. This mirrors the production batcher architecture: the
+/// driver owns its encoding pipeline and transaction manager and runs its own async loop,
+/// and catches up from the safe head again after a reset. The test plays the world around
+/// it: it pushes L2 blocks with [`push_block`], and mines L1 blocks and shows them to the
+/// driver with [`observe_l1_block`].
 ///
 /// Every `async` method returns once the driver is idle again, that is once it has taken
 /// what it was given, encoded it, handed the resulting submissions to the tx manager and
 /// applied every receipt. The harness waits for that with a marker queued in the L1 head
-/// source; see [`L1HeadItem::Marker`].
+/// source; see [`L1HeadItem::Marker`]. It panics if the driver task has exited, or did not go
+/// idle within [`IDLE_TIMEOUT`](Batcher::IDLE_TIMEOUT).
 ///
 /// Each call to [`advance`] drives one complete batch cycle:
-/// 1. Drain the L2 source and forward each block to the driver via the block source.
-/// 2. Wait for the driver to encode every block.
-/// 3. Flush through the admin channel, exactly as an operator would, to close and
+/// 1. Wait for the driver to take and encode every block pushed so far.
+/// 2. Flush through the admin channel, exactly as an operator would, to close and
 ///    release the current channel.
-/// 4. Wait for the driver to hand every resulting submission to the tx manager.
-/// 5. Stage every pending submission, mine one L1 block and show it to the driver.
-/// 6. Wait for the driver to apply the block's receipts and its new L1 head.
+/// 3. Wait for the driver to hand every resulting submission to the tx manager.
+/// 4. Stage every pending submission, mine one L1 block and show it to the driver.
+/// 5. Wait for the driver to apply the block's receipts and its new L1 head.
 ///
 /// The driver's [`BatchEncoder`] state is persistent across `advance()` calls.
 /// The driver task continues running between cycles, waiting for new events.
 ///
 /// [`advance`]: Batcher::advance
+/// [`push_block`]: Batcher::push_block
+/// [`observe_l1_block`]: Batcher::observe_l1_block
 /// [`BatchDriver`]: base_batcher_core::BatchDriver
 #[derive(Debug)]
 pub struct Batcher {
-    /// The L2 block source to drain on each [`advance`](Batcher::advance) cycle.
-    l2_source: ActionL2Source,
-    /// Feeds the driver's block source with block and reorg events.
-    source_tx: mpsc::UnboundedSender<L2BlockEvent>,
+    /// The L2 chain the driver's block source polls.
+    chain: SharedL2Chain,
     /// Feeds the driver's L1 head source with mined heads, and with markers.
     l1_head_tx: mpsc::UnboundedSender<L1HeadItem>,
     /// Admin channel to the driver, used to flush at the end of a cycle.
@@ -127,14 +120,17 @@ impl Batcher {
     /// How long a method waits for the driver to go idle before giving up.
     pub const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 
-    /// Create a new [`Batcher`] backed by a persistent [`BatchDriver`] task.
+    /// Create a new [`Batcher`] backed by a persistent [`BatchDriver`] task, with the blocks
+    /// of `l2_source` as its L2 chain so far; see
+    /// [`BatcherConfig::initial_safe_head`] for where it starts.
     ///
     /// Spawns the driver immediately.
     ///
     /// # Panics
     ///
-    /// Panics if `config.encoder` is invalid, or if `config.batcher_address` is not the
-    /// address of `config.l1_signer`.
+    /// Panics if `config.encoder` is invalid, if `config.batcher_address` is not the address
+    /// of `config.l1_signer`, or if the first block is the genesis block, which no batcher
+    /// posts.
     pub fn new(
         l2_source: ActionL2Source,
         rollup_config: &RollupConfig,
@@ -144,7 +140,23 @@ impl Batcher {
         let pipeline = BatchEncoder::new(Arc::new(rollup_config.clone()), config.encoder.clone())
             .expect("valid encoder config");
 
-        let (source, source_tx) = ChannelBlockSource::new();
+        let blocks: Vec<BaseBlock> = l2_source.into_iter().collect();
+        // Only the number and hash of the safe head are ever read.
+        let initial_safe_head = config.initial_safe_head.unwrap_or_else(|| {
+            blocks.first().map_or_else(
+                || BlockInfo::from_l2_genesis(&rollup_config.genesis),
+                |block| BlockInfo {
+                    hash: block.header.parent_hash,
+                    number: block.header.number.checked_sub(1).expect("a block above genesis"),
+                    ..Default::default()
+                },
+            )
+        });
+        let chain = SharedL2Chain::new();
+        for block in blocks {
+            chain.push(block);
+        }
+        let source = HarnessBlockSource::new(&chain, initial_safe_head);
         let (l1_head_source, l1_head_tx) = HarnessL1HeadSource::new();
         let (admin, admin_rx) = AdminHandle::channel();
 
@@ -178,7 +190,7 @@ impl Batcher {
                 l1_head_source,
                 // The driver learns the L1 head from the blocks the tests mine.
                 initial_l1_head: 0,
-                initial_safe_head: BlockInfo::from_l2_genesis(&rollup_config.genesis),
+                initial_safe_head,
                 derivation_status_rx,
                 admin_rx,
             },
@@ -191,101 +203,56 @@ impl Batcher {
             driver.run().await
         });
 
-        Self { l2_source, source_tx, l1_head_tx, admin, tx_manager, driver_task }
+        Self { chain, l1_head_tx, admin, tx_manager, driver_task }
     }
 
-    /// Push a block into the L2 source for the next [`advance`] call.
-    ///
-    /// [`advance`]: Batcher::advance
-    pub fn push_block(&mut self, block: BaseBlock) {
-        self.l2_source.push(block);
+    /// Make `block` the head of the L2 chain, dropping the blocks at or above its number, as
+    /// a node would. The driver takes it once it has taken the block before it, and resets to
+    /// its safe head when the block after the last one it took does not build on it.
+    pub fn push_block(&self, block: BaseBlock) {
+        self.chain.push(block);
     }
 
-    /// Drain the L2 source and forward all blocks to the driver, then flush.
+    /// Wait for the driver to encode every block pushed so far, then flush.
     ///
-    /// Performs steps 1–4 of [`advance`] without mining. Once it returns, every frame the
+    /// Performs steps 1–3 of [`advance`] without mining. Once it returns, every frame the
     /// flush released has been handed to the tx manager, so [`pending_count`] counts them all.
     ///
     /// # Panics
     ///
-    /// Panics if the L2 source is empty. Use [`try_advance`] if you need to
-    /// test the empty-source error path.
+    /// Panics if submissions are still pending or staged, or if the flush is rejected.
     ///
     /// [`advance`]: Batcher::advance
-    /// [`try_advance`]: Batcher::try_advance
     /// [`pending_count`]: Batcher::pending_count
-    pub async fn encode_only(&mut self) {
-        self.try_encode_only().await.unwrap_or_else(|e| panic!("Batcher::encode_only failed: {e}"))
-    }
-
-    /// Fallible variant of [`encode_only`] that returns an error instead of panicking.
-    ///
-    /// [`encode_only`]: Batcher::encode_only
-    async fn try_encode_only(&mut self) -> Result<(), BatcherError> {
-        if self.pending_count() > 0 || self.staged_count() > 0 {
-            return Err(BatcherError::OutstandingSubmissions);
-        }
-
-        let mut block_count = 0u64;
-        while let Some(block) = self.l2_source.next_block() {
-            self.send_event(L2BlockEvent::Block(Box::new(block)))?;
-            block_count += 1;
-        }
-        if block_count == 0 {
-            return Err(BatcherError::NoBlocks);
-        }
+    pub async fn encode_only(&self) {
+        assert!(
+            self.pending_count() == 0 && self.staged_count() == 0,
+            "cannot start a batch cycle with outstanding frame submissions"
+        );
 
         // Admin commands outrank the block source in the driver's select, so wait until every
-        // block above is taken and encoded before asking for the flush.
-        self.wait_until_idle().await?;
-        self.admin.flush().await?;
+        // block pushed so far is taken and encoded before asking for the flush.
+        self.wait_until_idle().await;
+        self.admin.flush().await.unwrap_or_else(|e| panic!("flush failed: {e}"));
 
         // The flush is answered before the driver's next encode-and-submit pass. Wait for that
         // pass so every frame the flush released has been handed to the tx manager.
-        self.wait_until_idle().await
-    }
-
-    /// Queue an event for the driver's block source. Fails if the driver task has exited.
-    fn send_event(&self, event: L2BlockEvent) -> Result<(), BatcherError> {
-        self.source_tx.send(event).map_err(|_| BatcherError::DriverUnavailable)
-    }
-
-    /// Queue an item for the driver's L1 head source. Fails if the driver task has exited.
-    fn send_l1_head_item(&self, item: L1HeadItem) -> Result<(), BatcherError> {
-        self.l1_head_tx.send(item).map_err(|_| BatcherError::DriverUnavailable)
+        self.wait_until_idle().await;
     }
 
     /// Wait until the driver has nothing left to do: everything sent so far is taken,
     /// encoded and submitted, and every receipt is applied.
-    async fn wait_until_idle(&self) -> Result<(), BatcherError> {
+    async fn wait_until_idle(&self) {
         let (reached_tx, reached_rx) = oneshot::channel();
-        self.send_l1_head_item(L1HeadItem::Marker(reached_tx))?;
-        match tokio::time::timeout(Self::IDLE_TIMEOUT, reached_rx).await {
-            Ok(Ok(())) => Ok(()),
-            _ => Err(BatcherError::DriverUnavailable),
-        }
+        self.l1_head_tx.send(L1HeadItem::Marker(reached_tx)).expect("the batch driver has exited");
+        let reached = tokio::time::timeout(Self::IDLE_TIMEOUT, reached_rx).await;
+        assert!(matches!(reached, Ok(Ok(()))), "the batch driver exited or stalled");
     }
 
     /// Deliver `head` to the driver as the new L1 head and wait until it is applied.
-    async fn deliver_l1_head(&self, head: u64) -> Result<(), BatcherError> {
-        self.send_l1_head_item(L1HeadItem::Head(head))?;
-        self.wait_until_idle().await
-    }
-
-    /// Fallible variant of [`observe_l1_block`](Self::observe_l1_block).
-    async fn try_observe_l1_block(&self, block: &L1Block) -> Result<(), BatcherError> {
-        // Receipts first: the driver serves them before L1 heads, so a failed submission is
-        // requeued before the head advances.
-        self.tx_manager.confirm_block(block);
-        self.deliver_l1_head(block.number()).await
-    }
-
-    /// Fallible variant of [`mine_pending`](Self::mine_pending).
-    async fn try_mine_pending(&self, l1: &mut L1Miner) -> Result<u64, BatcherError> {
-        self.tx_manager.stage_n_to_l1(l1, usize::MAX);
-        let block = l1.mine_block().clone();
-        self.try_observe_l1_block(&block).await?;
-        Ok(block.number())
+    async fn deliver_l1_head(&self, head: u64) {
+        self.l1_head_tx.send(L1HeadItem::Head(head)).expect("the batch driver has exited");
+        self.wait_until_idle().await;
     }
 
     /// Returns the number of encoded-but-not-yet-staged pending frame submissions.
@@ -326,15 +293,11 @@ impl Batcher {
     /// the driver has confirmed them. Returns the mined block number.
     ///
     /// Use this to confirm a requeued batch without encoding new L2 blocks.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the driver task has exited, or did not catch up within
-    /// [`IDLE_TIMEOUT`](Self::IDLE_TIMEOUT).
     pub async fn mine_pending(&self, l1: &mut L1Miner) -> u64 {
-        self.try_mine_pending(l1)
-            .await
-            .unwrap_or_else(|e| panic!("Batcher::mine_pending failed: {e}"))
+        self.tx_manager.stage_n_to_l1(l1, usize::MAX);
+        let block = l1.mine_block().clone();
+        self.observe_l1_block(&block).await;
+        block.number()
     }
 
     /// Drop the first `n` pending frame submissions without staging them to L1.
@@ -350,15 +313,11 @@ impl Batcher {
     /// head source would. Fires the receipts of the staged submissions the block includes,
     /// delivers its number as the new L1 head and waits until the driver has applied both. A
     /// block without any of the batcher's transactions only advances the L1 head.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the driver task has exited, or did not catch up within
-    /// [`IDLE_TIMEOUT`](Self::IDLE_TIMEOUT).
     pub async fn observe_l1_block(&self, block: &L1Block) {
-        self.try_observe_l1_block(block)
-            .await
-            .unwrap_or_else(|e| panic!("Batcher::observe_l1_block failed: {e}"));
+        // Receipts first: the driver serves them before L1 heads, so a failed submission is
+        // requeued before the head advances.
+        self.tx_manager.confirm_block(block);
+        self.deliver_l1_head(block.number()).await;
     }
 
     /// Simulate an L1 reorg back to `block_number`.
@@ -371,58 +330,24 @@ impl Batcher {
     ///
     /// # Panics
     ///
-    /// Panics if `block_number` exceeds the current L1 chain tip
-    /// (`ReorgError::BeyondTip`), or if the driver task has exited or did not catch up
-    /// within [`IDLE_TIMEOUT`](Self::IDLE_TIMEOUT).
+    /// Panics if `block_number` exceeds the current L1 chain tip (`ReorgError::BeyondTip`).
     ///
     /// [`observe_l1_block`]: Batcher::observe_l1_block
     pub async fn reorg(&self, block_number: u64, l1: &mut L1Miner) {
-        // Failure receipts first, for the same reason as in `try_observe_l1_block`.
+        // Failure receipts first, for the same reason as in `observe_l1_block`.
         self.tx_manager.reorg_to(block_number, l1);
-        self.deliver_l1_head(block_number)
-            .await
-            .unwrap_or_else(|e| panic!("Batcher::reorg failed: {e}"));
-    }
-
-    /// Signal that the batcher has been repointed to a different L2 node.
-    ///
-    /// Sends an [`L2BlockEvent::Reorg`] to the background [`BatchDriver`] and waits until
-    /// it has applied it, so the encoder is known to be empty on return.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the driver task has exited, or did not apply the reorg within
-    /// [`IDLE_TIMEOUT`](Self::IDLE_TIMEOUT).
-    ///
-    /// [`BatchDriver`]: base_batcher_core::BatchDriver
-    pub async fn signal_reorg(&self) {
-        self.send_event(L2BlockEvent::Reorg).expect("driver task alive");
-        self.wait_until_idle().await.expect("driver applies the reorg");
+        self.deliver_l1_head(block_number).await;
     }
 
     /// Run one full batch cycle through the production [`BatchDriver`] path.
     ///
     /// # Panics
     ///
-    /// Panics if the L2 source is empty. Use [`try_advance`] to test the
-    /// empty-source error path.
-    ///
-    /// [`try_advance`]: Batcher::try_advance
-    pub async fn advance(&mut self, l1: &mut L1Miner) {
-        self.try_advance(l1).await.unwrap_or_else(|e| panic!("Batcher::advance failed: {e}"))
-    }
-
-    /// Fallible variant of [`advance`] — returns an error instead of panicking.
-    ///
-    /// Use this when a test needs to assert that `advance` fails (e.g. to
-    /// verify that [`BatcherError::NoBlocks`] is returned for an empty source).
-    /// For the common happy-path case prefer [`advance`].
-    ///
-    /// [`advance`]: Batcher::advance
-    pub async fn try_advance(&mut self, l1: &mut L1Miner) -> Result<(), BatcherError> {
-        self.try_encode_only().await?;
-        self.try_mine_pending(l1).await?;
-        Ok(())
+    /// Panics where [`encode_only`](Self::encode_only) and
+    /// [`mine_pending`](Self::mine_pending) do.
+    pub async fn advance(&self, l1: &mut L1Miner) {
+        self.encode_only().await;
+        self.mine_pending(l1).await;
     }
 }
 

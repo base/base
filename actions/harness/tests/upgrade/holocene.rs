@@ -62,7 +62,7 @@ async fn holocene_derivation_crosses_activation_boundary() {
 
     // Build and submit 4 L2 blocks; no upgrade-tx constraint at Holocene,
     // so user txs are valid in all blocks including block 3.
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for _ in 1..=4u64 {
         batcher.push_block(builder.build_next_block_with_single_transaction().await);
         batcher.advance(&mut h.l1).await;
@@ -113,7 +113,7 @@ async fn holocene_activation_flushes_buffered_pre_holocene_channel_data() {
 
     let mut source = ActionL2Source::new();
     source.push(block.clone());
-    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.encode_only().await;
     assert!(
         batcher.pending_count() >= 2,
@@ -284,7 +284,7 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
     // Encode the block into frames without mining.
     let mut source = ActionL2Source::new();
     source.push(block);
-    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.encode_only().await;
     let frame_count = batcher.pending_count();
     assert!(
@@ -391,12 +391,12 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
     // Each Batcher instance generates a distinct random channel ID.
     let mut source_a = ActionL2Source::new();
     source_a.push(block_a);
-    let mut batcher_a = Batcher::new(source_a, &h.rollup_config, batcher_cfg.clone());
+    let batcher_a = Batcher::new(source_a, &h.rollup_config, batcher_cfg.clone());
     batcher_a.encode_only().await;
 
     let mut source_b = ActionL2Source::new();
     source_b.push(block_b);
-    let mut batcher_b = Batcher::new(source_b, &h.rollup_config, batcher_cfg.clone());
+    let batcher_b = Batcher::new(source_b, &h.rollup_config, batcher_cfg.clone());
     batcher_b.encode_only().await;
 
     let n_a = batcher_a.pending_count();
@@ -499,7 +499,7 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
     // Encode the block into frames without mining.
     let mut source = ActionL2Source::new();
     source.push(block.clone());
-    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.encode_only().await;
     let frame_count = batcher.pending_count();
     assert!(frame_count >= 3, "need ≥3 frames to skip frame 1; got {frame_count}");
@@ -552,7 +552,7 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
     // timestamp. The sequencer has not advanced since build_next_block_with_single_transaction().
     let mut recovery_source = ActionL2Source::new();
     recovery_source.push(block);
-    let mut batcher2 = Batcher::new(recovery_source, &h.rollup_config, batcher_cfg.clone());
+    let batcher2 = Batcher::new(recovery_source, &h.rollup_config, batcher_cfg.clone());
     batcher2.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 

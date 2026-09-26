@@ -160,18 +160,21 @@ manually.
 
 ## Batcher actor
 
-`Batcher` drains `BaseBlock`s from an `ActionL2Source` and forwards them to a
-production `BatchDriver` running in a background tokio task. The driver owns a
-`BatchEncoder`, channel manager behavior, calldata/blob frame construction,
-and submission flow. The harness-owned boundary is `L1MinerTxManager`, which
-turns the driver's transaction candidates into signed L1 transactions and
-lets tests control when those transactions are staged, mined, confirmed,
-failed, or reorged.
+`Batcher` runs a production `BatchDriver` in a background tokio task over the
+L2 chain the test builds: the blocks of an `ActionL2Source`, plus those pushed
+later with `push_block`. The driver polls that chain by block number like the
+production source polls its L2 node, so after a reset it catches up again from
+the safe head. The driver owns a `BatchEncoder`, channel manager behavior,
+calldata/blob frame construction, and submission flow. The harness-owned
+boundary is `L1MinerTxManager`, which turns the driver's transaction candidates
+into signed L1 transactions and lets tests control when those transactions are
+staged, mined, confirmed, failed, or reorged.
 
-For the common happy path, call `batcher.advance(&mut h.l1).await`. It drains
-the L2 source, flushes the encoder, mines one L1 block, and shows it to the
-driver. For more exact scenarios, use `encode_only`, `stage_n_frames`,
-`observe_l1_block`, `mine_pending`, `fail_next_n_submissions` and `reorg`.
+For the common happy path, call `batcher.advance(&mut h.l1).await`. It waits
+for the driver to encode every block pushed so far, flushes the encoder, mines
+one L1 block, and shows it to the driver. For more exact scenarios, use
+`encode_only`, `stage_n_frames`, `observe_l1_block`, `mine_pending`,
+`fail_next_n_submissions` and `reorg`.
 Every `async` method of `Batcher` returns once the driver is idle again, so the
 test can read the tx manager's queues right after.
 
@@ -192,7 +195,7 @@ async fn example_action_test() {
 
     // Step 2: build real L2 blocks and batch them into one L1 block.
     let source = h.create_l2_source(5).await;
-    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg);
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg);
     batcher.advance(&mut h.l1).await;
 
     // Step 3: inspect the signed L1 submissions.

@@ -41,7 +41,7 @@ async fn channel_timeout_triggers_channel_invalidation() {
     // Encode block via Batcher — produces multiple frames with max_frame_size=80.
     let mut source = ActionL2Source::new();
     source.push(block.clone());
-    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.encode_only().await;
 
     let frame_count = batcher.pending_count();
@@ -82,7 +82,7 @@ async fn channel_timeout_triggers_channel_invalidation() {
     // Recovery: new Batcher (new BatchEncoder = new channel ID) with all frames in one L1 block.
     let mut source2 = ActionL2Source::new();
     source2.push(block);
-    let mut batcher2 = Batcher::new(source2, &h.rollup_config, batcher_cfg.clone());
+    let batcher2 = Batcher::new(source2, &h.rollup_config, batcher_cfg.clone());
     batcher2.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
@@ -125,7 +125,7 @@ async fn channel_timeout_recovery_resubmits_successfully() {
     // Encode the block — will produce multiple frames with max_frame_size=80.
     let mut source = ActionL2Source::new();
     source.push(block.clone());
-    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.encode_only().await;
 
     let frame_count = batcher.pending_count();
@@ -160,7 +160,7 @@ async fn channel_timeout_recovery_resubmits_successfully() {
     // Recovery: new Batcher (new channel ID) submits all frames in one L1 block.
     let mut source2 = ActionL2Source::new();
     source2.push(block);
-    let mut batcher2 = Batcher::new(source2, &h.rollup_config, batcher_cfg.clone());
+    let batcher2 = Batcher::new(source2, &h.rollup_config, batcher_cfg.clone());
     batcher2.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
@@ -199,13 +199,13 @@ async fn interleaved_channels_correctly_reassembled() {
     // Batcher A: block 1 in its own channel (distinct random channel ID).
     let mut source_a = ActionL2Source::new();
     source_a.push(block_a);
-    let mut batcher_a = Batcher::new(source_a, &h.rollup_config, batcher_cfg.clone());
+    let batcher_a = Batcher::new(source_a, &h.rollup_config, batcher_cfg.clone());
     batcher_a.encode_only().await;
 
     // Batcher B: block 2 in its own channel (distinct random channel ID).
     let mut source_b = ActionL2Source::new();
     source_b.push(block_b);
-    let mut batcher_b = Batcher::new(source_b, &h.rollup_config, batcher_cfg.clone());
+    let batcher_b = Batcher::new(source_b, &h.rollup_config, batcher_cfg.clone());
     batcher_b.encode_only().await;
 
     let n_a = batcher_a.pending_count();
@@ -272,7 +272,7 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
     // Encode into multiple frames.
     let mut source = ActionL2Source::new();
     source.push(block);
-    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.encode_only().await;
 
     let frame_count = batcher.pending_count();
@@ -349,7 +349,7 @@ async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
     // The admin flush at the end of encode_only() closes the channel; frames become pending.
     let mut source = ActionL2Source::new();
     source.push(block);
-    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.encode_only().await;
 
     let frame_count = batcher.pending_count();
