@@ -55,9 +55,9 @@ use reth_node_builder::{
     },
     node::{FullNodeTypes, NodeTypes},
     rpc::{
-        BasicEngineValidatorBuilder, EngineApiBuilder, EngineValidatorAddOn,
-        EngineValidatorBuilder, EthApiBuilder, Identity, PayloadValidatorBuilder, RethRpcAddOns,
-        RethRpcMiddleware, RethRpcServerHandles, RpcAddOns, RpcContext, RpcHandle,
+        EngineApiBuilder, EngineValidatorAddOn, EngineValidatorBuilder, EthApiBuilder, Identity,
+        PayloadValidatorBuilder, RethRpcAddOns, RethRpcMiddleware, RethRpcServerHandles, RpcAddOns,
+        RpcContext, RpcHandle,
     },
 };
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
@@ -75,7 +75,7 @@ use serde::de::DeserializeOwned;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{
-    BaseEngineApiBuilder, BaseEngineTypes, BaseStorage,
+    BaseEngineApiBuilder, BaseEngineTypes, BaseStorage, BaseTreeEngineValidatorBuilder,
     args::{RollupArgs, TxpoolOrdering},
     engine::BaseEngineValidator,
 };
@@ -356,7 +356,7 @@ where
         BaseEthApiBuilder,
         BasePayloadValidatorBuilder,
         BaseEngineApiBuilder<BasePayloadValidatorBuilder>,
-        BasicEngineValidatorBuilder<BasePayloadValidatorBuilder>,
+        BaseTreeEngineValidatorBuilder<BasePayloadValidatorBuilder>,
     >;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
@@ -402,7 +402,7 @@ pub struct BaseAddOns<
     EthB: EthApiBuilder<N>,
     PVB,
     EB = BaseEngineApiBuilder<PVB>,
-    EVB = BasicEngineValidatorBuilder<PVB>,
+    EVB = BaseTreeEngineValidatorBuilder<PVB>,
     RpcMiddleware = Identity,
 > {
     /// Rpc add-ons responsible for launching the RPC servers and instantiating the RPC handlers
