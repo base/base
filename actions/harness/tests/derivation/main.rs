@@ -390,7 +390,7 @@ async fn orphaned_partial_channel_does_not_combine_with_canonical_remainder() {
 
     batcher.stage_n_frames(&mut h.l1, 1);
     h.l1.mine_block();
-    batcher.confirm_staged(h.l1.tip()).await;
+    batcher.observe_l1_block(h.l1.tip()).await;
     chain.push(h.l1.tip().clone());
 
     node.initialize().await;
@@ -405,7 +405,7 @@ async fn orphaned_partial_channel_does_not_combine_with_canonical_remainder() {
     assert!(remaining > 0, "test requires canonical remainder frames");
     batcher.stage_n_frames(&mut h.l1, remaining);
     h.l1.mine_block();
-    batcher.confirm_staged(h.l1.tip()).await;
+    batcher.observe_l1_block(h.l1.tip()).await;
     chain.push(h.l1.tip().clone());
 
     node.act_reset(h.l2_genesis()).await;
@@ -1352,7 +1352,7 @@ async fn multi_frame_channel_reassembled() {
     let n = batcher.pending_count();
     batcher.stage_n_frames(&mut h.l1, n);
     h.l1.mine_block();
-    batcher.confirm_staged(h.l1.tip()).await;
+    batcher.observe_l1_block(h.l1.tip()).await;
     chain.push(h.l1.tip().clone());
 
     node.initialize().await;

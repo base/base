@@ -54,7 +54,7 @@ async fn channel_timeout_triggers_channel_invalidation() {
     batcher.stage_n_frames(&mut h.l1, 1);
     h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(h.l1.tip()).await;
+    batcher.observe_l1_block(h.l1.tip()).await;
 
     node.initialize().await;
     node.run_until_idle().await;
@@ -74,7 +74,7 @@ async fn channel_timeout_triggers_channel_invalidation() {
     batcher.stage_n_frames(&mut h.l1, frame_count - 1);
     h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(h.l1.tip()).await;
+    batcher.observe_l1_block(h.l1.tip()).await;
 
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 0, "late frames after channel timeout must be ignored");
@@ -138,7 +138,7 @@ async fn channel_timeout_recovery_resubmits_successfully() {
     batcher.stage_n_frames(&mut h.l1, 1);
     h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(h.l1.tip()).await;
+    batcher.observe_l1_block(h.l1.tip()).await;
 
     node.initialize().await;
 
@@ -225,8 +225,8 @@ async fn interleaved_channels_correctly_reassembled() {
 
     // Mine one L1 block containing all interleaved frames.
     h.l1.mine_block();
-    batcher_a.confirm_staged(h.l1.tip()).await;
-    batcher_b.confirm_staged(h.l1.tip()).await;
+    batcher_a.observe_l1_block(h.l1.tip()).await;
+    batcher_b.observe_l1_block(h.l1.tip()).await;
 
     let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut sequencer,
@@ -285,7 +285,7 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
     batcher.stage_n_frames(&mut h.l1, 1);
     h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(h.l1.tip()).await;
+    batcher.observe_l1_block(h.l1.tip()).await;
 
     node.initialize().await;
     node.run_until_idle().await;
@@ -300,7 +300,7 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
     batcher.stage_n_frames(&mut h.l1, frame_count - 1);
     h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(h.l1.tip()).await;
+    batcher.observe_l1_block(h.l1.tip()).await;
 
     let derived = node.run_until_idle().await;
 
@@ -362,7 +362,7 @@ async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
     batcher.stage_n_frames(&mut h.l1, 1);
     h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(h.l1.tip()).await;
+    batcher.observe_l1_block(h.l1.tip()).await;
 
     node.initialize().await;
     node.run_until_idle().await;
@@ -373,19 +373,19 @@ async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
         "incomplete channel after block 1; safe head must stay at genesis"
     );
 
-    // Mine an empty L1 block 2 and confirm it: encode_only() already closed the channel
-    // (admin flush), so this fires no receipt and only advances the driver's L1 head to 2.
+    // Mine an empty L1 block 2 and show it to the batcher: encode_only() already closed the
+    // channel (admin flush), so this fires no receipt and only moves the driver's L1 head to 2.
     // The remaining frames are already in `pending`.
     h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(h.l1.tip()).await;
+    batcher.observe_l1_block(h.l1.tip()).await;
 
     // L1 block 3: submit the remaining frames.
     let remaining = batcher.pending_count();
     batcher.stage_n_frames(&mut h.l1, remaining);
     h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(h.l1.tip()).await;
+    batcher.observe_l1_block(h.l1.tip()).await;
 
     // Signal node for all L1 blocks. Track the total L2 blocks derived
     // to confirm exactly one block was produced across the 3-block span.

@@ -169,9 +169,9 @@ lets tests control when those transactions are staged, mined, confirmed,
 failed, or reorged.
 
 For the common happy path, call `batcher.advance(&mut h.l1).await`: it drains
-the L2 source, flushes the encoder, mines one L1 block, and confirms the
-resulting receipts. For more exact scenarios, use `encode_only`,
-`stage_n_frames`, `confirm_staged`, `mine_pending`, `fail_next_n_submissions`
+the L2 source, flushes the encoder, mines one L1 block, and hands the driver
+its receipts and new L1 head. For more exact scenarios, use `encode_only`,
+`stage_n_frames`, `observe_l1_block`, `mine_pending`, `fail_next_n_submissions`
 and `reorg`.
 Every `async` method of `Batcher` returns once the driver is idle again, so the
 test can read the tx manager's queues right after.

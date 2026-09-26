@@ -99,9 +99,8 @@ pub enum BatcherError {
 /// 3. Flush through the admin channel, exactly as an operator would, to close and
 ///    release the current channel.
 /// 4. Wait for the driver to hand every resulting submission to the tx manager.
-/// 5. Stage every pending submission, mine one L1 block, fire the receipts of the
-///    submissions it includes and deliver the new L1 head to the driver.
-/// 6. Wait for the driver to confirm the receipts and advance its L1 head.
+/// 5. Stage every pending submission, mine one L1 block and show it to the driver.
+/// 6. Wait for the driver to apply the block's receipts and its new L1 head.
 ///
 /// The driver's [`BatchEncoder`] state is persistent across `advance()` calls.
 /// The driver task continues running between cycles, waiting for new events.
@@ -273,20 +272,19 @@ impl Batcher {
         self.wait_until_idle().await
     }
 
-    /// Fire receipts for the staged items included in `block`, then deliver its number as
-    /// the new L1 head.
-    async fn try_confirm_staged(&self, block: &L1Block) -> Result<(), BatcherError> {
+    /// Fallible variant of [`observe_l1_block`](Self::observe_l1_block).
+    async fn try_observe_l1_block(&self, block: &L1Block) -> Result<(), BatcherError> {
         // Receipts first: the driver serves them before L1 heads, so a failed submission is
         // requeued before the head advances.
         self.tx_manager.confirm_block(block);
         self.deliver_l1_head(block.number()).await
     }
 
-    /// Stage every pending submission, mine one L1 block and confirm it.
+    /// Fallible variant of [`mine_pending`](Self::mine_pending).
     async fn try_mine_pending(&self, l1: &mut L1Miner) -> Result<u64, BatcherError> {
         self.tx_manager.stage_n_to_l1(l1, usize::MAX);
         let block = l1.mine_block().clone();
-        self.try_confirm_staged(&block).await?;
+        self.try_observe_l1_block(&block).await?;
         Ok(block.number())
     }
 
@@ -348,17 +346,20 @@ impl Batcher {
         self.tx_manager.drop_n(n)
     }
 
-    /// Fire receipts for all staged items included in `block`, deliver its number to the
-    /// driver as the new L1 head, and wait until the driver has applied both.
+    /// Show a mined L1 block to the driver, as the tx manager's receipt polling and the L1
+    /// head source would:
+    /// fire the receipts of the staged submissions the block includes, deliver its number as
+    /// the new L1 head, and wait until the driver has applied both. A block without any of
+    /// the batcher's transactions only advances the L1 head.
     ///
     /// # Panics
     ///
     /// Panics if the driver task has exited, or did not catch up within
     /// [`IDLE_TIMEOUT`](Self::IDLE_TIMEOUT).
-    pub async fn confirm_staged(&self, block: &L1Block) {
-        self.try_confirm_staged(block)
+    pub async fn observe_l1_block(&self, block: &L1Block) {
+        self.try_observe_l1_block(block)
             .await
-            .unwrap_or_else(|e| panic!("Batcher::confirm_staged failed: {e}"));
+            .unwrap_or_else(|e| panic!("Batcher::observe_l1_block failed: {e}"));
     }
 
     /// Simulate an L1 reorg back to `block_number`.
@@ -367,7 +368,7 @@ impl Batcher {
     /// item in `pending` and `staged`, delivers the new L1 head to the driver, and waits
     /// until the driver has requeued and resubmitted the failed frames.
     ///
-    /// Submissions already confirmed through [`confirm_staged`] are not revisited.
+    /// Submissions already confirmed through [`observe_l1_block`] are not revisited.
     ///
     /// # Panics
     ///
@@ -375,9 +376,9 @@ impl Batcher {
     /// (`ReorgError::BeyondTip`), or if the driver task has exited or did not catch up
     /// within [`IDLE_TIMEOUT`](Self::IDLE_TIMEOUT).
     ///
-    /// [`confirm_staged`]: Batcher::confirm_staged
+    /// [`observe_l1_block`]: Batcher::observe_l1_block
     pub async fn reorg(&self, block_number: u64, l1: &mut L1Miner) {
-        // Failure receipts first, for the same reason as in `try_confirm_staged`.
+        // Failure receipts first, for the same reason as in `try_observe_l1_block`.
         self.tx_manager.reorg_to(block_number, l1);
         self.deliver_l1_head(block_number)
             .await
