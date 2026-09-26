@@ -30,7 +30,6 @@ struct SendStateInner {
     mined_txs: Vec<B256>,
     has_published: bool,
     nonce_too_low_count: u64,
-    already_reserved: bool,
     bump_fees: bool,
     bump_count: u64,
     mempool_deadline: Option<MempoolDeadline>,
@@ -61,7 +60,6 @@ impl SendState {
                 mined_txs: Vec::new(),
                 has_published: false,
                 nonce_too_low_count: 0,
-                already_reserved: false,
                 bump_fees: false,
                 bump_count: 0,
                 mempool_deadline: None,
@@ -75,7 +73,6 @@ impl SendState {
     ///
     /// - [`TxManagerError::NonceTooLow`] increments the nonce-too-low counter.
     /// - [`TxManagerError::NonceTooHigh`] is transient and leaves no state.
-    /// - [`TxManagerError::AlreadyReserved`] sets the already-reserved flag.
     /// - Any other [retryable](TxManagerError::is_retryable) error sets the
     ///   bump-fees flag for the next send attempt.
     /// - Other critical errors are no-ops (handled at a higher level).
@@ -92,9 +89,6 @@ impl SendState {
             // publication has propagated. Retrying the same signed
             // transaction requires no persistent state change.
             TxManagerError::NonceTooHigh => {}
-            TxManagerError::AlreadyReserved => {
-                inner.already_reserved = true;
-            }
             e if e.is_retryable() => {
                 inner.bump_fees = true;
             }
@@ -133,20 +127,18 @@ impl SendState {
     ///
     /// Conditions are checked in priority order:
     /// 1. If any transaction is mined, returns `None` (wait for confirmation).
-    /// 2. If the nonce slot was already reserved, returns
-    ///    [`TxManagerError::AlreadyReserved`].
-    /// 3. If no successful publish has occurred and a nonce-too-low error was
+    /// 2. If no successful publish has occurred and a nonce-too-low error was
     ///    seen, returns [`TxManagerError::NonceTooLow`] (immediate abort).
-    /// 4. If nonce-too-low errors have reached the threshold, returns
+    /// 3. If nonce-too-low errors have reached the threshold, returns
     ///    [`TxManagerError::NonceTooLow`].
-    /// 5. If the mempool deadline has expired *and* no transaction has been
+    /// 4. If the mempool deadline has expired *and* no transaction has been
     ///    successfully published, returns
     ///    [`TxManagerError::MempoolDeadlineExpired`]. Once a publish has
     ///    succeeded the tx is in the mempool and the deadline's purpose is
     ///    served — further waiting is governed by the receipt timeout and
     ///    bump cycle, not by aborting (which would leak a pre-reserved nonce
     ///    and stall publication on lower nonces still live on L1).
-    /// 6. Otherwise, returns `None`.
+    /// 5. Otherwise, returns `None`.
     #[must_use]
     pub fn critical_error(&self) -> Option<TxManagerError> {
         self.critical_error_with(None)
@@ -163,9 +155,6 @@ impl SendState {
 
         if !inner.mined_txs.is_empty() {
             return None;
-        }
-        if inner.already_reserved {
-            return Some(TxManagerError::AlreadyReserved);
         }
         if !inner.has_published && inner.nonce_too_low_count > 0 {
             return Some(TxManagerError::NonceTooLow);
@@ -373,16 +362,6 @@ mod tests {
     }
 
     #[test]
-    fn mined_tx_suppresses_already_reserved_abort() {
-        let state = SendState::new(3).unwrap();
-        state.process_send_error(&TxManagerError::AlreadyReserved);
-        assert_eq!(state.critical_error(), Some(TxManagerError::AlreadyReserved));
-
-        state.tx_mined(B256::with_last_byte(1));
-        assert!(state.critical_error().is_none());
-    }
-
-    #[test]
     fn mined_tx_suppresses_mempool_deadline_abort() {
         let state = SendState::new(3).unwrap();
         state.set_wall_clock_mempool_deadline(Instant::now() - Duration::from_secs(1));
@@ -584,27 +563,7 @@ mod tests {
         assert!(!state.take_bump_fees());
     }
 
-    // ── AlreadyReserved ─────────────────────────────────────────────────
-
-    #[test]
-    fn already_reserved_triggers_abort() {
-        let state = SendState::new(3).unwrap();
-        state.process_send_error(&TxManagerError::AlreadyReserved);
-        assert_eq!(state.critical_error(), Some(TxManagerError::AlreadyReserved));
-    }
-
     // ── Priority ordering ────────────────────────────────────────────────
-
-    #[test]
-    fn already_reserved_takes_priority_over_expired_deadline() {
-        let state = SendState::new(3).unwrap();
-        state.process_send_error(&TxManagerError::AlreadyReserved);
-        state.set_wall_clock_mempool_deadline(Instant::now() - Duration::from_secs(1));
-
-        // AlreadyReserved (priority 2) wins over MempoolDeadlineExpired
-        // (priority 6).
-        assert_eq!(state.critical_error(), Some(TxManagerError::AlreadyReserved));
-    }
 
     #[test]
     fn pre_publish_nonce_too_low_takes_priority_over_expired_deadline() {
@@ -613,8 +572,8 @@ mod tests {
         state.process_send_error(&TxManagerError::NonceTooLow);
         state.set_wall_clock_mempool_deadline(Instant::now() - Duration::from_secs(1));
 
-        // Pre-publish NonceTooLow (priority 4) wins over
-        // MempoolDeadlineExpired (priority 6).
+        // Pre-publish NonceTooLow (priority 2) wins over
+        // MempoolDeadlineExpired (priority 4).
         assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooLow));
     }
 
