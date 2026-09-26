@@ -79,7 +79,6 @@ use reth_rpc_eth_api::{
 use reth_rpc_eth_types::EthApiError;
 use revm::context::TxEnv;
 use tokio::{sync::broadcast::error::RecvError, time};
-use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::{debug, trace, warn};
 
 use crate::{FlashblocksAPI, PendingBlocksAPI, metrics::Metrics};
@@ -403,17 +402,11 @@ where
 
         let timeout = Duration::from_millis(timeout_ms);
         tokio::select! {
-            receipt = self.wait_for_flashblocks_receipt(tx_hash) => {
-                receipt.ok_or_else(|| EthApiError::TransactionConfirmationTimeout {
-                    hash: tx_hash,
-                    duration: timeout,
-                }.into())
+            Some(receipt) = self.wait_for_flashblocks_receipt(tx_hash) => {
+                Ok(receipt)
             }
-            receipt = self.wait_for_canonical_receipt(tx_hash) => {
-                receipt.ok_or_else(|| EthApiError::TransactionConfirmationTimeout {
-                    hash: tx_hash,
-                    duration: timeout,
-                }.into())
+            Some(receipt) = self.wait_for_canonical_receipt(tx_hash) => {
+                Ok(receipt)
             }
             _ = time::sleep(timeout) => {
                 Err(EthApiError::TransactionConfirmationTimeout {
@@ -661,6 +654,12 @@ where
 {
     async fn wait_for_flashblocks_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Base>> {
         let mut receiver = self.flashblocks_state.subscribe_to_flashblocks();
+        if let Some(receipt) =
+            self.flashblocks_state.get_pending_blocks().get_transaction_receipt(tx_hash)
+        {
+            debug!(message = "found receipt in flashblock", tx_hash = %tx_hash);
+            return Some(receipt);
+        }
 
         loop {
             match receiver.recv().await {
@@ -683,25 +682,23 @@ where
     }
 
     async fn wait_for_canonical_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Base>> {
-        let mut stream =
-            BroadcastStream::new(self.eth_api.provider().subscribe_to_canonical_state());
+        let mut receiver = self.eth_api.provider().subscribe_to_canonical_state();
 
-        while let Some(Ok(canon_state)) = stream.next().await {
-            for (block_receipt, _) in canon_state.block_receipts() {
-                for (canonical_tx_hash, _) in &block_receipt.tx_receipts {
-                    if *canonical_tx_hash == tx_hash {
-                        debug!(
-                            message = "found receipt in canonical state",
-                            tx_hash = %tx_hash
-                        );
-                        return EthTransactions::transaction_receipt(&self.eth_api, tx_hash)
-                            .await
-                            .ok()
-                            .flatten();
-                    }
-                }
+        loop {
+            if let Ok(Some(receipt)) = EthTransactions::transaction_receipt(&self.eth_api, tx_hash)
+                .await
+                .inspect_err(|error| {
+                    debug!(error = %error, tx_hash = %tx_hash, "canonical receipt lookup failed");
+                })
+            {
+                debug!(message = "found receipt in canonical state", tx_hash = %tx_hash);
+                return Some(receipt);
+            }
+
+            match receiver.recv().await {
+                Ok(_) | Err(RecvError::Lagged(_)) => continue,
+                Err(RecvError::Closed) => return None,
             }
         }
-        None
     }
 }
