@@ -178,50 +178,37 @@ async fn estimate_gas_rejects_mismatched_from_and_sender() -> eyre::Result<()> {
     Ok(())
 }
 
-/// A supplied non-secp256k1 authentication blob must be priced into the
-/// estimate: a P-256 sender costs strictly more than the default-EOA secp256k1
-/// path (its authenticator execution gas is higher and its authentication
-/// payload is longer), and a longer `WebAuthn` blob costs more still.
+/// A supplied secp256k1 authentication blob is priced by its own bytes: a
+/// longer k1 blob costs more than a shorter one. P-256 and `WebAuthn` blobs are
+/// rejected, matching txpool admission, rather than priced.
 #[tokio::test]
 async fn estimate_gas_prices_the_supplied_authentication_blob() -> eyre::Result<()> {
     let (_harness, client) = setup().await?;
     let alice: Address = Account::Alice.address();
+    let estimate = |sender_auth: String| {
+        let client = client.clone();
+        async move {
+            client
+                .request::<_, U256>(
+                    "eth_estimateGas",
+                    (json!({ "from": alice, "calls": [], "senderAuth": sender_auth }), "latest"),
+                )
+                .await
+        }
+    };
 
-    let k1: U256 = client
-        .request("eth_estimateGas", (json!({ "from": alice, "calls": [] }), "latest"))
-        .await?;
-    let p256: U256 = client
-        .request(
-            "eth_estimateGas",
-            (
-                json!({
-                    "from": alice,
-                    "calls": [],
-                    "senderAuth": auth_blob(Eip8130Contracts::P256_AUTHENTICATOR, 128),
-                }),
-                "latest",
-            ),
-        )
-        .await?;
-    let webauthn: U256 = client
-        .request(
-            "eth_estimateGas",
-            (
-                json!({
-                    "from": alice,
-                    "calls": [],
-                    "senderAuth": auth_blob(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR, 1024),
-                }),
-                "latest",
-            ),
-        )
-        .await?;
+    let short = estimate(auth_blob(Eip8130Constants::K1_AUTHENTICATOR, 65)).await?;
+    let long = estimate(auth_blob(Eip8130Constants::K1_AUTHENTICATOR, 200)).await?;
+    assert!(long > short, "a longer k1 blob ({long}) must cost more than a shorter one ({short})");
 
-    assert!(p256 > k1, "P-256 auth ({p256}) must cost more than secp256k1 ({k1})");
-    assert!(
-        webauthn > p256,
-        "a larger WebAuthn payload ({webauthn}) must cost more than P-256 ({p256})"
-    );
+    for authenticator in
+        [Eip8130Contracts::P256_AUTHENTICATOR, Eip8130Contracts::WEBAUTHN_AUTHENTICATOR]
+    {
+        assert!(
+            estimate(auth_blob(authenticator, 128)).await.is_err(),
+            "a non-k1 sender authenticator ({authenticator}) must be rejected"
+        );
+    }
     Ok(())
 }
 

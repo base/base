@@ -88,6 +88,11 @@ impl BaseTransactionRequest {
 
         let (sender, sender_auth) = match &aa.sender_auth {
             Some(blob) => {
+                // A recognized non-k1 selector must not fall through to the bare
+                // EOA path: the pool rejects it, so the simulation does too.
+                if Self::is_disallowed_authenticator(blob) {
+                    return None;
+                }
                 let prefixed = Self::is_prefixed_auth(blob);
                 Self::check_auth_len(blob, prefixed)?;
                 (prefixed.then_some(account), blob.clone())
@@ -160,13 +165,26 @@ impl BaseTransactionRequest {
         (data_len as u64 <= u64::from(MAX_AUTH_SIZE)).then_some(())
     }
 
+    /// Leading authenticator selector, when the blob is long enough to carry one.
+    fn authenticator_selector(blob: &Bytes) -> Option<Address> {
+        (blob.len() >= AUTHENTICATOR_SELECTOR_LEN)
+            .then(|| Address::from_slice(&blob[..AUTHENTICATOR_SELECTOR_LEN]))
+    }
+
+    /// Whether the blob is a configured-account authorization the launch wire
+    /// accepts. Only the native k1 authenticator qualifies, matching txpool
+    /// admission. Other selectors are either rejected
+    /// ([`Self::is_disallowed_authenticator`]) or treated as a bare EOA signature.
     fn is_prefixed_auth(blob: &Bytes) -> bool {
-        if blob.len() < AUTHENTICATOR_SELECTOR_LEN {
-            return false;
-        }
-        let selector = Address::from_slice(&blob[..AUTHENTICATOR_SELECTOR_LEN]);
-        selector == Eip8130Constants::K1_AUTHENTICATOR
-            || Eip8130Contracts::is_canonical_authenticator(&selector)
+        Self::authenticator_selector(blob)
+            .is_some_and(|selector| selector == Eip8130Constants::K1_AUTHENTICATOR)
+    }
+
+    /// Whether the blob names a canonical authenticator the launch wire does not
+    /// admit (P256, `WebAuthn`, or delegate).
+    fn is_disallowed_authenticator(blob: &Bytes) -> bool {
+        Self::authenticator_selector(blob)
+            .is_some_and(|selector| Eip8130Contracts::is_canonical_authenticator(&selector))
     }
 
     fn stub_prefixed_auth(scheme: Eip8130AuthScheme, data_len: usize) -> Bytes {
