@@ -38,6 +38,28 @@ fn requeued_submissions_resend_their_frames_in_production_order() {
     assert!(encoder.next_submission().is_none());
 }
 
+/// A retry goes out as the transaction that failed, never packed with blobs built after its
+/// requeue.
+#[test]
+fn a_retry_is_not_packed_with_newer_output() {
+    let config = EncoderConfig { max_blobs_per_tx: 2, ..EncoderConfig::default() };
+    let fixture = EncoderFixture::new(config);
+    let mut encoder = fixture.encoder();
+    let blocks = BlockFixture::chain(2, MULTI_FRAME_PAYLOAD);
+    encoder.add_block(blocks[0].clone()).unwrap();
+    let submission = encoder.encode_and_drain().unwrap().remove(0);
+    encoder.requeue(submission.id);
+    encoder.add_block(blocks[1].clone()).unwrap();
+    assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+    encoder.flush().unwrap();
+
+    let retry = encoder.next_submission().expect("the retry");
+    assert_eq!(SubmissionFixture::frames(&retry), SubmissionFixture::frames(&submission));
+    let newer = encoder.next_submission().expect("the newer output");
+    assert!(encoder.next_submission().is_none());
+    assert_eq!(fixture.derive(&[retry, newer]).concat(), BlockFixture::batches(&blocks));
+}
+
 /// Requeuing one submission resends exactly its frames, and none from the other submissions of
 /// its channel still in flight.
 #[test]

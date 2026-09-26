@@ -2,10 +2,12 @@
 //! flush does.
 
 use alloy_primitives::B256;
-use base_batcher_encoder::{BatchPipeline, DaEgress, EncoderConfig, StepResult, SubmissionPayload};
+use base_batcher_encoder::{
+    BatchPipeline, DaEgress, DaType, EncoderConfig, StepResult, SubmissionPayload,
+};
 use rstest::rstest;
 
-use crate::common::{BlockFixture, EncoderFixture, OpenChannel};
+use crate::common::{BlockFixture, EncoderFixture, OpenChannel, SubmissionFixture};
 
 /// A channel opened at L1 head 0 closes when the head reaches
 /// `max_channel_duration - sub_safety_margin`, and the close releases its output.
@@ -115,5 +117,33 @@ fn open_channel_emits_full_blobs_without_closing() {
     submissions.extend(encoder.encode_and_drain().unwrap());
     let derived = fixture.derive(&submissions);
     assert_eq!(derived.len(), 1, "the early blob and the rest are one channel");
+    assert_eq!(derived.concat(), batches);
+}
+
+/// An open calldata channel emits every full frame without closing, and nothing shorter: the
+/// frames emitted early and the rest of the channel decode together.
+#[test]
+fn open_channel_emits_full_calldata_frames_without_closing() {
+    let max_frame_size = 1_000;
+    let config =
+        EncoderConfig { da_type: DaType::Calldata, max_frame_size, ..EncoderConfig::default() };
+    let fixture = EncoderFixture::new(config);
+    let mut encoder = fixture.encoder();
+    let mut open = OpenChannel::encode(&mut encoder);
+    let mut submissions = SubmissionFixture::drain(&mut encoder);
+    for frame in
+        std::iter::once(&open.first).chain(&submissions).flat_map(SubmissionFixture::frames)
+    {
+        assert!(!frame.is_last, "the channel is still open");
+        assert_eq!(frame.encoded_len(), max_frame_size, "only full frames leave an open channel");
+    }
+
+    open.add_next_block(&mut encoder);
+    let batches = open.batches();
+
+    submissions.insert(0, open.first);
+    submissions.extend(encoder.encode_and_drain().unwrap());
+    let derived = fixture.derive(&submissions);
+    assert_eq!(derived.len(), 1, "the early frames and the rest are one channel");
     assert_eq!(derived.concat(), batches);
 }

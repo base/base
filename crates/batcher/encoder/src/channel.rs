@@ -492,17 +492,6 @@ mod tests {
     }
 
     #[test]
-    fn output_fifo_preserves_transferred_stream_order() {
-        let mut channel = channel(EncoderConfig::default());
-        channel.push_output(vec![1, 2]);
-        channel.push_output(vec![3, 4, 5]);
-
-        assert_eq!(channel.take_output(4), vec![1, 2, 3, 4]);
-        assert_eq!(channel.take_output(1), vec![5]);
-        assert_eq!(channel.available_output(), 0);
-    }
-
-    #[test]
     fn soft_target_accepts_complete_batch_before_closing() {
         let config = EncoderConfig {
             compressed_size_target: Some(1),

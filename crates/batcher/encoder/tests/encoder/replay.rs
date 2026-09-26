@@ -8,7 +8,7 @@ use rstest::rstest;
 
 use crate::common::{
     BlockFixture, CHANNEL_TIMEOUT, EncoderFixture, MULTI_BLOB_PAYLOAD, MULTI_FRAME_PAYLOAD,
-    SharedBlob, SubmissionFixture, THREE_BLOB_PAYLOAD,
+    SharedBlob, SharedRetry, SubmissionFixture,
 };
 
 /// A complete channel whose confirmations are more than the timeout apart, in either order, is
@@ -135,36 +135,39 @@ fn replay_includes_the_channel_sharing_a_blob() {
 fn replay_includes_the_channel_sharing_a_transaction() {
     let fixture = EncoderFixture::one_channel_per_block(2);
     let mut encoder = fixture.encoder();
-    let first_block = BlockFixture::block(B256::ZERO, 1, 0);
-    let second_block = BlockFixture::block(first_block.header.hash_slow(), 2, THREE_BLOB_PAYLOAD);
-    encoder.add_block(first_block.clone()).unwrap();
-    let first = encoder.encode_and_drain().unwrap();
-    encoder.add_block(second_block.clone()).unwrap();
-    let second = encoder.encode_and_drain().unwrap();
-    assert_eq!(second.len(), 2, "two full blobs, then the tail");
+    let shared = SharedRetry::encode(&mut encoder);
 
-    // The first channel's blob and the second channel's tail are retried in one transaction.
-    encoder.confirm(second[0].id, 1);
-    encoder.requeue(first[0].id);
-    encoder.requeue(second[1].id);
-    let retry = encoder.next_submission().expect("the retry");
-    assert_eq!(retry.blob_count(), 2, "one transaction carries both channels");
+    // The second channel's window closes with its tail, hence the retry, still in flight.
+    encoder.confirm(shared.full_blobs.id, 1);
     encoder.advance_l1_head(1 + CHANNEL_TIMEOUT + 1);
 
     let replay = encoder.encode_and_drain().unwrap();
-    assert_eq!(
-        fixture.derive(&replay).concat(),
-        BlockFixture::batches(&[first_block, second_block])
-    );
+    assert_eq!(fixture.derive(&replay).concat(), BlockFixture::batches(&shared.blocks));
     for submission in &replay {
         encoder.confirm(submission.id, 5);
     }
     assert_eq!(encoder.da_backlog_bytes(), 0);
 }
 
+/// A transaction that landed confirms the channels it carried: replaying one of them does
+/// not pull in the other, which is fully confirmed.
+#[test]
+fn a_landed_transaction_does_not_pull_its_other_channel_into_a_replay() {
+    let fixture = EncoderFixture::one_channel_per_block(2);
+    let mut encoder = fixture.encoder();
+    let shared = SharedRetry::encode(&mut encoder);
+
+    // The second channel's window closes with its full blobs still in flight.
+    encoder.confirm(shared.retry.id, 1);
+    encoder.advance_l1_head(1 + CHANNEL_TIMEOUT + 1);
+
+    let replay = encoder.encode_and_drain().unwrap();
+    assert_eq!(fixture.derive(&replay).concat(), BlockFixture::batches(&shared.blocks[1..]));
+}
+
 /// Replaying a channel discards every later channel too, but not the earlier ones that landed
-/// in time, and the submissions of the discarded channels are forgotten, so requeuing them
-/// sends nothing.
+/// in time, which stay confirmed. The submissions of the discarded channels are forgotten, so
+/// requeuing them sends nothing.
 #[test]
 fn replay_discards_every_later_channel() {
     let fixture = EncoderFixture::one_channel_per_block(1);
@@ -195,4 +198,8 @@ fn replay_discards_every_later_channel() {
         SubmissionFixture::drain(&mut encoder).is_empty(),
         "the discarded submissions are forgotten"
     );
+    for submission in &replay {
+        encoder.confirm(submission.id, 5);
+    }
+    assert_eq!(encoder.da_backlog_bytes(), 0, "the first channel is still confirmed");
 }
