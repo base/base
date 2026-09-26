@@ -3,7 +3,6 @@
 use std::fmt::Display;
 
 use alloy_eips::{BlockId, BlockNumberOrTag};
-use alloy_primitives::B256;
 use alloy_provider::Network;
 use alloy_transport::TransportResult;
 use base_common_genesis::RollupConfig;
@@ -95,7 +94,7 @@ impl L2ForkchoiceState {
                     Err(e) => return Err(e),
                 }
             }
-            Ok(None) => genesis_l2_block_info(cfg),
+            Ok(None) => L2BlockInfo::from_l2_genesis(&cfg.genesis),
             Err(e) => return Err(e.into()),
         };
         let safe = match get_block_compat(engine_client, BlockNumberOrTag::Safe.into()).await {
@@ -138,20 +137,6 @@ impl L2ForkchoiceState {
         };
 
         Ok(Self { un_safe, safe, finalized })
-    }
-}
-
-const fn genesis_l2_block_info(cfg: &RollupConfig) -> L2BlockInfo {
-    L2BlockInfo {
-        block_info: BlockInfo {
-            hash: cfg.genesis.l2.hash,
-            number: cfg.genesis.l2.number,
-            // Base chains start at L2 block 0, whose parent hash is zero.
-            parent_hash: B256::ZERO,
-            timestamp: cfg.genesis.l2_time,
-        },
-        l1_origin: cfg.genesis.l1,
-        seq_num: 0,
     }
 }
 

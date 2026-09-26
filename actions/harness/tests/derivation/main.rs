@@ -18,7 +18,7 @@ use base_consensus_derive::{
     EthereumDataSource, PipelineBuilder, PipelineEncodingError, PipelineError, PipelineErrorKind,
     StatefulAttributesBuilder, StepResult,
 };
-use base_protocol::{BlockInfo, DERIVATION_VERSION_0, DepositDecodeError, Deposits, L2BlockInfo};
+use base_protocol::{DERIVATION_VERSION_0, DepositDecodeError, Deposits, L2BlockInfo};
 
 mod holocene_span_batches;
 mod node;
@@ -1852,16 +1852,7 @@ async fn derive_chain_from_near_l1_genesis() {
     rollup_cfg.genesis.l2.hash = ActionEngineClient::compute_l2_genesis_hash(&rollup_cfg);
 
     // Build an L2 genesis head anchored to L1 block #5.
-    let genesis_head = L2BlockInfo {
-        block_info: BlockInfo {
-            hash: rollup_cfg.genesis.l2.hash,
-            number: rollup_cfg.genesis.l2.number,
-            parent_hash: Default::default(),
-            timestamp: rollup_cfg.genesis.l2_time,
-        },
-        l1_origin: BlockNumHash { number: 5, hash: l1_block_5_hash },
-        seq_num: 0,
-    };
+    let genesis_head = L2BlockInfo::from_l2_genesis(&rollup_cfg.genesis);
 
     // Update the harness rollup config so create_l2_sequencer uses the correct genesis.
     h.rollup_config = rollup_cfg.clone();
