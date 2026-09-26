@@ -26,7 +26,7 @@ use base_proof::{Hint, HintType, ROOTS_OF_UNITY};
 use base_proof_preimage::{PreimageKey, PreimageKeyType};
 use base_protocol::{BlockInfo, OutputRoot};
 use futures::FutureExt;
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, watch};
 use tracing::{debug, error, warn};
 
 use crate::{
@@ -59,6 +59,10 @@ struct PayloadWitnessPrefetchState {
     scheduled_block_order: VecDeque<u64>,
     scheduled_lookaheads: HashSet<B256>,
     scheduled_lookahead_order: VecDeque<B256>,
+    // Claims on a payload's RPC, keyed by parent hash, held by a prefetch (bounded by its semaphore)
+    // or by the foreground hint handler (one at a time). Waiters are woken when the sender in
+    // `InFlightGuard` is dropped.
+    in_flight: HashMap<B256, (B256, watch::Receiver<()>)>,
 }
 
 #[derive(Debug)]
@@ -91,17 +95,89 @@ impl PayloadWitnessPrefetcher {
         }
     }
 
+    #[cfg(test)]
     fn take_ready(&self, parent_block_hash: B256, payload_attributes_digest: B256) -> bool {
-        let mut state = self.lock_state();
-        let Some(ready_payload_attributes_digest) = state.ready.get(&parent_block_hash) else {
-            return false;
-        };
-        if *ready_payload_attributes_digest != payload_attributes_digest {
+        Self::take_ready_locked(
+            &mut self.lock_state(),
+            parent_block_hash,
+            payload_attributes_digest,
+        )
+    }
+
+    fn take_ready_locked(
+        state: &mut PayloadWitnessPrefetchState,
+        parent_block_hash: B256,
+        payload_attributes_digest: B256,
+    ) -> bool {
+        if state.ready.get(&parent_block_hash) != Some(&payload_attributes_digest) {
             return false;
         }
         state.ready.remove(&parent_block_hash);
         state.ready_order.retain(|hash| hash != &parent_block_hash);
         true
+    }
+
+    /// Serves the hint from a finished prefetch, waiting for one of the same payload that is still
+    /// in flight. Otherwise returns `Err` so the caller fetches the witness itself, holding a claim
+    /// (when none conflicts) that makes a prefetch starting later skip this payload.
+    ///
+    /// The ready check, in-flight check and claim happen under one lock, so a foreground request
+    /// and a prefetch can never both issue `debug_executePayload` for the same payload.
+    async fn take_ready_or_claim(
+        &self,
+        parent_block_hash: B256,
+        payload_attributes_digest: B256,
+    ) -> std::result::Result<(), Option<InFlightGuard>> {
+        loop {
+            let mut rx = {
+                let mut state = self.lock_state();
+                if Self::take_ready_locked(&mut state, parent_block_hash, payload_attributes_digest)
+                {
+                    return Ok(());
+                }
+                match state.in_flight.get(&parent_block_hash) {
+                    Some((digest, rx)) if *digest == payload_attributes_digest => rx.clone(),
+                    // A prefetch for different attributes can't serve this hint.
+                    Some(_) => return Err(None),
+                    None => {
+                        return Err(Some(self.claim_locked(
+                            &mut state,
+                            parent_block_hash,
+                            payload_attributes_digest,
+                        )));
+                    }
+                }
+            };
+            // The sender never sends; this resolves once the prefetch drops its claim, after
+            // marking the witness ready on success. On failure the next pass claims it instead.
+            let _ = rx.changed().await;
+        }
+    }
+
+    /// Claims the payload for a prefetch unless it is already ready or claimed.
+    fn mark_in_flight(
+        &self,
+        parent_block_hash: B256,
+        payload_attributes_digest: B256,
+    ) -> Option<InFlightGuard> {
+        let mut state = self.lock_state();
+        if state.ready.contains_key(&parent_block_hash)
+            || state.in_flight.contains_key(&parent_block_hash)
+        {
+            return None;
+        }
+        Some(self.claim_locked(&mut state, parent_block_hash, payload_attributes_digest))
+    }
+
+    fn claim_locked(
+        &self,
+        state: &mut PayloadWitnessPrefetchState,
+        parent_block_hash: B256,
+        payload_attributes_digest: B256,
+    ) -> InFlightGuard {
+        let (tx, rx) = watch::channel(());
+        state.in_flight.insert(parent_block_hash, (payload_attributes_digest, rx));
+        InFlightGuard { prefetcher: self.clone(), parent_block_hash, _tx: tx }
     }
 
     pub(crate) async fn schedule_lookahead(
@@ -367,6 +443,14 @@ impl PayloadWitnessPrefetcher {
             }
         };
 
+        // Lets a foreground request for the same payload wait for this prefetch instead of
+        // issuing a duplicate RPC. Dropped after `mark_ready`, or on any failure path.
+        let Some(_in_flight_guard) =
+            self.mark_in_flight(parent_block_hash, payload_attributes_digest)
+        else {
+            return false;
+        };
+
         let execute_payload_response =
             match base_metrics::time!(Metrics::l2_proof_node_rpc_latency_seconds(), {
                 fetch_payload_witness(
@@ -406,6 +490,20 @@ impl PayloadWitnessPrefetcher {
         self.mark_ready(parent_block_hash, payload_attributes_digest);
 
         true
+    }
+}
+
+#[derive(Debug)]
+struct InFlightGuard {
+    prefetcher: PayloadWitnessPrefetcher,
+    parent_block_hash: B256,
+    _tx: watch::Sender<()>,
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        // `_tx` is dropped after this runs, waking waiters once the entry is gone.
+        self.prefetcher.lock_state().in_flight.remove(&self.parent_block_hash);
     }
 }
 
@@ -1281,20 +1379,30 @@ async fn handle_hint_inner(
             let parent_block_hash = B256::from_slice(&hint.data.as_ref()[..32]);
             let encoded_payload_attributes = &hint.data[32..];
 
-            if let Some(prefetcher) = payload_witness_prefetcher.as_ref()
-                && prefetcher.take_ready(parent_block_hash, keccak256(encoded_payload_attributes))
-            {
-                // Prefetched preimages are written into the same proof-session KV store, which is
-                // append-only for the lifetime of a proof request. The guest emits this hint with
-                // serde_json::to_vec(BasePayloadAttributes), matching the digest stored by
-                // prefetch, so the ready cache does not retain or compare full transaction bytes.
-                debug!(
-                    target: HOST_SERVER_TARGET,
-                    ?parent_block_hash,
-                    "payload witness served from prefetch cache"
-                );
-                prefetcher.schedule_lookahead(Arc::clone(&kv), parent_block_hash).await;
-                return Ok(());
+            let mut _claim = None;
+            if let Some(prefetcher) = payload_witness_prefetcher.as_ref() {
+                match prefetcher
+                    .take_ready_or_claim(parent_block_hash, keccak256(encoded_payload_attributes))
+                    .await
+                {
+                    Ok(()) => {
+                        // Prefetched preimages are written into the same proof-session KV store,
+                        // which is append-only for the lifetime of a proof request. The guest emits
+                        // this hint with serde_json::to_vec(BasePayloadAttributes), matching the
+                        // digest stored by prefetch, so the ready cache does not retain or compare
+                        // full transaction bytes.
+                        debug!(
+                            target: HOST_SERVER_TARGET,
+                            ?parent_block_hash,
+                            "payload witness served from prefetch cache"
+                        );
+                        prefetcher.schedule_lookahead(Arc::clone(&kv), parent_block_hash).await;
+                        return Ok(());
+                    }
+                    // Held until this handler's own fetch finishes, so a prefetch of the same
+                    // payload skips instead of issuing a duplicate RPC.
+                    Err(claim) => _claim = claim,
+                }
             }
 
             let payload_attributes: BasePayloadAttributes =
@@ -1680,6 +1788,62 @@ mod tests {
         let error = handle_hint(hint, &cfg, &providers, kv).await.unwrap_err();
 
         assert!(matches!(error, HostError::Transport(_)));
+    }
+
+    #[tokio::test]
+    async fn test_payload_witness_foreground_waits_for_in_flight_prefetch() {
+        // No responses are queued, so any foreground RPC would fail the hint.
+        let l2 = provider_builder::<Base>().connect_mocked_client(Asserter::new());
+        let providers = test_providers(l2);
+        let prefetcher = test_prefetcher();
+        let kv: SharedKeyValueStore = Arc::new(RwLock::new(MemoryKeyValueStore::new()));
+        let mut cfg = test_cfg();
+        cfg.prover.enable_experimental_witness_endpoint = true;
+        let encoded_attributes = serde_json::to_vec(&BasePayloadAttributes::default()).unwrap();
+        let digest = keccak256(&encoded_attributes);
+        let hint = HintType::L2PayloadWitness
+            .with_data(&[TEST_HASH.as_slice(), encoded_attributes.as_slice()]);
+
+        let in_flight_guard = prefetcher.mark_in_flight(TEST_HASH, digest).unwrap();
+        let foreground = tokio::spawn({
+            let prefetcher = prefetcher.clone();
+            async move {
+                handle_hint_with_prefetchers(hint, &cfg, &providers, kv, Some(prefetcher), None)
+                    .await
+            }
+        });
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        assert!(!foreground.is_finished());
+
+        prefetcher.mark_ready(TEST_HASH, digest);
+        drop(in_flight_guard);
+
+        foreground.await.unwrap().unwrap();
+        assert!(prefetcher.lock_state().in_flight.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_payload_witness_foreground_claim_blocks_later_prefetch() {
+        let prefetcher = test_prefetcher();
+        let digest = keccak256(b"attributes");
+
+        // Nothing ready or in flight: the foreground claims the payload, so a prefetch that
+        // reaches its claim afterwards skips instead of issuing a second RPC.
+        let claim = prefetcher.take_ready_or_claim(TEST_HASH, digest).await.unwrap_err();
+        assert!(claim.is_some());
+        assert!(prefetcher.mark_in_flight(TEST_HASH, digest).is_none());
+
+        drop(claim);
+        assert!(prefetcher.lock_state().in_flight.is_empty());
+        let prefetch_claim = prefetcher.mark_in_flight(TEST_HASH, digest);
+        assert!(prefetch_claim.is_some());
+
+        // A finished prefetch also blocks a new prefetch claim.
+        drop(prefetch_claim);
+        prefetcher.mark_ready(TEST_HASH, digest);
+        assert!(prefetcher.mark_in_flight(TEST_HASH, digest).is_none());
     }
 
     #[tokio::test]
