@@ -350,7 +350,7 @@ pub struct RollupArgs {
     #[arg(long = "rollup.discovery.v4", default_value = "false")]
     pub discovery_v4: bool,
 
-    /// Optional headers to use when connecting to the sequencer.
+    /// Optional headers to use when connecting to the sequencer, each given as `name=value`.
     #[arg(long = "rollup.sequencer-headers", requires = "sequencer")]
     pub sequencer_headers: Vec<String>,
 
