@@ -220,15 +220,28 @@ impl ChallengerE2e {
             // checks covers disputes submitted after Path 3 completed.
             info!(window = ?config.quiet_window, "observing the fork after Path 3");
             tokio::time::sleep(config.quiet_window).await;
-            let after = Self::disputes_submitted(&config).await?;
-            ensure!(
-                after <= submitted + 1.0,
-                "the challenger submitted {} dispute(s) in the {:?} after Path 3 completed; \
-                 nothing on the fork was disputable, and a dispute that reverts leaves every \
-                 game state untouched",
-                after - submitted - 1.0,
-                config.quiet_window
-            );
+
+            // Only meaningful on the unraced path. A challenger that saw the
+            // staging window may legitimately have submitted a TEE attempt
+            // against the dual-proof shape — which fails on its unregistered key
+            // — and then a ZK fallback, and `ChallengeSubmitter` counts both. Two
+            // submissions is the correct Path 4 response to what it was shown, so
+            // holding it to Path 3's single dispute would fail a challenger that
+            // did nothing wrong.
+            if !raced {
+                let after = Self::disputes_submitted(&config).await?;
+                ensure!(
+                    after <= submitted + 1.0,
+                    "the challenger submitted {} dispute(s) in the {:?} after Path 3 completed; \
+                     nothing on the fork was disputable, and a dispute that reverts leaves every \
+                     game state untouched",
+                    after - submitted - 1.0,
+                    config.quiet_window
+                );
+            }
+
+            // Runs either way: a staging race is no licence to touch games this
+            // scenario never corrupted.
             Self::assert_bystanders_untouched(&verifier, &untouched).await?;
             return Ok(());
         }
@@ -612,7 +625,16 @@ impl ChallengerE2e {
         // game for reasons that have nothing to do with `InvalidZkProposal` — so
         // the caller abandons the scenario rather than drawing a conclusion from
         // it. Not a challenger failure: it classified exactly what it was shown.
-        let raced = Self::dual_proposals_detected(config).await? > dual_detected;
+        //
+        // Reading the counter now would be too early. The driver classifies a
+        // game, then awaits `validate_game` — a round trip to the L2 RPC — and
+        // only increments the counter once that returns (`driver.rs:250-301`).
+        // A scan that started before the nullify landed can therefore still be
+        // in `validate_game` here, and would be missed. The driver loop is
+        // sequential (`scan` → validate → process, then sleep), so waiting for
+        // `games_scanned_total` to advance twice means any such scan has run to
+        // completion and had its chance to increment.
+        let raced = Self::await_scans_drained(config, 2).await? > dual_detected;
 
         info!(
             game = %game.address,
@@ -760,6 +782,32 @@ impl ChallengerE2e {
             .with_context(|| format!("anvil_setStorageAt failed for verifier {verifier}"))?;
         ensure!(updated, "anvil_setStorageAt returned false for verifier {verifier}");
         Ok(())
+    }
+
+    /// Waits for `count` further scans to complete, then returns the
+    /// dual-proposal detection count.
+    ///
+    /// The driver's loop is sequential — scan, validate, process, sleep — so a
+    /// scan that has incremented `games_scanned_total` has already finished
+    /// processing everything the previous scan found. Waiting two scans out
+    /// therefore drains any classification that was mid-`validate_game` when
+    /// staging finished.
+    ///
+    /// Falls back to the last value read if the scans do not arrive inside the
+    /// dispute budget: the caller treats a higher count as "raced", and timing
+    /// out here should not be reported as a race.
+    async fn await_scans_drained(config: &Config, count: u64) -> Result<f64> {
+        let scanned = Scrape::fetch(&config.challenger_metrics_url)
+            .await?
+            .sum("base_challenger_games_scanned_total");
+        let target = scanned + count as f64;
+
+        Self::poll_until(config, config.dispute_timeout, "in-flight scans to drain", || async {
+            let scrape = Scrape::fetch(&config.challenger_metrics_url).await?;
+            Ok((scrape.sum("base_challenger_games_scanned_total") >= target)
+                .then(|| scrape.sum("base_challenger_invalid_dual_proposal_detected_total")))
+        })
+        .await
     }
 
     /// Times the challenger has classified a game as `InvalidDualProposal`.

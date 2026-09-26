@@ -153,9 +153,23 @@ nullification would clear the game while satisfying every assertion below — a
 green run that never reached `InvalidZkProposal`. But a challenger that scanned in
 there did nothing wrong; it classified exactly the shape it was shown. So the
 Path 3 claim is **abandoned with a warning**, not failed — asserting would turn a
-setup race into a recurring false failure on a job that runs every deploy. Every
-other check still applies, including the quiet window that already passed and the
-collateral-damage check. Re-run on a fresh fork.
+setup race into a recurring false failure on a job that runs every deploy. Re-run
+on a fresh fork.
+
+The counter is not read immediately. The driver classifies a game, then awaits
+`validate_game` — a round trip to the L2 RPC — and increments only once that
+returns, so a scan that began before the nullify landed can still be in flight.
+Its loop is sequential (scan, validate, process, sleep), so the driver waits for
+`games_scanned_total` to advance twice first: any such scan has then run to
+completion and had its chance to count. The wait happens after the nullify has
+confirmed, so it cannot widen the window it is measuring.
+
+On the raced path the one-dispute bound is also skipped. A challenger that saw
+the dual-proof shape may legitimately have tried a TEE nullification — which
+fails on its unregistered key — and then a ZK fallback, and both are counted at
+submission. Two submissions is the right answer to what it was shown. The
+collateral-damage check runs either way: a staging race is no licence to touch
+games this scenario never corrupted.
 
 The end state is ambiguous about how it was reached, so the path is confirmed
 positively too: `invalid_zk_proposal_detected_total` must have advanced.
