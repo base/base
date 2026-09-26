@@ -31,6 +31,9 @@ pub use rpc::BaseEngineApiBuilder;
 mod storage;
 pub use storage::BaseStorage;
 
+mod tree_validator;
+pub use tree_validator::{BaseTreeEngineValidator, BaseTreeEngineValidatorBuilder};
+
 pub mod version;
 pub use version::CLIENT_NAME;
 

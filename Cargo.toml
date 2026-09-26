@@ -395,6 +395,7 @@ reth-eth-wire-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2
 reth-payload-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.2.6" }
 reth-execution-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.6" }
 reth-execution-cache = { git = "https://github.com/base/reth", tag = "base-v2.5.2.6" }
+reth-storage-overlay = { git = "https://github.com/base/reth", tag = "base-v2.5.2.6" }
 reth-exex-test-utils = { git = "https://github.com/base/reth", tag = "base-v2.5.2.6" }
 reth-rpc-server-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.6" }
 reth-transaction-pool = { git = "https://github.com/base/reth", tag = "base-v2.5.2.6" }
