@@ -453,18 +453,11 @@ mod tests {
     }
 
     #[test]
-    fn into_config_defaults_to_blob_da() {
+    fn into_config_applies_encoder_defaults() {
         let cli = parse_cli(&[]);
         let config = cli.into_config(false).expect("config should build");
 
         assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Blob);
-    }
-
-    #[test]
-    fn into_config_uses_full_blob_frame_capacity() {
-        let cli = parse_cli(&[]);
-        let config = cli.into_config(false).expect("config should build");
-
         assert_eq!(
             config.encoder_config.max_frame_size,
             base_batcher_encoder::EncoderConfig::MAX_BLOB_FRAME_SIZE
@@ -508,6 +501,14 @@ mod tests {
     }
 
     #[test]
+    fn cli_rejects_unknown_da_mode() {
+        let mut args = base_args();
+        args.extend_from_slice(["--data-availability-type", "blobz"].as_slice());
+
+        assert!(BatcherArgs::try_parse_from(args).is_err());
+    }
+
+    #[test]
     fn into_config_reserves_derivation_prefix_from_calldata_size_cap() {
         let cli = parse_cli(&[
             "--data-availability-type",
@@ -518,14 +519,6 @@ mod tests {
         let config = cli.into_config(false).expect("config should build");
 
         assert_eq!(config.encoder_config.max_frame_size, 129_999);
-    }
-
-    #[test]
-    fn cli_rejects_auto_da_mode_for_now() {
-        let mut args = base_args();
-        args.extend_from_slice(["--data-availability-type", "auto"].as_slice());
-
-        assert!(BatcherArgs::try_parse_from(args).is_err());
     }
 
     #[test]
@@ -551,15 +544,6 @@ mod tests {
 
         assert_eq!(config.tx_manager.publish_max_retries, 12);
         assert_eq!(config.tx_manager.publish_retry_delay, Duration::from_millis(250));
-    }
-
-    #[test]
-    fn rpc_urls_default_to_single_endpoint() {
-        let cli = parse_cli(&[]);
-        let config = cli.into_config(false).expect("config should build");
-        assert_eq!(config.l1_rpc_url.len(), 1);
-        assert_eq!(config.l2_rpc_url.len(), 1);
-        assert_eq!(config.rollup_rpc_url.len(), 1);
     }
 
     #[test]

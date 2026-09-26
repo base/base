@@ -93,7 +93,7 @@ mod tests {
         let mut module = RpcModule::new(());
         module
             .register_method("admin_getBatcherStatus", |_, _, _| {
-                serde_json::json!({ "stopped": true, "in_flight": 0, "da_backlog_bytes": 7 })
+                serde_json::json!({ "stopped": true, "in_flight": 2, "da_backlog_bytes": 7 })
             })
             .unwrap();
         module.register_method("admin_stopBatcher", |_, _, _| ()).unwrap();
@@ -108,7 +108,7 @@ mod tests {
         let rpc = Url::parse(&format!("http://operator:secret@{address}")).unwrap();
 
         let status = BatcherClient::status(&rpc).await.unwrap();
-        assert_eq!(status, BatcherStatus { stopped: true, in_flight: 0, da_backlog_bytes: 7 });
+        assert_eq!(status, BatcherStatus { stopped: true, in_flight: 2, da_backlog_bytes: 7 });
 
         BatcherClient::stop(&rpc).await.unwrap();
 
@@ -128,17 +128,5 @@ mod tests {
         let rpc = Url::parse("https://operator:secret@batcher.example:6545/admin?key=abc").unwrap();
 
         assert_eq!(BatcherClient::display_url(&rpc), "https://batcher.example:6545");
-    }
-
-    #[test]
-    fn status_deserializes_the_admin_response() {
-        let status: BatcherStatus = serde_json::from_value(serde_json::json!({
-            "stopped": true,
-            "in_flight": 2,
-            "da_backlog_bytes": 1024,
-        }))
-        .unwrap();
-
-        assert_eq!(status, BatcherStatus { stopped: true, in_flight: 2, da_backlog_bytes: 1024 });
     }
 }

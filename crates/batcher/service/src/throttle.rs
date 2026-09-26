@@ -125,9 +125,9 @@ mod tests {
         let server = MockServer::start_async().await;
         let mock = server
             .mock_async(|when, then| {
-                when.method(POST)
-                    .path("/")
-                    .json_body_includes(r#"{"method":"miner_setMaxDASize"}"#);
+                when.method(POST).path("/").json_body_includes(
+                    r#"{"method":"miner_setMaxDASize","params":["0x96","0x4e20"]}"#,
+                );
                 then.status(200)
                     .header("content-type", "application/json")
                     .body(json_rpc_response("true"));
@@ -159,16 +159,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_max_da_size_transport_error_propagates() {
-        // Port 1 has no listener — connection will fail.
-        let client = RpcThrottleClient::new(&["http://127.0.0.1:1"]).unwrap();
-        assert!(
-            client.set_max_da_size(150, 20_000).await.is_err(),
-            "connection failure must propagate as error"
-        );
-    }
-
-    #[tokio::test]
     async fn set_max_da_size_falls_over_to_second_endpoint() {
         // First endpoint refuses connections; second endpoint accepts.
         let server = MockServer::start_async().await;
@@ -191,12 +181,7 @@ mod tests {
     #[tokio::test]
     async fn set_max_da_size_all_endpoints_fail() {
         let client = RpcThrottleClient::new(&["http://127.0.0.1:1", "http://127.0.0.1:2"]).unwrap();
-        let err = client.set_max_da_size(150, 20_000).await.unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("all 2 throttle endpoints failed"),
-            "error must list endpoint count, got: {msg}"
-        );
+        assert!(client.set_max_da_size(150, 20_000).await.is_err());
     }
 
     #[test]

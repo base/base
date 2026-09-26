@@ -121,12 +121,15 @@ mod tests {
         assert_eq!(channel.first(), Some(&BrotliLevel::CHANNEL_VERSION));
     }
 
+    /// A channel the size of a real one, compressible, decompresses to its input at the
+    /// lowest, default and highest quality.
     #[cfg(feature = "std")]
     #[test]
     fn brotli_channel_roundtrips_at_quality_bounds() {
-        let input = b"batch channel data";
-        for level in [BrotliLevel::Brotli0, BrotliLevel::Brotli11] {
-            let channel = level.compress_channel(input).unwrap();
+        let input: Vec<u8> = (0..100_000u32).flat_map(|i| (i % 251).to_le_bytes()).collect();
+        for level in [BrotliLevel::Brotli0, BrotliLevel::DEFAULT, BrotliLevel::Brotli11] {
+            let channel = level.compress_channel(&input).unwrap();
+            assert!(channel.len() < input.len(), "{level:?} did not compress");
             let decompressed = Brotli
                 .decompress(&channel[1..], RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize)
                 .unwrap();

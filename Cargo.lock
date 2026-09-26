@@ -3810,7 +3810,6 @@ dependencies = [
 name = "base-comp"
 version = "0.0.0"
 dependencies = [
- "alloy-primitives",
  "base-common-genesis",
  "base-protocol",
  "brotli",

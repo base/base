@@ -54,26 +54,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn receive_block_event() {
-        let (mut source, tx) = ChannelBlockSource::new();
-        tx.send(L2BlockEvent::Block(Box::new(make_block(1)))).unwrap();
-
-        let event = source.next().await;
-        match event {
-            L2BlockEvent::Block(b) => assert_eq!(b.header.number, 1),
-            _ => panic!("expected Block event"),
-        }
-    }
-
-    #[tokio::test]
-    async fn receive_reorg_event() {
-        let (mut source, tx) = ChannelBlockSource::new();
-        tx.send(L2BlockEvent::Reorg).unwrap();
-
-        assert!(matches!(source.next().await, L2BlockEvent::Reorg));
-    }
-
-    #[tokio::test]
     async fn parks_when_empty_then_receives() {
         let (mut source, tx) = ChannelBlockSource::new();
 

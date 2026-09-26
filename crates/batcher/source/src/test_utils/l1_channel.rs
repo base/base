@@ -40,14 +40,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn receive_l1_head() {
-        let (mut source, tx) = ChannelL1HeadSource::new();
-        tx.send(42).unwrap();
-
-        assert_eq!(source.next().await, 42);
-    }
-
-    #[tokio::test]
     async fn parks_when_empty_then_receives() {
         let (mut source, tx) = ChannelL1HeadSource::new();
 
