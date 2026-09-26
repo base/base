@@ -82,14 +82,6 @@ impl Recorded {
         })
     }
 
-    /// The submission ids passed to `requeue`, in order.
-    pub fn requeued(&self) -> Vec<SubmissionId> {
-        self.pick(|call| match call {
-            PipelineCall::Requeue(id) => Some(*id),
-            _ => None,
-        })
-    }
-
     /// The L1 heads the pipeline advanced to, in order.
     pub fn l1_heads(&self) -> Vec<u64> {
         self.pick(|call| match call {

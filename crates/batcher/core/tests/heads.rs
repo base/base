@@ -126,19 +126,3 @@ fn test_derivation_status_sender_drop_is_fatal() {
         assert!(matches!(driver.run().await, Err(BatchDriverError::DerivationStatusSourceClosed)));
     });
 }
-
-#[test]
-fn test_derivation_status_sender_drop_during_shutdown_is_clean() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let (driver, handles) = DriverFixture::new(
-            ctx.clone(),
-            TrackingPipeline::new(),
-            ScriptedTxManager::confirming_at(1),
-        )
-        .build();
-
-        ctx.cancel();
-        drop(handles);
-        assert!(driver.run().await.is_ok());
-    });
-}

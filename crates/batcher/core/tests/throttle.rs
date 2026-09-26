@@ -11,146 +11,44 @@ use base_batcher_core::{
         BlockStub, DriverFixture, ScriptedTxManager, TrackingPipeline, TrackingThrottleClient,
     },
 };
-use base_batcher_source::{L2BlockEvent, test_utils::ChannelBlockSource};
+use base_batcher_source::{
+    L2BlockEvent,
+    test_utils::{ChannelBlockSource, ChannelL1HeadSource},
+};
 use base_runtime::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
 };
 
-/// When the DA backlog exceeds the threshold, the driver must call
-/// `set_max_da_size` on the throttle client with reduced limits.
+/// Without a backlog, the upper limits are pushed once at startup, lifting any throttle left on
+/// the block builder, and not again on the later iterations that leave them unchanged.
 #[test]
-fn test_throttle_client_called_on_high_backlog() {
+fn test_upper_limits_are_pushed_once_without_backlog() {
     Runner::start(Config::seeded(0), |ctx| async move {
-        // 2 MB backlog — above the default 1 MB threshold.
-        let pipeline = TrackingPipeline::new().with_da_backlog(2_000_000);
+        let pipeline = TrackingPipeline::new();
+        let (l1_head_source, l1_head_tx) = ChannelL1HeadSource::new();
 
-        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
+        let config = ThrottleConfig::default();
+        let upper_limits = (config.tx_size_upper_limit, config.block_size_upper_limit);
+        let throttle = ThrottleController::new(config, ThrottleStrategy::Linear);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
         let (driver, _handles) =
             DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                .l1_head_source(l1_head_source)
                 .throttle(DaThrottle::new(throttle, Arc::new(throttle_client)))
                 .build();
         let handle = ctx.spawn(driver.run());
 
-        ctx.sleep(Duration::from_millis(50)).await;
+        // Each L1 head wakes the loop for another iteration with the same backlog.
+        for l1_head in 1..=3 {
+            l1_head_tx.send(l1_head).unwrap();
+        }
+        ctx.sleep(Duration::from_millis(10)).await;
         ctx.cancel();
         assert!(handle.await.unwrap().is_ok());
 
-        let calls = throttle_recorded.lock().unwrap();
-        assert!(!calls.is_empty(), "throttle client must be called when backlog is high");
-        let (max_tx_size, max_block_size) = calls[0];
-        assert!(
-            max_block_size < 130_000,
-            "max_block_size should be below upper limit when throttled, got {max_block_size}"
-        );
-        assert!(
-            max_tx_size < 20_000,
-            "max_tx_size should be below upper limit when throttled, got {max_tx_size}"
-        );
-    });
-}
-
-/// When the DA backlog is zero (below threshold), the driver must call
-/// `set_max_da_size` with the upper limits to reset any previous throttle.
-#[test]
-fn test_throttle_client_called_with_upper_limits_on_zero_backlog() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let pipeline = TrackingPipeline::new().with_da_backlog(0);
-
-        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
-        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
-
-        let (driver, _handles) =
-            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
-                .throttle(DaThrottle::new(throttle, Arc::new(throttle_client)))
-                .build();
-        let handle = ctx.spawn(driver.run());
-
-        ctx.sleep(Duration::from_millis(50)).await;
-        ctx.cancel();
-        assert!(handle.await.unwrap().is_ok());
-
-        let calls = throttle_recorded.lock().unwrap();
-        assert!(!calls.is_empty(), "throttle client must be called even with zero backlog");
-        let (max_tx_size, max_block_size) = calls[0];
-        assert_eq!(
-            max_block_size, 130_000,
-            "max_block_size should be the upper limit when not throttling"
-        );
-        assert_eq!(
-            max_tx_size, 20_000,
-            "max_tx_size should be the upper limit when not throttling"
-        );
-    });
-}
-
-/// `set_max_da_size` must be called exactly once when limits do not change
-/// between driver loop iterations.
-#[test]
-fn test_throttle_not_called_redundantly() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let pipeline = TrackingPipeline::new().with_da_backlog(0);
-
-        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
-        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
-
-        let (driver, _handles) =
-            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
-                .throttle(DaThrottle::new(throttle, Arc::new(throttle_client)))
-                .build();
-        let handle = ctx.spawn(driver.run());
-
-        // Run for 100ms to allow multiple loop iterations.
-        ctx.sleep(Duration::from_millis(100)).await;
-        ctx.cancel();
-        assert!(handle.await.unwrap().is_ok());
-
-        let calls = throttle_recorded.lock().unwrap();
-        assert_eq!(
-            calls.len(),
-            1,
-            "set_max_da_size must be called exactly once when limits do not change, got {}",
-            calls.len()
-        );
-    });
-}
-
-/// With the Step strategy and full intensity, when backlog is above the
-/// threshold, the driver must apply the lower DA limits.
-#[test]
-fn test_step_strategy_full_intensity_applies_lower_limits() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        // Backlog of 100 — above threshold of 1.
-        let pipeline = TrackingPipeline::new().with_da_backlog(100);
-
-        let config =
-            ThrottleConfig { threshold_bytes: 1, max_intensity: 1.0, ..Default::default() };
-        let throttle = ThrottleController::new(config, ThrottleStrategy::Step);
-        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
-
-        let (driver, _handles) =
-            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
-                .throttle(DaThrottle::new(throttle, Arc::new(throttle_client)))
-                .build();
-        let handle = ctx.spawn(driver.run());
-
-        ctx.sleep(Duration::from_millis(50)).await;
-        ctx.cancel();
-        assert!(handle.await.unwrap().is_ok());
-
-        let calls = throttle_recorded.lock().unwrap();
-        assert!(!calls.is_empty(), "throttle client must be called with Step strategy");
-        let (max_tx_size, max_block_size) = calls[0];
-        assert_eq!(
-            max_block_size, 2_000,
-            "Step strategy at full intensity must apply block_size_lower_limit"
-        );
-        assert_eq!(
-            max_tx_size, 150,
-            "Step strategy at full intensity must apply tx_size_lower_limit"
-        );
+        assert_eq!(*throttle_recorded.lock().unwrap(), [upper_limits]);
     });
 }
 
@@ -166,7 +64,10 @@ fn test_throttle_transitions_from_active_to_inactive() {
         let pipeline = TrackingPipeline::new().with_da_backlog(2_000_000);
         let backlog = Arc::clone(&pipeline.da_backlog_bytes);
 
-        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
+        let config = ThrottleConfig::default();
+        let lower_limits = (config.tx_size_lower_limit, config.block_size_lower_limit);
+        let upper_limits = (config.tx_size_upper_limit, config.block_size_upper_limit);
+        let throttle = ThrottleController::new(config, ThrottleStrategy::Linear);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
         let (driver, _handles) =
@@ -188,9 +89,8 @@ fn test_throttle_transitions_from_active_to_inactive() {
         ctx.cancel();
         assert!(handle.await.unwrap().is_ok());
 
-        let calls = throttle_recorded.lock().unwrap();
         // Twice the threshold is full intensity, so the lower limits first, then the upper
         // limits once the backlog is gone.
-        assert_eq!(*calls, [(150, 2_000), (20_000, 130_000)]);
+        assert_eq!(*throttle_recorded.lock().unwrap(), [lower_limits, upper_limits]);
     });
 }

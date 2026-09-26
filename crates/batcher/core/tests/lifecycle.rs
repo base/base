@@ -9,7 +9,9 @@ use std::{
 use async_trait::async_trait;
 use base_batcher_core::{
     BatchDriverError,
-    test_utils::{DriverFixture, Recorded, ScriptedTxManager, SubmissionStub, TrackingPipeline},
+    test_utils::{
+        DRAIN_TIMEOUT, DriverFixture, Recorded, ScriptedTxManager, SubmissionStub, TrackingPipeline,
+    },
 };
 use base_batcher_encoder::{ChannelLimit, StepError, SubmissionId};
 use base_batcher_source::{L2BlockEvent, UnsafeBlockSource};
@@ -32,12 +34,17 @@ fn test_drain_timeout_exits_with_in_flight_submissions() {
         let handle = ctx.spawn(driver.run());
 
         ctx.sleep(Duration::from_millis(20)).await;
+        let cancelled_at = ctx.now();
         ctx.cancel();
 
         let result = handle.await.unwrap();
         assert!(
             result.is_ok(),
             "driver must exit after drain timeout even with in-flight submissions"
+        );
+        assert!(
+            ctx.now().saturating_sub(cancelled_at) >= DRAIN_TIMEOUT,
+            "the driver must wait the drain timeout for the in-flight submission"
         );
         let recorded = recorded.lock().unwrap();
         assert_eq!(recorded.dequeued(), [SubmissionId(0)], "submission must have been dequeued");
@@ -71,7 +78,7 @@ fn test_shutdown_drains_in_flight_before_returning_flush_error() {
             "flush error must be returned after drain"
         );
         assert!(
-            ctx.now().saturating_sub(cancelled_at) >= Duration::from_millis(10),
+            ctx.now().saturating_sub(cancelled_at) >= DRAIN_TIMEOUT,
             "in-flight receipts must be drained before the flush error is returned"
         );
         let recorded = recorded.lock().unwrap();
@@ -115,22 +122,31 @@ fn test_driver_finishes_pending_work_before_waiting_for_events() {
 
         // One tx in flight at most: the second submission can only leave the pipeline once the
         // receipt of the first one has been processed.
-        let (driver, _handles) =
-            DriverFixture::new(ctx.clone(), pipeline, tx_manager.clone()).source(source).build();
+        let (driver, _handles) = DriverFixture::new(ctx.clone(), pipeline, tx_manager.clone())
+            .source(source)
+            .max_pending(1)
+            .build();
         let handle = ctx.spawn(driver.run());
 
         // Let the driver submit the first stub and wait on the source, then confirm that stub
         // so the receipt releases the second one.
         ctx.sleep(Duration::from_millis(1)).await;
+        let polls_before_receipt = dequeued_at_poll.lock().unwrap().len();
         tx_manager.confirm_next(1);
         ctx.sleep(Duration::from_millis(1)).await;
 
         ctx.cancel();
         assert!(handle.await.unwrap().is_ok());
-        assert_eq!(
-            *dequeued_at_poll.lock().unwrap(),
-            [1, 2],
-            "the submission released by the receipt must be sent before the driver waits again"
+        let polls = dequeued_at_poll.lock().unwrap();
+        let (before_receipt, after_receipt) = polls.split_at(polls_before_receipt);
+        assert!(
+            !before_receipt.is_empty() && before_receipt.iter().all(|&dequeued| dequeued == 1),
+            "the driver must wait on the source with the first submission in flight: {polls:?}"
+        );
+        assert!(!after_receipt.is_empty(), "the driver must wait on the source after the receipt");
+        assert!(
+            after_receipt.iter().all(|&dequeued| dequeued == 2),
+            "the submission released by the receipt must be sent before the driver waits again: {polls:?}"
         );
     });
 }

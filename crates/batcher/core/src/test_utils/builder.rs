@@ -73,6 +73,9 @@ pub struct DriverFixture<
     safe_head: BlockInfo,
 }
 
+/// How long a fixture-built driver waits for its in-flight submissions on cancellation.
+pub const DRAIN_TIMEOUT: Duration = Duration::from_millis(10);
+
 /// The sending sides of a fixture-built driver's channels.
 #[derive(Debug)]
 pub struct DriverHandles {
@@ -188,7 +191,7 @@ where
             BatchDriverConfig {
                 inbox: Address::ZERO,
                 max_pending_transactions: self.max_pending,
-                drain_timeout: Duration::from_millis(10),
+                drain_timeout: DRAIN_TIMEOUT,
                 force_blobs_when_throttling: true,
                 stopped: false,
             },
