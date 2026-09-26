@@ -371,6 +371,9 @@ impl BatcherService {
         let cancellation = runtime.token().clone();
         let mut background_tasks = Vec::new();
         self.config.encoder_config.validate()?;
+        if let Some(throttle) = &self.config.throttle {
+            throttle.validate()?;
+        }
 
         if self.config.poll_interval.is_zero() {
             eyre::bail!("poll_interval must be greater than zero");
@@ -756,6 +759,7 @@ mod tests {
     use std::sync::atomic::{AtomicU8, Ordering};
 
     use alloy_node_bindings::Anvil;
+    use base_batcher_core::ThrottleConfig;
 
     use super::*;
 
@@ -803,6 +807,22 @@ mod tests {
 
         assert!(
             error.to_string().contains("max_pending_transactions"),
+            "error should name the setting, got {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn setup_rejects_invalid_throttle_config() {
+        let throttle = ThrottleConfig { block_size_lower_limit: 0, ..ThrottleConfig::default() };
+        let config = BatcherConfig { throttle: Some(throttle), ..BatcherConfig::default() };
+
+        let error = BatcherService::new(config)
+            .setup(TokioRuntime::new())
+            .await
+            .expect_err("a throttle that can send a zero limit must not start");
+
+        assert!(
+            error.to_string().contains("block_size_lower_limit"),
             "error should name the setting, got {error}"
         );
     }
