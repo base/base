@@ -20,6 +20,7 @@ use alloy_primitives::{B64, B256};
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTxEnvelope, DepositReceiptExt};
 use base_execution_chainspec::BaseChainSpec;
+use base_protocol::BaseTimeScheduleError;
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 use reth_consensus_common::validation::{
     validate_against_parent_eip1559_base_fee, validate_against_parent_hash_number,
@@ -79,6 +80,13 @@ where
         receipt_root_bloom: Option<ReceiptRootBloom>,
         _block_access_list_hash: Option<B256>,
     ) -> Result<(), ConsensusError> {
+        // Staged execution calls this hook without calling `validate_block_pre_execution`.
+        validate_base_time_metadata(
+            &self.chain_spec,
+            block.timestamp(),
+            block.number(),
+            block.body().transactions(),
+        )?;
         validate_block_post_execution(block.header(), &self.chain_spec, result, receipt_root_bloom)
     }
 }
@@ -101,7 +109,6 @@ where
             header.number(),
             body.transactions(),
         )
-        .map_err(ConsensusError::other)
     }
 
     fn validate_block_pre_execution(&self, block: &SealedBlock<B>) -> Result<(), ConsensusError> {
@@ -127,8 +134,7 @@ where
             block.timestamp(),
             block.number(),
             block.body().transactions(),
-        )
-        .map_err(ConsensusError::other)?;
+        )?;
 
         // Check empty shanghai-withdrawals
         if self.chain_spec.is_canyon_active_at_timestamp(block.timestamp()) {
@@ -192,6 +198,20 @@ impl HeaderValidator<Header> for BaseBeaconConsensus {
         validate_header_extra_data(header, self.max_extra_data_size)?;
         validate_header_gas(header)?;
         validate_header_base_fee(header, &self.chain_spec)?;
+
+        if let Some(schedule) =
+            self.chain_spec.block_timestamp_schedule().map_err(ConsensusError::other)?
+            && header.number() != schedule.genesis_block_number
+            && schedule.is_denim_active_at_block(header.number())
+        {
+            let (expected, _) = schedule.block_timestamp_parts(header.number());
+            if header.timestamp() != expected {
+                return Err(ConsensusError::other(BaseTimeScheduleError::InvalidTimestamp {
+                    expected,
+                    actual: header.timestamp(),
+                }));
+            }
+        }
 
         // After Isthmus, every block header must carry `requests_hash = sha256("")`
         // (i.e. `EMPTY_REQUESTS_HASH`) because Base does not support EL-triggered execution
@@ -283,24 +303,167 @@ impl HeaderValidator<Header> for BaseBeaconConsensus {
 mod tests {
     use std::sync::Arc;
 
-    use alloy_consensus::{BlockBody, Eip658Value, Header, Receipt, TxEip7702, TxReceipt};
+    use alloy_consensus::{
+        BlockBody, Eip658Value, Header, Receipt, Sealable, TxEip7702, TxReceipt,
+    };
     use alloy_eips::{
         eip4895::Withdrawals,
         eip7685::{EMPTY_REQUESTS_HASH, Requests},
     };
     use alloy_primitives::{Address, B256, Bytes, Log, Signature, U256};
     use base_common_consensus::{
-        BasePrimitives, BaseReceipt, BaseTransactionSigned, BaseTypedTransaction,
-        HoloceneExtraData, JovianExtraData,
+        BaseBlock, BasePrimitives, BaseReceipt, BaseTransactionSigned, BaseTypedTransaction,
+        HoloceneExtraData, JovianExtraData, TxDeposit,
     };
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
+    use base_protocol::{BaseTimeScheduleError, BaseTimeUpdateTx};
     use reth_chainspec::{BaseFeeParams, EthChainSpec, ForkCondition};
     use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator};
     use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader, proofs};
     use reth_provider::BlockExecutionResult;
 
     use crate::BaseBeaconConsensus;
+
+    fn timestamp_schedule_consensus() -> BaseBeaconConsensus {
+        let mut chain_spec = BaseChainSpec::mainnet();
+        // A nonzero genesis and an activation between legacy slots catch offset and rounding
+        // mistakes: genesis #7 at 100, legacy interval 2s, Denim #10 at 106.000.
+        chain_spec.inner.genesis_header =
+            SealedHeader::seal_slow(Header { number: 7, timestamp: 100, ..Default::default() });
+        chain_spec.set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(105));
+        BaseBeaconConsensus::new(Arc::new(chain_spec))
+    }
+
+    fn timestamp_schedule_block(
+        number: u64,
+        timestamp: u64,
+        millis: u16,
+    ) -> RecoveredBlock<BaseBlock> {
+        let transactions = vec![
+            TxDeposit::default().seal_slow().into(),
+            BaseTimeUpdateTx::new(millis).unwrap().into_deposit_tx(number).into(),
+        ];
+        let block = BaseBlock {
+            header: Header {
+                number,
+                timestamp,
+                base_fee_per_gas: Some(1),
+                transactions_root: proofs::calculate_transaction_root(&transactions),
+                ..Default::default()
+            },
+            body: BlockBody { transactions, ..Default::default() },
+        };
+        RecoveredBlock::new_sealed(SealedBlock::seal_slow(block), vec![Address::ZERO; 2])
+    }
+
+    #[test]
+    fn denim_timestamp_schedule_rejects_invalid_imports() {
+        let consensus = timestamp_schedule_consensus();
+        for (number, timestamp, millis) in
+            [(10, 107, 0), (10, 104, 0), (11, 106, 400), (15, 106, 0)]
+        {
+            let block = timestamp_schedule_block(number, timestamp, millis);
+            assert!(
+                Consensus::<BaseBlock>::validate_body_against_header(
+                    &consensus,
+                    block.body(),
+                    block.sealed_header()
+                )
+                .is_err(),
+                "body import accepted an off-schedule block: {number}, {timestamp}.{millis:03}"
+            );
+            assert!(
+                consensus.validate_block_pre_execution(block.sealed_block()).is_err(),
+                "Engine pre-execution accepted an off-schedule block: {number}, {timestamp}.{millis:03}"
+            );
+            assert!(
+                FullConsensus::<BasePrimitives>::validate_block_post_execution(
+                    &consensus,
+                    &block,
+                    &BlockExecutionResult::default(),
+                    None,
+                    None,
+                )
+                .is_err(),
+                "staged execution accepted an off-schedule block: {number}, {timestamp}.{millis:03}"
+            );
+        }
+    }
+
+    #[test]
+    fn denim_timestamp_schedule_accepts_scheduled_imports() {
+        let consensus = timestamp_schedule_consensus();
+        for (number, timestamp, millis) in
+            [(9, 104, 0), (10, 106, 0), (11, 106, 200), (14, 106, 800), (15, 107, 0)]
+        {
+            let block = timestamp_schedule_block(number, timestamp, millis);
+            consensus.validate_header(block.sealed_header()).unwrap();
+            Consensus::<BaseBlock>::validate_body_against_header(
+                &consensus,
+                block.body(),
+                block.sealed_header(),
+            )
+            .unwrap();
+            consensus.validate_block_pre_execution(block.sealed_block()).unwrap();
+            FullConsensus::<BasePrimitives>::validate_block_post_execution(
+                &consensus,
+                &block,
+                &BlockExecutionResult::default(),
+                None,
+                None,
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn denim_timestamp_schedule_validates_header_seconds() {
+        let consensus = timestamp_schedule_consensus();
+        for (number, timestamp, expected) in [(10, 104, 106), (10, 107, 106), (15, 106, 107)] {
+            let block = timestamp_schedule_block(number, timestamp, 0);
+            let ConsensusError::Other(error) =
+                consensus.validate_header(block.sealed_header()).unwrap_err()
+            else {
+                panic!("expected a timestamp schedule error");
+            };
+            assert_eq!(
+                error.downcast_ref::<BaseTimeScheduleError>(),
+                Some(&BaseTimeScheduleError::InvalidTimestamp { expected, actual: timestamp })
+            );
+        }
+    }
+
+    #[test]
+    fn denim_timestamp_schedule_preserves_empty_genesis_and_pre_denim_blocks() {
+        let mut chain_spec = timestamp_schedule_consensus().chain_spec.as_ref().clone();
+        for (number, timestamp, activation) in [(7, 100, 0), (9, 104, 105)] {
+            chain_spec.set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(activation));
+            let consensus = BaseBeaconConsensus::new(Arc::new(chain_spec.clone()));
+            let block = RecoveredBlock::new_sealed(
+                SealedBlock::seal_slow(BaseBlock {
+                    header: Header {
+                        number,
+                        timestamp,
+                        base_fee_per_gas: Some(1),
+                        ..Default::default()
+                    },
+                    body: BlockBody::default(),
+                }),
+                vec![],
+            );
+            consensus.validate_header(block.sealed_header()).unwrap();
+            consensus.validate_block_pre_execution(block.sealed_block()).unwrap();
+            FullConsensus::<BasePrimitives>::validate_block_post_execution(
+                &consensus,
+                &block,
+                &BlockExecutionResult::default(),
+                None,
+                None,
+            )
+            .unwrap();
+        }
+    }
 
     fn mock_tx(nonce: u64) -> BaseTransactionSigned {
         let tx = TxEip7702 {

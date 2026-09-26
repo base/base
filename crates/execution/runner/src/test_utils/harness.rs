@@ -168,10 +168,14 @@ impl TestHarness {
         let new_block_number = latest_block.header.number + 1;
         let parent_beacon_block_root =
             latest_block.header.parent_beacon_block_root.unwrap_or(B256::ZERO);
-        let next_timestamp = latest_block.header.timestamp + BLOCK_TIME_SECONDS;
+        let chain_spec = self.node.blockchain_provider().chain_spec();
+        let next_timestamp = if let Some(schedule) = chain_spec.block_timestamp_schedule()? {
+            schedule.block_timestamp_parts(new_block_number).0
+        } else {
+            latest_block.header.timestamp + BLOCK_TIME_SECONDS
+        };
 
         let min_base_fee = latest_block.header.base_fee_per_gas.unwrap_or_default();
-        let chain_spec = self.node.blockchain_provider().chain_spec();
         let base_fee_params = chain_spec.base_fee_params_at_timestamp(next_timestamp);
         let eip_1559_params = ((base_fee_params.max_change_denominator as u64) << 32)
             | (base_fee_params.elasticity_multiplier as u64);
