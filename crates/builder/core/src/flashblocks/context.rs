@@ -6,7 +6,7 @@ use std::{
 
 use alloy_consensus::{Eip658Value, Transaction};
 use alloy_eips::{Encodable2718, Typed2718};
-use alloy_evm::Database;
+use alloy_evm::{Database, FromTxWithEncoded};
 #[cfg(any(test, feature = "test-utils"))]
 use alloy_primitives::B256;
 use alloy_primitives::{Address, BlockHash, Bytes, TxHash, U256};
@@ -16,7 +16,7 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{
     BaseReceipt, BaseTransactionSigned, CoinbaseTip, DepositReceipt, OpTxType,
 };
-use base_common_evm::{BaseReceiptBuilder, BaseSpecId, L1BlockInfo};
+use base_common_evm::{BaseReceiptBuilder, BaseSpecId, BaseTransaction, L1BlockInfo};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
@@ -1096,6 +1096,10 @@ impl BasePayloadBuilderCtx {
                 continue;
             }
 
+            // Reuse the pool's cached encoding and FastLZ size so the L1 fee charged during
+            // execution does not re-encode or recompress the transaction.
+            let encoded = BasePooledTx::encoded_2718(&tx).into_owned();
+            let fastlz_size = tx.fastlz_size();
             let tx = tx.into_consensus();
             let tx_hash = tx.tx_hash();
             let tx_uncompressed_size = tx.encode_2718_len() as u64;
@@ -1322,7 +1326,9 @@ impl BasePayloadBuilderCtx {
             let _tx_span_guard = tx_span.enter();
 
             let execution_start_time = Instant::now();
-            let ResultAndState { result, state } = match evm.transact(&tx) {
+            let mut tx_env = BaseTransaction::from_encoded_tx(tx.inner(), tx.signer(), encoded);
+            tx_env.enveloped_tx_fastlz_size = fastlz_size;
+            let ResultAndState { result, state } = match evm.transact(tx_env) {
                 Ok(res) => res,
                 Err(err) => {
                     if let Some(err) = err.as_invalid_tx_err() {
