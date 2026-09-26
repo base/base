@@ -5369,6 +5369,7 @@ dependencies = [
  "futures",
  "metrics",
  "proptest",
+ "reqwest 0.13.4",
  "revm",
  "rocksdb",
  "serde",
