@@ -42,6 +42,23 @@ pub fn tx_estimated_size_fjord_bytes(input: &[u8]) -> u64 {
     estimated_size.wrapping_div(1_000_000)
 }
 
+/// Number of slots in the `FastLZ` hash table (13-bit hash).
+const HTAB_LEN: usize = 8192;
+
+/// Inputs up to this length reuse a per-thread hash table instead of zeroing a fresh one.
+/// Zeroing dominates for typical (sub-KiB) transactions; above this size it is noise and the
+/// stale-slot check in the hot loop costs more than it saves.
+#[cfg(feature = "std")]
+const REUSED_HTAB_MAX_INPUT_LEN: usize = 32 * 1024;
+
+#[cfg(feature = "std")]
+std::thread_local! {
+    /// Reusable hash table and the offset ("base") stamped into slots by the current call.
+    /// Slots written by earlier calls hold values below `base` and read as empty.
+    static REUSED_HTAB: core::cell::RefCell<(u32, std::boxed::Box<[u32; HTAB_LEN]>)> =
+        core::cell::RefCell::new((0, std::boxed::Box::new([0; HTAB_LEN])));
+}
+
 /// Returns the length of the data after compression through `FastLZ`.
 ///
 /// The u32s match op-geth's Go port.
@@ -49,6 +66,35 @@ pub fn tx_estimated_size_fjord_bytes(input: &[u8]) -> u64 {
 /// <https://github.com/Vectorized/solady/blob/5315d937d79b335c668896d7533ac603adac5315/js/solady.js>
 /// <https://github.com/ethereum-optimism/op-geth/blob/647c346e2bef36219cc7b47d76b1cb87e7ca29e4/core/types/rollup_cost.go#L411>
 pub fn flz_compress_len(input: &[u8]) -> u32 {
+    // Positions are u32 like op-geth's, which only addresses the first `len mod 2^32` bytes.
+    // Truncating keeps the unchecked loads below in bounds for inputs of 4 GiB and more.
+    let input = &input[..input.len() as u32 as usize];
+    #[cfg(feature = "std")]
+    if input.len() <= REUSED_HTAB_MAX_INPUT_LEN {
+        // Falls back to a fresh table if the thread-local is being destroyed or already borrowed.
+        let reused = REUSED_HTAB.try_with(|cell| {
+            let (base, htab) = &mut *cell.try_borrow_mut().ok()?;
+            // Stamps range over `base..=base + len`; start over from a zeroed table on overflow.
+            let len = input.len() as u32;
+            if base.checked_add(len + 1).is_none() {
+                htab.fill(0);
+                *base = 0;
+            }
+            let size = compress_len(input, htab, *base);
+            *base += len + 1;
+            Some(size)
+        });
+        if let Ok(Some(size)) = reused {
+            return size;
+        }
+    }
+    compress_len(input, &mut [0; HTAB_LEN], 0)
+}
+
+/// `FastLZ` compressed length using `htab`, whose slots hold `base + position`. Slots below
+/// `base` are treated as empty (position 0), exactly like a freshly zeroed table.
+#[inline(always)]
+fn compress_len(input: &[u8], htab: &mut [u32; HTAB_LEN], base: u32) -> u32 {
     let mut idx: u32 = 2;
 
     let idx_limit: u32 = if input.len() < 13 { 0 } else { input.len() as u32 - 13 };
@@ -57,8 +103,6 @@ pub fn flz_compress_len(input: &[u8]) -> u32 {
 
     let mut size = 0;
 
-    let mut htab = [0; 8192];
-
     while idx < idx_limit {
         let mut r: u32;
         let mut distance: u32;
@@ -66,8 +110,8 @@ pub fn flz_compress_len(input: &[u8]) -> u32 {
         loop {
             let seq = u24(input, idx);
             let hash = hash(seq);
-            r = htab[hash as usize];
-            htab[hash as usize] = idx;
+            r = htab[hash as usize].saturating_sub(base);
+            htab[hash as usize] = base + idx;
             distance = idx - r;
             if idx >= idx_limit {
                 break;
@@ -91,8 +135,8 @@ pub fn flz_compress_len(input: &[u8]) -> u32 {
         let len = cmp(input, r + 3, idx + 3, idx_limit + 9);
         size = flz_match(len, size);
 
-        idx = set_next_hash(&mut htab, input, idx + len);
-        idx = set_next_hash(&mut htab, input, idx);
+        idx = set_next_hash(htab, input, idx + len, base);
+        idx = set_next_hash(htab, input, idx, base);
         anchor = idx;
     }
 
@@ -105,16 +149,25 @@ const fn literals(r: u32, size: u32) -> u32 {
     if r != 0 { size + r + 1 } else { size }
 }
 
-const fn cmp(input: &[u8], p: u32, q: u32, r: u32) -> u32 {
+/// Number of bytes compared at `p` and `q` up to and including the first mismatch, capped at
+/// `r - q`. Compares eight bytes at a time; `r` never exceeds `input.len() - 4`.
+fn cmp(input: &[u8], p: u32, q: u32, r: u32) -> u32 {
+    let (p, q, n) = (p as usize, q as usize, (r - q) as usize);
     let mut l = 0;
-    let mut r = r - q;
-    while l < r {
-        if input[(p + l) as usize] != input[(q + l) as usize] {
-            r = 0;
+    while l + 8 <= n {
+        let diff = u64_at(input, p + l) ^ u64_at(input, q + l);
+        if diff != 0 {
+            return (l + diff.trailing_zeros() as usize / 8 + 1) as u32;
+        }
+        l += 8;
+    }
+    while l < n {
+        if input[p + l] != input[q + l] {
+            return (l + 1) as u32;
         }
         l += 1;
     }
-    l
+    n as u32
 }
 
 const fn flz_match(l: u32, size: u32) -> u32 {
@@ -123,25 +176,42 @@ const fn flz_match(l: u32, size: u32) -> u32 {
     if l % 262 >= 6 { size + 3 } else { size + 2 }
 }
 
-fn set_next_hash(htab: &mut [u32; 8192], input: &[u8], idx: u32) -> u32 {
-    htab[hash(u24(input, idx)) as usize] = idx;
+fn set_next_hash(htab: &mut [u32; HTAB_LEN], input: &[u8], idx: u32, base: u32) -> u32 {
+    htab[hash(u24(input, idx)) as usize] = base + idx;
     idx + 1
 }
 
 const fn hash(v: u32) -> u16 {
-    let hash = (v as u64 * 2654435769) >> 19;
-    hash as u16 & 0x1fff
+    // The masked bits 19..32 of the product only depend on its low 32 bits.
+    (v.wrapping_mul(2654435769) >> 19) as u16 & 0x1fff
 }
 
+/// Little-endian 24-bit value at `idx`, read as one unchecked 4-byte load.
+///
+/// Every call site reads at `idx <= input.len() - 6`: scan positions stay at or below
+/// `idx_limit = len - 13`, match candidates `r` are earlier written positions (or 0), and `cmp`
+/// stops at `len - 4`, so the two post-match positions are at most `len - 7` and `len - 6`.
 fn u24(input: &[u8], idx: u32) -> u32 {
-    u32::from(input[idx as usize])
-        + (u32::from(input[(idx + 1) as usize]) << 8)
-        + (u32::from(input[(idx + 2) as usize]) << 16)
+    let idx = idx as usize;
+    debug_assert!(idx + 4 <= input.len());
+    // SAFETY: `idx + 4 <= input.len()` at every call site (see above); the read is unaligned.
+    let word = unsafe { input.as_ptr().add(idx).cast::<u32>().read_unaligned() };
+    u32::from_le(word) & 0x00ff_ffff
+}
+
+/// Little-endian 8 bytes at `idx`, read as one unchecked load. `cmp` only reads 8-byte words that
+/// end at or before its bound, which never exceeds `input.len() - 4`.
+fn u64_at(input: &[u8], idx: usize) -> u64 {
+    debug_assert!(idx + 8 <= input.len());
+    // SAFETY: `idx + 8 <= input.len()` at every call site (see above); the read is unaligned.
+    let word = unsafe { input.as_ptr().add(idx).cast::<u64>().read_unaligned() };
+    u64::from_le(word)
 }
 
 #[cfg(test)]
 mod tests {
     use hex_literal::hex;
+    use proptest::prelude::*;
     use rstest::rstest;
 
     use super::*;
@@ -176,5 +246,162 @@ mod tests {
     fn test_fjord_estimates_nonzero(#[case] input: &[u8]) {
         assert!(tx_estimated_size_fjord_bytes(input) > 0);
         assert!(data_gas_fjord(input) > 0);
+    }
+
+    /// The straightforward byte-at-a-time port (op-geth / solady) with a fresh table per call.
+    fn reference_compress_len(input: &[u8]) -> u32 {
+        let byte_u24 = |i: u32| {
+            let i = i as usize;
+            u32::from(input[i]) | u32::from(input[i + 1]) << 8 | u32::from(input[i + 2]) << 16
+        };
+        let mut htab = [0u32; HTAB_LEN];
+        let mut idx: u32 = 2;
+        let idx_limit = if input.len() < 13 { 0 } else { input.len() as u32 - 13 };
+        let (mut anchor, mut size) = (0, 0);
+        while idx < idx_limit {
+            let mut r: u32;
+            loop {
+                let seq = byte_u24(idx);
+                let h = hash(seq) as usize;
+                r = htab[h];
+                htab[h] = idx;
+                let distance = idx - r;
+                if idx >= idx_limit {
+                    break;
+                }
+                idx += 1;
+                if distance < 8192 && seq == byte_u24(r) {
+                    break;
+                }
+            }
+            if idx >= idx_limit {
+                break;
+            }
+            idx -= 1;
+            if idx > anchor {
+                size = literals(idx - anchor, size);
+            }
+            let (p, q) = (r + 3, idx + 3);
+            let mut len = 0;
+            while len < idx_limit + 9 - q {
+                len += 1;
+                if input[(p + len - 1) as usize] != input[(q + len - 1) as usize] {
+                    break;
+                }
+            }
+            size = flz_match(len, size);
+            idx += len;
+            for _ in 0..2 {
+                htab[hash(byte_u24(idx)) as usize] = idx;
+                idx += 1;
+            }
+            anchor = idx;
+        }
+        literals(input.len() as u32 - anchor, size)
+    }
+
+    /// Deterministic inputs mixing random bytes, zero runs, and repeated fragments, so both
+    /// literal and match paths (including long word-compared matches) are exercised.
+    fn mixed_input(seed: u64, len: usize) -> Vec<u8> {
+        let mut state = seed | 1;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut out = Vec::with_capacity(len);
+        while out.len() < len {
+            let run = (next() % 80) as usize + 1;
+            match next() % 3 {
+                0 => out.extend((0..run).map(|_| next() as u8)),
+                1 => out.extend(core::iter::repeat_n(0, run)),
+                _ if out.len() > run => {
+                    let start = (next() as usize) % (out.len() - run);
+                    out.extend_from_within(start..start + run);
+                }
+                _ => out.push(next() as u8),
+            }
+        }
+        out.truncate(len);
+        out
+    }
+
+    /// Builds an input from segments of random bytes, byte runs, and (possibly overlapping)
+    /// copies of earlier output, which drive both literal and match paths.
+    fn build_input(segments: &[(u8, usize, u64)]) -> Vec<u8> {
+        let mut out: Vec<u8> = Vec::new();
+        for &(kind, len, seed) in segments {
+            let mut state = seed | 1;
+            match kind {
+                0 => out.extend((0..len).map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    state as u8
+                })),
+                1 => out
+                    .extend(core::iter::repeat_n(if seed % 4 == 0 { 0 } else { seed as u8 }, len)),
+                _ if !out.is_empty() => {
+                    let start = seed as usize % out.len();
+                    for i in 0..len {
+                        out.push(out[start + i]);
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    proptest! {
+        /// A short sequence of inputs per case also exercises slots left by earlier calls.
+        #[test]
+        fn prop_flz_compress_len_matches_reference(
+            inputs in prop::collection::vec(
+                prop::collection::vec((0u8..3, 1usize..400, any::<u64>()), 0..120)
+                    .prop_map(|segments| build_input(&segments)),
+                1..4,
+            )
+        ) {
+            for input in &inputs {
+                prop_assert_eq!(flz_compress_len(input), reference_compress_len(input));
+            }
+        }
+    }
+
+    #[test]
+    fn test_flz_compress_len_matches_reference() {
+        // Sequential calls on one thread also exercise stale slots left by earlier inputs.
+        let lens = (0..600).chain([4095, 8191, 8192, 8193, 32 * 1024, 32 * 1024 + 1, 70_000]);
+        for (seed, len) in lens.enumerate() {
+            let input = mixed_input(seed as u64, len);
+            assert_eq!(flz_compress_len(&input), reference_compress_len(&input), "len {len}");
+        }
+        for len in [1000, 20_000, 131_072] {
+            let input = vec![7; len];
+            assert_eq!(flz_compress_len(&input), reference_compress_len(&input), "len {len}");
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_flz_compress_len_reused_table_overflow() {
+        let input = mixed_input(42, 2000);
+        let expected = reference_compress_len(&input);
+        REUSED_HTAB.with_borrow_mut(|(base, htab)| {
+            htab.fill(u32::MAX - 10);
+            *base = u32::MAX - 1000;
+        });
+        assert_eq!(flz_compress_len(&input), expected);
+        assert_eq!(flz_compress_len(&input), expected);
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_flz_compress_len_falls_back_while_table_borrowed() {
+        let input = mixed_input(7, 2000);
+        let expected = reference_compress_len(&input);
+        REUSED_HTAB.with_borrow(|_| assert_eq!(flz_compress_len(&input), expected));
     }
 }

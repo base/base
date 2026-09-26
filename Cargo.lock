@@ -3674,6 +3674,7 @@ dependencies = [
  "criterion",
  "hex-literal 1.1.0",
  "iai-callgrind",
+ "proptest",
  "rstest",
 ]
 
