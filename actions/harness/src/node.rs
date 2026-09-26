@@ -295,13 +295,6 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         self.safe_db.safe_head_at_l1(l1_block_num).await
     }
 
-    /// Return the total transaction counts for each derived L2 block.
-    ///
-    /// Each entry is `(l2_block_number, tx_count)`.
-    pub fn derived_tx_counts(&self) -> &[(u64, usize)] {
-        &self.derived_tx_counts
-    }
-
     /// Return the user transaction counts for each derived L2 block.
     ///
     /// Each entry is `(l2_block_number, user_tx_count)`. A count of `0` means

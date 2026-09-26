@@ -31,7 +31,7 @@ pub struct BatcherConfig {
     pub inbox_address: alloy_primitives::Address,
     /// Encoder configuration forwarded to [`BatchEncoder`].
     pub encoder: EncoderConfig,
-    /// L1 signer used to produce signed `TxEnvelope`s for production-mode DA tests.
+    /// L1 signer of the batcher's submissions.
     ///
     /// When changed via [`with_l1_signer`](BatcherConfig::with_l1_signer), the
     /// signer address becomes [`batcher_address`](BatcherConfig::batcher_address)
@@ -131,30 +131,37 @@ impl Batcher {
     ///
     /// # Panics
     ///
-    /// Panics if `config.encoder` is invalid, if `config.batcher_address` is not the address
-    /// of `config.l1_signer`, or if `config.initial_safe_head` is `None` and the first block is
-    /// the genesis block, which no batcher posts.
+    /// Panics if `config.encoder` is one production would refuse for `rollup_config` at the
+    /// timestamp of the block after the safe head, if `config.batcher_address` is not the
+    /// address of `config.l1_signer`, or if `config.initial_safe_head` is `None` and the first
+    /// block is the genesis block, which no batcher posts.
     pub fn new(
         l2_source: ActionL2Source,
         rollup_config: &RollupConfig,
         config: BatcherConfig,
     ) -> Self {
         let l1_chain_id = rollup_config.l1_chain_id;
-        let pipeline = BatchEncoder::new(Arc::new(rollup_config.clone()), config.encoder.clone())
-            .expect("valid encoder config");
-
         let blocks: Vec<BaseBlock> = l2_source.into_iter().collect();
-        // Only the number and hash of the safe head are ever read.
         let initial_safe_head = config.initial_safe_head.unwrap_or_else(|| {
             blocks.first().map_or_else(
                 || BlockInfo::from_l2_genesis(&rollup_config.genesis),
                 |block| BlockInfo {
                     hash: block.header.parent_hash,
                     number: block.header.number.checked_sub(1).expect("a block above genesis"),
+                    timestamp: block.header.timestamp - rollup_config.block_time,
                     ..Default::default()
                 },
             )
         });
+        // Production validates against the timestamp of the block after the safe head.
+        let next_l2_timestamp = initial_safe_head.timestamp + rollup_config.block_time;
+        config
+            .encoder
+            .validate_for_rollup_config(rollup_config, next_l2_timestamp)
+            .expect("an encoder config production accepts");
+        let pipeline = BatchEncoder::new(Arc::new(rollup_config.clone()), config.encoder.clone())
+            .expect("the config was validated");
+
         let chain = SharedL2Chain::new();
         for block in blocks {
             chain.push(block);

@@ -601,7 +601,7 @@ impl L1Miner {
 
     /// Enqueue a signed L1 transaction for inclusion in the next mined block.
     ///
-    /// Production-mode DA tests use this path so derivation receives the same
+    /// The batcher's signed submissions take this path, so derivation receives the same
     /// `TxEnvelope` shape it reads from an RPC-backed provider.
     pub fn submit_transaction(&mut self, tx: TxEnvelope) {
         self.submit_transaction_with_logs(tx, Vec::new());

@@ -6,26 +6,31 @@ use base_action_harness::{
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 
+/// The derivation channel timeout, in L1 blocks, of the channel-timeout test.
+const CHANNEL_TIMEOUT: u64 = 2;
+
 // ---------------------------------------------------------------------------
 // A. Channel timeout — first frame's inclusion span exceeds channel_timeout
 // ---------------------------------------------------------------------------
 
-/// When a channel's frames are spread across L1 blocks separated by more than
-/// `channel_timeout` blocks, the derivation pipeline discards the entire
-/// channel. The batcher must detect this and resubmit the affected L2 blocks
-/// in a new channel.
+/// A channel whose frames land more than `channel_timeout` L1 blocks apart is discarded by
+/// derivation, late frames included. How the batcher recovers from that is in `recovery.rs`,
+/// and the Granite value of the timeout in `upgrade_transitions.rs`.
 #[tokio::test]
-async fn channel_timeout_triggers_channel_invalidation() {
+async fn late_frames_of_a_timed_out_channel_are_ignored() {
     let batcher_cfg = BatcherConfig {
         encoder: EncoderConfig {
             da_type: DaType::Calldata,
             max_frame_size: 80,
+            // Below `CHANNEL_TIMEOUT`, as `validate_for_rollup_config` requires.
+            max_channel_duration: 1,
             ..EncoderConfig::default()
         },
         ..BatcherConfig::default()
     };
-    let rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_channel_timeout(2).build();
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .with_channel_timeout(CHANNEL_TIMEOUT)
+        .build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -39,9 +44,7 @@ async fn channel_timeout_triggers_channel_invalidation() {
     );
 
     // Encode block via Batcher — produces multiple frames with max_frame_size=80.
-    let mut source = ActionL2Source::new();
-    source.push(block.clone());
-    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(ActionL2Source::from_blocks([block]), &h.rollup_config, batcher_cfg);
     batcher.encode_only().await;
 
     let frame_count = batcher.pending_count();
@@ -61,12 +64,9 @@ async fn channel_timeout_triggers_channel_invalidation() {
 
     assert_eq!(node.l2_safe_number(), 0, "incomplete channel should not advance safe head");
 
-    // Mine `channel_timeout + 1 = 3` empty L1 blocks to expire the channel.
-    for _ in 0..3 {
+    // Mine `CHANNEL_TIMEOUT + 1` empty L1 blocks to expire the channel.
+    for _ in 0..=CHANNEL_TIMEOUT {
         h.mine_and_push(&chain);
-    }
-
-    for _ in 2..=4 {
         node.run_until_idle().await;
     }
 
@@ -78,100 +78,11 @@ async fn channel_timeout_triggers_channel_invalidation() {
 
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 0, "late frames after channel timeout must be ignored");
-
-    // Recovery: new Batcher (new BatchEncoder = new channel ID) with all frames in one L1 block.
-    let mut source2 = ActionL2Source::new();
-    source2.push(block);
-    let batcher2 = Batcher::new(source2, &h.rollup_config, batcher_cfg.clone());
-    batcher2.advance(&mut h.l1).await;
-    chain.push(h.l1.tip().clone());
-
-    let recovered = node.run_until_idle().await;
-
-    assert_eq!(recovered, 1, "resubmitted channel should derive L2 block 1");
-    assert_eq!(node.l2_safe_number(), 1, "safe head should recover to 1");
+    assert_eq!(node.l2_safe_number(), 0);
 }
 
 // ---------------------------------------------------------------------------
-// B. Channel timeout with recovery
-// ---------------------------------------------------------------------------
-
-/// After a channel times out, the batcher creates a fresh channel containing
-/// the same L2 blocks and submits it within the timeout window.
-#[tokio::test]
-async fn channel_timeout_recovery_resubmits_successfully() {
-    let batcher_cfg = BatcherConfig {
-        encoder: EncoderConfig {
-            da_type: DaType::Calldata,
-            max_frame_size: 80,
-            ..EncoderConfig::default()
-        },
-        ..BatcherConfig::default()
-    };
-    let rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_channel_timeout(2).build();
-    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
-
-    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-    let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block_with_single_transaction().await;
-
-    // Create node before any mining so all future blocks are pushed to chain.
-    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
-        &mut sequencer,
-        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
-    );
-
-    // Encode the block — will produce multiple frames with max_frame_size=80.
-    let mut source = ActionL2Source::new();
-    source.push(block.clone());
-    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-    batcher.encode_only().await;
-
-    let frame_count = batcher.pending_count();
-    assert!(
-        frame_count >= 2,
-        "expected multi-frame channel with max_frame_size=80, got {frame_count} frames",
-    );
-
-    // L1 block 1: submit only frame 0 — channel stays incomplete.
-    batcher.stage_n_frames(&mut h.l1, 1);
-    h.l1.mine_block();
-    chain.push(h.l1.tip().clone());
-    batcher.observe_l1_block(h.l1.tip()).await;
-
-    node.initialize().await;
-
-    // Mine channel_timeout + 1 = 3 empty blocks to expire the channel.
-    for _ in 0..3 {
-        h.mine_and_push(&chain);
-    }
-
-    for _ in 1..=h.l1.latest_number() {
-        node.run_until_idle().await;
-    }
-
-    assert_eq!(
-        node.l2_safe_number(),
-        0,
-        "channel should have timed out; safe head must remain at genesis"
-    );
-
-    // Recovery: new Batcher (new channel ID) submits all frames in one L1 block.
-    let mut source2 = ActionL2Source::new();
-    source2.push(block);
-    let batcher2 = Batcher::new(source2, &h.rollup_config, batcher_cfg.clone());
-    batcher2.advance(&mut h.l1).await;
-    chain.push(h.l1.tip().clone());
-
-    let recovered = node.run_until_idle().await;
-
-    assert_eq!(recovered, 1, "recovery channel should derive L2 block 1");
-    assert_eq!(node.l2_safe_number(), 1, "safe head should recover to 1");
-}
-
-// ---------------------------------------------------------------------------
-// C. Channel interleaving — frames from two channels interleaved in L1
+// B. Channel interleaving — frames from two channels interleaved in L1
 // ---------------------------------------------------------------------------
 
 /// Frames from two different channels are submitted to L1 in interleaved
@@ -241,7 +152,7 @@ async fn interleaved_channels_correctly_reassembled() {
 }
 
 // ---------------------------------------------------------------------------
-// D. Multi-block channel — frames split across consecutive L1 blocks
+// C. Multi-block channel — frames split across consecutive L1 blocks
 // ---------------------------------------------------------------------------
 
 /// A single channel whose frames are spread across two consecutive L1 blocks
@@ -306,97 +217,4 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
 
     assert_eq!(derived, 1, "multi-block channel must yield 1 L2 block");
     assert_eq!(node.l2_safe_number(), 1, "safe head must advance to 1");
-}
-
-// ---------------------------------------------------------------------------
-// E. Multi-frame channel with an empty L1 gap between submissions
-// ---------------------------------------------------------------------------
-
-/// Frames from a single channel are submitted to L1 in two separate L1 blocks
-/// with an **empty L1 block** between them. The derivation pipeline must
-/// correctly reassemble the channel across the gap.
-///
-/// Note: `encode_only()` ends with an admin flush that closes the channel
-/// immediately, so all frames are in the pending queue before any L1 head
-/// events arrive. This means this test exercises the multi-frame split
-/// submission scenario (frame 0 in block 1, empty block 2, rest in block 3),
-/// not duration-based channel closure — that would require the channel to
-/// remain open while L1 blocks are mined.
-#[tokio::test]
-async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
-    let batcher_cfg = BatcherConfig {
-        encoder: EncoderConfig {
-            da_type: DaType::Calldata,
-            max_frame_size: 80,
-            ..EncoderConfig::default()
-        },
-        ..BatcherConfig::default()
-    };
-    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
-    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
-
-    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-    let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block_with_single_transaction().await;
-
-    // Create node before any mining so all future blocks are pushed to chain.
-    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
-        &mut sequencer,
-        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
-    );
-
-    // Encode block — produces multiple frames with max_frame_size=80.
-    // The admin flush at the end of encode_only() closes the channel; frames become pending.
-    let mut source = ActionL2Source::new();
-    source.push(block);
-    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-    batcher.encode_only().await;
-
-    let frame_count = batcher.pending_count();
-    assert!(
-        frame_count >= 2,
-        "expected multi-frame channel with max_frame_size=80, got {frame_count} frames",
-    );
-
-    // L1 block 1: submit only frame 0.
-    batcher.stage_n_frames(&mut h.l1, 1);
-    h.l1.mine_block();
-    chain.push(h.l1.tip().clone());
-    batcher.observe_l1_block(h.l1.tip()).await;
-
-    node.initialize().await;
-    node.run_until_idle().await;
-
-    assert_eq!(
-        node.l2_safe_number(),
-        0,
-        "incomplete channel after block 1; safe head must stay at genesis"
-    );
-
-    // Mine an empty L1 block 2 and show it to the batcher. It holds no batcher transaction, so
-    // it only moves the driver's L1 head to 2. The remaining frames wait in `pending`.
-    h.l1.mine_block();
-    chain.push(h.l1.tip().clone());
-    batcher.observe_l1_block(h.l1.tip()).await;
-
-    // L1 block 3: submit the remaining frames.
-    let remaining = batcher.pending_count();
-    batcher.stage_n_frames(&mut h.l1, remaining);
-    h.l1.mine_block();
-    chain.push(h.l1.tip().clone());
-    batcher.observe_l1_block(h.l1.tip()).await;
-
-    // Signal node for all L1 blocks. Track the total L2 blocks derived
-    // to confirm exactly one block was produced across the 3-block span.
-    let mut total_derived = 0usize;
-    for _ in 2..=h.l1.latest_number() {
-        total_derived += node.run_until_idle().await;
-    }
-
-    assert_eq!(total_derived, 1, "exactly one L2 block must be derived across the 3-block span");
-    assert_eq!(
-        node.l2_safe_number(),
-        1,
-        "frames split across 3 L1 blocks (with an empty intermediate block) must derive L2 block 1"
-    );
 }

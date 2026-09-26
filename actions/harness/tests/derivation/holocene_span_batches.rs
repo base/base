@@ -288,28 +288,32 @@ async fn pre_holocene_past_singular_does_not_poison_channel() {
     assert_eq!(node.l2_safe_number(), 2);
 }
 
-/// Post-Holocene derivation accepts singular and span batches in the same L1 stream.
+/// Derivation accepts singular and span batches in the same L1 stream, before and after
+/// Holocene.
 #[tokio::test]
-async fn post_holocene_mixed_singular_and_span_batches_derive() {
+async fn mixed_singular_and_span_batches_derive_before_and_after_holocene() {
     let batcher_cfg = HoloceneSpanFixture::batcher_config();
-    let mut harness = HoloceneSpanFixture::post_holocene_harness(&batcher_cfg);
+    for mut harness in [
+        HoloceneSpanFixture::pre_holocene_harness(&batcher_cfg),
+        HoloceneSpanFixture::post_holocene_harness(&batcher_cfg),
+    ] {
+        let l1_chain = SharedL1Chain::from_blocks(harness.l1.chain().to_vec());
+        let mut sequencer = harness.create_l2_sequencer(l1_chain);
+        let mut blocks = sequencer.build_next_blocks_with_single_transactions(2).await;
+        let block_1 = blocks.remove(0);
+        let block_2 = blocks.remove(0);
 
-    let l1_chain = SharedL1Chain::from_blocks(harness.l1.chain().to_vec());
-    let mut sequencer = harness.create_l2_sequencer(l1_chain);
-    let mut blocks = sequencer.build_next_blocks_with_single_transactions(2).await;
-    let block_1 = blocks.remove(0);
-    let block_2 = blocks.remove(0);
+        let (mut node, chain) = harness.create_test_rollup_node_from_sequencer(
+            &mut sequencer,
+            SharedL1Chain::from_blocks(harness.l1.chain().to_vec()),
+        );
+        harness.submit_l2_blocks(&chain, batcher_cfg.clone(), vec![block_1]).await;
+        submit_span_fixture(&mut harness, &chain, &batcher_cfg, &[block_2], 100);
 
-    let (mut node, chain) = harness.create_test_rollup_node_from_sequencer(
-        &mut sequencer,
-        SharedL1Chain::from_blocks(harness.l1.chain().to_vec()),
-    );
-    harness.submit_l2_blocks(&chain, batcher_cfg.clone(), vec![block_1]).await;
-    submit_span_fixture(&mut harness, &chain, &batcher_cfg, &[block_2], 100);
+        node.initialize().await;
+        let derived = node.run_until_idle().await;
 
-    node.initialize().await;
-    let derived = node.run_until_idle().await;
-
-    assert_eq!(derived, 2, "singular and span batches should both derive");
-    assert_eq!(node.l2_safe_number(), 2, "safe head should include both batch formats");
+        assert_eq!(derived, 2, "singular and span batches should both derive");
+        assert_eq!(node.l2_safe_number(), 2, "safe head should include both batch formats");
+    }
 }

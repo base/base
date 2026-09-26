@@ -148,17 +148,12 @@ in-memory.
 
 ## ActionL2Source and BaseBlock
 
-`ActionL2Source` holds the `BaseBlock`s a batcher is created with, its L2 chain
-so far. Tests usually fill it with blocks
-produced by `L2Sequencer`, which uses the production L1 origin selector,
-attributes builder, and in-process engine client. Each block therefore
-contains a real L1-info deposit transaction and signed user transactions,
-rather than a batcher-only mock shape.
-
-`ActionTestHarness::create_l2_source(n)` is the shortcut for building a source
-with `n` sequenced blocks. Tests that need precise block contents can create
-an empty `ActionL2Source`, build blocks through `L2Sequencer`, and push them
-manually.
+`ActionL2Source` holds the blocks a batcher is created with, in order. Tests
+fill it with blocks produced by `L2Sequencer`, which uses the production L1
+origin selector, attributes builder, and in-process engine client. Each block
+therefore contains a real L1-info deposit transaction and signed user
+transactions, rather than a batcher-only mock shape. Blocks built later go to
+the running batcher with `push_block`.
 
 
 ## Batcher actor
@@ -178,7 +173,7 @@ for the driver to encode every block pushed so far, flushes the encoder, mines
 one L1 block, and shows it to the driver. For more exact scenarios, use
 `encode_only`, `stage_n_frames`, `observe_l1_block`, `mine_pending`,
 `fail_next_n_submissions` and `reorg`. Report derivation progress with
-`batcher.observe_derivation(node.derivation_status())`.
+`observe_derivation`.
 Every `async` method of `Batcher` returns once the driver is idle again, so the
 test can read the tx manager's queues right after.
 
@@ -186,28 +181,32 @@ test can read the tx manager's queues right after.
 ## Writing a test
 
 ```rust
-use base_action_harness::{ActionTestHarness, Batcher, BatcherConfig};
+use base_action_harness::{
+    ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
+    TestRollupConfigBuilder,
+};
 
 #[tokio::test]
 async fn example_action_test() {
-    let mut h = ActionTestHarness::default();
     let batcher_cfg = BatcherConfig::default();
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
-    // Step 1: mine some L1 context.
-    h.mine_l1_blocks(3);
-    assert_eq!(h.l1.latest_number(), 3);
-
-    // Step 2: build real L2 blocks and batch them into one L1 block.
-    let source = h.create_l2_source(5).await;
-    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg);
-    batcher.advance(&mut h.l1).await;
-
-    // Step 3: inspect the signed L1 submissions.
-    assert!(h.l1.latest_number() >= 4);
-    assert!(
-        !h.l1.tip().transactions.is_empty() || !h.l1.tip().blob_sidecars.is_empty(),
-        "mined block should contain signed batcher submissions"
+    // Build real L2 blocks and batch them into one L1 block.
+    let mut sequencer = h.create_l2_sequencer(SharedL1Chain::from_blocks(h.l1.chain().to_vec()));
+    let blocks = sequencer.build_next_blocks_with_single_transactions(3).await;
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
+    let source = blocks.into_iter().collect();
+    Batcher::new(source, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
+    chain.push(h.l1.tip().clone());
+
+    // Derivation reads them back.
+    node.initialize().await;
+    assert_eq!(node.run_until_idle().await, 3);
+    assert_eq!(node.l2_safe_number(), 3);
 }
 ```
 

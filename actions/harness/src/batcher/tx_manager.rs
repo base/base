@@ -315,6 +315,10 @@ impl TxManager for L1MinerTxManager {
 
 #[cfg(test)]
 mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use alloy_consensus::{Transaction, transaction::SignerRecoverable};
+    use alloy_eips::eip4844::Blob;
     use alloy_primitives::{Address, B256, Bytes, U256};
     use alloy_signer_local::PrivateKeySigner;
     use base_tx_manager::{TxCandidate, TxManager};
@@ -340,29 +344,57 @@ mod tests {
         }
     }
 
+    /// Every submission is signed by the batcher key and sent where its candidate says, the
+    /// driver's inbox: calldata as an EIP-1559 transaction, blobs as an EIP-4844 transaction
+    /// whose versioned hashes are those of the sidecars handed to the miner.
+    #[tokio::test]
+    async fn signed_submissions_go_to_the_candidate_recipient_from_the_batcher_key() {
+        let inbox = Address::repeat_byte(0x42);
+        let signer = TxManagerFixture::signer();
+        let manager = L1MinerTxManager::new(signer.clone(), Address::repeat_byte(0x43), 1);
+        let mut l1 = L1Miner::default();
+        manager.send_async(TxManagerFixture::candidate(inbox)).await;
+        let blobs = TxCandidate {
+            blobs: Arc::from(vec![Box::new(Blob::ZERO)]),
+            ..TxManagerFixture::candidate(inbox)
+        };
+        manager.send_async(blobs).await;
+        manager.stage_n_to_l1(&mut l1, 2);
+
+        let block = l1.mine_block();
+
+        let [calldata_tx, blob_tx] = block.transactions.as_slice() else {
+            panic!("expected two transactions, got {}", block.transactions.len());
+        };
+        for tx in [calldata_tx, blob_tx] {
+            assert_eq!(tx.recover_signer().expect("signed tx recovers"), signer.address());
+            assert_eq!(tx.to(), Some(inbox));
+        }
+        assert!(calldata_tx.is_eip1559());
+        assert!(blob_tx.is_eip4844());
+        let sidecar_hashes: Vec<_> = block.blob_sidecars.iter().map(|(hash, _)| *hash).collect();
+        assert_eq!(blob_tx.blob_versioned_hashes(), Some(sidecar_hashes.as_slice()));
+    }
+
+    /// A staged submission's handle stays unresolved through blocks that do not include it,
+    /// and resolves with the receipt of the block that does.
     #[tokio::test]
     async fn confirm_block_keeps_unincluded_staged_submission_polling() {
         let inbox = Address::repeat_byte(0x42);
         let manager = L1MinerTxManager::new(TxManagerFixture::signer(), inbox, 1);
         let mut l1 = L1Miner::default();
-
-        let handle = manager.send_async(TxManagerFixture::candidate(inbox)).await;
-        assert_eq!(manager.pending_count(), 1);
-        assert_eq!(manager.stage_n_to_l1(&mut l1, 1), 1);
-        assert_eq!(manager.pending_count(), 0);
-        assert_eq!(manager.staged_count(), 1);
+        let mut handle = manager.send_async(TxManagerFixture::candidate(inbox)).await;
+        manager.stage_n_to_l1(&mut l1, 1);
 
         let genesis = l1.tip().clone();
         manager.confirm_block(&genesis);
-        assert_eq!(manager.staged_count(), 1);
+        let unresolved = tokio::time::timeout(Duration::ZERO, &mut handle);
+        assert!(unresolved.await.is_err(), "no receipt from a block without the transaction");
 
         let block = l1.mine_block().clone();
         manager.confirm_block(&block);
-        assert_eq!(manager.staged_count(), 0);
-
         let receipt = handle.await.expect("staged transaction should confirm");
         assert_eq!(receipt.block_number, Some(block.number()));
-        assert_eq!(receipt.transaction_index, Some(0));
         assert_eq!(receipt.to, Some(inbox));
     }
 }
