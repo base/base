@@ -108,6 +108,12 @@ pub struct Eip8130Outcome {
     pub gas_limit: u64,
     /// Sender-intrinsic gas (intrinsic gas excluding payer authentication).
     pub sender_intrinsic: u64,
+    /// EIP-7623 sender-side calldata floor: the minimum sender gas the
+    /// transaction is metered regardless of how little its `calls` execute
+    /// (`>= sender_intrinsic`). `gas_limit` is guaranteed `>= sender_floor` (the
+    /// transaction is rejected otherwise), and settlement charges at least this
+    /// for the sender portion.
+    pub sender_floor: u64,
     /// Payer-authentication gas, metered on top of `gas_limit`.
     pub payer_auth: u64,
     /// Gas available to `calls` (`gas_limit - sender_intrinsic`).
@@ -119,6 +125,17 @@ pub struct Eip8130Outcome {
     /// Whether the sender's protocol (basic) account nonce must be bumped
     /// (`nonce_key == 0`).
     pub bump_protocol_nonce: bool,
+}
+
+impl Eip8130Outcome {
+    /// Applies the EIP-7623 floor to the sender portion of metered gas.
+    ///
+    /// Every path that reports or charges sender gas goes through this, so the
+    /// floor is applied the same way in estimation and settlement.
+    #[must_use]
+    pub const fn floored_sender_gas(&self, sender_gas: u64) -> u64 {
+        if sender_gas < self.sender_floor { self.sender_floor } else { sender_gas }
+    }
 }
 
 /// The result of dispatching an EIP-8130 transaction's `calls`.
@@ -524,9 +541,13 @@ impl Eip8130Executor {
                 }
             };
             let logs = evm.ctx_mut().journal_mut().take_logs();
+            // EIP-7623: the sender portion is floored at the calldata floor even
+            // on a revert, so the reported gas reflects the minimum a data-heavy
+            // transaction is metered.
             let gross = outcome
-                .sender_intrinsic
-                .saturating_add(final_calls.call_gas_spent)
+                .floored_sender_gas(
+                    outcome.sender_intrinsic.saturating_add(final_calls.call_gas_spent),
+                )
                 .saturating_add(outcome.payer_auth);
             Self::end_inspection(
                 evm,
@@ -588,14 +609,15 @@ impl Eip8130Executor {
         };
         let logs = evm.ctx_mut().journal_mut().take_logs();
 
-        // gas_limit = intrinsic + feasible_pool + payer_auth. The on-chain call
-        // pool at this limit is `gas_limit - intrinsic = feasible_pool + payer_auth`
-        // (payer authentication is billed on top of the limit, not drawn from the
-        // pool), so it is at least `feasible_pool` — the verified-feasible amount —
-        // and the limit also covers the net charge (which never exceeds it).
+        // gas_limit = max(intrinsic + feasible_pool, sender_floor) + payer_auth.
+        // The on-chain call pool at this limit is `gas_limit - intrinsic` (payer
+        // authentication is billed on top of the limit, not drawn from the pool),
+        // so it is at least `feasible_pool` — the verified-feasible amount — and
+        // the limit also covers the net charge (which never exceeds it). The
+        // EIP-7623 floor raises the returned limit for a data-heavy transaction so
+        // it is never rejected at admission (`gas_limit >= sender_floor`).
         let estimate_gas = outcome
-            .sender_intrinsic
-            .saturating_add(feasible_pool)
+            .floored_sender_gas(outcome.sender_intrinsic.saturating_add(feasible_pool))
             .saturating_add(outcome.payer_auth);
         Self::end_inspection(
             evm,
@@ -790,20 +812,20 @@ impl Eip8130Executor {
             //    three-reset worst case regardless of which slots are empty). The
             //    monotonic, body-derivable nonce first-use cost stays resolved.
             //    Execution reprices the discount precisely against real state.
-            let (sender_intrinsic, payer_auth, execution_gas_available) =
-                Self::resolve_execution_gas(
-                    signed,
-                    encoded,
-                    &IntrinsicGasInput::worst_case(sender, nonce_key_first_use),
-                    gas_limit,
-                )?;
+            let (intrinsic, execution_gas_available) = Self::resolve_execution_gas(
+                signed,
+                encoded,
+                &IntrinsicGasInput::worst_case(sender, nonce_key_first_use),
+                gas_limit,
+            )?;
 
             Ok(Eip8130Outcome {
                 sender,
                 payer,
                 gas_limit,
-                sender_intrinsic,
-                payer_auth,
+                sender_intrinsic: intrinsic.sender_intrinsic(),
+                sender_floor: intrinsic.sender_floor(),
+                payer_auth: intrinsic.payer_auth,
                 execution_gas_available,
                 effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
                 base_fee,
@@ -959,14 +981,13 @@ impl Eip8130Executor {
                 };
 
             // 4. Intrinsic gas under the EIP-8130 schedule.
-            let (sender_intrinsic, payer_auth, execution_gas_available) =
-                Self::resolve_execution_gas(
-                    signed,
-                    encoded,
-                    &IntrinsicGasInput::new(sender, nonce_key_first_use)
-                        .with_revoke_discount_slots(applied_tx.revoke_discount_slots),
-                    gas_limit,
-                )?;
+            let (intrinsic, execution_gas_available) = Self::resolve_execution_gas(
+                signed,
+                encoded,
+                &IntrinsicGasInput::new(sender, nonce_key_first_use)
+                    .with_revoke_discount_slots(applied_tx.revoke_discount_slots),
+                gas_limit,
+            )?;
 
             // 5. Fee caps and payer balance.
             FeeCheck::validate_fees(max_fee, max_priority, base_fee)
@@ -974,15 +995,16 @@ impl Eip8130Executor {
             let payer_balance = sctx
                 .with_account_info(payer, |info| Ok(info.balance))
                 .map_err(BaseTransactionError::eip8130)?;
-            FeeCheck::validate_balance(payer_balance, gas_limit, payer_auth, max_fee)
+            FeeCheck::validate_balance(payer_balance, gas_limit, intrinsic.payer_auth, max_fee)
                 .map_err(BaseTransactionError::eip8130)?;
 
             Ok(Eip8130Outcome {
                 sender,
                 payer,
                 gas_limit,
-                sender_intrinsic,
-                payer_auth,
+                sender_intrinsic: intrinsic.sender_intrinsic(),
+                sender_floor: intrinsic.sender_floor(),
+                payer_auth: intrinsic.payer_auth,
                 execution_gas_available,
                 effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
                 base_fee,
@@ -1545,11 +1567,17 @@ impl Eip8130Executor {
     /// `sender_intrinsic + call_gas_spent + payer_auth` — because refunds are
     /// credited after execution and are never available to the call pool during
     /// execution, so the gas limit must cover the full gross spend.
+    ///
+    /// The sender portion is floored at [`Eip8130Outcome::sender_floor`] per
+    /// EIP-7623: a data-heavy transaction whose `calls` execute cheaply still pays
+    /// the calldata floor. Mirrors revm's `eip7623_check_gas_floor`, which compares
+    /// the floor against the post-refund gas used. `payer_auth` is added on top and
+    /// is not part of the floor (it is metered outside `gas_limit`).
     fn billable_gas(outcome: &Eip8130Outcome, calls: &CallsResult) -> u64 {
         let gross_used = outcome.sender_intrinsic.saturating_add(calls.call_gas_spent);
         let refund = Self::capped_refund(calls.refund, gross_used);
         let net_used = gross_used.saturating_sub(refund);
-        net_used.saturating_add(outcome.payer_auth)
+        outcome.floored_sender_gas(net_used).saturating_add(outcome.payer_auth)
     }
 
     /// Applies the transaction's account-configuration changes and installs the
@@ -1652,23 +1680,32 @@ impl Eip8130Executor {
         sctx.set_code(address, bytecode).map_err(BaseTransactionError::eip8130)
     }
 
-    /// Computes the EIP-8130 intrinsic gas and the gas left for `calls`, returning
-    /// `(sender_intrinsic, payer_auth, execution_gas_available)`. Shared by both
-    /// pipelines so intrinsic pricing is computed identically for execution and
-    /// estimation. Errors when sender-intrinsic gas exceeds the gas limit.
+    /// Computes the EIP-8130 intrinsic gas and the gas left for `calls`.
+    /// Shared by both pipelines so intrinsic pricing is computed identically for
+    /// execution and estimation.
+    ///
+    /// Errors when `gas_limit` is below either the EIP-7623 sender floor or
+    /// sender-intrinsic gas. Both are checked: the floor dominates intrinsic gas
+    /// only while the floor rate is at least the standard data rate, and a
+    /// repriced schedule must be rejected rather than panic.
     fn resolve_execution_gas(
         signed: &base_common_consensus::Eip8130Signed,
         encoded: &[u8],
         input: &IntrinsicGasInput,
         gas_limit: u64,
-    ) -> Result<(u64, u64, u64), BaseTransactionError> {
+    ) -> Result<(IntrinsicGas, u64), BaseTransactionError> {
         let intrinsic =
             IntrinsicGas::compute(signed, encoded, input).map_err(BaseTransactionError::eip8130)?;
+        if gas_limit < intrinsic.sender_floor() {
+            return Err(BaseTransactionError::eip8130(
+                "EIP-8130 gas limit is below the EIP-7623 calldata floor",
+            ));
+        }
         let execution_gas_available =
             intrinsic.execution_gas_available(gas_limit).ok_or_else(|| {
-                BaseTransactionError::eip8130("EIP-8130 sender-intrinsic gas exceeds the gas limit")
+                BaseTransactionError::eip8130("EIP-8130 gas limit is below intrinsic gas")
             })?;
-        Ok((intrinsic.sender_intrinsic(), intrinsic.payer_auth, execution_gas_available))
+        Ok((intrinsic, execution_gas_available))
     }
 }
 
@@ -1701,6 +1738,24 @@ mod tests {
     const NOW: u64 = 1_000;
     const BASE_FEE: u64 = 1_000_000_000;
     const BENEFICIARY: Address = address!("0x00000000000000000000000000000000000000bb");
+
+    /// Extra execution gas the warmth probes burn via `JUMPDEST` no-ops (1 gas
+    /// each). These probes carry little calldata and do almost no work, so their
+    /// `calls` otherwise spend less than the EIP-7623 calldata-floor premium
+    /// (`6 gas/token`) — the floor would then clamp both the cold and the warm
+    /// outcome to the same value and mask the 2,100-vs-100 SLOAD delta the tests
+    /// measure. Padding execution above the floor keeps that delta observable.
+    const WARMTH_PROBE_PAD_GAS: u64 = 5_000;
+
+    /// `JUMPDEST * WARMTH_PROBE_PAD_GAS` (each a 1-gas straight-line no-op) then
+    /// `PUSH1 0; SLOAD; STOP`. The padding is *deployed* code, not transaction
+    /// bytes, so it raises only execution gas — never `tx_payload_cost` — and the
+    /// intrinsic breakdown is unchanged from the bare `60005400` probe.
+    fn warmth_probe_loader_code() -> Bytes {
+        let mut code = vec![0x5bu8; WARMTH_PROBE_PAD_GAS as usize];
+        code.extend_from_slice(&[0x60, 0x00, 0x54, 0x00]);
+        Bytes::from(code)
+    }
 
     fn signing_key(byte: u8) -> SigningKey {
         SigningKey::from_slice(&[byte; 32]).unwrap()
@@ -1817,6 +1872,49 @@ mod tests {
             .map_or_else(Bytes::new, Bytecode::original_bytes)
     }
 
+    /// The EIP-7623 sender-side calldata floor is applied to the settled charge:
+    /// a data-heavy transaction whose `calls` execute cheaply is billed at least
+    /// `sender_floor`, while a transaction that outspends the floor pays the
+    /// standard branch unchanged. `payer_auth` is added on top of both and is not
+    /// part of the floor.
+    #[test]
+    fn billable_gas_applies_the_eip7623_sender_floor() {
+        let base = Eip8130Outcome {
+            sender: Address::ZERO,
+            payer: Address::ZERO,
+            gas_limit: 1_000_000,
+            sender_intrinsic: 100_000,
+            sender_floor: 130_000,
+            payer_auth: 7_000,
+            execution_gas_available: 900_000,
+            effective: u128::from(BASE_FEE),
+            base_fee: u128::from(BASE_FEE),
+            bump_protocol_nonce: false,
+        };
+
+        // Cheap execution: sender_intrinsic + call_gas_spent (110_000) is below the
+        // 130_000 floor, so the sender portion is raised to the floor.
+        let cheap = CallsResult {
+            call_gas_spent: 10_000,
+            refund: 0,
+            reverted: false,
+            output: Bytes::new(),
+            phase_statuses: Vec::new(),
+        };
+        assert_eq!(
+            Eip8130Executor::billable_gas(&base, &cheap),
+            base.sender_floor + base.payer_auth,
+        );
+
+        // Heavy execution: sender_intrinsic + call_gas_spent (600_000) clears the
+        // floor, so the standard post-refund branch is billed unchanged.
+        let heavy = CallsResult { call_gas_spent: 500_000, ..cheap };
+        assert_eq!(
+            Eip8130Executor::billable_gas(&base, &heavy),
+            base.sender_intrinsic + heavy.call_gas_spent + base.payer_auth,
+        );
+    }
+
     #[test]
     fn eoa_self_pay_transaction_executes_and_charges_sender() {
         let key = signing_key(0x22);
@@ -1874,9 +1972,17 @@ mod tests {
         let key = signing_key(0x53);
         let sender = eoa_address(&key);
         let recipient = address!("0x00000000000000000000000000000000000000e3");
+        // Burns enough gas that both runs bill above the EIP-7623 calldata floor.
+        let burner = address!("0x00000000000000000000000000000000000000e5");
+        let mut burner_code = vec![0x5bu8; WARMTH_PROBE_PAD_GAS as usize];
+        burner_code.push(0x00);
+        let burner_code = Bytes::from(burner_code);
         let initial_balance = U256::from(10u64).pow(U256::from(18u64));
         let mut tx = base_tx();
-        tx.calls = vec![vec![Call { to: recipient, value: U256::from(1u64), data: Bytes::new() }]];
+        tx.calls = vec![vec![
+            Call { to: recipient, value: U256::from(1u64), data: Bytes::new() },
+            Call { to: burner, value: U256::ZERO, data: Bytes::new() },
+        ]];
         let signed = eoa_signed(tx, &key);
 
         let gas_used = |accounts: &[(Address, Bytes)]| {
@@ -1887,7 +1993,8 @@ mod tests {
         };
 
         assert_eq!(
-            gas_used(&[]) - gas_used(&[(recipient, bytes!("00"))]),
+            gas_used(&[(burner, burner_code.clone())])
+                - gas_used(&[(recipient, bytes!("00")), (burner, burner_code)]),
             Eip8130GasSchedule::NEW_ACCOUNT_COST
         );
     }
@@ -1907,6 +2014,7 @@ mod tests {
         let mut gas_limit = shortfall;
         let mut signed = eoa_signed(tx.clone(), &key);
         let mut sender_intrinsic = 0;
+        let mut sender_floor = 0;
         for _ in 0..8 {
             let mut trial = tx.clone();
             trial.gas_limit = gas_limit;
@@ -1917,6 +2025,7 @@ mod tests {
                 IntrinsicGas::compute(&signed, &encoded, &IntrinsicGasInput::new(sender, true))
                     .expect("intrinsic gas");
             sender_intrinsic = intrinsic.sender_intrinsic();
+            sender_floor = intrinsic.sender_floor();
             let next = sender_intrinsic.saturating_add(shortfall);
             if next == gas_limit {
                 break;
@@ -1930,9 +2039,11 @@ mod tests {
         let outcome = evm.transact_raw(into_base_tx(&signed)).expect("tx should be included");
 
         assert!(!outcome.result.is_success(), "phase should revert when creation gas does not fit");
+        // No call gas was spent, so the bill is sender-intrinsic gas raised to
+        // the EIP-7623 floor.
         assert_eq!(
             outcome.result.tx_gas_used(),
-            sender_intrinsic,
+            sender_intrinsic.max(sender_floor),
             "unspent call gas must not be billed"
         );
         assert!(outcome.result.tx_gas_used() < signed.tx().gas_limit);
@@ -2710,8 +2821,10 @@ mod tests {
         let sender = eoa_address(&key);
 
         let loader = address!("0x00000000000000000000000000000000000000c8");
-        // PUSH1 0, SLOAD, STOP
-        let loader_code = bytes!("60005400");
+        // JUMPDEST padding (see `warmth_probe_loader_code`) then PUSH1 0, SLOAD,
+        // STOP: the padding keeps execution above the EIP-7623 floor so the
+        // cold-vs-warm SLOAD delta below is not masked by the floor clamp.
+        let loader_code = warmth_probe_loader_code();
 
         let mut evm = evm_with_accounts(
             U256::from(10u64).pow(U256::from(18u64)),
@@ -2733,8 +2846,9 @@ mod tests {
         // payload EIP-2028 DA over the tx 1_716
         // nonce_key existing channel 0: COLD_SLOAD 2_100 + SSTORE_RESET 2_900 5_000
         // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
-        // call PUSH1 (3) + COLD SLOAD (2_100) + STOP 2_103
-        // total 28_919 (the call's zero value adds one 0x80 calldata byte)
+        // call JUMPDEST pad (WARMTH_PROBE_PAD_GAS) + PUSH1 (3) + COLD SLOAD (2_100) + STOP
+        // total 28_919 + WARMTH_PROBE_PAD_GAS (the call's zero value adds one 0x80
+        // calldata byte)
         let mut load_tx = base_tx();
         load_tx.nonce_sequence = 1;
         load_tx.calls = vec![vec![Call { to: loader, value: U256::ZERO, data: Bytes::new() }]];
@@ -2745,7 +2859,7 @@ mod tests {
 
         assert_eq!(
             load_outcome.result.gas().tx_gas_used(),
-            28_919,
+            28_919 + WARMTH_PROBE_PAD_GAS,
             "loader SLOAD must be COLD (2_100); a warm read (100) would be 2_000 \
              less, meaning tx 1's warmth leaked across the transaction boundary",
         );
@@ -2763,8 +2877,10 @@ mod tests {
         let sender = eoa_address(&key);
 
         let loader = address!("0x00000000000000000000000000000000000000c8");
-        // PUSH1 0, SLOAD, STOP
-        let loader_code = bytes!("60005400");
+        // JUMPDEST padding (see `warmth_probe_loader_code`) then PUSH1 0, SLOAD,
+        // STOP: the padding keeps each phase's execution above the EIP-7623 floor
+        // so the intra-transaction cold-vs-warm SLOAD delta is not masked.
+        let loader_code = warmth_probe_loader_code();
 
         let mut evm = evm_with_accounts(
             U256::from(10u64).pow(U256::from(18u64)),
@@ -2786,13 +2902,13 @@ mod tests {
         // payload EIP-2028 DA over the two-phase tx 1_888
         // nonce_key first use of channel 0: COLD_SLOAD 2_100 + SSTORE_SET 20_000 22_100
         // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
-        // call phase 0 PUSH1 (3) + COLD SLOAD (2_100) + STOP 2_103
-        // call phase 1 PUSH1 (3) + WARM SLOAD (100) + STOP 103
-        // total 46_294 (the two calls each carry a value word; a zero value adds
-        // one 0x80 calldata byte per call to the DA payload)
+        // call phase 0 JUMPDEST pad + PUSH1 (3) + COLD SLOAD (2_100) + STOP
+        // call phase 1 JUMPDEST pad + PUSH1 (3) + WARM SLOAD (100) + STOP
+        // total 46_294 + 2 * WARMTH_PROBE_PAD_GAS (the pad runs once per phase; the
+        // two calls each carry a value word, adding one 0x80 calldata byte per call)
         assert_eq!(
             outcome.result.gas().tx_gas_used(),
-            46_294,
+            46_294 + 2 * WARMTH_PROBE_PAD_GAS,
             "phase 1's SLOAD must be WARM (100): committed phase 0 warmed \
              (loader, slot 0). A cold read (2_100) would be 2_000 more, meaning \
              the committed phase's warmth failed to carry across phases",
@@ -2805,8 +2921,10 @@ mod tests {
         let sender = eoa_address(&key);
 
         let loader = address!("0x00000000000000000000000000000000000000c8");
-        // PUSH1 0, SLOAD, STOP
-        let loader_code = bytes!("60005400");
+        // JUMPDEST padding (see `warmth_probe_loader_code`) then PUSH1 0, SLOAD,
+        // STOP: the padding keeps execution above the EIP-7623 floor so the
+        // cold-vs-warm SLOAD delta below is not masked by the floor clamp.
+        let loader_code = warmth_probe_loader_code();
 
         let mut evm = evm_with_accounts(
             U256::from(10u64).pow(U256::from(18u64)),
@@ -2839,13 +2957,14 @@ mod tests {
         // payload EIP-2028 DA over the 123-byte tx 1_716
         // nonce_key first use of channel 0: COLD_SLOAD 2_100 + SSTORE_SET 20_000 22_100
         // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
-        // call PUSH1 (3) + SLOAD + STOP (0) 2_103
-        // total 46_019 (the call's zero value adds one 0x80 calldata byte)
+        // call JUMPDEST pad (WARMTH_PROBE_PAD_GAS) + PUSH1 (3) + COLD SLOAD (2_100) + STOP
+        // total 46_019 + WARMTH_PROBE_PAD_GAS (the call's zero value adds one 0x80
+        // calldata byte)
         assert_eq!(
             load_outcome.result.gas().tx_gas_used(),
-            46_019,
-            "loader SLOAD must be COLD (2_100); a warm read (100) would total \
-             44_019, meaning the discarded invalid tx leaked warmth",
+            46_019 + WARMTH_PROBE_PAD_GAS,
+            "loader SLOAD must be COLD (2_100); a warm read (100) would be 2_000 \
+             less, meaning the discarded invalid tx leaked warmth",
         );
     }
 

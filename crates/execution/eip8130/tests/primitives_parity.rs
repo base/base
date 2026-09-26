@@ -40,6 +40,9 @@ fn gas_primitives_match_evm_reference() {
     // (Istanbul) cost, not the EIP-7623 floor token.
     assert_eq!(Eip8130GasSchedule::TX_DATA_ZERO_BYTE, gas::STANDARD_TOKEN_COST);
     assert_eq!(Eip8130GasSchedule::TX_DATA_NONZERO_BYTE, gas::NON_ZERO_BYTE_DATA_COST_ISTANBUL);
+    // The EIP-7623 per-token floor an 8130 transaction pays over its serialized
+    // payload, pinned to revm's `TOTAL_COST_FLOOR_PER_TOKEN`.
+    assert_eq!(Eip8130GasSchedule::TX_TOTAL_COST_FLOOR_PER_TOKEN, gas::TOTAL_COST_FLOOR_PER_TOKEN);
     assert_eq!(Eip8130GasSchedule::CODE_DEPOSIT_PER_BYTE, gas::CODEDEPOSIT);
     assert_eq!(Eip8130GasSchedule::CREATE_BASE_COST, gas::CREATE);
 

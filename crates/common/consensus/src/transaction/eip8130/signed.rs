@@ -486,37 +486,61 @@ impl Eip8130Signed {
         out
     }
 
-    /// Folds `byte_cost` over the sender-billed EIP-2718 encoding: this
+    /// Folds `fold_byte` over the sender-billed EIP-2718 encoding: this
     /// transaction with `payer_auth` replaced by the empty string.
     ///
     /// When `encoded_2718` is this transaction's network encoding, the fold
     /// rewrites only the list header and the `payer_auth` suffix. The
     /// transaction body is not re-serialized. A mismatched `encoded_2718`
     /// falls back to [`Self::encoded_2718_without_payer_auth`].
-    pub fn fold_sender_billed_bytes(
+    pub fn fold_sender_billed_bytes<T>(
         &self,
         encoded_2718: &[u8],
-        mut byte_cost: impl FnMut(u8) -> u64,
-    ) -> u64 {
-        let fold = |bytes: &[u8], byte_cost: &mut dyn FnMut(u8) -> u64| {
-            bytes.iter().fold(0u64, |acc, &byte| acc.saturating_add(byte_cost(byte)))
-        };
+        init: T,
+        mut fold_byte: impl FnMut(T, u8) -> T,
+    ) -> T {
         if self.payer_auth.is_empty() {
-            return fold(encoded_2718, &mut byte_cost);
+            return encoded_2718.iter().copied().fold(init, fold_byte);
         }
-        if let Some(cost) = self.try_fold_sender_billed(encoded_2718, &mut byte_cost) {
-            return cost;
+        match self.try_fold_sender_billed(encoded_2718, init, &mut fold_byte) {
+            Ok(total) => total,
+            Err(init) => {
+                self.encoded_2718_without_payer_auth().iter().copied().fold(init, fold_byte)
+            }
         }
-        fold(&self.encoded_2718_without_payer_auth(), &mut byte_cost)
     }
 
-    /// Sender-billed fold of a verified EIP-2718 encoding. `None` when
-    /// `encoded_2718` is not this transaction.
-    fn try_fold_sender_billed(
+    /// Sender-billed fold of a verified EIP-2718 encoding. `Err(init)` when
+    /// `encoded_2718` is not this transaction, so the caller can fall back
+    /// without dropping the accumulator.
+    fn try_fold_sender_billed<T>(
         &self,
         encoded_2718: &[u8],
-        byte_cost: &mut impl FnMut(u8) -> u64,
-    ) -> Option<u64> {
+        init: T,
+        fold_byte: &mut impl FnMut(T, u8) -> T,
+    ) -> Result<T, T> {
+        let Some((type_byte, header_buf, header_len, body)) =
+            self.sender_billed_parts(encoded_2718)
+        else {
+            return Err(init);
+        };
+
+        let mut total = fold_byte(init, type_byte);
+        for &byte in &header_buf[..header_len] {
+            total = fold_byte(total, byte);
+        }
+        for &byte in body {
+            total = fold_byte(total, byte);
+        }
+        Ok(fold_byte(total, 0x80))
+    }
+
+    /// Header rewrite and body slice for the sender-billed encoding.
+    /// `None` when `encoded_2718` is not this transaction.
+    fn sender_billed_parts<'a>(
+        &self,
+        encoded_2718: &'a [u8],
+    ) -> Option<(u8, [u8; 9], usize, &'a [u8])> {
         let (&type_byte, rest) = encoded_2718.split_first()?;
         if type_byte != Eip8130Constants::EIP8130_TX_TYPE {
             return None;
@@ -543,15 +567,7 @@ impl Eip8130Signed {
             cursor.len()
         };
         let header_len = header_buf.len() - remaining;
-
-        let mut total = byte_cost(type_byte);
-        for &byte in &header_buf[..header_len] {
-            total = total.saturating_add(byte_cost(byte));
-        }
-        for &byte in body {
-            total = total.saturating_add(byte_cost(byte));
-        }
-        Some(total.saturating_add(byte_cost(0x80)))
+        Some((type_byte, header_buf, header_len, body))
     }
 
     /// Whether `encoded` is the canonical RLP string for `raw`.
