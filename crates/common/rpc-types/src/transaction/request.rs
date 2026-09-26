@@ -7,7 +7,7 @@ use alloy_eips::eip7702::SignedAuthorization;
 #[cfg(feature = "network")]
 use alloy_network::TransactionBuilder;
 use alloy_network_primitives::TransactionBuilder7702;
-use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxKind, U256};
+use alloy_primitives::{Address, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, TransactionInput, TransactionRequest};
 use base_common_consensus::{
     AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, Eip8130Constants, Eip8130Contracts,
@@ -115,7 +115,7 @@ pub struct Eip8130RequestFields {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Bytes>,
     /// The EIP-8130 sender account the batch dispatches from — the wire-level
-    /// `sender` identity that drives actor resolution and policy lookup.
+    /// `sender` identity that drives actor resolution.
     /// Interchangeable with the standard `from`: the estimate
     /// resolves the account as `sender` or `from`, and rejects a request where
     /// both are present but disagree, or where neither is set, as
@@ -158,24 +158,10 @@ pub struct Eip8130RequestFields {
     /// delegate authenticator, is rejected as `INVALID_PARAMS` rather than priced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer_auth: Option<Bytes>,
-    /// Optional acting-actor hint for simulation. Estimation never recovers a
-    /// signature, so without this hint the simulate path publishes the account's
-    /// self-actor to the `TxContext` precompile — which makes policy-gated
-    /// session-key calls look up the wrong policy and revert. When set, the
-    /// simulate path publishes this actor id (and resolves its policy) after
-    /// applying `account_changes`, so an actor authorized in the same estimate
-    /// request is visible. Ignored on the verifying execution path.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sender_actor_id: Option<B256>,
 }
 
 impl Eip8130RequestFields {
     /// Whether any field that defines an EIP-8130 request is present.
-    ///
-    /// [`Self::sender_actor_id`] is excluded: it is a simulation-only auxiliary
-    /// hint about an already-8130 request, not an indicator of one. A stray
-    /// `senderActorId` on a plain transaction is therefore ignored rather than
-    /// routing the request onto the AA simulation path.
     pub const fn is_some(&self) -> bool {
         self.nonce_key.is_some()
             || self.account_changes.is_some()
@@ -600,21 +586,5 @@ mod tests {
         assert_eq!(calls[0].len(), 1);
         // The base fields still deserialize into the inner request.
         assert_eq!(req.as_ref().max_fee_per_gas, Some(5));
-    }
-
-    #[test]
-    fn sender_actor_id_alone_does_not_mark_request_as_eip8130() {
-        // `senderActorId` is metadata about an 8130 request, not a defining
-        // field — a lone hint must not route a plain request onto the AA path.
-        let json = r#"{
-            "from":"0x0000000000000000000000000000000000000001",
-            "to":"0x0000000000000000000000000000000000000002",
-            "senderActorId":"0x30df39d5edcf9ed82b6d77d27bff1192ac265918000000000000000000000000"
-        }"#;
-        let req: BaseTransactionRequest = serde_json::from_str(json).unwrap();
-        assert!(
-            req.as_eip8130().is_none(),
-            "senderActorId alone must not classify the request as EIP-8130",
-        );
     }
 }

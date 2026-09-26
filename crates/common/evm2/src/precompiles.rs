@@ -120,7 +120,7 @@ impl BaseEvmTypes {
     /// - **Isthmus** caps the BLS12-381 G1/G2 MSM and pairing (`0x0c`/`0x0e`/`0x0f`) inputs;
     ///   **Jovian** tightens those caps.
     ///
-    /// The Beryl/Cobalt dynamic precompiles (B20 factory, registries, `TxContext`, `NonceManager`)
+    /// The Beryl/Cobalt dynamic precompiles (B20 factory, registries, `NonceManager`)
     /// remain follow-up work.
     pub fn precompiles(spec: BaseSpecId) -> Precompiles<Self> {
         let upgrade = spec.upgrade();

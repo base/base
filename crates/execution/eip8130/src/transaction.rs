@@ -727,7 +727,6 @@ mod tests {
             resolved: ResolvedActor {
                 actor_id: actor_id(account),
                 scope: Eip8130Constants::SCOPE_OPERATOR,
-                policy_target: Address::ZERO,
                 expiry: 0,
             },
         };
