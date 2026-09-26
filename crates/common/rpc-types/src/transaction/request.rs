@@ -10,8 +10,7 @@ use alloy_network_primitives::TransactionBuilder7702;
 use alloy_primitives::{Address, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, TransactionInput, TransactionRequest};
 use base_common_consensus::{
-    AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, Eip8130Constants, Eip8130Contracts,
-    TxDeposit,
+    AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, Eip8130Constants, TxDeposit,
 };
 use serde::{Deserialize, Serialize};
 
@@ -19,19 +18,20 @@ use crate::Transaction;
 
 /// Named EIP-8130 authenticator selectors.
 ///
-/// [`Self::Secp256k1`] sizes the default authorization when a blob is absent
-/// and is the only selector launch-wire simulation prices. P256, `WebAuthn`, and
-/// the delegate authenticator are rejected by `eth_call` / `eth_estimateGas`,
-/// matching txpool admission.
+/// Estimation never verifies a signature: the scheme only selects which
+/// enshrined authenticator the intrinsic-gas schedule charges (the
+/// authenticator's execution gas plus the calldata cost of its authentication
+/// payload), and provides the default secp256k1 authorization used when a
+/// blob is absent. With the Keystore removed, secp256k1 is the only enshrined
+/// authenticator on the launch wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Eip8130AuthScheme {
     /// secp256k1 — the k1 authenticator (also the absent-blob default).
+    ///
+    /// With the Keystore removed, secp256k1 is the only enshrined authenticator
+    /// on the launch wire.
     Secp256k1,
-    /// P-256 (secp256r1) authenticator.
-    P256,
-    /// `WebAuthn` authenticator (P-256 over `authenticatorData || clientDataJSON`).
-    WebAuthn,
 }
 
 impl Eip8130AuthScheme {
@@ -41,8 +41,6 @@ impl Eip8130AuthScheme {
     pub const fn authenticator(self) -> Address {
         match self {
             Self::Secp256k1 => Eip8130Constants::K1_AUTHENTICATOR,
-            Self::P256 => Eip8130Contracts::P256_AUTHENTICATOR,
-            Self::WebAuthn => Eip8130Contracts::WEBAUTHN_AUTHENTICATOR,
         }
     }
 
@@ -55,21 +53,13 @@ impl Eip8130AuthScheme {
     pub const fn default_data_len(self) -> usize {
         match self {
             Self::Secp256k1 => 65,
-            Self::P256 => 128,
-            Self::WebAuthn => 256,
         }
     }
 
     /// Every variant, in declaration order. The authoritative list for
-    /// exhaustively handling every flat leaf scheme (e.g. building a default
-    /// stub) — consult this rather than re-deriving the variant set by hand,
-    /// so a new variant can't silently go unhandled. See the
-    /// `eip8130_auth_scheme_all_lists_every_variant` test for the
-    /// compile-time guard that keeps this in sync with the enum.
-    ///
-    /// Simulation prices only [`Self::Secp256k1`]. The other variants name
-    /// authenticators the launch wire rejects.
-    pub const ALL: [Self; 3] = [Self::Secp256k1, Self::P256, Self::WebAuthn];
+    /// exhaustively handling every scheme — consult this rather than
+    /// re-deriving the variant set by hand.
+    pub const ALL: [Self; 1] = [Self::Secp256k1];
 }
 
 /// EIP-8130 account-abstraction fields layered onto a standard
@@ -133,10 +123,7 @@ pub struct Eip8130RequestFields {
     ///
     /// - A bare secp256k1 signature prices the default-EOA path: the account
     ///   authenticates with a k1 key, exactly as for a 1559 transaction.
-    /// - `authenticator(20) || data` prefixed with the native k1 authenticator
-    ///   prices the configured-account path.
-    /// - A prefix that names P256, `WebAuthn`, or the delegate authenticator is
-    ///   rejected, matching txpool admission.
+    /// - `K1_AUTHENTICATOR(20) || data` prices the named-account path.
     ///
     /// An absent blob defaults by intent: a declared `sender` synthesizes a
     /// k1-prefixed configured-account authorization; a `from`-only request
@@ -154,9 +141,9 @@ pub struct Eip8130RequestFields {
     /// Raw payer authentication blob (`authenticator(20) || data`) whose shape
     /// is priced when a `payer` is declared. Absent defaults to a representative
     /// secp256k1 payer authorization. Unlike `sender_auth`, a supplied blob is
-    /// always the prefixed form and its leading 20 bytes must be the native k1
-    /// authenticator. Any other selector, including P256, `WebAuthn`, and the
-    /// delegate authenticator, is rejected as `INVALID_PARAMS` rather than priced.
+    /// always the prefixed form and its leading 20 bytes must be the native
+    /// `K1_AUTHENTICATOR` selector; any other selector is rejected as
+    /// `INVALID_PARAMS` rather than priced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer_auth: Option<Bytes>,
 }
@@ -545,9 +532,7 @@ mod tests {
                 "{scheme:?} is missing from Eip8130AuthScheme::ALL",
             );
             match scheme {
-                Eip8130AuthScheme::Secp256k1
-                | Eip8130AuthScheme::P256
-                | Eip8130AuthScheme::WebAuthn => {}
+                Eip8130AuthScheme::Secp256k1 => {}
             }
         }
         for scheme in Eip8130AuthScheme::ALL {

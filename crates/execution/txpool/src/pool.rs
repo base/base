@@ -1791,7 +1791,7 @@ fn pooled_element<T: BasePooledTx>(
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     use alloy_consensus::{
         SignableTransaction, Transaction, TxEip1559,
@@ -2153,99 +2153,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn protocol_and_sidecar_eip8130_routes_enforce_sender_limit() {
-        let cap = u64::from(GuardLimits::default().signature_limit);
-
-        let (protocol_pool, protocol_client) = build_integration_pool();
-        let protocol_signer = signer();
-        fund(&protocol_client, protocol_signer.address());
-        for sequence in 0..cap {
-            let transaction = self_paid_eoa_8130(&protocol_signer, U256::ZERO, sequence, 0, 1_000);
-            assert!(
-                protocol_pool.add_transaction(TransactionOrigin::Local, transaction).await.is_ok()
-            );
-        }
-        let mut protocol_events = protocol_pool.all_transactions_event_listener();
-        let over = self_paid_eoa_8130(&protocol_signer, U256::ZERO, cap, 0, 1_000);
-        let over_hash = *over.hash();
-        let error = protocol_pool
-            .add_transaction(TransactionOrigin::Local, over)
-            .await
-            .expect_err("protocol-resident transaction above the cap must be rejected");
-        assert!(error.to_string().contains("sender EIP-8130 signature limit"));
-        assert!(protocol_pool.get(&over_hash).is_none());
-        assert!(
-            tokio::time::timeout(Duration::from_millis(50), protocol_events.next()).await.is_err(),
-            "guard-rejected protocol transaction must not publish pool events"
-        );
-
-        let (sidecar_pool, sidecar_client) = build_integration_pool();
-        let sidecar_signer = signer();
-        fund(&sidecar_client, sidecar_signer.address());
-        for key in 1..=cap {
-            let transaction = self_paid_eoa_8130(&sidecar_signer, U256::from(key), 0, 0, 1_000);
-            assert!(
-                sidecar_pool.add_transaction(TransactionOrigin::Local, transaction).await.is_ok()
-            );
-        }
-        let over = self_paid_eoa_8130(&sidecar_signer, U256::from(cap + 1), 0, 0, 1_000);
-        let over_hash = *over.hash();
-        let mut over_events = sidecar_pool.listeners.write().subscribe_hash(over_hash).0;
-        let error = sidecar_pool
-            .add_transaction(TransactionOrigin::Local, over)
-            .await
-            .expect_err("sidecar transaction above the cap must be rejected");
-        assert!(error.to_string().contains("sender EIP-8130 signature limit"));
-        assert!(sidecar_pool.get(&over_hash).is_none());
-        assert!(matches!(over_events.next().await, Some(TransactionEvent::Discarded)));
-    }
-
-    #[tokio::test]
-    async fn nonce_free_sidecar_members_are_guarded_independently() {
+    async fn eip8130_senders_are_signature_stable() {
+        // With the Keystore removed, every account is signature-stable: there is
+        // no per-account inflight-signature cap, so a single sender can hold many
+        // more inflight EIP-8130 transactions than the old cap.
         let (pool, client) = build_integration_pool();
         let signer = signer();
         fund(&client, signer.address());
-        let cap = u64::from(GuardLimits::default().signature_limit);
 
-        // Distinct millisecond `valid_before` bounds, each inside the nonce-free
-        // admission window `(now_ms, now_ms + NONCE_FREE_MAX_EXPIRY_WINDOW]`, so
-        // each is a separately-tracked sidecar member; `cap` stays far below the
-        // 20_000 ms window.
-        let mut admitted = Vec::new();
-        for offset in 0..cap {
-            let transaction = self_paid_eoa_8130(
-                &signer,
-                Eip8130Constants::NONCE_KEY_MAX,
-                0,
-                INTEGRATION_POOL_NOW_MS + offset + 1,
-                1_000,
+        let count = u64::from(GuardLimits::default().signature_limit) * 3;
+        for sequence in 0..count {
+            let transaction = self_paid_eoa_8130(&signer, U256::ZERO, sequence, 0, 1_000);
+            let hash = *transaction.hash();
+            assert!(
+                pool.add_transaction(TransactionOrigin::Local, transaction).await.is_ok(),
+                "sender transaction {sequence} was guard-rejected"
             );
-            admitted.push(*transaction.hash());
-            assert!(pool.add_transaction(TransactionOrigin::Local, transaction).await.is_ok());
+            assert!(pool.get(&hash).is_some());
         }
-        assert!(admitted.iter().all(|hash| pool.nonce_pool.read().contains(hash)));
-
-        let over = self_paid_eoa_8130(
-            &signer,
-            Eip8130Constants::NONCE_KEY_MAX,
-            0,
-            INTEGRATION_POOL_NOW_MS + cap + 1,
-            1_000,
-        );
-        let over_hash = *over.hash();
-        assert!(pool.add_transaction(TransactionOrigin::Local, over).await.is_err());
-        assert!(pool.get(&over_hash).is_none());
-
-        let removed = pool.remove_transactions(vec![admitted[0]]);
-        assert_eq!(removed.len(), 1);
-        let replacement = self_paid_eoa_8130(
-            &signer,
-            Eip8130Constants::NONCE_KEY_MAX,
-            0,
-            INTEGRATION_POOL_NOW_MS + cap + 2,
-            1_000,
-        );
-        assert!(pool.add_transaction(TransactionOrigin::Local, replacement).await.is_ok());
+        assert_eq!(pool.guard.read().len(), count as usize);
     }
 
     #[tokio::test]
@@ -2374,16 +2300,12 @@ mod tests {
         let signer = signer();
         fund(&client, signer.address());
 
-        let nonce_free = self_paid_eoa_8130(
-            &signer,
-            Eip8130Constants::NONCE_KEY_MAX,
-            0,
-            INTEGRATION_POOL_NOW_MS + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
-            1_000,
-        );
-        let nonce_free_hash = *nonce_free.hash();
-        pool.add_transaction(TransactionOrigin::Local, nonce_free).await.unwrap();
-        let pooled = pool.get(&nonce_free_hash).unwrap();
+        // A sequenced (channel) nonce transaction exposes an exact
+        // nonce-manager config-slot dependency in its watch set.
+        let channel = self_paid_eoa_8130(&signer, U256::from(1), 0, 0, 1_000);
+        let channel_hash = *channel.hash();
+        pool.add_transaction(TransactionOrigin::Local, channel).await.unwrap();
+        let pooled = pool.get(&channel_hash).unwrap();
         let (address, slot) = pooled
             .transaction
             .watch_set()
@@ -2393,7 +2315,7 @@ mod tests {
                 InvalidationKey::Slot { address, slot } => Some((*address, *slot)),
                 _ => None,
             })
-            .expect("EOA authorization must expose an exact config-slot dependency");
+            .expect("a channel-nonce transaction must expose an exact config-slot dependency");
 
         let removed = pool.apply_state_diff(&[AccountStateDiff {
             address,
@@ -2401,18 +2323,18 @@ mod tests {
             ..Default::default()
         }]);
         assert_eq!(removed.len(), 1);
-        assert_eq!(*removed[0].hash(), nonce_free_hash);
-        assert!(pool.get(&nonce_free_hash).is_none());
+        assert_eq!(*removed[0].hash(), channel_hash);
+        assert!(pool.get(&channel_hash).is_none());
 
-        let channel = self_paid_eoa_8130(&signer, U256::from(1), 0, 0, 1_000);
-        let channel_hash = *channel.hash();
-        pool.add_transaction(TransactionOrigin::Local, channel).await.unwrap();
-        assert!(pool.guard.read().contains(&channel_hash));
+        let second = self_paid_eoa_8130(&signer, U256::from(2), 0, 0, 1_000);
+        let second_hash = *second.hash();
+        pool.add_transaction(TransactionOrigin::Local, second).await.unwrap();
+        assert!(pool.guard.read().contains(&second_hash));
 
         let removed = pool.invalidate_all_tracked_transactions(InvalidationCause::Reorg);
         assert_eq!(removed.len(), 1);
-        assert_eq!(*removed[0].hash(), channel_hash);
-        assert!(pool.get(&channel_hash).is_none());
+        assert_eq!(*removed[0].hash(), second_hash);
+        assert!(pool.get(&second_hash).is_none());
         assert!(pool.guard.read().is_empty());
     }
 

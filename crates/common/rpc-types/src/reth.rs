@@ -99,7 +99,7 @@ impl SignableTxRequest<BaseTxEnvelope> for BaseTransactionRequest {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
-    use base_common_consensus::{Eip8130Constants, Eip8130Contracts, Eip8130Signed};
+    use base_common_consensus::{Eip8130Constants, Eip8130Signed};
     use base_common_evm::Eip8130ExecutionMode;
     use serde_json::json;
 
@@ -154,34 +154,6 @@ mod tests {
             "the default stub is selector + the scheme's default data length",
         );
         assert!(s.payer_auth().is_empty(), "no declared payer means no payer auth");
-    }
-
-    #[test]
-    fn prefixed_p256_sender_auth_is_rejected() {
-        let req: BaseTransactionRequest = serde_json::from_value(json!({
-            "sender": SENDER,
-            "calls": [],
-            "senderAuth": blob(Some(Eip8130Contracts::P256_AUTHENTICATOR), 128),
-        }))
-        .expect("valid request");
-        assert!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
-            "a P256 sender authenticator is rejected, matching pool admission",
-        );
-    }
-
-    #[test]
-    fn prefixed_webauthn_sender_auth_is_rejected() {
-        let req: BaseTransactionRequest = serde_json::from_value(json!({
-            "sender": SENDER,
-            "calls": [],
-            "senderAuth": blob(Some(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR), 512),
-        }))
-        .expect("valid request");
-        assert!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
-            "a WebAuthn sender authenticator is rejected, matching pool admission",
-        );
     }
 
     #[test]
@@ -256,48 +228,6 @@ mod tests {
         let s = signed(&tx);
         assert!(s.tx().sender.is_none(), "an unrecognized prefix falls to the EOA path");
         assert_eq!(s.sender_auth().len(), 20 + 65, "priced verbatim as a bare blob");
-    }
-
-    #[test]
-    fn delegate_prefixed_sender_auth_is_rejected() {
-        let delegate_account = address!("0x00000000000000000000000000000000000000d4");
-        let mut nested = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
-        nested.extend_from_slice(&[STUB_AUTH_FILL; 65]);
-        let mut blob = Eip8130Contracts::DELEGATE_AUTHENTICATOR.to_vec();
-        blob.extend_from_slice(delegate_account.as_slice());
-        blob.extend_from_slice(&nested);
-        let req: BaseTransactionRequest = serde_json::from_value(json!({
-            "sender": SENDER,
-            "calls": [],
-            "senderAuth": alloy_primitives::hex::encode_prefixed(&blob),
-        }))
-        .expect("valid request");
-        assert!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
-            "a delegate sender authenticator is rejected, not priced as a bare EOA",
-        );
-    }
-
-    #[test]
-    fn delegate_prefixed_payer_auth_is_rejected() {
-        let payer = address!("0x00000000000000000000000000000000000000b2");
-        let delegate_account = address!("0x00000000000000000000000000000000000000d4");
-        let mut nested = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
-        nested.extend_from_slice(&[STUB_AUTH_FILL; 65]);
-        let mut blob = Eip8130Contracts::DELEGATE_AUTHENTICATOR.to_vec();
-        blob.extend_from_slice(delegate_account.as_slice());
-        blob.extend_from_slice(&nested);
-        let req: BaseTransactionRequest = serde_json::from_value(json!({
-            "sender": SENDER,
-            "calls": [],
-            "payer": payer,
-            "payerAuth": alloy_primitives::hex::encode_prefixed(&blob),
-        }))
-        .expect("valid request");
-        assert!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
-            "a delegate payer authenticator is rejected, matching pool admission",
-        );
     }
 
     #[test]
@@ -434,22 +364,6 @@ mod tests {
         let auth = s.payer_auth();
         assert_eq!(&auth[..20], Eip8130Constants::K1_AUTHENTICATOR.as_slice());
         assert_eq!(auth.len(), 20 + 65);
-    }
-
-    #[test]
-    fn prefixed_p256_payer_auth_is_rejected() {
-        let payer = address!("0x00000000000000000000000000000000000000b2");
-        let req: BaseTransactionRequest = serde_json::from_value(json!({
-            "sender": SENDER,
-            "calls": [],
-            "payer": payer,
-            "payerAuth": blob(Some(Eip8130Contracts::P256_AUTHENTICATOR), 128),
-        }))
-        .expect("valid request");
-        assert!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
-            "a P256 payer authenticator is rejected, matching pool admission",
-        );
     }
 
     #[test]

@@ -12,7 +12,7 @@ use std::{collections::BTreeMap, sync::Arc};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, U256, address, bytes};
 use alloy_rpc_client::RpcClient;
-use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
+use base_common_consensus::Eip8130Constants;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
@@ -36,14 +36,6 @@ async fn setup_with(genesis: Genesis) -> eyre::Result<(TestHarness, RpcClient)> 
 /// Everest-activated harness (the common case for EIP-8130 RPC reads).
 async fn setup() -> eyre::Result<(TestHarness, RpcClient)> {
     setup_with(build_test_genesis_everest()).await
-}
-
-/// A hex (`0x`) authentication blob for an `eth_estimateGas` request: a 20-byte
-/// authenticator selector followed by `data_len` filler bytes.
-fn auth_blob(authenticator: Address, data_len: usize) -> String {
-    let mut v = authenticator.as_slice().to_vec();
-    v.resize(v.len() + data_len, 0xff);
-    alloy_primitives::hex::encode_prefixed(v)
 }
 
 /// `nonce_key == 0` must delegate to the standard protocol-nonce path
@@ -179,8 +171,7 @@ async fn estimate_gas_rejects_mismatched_from_and_sender() -> eyre::Result<()> {
 }
 
 /// A supplied secp256k1 authentication blob is priced by its own bytes: a
-/// longer k1 blob costs more than a shorter one. P-256 and `WebAuthn` blobs are
-/// rejected, matching txpool admission, rather than priced.
+/// longer k1 blob costs more than a shorter one.
 #[tokio::test]
 async fn estimate_gas_prices_the_supplied_authentication_blob() -> eyre::Result<()> {
     let (_harness, client) = setup().await?;
@@ -201,14 +192,6 @@ async fn estimate_gas_prices_the_supplied_authentication_blob() -> eyre::Result<
     let long = estimate(auth_blob(Eip8130Constants::K1_AUTHENTICATOR, 200)).await?;
     assert!(long > short, "a longer k1 blob ({long}) must cost more than a shorter one ({short})");
 
-    for authenticator in
-        [Eip8130Contracts::P256_AUTHENTICATOR, Eip8130Contracts::WEBAUTHN_AUTHENTICATOR]
-    {
-        assert!(
-            estimate(auth_blob(authenticator, 128)).await.is_err(),
-            "a non-k1 sender authenticator ({authenticator}) must be rejected"
-        );
-    }
     Ok(())
 }
 

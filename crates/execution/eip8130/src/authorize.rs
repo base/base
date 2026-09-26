@@ -1,493 +1,123 @@
-//! Stateful EIP-8130 actor authorization: resolve an auth blob to an authorized
-//! actor against the `AccountConfiguration` storage.
+//! Pure secp256k1 actor authentication.
 //!
-//! Native mirror of `AccountConfiguration.authenticateActor` / `_authenticate`.
+//! With the Keystore removed, every EIP-8130 identity is a full-authority
+//! secp256k1 owner. Authentication is therefore a signature recovery with no
+//! account-config storage read, no scope/expiry/revocation checks, and no
+//! non-k1 authenticators. This type provides the two wire forms the sender and
+//! payer paths use:
+//!
+//! - a **bare** 65-byte `r || s || v` signature (the empty-`sender` EOA path and
+//!   open payer mode), and
+//! - a **named** `K1_AUTHENTICATOR(20) || r || s || v(65)` blob (a configured
+//!   sender and an explicit/bound payer), which must carry the canonical native
+//!   secp256k1 authenticator selector.
 
 use alloy_primitives::{Address, B256};
-use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
+use base_common_consensus::Eip8130Constants;
 
-use crate::{
-    AccountConfigurationStorage, AccountState, AuthError, AuthenticatorDispatch, AuthorizeError,
-    DispatchOutcome, RecoveredActorId, ResolvedActor,
-};
+use crate::{AuthError, RecoveredActorId};
 
-/// Authorizes actors against an [`AccountConfigurationStorage`] view.
-///
-/// Stateless of the EVM otherwise: all account state flows through the storage
-/// reader, so the same logic runs over the EVM journal (inclusion), a
-/// `StateProvider` adapter (mempool), or an in-memory map (tests).
+/// Recovers the secp256k1 signer of an EIP-8130 authentication blob.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ActorAuthorizer;
 
 impl ActorAuthorizer {
-    /// Authenticate and authorize `auth` (`authenticator(20) || data`) for
-    /// `account` against `hash`, returning the resolved actor's authorization
-    /// surface. `now` is the timestamp used for expiry (block timestamp at
-    /// inclusion, wall-clock in the pool).
+    /// Recovers the signer of a **named** `K1_AUTHENTICATOR(20) || r||s||v(65)`
+    /// blob over `hash`.
     ///
-    /// Mirrors `AccountConfiguration.authenticateActor`: the contract reverts on
-    /// any failure; here that maps to an [`AuthorizeError`].
-    pub fn authenticate_actor(
-        storage: &AccountConfigurationStorage<'_>,
-        account: Address,
-        hash: B256,
-        auth: &[u8],
-        now: u64,
-    ) -> Result<ResolvedActor, AuthorizeError> {
-        Self::authenticate_actor_with_account_state(storage, account, hash, auth, now, None)
-    }
-
-    /// Authenticates `auth` while reusing an already-loaded state for `account`.
-    ///
-    /// The supplied state is used when the recovered actor is the account's
-    /// inline secp256k1 self. Nested delegate authentication targets a different
-    /// account and therefore continues to load that delegate's state normally.
-    pub fn authenticate_actor_with_account_state(
-        storage: &AccountConfigurationStorage<'_>,
-        account: Address,
-        hash: B256,
-        auth: &[u8],
-        now: u64,
-        account_state: Option<&AccountState>,
-    ) -> Result<ResolvedActor, AuthorizeError> {
+    /// The 20-byte selector must be the canonical native secp256k1 sentinel
+    /// ([`Eip8130Constants::K1_AUTHENTICATOR`]); any other selector is rejected
+    /// as non-canonical, since it is a removed Keystore authenticator that no
+    /// account can hold.
+    pub fn recover_named_k1(auth: &[u8], hash: B256) -> Result<Address, AuthError> {
         if auth.len() < 20 {
-            return Err(AuthError::MalformedAuth.into());
+            return Err(AuthError::MalformedAuth);
         }
         let authenticator = Address::from_slice(&auth[..20]);
-        // EIP-8130 launch: only the native secp256k1 authenticator is accepted on
-        // the transaction path. Every non-k1 authenticator (P-256, WebAuthn,
-        // delegate) is a Keystore feature and needs a Keystore actor, which no
-        // account can hold while account changes are delegation-only, so reject it
-        // here rather than dispatching an authenticator that can never authorize.
         if authenticator != Eip8130Constants::K1_AUTHENTICATOR {
-            return Err(AuthError::NotCanonical(authenticator).into());
+            return Err(AuthError::NotCanonical(authenticator));
         }
-        Self::authenticate(storage, account, hash, authenticator, &auth[20..], now, account_state)
+        Ok(RecoveredActorId::recover_k1(hash, &auth[20..])?.address())
     }
 
-    /// Mirror of `_authenticate`: route by authenticator, then authorize the
-    /// resolved actor against the account's config.
-    fn authenticate(
-        storage: &AccountConfigurationStorage<'_>,
-        account: Address,
-        hash: B256,
-        authenticator: Address,
-        data: &[u8],
-        now: u64,
-        account_state: Option<&AccountState>,
-    ) -> Result<ResolvedActor, AuthorizeError> {
-        // secp256k1 signers — the implicit default EOA and every explicit k1
-        // actor — authenticate through `K1_AUTHENTICATOR`. Recover here (the
-        // `RecoveredActorId` token proves the recovery) and authorize against
-        // the account.
-        if authenticator == Eip8130Constants::K1_AUTHENTICATOR {
-            return Self::authorize_k1_with_account_state(
-                storage,
-                account,
-                RecoveredActorId::recover_k1(hash, data)?,
-                now,
-                account_state,
-            );
-        }
-
-        // P-256, WebAuthn, and delegate route through enshrined dispatch;
-        // non-canonical authenticators are rejected there.
-        match AuthenticatorDispatch::authenticate(hash, authenticator, data)? {
-            DispatchOutcome::Authenticated { actor_id } => {
-                Self::resolve_bound(storage, account, actor_id, authenticator, now)
-            }
-            DispatchOutcome::Delegated { actor_id, delegate_account } => {
-                // `data` = delegate_account(20) || nested_auth. Mirror
-                // `DelegateAuthenticator`, which calls
-                // `authenticateActor(delegate, hash, nestedAuth)` — the *full*
-                // auth path (inline default-EOA k1 self *or* explicit
-                // `actor_config`), then requires admin (`scope == 0`). Nested
-                // discharge must not skip to `resolve_bound`: that would reject a
-                // live default EOA whose key lives only in `AccountState`, the
-                // common EOA-as-parent case. This is also the single nested
-                // signature verification (dispatch's delegate step is structural
-                // only), so there is no redundant ecrecover. The admin gate is
-                // independent of `verifySignature` (operational authority: admin
-                // `scope == 0`, or an OPERATOR actor — OPERATOR and POLICY no
-                // longer combine): an operational key may sign for
-                // its own account but MUST NOT vouch as a delegate, to preserve
-                // non-escalation. Followed by the outer
-                // `_actorConfig[uint256(uint160(delegate))][account]` binding check.
-                //
-                // Independent depth-1 guard: `authenticate_actor` re-enters the
-                // public dispatch, which routes a delegate authenticator straight
-                // to the (structural) delegate step, so reject a nested delegate
-                // here before re-entry. `AuthenticatorDispatch::delegate` already
-                // enforces this structurally; this second, layer-local check keeps
-                // single-hop intact even if either layer is later refactored.
-                // (`data` is `delegate_account(20) || nested_auth`, so
-                // `data[20..40]` is the nested authenticator; the outer dispatch
-                // guarantees `data.len() >= 40`.)
-                let nested_authenticator = Address::from_slice(&data[20..40]);
-                if nested_authenticator == Eip8130Contracts::DELEGATE_AUTHENTICATOR {
-                    return Err(AuthError::NestedDelegate.into());
-                }
-                let nested =
-                    Self::authenticate_actor(storage, delegate_account, hash, &data[20..], now)?;
-                if nested.scope != 0 {
-                    return Err(AuthorizeError::NestedSignatureScope { actor_id: nested.actor_id });
-                }
-                Self::resolve_bound(
-                    storage,
-                    account,
-                    actor_id,
-                    Eip8130Contracts::DELEGATE_AUTHENTICATOR,
-                    now,
-                )
-            }
-        }
-    }
-
-    /// Mirror of `_authenticateK1` after recovery: resolve a recovered secp256k1
-    /// signer against `account`.
-    ///
-    /// The account's own key — the **secp256k1 self** (`recovered ==
-    /// bytes32(uint256(uint160(account)))`, right-aligned) — resolves entirely from
-    /// the inline config in
-    /// the account-state slot, a single SLOAD: a set `DEFAULT_EOA_REVOKED` flag
-    /// disables it (revoked, or a non-k1 self is the live self authenticator), an
-    /// all-zero inline config is the implicit full owner, and a non-zero inline
-    /// `scope`/`expiry` is a scoped self. Every *other* recovered
-    /// signer must carry an explicit k1 `actor_config` entry, validated by
-    /// [`Self::resolve_bound`].
-    ///
-    /// `recovered` is a [`RecoveredActorId`] — a proof-of-recovery token, so
-    /// this method trusts it as a genuinely recovered signer without
-    /// re-verifying. The token can only be produced by a recovery constructor
-    /// ([`RecoveredActorId::recover_k1`] / [`RecoveredActorId::recover_eoa_sender`]),
-    /// which keeps this `pub` entrypoint from granting owner access on a bare
-    /// caller-supplied `B256`. The empty-`sender` transaction path recovers the
-    /// signer once in the verifier and passes the token here rather than
-    /// re-recovering.
-    pub fn authorize_k1(
-        storage: &AccountConfigurationStorage<'_>,
-        account: Address,
-        recovered: RecoveredActorId,
-        now: u64,
-    ) -> Result<ResolvedActor, AuthorizeError> {
-        Self::authorize_k1_with_account_state(storage, account, recovered, now, None)
-    }
-
-    /// Resolves a recovered secp256k1 signer while reusing `account_state` for
-    /// the inline self path when it is already available.
-    pub fn authorize_k1_with_account_state(
-        storage: &AccountConfigurationStorage<'_>,
-        account: Address,
-        recovered: RecoveredActorId,
-        now: u64,
-        account_state: Option<&AccountState>,
-    ) -> Result<ResolvedActor, AuthorizeError> {
-        let recovered = recovered.actor_id();
-        if recovered == AccountConfigurationStorage::self_actor_id(account) {
-            let loaded_state;
-            let state = if let Some(state) = account_state {
-                state
-            } else {
-                loaded_state = storage.get_account_state(account)?;
-                &loaded_state
-            };
-            // Flag set => the inline k1 self is disabled: either revoked outright
-            // or superseded by a non-k1 self in `actor_config`. A k1 signature
-            // recovering to the account can never authorize in that state.
-            if state.default_eoa_revoked() {
-                return Err(AuthorizeError::DefaultEoaRevoked { account });
-            }
-            // 0 = no expiry; otherwise valid while now <= expiry.
-            if state.default_eoa_expiry != 0 && now > state.default_eoa_expiry {
-                return Err(AuthorizeError::ActorExpired {
-                    actor_id: recovered,
-                    expiry: state.default_eoa_expiry,
-                });
-            }
-            return Ok(ResolvedActor {
-                actor_id: recovered,
-                scope: state.default_eoa_scope,
-                expiry: state.default_eoa_expiry,
-            });
-        }
-        Self::resolve_bound(storage, account, recovered, Eip8130Constants::K1_AUTHENTICATOR, now)
-    }
-
-    /// Loads `actor_config[actor_id][account]`, requires it to be bound to
-    /// `authenticator` and not expired, and returns the authorization surface
-    /// (`scope`, `expiry`). Mirrors the shared tail
-    /// of `_authenticate` / `_authenticateK1`.
-    fn resolve_bound(
-        storage: &AccountConfigurationStorage<'_>,
-        account: Address,
-        actor_id: B256,
-        authenticator: Address,
-        now: u64,
-    ) -> Result<ResolvedActor, AuthorizeError> {
-        if actor_id.is_zero() {
-            return Err(AuthorizeError::AuthenticationFailed);
-        }
-        let config = storage.actor_config_slot(account, actor_id)?;
-        if config.authenticator != authenticator {
-            return Err(AuthorizeError::AuthenticatorMismatch { actor_id, authenticator });
-        }
-        // 0 = no expiry; otherwise valid while now <= expiry.
-        if config.expiry != 0 && now > config.expiry {
-            return Err(AuthorizeError::ActorExpired { actor_id, expiry: config.expiry });
-        }
-        Ok(ResolvedActor { actor_id, scope: config.scope, expiry: config.expiry })
+    /// Recovers the signer of a **bare** 65-byte `r||s||v` signature over `hash`
+    /// (the EOA sender path and open payer mode).
+    pub fn recover_bare_k1(auth: &[u8], hash: B256) -> Result<Address, AuthError> {
+        Ok(RecoveredActorId::recover_k1(hash, auth)?.address())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{U256, address, keccak256};
-    use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
+    use alloy_primitives::keccak256;
     use k256::ecdsa::SigningKey as K256SigningKey;
 
     use super::*;
 
     const HASH: B256 = B256::repeat_byte(0x42);
-    const NOW: u64 = 1_000;
-    const ACCOUNT: Address = address!("0x00000000000000000000000000000000000000a1");
 
-    /// Canonical Solidity packing of `ActorConfig` (each field at its bit offset:
-    /// authenticator 0..160, expiry 160..208, scope 208..224).
-    fn pack(authenticator: Address, scope: u16, expiry: u64) -> U256 {
-        U256::from_be_slice(authenticator.as_slice())
-            | (U256::from(expiry) << 160)
-            | (U256::from(scope) << 208)
-    }
-
-    /// Packs an `AccountState` word carrying the inline secp256k1 self config
-    /// (each field at its bit offset: defaultEOAExpiry 184..232, defaultEOAScope
-    /// 232..248; sequences/lock left zero).
-    fn pack_self(scope: u16, expiry: u64, revoked: bool) -> U256 {
-        let flags = if revoked { Eip8130Constants::DEFAULT_EOA_REVOKED } else { 0 };
-        (U256::from(flags) << 128) | (U256::from(expiry) << 184) | (U256::from(scope) << 232)
-    }
-
-    fn actor_id(address: Address) -> B256 {
-        AccountConfigurationStorage::self_actor_id(address)
-    }
-
-    fn k1_key(byte: u8) -> K256SigningKey {
+    fn key(byte: u8) -> K256SigningKey {
         K256SigningKey::from_slice(&[byte; 32]).unwrap()
     }
 
-    fn k1_address(key: &K256SigningKey) -> Address {
+    fn addr(key: &K256SigningKey) -> Address {
         let point = key.verifying_key().to_encoded_point(false);
         Address::from_slice(&keccak256(&point.as_bytes()[1..])[12..])
     }
 
-    /// 65-byte `r || s || v` signature over `hash`, `v` in `{27, 28}`.
-    fn k1_sig(key: &K256SigningKey, hash: B256) -> [u8; 65] {
-        let (sig, recid) = key.sign_prehash_recoverable(hash.as_slice()).unwrap();
+    fn sig(key: &K256SigningKey, hash: B256) -> [u8; 65] {
+        let (signature, recid) = key.sign_prehash_recoverable(hash.as_slice()).unwrap();
         let mut out = [0u8; 65];
-        out[..64].copy_from_slice(&sig.to_bytes());
+        out[..64].copy_from_slice(&signature.to_bytes());
         out[64] = recid.to_byte() + 27;
         out
     }
 
-    /// `authenticator(20) || data`.
-    fn blob(authenticator: Address, data: &[u8]) -> Vec<u8> {
+    fn named(authenticator: Address, data: &[u8]) -> Vec<u8> {
         let mut out = Vec::with_capacity(20 + data.len());
         out.extend_from_slice(authenticator.as_slice());
         out.extend_from_slice(data);
         out
     }
 
-    /// Runs `body` with a fresh in-memory `AccountConfigurationStorage`.
-    fn with_storage<R>(body: impl FnOnce(&mut AccountConfigurationStorage<'_>) -> R) -> R {
-        let mut storage = HashMapStorageProvider::new(1);
-        StorageCtx::enter(&mut storage, |ctx| body(&mut AccountConfigurationStorage::new(ctx)))
+    #[test]
+    fn named_k1_recovers_the_signer() {
+        let k = key(0x11);
+        let blob = named(Eip8130Constants::K1_AUTHENTICATOR, &sig(&k, HASH));
+        assert_eq!(ActorAuthorizer::recover_named_k1(&blob, HASH), Ok(addr(&k)));
     }
 
     #[test]
-    fn implicit_eoa_authorizes_unrestricted_owner() {
-        let key = k1_key(0x11);
-        let account = k1_address(&key);
-        // The k1 blob whose signer recovers to the account: a live default EOA
-        // (flag unset, no explicit self entry) resolves to the unrestricted owner.
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
-        with_storage(|acc| {
-            let resolved = ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW);
-            assert_eq!(resolved.unwrap(), ResolvedActor::unrestricted(actor_id(account)));
-        });
+    fn bare_k1_recovers_the_signer() {
+        let k = key(0x22);
+        assert_eq!(ActorAuthorizer::recover_bare_k1(&sig(&k, HASH), HASH), Ok(addr(&k)));
     }
 
     #[test]
-    fn default_eoa_revoked_self_is_rejected() {
-        let key = k1_key(0x11);
-        let account = k1_address(&key);
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
-        with_storage(|acc| {
-            // DEFAULT_EOA_REVOKED set: the inline k1 self is disabled (revoked, or a
-            // non-k1 self is the live self authenticator), so a k1 signature
-            // recovering to the account is rejected outright.
-            acc.account_state.at_mut(&account).write(pack_self(0, 0, true)).unwrap();
-            assert_eq!(
-                ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW),
-                Err(AuthorizeError::DefaultEoaRevoked { account }),
-            );
-        });
+    fn named_non_canonical_selector_is_rejected() {
+        let k = key(0x33);
+        let bogus = Address::repeat_byte(0x99);
+        let blob = named(bogus, &sig(&k, HASH));
+        assert_eq!(
+            ActorAuthorizer::recover_named_k1(&blob, HASH),
+            Err(AuthError::NotCanonical(bogus))
+        );
     }
 
     #[test]
-    fn scoped_self_resolves_inline_config() {
-        let key = k1_key(0x11);
-        let account = k1_address(&key);
-        let self_id = actor_id(account);
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
-        with_storage(|acc| {
-            // Flag unset with an inline scope: the self key is live but scoped, and
-            // resolves from the account-state slot alone (no `actor_config` read).
-            acc.account_state
-                .at_mut(&account)
-                .write(pack_self(Eip8130Constants::SCOPE_OPERATOR, 0, false))
-                .unwrap();
-            let resolved =
-                ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW).unwrap();
-            assert_eq!(resolved.actor_id, self_id);
-            assert_eq!(resolved.scope, Eip8130Constants::SCOPE_OPERATOR);
-        });
+    fn named_blob_shorter_than_selector_is_malformed() {
+        assert_eq!(
+            ActorAuthorizer::recover_named_k1(&[0u8; 10], HASH),
+            Err(AuthError::MalformedAuth)
+        );
     }
 
     #[test]
-    fn expired_self_is_rejected() {
-        let key = k1_key(0x11);
-        let account = k1_address(&key);
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
-        with_storage(|acc| {
-            // Inline expiry in the past: the self key is no longer valid.
-            acc.account_state.at_mut(&account).write(pack_self(0, NOW - 1, false)).unwrap();
-            assert_eq!(
-                ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW),
-                Err(AuthorizeError::ActorExpired { actor_id: actor_id(account), expiry: NOW - 1 }),
-            );
-        });
-    }
-
-    #[test]
-    fn k1_signer_without_actor_entry_is_rejected() {
-        let key = k1_key(0x11);
-        // Signer recovers to a non-account address with no registered actor entry.
-        let id = actor_id(k1_address(&key));
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
-        with_storage(|acc| {
-            assert_eq!(
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
-                Err(AuthorizeError::AuthenticatorMismatch {
-                    actor_id: id,
-                    authenticator: Eip8130Constants::K1_AUTHENTICATOR,
-                }),
-            );
-        });
-    }
-
-    #[test]
-    fn explicit_k1_resolves_bound_actor_surface() {
-        let key = k1_key(0x22);
-        let id = actor_id(k1_address(&key));
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
-        with_storage(|acc| {
-            acc.actors
-                .at_mut(&id)
-                .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0x04, 0))
-                .unwrap();
-            let resolved =
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
-            assert_eq!(resolved, ResolvedActor { actor_id: id, scope: 0x04, expiry: 0 });
-        });
-    }
-
-    #[test]
-    fn ecrecover_unbound_actor_is_rejected() {
-        let key = k1_key(0x22);
-        let id = actor_id(k1_address(&key));
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
-        with_storage(|acc| {
-            assert_eq!(
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
-                Err(AuthorizeError::AuthenticatorMismatch {
-                    actor_id: id,
-                    authenticator: Eip8130Constants::K1_AUTHENTICATOR,
-                }),
-            );
-        });
-    }
-
-    #[test]
-    fn expiry_is_enforced_against_now() {
-        let key = k1_key(0x22);
-        let id = actor_id(k1_address(&key));
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
-        with_storage(|acc| {
-            acc.actors
-                .at_mut(&id)
-                .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 500))
-                .unwrap();
-            // Valid at/under expiry.
-            assert!(ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, 500).is_ok());
-            // Expired once now > expiry.
-            assert_eq!(
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, 501),
-                Err(AuthorizeError::ActorExpired { actor_id: id, expiry: 500 }),
-            );
-        });
-    }
-
-    #[test]
-    fn canonical_non_k1_authenticator_is_rejected_on_tx_path() {
-        // P-256 (and every other non-k1 authenticator) is a Keystore feature. On
-        // the launch wire the transaction path accepts only the native k1
-        // authenticator, so a canonical P-256 selector is rejected before any
-        // signature check.
-        let auth = blob(Eip8130Contracts::P256_AUTHENTICATOR, &[0u8; 129]);
-        with_storage(|acc| {
-            assert_eq!(
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
-                Err(AuthorizeError::Authenticate(AuthError::NotCanonical(
-                    Eip8130Contracts::P256_AUTHENTICATOR
-                ))),
-            );
-        });
-    }
-
-    #[test]
-    fn auth_shorter_than_an_authenticator_is_malformed() {
-        with_storage(|acc| {
-            assert_eq!(
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &[0u8; 10], NOW),
-                Err(AuthorizeError::Authenticate(AuthError::MalformedAuth)),
-            );
-        });
-    }
-
-    #[test]
-    fn zero_authenticator_selector_is_rejected() {
-        // `address(0)` is the empty sentinel, never a valid authenticator selector.
-        let auth = blob(Address::ZERO, &[0u8; 65]);
-        with_storage(|acc| {
-            assert_eq!(
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
-                Err(AuthorizeError::Authenticate(AuthError::NotCanonical(Address::ZERO))),
-            );
-        });
-    }
-
-    #[test]
-    fn non_canonical_authenticator_is_rejected() {
-        let authenticator = address!("0x00000000000000000000000000000000deadbeef");
-        let auth = blob(authenticator, &[0u8; 65]);
-        with_storage(|acc| {
-            assert_eq!(
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
-                Err(AuthorizeError::Authenticate(AuthError::NotCanonical(authenticator))),
-            );
-        });
+    fn bare_wrong_length_is_malformed() {
+        assert_eq!(
+            ActorAuthorizer::recover_bare_k1(&[0u8; 64], HASH),
+            Err(AuthError::MalformedAuth)
+        );
     }
 }
