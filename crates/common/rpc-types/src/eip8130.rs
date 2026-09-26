@@ -181,7 +181,7 @@ impl BaseTransactionRequest {
     }
 
     /// Whether the blob names a canonical authenticator the launch wire does not
-    /// admit (P256, WebAuthn, or delegate).
+    /// admit (P256, `WebAuthn`, or delegate).
     fn is_disallowed_authenticator(blob: &Bytes) -> bool {
         Self::authenticator_selector(blob)
             .is_some_and(|selector| Eip8130Contracts::is_canonical_authenticator(&selector))

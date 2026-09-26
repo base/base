@@ -20,7 +20,7 @@ use crate::Transaction;
 /// Named EIP-8130 authenticator selectors.
 ///
 /// [`Self::Secp256k1`] sizes the default authorization when a blob is absent
-/// and is the only selector launch-wire simulation prices. P256, WebAuthn, and
+/// and is the only selector launch-wire simulation prices. P256, `WebAuthn`, and
 /// the delegate authenticator are rejected by `eth_call` / `eth_estimateGas`,
 /// matching txpool admission.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -135,7 +135,7 @@ pub struct Eip8130RequestFields {
     ///   authenticates with a k1 key, exactly as for a 1559 transaction.
     /// - `authenticator(20) || data` prefixed with the native k1 authenticator
     ///   prices the configured-account path.
-    /// - A prefix that names P256, WebAuthn, or the delegate authenticator is
+    /// - A prefix that names P256, `WebAuthn`, or the delegate authenticator is
     ///   rejected, matching txpool admission.
     ///
     /// An absent blob defaults by intent: a declared `sender` synthesizes a
@@ -154,7 +154,7 @@ pub struct Eip8130RequestFields {
     /// is priced when a `payer` is declared. Absent defaults to a representative
     /// secp256k1 payer authorization. Unlike `sender_auth`, a supplied blob is
     /// always the prefixed form and its leading 20 bytes must be the native k1
-    /// authenticator. Any other selector, including P256, WebAuthn, and the
+    /// authenticator. Any other selector, including P256, `WebAuthn`, and the
     /// delegate authenticator, is rejected as `INVALID_PARAMS` rather than priced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer_auth: Option<Bytes>,
