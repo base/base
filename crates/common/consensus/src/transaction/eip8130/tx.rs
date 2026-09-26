@@ -54,14 +54,16 @@ pub struct TxEip8130 {
     pub nonce_key: U256,
     /// Sequence number within the nonce key.
     pub nonce_sequence: u64,
-    /// Lower bound of the validity window: a Unix timestamp in **milliseconds**.
-    /// The transaction is invalid when `block.timestamp * 1000 < valid_after`;
-    /// `0` means no lower bound.
+    /// Lower bound of the validity window: a Unix timestamp in **seconds or
+    /// milliseconds** (auto-detected per EIP-8130 Timestamp Normalization; see
+    /// [`Self::valid_after_ms`]). After normalization the transaction is invalid
+    /// when `block.timestamp * 1000 < valid_after_ms`; `0` means no lower bound.
     pub valid_after: u64,
-    /// Upper bound of the validity window: a Unix timestamp in **milliseconds**.
-    /// The bound is inclusive — the transaction is still valid at
-    /// `block.timestamp * 1000 == valid_before` and invalid only once
-    /// `block.timestamp * 1000 > valid_before`; `0` means no expiry. It MUST be
+    /// Upper bound of the validity window: a Unix timestamp in **seconds or
+    /// milliseconds** (auto-detected; see [`Self::valid_before_ms`]). After
+    /// normalization the bound is inclusive — the transaction is still valid at
+    /// `block.timestamp * 1000 == valid_before_ms` and invalid only once
+    /// `block.timestamp * 1000 > valid_before_ms`; `0` means no expiry. It MUST be
     /// non-zero for nonce-free (`nonce_key == NONCE_KEY_MAX`) transactions, which
     /// additionally require `valid_before` to be strictly in the future when the
     /// nonce is recorded: the nonce-manager replay ring's admission window is
@@ -92,6 +94,31 @@ pub struct TxEip8130 {
 }
 
 impl TxEip8130 {
+    /// The lower validity bound normalized to Unix **milliseconds**.
+    ///
+    /// [`Self::valid_after`] may be supplied in seconds or milliseconds; this
+    /// applies [`Eip8130Constants::normalize_timestamp_ms`] so callers compare
+    /// against `block.timestamp * 1000` (or a millisecond wall clock) uniformly.
+    /// `0` (no lower bound) is preserved. The raw field is still what the wire
+    /// encoding, signature hashes, and replay id commit to; only validity-window
+    /// comparisons use this normalized view.
+    #[must_use]
+    pub const fn valid_after_ms(&self) -> u64 {
+        Eip8130Constants::normalize_timestamp_ms(self.valid_after)
+    }
+
+    /// The upper validity bound normalized to Unix **milliseconds**.
+    ///
+    /// [`Self::valid_before`] may be supplied in seconds or milliseconds; this
+    /// applies [`Eip8130Constants::normalize_timestamp_ms`]. `0` (no expiry) is
+    /// preserved. As with [`Self::valid_after_ms`], the raw field remains the
+    /// signed/encoded/replay-committed value; this normalized view is used only
+    /// for validity-window and nonce-free expiry comparisons.
+    #[must_use]
+    pub const fn valid_before_ms(&self) -> u64 {
+        Eip8130Constants::normalize_timestamp_ms(self.valid_before)
+    }
+
     /// Encodes an `Option<Address>` as the AA wire format: zero-length byte
     /// string when `None`, 20-byte string when `Some`.
     fn encode_address_opt(addr: &Option<Address>, out: &mut dyn BufMut) {
@@ -693,6 +720,26 @@ mod tests {
         Header { list: true, payload_length: count }.encode(&mut encoded);
         encoded.resize(encoded.len() + count, 0xc0);
         encoded
+    }
+
+    #[test]
+    fn validity_bounds_normalize_seconds_to_milliseconds() {
+        let mut tx = sample_tx();
+        // Zero (disabled) is preserved on both bounds.
+        tx.valid_after = 0;
+        tx.valid_before = 0;
+        assert_eq!(tx.valid_after_ms(), 0);
+        assert_eq!(tx.valid_before_ms(), 0);
+        // Seconds (< threshold) are scaled by 1000.
+        tx.valid_after = 1_700_000_000;
+        tx.valid_before = 1_700_000_020;
+        assert_eq!(tx.valid_after_ms(), 1_700_000_000_000);
+        assert_eq!(tx.valid_before_ms(), 1_700_000_020_000);
+        // Milliseconds (>= threshold) pass through unchanged.
+        tx.valid_after = 1_700_000_000_000;
+        tx.valid_before = 1_700_000_020_000;
+        assert_eq!(tx.valid_after_ms(), 1_700_000_000_000);
+        assert_eq!(tx.valid_before_ms(), 1_700_000_020_000);
     }
 
     #[test]
