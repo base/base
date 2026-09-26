@@ -334,11 +334,21 @@ impl BaseReceiptBuilder {
         let tx_signed = *input.tx.inner();
 
         // EIP-8130 RPC-only fields, derived before `input` is consumed below. The payer is
-        // the sender for self-pay or the explicit payer for sponsored transactions; the
-        // per-phase statuses are persisted on the receipt and surfaced only at RPC.
-        let payer = tx_signed
-            .as_eip8130()
-            .map(|signed| signed.tx().payer.unwrap_or_else(|| input.tx.signer()));
+        // the sender for self-pay, the named payer for sponsored transactions, or the
+        // recovered signer in open payer mode; the per-phase statuses are persisted on the
+        // receipt and surfaced only at RPC.
+        // Every EIP-8130 receipt reports a payer. Recovery of an included
+        // open-payer transaction succeeds; if it does not, report the sender
+        // rather than omitting the field.
+        let payer = tx_signed.as_eip8130().map(|signed| {
+            signed.resolved_payer(input.tx.signer()).unwrap_or_else(|error| {
+                tracing::error!(
+                    error = %error,
+                    "open payer recovery failed while building an EIP-8130 receipt; reporting the sender"
+                );
+                input.tx.signer()
+            })
+        });
         // Omit empty metadata rather than serializing it as `"0x"`. Empty
         // `phase_statuses` is still serialized as `[]` on EIP-8130 receipts;
         // only metadata is skipped when empty.

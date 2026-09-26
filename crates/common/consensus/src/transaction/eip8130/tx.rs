@@ -36,7 +36,8 @@ use crate::transaction::eip8130::{
 ///   `sender_auth` as a 65-byte ECDSA signature); `Some` selects the
 ///   configured-actor path with an explicit account address.
 /// - [`Self::payer`]: `None` selects self-pay (the resolved sender pays);
-///   `Some` selects sponsored pay (the payer address pays).
+///   [`Eip8130Constants::OPEN_PAYER`] selects open payer mode (the payer is
+///   recovered from `payer_auth`); any other address selects that payer.
 ///
 /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -84,7 +85,9 @@ pub struct TxEip8130 {
     /// wire body between `calls` and `payer` and committed to by both the
     /// sender and payer signatures, but otherwise uninterpreted by the protocol.
     pub metadata: Bytes,
-    /// Optional explicit payer; `None` means the resolved sender pays gas.
+    /// Optional payer; `None` means the resolved sender pays gas, and
+    /// [`Eip8130Constants::OPEN_PAYER`] means the payer is recovered from
+    /// `payer_auth`.
     pub payer: Option<Address>,
 }
 
@@ -114,6 +117,45 @@ impl TxEip8130 {
             20 => Ok(Some(Address::from_slice(&raw))),
             _ => Err(alloy_rlp::Error::Custom("invalid Option<Address> length")),
         }
+    }
+
+    /// Encodes `payer`: empty for self-pay, the single byte `0x00` for open
+    /// payer mode ([`Eip8130Constants::OPEN_PAYER`]), otherwise the 20-byte
+    /// address.
+    fn encode_payer(payer: Option<Address>, out: &mut dyn BufMut) {
+        match payer {
+            Some(Eip8130Constants::OPEN_PAYER) => [0u8].as_slice().encode(out),
+            payer => Self::encode_address_opt(&payer, out),
+        }
+    }
+
+    /// Length contribution of `payer` under [`Self::encode_payer`].
+    const fn payer_encoded_length(payer: Option<Address>) -> usize {
+        match payer {
+            Some(Eip8130Constants::OPEN_PAYER) => 1,
+            payer => Self::address_opt_encoded_length(&payer),
+        }
+    }
+
+    /// Decodes the [`Self::encode_payer`] wire format. A 20-byte zero address
+    /// is rejected so open payer mode has a single encoding.
+    fn decode_payer(buf: &mut &[u8]) -> alloy_rlp::Result<Option<Address>> {
+        let raw = Bytes::decode(buf)?;
+        match raw.as_ref() {
+            [] => Ok(None),
+            [0] => Ok(Some(Eip8130Constants::OPEN_PAYER)),
+            bytes if bytes.len() == 20 && bytes != [0u8; 20] => {
+                Ok(Some(Address::from_slice(bytes)))
+            }
+            _ => Err(alloy_rlp::Error::Custom("invalid EIP-8130 payer encoding")),
+        }
+    }
+
+    /// Whether the transaction uses open payer mode: the sender does not name a
+    /// payer, and any key willing to pay signs `payer_auth`.
+    #[must_use]
+    pub fn is_open_payer(&self) -> bool {
+        self.payer == Some(Eip8130Constants::OPEN_PAYER)
     }
 
     /// Encodes the inner phase list of `calls` as `rlp([rlp([Call, ...]), ...])`.
@@ -173,7 +215,7 @@ impl TxEip8130 {
             + self.account_changes.length()
             + Self::calls_encoded_length(&self.calls)
             + self.metadata.length()
-            + Self::address_opt_encoded_length(&self.payer)
+            + Self::payer_encoded_length(self.payer)
     }
 
     /// Encodes the RLP fields (no list header) in canonical order, encoding
@@ -191,7 +233,7 @@ impl TxEip8130 {
         self.account_changes.encode(out);
         Self::encode_calls(&self.calls, out);
         self.metadata.encode(out);
-        Self::encode_address_opt(&self.payer, out);
+        Self::encode_payer(self.payer, out);
     }
 
     /// Length of all RLP fields (no list header).
@@ -219,7 +261,7 @@ impl TxEip8130 {
             account_changes: Decodable::decode(buf)?,
             calls: Self::decode_calls(buf)?,
             metadata: Decodable::decode(buf)?,
-            payer: Self::decode_address_opt(buf)?,
+            payer: Self::decode_payer(buf)?,
         })
     }
 
@@ -324,7 +366,7 @@ impl TxEip8130 {
             + self.account_changes.length()
             + Self::calls_encoded_length(&self.calls)
             + self.metadata.length()
-            + Self::address_opt_encoded_length(&self.payer);
+            + Self::payer_encoded_length(self.payer);
         let mut buf = Vec::with_capacity(
             Eip8130Constants::REPLAY_ID_TYPE.len()
                 + length_of_length(payload_length)
@@ -339,7 +381,7 @@ impl TxEip8130 {
         self.account_changes.encode(&mut buf);
         Self::encode_calls(&self.calls, &mut buf);
         self.metadata.encode(&mut buf);
-        Self::encode_address_opt(&self.payer, &mut buf);
+        Self::encode_payer(self.payer, &mut buf);
         keccak256(&buf)
     }
 
@@ -775,6 +817,31 @@ mod tests {
         Bytes::copy_from_slice(&[0u8; 19]).encode(&mut buf);
         let res = TxEip8130::decode_address_opt(&mut buf.as_slice());
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn open_payer_roundtrips_as_single_zero_byte() {
+        let tx = TxEip8130 { payer: Some(Eip8130Constants::OPEN_PAYER), ..sample_tx() };
+        assert!(tx.is_open_payer());
+
+        let mut payer = Vec::new();
+        TxEip8130::encode_payer(tx.payer, &mut payer);
+        assert_eq!(payer, vec![0x00]);
+        assert_eq!(TxEip8130::payer_encoded_length(tx.payer), 1);
+
+        let mut buf = Vec::new();
+        tx.encode(&mut buf);
+        assert_eq!(buf.len(), tx.length());
+        assert_eq!(TxEip8130::decode(&mut buf.as_slice()).unwrap(), tx);
+    }
+
+    #[test]
+    fn payer_rejects_zero_address_and_other_lengths() {
+        for raw in [vec![0u8; 20], vec![1u8], vec![0u8; 19]] {
+            let mut buf = Vec::new();
+            Bytes::from(raw).encode(&mut buf);
+            assert!(TxEip8130::decode_payer(&mut buf.as_slice()).is_err());
+        }
     }
 
     #[test]

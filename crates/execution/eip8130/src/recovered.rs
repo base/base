@@ -1,9 +1,8 @@
 //! Proof-of-recovery actor id: a recovered secp256k1 signer that can only be
 //! produced by a verified signature recovery.
 
-use alloy_primitives::{Address, B256, keccak256};
+use alloy_primitives::{Address, B256};
 use base_common_consensus::Eip8130Signed;
-use k256::ecdsa::{RecoveryId, Signature as K256Signature, VerifyingKey as K256VerifyingKey};
 
 use crate::AuthError;
 
@@ -29,33 +28,18 @@ impl RecoveredActorId {
     /// Recovers the signer of `hash` from a 65-byte `r || s || v` secp256k1
     /// signature — the native `K1_AUTHENTICATOR` wire form — requiring
     /// `v in {27, 28}` and enforcing **EIP-2 low-`s`** (malleable upper-half-`s`
-    /// signatures are rejected, not canonicalized). This is the recovery the
-    /// enshrined k1 authenticator performs; [`AuthenticatorDispatch`] routes its
-    /// k1 path through here, so the two stay byte-parity with the deployed
-    /// `AccountConfiguration` reference by construction.
+    /// signatures are rejected, not canonicalized). Recovery goes through
+    /// [`Eip8130Signed::recover_raw_k1`], the same checked path open-payer
+    /// resolution uses. [`AuthenticatorDispatch`] routes its k1 path through
+    /// here.
     ///
     /// [`AuthenticatorDispatch`]: crate::AuthenticatorDispatch
     pub fn recover_k1(hash: B256, signature: &[u8]) -> Result<Self, AuthError> {
         if signature.len() != 65 {
             return Err(AuthError::MalformedAuth);
         }
-        let recovery = match signature[64] {
-            27 | 28 => signature[64] - 27,
-            _ => return Err(AuthError::InvalidSignature),
-        };
-        let sig =
-            K256Signature::from_slice(&signature[..64]).map_err(|_| AuthError::InvalidSignature)?;
-        // `normalize_s` returns `Some` only when `s` is in the upper half, i.e. a
-        // malleable high-`s` signature: reject it rather than canonicalizing.
-        if sig.normalize_s().is_some() {
-            return Err(AuthError::InvalidSignature);
-        }
-        let recovery_id = RecoveryId::from_byte(recovery).ok_or(AuthError::InvalidSignature)?;
-        let key = K256VerifyingKey::recover_from_prehash(hash.as_slice(), &sig, recovery_id)
+        let address = Eip8130Signed::recover_raw_k1(hash, signature)
             .map_err(|_| AuthError::InvalidSignature)?;
-        let encoded = key.to_encoded_point(false);
-        // encoded = 0x04 || x(32) || y(32); address = keccak256(x || y)[12..].
-        let address = Address::from_slice(&keccak256(&encoded.as_bytes()[1..])[12..]);
         Ok(Self { address })
     }
 
