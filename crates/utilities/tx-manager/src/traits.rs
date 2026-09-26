@@ -60,16 +60,6 @@ pub trait TxManager: Send + Sync + Debug {
 
     /// Returns the address transactions are sent from.
     fn sender_address(&self) -> Address;
-
-    /// Attempt to cancel a stuck txpool transaction by sending a self-transfer
-    /// with a higher gas price at the same nonce, freeing the slot.
-    ///
-    /// The default implementation is a no-op that immediately returns `Ok(())`,
-    /// suitable for test managers and environments where txpool management is
-    /// not needed. Nothing calls it today.
-    fn cancel_tx(&self) -> impl Future<Output = TxManagerResult<()>> + Send {
-        std::future::ready(Ok(()))
-    }
 }
 
 #[cfg(test)]
