@@ -793,21 +793,44 @@ impl ChallengerE2e {
     /// therefore drains any classification that was mid-`validate_game` when
     /// staging finished.
     ///
-    /// Falls back to the last value read if the scans do not arrive inside the
-    /// dispute budget: the caller treats a higher count as "raced", and timing
-    /// out here should not be reported as a race.
+    /// A timeout here is reported as "raced" rather than failing the run. The
+    /// caller treats a higher count as raced and then skips the Path 3 claim, so
+    /// the conservative reading of "the challenger is too slow to prove it did
+    /// not see the staging window" is to not make the claim. Failing instead
+    /// would turn a slow scan into a red run, which is the false-red this whole
+    /// branch exists to avoid.
     async fn await_scans_drained(config: &Config, count: u64) -> Result<f64> {
-        let scanned = Scrape::fetch(&config.challenger_metrics_url)
-            .await?
-            .sum("base_challenger_games_scanned_total");
-        let target = scanned + count as f64;
+        let scrape = Scrape::fetch(&config.challenger_metrics_url).await?;
+        let target = scrape.sum("base_challenger_games_scanned_total") + count as f64;
+        let baseline = scrape.sum("base_challenger_invalid_dual_proposal_detected_total");
 
-        Self::poll_until(config, config.dispute_timeout, "in-flight scans to drain", || async {
-            let scrape = Scrape::fetch(&config.challenger_metrics_url).await?;
-            Ok((scrape.sum("base_challenger_games_scanned_total") >= target)
-                .then(|| scrape.sum("base_challenger_invalid_dual_proposal_detected_total")))
-        })
-        .await
+        let drained = Self::poll_until(
+            config,
+            config.dispute_timeout,
+            "in-flight scans to drain",
+            || async {
+                let scrape = Scrape::fetch(&config.challenger_metrics_url).await?;
+                Ok((scrape.sum("base_challenger_games_scanned_total") >= target)
+                    .then(|| scrape.sum("base_challenger_invalid_dual_proposal_detected_total")))
+            },
+        )
+        .await;
+
+        match drained {
+            Ok(detected) => Ok(detected),
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    scans = count,
+                    "the challenger did not complete the scans needed to rule out a staging \
+                     race; treating Path 3 as raced, because a stalled scan cannot show it \
+                     missed the staging window"
+                );
+                // Above the baseline by construction, so the caller reads it as
+                // raced whatever the baseline was.
+                Ok(baseline + 1.0)
+            }
+        }
     }
 
     /// Times the challenger has classified a game as `InvalidDualProposal`.

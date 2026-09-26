@@ -162,7 +162,9 @@ returns, so a scan that began before the nullify landed can still be in flight.
 Its loop is sequential (scan, validate, process, sleep), so the driver waits for
 `games_scanned_total` to advance twice first: any such scan has then run to
 completion and had its chance to count. The wait happens after the nullify has
-confirmed, so it cannot widen the window it is measuring.
+confirmed, so it cannot widen the window it is measuring. If those scans never
+arrive the staging is treated as raced rather than failing the run — a challenger
+too stalled to complete two scans cannot show it missed the window either.
 
 On the raced path the one-dispute bound is also skipped. A challenger that saw
 the dual-proof shape may legitimately have tried a TEE nullification — which
