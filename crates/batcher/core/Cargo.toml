@@ -68,6 +68,7 @@ required-features = ["test-utils"]
 [features]
 metrics = [ "base-batcher-encoder/metrics", "base-tx-manager/metrics" ]
 test-utils = [
+	"base-batcher-source/test-utils",
 	"base-protocol/test-utils",
 	"base-runtime/test-utils",
 	"dep:alloy-consensus",

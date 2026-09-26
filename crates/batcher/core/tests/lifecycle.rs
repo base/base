@@ -9,10 +9,7 @@ use std::{
 use async_trait::async_trait;
 use base_batcher_core::{
     BatchDriverError,
-    test_utils::{
-        DriverFixture, ManualConfirmTxManager, NeverConfirmTxManager, Recorded, SubmissionStub,
-        TrackingPipeline,
-    },
+    test_utils::{DriverFixture, Recorded, ScriptedTxManager, SubmissionStub, TrackingPipeline},
 };
 use base_batcher_encoder::{ChannelLimit, StepError, SubmissionId};
 use base_batcher_source::{L2BlockEvent, UnsafeBlockSource};
@@ -21,18 +18,17 @@ use base_runtime::{
     deterministic::{Config, Runner},
 };
 
-/// When cancellation fires while a submission is in-flight with a
-/// `NeverConfirmTxManager`, the drain timeout must fire and the driver must
-/// exit cleanly.
+/// When cancellation fires while a submission is in flight and never settles, the drain
+/// timeout must fire and the driver must exit cleanly.
 #[test]
 fn test_drain_timeout_exits_with_in_flight_submissions() {
     Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+        let mut pipeline = TrackingPipeline::new();
+        let recorded = pipeline.recorded();
         pipeline.submissions.push_back(SubmissionStub::stub());
 
         let (driver, _handles) =
-            DriverFixture::new(ctx.clone(), pipeline, NeverConfirmTxManager).build();
+            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::new([])).build();
         let handle = ctx.spawn(driver.run());
 
         ctx.sleep(Duration::from_millis(20)).await;
@@ -43,9 +39,9 @@ fn test_drain_timeout_exits_with_in_flight_submissions() {
             result.is_ok(),
             "driver must exit after drain timeout even with in-flight submissions"
         );
-        let r = recorded.lock().unwrap();
-        assert_eq!(r.dequeued, vec![SubmissionId(0)], "submission must have been dequeued");
-        assert_eq!(r.flush_count, 1, "flush must be called on shutdown");
+        let recorded = recorded.lock().unwrap();
+        assert_eq!(recorded.dequeued(), [SubmissionId(0)], "submission must have been dequeued");
+        assert_eq!(recorded.flushes(), 1, "flush must be called on shutdown");
     });
 }
 
@@ -53,17 +49,16 @@ fn test_drain_timeout_exits_with_in_flight_submissions() {
 #[test]
 fn test_shutdown_drains_in_flight_before_returning_flush_error() {
     Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_flush_error(
-            StepError::BlockExceedsChannelLimit {
+        let mut pipeline =
+            TrackingPipeline::new().with_flush_error(StepError::BlockExceedsChannelLimit {
                 cursor: 0,
                 limit: ChannelLimit::RlpBytes { required: 1, maximum: 0 },
-            },
-        );
+            });
+        let recorded = pipeline.recorded();
         pipeline.submissions.push_back(SubmissionStub::stub());
 
         let (driver, _handles) =
-            DriverFixture::new(ctx.clone(), pipeline, NeverConfirmTxManager).build();
+            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::new([])).build();
         let handle = ctx.spawn(driver.run());
 
         ctx.sleep(Duration::from_millis(20)).await;
@@ -79,9 +74,9 @@ fn test_shutdown_drains_in_flight_before_returning_flush_error() {
             ctx.now().saturating_sub(cancelled_at) >= Duration::from_millis(10),
             "in-flight receipts must be drained before the flush error is returned"
         );
-        let r = recorded.lock().unwrap();
-        assert_eq!(r.dequeued, vec![SubmissionId(0)]);
-        assert_eq!(r.flush_count, 1);
+        let recorded = recorded.lock().unwrap();
+        assert_eq!(recorded.dequeued(), [SubmissionId(0)]);
+        assert_eq!(recorded.flushes(), 1);
     });
 }
 
@@ -98,7 +93,7 @@ struct PollRecorder {
 #[async_trait]
 impl UnsafeBlockSource for PollRecorder {
     async fn next(&mut self) -> L2BlockEvent {
-        let dequeued = self.recorded.lock().unwrap().dequeued.len();
+        let dequeued = self.recorded.lock().unwrap().dequeued().len();
         self.dequeued_at_poll.lock().unwrap().push(dequeued);
         std::future::pending().await
     }
@@ -110,16 +105,13 @@ impl UnsafeBlockSource for PollRecorder {
 #[test]
 fn test_driver_finishes_pending_work_before_waiting_for_events() {
     Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+        let mut pipeline = TrackingPipeline::new();
+        let recorded = pipeline.recorded();
         pipeline.submissions.push_back(SubmissionStub::with_id(0));
         pipeline.submissions.push_back(SubmissionStub::with_id(1));
-        let tx_manager = ManualConfirmTxManager::default();
+        let tx_manager = ScriptedTxManager::new([]);
         let dequeued_at_poll = Arc::new(Mutex::new(Vec::new()));
-        let source = PollRecorder {
-            recorded: Arc::clone(&recorded),
-            dequeued_at_poll: Arc::clone(&dequeued_at_poll),
-        };
+        let source = PollRecorder { recorded, dequeued_at_poll: Arc::clone(&dequeued_at_poll) };
 
         // One tx in flight at most: the second submission can only leave the pipeline once the
         // receipt of the first one has been processed.
@@ -137,7 +129,7 @@ fn test_driver_finishes_pending_work_before_waiting_for_events() {
         assert!(handle.await.unwrap().is_ok());
         assert_eq!(
             *dequeued_at_poll.lock().unwrap(),
-            vec![1, 2],
+            [1, 2],
             "the submission released by the receipt must be sent before the driver waits again"
         );
     });
