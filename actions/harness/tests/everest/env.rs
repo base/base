@@ -130,7 +130,11 @@ impl EverestTestEnv {
             max_fee_per_gas: 1_000_000_000,
             gas_limit: 200_000,
             account_changes: Vec::new(),
-            calls: vec![vec![Call { to: Account::Bob.address(), data: Bytes::new() }]],
+            calls: vec![vec![Call {
+                to: Account::Bob.address(),
+                value: U256::ZERO,
+                data: Bytes::new(),
+            }]],
             metadata: Bytes::new(),
             payer: None,
         };

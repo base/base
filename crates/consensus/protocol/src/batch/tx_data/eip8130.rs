@@ -258,11 +258,12 @@ mod tests {
             calls: vec![
                 vec![Call {
                     to: address!("0x00000000000000000000000000000000000000dd"),
+                    value: U256::from(0x5678u64),
                     data: bytes!("deadbeef"),
                 }],
                 vec![
-                    Call { to: Address::ZERO, data: bytes!("01") },
-                    Call { to: Address::ZERO, data: bytes!("02") },
+                    Call { to: Address::ZERO, value: U256::ZERO, data: bytes!("01") },
+                    Call { to: Address::ZERO, value: U256::ZERO, data: bytes!("02") },
                 ],
             ],
             metadata: bytes!("c0ffee"),
