@@ -15,7 +15,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 const BLOCK_NUMBER: u64 = 1;
 const TIMESTAMP_MILLIS_PART: u16 = 200;
-const TIMESTAMP_MS_QUANTITY: &str = "0xc80";
+const TIMESTAMP_MS_QUANTITY: &str = "0x4b0";
 
 async fn request(client: &RpcClient, method: &'static str, params: Value) -> eyre::Result<Value> {
     Ok(client.request(method, params).await?)
@@ -45,7 +45,7 @@ fn receipt_logs(receipts: &Value, transaction_hash: &str) -> Value {
 #[tokio::test]
 async fn pending_denim_timestamp_is_independent_of_request_order() -> eyre::Result<()> {
     let mut genesis = build_test_genesis();
-    genesis.config.extra_fields.insert("base".into(), json!({ "denim": 3 }));
+    genesis.config.extra_fields.insert("base".into(), json!({ "denim": 0 }));
     let harness = TestHarness::builder()
         .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(genesis)))
         .build()
@@ -89,7 +89,7 @@ async fn pending_denim_timestamp_is_independent_of_request_order() -> eyre::Resu
 #[tokio::test]
 async fn canonical_denim_rpc_responses_include_millisecond_timestamps() -> eyre::Result<()> {
     let mut genesis = build_test_genesis();
-    genesis.config.extra_fields.insert("base".into(), json!({ "denim": 3 }));
+    genesis.config.extra_fields.insert("base".into(), json!({ "denim": 0 }));
     let harness = TestHarness::builder()
         .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(genesis)))
         .build()

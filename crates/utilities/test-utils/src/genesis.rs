@@ -56,6 +56,7 @@ pub fn build_test_genesis() -> Genesis {
         terminal_total_difficulty_passed: true,
         // Rollup upgrades and settings via extra_fields
         extra_fields: [
+            ("blockTime", serde_json::json!(2)),
             ("bedrockBlock", serde_json::json!(0)),
             ("regolithTime", serde_json::json!(0)),
             ("canyonTime", serde_json::json!(0)),
