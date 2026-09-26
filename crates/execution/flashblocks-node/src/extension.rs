@@ -1,11 +1,14 @@
 //! Contains the [`FlashblocksExtension`] which wires up the flashblocks feature
 //! (canonical block subscription and RPC surface) on the Base node builder.
 
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use base_flashblocks::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksConfig,
-    FlashblocksSubscriber,
+    FlashblocksRpcCutover, FlashblocksSubscriber,
 };
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use reth_chain_state::CanonStateSubscriptions;
@@ -69,10 +72,19 @@ impl BaseNodeExtension for FlashblocksExtension {
         hooks.add_rpc_module(move |ctx| {
             info!(message = "Starting Flashblocks RPC");
 
+            let chain_spec = Arc::clone(&ctx.config().chain);
+            let cutover = FlashblocksRpcCutover::new(move || {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("system clock must not precede Unix epoch")
+                    .as_secs();
+                chain_spec.is_denim_active_at_timestamp(now)
+            });
             let api_ext = EthApiExt::new(
                 ctx.registry.eth_api().clone(),
                 ctx.registry.eth_handlers().filter.clone(),
                 Arc::clone(&state_for_rpc),
+                cutover,
             );
             ctx.modules.replace_configured(api_ext.into_rpc())?;
 

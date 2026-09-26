@@ -25,7 +25,7 @@ use base_common_flashblocks::{
 use base_execution_chainspec::BaseChainSpec;
 use base_flashblocks::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksAPI,
-    FlashblocksReceiver, FlashblocksState, PendingBlocksAPI,
+    FlashblocksReceiver, FlashblocksRpcCutover, FlashblocksState, PendingBlocksAPI,
 };
 use base_node_runner::{
     BaseNodeExtension, NodeHooks,
@@ -185,6 +185,7 @@ impl BaseNodeExtension for FlashblocksTestExtension {
                 ctx.registry.eth_api().clone(),
                 ctx.registry.eth_handlers().filter.clone(),
                 Arc::clone(&fb),
+                FlashblocksRpcCutover::new(|| false),
             );
             ctx.modules.replace_configured(api_ext.into_rpc())?;
 

@@ -454,7 +454,7 @@ impl SnapshotL2Stack {
 
 #[cfg(test)]
 mod tests {
-    use base_common_chains::{ChainConfig, Upgrades};
+    use base_common_chains::ChainConfig;
     use base_common_genesis::{BaseUpgrade, SystemConfig};
     use base_execution_chainspec::BaseChainSpec;
     use reth_ethereum_forks::ForkCondition;
