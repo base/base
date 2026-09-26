@@ -1254,9 +1254,19 @@ where
         } else {
             U256::ZERO
         };
+        // Calls move `call.value` out of the sender, not the payer. A self-paying
+        // sender reserves it alongside gas; a sponsored sender must hold it alone.
+        let call_value = signed.tx().total_call_value();
         let payer_max_cost = gas_charge
             .saturating_add(additional_fee)
-            .saturating_add(if payer == sender { signed.tx().value() } else { U256::ZERO });
+            .saturating_add(if payer == sender { call_value } else { U256::ZERO });
+        let sender_obligation = if payer == sender { payer_max_cost } else { call_value };
+        if sender_account.balance < sender_obligation {
+            return Err(InvalidTransactionError::InsufficientFunds(
+                GotExpected { got: sender_account.balance, expected: sender_obligation }.into(),
+            )
+            .into());
+        }
         // All three predicates are now inclusive block-timestamp *second* bounds
         // (`now <= bound`): the transaction's millisecond window is folded onto
         // the seconds axis by `tx_valid_before_secs`, which is nonce-mode-aware
@@ -2164,7 +2174,7 @@ mod tests {
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         AccountChange, AccountChangeChannel, BasePrimitives, BaseTransactionSigned, BaseTxEnvelope,
-        ChangeType, CreateEntry, Delegation, Eip8130Constants, Eip8130Signed, InitialActor,
+        Call, ChangeType, CreateEntry, Delegation, Eip8130Constants, Eip8130Signed, InitialActor,
         SignedAccountChanges, SignedChange, TxDeposit, TxEip8130,
     };
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
@@ -3578,6 +3588,57 @@ mod tests {
         assert!(!additional_fees.is_zero(), "fixture must charge L1/operator fees");
         assert_eq!(state.payer_max_cost, gas_charge.saturating_add(additional_fees));
         assert_eq!(state.manifest.payer_max_cost(), state.payer_max_cost);
+    }
+
+    /// A self-paying sender reserves its call value on top of gas, and is
+    /// rejected when its balance cannot cover both.
+    #[test]
+    fn eip8130_self_pay_reserves_call_value() {
+        const BALANCE: u64 = 1_000_000_000_000;
+        let signer = PrivateKeySigner::random();
+        let sender = signer.address();
+        let recipient = Address::repeat_byte(0xee);
+        let signed_with_value = |value: u64| {
+            let tx = TxEip8130 {
+                gas_limit: 100_000,
+                calls: vec![vec![Call {
+                    to: recipient,
+                    value: U256::from(value),
+                    data: Bytes::new(),
+                }]],
+                ..minimal_valid_eoa_tx()
+            };
+            let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new())
+        };
+        let validator =
+            build_test_validator_with_account(sender, ExtendedAccount::new(0, U256::from(BALANCE)));
+
+        let without_value = validator
+            .validate_eip8130_full(&signed_with_value(0))
+            .expect("gas alone is affordable");
+        let with_value = validator
+            .validate_eip8130_full(&signed_with_value(BALANCE / 2))
+            .expect("gas plus half the balance is affordable");
+        assert_eq!(
+            with_value.payer_max_cost - without_value.payer_max_cost,
+            U256::from(BALANCE / 2),
+            "the call value is reserved on top of gas"
+        );
+        assert_eq!(with_value.manifest.payer_max_cost(), with_value.payer_max_cost);
+
+        let err = validator
+            .validate_eip8130_full(&signed_with_value(BALANCE))
+            .expect_err("gas plus the whole balance is not affordable");
+        assert!(
+            matches!(
+                err,
+                InvalidPoolTransactionError::Consensus(InvalidTransactionError::InsufficientFunds(
+                    _
+                ))
+            ),
+            "expected InsufficientFunds, got {err:?}"
+        );
     }
 
     #[test]

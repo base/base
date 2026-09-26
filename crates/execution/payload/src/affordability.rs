@@ -11,8 +11,20 @@ use revm::Database;
 pub struct CoinbaseTipAffordability;
 
 impl CoinbaseTipAffordability {
+    /// The balance the sender must hold for a phase-0 self-call tip.
+    ///
+    /// `tip` is the inner vault transfer. `call_value` is the protocol call's
+    /// value on that same self-call. The value is checked against the sender
+    /// and then credited back to the sender before the vault transfer, so both
+    /// observe one balance and the sender must cover the larger of them.
+    #[must_use]
+    pub fn sender_hold(tip: U256, call_value: U256) -> U256 {
+        tip.max(call_value)
+    }
+
     /// Returns `true` when `sender` and `payer` cannot cover worst-case gas plus
-    /// `tip` from the balances currently in `db`.
+    /// `sender_hold` (see [`Self::sender_hold`]) from the balances currently in
+    /// `db`.
     ///
     /// A failed account read is treated as affordable so a transient DB error
     /// does not drop an otherwise-valid candidate.
@@ -22,7 +34,7 @@ impl CoinbaseTipAffordability {
         gas_limit: u64,
         payer_auth: u64,
         max_fee: u128,
-        tip: U256,
+        sender_hold: U256,
         db: &mut DB,
     ) -> bool {
         let Ok(payer_info) = db.basic(payer) else {
@@ -44,13 +56,14 @@ impl CoinbaseTipAffordability {
             gas_limit,
             payer_auth,
             max_fee,
-            tip,
+            sender_hold,
         )
         .is_err()
     }
 
     /// Returns `true` when the transaction declares a static coinbase tip that
-    /// the sender and gas payer cannot cover together with worst-case gas.
+    /// the sender and gas payer cannot cover together with worst-case gas and
+    /// the phase-0 self-call value.
     ///
     /// Transactions without a statically decoded tip are treated as affordable.
     pub fn unaffordable<T, DB>(tx: &T, payer_auth: u64, db: &mut DB) -> bool
@@ -61,18 +74,29 @@ impl CoinbaseTipAffordability {
         let Some(signed) = tx.as_eip8130() else {
             return false;
         };
-        let Some(tip) = CoinbaseTip::decode(signed.tx(), tx.sender()) else {
+        let body = signed.tx();
+        let Some(tip) = CoinbaseTip::decode(body, tx.sender()) else {
+            return false;
+        };
+        // `decode` only succeeds for a single phase-0 self-call, which is the
+        // value the sender must hold alongside the tip.
+        let Some(call_value) = body.calls.first().and_then(|phase| {
+            let [call] = phase.as_slice() else {
+                return None;
+            };
+            Some(call.value)
+        }) else {
             return false;
         };
         let sender = tx.sender();
-        let payer = signed.tx().payer.unwrap_or(sender);
+        let payer = body.payer.unwrap_or(sender);
         Self::unaffordable_tip(
             sender,
             payer,
             tx.gas_limit(),
             payer_auth,
             tx.max_fee_per_gas(),
-            tip,
+            Self::sender_hold(tip, call_value),
             db,
         )
     }
@@ -134,7 +158,13 @@ mod tests {
     fn missing_account_cannot_cover_gas_plus_tip() {
         let mut db = InMemoryDB::default();
         assert!(CoinbaseTipAffordability::unaffordable_tip(
-            SENDER, SENDER, 21_000, 0, 2, TIP, &mut db
+            SENDER,
+            SENDER,
+            21_000,
+            0,
+            2,
+            CoinbaseTipAffordability::sender_hold(TIP, U256::ZERO),
+            &mut db
         ));
     }
 
@@ -144,7 +174,13 @@ mod tests {
         // gas = 21_000 * 2 = 42_000; tip = 1_000.
         fund(&mut db, SENDER, 43_000);
         assert!(!CoinbaseTipAffordability::unaffordable_tip(
-            SENDER, SENDER, 21_000, 0, 2, TIP, &mut db
+            SENDER,
+            SENDER,
+            21_000,
+            0,
+            2,
+            CoinbaseTipAffordability::sender_hold(TIP, U256::ZERO),
+            &mut db
         ));
     }
 
@@ -153,7 +189,13 @@ mod tests {
         let mut db = InMemoryDB::default();
         fund(&mut db, SENDER, 42_999);
         assert!(CoinbaseTipAffordability::unaffordable_tip(
-            SENDER, SENDER, 21_000, 0, 2, TIP, &mut db
+            SENDER,
+            SENDER,
+            21_000,
+            0,
+            2,
+            CoinbaseTipAffordability::sender_hold(TIP, U256::ZERO),
+            &mut db
         ));
     }
 
@@ -163,7 +205,13 @@ mod tests {
         fund(&mut db, PAYER, 42_000);
         fund(&mut db, SENDER, 999);
         assert!(CoinbaseTipAffordability::unaffordable_tip(
-            SENDER, PAYER, 21_000, 0, 2, TIP, &mut db
+            SENDER,
+            PAYER,
+            21_000,
+            0,
+            2,
+            CoinbaseTipAffordability::sender_hold(TIP, U256::ZERO),
+            &mut db
         ));
     }
 
@@ -173,7 +221,78 @@ mod tests {
         fund(&mut db, PAYER, 42_000);
         fund(&mut db, SENDER, 1_000);
         assert!(!CoinbaseTipAffordability::unaffordable_tip(
-            SENDER, PAYER, 21_000, 0, 2, TIP, &mut db
+            SENDER,
+            PAYER,
+            21_000,
+            0,
+            2,
+            CoinbaseTipAffordability::sender_hold(TIP, U256::ZERO),
+            &mut db
+        ));
+    }
+
+    #[test]
+    fn self_call_value_within_the_tip_does_not_raise_the_hold() {
+        let mut db = InMemoryDB::default();
+        // gas = 42_000; tip = 1_000; call value = 500. The self-call credits
+        // the value back before the vault transfer, so gas + tip still covers it.
+        fund(&mut db, SENDER, 43_000);
+        assert!(!CoinbaseTipAffordability::unaffordable_tip(
+            SENDER,
+            SENDER,
+            21_000,
+            0,
+            2,
+            CoinbaseTipAffordability::sender_hold(TIP, U256::from(500u64)),
+            &mut db
+        ));
+    }
+
+    #[test]
+    fn self_call_value_above_the_tip_is_unaffordable() {
+        let mut db = InMemoryDB::default();
+        // gas + tip = 43_000, but the self-call checks 1_500 before the tip moves.
+        fund(&mut db, SENDER, 43_000);
+        assert!(CoinbaseTipAffordability::unaffordable_tip(
+            SENDER,
+            SENDER,
+            21_000,
+            0,
+            2,
+            CoinbaseTipAffordability::sender_hold(TIP, U256::from(1_500u64)),
+            &mut db
+        ));
+    }
+
+    #[test]
+    fn self_call_value_above_the_tip_is_affordable_when_balance_covers_it() {
+        let mut db = InMemoryDB::default();
+        // gas = 42_000; call value = 1_500 > tip.
+        fund(&mut db, SENDER, 43_500);
+        assert!(!CoinbaseTipAffordability::unaffordable_tip(
+            SENDER,
+            SENDER,
+            21_000,
+            0,
+            2,
+            CoinbaseTipAffordability::sender_hold(TIP, U256::from(1_500u64)),
+            &mut db
+        ));
+    }
+
+    #[test]
+    fn sponsored_sender_must_cover_call_value_when_it_exceeds_the_tip() {
+        let mut db = InMemoryDB::default();
+        fund(&mut db, PAYER, 42_000);
+        fund(&mut db, SENDER, 1_000);
+        assert!(CoinbaseTipAffordability::unaffordable_tip(
+            SENDER,
+            PAYER,
+            21_000,
+            0,
+            2,
+            CoinbaseTipAffordability::sender_hold(TIP, U256::from(1_500u64)),
+            &mut db
         ));
     }
 
@@ -185,7 +304,7 @@ mod tests {
             21_000,
             0,
             2,
-            TIP,
+            CoinbaseTipAffordability::sender_hold(TIP, U256::ZERO),
             &mut FailingDatabase
         ));
     }

@@ -430,6 +430,7 @@ mod tests {
         let calls = coinbase_tip.map_or_else(Vec::new, |amount| {
             vec![vec![Call {
                 to: signer.address(),
+                value: U256::ZERO,
                 data: encode_execute(Predeploys::SEQUENCER_FEE_VAULT, amount),
             }]]
         });

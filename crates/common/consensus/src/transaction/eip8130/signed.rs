@@ -645,6 +645,7 @@ mod tests {
             account_changes: vec![AccountChange::Delegation(Delegation { target: Address::ZERO })],
             calls: vec![vec![Call {
                 to: address!("0x00000000000000000000000000000000000000bb"),
+                value: U256::ZERO,
                 data: bytes!("01020304"),
             }]],
             metadata: bytes!("c0ffee"),
