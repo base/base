@@ -143,11 +143,13 @@ where
     /// would waste an RPC.
     ///
     /// The I/O phase polls its arms in priority order: cancellation, admin commands,
-    /// derivation status, L2 blocks, receipts, L1 heads. Admin commands come before the
+    /// derivation status, receipts, L2 blocks, L1 heads. Admin commands come before the
     /// source so control-plane operations (stop, start, flush) are never starved by sustained
     /// block throughput; derivation-status changes come before unsafe blocks so pruning and
-    /// recovery cannot be starved by sequential catchup. A stopped batcher does not poll its
-    /// source at all.
+    /// recovery cannot be starved by sequential catchup. Receipts come before unsafe blocks so
+    /// a failed submission is resent before anything a block releases: the retry then takes
+    /// back the nonce it freed, and its frames reach L1 in order, as derivation requires. A
+    /// stopped batcher does not poll its source at all.
     ///
     /// Cancellation ends the loop with a bounded drain of the in-flight submissions; see
     /// `shutdown`.
@@ -174,6 +176,10 @@ where
                     None => return Err(BatchDriverError::DerivationStatusSourceClosed),
                 },
 
+                Some((id, outcome)) = self.submissions.next_settled() => {
+                    self.submissions.handle_outcome(&mut self.pipeline, id, outcome);
+                }
+
                 event = self.source.next(), if !self.stopped && !encoding_left => match event {
                     L2BlockEvent::Block(block) => self.on_block(block),
                     L2BlockEvent::Reorg => {
@@ -181,10 +187,6 @@ where
                         self.reset_to_safe_head(BatcherMetrics::RESET_SOURCE_REORG);
                     }
                 },
-
-                Some((id, outcome)) = self.submissions.next_settled() => {
-                    self.submissions.handle_outcome(&mut self.pipeline, id, outcome);
-                }
 
                 head = self.l1_head_source.next(), if !encoding_left => {
                     self.pipeline.advance_l1_head(head);
@@ -572,7 +574,7 @@ mod tests {
     }
 
     #[test]
-    fn run_prioritizes_source_before_receipts_and_heads() {
+    fn run_prioritizes_receipts_before_source_and_heads() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let mut pipeline = TrackingPipeline::new();
             let recorded = pipeline.recorded();
@@ -596,9 +598,9 @@ mod tests {
             assert!(
                 recorded.calls.starts_with(&[
                     PipelineCall::Dequeue(SubmissionId(0)),
-                    PipelineCall::AddBlock(1),
                     PipelineCall::Confirm(SubmissionId(0), 1),
                     PipelineCall::AdvanceL1Head(1),
+                    PipelineCall::AddBlock(1),
                     PipelineCall::AdvanceL1Head(9),
                 ]),
                 "{:?}",
@@ -635,9 +637,9 @@ mod tests {
                 recorded.calls.starts_with(&[
                     PipelineCall::Dequeue(SubmissionId(0)),
                     PipelineCall::ReconcileDerivation { safe_l2: 5, current_l1: None },
-                    PipelineCall::AddBlock(6),
                     PipelineCall::Confirm(SubmissionId(0), 42),
                     PipelineCall::AdvanceL1Head(42),
+                    PipelineCall::AddBlock(6),
                 ]),
                 "{:?}",
                 recorded.calls
@@ -854,6 +856,46 @@ mod tests {
                 tx_manager.candidates().len(),
                 2,
                 "separate pipeline submissions must not be coalesced into one L1 tx"
+            );
+        });
+    }
+
+    /// A failed submission is resent before anything a block releases, even when both are
+    /// ready at the same wait: the retry takes back the nonce it freed, so its frames reach L1
+    /// before the newer ones, as derivation requires.
+    #[test]
+    fn run_resends_a_failed_submission_before_a_block_releases_newer_ones() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let mut pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
+            // Submitted by the first CPU phase, so its failure is ready at the first wait,
+            // along with the block.
+            pipeline.submissions.push_back(SubmissionStub::stub());
+            let (source, l1_head_source) = queued_sources([1], []);
+            let (driver, _handles) = DriverFixture::new(
+                ctx.clone(),
+                pipeline,
+                ScriptedTxManager::new([SendOutcome::Failed]),
+            )
+            .source(source)
+            .l1_head_source(l1_head_source)
+            .build();
+
+            let handle = ctx.spawn(driver.run());
+            ctx.sleep(Duration::from_millis(10)).await;
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok());
+
+            let recorded = recorded.lock().unwrap();
+            assert!(
+                recorded.calls.starts_with(&[
+                    PipelineCall::Dequeue(SubmissionId(0)),
+                    PipelineCall::Requeue(SubmissionId(0)),
+                    PipelineCall::Dequeue(SubmissionId(0)),
+                    PipelineCall::AddBlock(1),
+                ]),
+                "{:?}",
+                recorded.calls
             );
         });
     }
