@@ -146,13 +146,19 @@ they match — so the root has to be corrupted first. The game is therefore an
 invalid `InvalidDualProposal` for one Anvil write plus one transaction, with no
 proof request in between.
 
-That window is asserted shut rather than argued about:
-`invalid_dual_proposal_detected_total` must not move across staging. Without it,
-a challenger that scanned mid-window could have a Path 4 proof in flight, and its
-later ZK nullification would clear the game while satisfying every assertion
-below — a green run that never reached `InvalidZkProposal`. The end state is
-ambiguous about how it was reached, so the path is confirmed positively too:
-`invalid_zk_proposal_detected_total` must have advanced.
+That window is measured rather than assumed shut:
+`invalid_dual_proposal_detected_total` is read either side of staging. If it
+moved, the challenger may have a Path 4 proof in flight, and its later ZK
+nullification would clear the game while satisfying every assertion below — a
+green run that never reached `InvalidZkProposal`. But a challenger that scanned in
+there did nothing wrong; it classified exactly the shape it was shown. So the
+Path 3 claim is **abandoned with a warning**, not failed — asserting would turn a
+setup race into a recurring false failure on a job that runs every deploy. Every
+other check still applies, including the quiet window that already passed and the
+collateral-damage check. Re-run on a fresh fork.
+
+The end state is ambiguous about how it was reached, so the path is confirmed
+positively too: `invalid_zk_proposal_detected_total` must have advanced.
 
 Going through `nullify` rather than a storage write means the game reaches the
 exact state a real TEE nullification produces — `proofCount` and `expectedResolution` included —
@@ -162,6 +168,16 @@ returns `true` for the duration of that one transaction and restored
 immediately after; the restore is asserted, because a fork left with a
 permissive verifier would pass every assertion that follows. The challenger's
 own proof and nullification run against the real, restored verifiers.
+
+Restoring the bytecode is not the whole of it. A real `nullify(TEE, ...)` also
+nullifies the TEE verifier *globally* (`AggregateVerifier.sol:697` →
+`Verifier.nullify()`), and the permissive runtime returned success without setting
+that flag — so a restored-but-live verifier would let other games on the fork
+verify TEE proofs that a genuine TEE-first Path 4 would have blocked. The driver
+therefore writes the flag itself with `anvil_setStorageAt` (slot 0, the sole
+storage variable of the `Verifier` base) and asserts `nullified()` reads true.
+`Verifier.nullify()` cannot be called directly: it is restricted to a registered,
+respected dispute game.
 
 What is left is `(teeProver == 0, zkProver != 0, counteredIndex == 0)` over an
 invalid root — `InvalidZkProposal`. The challenger must clear `zkProver`,

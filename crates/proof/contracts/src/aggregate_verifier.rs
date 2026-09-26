@@ -240,6 +240,16 @@ sol! {
     }
 }
 
+sol! {
+    /// Shared `Verifier` base of `TEEVerifier` and `ZKVerifier`.
+    #[sol(rpc)]
+    interface IVerifier {
+        /// Returns whether this verifier has been nullified, after which it
+        /// refuses to verify any further proof.
+        function nullified() external view returns (bool);
+    }
+}
+
 /// Information about a dispute game instance.
 #[derive(Debug, Clone, Copy)]
 pub struct GameInfo {
@@ -456,6 +466,19 @@ impl AggregateVerifierContractClient {
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
         contract_call!(contract.TEE_VERIFIER().call(), "TEE_VERIFIER failed")
+    }
+
+    /// Returns whether a verifier has been nullified.
+    ///
+    /// A nullified verifier rejects every later proof, so this is the global
+    /// side effect a `nullify` carries beyond the game it was called on.
+    pub async fn verifier_nullified(
+        &self,
+        verifier_address: Address,
+    ) -> Result<bool, ContractError> {
+        let contract = IVerifier::IVerifierInstance::new(verifier_address, &self.provider);
+
+        contract_call!(contract.nullified().call(), "nullified failed")
     }
 
     /// Reads `version()` from a verifier and reports which interval ABI that address speaks.
