@@ -15,7 +15,9 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
 use base_bundles::MeterBundleResponse;
-use base_common_consensus::{BaseTransactionSigned, Eip8130Constants, Eip8130Signed};
+use base_common_consensus::{
+    BaseTransactionSigned, EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Signed,
+};
 use c_kzg::KzgSettings;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_transaction_pool::{
@@ -180,11 +182,20 @@ where
         replacement: &Self,
         price_bumps: &PriceBumpConfig,
     ) -> bool {
-        if self.validity_predicates().is_empty() || replacement.validity_predicates().is_empty() {
-            return price_bumps.is_replacement_underpriced(self, replacement);
+        if !self.validity_predicates().is_empty() && !replacement.validity_predicates().is_empty() {
+            return replacement.max_fee_per_gas() <= self.max_fee_per_gas();
         }
-
-        replacement.max_fee_per_gas() <= self.max_fee_per_gas()
+        if self.ty() == EIP8130_TX_TYPE_ID || replacement.ty() == EIP8130_TX_TYPE_ID {
+            // EIP-8130 requires both fee fields to rise by the bump, including
+            // when the replacement's priority fee is zero (which the default
+            // check exempts).
+            let bump = price_bumps.price_bump(self.ty());
+            let bumped = |fee: u128| fee.saturating_mul(100 + bump).div_ceil(100);
+            return replacement.max_fee_per_gas() < bumped(self.max_fee_per_gas())
+                || replacement.max_priority_fee_per_gas().unwrap_or_default()
+                    < bumped(self.max_priority_fee_per_gas().unwrap_or_default());
+        }
+        price_bumps.is_replacement_underpriced(self, replacement)
     }
 
     fn clone_into_consensus(&self) -> Recovered<Self::Consensus> {
@@ -541,7 +552,7 @@ where
 mod tests {
     use std::sync::Arc;
 
-    use alloy_consensus::transaction::Recovered;
+    use alloy_consensus::{SignableTransaction, TxEip1559, transaction::Recovered};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, Bytes, TxKind, U256};
     use alloy_signer::SignerSync;
@@ -590,6 +601,24 @@ mod tests {
 
     fn signer() -> PrivateKeySigner {
         PrivateKeySigner::random()
+    }
+
+    fn eip1559_pooled_with_fees(
+        max_priority_fee_per_gas: u128,
+        max_fee_per_gas: u128,
+    ) -> BasePooledTransaction {
+        let signer = signer();
+        let tx = TxEip1559 {
+            chain_id: ChainConfig::mainnet().chain_id,
+            max_priority_fee_per_gas,
+            max_fee_per_gas,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::ZERO),
+            ..Default::default()
+        };
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let pooled = ConsensusPooledTransaction::Eip1559(tx.into_signed(signature));
+        BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
     }
 
     fn eip8130_pooled(nonce_key: U256) -> BasePooledTransaction {
@@ -669,22 +698,25 @@ mod tests {
         assert!(!eip8130_pooled(Eip8130Constants::NONCE_KEY_MAX).requires_nonce_check());
     }
 
-    #[test]
-    fn validity_replacement_only_requires_a_higher_max_fee() {
-        let predicate = ValidityPredicate::Balance {
+    fn balance_predicate() -> ValidityPredicate {
+        ValidityPredicate::Balance {
             address: Address::ZERO,
             op: ValidityOperator::Equal,
             value: U256::ZERO,
-        };
-        let existing = eip8130_pooled_with_fees(U256::ZERO, 10, 100)
-            .with_validity_predicates(vec![predicate.clone()]);
-        let replacement = eip8130_pooled_with_fees(U256::ZERO, 0, 101)
-            .with_validity_predicates(vec![predicate.clone()]);
+        }
+    }
+
+    #[test]
+    fn validity_replacement_only_requires_a_higher_max_fee() {
+        let existing =
+            eip1559_pooled_with_fees(10, 100).with_validity_predicates(vec![balance_predicate()]);
+        let replacement =
+            eip1559_pooled_with_fees(0, 101).with_validity_predicates(vec![balance_predicate()]);
 
         assert!(!existing.is_replacement_underpriced(&replacement, &PriceBumpConfig::default()));
 
-        let unchanged_max_fee = eip8130_pooled_with_fees(U256::ZERO, 100, 100)
-            .with_validity_predicates(vec![predicate]);
+        let unchanged_max_fee =
+            eip1559_pooled_with_fees(100, 100).with_validity_predicates(vec![balance_predicate()]);
         assert!(
             existing.is_replacement_underpriced(&unchanged_max_fee, &PriceBumpConfig::default())
         );
@@ -692,37 +724,56 @@ mod tests {
 
     #[test]
     fn validity_replacement_of_non_validity_transaction_uses_configured_price_bumps() {
-        let existing = eip8130_pooled_with_fees(U256::ZERO, 10, 100);
-        let predicate = ValidityPredicate::Balance {
-            address: Address::ZERO,
-            op: ValidityOperator::Equal,
-            value: U256::ZERO,
-        };
-        let underpriced = eip8130_pooled_with_fees(U256::ZERO, 0, 109)
-            .with_validity_predicates(vec![predicate.clone()]);
-
+        let existing = eip1559_pooled_with_fees(10, 100);
+        let underpriced =
+            eip1559_pooled_with_fees(0, 109).with_validity_predicates(vec![balance_predicate()]);
         assert!(existing.is_replacement_underpriced(&underpriced, &PriceBumpConfig::default()));
 
         let replacement =
-            eip8130_pooled_with_fees(U256::ZERO, 0, 110).with_validity_predicates(vec![predicate]);
+            eip1559_pooled_with_fees(0, 110).with_validity_predicates(vec![balance_predicate()]);
         assert!(!existing.is_replacement_underpriced(&replacement, &PriceBumpConfig::default()));
     }
 
     #[test]
-    fn non_validity_replacement_uses_configured_price_bumps() {
-        let predicate = ValidityPredicate::Balance {
-            address: Address::ZERO,
-            op: ValidityOperator::Equal,
-            value: U256::ZERO,
-        };
-        let existing =
-            eip8130_pooled_with_fees(U256::ZERO, 10, 100).with_validity_predicates(vec![predicate]);
-        let underpriced = eip8130_pooled_with_fees(U256::ZERO, 10, 110);
+    fn eip8130_replacement_requires_both_fees_to_rise() {
+        let existing = eip8130_pooled_with_fees(U256::ZERO, 10, 100);
+        let bumps = PriceBumpConfig::default();
 
-        assert!(existing.is_replacement_underpriced(&underpriced, &PriceBumpConfig::default()));
+        // A zero priority fee does not exempt the replacement from the bump.
+        assert!(
+            existing
+                .is_replacement_underpriced(&eip8130_pooled_with_fees(U256::ZERO, 0, 200), &bumps)
+        );
+        assert!(
+            existing
+                .is_replacement_underpriced(&eip8130_pooled_with_fees(U256::ZERO, 10, 110), &bumps)
+        );
+        assert!(
+            existing
+                .is_replacement_underpriced(&eip8130_pooled_with_fees(U256::ZERO, 11, 109), &bumps)
+        );
+        assert!(
+            !existing
+                .is_replacement_underpriced(&eip8130_pooled_with_fees(U256::ZERO, 11, 110), &bumps)
+        );
+    }
 
-        let replacement = eip8130_pooled_with_fees(U256::ZERO, 11, 110);
+    #[test]
+    fn eip8130_with_validity_predicates_uses_relaxed_replacement_rule() {
+        let existing = eip8130_pooled_with_fees(U256::ZERO, 10, 100)
+            .with_validity_predicates(vec![balance_predicate()]);
+        // Zero tip and a higher max fee is accepted: both transactions carry
+        // validity predicates, so the relaxed rule runs before the EIP-8130
+        // bump that requires both fee fields to rise.
+        let replacement = eip8130_pooled_with_fees(U256::ZERO, 0, 101)
+            .with_validity_predicates(vec![balance_predicate()]);
         assert!(!existing.is_replacement_underpriced(&replacement, &PriceBumpConfig::default()));
+
+        let unchanged_max_fee = eip8130_pooled_with_fees(U256::ZERO, 100, 100)
+            .with_validity_predicates(vec![balance_predicate()]);
+        assert!(
+            existing.is_replacement_underpriced(&unchanged_max_fee, &PriceBumpConfig::default())
+        );
     }
 
     #[test]
