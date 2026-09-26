@@ -36,10 +36,7 @@ if [[ -z "${BASE_NODE_L2_ENGINE_AUTH:-}" ]]; then
   exit 1
 fi
 
-if [[ -z "${BASE_NODE_L2_ENGINE_AUTH_RAW:-}" ]]; then
-  echo "expected BASE_NODE_L2_ENGINE_AUTH_RAW to be set" 1>&2
-  exit 1
-fi
+ENGINE_JWT_FILE="${ENGINE_JWT_FILE:-/engine-auth/jwt.hex}"
 
 until [ "$(curl -s --max-time 10 --connect-timeout 5 -w '%{http_code}' -o /dev/null "${BASE_NODE_L2_ENGINE_RPC/ws/http}")" -eq 401 ]; do
   echo "waiting for execution client to be ready"
@@ -54,6 +51,15 @@ else
 fi
 export BASE_NODE_P2P_ADVERTISE_IP=$PUBLIC_IP
 
+# The execution entrypoint generates the secret before starting reth, so it exists once the
+# engine API answers above.
+if [[ -z "${BASE_NODE_L2_ENGINE_AUTH_RAW:-}" ]]; then
+  if [[ ! -s "$ENGINE_JWT_FILE" ]]; then
+    echo "expected BASE_NODE_L2_ENGINE_AUTH_RAW to be set or $ENGINE_JWT_FILE to exist" 1>&2
+    exit 1
+  fi
+  BASE_NODE_L2_ENGINE_AUTH_RAW=$(cat "$ENGINE_JWT_FILE")
+fi
 echo "$BASE_NODE_L2_ENGINE_AUTH_RAW" > "$BASE_NODE_L2_ENGINE_AUTH"
 
 if [[ -n "${BASE_NODE_SOURCE_L2_RPC:-}" ]]; then
