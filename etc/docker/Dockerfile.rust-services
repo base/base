@@ -9,18 +9,9 @@ RUN apt-get update && \
       git libclang-dev libssl-dev pkg-config curl build-essential cmake lld \
       protobuf-compiler libprotobuf-dev && \
     rm -rf /var/lib/apt/lists/*
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    cargo install cargo-chef sccache --locked
-ENV RUSTC_WRAPPER=sccache
-ENV SCCACHE_DIR=/sccache
-ENV CARGO_INCREMENTAL=0
-ENV RUSTFLAGS=${RUSTFLAGS}
-
-FROM rust-builder-base AS zk-builder-base
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends unzip && \
-    rm -rf /var/lib/apt/lists/*
+# Install Go so cargo chef cook can run build scripts that shell out to `go`
+# (e.g. sp1-recursion-gnark-ffi). Also needed by every downstream cargo build
+# that transitively includes those crates.
 RUN set -eux; \
     GO_VERSION=1.23.3; \
     case "$(uname -m)" in \
@@ -33,6 +24,19 @@ RUN set -eux; \
     tar -C /usr/local -xzf /tmp/go.tar.gz; \
     rm /tmp/go.tar.gz
 ENV PATH="/usr/local/go/bin:${PATH}"
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    cargo install cargo-chef sccache --locked
+ENV RUSTC_WRAPPER=sccache
+ENV SCCACHE_DIR=/sccache
+ENV CARGO_INCREMENTAL=0
+ENV RUSTFLAGS=${RUSTFLAGS}
+
+FROM rust-builder-base AS zk-builder-base
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends unzip && \
+    rm -rf /var/lib/apt/lists/*
+# Go is inherited from rust-builder-base.
 RUN set -eux; \
     PROTOC_VERSION=33.4; \
     case "$(uname -m)" in \
