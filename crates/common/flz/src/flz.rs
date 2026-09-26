@@ -66,6 +66,9 @@ std::thread_local! {
 /// <https://github.com/Vectorized/solady/blob/5315d937d79b335c668896d7533ac603adac5315/js/solady.js>
 /// <https://github.com/ethereum-optimism/op-geth/blob/647c346e2bef36219cc7b47d76b1cb87e7ca29e4/core/types/rollup_cost.go#L411>
 pub fn flz_compress_len(input: &[u8]) -> u32 {
+    // Positions are u32 like op-geth's, which only addresses the first `len mod 2^32` bytes.
+    // Truncating keeps the unchecked loads below in bounds for inputs of 4 GiB and more.
+    let input = &input[..input.len() as u32 as usize];
     #[cfg(feature = "std")]
     if input.len() <= REUSED_HTAB_MAX_INPUT_LEN {
         // Falls back to a fresh table if the thread-local is being destroyed or already borrowed.
@@ -179,24 +182,36 @@ fn set_next_hash(htab: &mut [u32; HTAB_LEN], input: &[u8], idx: u32, base: u32) 
 }
 
 const fn hash(v: u32) -> u16 {
-    let hash = (v as u64 * 2654435769) >> 19;
-    hash as u16 & 0x1fff
+    // The masked bits 19..32 of the product only depend on its low 32 bits.
+    (v.wrapping_mul(2654435769) >> 19) as u16 & 0x1fff
 }
 
-/// Little-endian 24-bit value at `idx`, read as one 4-byte load. Every call site has
-/// `idx <= input.len() - 6`, so the load stays in bounds.
+/// Little-endian 24-bit value at `idx`, read as one unchecked 4-byte load.
+///
+/// Every call site reads at `idx <= input.len() - 6`: scan positions stay at or below
+/// `idx_limit = len - 13`, match candidates `r` are earlier written positions (or 0), and `cmp`
+/// stops at `len - 4`, so the two post-match positions are at most `len - 7` and `len - 6`.
 fn u24(input: &[u8], idx: u32) -> u32 {
     let idx = idx as usize;
-    u32::from_le_bytes(input[idx..idx + 4].try_into().unwrap()) & 0x00ff_ffff
+    debug_assert!(idx + 4 <= input.len());
+    // SAFETY: `idx + 4 <= input.len()` at every call site (see above); the read is unaligned.
+    let word = unsafe { input.as_ptr().add(idx).cast::<u32>().read_unaligned() };
+    u32::from_le(word) & 0x00ff_ffff
 }
 
+/// Little-endian 8 bytes at `idx`, read as one unchecked load. `cmp` only reads 8-byte words that
+/// end at or before its bound, which never exceeds `input.len() - 4`.
 fn u64_at(input: &[u8], idx: usize) -> u64 {
-    u64::from_le_bytes(input[idx..idx + 8].try_into().unwrap())
+    debug_assert!(idx + 8 <= input.len());
+    // SAFETY: `idx + 8 <= input.len()` at every call site (see above); the read is unaligned.
+    let word = unsafe { input.as_ptr().add(idx).cast::<u64>().read_unaligned() };
+    u64::from_le(word)
 }
 
 #[cfg(test)]
 mod tests {
     use hex_literal::hex;
+    use proptest::prelude::*;
     use rstest::rstest;
 
     use super::*;
@@ -310,6 +325,49 @@ mod tests {
         }
         out.truncate(len);
         out
+    }
+
+    /// Builds an input from segments of random bytes, byte runs, and (possibly overlapping)
+    /// copies of earlier output, which drive both literal and match paths.
+    fn build_input(segments: &[(u8, usize, u64)]) -> Vec<u8> {
+        let mut out: Vec<u8> = Vec::new();
+        for &(kind, len, seed) in segments {
+            let mut state = seed | 1;
+            match kind {
+                0 => out.extend((0..len).map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    state as u8
+                })),
+                1 => out
+                    .extend(core::iter::repeat_n(if seed % 4 == 0 { 0 } else { seed as u8 }, len)),
+                _ if !out.is_empty() => {
+                    let start = seed as usize % out.len();
+                    for i in 0..len {
+                        out.push(out[start + i]);
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    proptest! {
+        /// A short sequence of inputs per case also exercises slots left by earlier calls.
+        #[test]
+        fn prop_flz_compress_len_matches_reference(
+            inputs in prop::collection::vec(
+                prop::collection::vec((0u8..3, 1usize..400, any::<u64>()), 0..120)
+                    .prop_map(|segments| build_input(&segments)),
+                1..4,
+            )
+        ) {
+            for input in &inputs {
+                prop_assert_eq!(flz_compress_len(input), reference_compress_len(input));
+            }
+        }
     }
 
     #[test]
