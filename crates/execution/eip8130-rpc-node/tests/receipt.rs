@@ -21,8 +21,8 @@ use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis_everest};
 const EIP8130_TX_TYPE: u8 = 0x79;
 
 fn base_time_deposit() -> Bytes {
-    BaseTimeUpdateTx::new(0)
-        .expect("zero millisecond component must be valid")
+    BaseTimeUpdateTx::new(200)
+        .expect("200 millisecond component must be valid")
         .into_deposit_tx(1)
         .encoded_2718()
         .into()

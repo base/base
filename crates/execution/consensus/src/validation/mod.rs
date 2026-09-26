@@ -11,7 +11,8 @@ use alloy_primitives::{B256, Bloom, Bytes};
 use alloy_trie::EMPTY_ROOT_HASH;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTxEnvelope, DepositReceiptExt};
-use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
+use base_execution_chainspec::BaseChainSpec;
+use base_protocol::BaseTimeUpdateTx;
 use reth_consensus::ConsensusError;
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{BlockBody, GotExpected, receipt::gas_spent_by_transactions};
@@ -23,18 +24,24 @@ fn should_trust_precomputed_receipt_root(chain_spec: &impl Upgrades, timestamp: 
     chain_spec.is_canyon_active_at_timestamp(timestamp)
 }
 
-/// Validates the `BaseTime` metadata deposit when its activation gate is active.
+/// Validates the full Denim timestamp and metadata schedule.
 pub fn validate_base_time_metadata(
-    chain_spec: &impl Upgrades,
+    chain_spec: &BaseChainSpec,
     timestamp: u64,
     block_number: u64,
     transactions: &[BaseTxEnvelope],
-) -> Result<(), BaseTimeMetadataError> {
-    if chain_spec.is_denim_active_at_timestamp(timestamp) {
-        BaseTimeUpdateTx::extract_from_transactions(transactions, block_number)?;
+) -> Result<(), ConsensusError> {
+    let Some(schedule) = chain_spec.block_timestamp_schedule().map_err(ConsensusError::other)?
+    else {
+        return Ok(());
+    };
+    // Genesis is the configured chain anchor, not a produced block, and has no metadata deposit
+    // even when Denim is active at genesis.
+    if block_number == schedule.genesis_block_number {
+        return Ok(());
     }
-
-    Ok(())
+    BaseTimeUpdateTx::validate_timestamp_schedule(&schedule, transactions, block_number, timestamp)
+        .map_err(ConsensusError::other)
 }
 
 /// Ensures the block response data matches the header.
@@ -249,7 +256,7 @@ mod tests {
     use base_common_consensus::{BaseReceipt, BaseTxEnvelope, DepositReceipt, TxDeposit};
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::BaseChainSpec;
-    use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
+    use base_protocol::{BaseTimeMetadataError, BaseTimeScheduleError, BaseTimeUpdateTx};
     use reth_chainspec::{BaseFeeParams, EthChainSpec, ForkCondition};
 
     use super::*;
@@ -299,14 +306,21 @@ mod tests {
     #[test]
     fn validates_base_time_metadata_only_after_activation() {
         let mut chain_spec = BaseChainSpec::sepolia();
-        chain_spec.set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(10));
+        let activation = chain_spec.genesis_header().timestamp + 4;
+        chain_spec.set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(activation));
 
-        validate_base_time_metadata(&chain_spec, 10, 9, &base_time_transactions(9, 400)).unwrap();
-        assert!(matches!(
-            validate_base_time_metadata(&chain_spec, 10, 9, &[]),
-            Err(BaseTimeMetadataError::Missing)
-        ));
-        validate_base_time_metadata(&chain_spec, 9, 9, &[]).unwrap();
+        validate_base_time_metadata(&chain_spec, activation, 4, &base_time_transactions(4, 400))
+            .unwrap();
+        let ConsensusError::Other(error) =
+            validate_base_time_metadata(&chain_spec, activation, 4, &[]).unwrap_err()
+        else {
+            panic!("expected a BaseTime metadata error");
+        };
+        assert_eq!(
+            error.downcast_ref::<BaseTimeScheduleError>(),
+            Some(&BaseTimeScheduleError::InvalidMetadata(BaseTimeMetadataError::Missing))
+        );
+        validate_base_time_metadata(&chain_spec, activation - 2, 1, &[]).unwrap();
     }
 
     fn plain_precomputed_receipt_root_bloom(receipts: &[BaseReceipt]) -> (B256, Bloom) {
