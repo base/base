@@ -19,6 +19,8 @@ pub enum Scenario {
     All,
     /// Path 1 followed by both the skip and dispute halves of Path 2.
     Path1Path2,
+    /// Invalid ZK-only proposal coverage.
+    Path3,
 }
 
 /// Runtime configuration for [`crate::ChallengerE2e`].
@@ -126,5 +128,6 @@ mod tests {
     #[test]
     fn parses_path1_path2_scenario() {
         assert_eq!(Scenario::from_str("path1-path2", false), Ok(Scenario::Path1Path2));
+        assert_eq!(Scenario::from_str("path3", false), Ok(Scenario::Path3));
     }
 }

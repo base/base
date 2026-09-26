@@ -3,18 +3,20 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use alloy_node_bindings::{Anvil, AnvilInstance};
-use alloy_primitives::{Address, U256, hex};
+use alloy_primitives::{Address, B256, Bytes, U256, hex};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryClient,
     AnchorStateRegistryContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
-    GameStatus,
+    GameStatus, encode_nullify_calldata,
 };
 use base_proof_rpc::L2HttpProvider;
 use base_proof_submission::AggregateProofSubmitter;
 use base_prover_service_protocol::ZkBackend;
-use base_tx_manager::{NoopTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
+use base_tx_manager::{
+    NoopTxMetrics, SignerConfig, SimpleTxManager, TxCandidate, TxManager, TxManagerConfig,
+};
 use base_zk_fork_dispute::{Checkpoint, Config as ForkConfig};
 use clap::Parser;
 use eyre::{Context, Result, bail, ensure, eyre};
@@ -34,6 +36,14 @@ const FUNDING_WEI: u128 = 100_000_000_000_000_000_000;
 /// blocks on it appearing. The sidecar hardcodes the same path, so this was
 /// never independently configurable.
 const CHALLENGER_ENV_FILE: &str = "/shared/challenger.env";
+
+/// EVM runtime that returns ABI `true` for every call:
+/// `PUSH1 1; PUSH1 0; MSTORE; PUSH1 32; PUSH1 0; RETURN`.
+///
+/// Stands in for the TEE verifier while Path 3 is staged, so a dummy TEE
+/// proof passes without a real enclave signature.
+const PERMISSIVE_VERIFIER_RUNTIME: &[u8] =
+    &[0x60, 0x01, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3];
 
 /// Counters that must stay at zero for as long as every game on the fork is
 /// valid. Checked absolutely at the baseline and as a delta over the window.
@@ -133,7 +143,7 @@ impl ChallengerE2e {
         )
         .await?;
 
-        if config.scenario == Scenario::All {
+        if matches!(config.scenario, Scenario::All | Scenario::Path3) {
             Self::stage_dual_proof(&config, &fork_url, &verifier, &provider, &driver, game_b)
                 .await?;
         }
@@ -142,6 +152,86 @@ impl ChallengerE2e {
         Self::await_first_scan(&config).await?;
 
         Self::assert_quiet_on_valid_games(&config).await?;
+
+        // After the quiet window, not before it. B is a valid dual-proof game
+        // until `stage_path3` patches it, so this scenario gets the same
+        // positive case as every other one: a challenger that disputes valid
+        // games fails above rather than reaching Path 3 at all.
+        if config.scenario == Scenario::Path3 {
+            // Game A is never corrupted in this scenario, so it is a valid game
+            // the challenger must leave alone — but `snapshot_bystanders`
+            // excludes both games under test. Watching it here is what makes
+            // the collateral-damage check cover it.
+            let mut untouched = bystanders;
+            untouched
+                .push((game_a.address, Self::read_game_state(&verifier, game_a.address).await?));
+
+            // Zero, because `assert_quiet_on_valid_games` above asserts these
+            // counters are still absolutely zero once the first scan completes.
+            let submitted = Self::disputes_submitted(&config).await?;
+
+            let (nonce, raced) = Self::stage_path3(
+                &config,
+                &fork_url,
+                &verifier,
+                &provider,
+                &driver,
+                &challenger,
+                game_b,
+            )
+            .await?;
+
+            // The challenger saw the game mid-staging as `InvalidDualProposal`.
+            // It may already be proving against that shape, and a Path 4
+            // nullification would then clear the ZK proof while satisfying every
+            // Path 3 assertion on the way past. The scenario cannot conclude
+            // anything, and the challenger is not at fault, so the Path 3 claim
+            // is abandoned rather than asserted or failed. Every other check
+            // still runs: the quiet window above already passed, and the
+            // collateral-damage check below still applies.
+            //
+            // ponytail: a fresh fork would recover the run; re-running the whole
+            // scenario is the job's business, not the driver's. Revisit if this
+            // shows up often enough to erode coverage.
+            if raced {
+                warn!(
+                    game = %game_b.address,
+                    "abandoning the Path 3 claim: the challenger scanned the game while it was \
+                     mid-staging, so a Path 4 dispute may be in flight; re-run on a fresh fork"
+                );
+            } else {
+                Self::await_path3(
+                    &config,
+                    &verifier,
+                    &provider,
+                    &challenger,
+                    game_b,
+                    nonce,
+                    submitted,
+                )
+                .await?;
+            }
+
+            // The bound inside `await_path3` is read the moment B's ZK proof
+            // disappears, so on its own it says nothing about the scans that
+            // follow. Nothing on the fork is actionable now — B is fully
+            // nullified and therefore terminal to the scanner, and everything
+            // else was always valid — so one more window with the same two
+            // checks covers disputes submitted after Path 3 completed.
+            info!(window = ?config.quiet_window, "observing the fork after Path 3");
+            tokio::time::sleep(config.quiet_window).await;
+            let after = Self::disputes_submitted(&config).await?;
+            ensure!(
+                after <= submitted + 1.0,
+                "the challenger submitted {} dispute(s) in the {:?} after Path 3 completed; \
+                 nothing on the fork was disputable, and a dispute that reverts leaves every \
+                 game state untouched",
+                after - submitted - 1.0,
+                config.quiet_window
+            );
+            Self::assert_bystanders_untouched(&verifier, &untouched).await?;
+            return Ok(());
+        }
 
         let (path1, checkpoint) =
             Self::run_path1(&config, &fork_url, &verifier, &provider, &driver, &challenger, game_a)
@@ -317,25 +407,9 @@ impl ChallengerE2e {
             .await
             .context("failed to request a SNARK of the dual-proof game's canonical roots")?;
 
-        let chain_id = provider.get_chain_id().await?;
-        let tx_manager = SimpleTxManager::new(
-            provider.clone(),
-            SignerConfig::local(driver.clone()),
-            // Anvil mines on send: the default 10 confirmations never arrive
-            // and the default 12s receipt poll is 12s of nothing. Send has no
-            // default timeout at all, and this call is not inside a
-            // `poll_until`. Every other default is unreachable here.
-            TxManagerConfig {
-                num_confirmations: 1,
-                receipt_query_interval: Duration::from_secs(1),
-                tx_send_timeout: Duration::from_secs(180),
-                ..Default::default()
-            },
-            chain_id,
-            Arc::new(NoopTxMetrics),
-        )
-        .await
-        .context("failed to build a tx manager for verifyProposalProof")?;
+        let tx_manager = Self::driver_tx_manager(provider, driver)
+            .await
+            .context("failed to build a tx manager for verifyProposalProof")?;
         let receipt = AggregateProofSubmitter::new(&tx_manager)
             .verify_proposal_proof(game.address, proof_bytes)
             .await
@@ -361,6 +435,351 @@ impl ChallengerE2e {
             "staged Path 4 dual-proof game; counteredIndex is 0"
         );
         Ok(())
+    }
+
+    /// A TEE-typed dispute proof in the 66-byte `proofType(0) + signature(65)`
+    /// shape the game slices before handing the signature to its TEE verifier.
+    ///
+    /// The signature is nonsense; the verifier is mocked out for the one call
+    /// that consumes it, so only the length has to be right.
+    fn dummy_tee_proof() -> Bytes {
+        let mut proof = vec![0xab; 66];
+        proof[0] = 0; // ProofType.TEE
+        proof[65] = 27; // ECDSA v
+        Bytes::from(proof)
+    }
+
+    /// Builds a tx manager for the driver key's setup transactions.
+    async fn driver_tx_manager(
+        provider: &RootProvider,
+        driver: &PrivateKeySigner,
+    ) -> Result<SimpleTxManager<RootProvider>> {
+        let chain_id = provider.get_chain_id().await?;
+        SimpleTxManager::new(
+            provider.clone(),
+            SignerConfig::local(driver.clone()),
+            // Anvil mines on send: the default 10 confirmations never arrive
+            // and the default 12s receipt poll is 12s of nothing. Send has no
+            // default timeout at all, and these calls are not inside a
+            // `poll_until`. Every other default is unreachable here.
+            TxManagerConfig {
+                num_confirmations: 1,
+                receipt_query_interval: Duration::from_secs(1),
+                tx_send_timeout: Duration::from_secs(180),
+                ..Default::default()
+            },
+            chain_id,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .map_err(Into::into)
+    }
+
+    /// Stages Path 3: an invalid, ZK-only proposal.
+    ///
+    /// The game already carries a real SNARK of its canonical roots from
+    /// [`Self::stage_dual_proof`]. Corrupting a root makes that ZK proposal
+    /// wrong, and dropping the TEE proof leaves the `(teeProver == 0,
+    /// zkProver != 0, counteredIndex == 0)` shape the challenger classifies as
+    /// `InvalidZkProposal`.
+    ///
+    /// The TEE proof is dropped through the game's own `nullify`, not by
+    /// writing storage, so the game reaches the exact state a real TEE
+    /// nullification produces — `proofCount` and `expectedResolution` included.
+    /// Only the signature check is mocked, and only for that one transaction:
+    /// the driver key has no enclave to sign with. Everything the challenger
+    /// then does runs against the real, restored verifiers.
+    ///
+    /// The root must be patched *before* the TEE proof is dropped, and cannot be
+    /// ordered the other way round: `nullify` refutes a checkpoint by proving a
+    /// root that differs from the stored one, and `_checkIntermediateRoot`
+    /// reverts with `IntermediateRootSameAsProposed()` when they match. So the
+    /// game is briefly an invalid `InvalidDualProposal` — one Anvil write and
+    /// one transaction wide, with no proof request in between — before it
+    /// becomes the ZK-only shape under test.
+    ///
+    /// That window is measured rather than assumed shut: the challenger's
+    /// `invalid_dual_proposal_detected_total` is read either side of staging. A
+    /// challenger that scanned in there did nothing wrong — it correctly
+    /// classified the shape it was shown — so this is reported, not asserted,
+    /// and `run` abandons the scenario instead of failing it. Asserting would
+    /// turn a setup race into a recurring false failure on a job that runs
+    /// every deploy.
+    ///
+    /// Returns the challenger's nonce, sampled before the fork is corrupted,
+    /// and whether the staging window was raced.
+    async fn stage_path3(
+        config: &Config,
+        fork_url: &Url,
+        verifier: &AggregateVerifierContractClient,
+        provider: &RootProvider,
+        driver: &PrivateKeySigner,
+        challenger: &PrivateKeySigner,
+        game: Candidate,
+    ) -> Result<(u64, bool)> {
+        let fork_config = Self::fork_config(config, fork_url, driver, game);
+        // Sampled before anything is staged, for the reason given in `run_path1`.
+        let nonce = provider.get_transaction_count(challenger.address()).await?;
+        // Baseline for the window assertion below, taken before the game is
+        // briefly disputable.
+        let dual_detected = Self::dual_proposals_detected(config).await?;
+
+        let checkpoint = Checkpoint::patch(&fork_config, verifier)
+            .await
+            .context("failed to corrupt the ZK-only game on the fork")?;
+
+        let tee_verifier = verifier
+            .tee_verifier_address(game.address)
+            .await
+            .context("failed to read the game's TEE verifier")?;
+        // `checkpoint.expected_root` is the canonical root; the game now stores
+        // the corrupted one, so the two differ and `_checkIntermediateRoot`
+        // passes.
+        let calldata = encode_nullify_calldata(
+            Self::dummy_tee_proof(),
+            checkpoint.index,
+            checkpoint.expected_root,
+        );
+        let tx_manager = Self::driver_tx_manager(provider, driver)
+            .await
+            .context("failed to build a tx manager for the Path 3 TEE nullify")?;
+
+        info!(
+            game = %game.address,
+            invalid_index = checkpoint.index,
+            tee_verifier = %tee_verifier,
+            "corrupted the dual-proof game; dropping its TEE proof to stage Path 3"
+        );
+        let receipt = Self::with_permissive_verifier(provider, tee_verifier, async {
+            tx_manager
+                .send(TxCandidate {
+                    tx_data: calldata,
+                    to: Some(game.address),
+                    ..Default::default()
+                })
+                .await
+                .context("failed to submit the Path 3 TEE nullify")
+        })
+        .await?;
+        ensure!(
+            receipt.inner.status(),
+            "the Path 3 TEE nullify reverted ({}); the game may check the TEE proof itself \
+             rather than delegating to TEE_VERIFIER",
+            receipt.transaction_hash
+        );
+
+        let state = Self::read_game_state(verifier, game.address).await?;
+        ensure!(
+            state.tee_prover == Address::ZERO,
+            "the Path 3 TEE nullify confirmed ({}) but teeProver is still {}",
+            receipt.transaction_hash,
+            state.tee_prover
+        );
+        ensure!(
+            state.zk_prover != Address::ZERO,
+            "the Path 3 TEE nullify cleared the ZK proposal as well; there is nothing left to \
+             dispute"
+        );
+        ensure!(
+            state.countered_index == 0,
+            "the Path 3 TEE nullify set counteredIndex to {}; expected 0 (an invalid ZK \
+             proposal, not a challenge)",
+            state.countered_index
+        );
+
+        // A real TEE nullification also nullifies the TEE verifier globally, and
+        // the permissive runtime that stood in for it returned success without
+        // setting that flag. Restoring the bytecode therefore leaves a verifier
+        // that is still live, so other games on the fork could go on verifying
+        // TEE proofs — the one way this staged state would differ from a genuine
+        // TEE-first Path 4. `nullified` is the sole storage variable of the
+        // shared `Verifier` base (`Verifier.sol:14`; `TEEVerifier` adds only an
+        // immutable, which lives in code), so it is slot 0.
+        Self::set_verifier_nullified(provider, tee_verifier).await?;
+        ensure!(
+            verifier
+                .verifier_nullified(tee_verifier)
+                .await
+                .context("failed to read the TEE verifier's nullified flag")?,
+            "the TEE verifier at {tee_verifier} is still live after the Path 3 TEE nullify; the \
+             fork would let other games verify TEE proofs that a real TEE-first Path 4 would have \
+             blocked"
+        );
+
+        // The game was an invalid `InvalidDualProposal` between the patch and the
+        // nullify above. A challenger that scanned in that window may now have a
+        // Path 4 proof in flight, whose later ZK nullification would clear the
+        // game for reasons that have nothing to do with `InvalidZkProposal` — so
+        // the caller abandons the scenario rather than drawing a conclusion from
+        // it. Not a challenger failure: it classified exactly what it was shown.
+        let raced = Self::dual_proposals_detected(config).await? > dual_detected;
+
+        info!(
+            game = %game.address,
+            tx_hash = %receipt.transaction_hash,
+            zk_prover = %state.zk_prover,
+            invalid_index = checkpoint.index,
+            raced,
+            "staged Path 3: an invalid ZK-only proposal"
+        );
+        Ok((nonce, raced))
+    }
+
+    /// Runs `operation` with `verifier`'s bytecode replaced by
+    /// [`PERMISSIVE_VERIFIER_RUNTIME`], restoring it either way.
+    ///
+    /// The restore is asserted, not assumed: leaving a permissive verifier on
+    /// the fork would let every later assertion pass against a contract that
+    /// verifies nothing.
+    async fn with_permissive_verifier<T>(
+        provider: &RootProvider,
+        verifier: Address,
+        operation: impl Future<Output = Result<T>>,
+    ) -> Result<T> {
+        let original = provider
+            .get_code_at(verifier)
+            .await
+            .with_context(|| format!("failed to read the code at verifier {verifier}"))?;
+        Self::set_code(provider, verifier, Bytes::from_static(PERMISSIVE_VERIFIER_RUNTIME))
+            .await
+            .with_context(|| format!("failed to mock the verifier at {verifier}"))?;
+
+        let outcome = operation.await;
+
+        let restored = async {
+            Self::set_code(provider, verifier, original.clone()).await?;
+            let after = provider.get_code_at(verifier).await?;
+            ensure!(after == original, "verifier {verifier} did not read back as its own code");
+            Ok(())
+        }
+        .await
+        .with_context(|| {
+            format!("failed to restore the verifier at {verifier}; the fork is now unsound")
+        });
+
+        match (outcome, restored) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Ok(_), Err(error)) | (Err(error), Ok(())) => Err(error),
+            (Err(error), Err(restore_error)) => Err(error.wrap_err(format!("{restore_error:#}"))),
+        }
+    }
+
+    async fn set_code(provider: &RootProvider, address: Address, code: Bytes) -> Result<()> {
+        provider
+            .client()
+            .request::<_, ()>("anvil_setCode", (address, code))
+            .await
+            .with_context(|| format!("anvil_setCode failed for {address}"))
+    }
+
+    /// Path 3: the challenger must ZK-nullify the invalid ZK-only proposal.
+    ///
+    /// `submitted_before` is the dispute-submission count from before the game
+    /// was patched. Exactly one dispute clears Path 3, so anything above that
+    /// went somewhere this scenario never corrupted — and a dispute that
+    /// reverts moves no game state, so the per-game assertions cannot see it.
+    async fn await_path3(
+        config: &Config,
+        verifier: &AggregateVerifierContractClient,
+        provider: &RootProvider,
+        challenger: &PrivateKeySigner,
+        game: Candidate,
+        nonce: u64,
+        submitted_before: f64,
+    ) -> Result<()> {
+        let state = Self::poll_until(
+            config,
+            config.dispute_timeout,
+            "the challenger to nullify the invalid ZK-only proposal",
+            || async {
+                let state = Self::read_game_state(verifier, game.address).await?;
+                Ok((state.zk_prover == Address::ZERO).then_some(state))
+            },
+        )
+        .await?;
+        ensure!(
+            state.tee_prover == Address::ZERO,
+            "game {} grew a TEE proof during Path 3; only the challenger was acting on the fork",
+            game.address
+        );
+        ensure!(
+            state.countered_index == 0,
+            "the challenger challenged game {} at index {} instead of nullifying its invalid ZK \
+             proposal",
+            game.address,
+            state.countered_index.saturating_sub(1)
+        );
+        Self::assert_challenger_acted(
+            provider,
+            challenger,
+            nonce,
+            "Path 3 invalid ZK proposal nullified",
+        )
+        .await?;
+
+        // Positive confirmation of the path, not just of the end state. Every
+        // assertion above is satisfied by *any* route to a cleared ZK proof; this
+        // is the one that says the challenger got there through
+        // `InvalidZkProposal`.
+        let scrape = Scrape::fetch(&config.challenger_metrics_url).await?;
+        let classified = scrape.sum("base_challenger_invalid_zk_proposal_detected_total");
+        ensure!(
+            classified >= 1.0,
+            "game {} was nullified but the challenger never classified an InvalidZkProposal; \
+             Path 3 was cleared through some other path",
+            game.address
+        );
+
+        let submitted = Self::disputes_submitted(config).await? - submitted_before;
+        ensure!(
+            submitted <= 1.0,
+            "the challenger submitted {submitted} disputes to clear Path 3, which takes one; the \
+             extra ones went to a game this scenario never corrupted, and a dispute that reverts \
+             leaves its game state untouched"
+        );
+
+        info!(game = %game.address, disputes = submitted, "Path 3: invalid ZK proposal nullified");
+        Ok(())
+    }
+
+    /// Sets a verifier's `nullified` flag directly, reproducing the global side
+    /// effect of a real `nullify`.
+    ///
+    /// `nullified` is the only storage variable of the shared `Verifier` base,
+    /// so it occupies slot 0. Written with `anvil_setStorageAt` rather than by
+    /// calling `Verifier.nullify()`, because that function is callable only by a
+    /// registered, respected dispute game and the driver is not one.
+    async fn set_verifier_nullified(provider: &RootProvider, verifier: Address) -> Result<()> {
+        let updated = provider
+            .client()
+            .request::<_, bool>(
+                "anvil_setStorageAt",
+                (verifier, B256::ZERO, B256::with_last_byte(1)),
+            )
+            .await
+            .with_context(|| format!("anvil_setStorageAt failed for verifier {verifier}"))?;
+        ensure!(updated, "anvil_setStorageAt returned false for verifier {verifier}");
+        Ok(())
+    }
+
+    /// Times the challenger has classified a game as `InvalidDualProposal`.
+    ///
+    /// Path 3 staging exposes that shape for one Anvil write plus one
+    /// transaction, and this is what makes the window observable.
+    async fn dual_proposals_detected(config: &Config) -> Result<f64> {
+        let scrape = Scrape::fetch(&config.challenger_metrics_url).await?;
+        Ok(scrape.sum("base_challenger_invalid_dual_proposal_detected_total"))
+    }
+
+    /// Total dispute transactions the challenger has submitted, reverted or not.
+    ///
+    /// Counted at submission rather than from game state: a dispute that
+    /// reverts moves nothing on-chain, so it is invisible to every other
+    /// assertion in this test.
+    async fn disputes_submitted(config: &Config) -> Result<f64> {
+        let scrape = Scrape::fetch(&config.challenger_metrics_url).await?;
+        Ok(scrape.sum("base_challenger_nullify_tx_submitted_total")
+            + scrape.sum("base_challenger_challenge_tx_submitted_total"))
     }
 
     /// Hands the fork and a funded key to the challenger sidecar, which is
@@ -981,6 +1400,58 @@ impl ChallengerE2e {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The verifier mock must never outlive the call it was installed for:
+    /// a fork left with a permissive verifier passes every later assertion.
+    #[tokio::test]
+    async fn permissive_verifier_is_restored_on_both_paths() {
+        let anvil = Anvil::new().spawn();
+        let provider: RootProvider = RootProvider::new_http(anvil.endpoint_url());
+        let verifier = Address::repeat_byte(0x42);
+        let original = Bytes::from_static(&[0x60, 0x00, 0x60, 0x00, 0xf3]);
+        ChallengerE2e::set_code(&provider, verifier, original.clone()).await.expect("seed code");
+
+        let assert_mocked = || async {
+            let code = provider.get_code_at(verifier).await.expect("read code");
+            assert_eq!(code.as_ref(), PERMISSIVE_VERIFIER_RUNTIME);
+        };
+
+        let value = ChallengerE2e::with_permissive_verifier(&provider, verifier, async {
+            assert_mocked().await;
+            Ok(7)
+        })
+        .await
+        .expect("operation succeeded");
+        assert_eq!(value, 7);
+        assert_eq!(provider.get_code_at(verifier).await.expect("read code"), original);
+
+        let error = ChallengerE2e::with_permissive_verifier(&provider, verifier, async {
+            assert_mocked().await;
+            Err::<(), _>(eyre!("operation failed"))
+        })
+        .await
+        .expect_err("operation failed");
+        assert_eq!(error.to_string(), "operation failed");
+        assert_eq!(provider.get_code_at(verifier).await.expect("read code"), original);
+    }
+
+    /// Restoring the mocked bytecode is not enough: a real `nullify(TEE, ...)`
+    /// also sets the verifier's `nullified` flag, and the permissive runtime
+    /// returns success without touching storage.
+    #[tokio::test]
+    async fn set_verifier_nullified_writes_slot_zero() {
+        let anvil = Anvil::new().spawn();
+        let provider: RootProvider = RootProvider::new_http(anvil.endpoint_url());
+        let verifier = Address::repeat_byte(0x43);
+
+        let before = provider.get_storage_at(verifier, U256::ZERO).await.expect("read slot 0");
+        assert_eq!(before, U256::ZERO, "slot 0 starts clear");
+
+        ChallengerE2e::set_verifier_nullified(&provider, verifier).await.expect("nullify");
+
+        let after = provider.get_storage_at(verifier, U256::ZERO).await.expect("read slot 0");
+        assert_eq!(after, U256::from(1), "`nullified` is slot 0 of the Verifier base");
+    }
 
     #[test]
     fn private_key_env_is_0x_hex_and_round_trips() {
