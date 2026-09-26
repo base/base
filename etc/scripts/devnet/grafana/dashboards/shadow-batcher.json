@@ -825,7 +825,7 @@
     "type": "prometheus",
     "uid": "PBFA97CFB590B2093"
    },
-   "description": "L1 batch submission attempts by outcome (submitted / confirmed / requeued / failed). Requeued and failed indicate trouble getting batches on-chain.",
+   "description": "L1 batch submission attempts by outcome (submitted / confirmed / failed). Failed indicates trouble getting batches on-chain.",
    "fieldConfig": {
     "defaults": {
      "color": {

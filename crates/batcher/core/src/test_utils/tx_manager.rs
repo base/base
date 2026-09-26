@@ -11,9 +11,7 @@ use std::{
 use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
 use alloy_primitives::{Address, B256, Bloom};
 use alloy_rpc_types_eth::TransactionReceipt;
-use base_tx_manager::{
-    SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError, TxManagerResult,
-};
+use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
 use tokio::sync::oneshot;
 
 /// What [`ScriptedTxManager`] does with a sent transaction.
@@ -23,8 +21,6 @@ pub enum SendOutcome {
     Confirmed(u64),
     /// The send fails right away.
     Failed,
-    /// The send fails right away because another transaction holds the nonce slot.
-    TxpoolBlocked,
     /// The transaction stays in flight until [`ScriptedTxManager::confirm_next`] settles it.
     #[default]
     Pending,
@@ -41,8 +37,6 @@ pub struct Script {
     pending: VecDeque<oneshot::Sender<SendResponse>>,
     /// Every candidate sent, in order.
     candidates: Vec<TxCandidate>,
-    /// Number of `cancel_tx` calls.
-    cancellations: usize,
 }
 
 /// [`TxManager`] that applies a scripted [`SendOutcome`] to each send, and records every
@@ -76,11 +70,6 @@ impl ScriptedTxManager {
     /// The candidates sent so far, in order.
     pub fn candidates(&self) -> Vec<TxCandidate> {
         self.script.lock().unwrap().candidates.clone()
-    }
-
-    /// The number of `cancel_tx` calls so far.
-    pub fn cancellations(&self) -> usize {
-        self.script.lock().unwrap().cancellations
     }
 
     /// A successful receipt for a transaction included in `block_number`.
@@ -131,17 +120,9 @@ impl TxManager for ScriptedTxManager {
             SendOutcome::Failed => {
                 let _ = tx.send(Err(TxManagerError::ChannelClosed));
             }
-            SendOutcome::TxpoolBlocked => {
-                let _ = tx.send(Err(TxManagerError::AlreadyReserved));
-            }
             SendOutcome::Pending => script.pending.push_back(tx),
         }
         std::future::ready(SendHandle::new(rx))
-    }
-
-    fn cancel_tx(&self) -> impl std::future::Future<Output = TxManagerResult<()>> + Send {
-        self.script.lock().unwrap().cancellations += 1;
-        std::future::ready(Ok(()))
     }
 
     fn sender_address(&self) -> Address {
