@@ -39,3 +39,6 @@ pub use genesis::ChainGenesis;
 
 mod rollup;
 pub use rollup::RollupConfig;
+
+mod schedule;
+pub use schedule::BlockTimestampSchedule;

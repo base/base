@@ -1,4 +1,5 @@
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
+use core::num::NonZeroU64;
 
 use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, EMPTY_ROOT_HASH, Header, proofs::storage_root_unhashed};
@@ -9,7 +10,8 @@ use alloy_primitives::{Address, B256, U256};
 use base_common_chains::{BaseUpgradeExt, ChainConfig, Upgrades};
 use base_common_consensus::Predeploys;
 use base_common_genesis::{
-    BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationSink,
+    BaseUpgrade, BlockTimestampSchedule, RuntimeUpgradeRegistry, UpgradeActivation,
+    UpgradeActivationSink,
 };
 use base_protocol::OutputRoot;
 use derive_more::{Constructor, Deref, Into};
@@ -29,6 +31,9 @@ pub enum BaseChainSpecError {
     /// Genesis JSON failed to deserialize.
     #[error("invalid genesis JSON: {0}")]
     GenesisJson(#[from] serde_json::Error),
+    /// Denim is scheduled without a usable legacy block interval.
+    #[error("Denim is scheduled but config.blockTime is missing or zero")]
+    InvalidDenimBlockTime,
     /// Beryl is scheduled but no activation registry admin address is configured.
     #[error("missing activation admin address for Beryl-enabled chain ID: {chain_id}")]
     MissingActivationAdminAddress {
@@ -101,6 +106,9 @@ pub struct BaseChainSpec {
     /// Activation registry admin address.
     #[deref(ignore)]
     pub activation_admin_address: Option<Address>,
+    /// Legacy L2 block interval in seconds.
+    #[deref(ignore)]
+    pub block_time: Option<u64>,
 }
 
 impl BaseChainSpec {
@@ -135,6 +143,8 @@ impl BaseChainSpec {
         let base_genesis_info = GenesisInfo::extract_from(&genesis);
         let genesis_info = base_genesis_info.base_chain_info.genesis_info.unwrap_or_default();
         let activation_admin_address = genesis_info.activation_admin_address;
+        // Parse this fallibly: dropping malformed timing config must not disable the schedule.
+        let block_time = genesis.config.extra_fields.get_deserialized("blockTime").transpose()?;
 
         // Block-based upgrades in canonical fork ID order.
         let block_upgrade_opts = [
@@ -224,6 +234,7 @@ impl BaseChainSpec {
                 ..Default::default()
             },
             activation_admin_address,
+            block_time,
         })
     }
 
@@ -237,7 +248,28 @@ impl BaseChainSpec {
             activation_admin_address,
             value.chain.id(),
         )?;
-        Ok(Self { inner: value, activation_admin_address })
+        let block_time =
+            value.genesis.config.extra_fields.get_deserialized("blockTime").transpose()?;
+        Ok(Self { inner: value, activation_admin_address, block_time })
+    }
+
+    /// Returns the runtime-aware timestamp schedule, or `None` when Denim is unscheduled.
+    pub fn block_timestamp_schedule(
+        &self,
+    ) -> Result<Option<BlockTimestampSchedule>, BaseChainSpecError> {
+        let ForkCondition::Timestamp(denim_activation_timestamp) = self.fork(BaseUpgrade::Denim)
+        else {
+            return Ok(None);
+        };
+        let Some(legacy_block_interval) = self.block_time.and_then(NonZeroU64::new) else {
+            return Err(BaseChainSpecError::InvalidDenimBlockTime);
+        };
+        Ok(Some(BlockTimestampSchedule {
+            genesis_block_number: self.genesis_header.number(),
+            genesis_timestamp: self.genesis_header.timestamp(),
+            legacy_block_interval,
+            denim_activation_timestamp,
+        }))
     }
 
     /// Validates that Beryl-enabled chains have a valid activation registry admin address:
@@ -581,6 +613,7 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
                 ..Default::default()
             },
             activation_admin_address,
+            block_time: Some(cfg.block_time),
         })
     }
 }
@@ -1835,5 +1868,82 @@ mod tests {
         for eth_hf in EthereumHardfork::VARIANTS {
             assert!(!content.contains(eth_hf.name()));
         }
+    }
+
+    #[test]
+    fn custom_genesis_timestamp_schedule_preserves_interval_and_anchor() {
+        let genesis: Genesis = serde_json::from_value(serde_json::json!({
+            "number": "0x7", "timestamp": "0x64",
+            "config": { "chainId": 9100010, "blockTime": 3, "base": { "denim": 107 } }
+        }))
+        .unwrap();
+        let parsed = BaseChainSpec::from_genesis(genesis.clone());
+        let built = BaseChainSpecBuilder::default()
+            .chain(9100010.into())
+            .genesis(genesis)
+            .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(107))
+            .build();
+        let converted = BaseChainSpec::from(parsed.inner.clone());
+        for spec in [parsed, built, converted] {
+            let schedule = spec.block_timestamp_schedule().unwrap().unwrap();
+            assert!(!schedule.is_denim_active_at_block(9));
+            assert!(schedule.is_denim_active_at_block(10));
+            assert_eq!(schedule.block_timestamp_parts(9), (106, 0));
+            assert_eq!(schedule.block_timestamp_parts(10), (109, 0));
+            assert_eq!(schedule.block_timestamp_parts(11), (109, 200));
+            assert_eq!(schedule.block_timestamp_parts(15), (110, 0));
+        }
+    }
+
+    #[test]
+    fn malformed_block_time_does_not_disable_denim() {
+        let genesis: Genesis = serde_json::from_value(serde_json::json!({
+            "config": { "blockTime": "invalid", "base": { "denim": 100 } }
+        }))
+        .unwrap();
+        let chain_spec = ChainSpec { genesis: genesis.clone(), ..Default::default() };
+        for result in [
+            BaseChainSpecBuilder::default()
+                .chain(9_100_012.into())
+                .block_time(2)
+                .genesis(genesis.clone())
+                .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(100))
+                .try_build(),
+            BaseChainSpec::try_from_genesis(genesis),
+            BaseChainSpec::try_from_chainspec(chain_spec, None),
+        ] {
+            assert!(matches!(result, Err(BaseChainSpecError::GenesisJson(_))));
+        }
+    }
+
+    #[test]
+    fn runtime_denim_schedule_requires_block_time_and_observes_changes() {
+        let chain_id = 9_100_011;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        let mut spec = BaseChainSpecBuilder::default()
+            .chain(chain_id.into())
+            .genesis(Genesis { timestamp: 100, ..Default::default() })
+            .build();
+        assert!(spec.block_timestamp_schedule().unwrap().is_none());
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Denim, 105);
+        for interval in [None, Some(0)] {
+            spec.block_time = interval;
+            assert!(matches!(
+                spec.block_timestamp_schedule(),
+                Err(BaseChainSpecError::InvalidDenimBlockTime)
+            ));
+        }
+        spec.block_time = Some(2);
+        assert_eq!(
+            spec.block_timestamp_schedule().unwrap().unwrap().block_timestamp_parts(4),
+            (106, 200)
+        );
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Denim, 107);
+        assert_eq!(
+            spec.block_timestamp_schedule().unwrap().unwrap().block_timestamp_parts(4),
+            (108, 0)
+        );
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        assert!(spec.block_timestamp_schedule().unwrap().is_none());
     }
 }
