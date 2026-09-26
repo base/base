@@ -81,10 +81,6 @@ pub enum TxManagerError {
     #[error("runtime mempool deadline requires critical_error_at")]
     RuntimeMempoolDeadlineMissingTimestamp,
 
-    /// Nonce slot was already reserved.
-    #[error("nonce already reserved")]
-    AlreadyReserved,
-
     /// Nonce arithmetic overflowed `u64::MAX`.
     #[error("nonce overflow")]
     NonceOverflow,
@@ -411,7 +407,7 @@ mod tests {
     #[case::preserves_casing("Some Unknown ERROR", TxManagerError::Rpc("Some Unknown ERROR".to_string()))]
     #[case::empty_string("", TxManagerError::Rpc(String::new()))]
     #[case::mempool_deadline_not_classified("mempool deadline expired", TxManagerError::Rpc("mempool deadline expired".to_string()))]
-    #[case::already_reserved_not_classified("nonce already reserved", TxManagerError::Rpc("nonce already reserved".to_string()))]
+    #[case::nonce_already_reserved_is_generic("nonce already reserved", TxManagerError::Rpc("nonce already reserved".to_string()))]
     fn classify_rpc_error(#[case] input: &str, #[case] expected: TxManagerError) {
         let transport_err = error_resp(input);
         assert_eq!(RpcErrorClassifier::classify_rpc_error(&transport_err), expected);
@@ -447,7 +443,6 @@ mod tests {
         TxManagerError::RuntimeMempoolDeadlineMissingTimestamp,
         false
     )]
-    #[case::already_reserved(TxManagerError::AlreadyReserved, false)]
     #[case::channel_closed(TxManagerError::ChannelClosed, false)]
     #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded { fee: 0, ceiling: 0 }, false)]
     #[case::invalid_safe_abort(TxManagerError::InvalidSafeAbortNonceTooLowCount, false)]
@@ -506,7 +501,6 @@ mod tests {
         TxManagerError::RuntimeMempoolDeadlineMissingTimestamp,
         "runtime mempool deadline requires critical_error_at"
     )]
-    #[case::already_reserved(TxManagerError::AlreadyReserved, "nonce already reserved")]
     #[case::underpriced(TxManagerError::Underpriced, "transaction underpriced")]
     #[case::replacement_underpriced(
         TxManagerError::ReplacementUnderpriced,
