@@ -471,11 +471,9 @@ mod tests {
     use alloc::vec;
 
     use alloy_consensus::{Signed, TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy};
-    use alloy_primitives::{B256, Signature, TxKind, address};
+    use alloy_primitives::{Signature, TxKind, address};
     use base_common_consensus::{
-        AccountChange, AccountChangeChannel, Call, ChangeType, CreateEntry, Delegation,
-        Eip8130Constants, Eip8130Signed, InitialActor, SignedAccountChanges, SignedChange,
-        TxEip8130,
+        AccountChange, Call, Delegation, Eip8130Constants, Eip8130Signed, TxEip8130,
     };
 
     use super::*;
@@ -669,39 +667,14 @@ mod tests {
             eip8130_raw(tx, Bytes::from(sender_auth), Bytes::from(payer_auth))
         };
 
-        // Every account-change variant plus multi-phase calls and metadata.
+        // A delegation account change plus multi-phase calls and metadata.
         let rich = {
             let mut tx = eip8130_body();
             tx.sender = Some(sender);
             tx.nonce_sequence = 11;
-            tx.account_changes = vec![
-                AccountChange::Create(CreateEntry {
-                    user_salt: B256::repeat_byte(0x01),
-                    code: bytes!("60006000fd"),
-                    initial_actors: vec![InitialActor::owner(
-                        B256::repeat_byte(0x02),
-                        address!("00000000000000000000000000000000000000cc"),
-                    )],
-                }),
-                AccountChange::ConfigChange(SignedAccountChanges {
-                    channel: AccountChangeChannel::Local,
-                    sequence: 1,
-                    changes: vec![
-                        SignedChange {
-                            change_type: ChangeType::AuthorizeActor,
-                            payload: bytes!("aabbcc"),
-                        },
-                        SignedChange {
-                            change_type: ChangeType::RevokeActor,
-                            payload: Bytes::new(),
-                        },
-                    ],
-                    signature: bytes!("c0ffee"),
-                }),
-                AccountChange::Delegation(Delegation {
-                    target: address!("00000000000000000000000000000000000000ee"),
-                }),
-            ];
+            tx.account_changes = vec![AccountChange::Delegation(Delegation {
+                target: address!("00000000000000000000000000000000000000ee"),
+            })];
             tx.calls = vec![
                 vec![
                     Call {

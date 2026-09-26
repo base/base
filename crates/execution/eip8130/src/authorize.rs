@@ -55,6 +55,14 @@ impl ActorAuthorizer {
             return Err(AuthError::MalformedAuth.into());
         }
         let authenticator = Address::from_slice(&auth[..20]);
+        // EIP-8130 launch: only the native secp256k1 authenticator is accepted on
+        // the transaction path. Every non-k1 authenticator (P-256, WebAuthn,
+        // delegate) is a Keystore feature and needs a Keystore actor, which no
+        // account can hold while account changes are delegation-only, so reject it
+        // here rather than dispatching an authenticator that can never authorize.
+        if authenticator != Eip8130Constants::K1_AUTHENTICATOR {
+            return Err(AuthError::NotCanonical(authenticator).into());
+        }
         Self::authenticate(storage, account, hash, authenticator, &auth[20..], now, account_state)
     }
 
@@ -237,9 +245,6 @@ mod tests {
     use alloy_primitives::{U256, address, keccak256};
     use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
     use k256::ecdsa::SigningKey as K256SigningKey;
-    use p256::ecdsa::{
-        Signature as P256Sig, SigningKey as P256SigningKey, signature::hazmat::PrehashSigner,
-    };
 
     use super::*;
 
@@ -283,26 +288,6 @@ mod tests {
         out[..64].copy_from_slice(&sig.to_bytes());
         out[64] = recid.to_byte() + 27;
         out
-    }
-
-    fn p256_key(byte: u8) -> P256SigningKey {
-        P256SigningKey::from_slice(&[byte; 32]).unwrap()
-    }
-
-    /// `data = r || s || x || y || pre_hash` for the P-256 authenticator, plus the
-    /// derived `actorId = keccak256(x || y)`.
-    fn p256_blob(key: &P256SigningKey, hash: B256) -> (Vec<u8>, B256) {
-        let point = key.verifying_key().to_encoded_point(false);
-        let bytes = point.as_bytes();
-        let (x, y) = (&bytes[1..33], &bytes[33..65]);
-        let sig: P256Sig = key.sign_prehash(hash.as_slice()).unwrap();
-        let sig = sig.normalize_s().unwrap_or(sig);
-        let mut data = Vec::with_capacity(129);
-        data.extend_from_slice(&sig.to_bytes());
-        data.extend_from_slice(x);
-        data.extend_from_slice(y);
-        data.push(0);
-        (data, keccak256([x, y].concat()))
     }
 
     /// `authenticator(20) || data`.
@@ -456,279 +441,18 @@ mod tests {
     }
 
     #[test]
-    fn p256_resolves_keccak_xy_actor() {
-        let key = p256_key(0x33);
-        let (data, id) = p256_blob(&key, HASH);
-        let auth = blob(Eip8130Contracts::P256_AUTHENTICATOR, &data);
-        with_storage(|acc| {
-            acc.actors
-                .at_mut(&id)
-                .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Contracts::P256_AUTHENTICATOR, 0x02, 0))
-                .unwrap();
-            let resolved =
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
-            assert_eq!(resolved, ResolvedActor { actor_id: id, scope: 0x02, expiry: 0 });
-        });
-    }
-
-    /// `DELEGATE || delegate_account(20) || K1_AUTHENTICATOR || nested_sig`.
-    fn delegate_auth(delegate_account: Address, nested_key: &K256SigningKey) -> Vec<u8> {
-        let mut data = Vec::new();
-        data.extend_from_slice(delegate_account.as_slice());
-        data.extend_from_slice(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
-        data.extend_from_slice(&k1_sig(nested_key, HASH));
-        blob(Eip8130Contracts::DELEGATE_AUTHENTICATOR, &data)
-    }
-
-    #[test]
-    fn delegate_authorizes_nested_then_outer_surface() {
-        let delegate_account = address!("0x00000000000000000000000000000000000000bb");
-        let nested_key = k1_key(0x44);
-        let nested_id = actor_id(k1_address(&nested_key));
-        let outer_id = actor_id(delegate_account);
-        let auth = delegate_auth(delegate_account, &nested_key);
-        with_storage(|acc| {
-            // Nested actor authorized on the delegated account.
-            acc.actors
-                .at_mut(&nested_id)
-                .at_mut(&delegate_account)
-                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 0))
-                .unwrap();
-            // Outer delegate actor on the originating account carries the surface.
-            acc.actors
-                .at_mut(&outer_id)
-                .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Contracts::DELEGATE_AUTHENTICATOR, 0x08, 0))
-                .unwrap();
-            let resolved =
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
-            assert_eq!(resolved, ResolvedActor { actor_id: outer_id, scope: 0x08, expiry: 0 });
-        });
-    }
-
-    #[test]
-    fn delegate_rejects_nested_actor_without_signature_scope() {
-        let delegate_account = address!("0x00000000000000000000000000000000000000bb");
-        let nested_key = k1_key(0x44);
-        let nested_id = actor_id(k1_address(&nested_key));
-        let outer_id = actor_id(delegate_account);
-        let auth = delegate_auth(delegate_account, &nested_key);
-        with_storage(|acc| {
-            // Nested actor is bound on B but scoped (non-admin), so the delegate
-            // vouch — which `DelegateAuthenticator` requires to be admin
-            // (`scope == 0`) — rejects it.
-            acc.actors
-                .at_mut(&nested_id)
-                .at_mut(&delegate_account)
-                .write(pack(
-                    Eip8130Constants::K1_AUTHENTICATOR,
-                    Eip8130Constants::SCOPE_SELF_PAYER,
-                    0,
-                ))
-                .unwrap();
-            acc.actors
-                .at_mut(&outer_id)
-                .at_mut(&ACCOUNT)
-                .write(pack(
-                    Eip8130Contracts::DELEGATE_AUTHENTICATOR,
-                    Eip8130Constants::SCOPE_OPERATOR,
-                    0,
-                ))
-                .unwrap();
-            assert_eq!(
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
-                Err(AuthorizeError::NestedSignatureScope { actor_id: nested_id }),
-            );
-        });
-    }
-
-    #[test]
-    fn delegate_accepts_nested_actor_with_signature_scope() {
-        let delegate_account = address!("0x00000000000000000000000000000000000000bb");
-        let nested_key = k1_key(0x44);
-        let nested_id = actor_id(k1_address(&nested_key));
-        let outer_id = actor_id(delegate_account);
-        let auth = delegate_auth(delegate_account, &nested_key);
-        with_storage(|acc| {
-            // Nested actor is admin (`scope == 0`), the predicate the delegate
-            // vouch requires, so it satisfies the delegate gate.
-            acc.actors
-                .at_mut(&nested_id)
-                .at_mut(&delegate_account)
-                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 0))
-                .unwrap();
-            acc.actors
-                .at_mut(&outer_id)
-                .at_mut(&ACCOUNT)
-                .write(pack(
-                    Eip8130Contracts::DELEGATE_AUTHENTICATOR,
-                    Eip8130Constants::SCOPE_OPERATOR,
-                    0,
-                ))
-                .unwrap();
-            let resolved =
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
-            assert_eq!(resolved.actor_id, outer_id);
-            assert_eq!(resolved.scope, Eip8130Constants::SCOPE_OPERATOR);
-        });
-    }
-
-    #[test]
-    fn delegate_rejects_unbound_nested_actor() {
-        let delegate_account = address!("0x00000000000000000000000000000000000000bb");
-        let nested_key = k1_key(0x44);
-        let nested_id = actor_id(k1_address(&nested_key));
-        let outer_id = actor_id(delegate_account);
-        let auth = delegate_auth(delegate_account, &nested_key);
-        with_storage(|acc| {
-            // Only the outer actor is registered; the nested actor is not bound on B.
-            acc.actors
-                .at_mut(&outer_id)
-                .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Contracts::DELEGATE_AUTHENTICATOR, 0x08, 0))
-                .unwrap();
-            assert_eq!(
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
-                Err(AuthorizeError::AuthenticatorMismatch {
-                    actor_id: nested_id,
-                    authenticator: Eip8130Constants::K1_AUTHENTICATOR,
-                }),
-            );
-        });
-    }
-
-    #[test]
-    fn nested_delegate_is_rejected() {
-        // Depth-2: DELEGATE || delegate_account(20) || DELEGATE || .... Single-hop
-        // is rejected. On the public path the dispatch-level structural check
-        // (`AuthenticatorDispatch::delegate`) fires first, so that is what this
-        // test exercises; the authorize-layer guard is redundant defense-in-depth
-        // that only becomes reachable if the dispatch check were removed. Both
-        // surface the same `NestedDelegate` error.
-        let delegate_account = address!("0x00000000000000000000000000000000000000bb");
-        let mut data = Vec::new();
-        data.extend_from_slice(delegate_account.as_slice());
-        data.extend_from_slice(Eip8130Contracts::DELEGATE_AUTHENTICATOR.as_slice());
-        data.extend_from_slice(&[0u8; 65]);
-        let auth = blob(Eip8130Contracts::DELEGATE_AUTHENTICATOR, &data);
+    fn canonical_non_k1_authenticator_is_rejected_on_tx_path() {
+        // P-256 (and every other non-k1 authenticator) is a Keystore feature. On
+        // the launch wire the transaction path accepts only the native k1
+        // authenticator, so a canonical P-256 selector is rejected before any
+        // signature check.
+        let auth = blob(Eip8130Contracts::P256_AUTHENTICATOR, &[0u8; 129]);
         with_storage(|acc| {
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
-                Err(AuthorizeError::Authenticate(AuthError::NestedDelegate)),
-            );
-        });
-    }
-
-    #[test]
-    fn delegate_accepts_nested_default_eoa_self() {
-        // EOA as parent: nested k1 recovers to the delegate account itself,
-        // with no `actor_config` entry — only the live inline default EOA.
-        // `DelegateAuthenticator` → `authenticateActor` must honor that path;
-        // bare `resolve_bound` would incorrectly return AuthenticatorMismatch.
-        let nested_key = k1_key(0x55);
-        let delegate_account = k1_address(&nested_key);
-        let outer_id = actor_id(delegate_account);
-        let auth = delegate_auth(delegate_account, &nested_key);
-        with_storage(|acc| {
-            acc.actors
-                .at_mut(&outer_id)
-                .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Contracts::DELEGATE_AUTHENTICATOR, 0x08, 0))
-                .unwrap();
-            let resolved =
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
-            assert_eq!(resolved, ResolvedActor { actor_id: outer_id, scope: 0x08, expiry: 0 });
-        });
-    }
-
-    #[test]
-    fn delegate_rejects_nested_default_eoa_when_revoked() {
-        let nested_key = k1_key(0x56);
-        let delegate_account = k1_address(&nested_key);
-        let outer_id = actor_id(delegate_account);
-        let auth = delegate_auth(delegate_account, &nested_key);
-        with_storage(|acc| {
-            acc.account_state.at_mut(&delegate_account).write(pack_self(0, 0, true)).unwrap();
-            acc.actors
-                .at_mut(&outer_id)
-                .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Contracts::DELEGATE_AUTHENTICATOR, 0x08, 0))
-                .unwrap();
-            assert_eq!(
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
-                Err(AuthorizeError::DefaultEoaRevoked { account: delegate_account }),
-            );
-        });
-    }
-
-    #[test]
-    fn delegate_rejects_nested_scoped_default_eoa() {
-        // Live but scoped (non-admin) default EOA may sign for its own account,
-        // yet must not vouch as a delegate.
-        let nested_key = k1_key(0x57);
-        let delegate_account = k1_address(&nested_key);
-        let nested_id = actor_id(delegate_account);
-        let outer_id = actor_id(delegate_account);
-        let auth = delegate_auth(delegate_account, &nested_key);
-        with_storage(|acc| {
-            acc.account_state
-                .at_mut(&delegate_account)
-                .write(pack_self(Eip8130Constants::SCOPE_OPERATOR, 0, false))
-                .unwrap();
-            acc.actors
-                .at_mut(&outer_id)
-                .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Contracts::DELEGATE_AUTHENTICATOR, 0x08, 0))
-                .unwrap();
-            assert_eq!(
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
-                Err(AuthorizeError::NestedSignatureScope { actor_id: nested_id }),
-            );
-        });
-    }
-
-    #[test]
-    fn delegate_rejects_unbound_outer_actor() {
-        let delegate_account = address!("0x00000000000000000000000000000000000000bb");
-        let nested_key = k1_key(0x44);
-        let nested_id = actor_id(k1_address(&nested_key));
-        let outer_id = actor_id(delegate_account);
-        let auth = delegate_auth(delegate_account, &nested_key);
-        with_storage(|acc| {
-            // Nested is bound, but the outer delegate actor is missing on A.
-            acc.actors
-                .at_mut(&nested_id)
-                .at_mut(&delegate_account)
-                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 0))
-                .unwrap();
-            assert_eq!(
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
-                Err(AuthorizeError::AuthenticatorMismatch {
-                    actor_id: outer_id,
-                    authenticator: Eip8130Contracts::DELEGATE_AUTHENTICATOR,
-                }),
-            );
-        });
-    }
-
-    #[test]
-    fn delegate_to_zero_address_is_rejected_as_authentication_failed() {
-        // A delegate to address(0) yields an outer actor id of bytes32(0).
-        let nested_key = k1_key(0x44);
-        let nested_id = actor_id(k1_address(&nested_key));
-        let auth = delegate_auth(Address::ZERO, &nested_key);
-        with_storage(|acc| {
-            // Bind the nested actor on address(0) so the nested discharge passes
-            // and we reach the outer zero-actor guard.
-            acc.actors
-                .at_mut(&nested_id)
-                .at_mut(&Address::ZERO)
-                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 0))
-                .unwrap();
-            assert_eq!(
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
-                Err(AuthorizeError::AuthenticationFailed),
+                Err(AuthorizeError::Authenticate(AuthError::NotCanonical(
+                    Eip8130Contracts::P256_AUTHENTICATOR
+                ))),
             );
         });
     }
