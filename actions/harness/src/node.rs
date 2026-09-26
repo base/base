@@ -4,6 +4,7 @@ use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Decodable;
 use alloy_rpc_types_engine::ForkchoiceState;
+use base_batcher_core::DerivationStatus;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
 use base_common_genesis::RollupConfig;
 use base_common_network::BaseEngineApi;
@@ -273,6 +274,13 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
     /// Return the current L1 origin the pipeline is positioned at.
     pub fn l1_origin(&self) -> Option<BlockInfo> {
         self.pipeline.origin()
+    }
+
+    /// What this node reports to the batcher: its safe L2 head and the L1 block its
+    /// derivation pipeline is processing. See
+    /// [`Batcher::observe_derivation`](crate::Batcher::observe_derivation).
+    pub fn derivation_status(&self) -> DerivationStatus {
+        DerivationStatus { safe_l2: self.safe_head.block_info, current_l1: self.l1_origin() }
     }
 
     /// Query the safe head recorded for a given L1 block number from the persistent `SafeDB`.
