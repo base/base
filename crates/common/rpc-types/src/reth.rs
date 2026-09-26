@@ -58,6 +58,7 @@ impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm<TxEnv>, Spec, Block>
         Ok(BaseRevm {
             base: self.as_ref().clone().try_into_tx_env(evm_env)?,
             enveloped_tx: Some(Bytes::new()),
+            enveloped_tx_fastlz_size: None,
             deposit: Default::default(),
             eip8130: None,
         })

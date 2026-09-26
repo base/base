@@ -1154,7 +1154,10 @@ impl Eip8130Executor {
         let gas_charge = U256::from(max_gas)
             .checked_mul(U256::from(outcome.effective))
             .ok_or_else(|| BaseTransactionError::eip8130("EIP-8130 gas pre-charge overflow"))?;
-        let l1_cost = ctx.chain_mut().calculate_tx_l1_cost(encoded, spec);
+        // `encoded` is the transaction's enveloped bytes, so any cached FastLZ size applies.
+        let fastlz_size = ctx.tx.enveloped_tx_fastlz_size;
+        let l1_cost =
+            ctx.chain_mut().calculate_tx_l1_cost_with_fastlz_size(encoded, fastlz_size, spec);
         let operator_cost = ctx.chain().operator_fee_charge(encoded, U256::from(max_gas), spec);
         let prepay = gas_charge
             .checked_add(l1_cost)
@@ -1569,7 +1572,9 @@ impl Eip8130Executor {
         let priority_amount = fee
             .checked_sub(base_fee_amount)
             .ok_or_else(|| BaseTransactionError::eip8130("EIP-8130 priority amount underflow"))?;
-        let l1_cost = ctx.chain_mut().calculate_tx_l1_cost(encoded, spec);
+        let fastlz_size = ctx.tx.enveloped_tx_fastlz_size;
+        let l1_cost =
+            ctx.chain_mut().calculate_tx_l1_cost_with_fastlz_size(encoded, fastlz_size, spec);
         let operator_cost =
             ctx.chain().operator_fee_charge(encoded, U256::from(billable_gas), spec);
 
