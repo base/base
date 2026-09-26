@@ -21,6 +21,7 @@ async-trait.workspace = true
 base-retry.workspace = true
 base-metrics.workspace = true
 base-tx-manager.workspace = true
+alloy-sol-types.workspace = true
 base-batcher-core.workspace = true
 base-batcher-admin.workspace = true
 base-balance-monitor.workspace = true
@@ -42,8 +43,10 @@ jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 
 [dev-dependencies]
 httpmock.workspace = true
+serde_json.workspace = true
 alloy-node-bindings.workspace = true
 base-runtime = { workspace = true, features = ["test-utils"] }
+base-common-genesis = { workspace = true, features = ["serde"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [features]

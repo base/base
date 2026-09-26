@@ -38,6 +38,7 @@ use crate::{
     BatcherConfig, DerivationStatusPoller, DerivationStatusProvider, L2BlockParityMonitor,
     L2BlockParityMonitorConfig, MAX_CHECK_RECENT_TXS_DEPTH, RecentTxSyncTarget,
     RpcL1HeadPollingSource, RpcL2BlockProvider, RpcPollingSource, RpcThrottleClient,
+    SystemConfigBatcher,
 };
 
 const WEI_PER_ETHER: f64 = 1_000_000_000_000_000_000.0;
@@ -358,12 +359,12 @@ impl BatcherService {
 
     /// Initialise all batcher components and return a [`ReadyBatcher`].
     ///
-    /// Connects to the L2 and L1 RPC endpoints, fetches the rollup config,
-    /// validates the private key, and constructs the driver. One-shot startup
-    /// RPCs retry with exponential backoff until
-    /// [`BatcherConfig::wait_node_sync_timeout`]. Returns an error if any of
-    /// those steps fail — the caller sees the failure immediately, before any
-    /// background work is spawned.
+    /// Connects to the L2 and L1 RPC endpoints, fetches the rollup config, validates the
+    /// private key, checks outside shadow mode that the signer is the batcher the L1
+    /// `SystemConfig` authorizes, and constructs the driver. One-shot startup RPCs retry with
+    /// exponential backoff until [`BatcherConfig::wait_node_sync_timeout`]. Returns an error if
+    /// any of those steps fail — the caller sees the failure immediately, before any background
+    /// work is spawned.
     ///
     /// The runtime's cancellation token is forwarded to the derivation-status poller
     /// spawned here so it stops cleanly when the batcher shuts down.
@@ -525,6 +526,22 @@ impl BatcherService {
             })
         })
         .await?;
+
+        // Derivation ignores batches from any other sender, so a wrong signer would only burn L1
+        // fees. The shadow batcher posts with its own key on purpose.
+        if self.config.batch_inbox_override.is_none() {
+            let system_config = rollup_config.l1_system_config_address;
+            let authorized = Self::rpc_retry("system-config-batcher", retry, rpc_timeout, || {
+                SystemConfigBatcher::fetch(&l1_provider, system_config)
+            })
+            .await?;
+            if authorized != signer_address {
+                eyre::bail!(
+                    "signer {signer_address} is not the batcher {authorized} authorized by the L1 \
+                     SystemConfig at {system_config}"
+                );
+            }
+        }
 
         // Recent transactions only select an L1 synchronization target.
         // They never advance the L2 backfill cursor.
@@ -759,12 +776,59 @@ mod tests {
     use std::sync::atomic::{AtomicU8, Ordering};
 
     use alloy_node_bindings::Anvil;
+    use alloy_primitives::Address;
     use base_batcher_core::ThrottleConfig;
+    use base_common_genesis::RollupConfig;
+    use base_tx_manager::SignerConfig;
+    use httpmock::{Mock, prelude::*};
 
     use super::*;
 
     fn test_retry() -> RetryConfig {
         RetryConfig::unbounded(Duration::from_millis(1), Duration::from_millis(1))
+    }
+
+    /// Answers every JSON-RPC request whose body includes `request` with `result`, under id 0,
+    /// the id of each client's first request.
+    async fn mock_rpc<'a>(server: &'a MockServer, request: &str, result: String) -> Mock<'a> {
+        let response = format!(r#"{{"jsonrpc":"2.0","id":0,"result":{result}}}"#);
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/").json_body_includes(request);
+                then.status(200).header("content-type", "application/json").body(response);
+            })
+            .await
+    }
+
+    /// A batcher whose L1, L2 and rollup endpoints are all `server`, signing as `signer`.
+    fn mocked_config(server: &MockServer, signer: Address) -> BatcherConfig {
+        let url: Url = server.url("/").parse().unwrap();
+        BatcherConfig {
+            l1_rpc_url: vec![url.clone()],
+            l2_rpc_url: vec![url.clone()],
+            rollup_rpc_url: vec![url.clone()],
+            signer: Some(SignerConfig::Remote { endpoint: url, address: signer }),
+            poll_interval: Duration::from_millis(10),
+            wait_node_sync_timeout: Duration::from_millis(200),
+            ..BatcherConfig::default()
+        }
+    }
+
+    /// Serves a rollup config whose `SystemConfig` authorizes `authorized`, and returns the
+    /// mock of the `batcherHash()` call.
+    async fn mock_system_config(server: &MockServer, authorized: Address) -> Mock<'_> {
+        let rollup_config = RollupConfig {
+            l1_system_config_address: Address::repeat_byte(0x5c),
+            ..RollupConfig::default()
+        };
+        mock_rpc(
+            server,
+            r#"{"method":"optimism_rollupConfig"}"#,
+            serde_json::to_string(&rollup_config).unwrap(),
+        )
+        .await;
+        mock_rpc(server, r#"{"method":"eth_call"}"#, format!(r#""{}""#, authorized.into_word()))
+            .await
     }
 
     #[tokio::test]
@@ -825,6 +889,58 @@ mod tests {
             error.to_string().contains("block_size_lower_limit"),
             "error should name the setting, got {error}"
         );
+    }
+
+    #[tokio::test]
+    async fn setup_rejects_a_signer_the_system_config_does_not_authorize() {
+        let server = MockServer::start_async().await;
+        let (signer, authorized) = (Address::repeat_byte(0x51), Address::repeat_byte(0xba));
+        mock_system_config(&server, authorized).await;
+
+        let error = BatcherService::new(mocked_config(&server, signer))
+            .setup(TokioRuntime::new())
+            .await
+            .expect_err("a batcher whose batches derivation ignores must not start");
+
+        let error = error.to_string();
+        assert!(
+            error.contains(&signer.to_string()) && error.contains(&authorized.to_string()),
+            "error should name both addresses, got {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn setup_accepts_the_signer_the_system_config_authorizes() {
+        let server = MockServer::start_async().await;
+        let signer = Address::repeat_byte(0x51);
+        mock_system_config(&server, signer).await;
+        // The first L1 read after the check: once it is served, setup went past the check.
+        let l1_head = mock_rpc(&server, r#"{"method":"eth_blockNumber"}"#, r#""0x1""#.into()).await;
+
+        // Setup fails later, on the reads this test does not mock.
+        let _ =
+            BatcherService::new(mocked_config(&server, signer)).setup(TokioRuntime::new()).await;
+
+        assert!(l1_head.calls_async().await > 0, "setup must go past the check");
+    }
+
+    #[tokio::test]
+    async fn setup_skips_the_batcher_check_in_shadow_mode() {
+        let server = MockServer::start_async().await;
+        let batcher_hash = mock_system_config(&server, Address::repeat_byte(0xba)).await;
+        // The first L1 read after the check: once it is served, setup went past the check.
+        let l1_head = mock_rpc(&server, r#"{"method":"eth_blockNumber"}"#, r#""0x1""#.into()).await;
+        let config = BatcherConfig {
+            batch_inbox_override: Some(Address::repeat_byte(0x1b)),
+            parity_validator_l2_rpc_url: Some(server.url("/").parse().unwrap()),
+            ..mocked_config(&server, Address::repeat_byte(0x51))
+        };
+
+        // Setup fails later, on the reads this test does not mock.
+        let _ = BatcherService::new(config).setup(TokioRuntime::new()).await;
+
+        assert!(l1_head.calls_async().await > 0, "setup must reach the L1 head read");
+        batcher_hash.assert_calls_async(0).await;
     }
 
     #[tokio::test]
