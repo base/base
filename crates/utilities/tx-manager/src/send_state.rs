@@ -78,7 +78,8 @@ impl SendState {
     /// - [`TxManagerError::AlreadyReserved`] sets the already-reserved flag.
     /// - Any other [retryable](TxManagerError::is_retryable) error sets the
     ///   bump-fees flag for the next send attempt.
-    /// - Other critical errors are no-ops (handled at a higher level).
+    /// - Other critical errors are no-ops: the initial publication returns
+    ///   them, and a fee bump only logs them.
     ///
     /// Note: `NonceTooLow` is not retryable, so the nonce-too-low branch and
     /// the bump-fees branch are mutually exclusive.
@@ -143,7 +144,7 @@ impl SendState {
     ///    successfully published, returns
     ///    [`TxManagerError::MempoolDeadlineExpired`]. Once a publish has
     ///    succeeded the tx is in the mempool and the deadline's purpose is
-    ///    served — further waiting is governed by the receipt timeout and
+    ///    served — further waiting is governed by `tx_send_timeout` and the
     ///    bump cycle, not by aborting (which would leak a pre-reserved nonce
     ///    and stall publication on lower nonces still live on L1).
     /// 6. Otherwise, returns `None`.

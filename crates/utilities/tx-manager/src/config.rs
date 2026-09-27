@@ -123,7 +123,9 @@ pub struct TxManagerConfig {
     pub tx_send_timeout: Duration,
     /// Mempool appearance timeout (zero = disabled).
     pub tx_not_in_mempool_timeout: Duration,
-    /// Maximum time to poll for a transaction that is not mined before giving up.
+    /// Maximum time [`wait_mined`](crate::SimpleTxManager::wait_mined) polls for a
+    /// transaction that is not mined. The send loop is not bound by it: it polls every
+    /// version it published until the send ends.
     pub confirmation_timeout: Duration,
     /// Minimum blob base fee (in wei) to use for blob transactions.
     pub min_blob_fee: u128,
@@ -156,7 +158,7 @@ impl TxManagerConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::OutOfRange`] if any required field is zero:
+    /// Returns [`ConfigError::OutOfRange`] if a field is out of range:
     /// - `num_confirmations` must be >= 1
     /// - `safe_abort_nonce_too_low_count` must be >= 1
     /// - `fee_limit_multiplier` must be >= 1
@@ -167,6 +169,10 @@ impl TxManagerConfig {
     /// - `publish_retry_delay` must be > 0
     /// - `receipt_query_interval` must be > 0
     /// - `confirmation_timeout` must be > 0
+    /// - a receipt poll must fit between the first refused fee bump and the abort it may
+    ///   lead to: `(safe_abort_nonce_too_low_count - 1) * resubmission_timeout` must be
+    ///   above `receipt_query_interval`, or a transaction mined right after a poll would be
+    ///   taken for a nonce consumed by someone else
     pub fn validate(&self) -> Result<(), ConfigError> {
         macro_rules! reject_zero {
             ($($field:ident),+ $(,)?) => {$(
@@ -206,6 +212,22 @@ impl TxManagerConfig {
             confirmation_timeout,
         );
         reject_zero!(min_blob_fee);
+        let refusals_before_abort =
+            u32::try_from(self.safe_abort_nonce_too_low_count - 1).unwrap_or(u32::MAX);
+        if self.resubmission_timeout.saturating_mul(refusals_before_abort)
+            <= self.receipt_query_interval
+        {
+            return Err(ConfigError::OutOfRange {
+                field: "safe_abort_nonce_too_low_count",
+                constraint: "high enough for a receipt poll between the first refused fee bump and the abort: (count - 1) * resubmission_timeout > receipt_query_interval",
+                value: format!(
+                    "count {}, resubmission_timeout {:?}, receipt_query_interval {:?}",
+                    self.safe_abort_nonce_too_low_count,
+                    self.resubmission_timeout,
+                    self.receipt_query_interval
+                ),
+            });
+        }
         Ok(())
     }
 }
@@ -308,6 +330,37 @@ mod tests {
             matches!(err, ConfigError::OutOfRange { field: "confirmation_timeout", .. }),
             "expected OutOfRange for confirmation_timeout, got: {err}"
         );
+    }
+
+    /// The refused bumps before an abort must leave room for a receipt poll, or a send whose
+    /// transaction was mined right after a poll would abort.
+    #[rstest]
+    #[case::one_refusal(1, 48, 12, false)]
+    #[case::polls_at_the_abort(3, 6, 12, false)]
+    #[case::polls_before_the_abort(3, 7, 12, true)]
+    fn validation_requires_a_receipt_poll_before_an_abort(
+        #[case] safe_abort_nonce_too_low_count: u64,
+        #[case] resubmission_secs: u64,
+        #[case] receipt_query_secs: u64,
+        #[case] valid: bool,
+    ) {
+        let config = TxManagerConfig {
+            safe_abort_nonce_too_low_count,
+            resubmission_timeout: Duration::from_secs(resubmission_secs),
+            receipt_query_interval: Duration::from_secs(receipt_query_secs),
+            ..TxManagerConfig::default()
+        };
+        let result = config.validate();
+        assert_eq!(result.is_ok(), valid, "{result:?}");
+        if let Err(err) = result {
+            assert!(
+                matches!(
+                    err,
+                    ConfigError::OutOfRange { field: "safe_abort_nonce_too_low_count", .. }
+                ),
+                "expected OutOfRange for safe_abort_nonce_too_low_count, got: {err}"
+            );
+        }
     }
 
     #[test]
