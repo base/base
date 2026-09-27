@@ -1833,6 +1833,33 @@ impl BaseProofsStore for RocksdbProofsStorage {
         Ok(RocksdbAccountCursor::new_with_snapshot(Arc::clone(tx), max_block_number))
     }
 
+    fn hashed_account_with_tx<'db>(
+        &self,
+        tx: &Self::Tx<'db>,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Account>>
+    where
+        Self: 'db,
+    {
+        Ok(self.account_hashed_cursor_with_tx(tx, max_block_number)?.seek_exact(hashed_address)?)
+    }
+
+    fn hashed_storage_with_tx<'db>(
+        &self,
+        tx: &Self::Tx<'db>,
+        hashed_address: B256,
+        hashed_slot: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<U256>>
+    where
+        Self: 'db,
+    {
+        Ok(self
+            .storage_hashed_cursor_with_tx(tx, hashed_address, max_block_number)?
+            .seek_exact(hashed_slot)?)
+    }
+
     fn store_trie_updates(
         &self,
         block_ref: BlockWithParent,
@@ -2857,6 +2884,18 @@ impl<'db> RocksdbStorageCursor<'db> {
             hashed_address,
         }
     }
+
+    /// Returns the live, non-zero value of exactly slot `key` at or below the cursor's max block.
+    ///
+    /// Unlike [`HashedCursor::seek`], this never scans past `key`, so misses, tombstones, and
+    /// zero-valued slots cost a single point lookup.
+    pub fn seek_exact(&mut self, key: B256) -> Result<Option<U256>, DatabaseError> {
+        Ok(self
+            .inner
+            .seek_exact(HashedStorageKey::new(self.hashed_address, key))?
+            .map(|(_, value)| value.0)
+            .filter(|value| !value.is_zero()))
+    }
 }
 
 impl HashedCursor for RocksdbStorageCursor<'_> {
@@ -2933,6 +2972,14 @@ impl<'db> RocksdbAccountCursor<'db> {
         max_block_number: u64,
     ) -> Self {
         Self { inner: RocksdbVersionedCursor::new_with_snapshot(snapshot, max_block_number) }
+    }
+
+    /// Returns the live account at exactly `key` at or below the cursor's max block.
+    ///
+    /// Unlike [`HashedCursor::seek`], this never scans past `key`, so misses and tombstones cost a
+    /// single point lookup.
+    pub fn seek_exact(&mut self, key: B256) -> Result<Option<Account>, DatabaseError> {
+        Ok(self.inner.seek_exact(key)?.map(|(_, account)| account))
     }
 }
 

@@ -1,3 +1,5 @@
+//! [`Batcher`] actor driving a production [`BatchDriver`] through [`L1Miner`].
+
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
@@ -7,19 +9,15 @@ use base_batcher_core::{
     DaThrottle, NoopThrottleClient, ThrottleController,
 };
 use base_batcher_encoder::{BatchEncoder, EncoderConfig};
-use base_batcher_source::{L2BlockEvent, test_utils::ChannelL1HeadSource};
+use base_batcher_source::{L2BlockEvent, test_utils::ChannelBlockSource};
 use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
 use base_protocol::BlockInfo;
 use base_runtime::TokioRuntime;
 use base_tx_manager::TxManager;
 use tokio::sync::{mpsc, oneshot};
-use tokio_util::sync::CancellationToken;
 
-use crate::{
-    ActionL2Source, BlockSourceItem, HarnessBlockSource, L1Block, L1Miner, L1MinerTxManager,
-    L2BlockProvider,
-};
+use crate::{ActionL2Source, HarnessL1HeadSource, L1Block, L1HeadItem, L1Miner, L1MinerTxManager};
 
 /// Configuration for the [`Batcher`] actor.
 #[derive(Debug, Clone)]
@@ -77,106 +75,99 @@ pub enum BatcherError {
     /// The end-of-cycle flush failed, for example because the driver is stopped.
     #[error("flush failed: {0}")]
     Flush(#[from] AdminError),
-    /// The driver exited, or did not catch up with the harness within the timeout.
+    /// The driver exited, or did not catch up with the harness within
+    /// [`Batcher::IDLE_TIMEOUT`].
     #[error("the batch driver exited or stalled")]
     DriverUnavailable,
 }
 
 /// Batcher actor that drives a persistent [`BatchDriver`] through [`L1Miner`].
 ///
-/// On construction, `Batcher` spawns a [`BatchDriver`] as a background tokio
-/// task backed by a [`HarnessBlockSource`] for L2 block delivery, a
-/// [`ChannelL1HeadSource`] fed by [`L1MinerTxManager`], and an admin channel.
-/// This mirrors the production batcher architecture: the driver owns its
-/// encoding pipeline and transaction manager and runs its own async loop.
+/// On construction, `Batcher` spawns a [`BatchDriver`] as a background tokio task backed by
+/// a [`ChannelBlockSource`] for L2 block delivery, a [`HarnessL1HeadSource`] for L1 heads,
+/// and an admin channel. This mirrors the production batcher architecture: the driver owns
+/// its encoding pipeline and transaction manager and runs its own async loop.
+///
+/// Every `async` method returns once the driver is idle again, that is once it has taken
+/// what it was given, encoded it, handed the resulting submissions to the tx manager and
+/// applied every receipt. The harness waits for that with a marker queued in the L1 head
+/// source; see [`L1HeadItem::Marker`].
 ///
 /// Each call to [`advance`] drives one complete batch cycle:
 /// 1. Drain the L2 source and forward each block to the driver via the block source.
-/// 2. Wait for the driver to take and encode every block (a marker in the block source).
+/// 2. Wait for the driver to encode every block.
 /// 3. Flush through the admin channel, exactly as an operator would, to close and
 ///    release the current channel.
-/// 4. Wait for the driver's next submit pass (a second marker), after which every
-///    resulting submission has been handed to the tx manager, not just the first.
-/// 5. Mine one L1 block via the shared [`L1MinerTxManager`], firing all
-///    receipt oneshots and delivering the new L1 head to the driver.
-/// 6. Yield to let the driver confirm receipts and advance its L1 head.
+/// 4. Wait for the driver to hand every resulting submission to the tx manager.
+/// 5. Stage every pending submission, mine one L1 block, fire the receipts of the
+///    submissions it includes and deliver the new L1 head to the driver.
+/// 6. Wait for the driver to confirm the receipts and advance its L1 head.
 ///
 /// The driver's [`BatchEncoder`] state is persistent across `advance()` calls.
 /// The driver task continues running between cycles, waiting for new events.
 ///
 /// [`advance`]: Batcher::advance
 /// [`BatchDriver`]: base_batcher_core::BatchDriver
-/// [`ChannelL1HeadSource`]: base_batcher_source::test_utils::ChannelL1HeadSource
-pub struct Batcher<S: L2BlockProvider> {
+#[derive(Debug)]
+pub struct Batcher {
     /// The L2 block source to drain on each [`advance`](Batcher::advance) cycle.
-    l2_source: S,
-    /// Feeds the driver's block source with block and reorg events, and with markers.
-    source_tx: mpsc::UnboundedSender<BlockSourceItem>,
+    l2_source: ActionL2Source,
+    /// Feeds the driver's block source with block and reorg events.
+    source_tx: mpsc::UnboundedSender<L2BlockEvent>,
+    /// Feeds the driver's L1 head source with mined heads, and with markers.
+    l1_head_tx: mpsc::UnboundedSender<L1HeadItem>,
     /// Admin channel to the driver, used to flush at the end of a cycle.
     admin: AdminHandle,
-    /// Shared tx manager — used to mine blocks and fire receipt/L1 head events.
+    /// Shared tx manager — used to stage submissions and fire their receipts.
     tx_manager: L1MinerTxManager,
-    /// Background driver task handle.
+    /// Background driver task, aborted on drop.
     driver_task: tokio::task::JoinHandle<Result<(), BatchDriverError>>,
-    /// Token used to cancel the background driver on drop.
-    cancel: CancellationToken,
 }
 
-impl<S: L2BlockProvider + std::fmt::Debug> std::fmt::Debug for Batcher<S> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Batcher")
-            .field("l2_source", &self.l2_source)
-            .field("tx_manager", &self.tx_manager)
-            .finish_non_exhaustive()
-    }
-}
+impl Batcher {
+    /// How long a method waits for the driver to go idle before giving up.
+    pub const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 
-impl<S: L2BlockProvider> Batcher<S> {
     /// Create a new [`Batcher`] backed by a persistent [`BatchDriver`] task.
     ///
-    /// Spawns the driver immediately. The driver will not process any events
-    /// until the first [`advance`] call.
+    /// Spawns the driver immediately.
     ///
     /// # Panics
     ///
     /// Panics if `config.encoder` is invalid, or if `config.batcher_address` is not the
     /// address of `config.l1_signer`.
-    ///
-    /// [`advance`]: Batcher::advance
-    pub fn new(l2_source: S, rollup_config: &RollupConfig, config: BatcherConfig) -> Self {
+    pub fn new(
+        l2_source: ActionL2Source,
+        rollup_config: &RollupConfig,
+        config: BatcherConfig,
+    ) -> Self {
         let l1_chain_id = rollup_config.l1_chain_id;
         let pipeline = BatchEncoder::new(Arc::new(rollup_config.clone()), config.encoder.clone())
             .expect("valid encoder config");
 
-        let (source, source_tx) = HarnessBlockSource::new();
+        let (source, source_tx) = ChannelBlockSource::new();
+        let (l1_head_source, l1_head_tx) = HarnessL1HeadSource::new();
         let (admin, admin_rx) = AdminHandle::channel();
 
-        // L1 head source: mine_block() sends the mined block number; the driver
-        // calls advance_l1_head() when the channel delivers it.
-        let (l1_source, l1_head_tx) = ChannelL1HeadSource::new();
-
         let tx_manager =
-            L1MinerTxManager::new(config.l1_signer.clone(), config.inbox_address, l1_chain_id)
-                .with_l1_head_tx(l1_head_tx);
+            L1MinerTxManager::new(config.l1_signer.clone(), config.inbox_address, l1_chain_id);
         assert_eq!(
             config.batcher_address,
             tx_manager.sender_address(),
             "BatcherConfig::batcher_address must match BatcherConfig::l1_signer"
         );
 
-        let cancel = CancellationToken::new();
-        let runtime = TokioRuntime::with_token(cancel.clone());
-
         let (derivation_status_tx, derivation_status_rx) = mpsc::channel(1);
 
         let driver = BatchDriver::new(
-            runtime,
+            TokioRuntime::new(),
             pipeline,
             tx_manager.clone(),
             BatchDriverConfig {
                 inbox: config.inbox_address,
-                // `encode_only` returns after one submit pass, so a cycle must not produce
-                // more submissions than this. No action test comes close.
+                // Past this many transactions in flight the driver goes idle with submissions
+                // still in the pipeline, so `encode_only` would return before handing them all
+                // to the tx manager. No action test comes close.
                 max_pending_transactions: 16,
                 drain_timeout: Duration::from_secs(10),
                 force_blobs_when_throttling: true,
@@ -185,7 +176,7 @@ impl<S: L2BlockProvider> Batcher<S> {
             DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
             BatchDriverInputs {
                 source,
-                l1_head_source: l1_source,
+                l1_head_source,
                 // The driver learns the L1 head from the blocks the tests mine.
                 initial_l1_head: 0,
                 initial_safe_head: BlockInfo::from_l2_genesis(&rollup_config.genesis),
@@ -201,15 +192,20 @@ impl<S: L2BlockProvider> Batcher<S> {
             driver.run().await
         });
 
-        Self { l2_source, source_tx, admin, tx_manager, driver_task, cancel }
+        Self { l2_source, source_tx, l1_head_tx, admin, tx_manager, driver_task }
+    }
+
+    /// Push a block into the L2 source for the next [`advance`] call.
+    ///
+    /// [`advance`]: Batcher::advance
+    pub fn push_block(&mut self, block: BaseBlock) {
+        self.l2_source.push(block);
     }
 
     /// Drain the L2 source and forward all blocks to the driver, then flush.
     ///
-    /// Performs steps 1–4 of [`advance`] without mining. After this returns, every frame
-    /// resulting from the flush (not just the first) has been handed to the tx manager, so
-    /// [`pending_count`] reflects the *complete* set of frame transactions waiting, even
-    /// when a cycle produces more than one frame.
+    /// Performs steps 1–4 of [`advance`] without mining. Once it returns, every frame the
+    /// flush released has been handed to the tx manager, so [`pending_count`] counts them all.
     ///
     /// # Panics
     ///
@@ -233,7 +229,7 @@ impl<S: L2BlockProvider> Batcher<S> {
 
         let mut block_count = 0u64;
         while let Some(block) = self.l2_source.next_block() {
-            self.send(BlockSourceItem::Event(L2BlockEvent::Block(Box::new(block))))?;
+            self.send_event(L2BlockEvent::Block(Box::new(block)))?;
             block_count += 1;
         }
         if block_count == 0 {
@@ -242,28 +238,56 @@ impl<S: L2BlockProvider> Batcher<S> {
 
         // Admin commands outrank the block source in the driver's select, so wait until every
         // block above is taken and encoded before asking for the flush.
-        self.wait_for_driver().await?;
+        self.wait_until_idle().await?;
         self.admin.flush().await?;
 
         // The flush is answered before the driver's next encode-and-submit pass. Wait for that
         // pass so every frame the flush released has been handed to the tx manager.
-        self.wait_for_driver().await
+        self.wait_until_idle().await
     }
 
-    /// Queue an item for the driver's block source. Fails if the driver task has exited.
-    fn send(&self, item: BlockSourceItem) -> Result<(), BatcherError> {
-        self.source_tx.send(item).map_err(|_| BatcherError::DriverUnavailable)
+    /// Queue an event for the driver's block source. Fails if the driver task has exited.
+    fn send_event(&self, event: L2BlockEvent) -> Result<(), BatcherError> {
+        self.source_tx.send(event).map_err(|_| BatcherError::DriverUnavailable)
     }
 
-    /// Wait until the driver has taken everything sent to its block source so far and run
-    /// the encode-and-submit pass that follows.
-    async fn wait_for_driver(&self) -> Result<(), BatcherError> {
+    /// Queue an item for the driver's L1 head source. Fails if the driver task has exited.
+    fn send_l1_head_item(&self, item: L1HeadItem) -> Result<(), BatcherError> {
+        self.l1_head_tx.send(item).map_err(|_| BatcherError::DriverUnavailable)
+    }
+
+    /// Wait until the driver has nothing left to do: everything sent so far is taken,
+    /// encoded and submitted, and every receipt is applied.
+    async fn wait_until_idle(&self) -> Result<(), BatcherError> {
         let (reached_tx, reached_rx) = oneshot::channel();
-        self.send(BlockSourceItem::Marker(reached_tx))?;
-        match tokio::time::timeout(Duration::from_secs(10), reached_rx).await {
+        self.send_l1_head_item(L1HeadItem::Marker(reached_tx))?;
+        match tokio::time::timeout(Self::IDLE_TIMEOUT, reached_rx).await {
             Ok(Ok(())) => Ok(()),
             _ => Err(BatcherError::DriverUnavailable),
         }
+    }
+
+    /// Deliver `head` to the driver as the new L1 head and wait until it is applied.
+    async fn deliver_l1_head(&self, head: u64) -> Result<(), BatcherError> {
+        self.send_l1_head_item(L1HeadItem::Head(head))?;
+        self.wait_until_idle().await
+    }
+
+    /// Fire receipts for the staged items included in `block`, then deliver its number as
+    /// the new L1 head.
+    async fn try_confirm_staged(&self, block: &L1Block) -> Result<(), BatcherError> {
+        // Receipts first: the driver serves them before L1 heads, so a failed submission is
+        // requeued before the head advances.
+        self.tx_manager.confirm_block(block);
+        self.deliver_l1_head(block.number()).await
+    }
+
+    /// Stage every pending submission, mine one L1 block and confirm it.
+    async fn try_mine_pending(&self, l1: &mut L1Miner) -> Result<u64, BatcherError> {
+        self.tx_manager.stage_n_to_l1(l1, usize::MAX);
+        let block = l1.mine_block().clone();
+        self.try_confirm_staged(&block).await?;
+        Ok(block.number())
     }
 
     /// Returns the number of encoded-but-not-yet-staged pending frame submissions.
@@ -288,15 +312,12 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// [`TxManager::send_async`] will resolve with
     /// [`TxManagerError::Rpc`] instead of queuing to the L1 miner. The driver
     /// requeues the frame and retries, so calling this before [`encode_only`]
-    /// simulates transient L1 submission failures without losing data.
-    ///
-    /// Use [`wait_until_requeued`] after [`encode_only`] to wait for the driver
-    /// to process the failures and return frames to the pending queue.
+    /// simulates transient L1 submission failures without losing data. Once
+    /// [`encode_only`] returns, the retried frames are back in the pending queue.
     ///
     /// [`TxManager::send_async`]: base_tx_manager::TxManager::send_async
     /// [`TxManagerError::Rpc`]: base_tx_manager::TxManagerError::Rpc
     /// [`encode_only`]: Batcher::encode_only
-    /// [`wait_until_requeued`]: Batcher::wait_until_requeued
     pub fn fail_next_n_submissions(&self, n: usize) {
         self.tx_manager.fail_next_n(n);
     }
@@ -308,17 +329,17 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// [`TxManager::send_async`] resolves with [`TxManagerError::AlreadyReserved`].
     /// The driver classifies this as [`TxOutcome::TxpoolBlocked`]: it requeues
     /// the frames, stops submitting, and calls [`TxManager::cancel_tx`] on its
-    /// next loop iteration to clear the slot before resubmitting. Use
-    /// [`cancellation_count`] to assert the recovery path ran, and
-    /// [`wait_until_requeued`] to wait for the frames to return to pending.
+    /// next loop iteration to clear the slot before resubmitting. Once
+    /// [`encode_only`] returns, the recovery has run: use [`cancellation_count`]
+    /// to assert it did.
     ///
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
     /// [`TxManager::send_async`]: base_tx_manager::TxManager::send_async
     /// [`TxManager::cancel_tx`]: base_tx_manager::TxManager::cancel_tx
     /// [`TxManagerError::AlreadyReserved`]: base_tx_manager::TxManagerError::AlreadyReserved
     /// [`TxOutcome::TxpoolBlocked`]: base_batcher_core::TxOutcome::TxpoolBlocked
+    /// [`encode_only`]: Batcher::encode_only
     /// [`cancellation_count`]: Batcher::cancellation_count
-    /// [`wait_until_requeued`]: Batcher::wait_until_requeued
     pub fn block_next_n_submissions(&self, n: usize) {
         self.tx_manager.block_next_n(n);
     }
@@ -333,87 +354,64 @@ impl<S: L2BlockProvider> Batcher<S> {
 
     /// Mine all pending frame submissions in one L1 block.
     ///
-    /// Stages every pending frame, mines one L1 block, fires all receipt
-    /// oneshots, and yields once so the driver processes confirmations.
-    /// Returns the mined block number.
+    /// Stages every pending frame, mines one L1 block, fires all receipts and waits until
+    /// the driver has confirmed them. Returns the mined block number.
     ///
-    /// Use this after [`wait_until_requeued`] to confirm a requeued batch
-    /// without needing to encode new L2 blocks.
+    /// Use this to confirm a requeued batch without encoding new L2 blocks.
     ///
-    /// [`wait_until_requeued`]: Batcher::wait_until_requeued
+    /// # Panics
+    ///
+    /// Panics if the driver task has exited, or did not catch up within
+    /// [`IDLE_TIMEOUT`](Self::IDLE_TIMEOUT).
     pub async fn mine_pending(&self, l1: &mut L1Miner) -> u64 {
-        let block_number = self.tx_manager.mine_block(l1);
-        tokio::task::yield_now().await;
-        block_number
+        self.try_mine_pending(l1)
+            .await
+            .unwrap_or_else(|e| panic!("Batcher::mine_pending failed: {e}"))
     }
 
     /// Drop the first `n` pending frame submissions without staging them to L1.
     ///
     /// Returns the actual number dropped. Use this to skip specific frame
-    /// positions when testing non-sequential frame submission scenarios.
+    /// positions when testing non-sequential frame submission scenarios. The driver sees
+    /// each dropped submission fail and resubmits it on its next `async` call.
     pub fn drop_n_frames(&self, n: usize) -> usize {
         self.tx_manager.drop_n(n)
     }
 
-    /// Fire receipts for all staged items from `block` and yield to let
-    /// the driver process confirmations and the new L1 head.
+    /// Fire receipts for all staged items included in `block`, deliver its number to the
+    /// driver as the new L1 head, and wait until the driver has applied both.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the driver task has exited, or did not catch up within
+    /// [`IDLE_TIMEOUT`](Self::IDLE_TIMEOUT).
     pub async fn confirm_staged(&self, block: &L1Block) {
-        self.tx_manager.confirm_block(block);
-        tokio::task::yield_now().await;
+        self.try_confirm_staged(block)
+            .await
+            .unwrap_or_else(|e| panic!("Batcher::confirm_staged failed: {e}"));
     }
 
     /// Simulate an L1 reorg back to `block_number`.
     ///
-    /// Truncates the L1 chain via [`L1Miner::reorg_to`], fires failure
-    /// receipts for every item in `pending` and `staged`, and publishes the new
-    /// L1 head to the driver.
+    /// Truncates the L1 chain via [`L1Miner::reorg_to`], fires failure receipts for every
+    /// item in `pending` and `staged`, delivers the new L1 head to the driver, and waits
+    /// until the driver has requeued and resubmitted the failed frames.
     ///
-    /// Items already confirmed via [`confirm_staged`] (and thus living in
-    /// the driver's own `in_flight` set) are **not** covered — see
-    /// [`L1MinerTxManager::reorg_to`] for details.
-    ///
-    /// This method is synchronous. After returning, call
-    /// [`wait_until_requeued`] to wait for the driver to process the failure
-    /// receipts and return frames to the pending queue.
+    /// Submissions already confirmed through [`confirm_staged`] are not revisited.
     ///
     /// # Panics
     ///
     /// Panics if `block_number` exceeds the current L1 chain tip
-    /// (`ReorgError::BeyondTip`).
+    /// (`ReorgError::BeyondTip`), or if the driver task has exited or did not catch up
+    /// within [`IDLE_TIMEOUT`](Self::IDLE_TIMEOUT).
     ///
     /// [`confirm_staged`]: Batcher::confirm_staged
-    /// [`wait_until_requeued`]: Batcher::wait_until_requeued
-    pub fn reorg(&self, block_number: u64, l1: &mut L1Miner) {
+    pub async fn reorg(&self, block_number: u64, l1: &mut L1Miner) {
+        // Failure receipts first, for the same reason as in `try_confirm_staged`.
         self.tx_manager.reorg_to(block_number, l1);
-    }
-
-    /// Wait until at least `expected` frames are back in the pending queue
-    /// after an L1 reorg.
-    ///
-    /// A reorg requires two driver loop iterations to complete: the first
-    /// handles each failed receipt and requeues the frames in the encoder
-    /// pipeline; the second calls `submit_pending()` → [`send_async`] to
-    /// return them to the pending queue. This method polls
-    /// [`pending_count`] until the condition is satisfied.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `pending_count()` does not reach `expected` within the
-    /// polling iteration limit (20 yields).
-    ///
-    /// [`send_async`]: crate::L1MinerTxManager::send_async
-    /// [`pending_count`]: Batcher::pending_count
-    pub async fn wait_until_requeued(&self, expected: usize) {
-        for _ in 0..20 {
-            if self.pending_count() >= expected {
-                return;
-            }
-            tokio::task::yield_now().await;
-        }
-        panic!(
-            "timed out waiting for {expected} requeued frames after reorg; got {}",
-            self.pending_count()
-        );
+        self.deliver_l1_head(block_number)
+            .await
+            .unwrap_or_else(|e| panic!("Batcher::reorg failed: {e}"));
     }
 
     /// Signal that the batcher has been repointed to a different L2 node.
@@ -423,12 +421,13 @@ impl<S: L2BlockProvider> Batcher<S> {
     ///
     /// # Panics
     ///
-    /// Panics if the driver task has exited, or did not apply the reorg within the timeout.
+    /// Panics if the driver task has exited, or did not apply the reorg within
+    /// [`IDLE_TIMEOUT`](Self::IDLE_TIMEOUT).
     ///
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
     pub async fn signal_reorg(&self) {
-        self.send(BlockSourceItem::Event(L2BlockEvent::Reorg)).expect("driver task alive");
-        self.wait_for_driver().await.expect("driver applies the reorg");
+        self.send_event(L2BlockEvent::Reorg).expect("driver task alive");
+        self.wait_until_idle().await.expect("driver applies the reorg");
     }
 
     /// Run one full batch cycle through the production [`BatchDriver`] path.
@@ -452,30 +451,13 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// [`advance`]: Batcher::advance
     pub async fn try_advance(&mut self, l1: &mut L1Miner) -> Result<(), BatcherError> {
         self.try_encode_only().await?;
-
-        // Mine one L1 block: submits all pending txs/blobs, fires receipt
-        // oneshots, and sends the new L1 head to the driver.
-        self.tx_manager.mine_block(l1);
-
-        // Yield to let the driver process the receipts and the new L1 head.
-        tokio::task::yield_now().await;
-
+        self.try_mine_pending(l1).await?;
         Ok(())
     }
 }
 
-impl Batcher<ActionL2Source> {
-    /// Push a block into the L2 source for the next [`advance`] call.
-    ///
-    /// [`advance`]: Batcher::advance
-    pub fn push_block(&mut self, block: BaseBlock) {
-        self.l2_source.push(block);
-    }
-}
-
-impl<S: L2BlockProvider> Drop for Batcher<S> {
+impl Drop for Batcher {
     fn drop(&mut self) {
-        self.cancel.cancel();
         self.driver_task.abort();
     }
 }

@@ -27,7 +27,8 @@ use reth_rpc_eth_api::{
 };
 use reth_rpc_eth_types::{EthApiError, TransactionSource, block::convert_transaction_receipt};
 use reth_storage_api::{
-    BlockReaderIdExt, ProviderTx, ReceiptProvider, TransactionsProvider, errors::ProviderError,
+    BlockReader, BlockReaderIdExt, ProviderTx, ReceiptProvider, TransactionsProvider,
+    errors::ProviderError,
 };
 use reth_transaction_pool::{
     AddedTransactionOutcome, PoolTransaction, TransactionOrigin, TransactionPool,
@@ -281,7 +282,7 @@ impl<Provider> BaseTxInfoMapper<Provider> {
 impl<T, Provider> TxInfoMapper<T> for BaseTxInfoMapper<Provider>
 where
     T: BaseTransaction + SignedTransaction,
-    Provider: TransactionsProvider<Transaction = T> + ReceiptProvider<Receipt: DepositReceiptExt>,
+    Provider: BlockReader<Transaction = T> + ReceiptProvider<Receipt: DepositReceiptExt>,
 {
     type Out = BaseTransactionInfo;
     type Err = ProviderError;

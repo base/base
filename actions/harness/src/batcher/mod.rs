@@ -4,7 +4,7 @@ mod actor;
 pub use actor::{Batcher, BatcherConfig, BatcherError};
 
 mod source;
-pub use source::{BlockSourceItem, HarnessBlockSource};
+pub use source::{HarnessL1HeadSource, L1HeadItem};
 
 mod tx_manager;
 pub use tx_manager::{Inner, L1MinerTxManager, L1SignedSubmission, Pending};

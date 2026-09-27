@@ -8,10 +8,8 @@ use audit_archiver_lib::{
     DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS, DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS,
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
     DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
-    DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE,
+    DEFAULT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS,
     DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS,
-    DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES,
-    DEFAULT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS,
     DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, Metrics, PgTransactionEventSink, RpcEventReader,
     S3EventReaderWriter, TransactionEventIngestConfig, TransactionEventRetentionConfig,
 };
@@ -130,11 +128,10 @@ struct Args {
     #[arg(long, env = "TIPS_AUDIT_POSTGRES_MAX_CONNECTIONS", default_value = "10")]
     postgres_max_connections: u32,
 
-    /// Seconds between transaction-event retention delete passes. The first
-    /// pass runs immediately at startup; later passes wait this interval.
-    /// An expire scan cycle older than this interval is restarted at the
-    /// configured batch size after at least one returned attempt, except
-    /// while a post-timeout LIMIT 1 is still queued.
+    /// Seconds between transaction-event partition maintenance passes. The
+    /// first pass runs immediately at startup; later passes wait this
+    /// interval. Each pass creates upcoming day partitions and drops expired
+    /// ones.
     #[arg(
         long,
         env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS",
@@ -142,7 +139,8 @@ struct Args {
     )]
     transaction_event_retention_interval_secs: u64,
 
-    /// Days to keep high-volume proxy and builder-decision events.
+    /// Days to keep high-volume proxy and builder-decision events, by
+    /// `event_time`.
     #[arg(
         long,
         env = "TIPS_AUDIT_TRANSACTION_EVENT_HOT_RETENTION_DAYS",
@@ -150,7 +148,8 @@ struct Args {
     )]
     transaction_event_hot_retention_days: u32,
 
-    /// Days to keep ingress, simulation-success, and txpool-forward events.
+    /// Days to keep ingress, simulation-success, and txpool-forward events, by
+    /// `event_time`.
     #[arg(
         long,
         env = "TIPS_AUDIT_TRANSACTION_EVENT_WARM_RETENTION_DAYS",
@@ -158,7 +157,8 @@ struct Args {
     )]
     transaction_event_warm_retention_days: u32,
 
-    /// Days to keep failures, drops, inclusion, and flashblock events.
+    /// Days to keep failures, drops, inclusion, and flashblock events, by
+    /// `event_time`.
     #[arg(
         long,
         env = "TIPS_AUDIT_TRANSACTION_EVENT_COLD_RETENTION_DAYS",
@@ -166,35 +166,17 @@ struct Args {
     )]
     transaction_event_cold_retention_days: u32,
 
-    /// Maximum rows deleted in one retention statement.
-    #[arg(
-        long,
-        env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE",
-        default_value_t = DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE
-    )]
-    transaction_event_retention_batch_size: u32,
-
-    /// Maximum delete statements in one locked retention pass. Shared across
-    /// hot, then warm, then cold; raise this if a hot backlog starves warmer
-    /// classes.
-    #[arg(
-        long,
-        env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES",
-        default_value_t = DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES
-    )]
-    transaction_event_retention_max_batches: u32,
-
-    /// Postgres statement timeout for one retention delete, in milliseconds.
+    /// Postgres `lock_timeout` for one partition create, detach, or drop, in
+    /// milliseconds.
     ///
-    /// Bounds a sparse expire scan so it cannot hold the advisory lock for
-    /// hours. On timeout, expire tries `LIMIT 1` then bisects the batch size.
-    /// A `LIMIT 1` timeout advances to the next retention class.
+    /// Detach briefly queues inserts for its retention class, so a blocked
+    /// statement gives up after this timeout and retries on the next pass.
     #[arg(
         long,
-        env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS",
-        default_value_t = DEFAULT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS
+        env = "TIPS_AUDIT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS",
+        default_value_t = DEFAULT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS
     )]
-    transaction_event_retention_statement_timeout_ms: u64,
+    transaction_event_partition_lock_timeout_ms: u64,
 
     /// HTTP path for Vector transaction-event batch ingest.
     #[arg(
@@ -285,12 +267,8 @@ async fn run_server(args: Args) -> Result<()> {
         hot_days: args.transaction_event_hot_retention_days,
         warm_days: args.transaction_event_warm_retention_days,
         cold_days: args.transaction_event_cold_retention_days,
-        delete_batch_size: args.transaction_event_retention_batch_size,
-        max_batches: args.transaction_event_retention_max_batches,
-        statement_timeout_ms: args.transaction_event_retention_statement_timeout_ms,
+        partition_lock_timeout_ms: args.transaction_event_partition_lock_timeout_ms,
         interval_secs: args.transaction_event_retention_interval_secs,
-        test_hot_sleep_ms: None,
-        test_hot_sleep_min_limit: None,
     }
     .validate()?;
     let retention_interval = Duration::from_secs(retention_config.interval_secs);
@@ -305,9 +283,7 @@ async fn run_server(args: Args) -> Result<()> {
         transaction_event_hot_retention_days = retention_config.hot_days,
         transaction_event_warm_retention_days = retention_config.warm_days,
         transaction_event_cold_retention_days = retention_config.cold_days,
-        transaction_event_retention_batch_size = retention_config.delete_batch_size,
-        transaction_event_retention_max_batches = retention_config.max_batches,
-        transaction_event_retention_statement_timeout_ms = retention_config.statement_timeout_ms,
+        transaction_event_partition_lock_timeout_ms = retention_config.partition_lock_timeout_ms,
         transaction_event_retention_interval_secs = retention_interval.as_secs(),
         rpc_cache_capacity = args.rpc_cache_capacity,
         rpc_cache_ttl_secs = args.rpc_cache_ttl_secs,
@@ -329,7 +305,11 @@ async fn run_server(args: Args) -> Result<()> {
 
     let rpc_addr = SocketAddr::from(([0, 0, 0, 0], args.rpc_port));
     let transaction_event_sink = if let Some(postgres_url) = &args.postgres_url {
-        Some(PgTransactionEventSink::connect(postgres_url, args.postgres_max_connections).await?)
+        Some(
+            PgTransactionEventSink::connect(postgres_url, args.postgres_max_connections)
+                .await?
+                .with_retention_config(retention_config)?,
+        )
     } else {
         None
     };
@@ -385,8 +365,7 @@ async fn run_server(args: Args) -> Result<()> {
     );
 
     info!("Audit archiver initialized, starting main loop");
-    let retention_worker =
-        run_retention_worker(retention_sink, retention_config, retention_interval);
+    let retention_worker = run_retention_worker(retention_sink, retention_interval);
 
     tokio::select! {
         result = archiver.run() => result,
@@ -399,35 +378,37 @@ async fn run_server(args: Args) -> Result<()> {
 
 async fn run_retention_worker(
     transaction_event_sink: Option<PgTransactionEventSink>,
-    retention_config: TransactionEventRetentionConfig,
     retention_interval: Duration,
 ) -> Result<()> {
     let Some(sink) = transaction_event_sink else {
         return std::future::pending().await;
     };
 
-    // First tick is immediate so a new replica starts expiry without waiting
-    // a full interval. Skip missed ticks so a slow pass does not catch up.
+    // First tick is immediate so a new replica creates today's and upcoming
+    // partitions without waiting a full interval. Skip missed ticks so a slow
+    // pass does not catch up.
     let mut ticker = interval(retention_interval);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     loop {
         ticker.tick().await;
-        match sink.expire_old_events(retention_config).await {
-            Ok(outcome) if outcome.rows_deleted > 0 => {
+        match sink.maintain_partitions().await {
+            Ok(outcome)
+                if outcome.partitions_created > 0
+                    || outcome.partitions_dropped > 0
+                    || outcome.lock_timeouts > 0 =>
+            {
                 info!(
-                    rows_deleted = outcome.rows_deleted,
-                    hot_rows_deleted = outcome.hot_rows_deleted,
-                    warm_rows_deleted = outcome.warm_rows_deleted,
-                    cold_rows_deleted = outcome.cold_rows_deleted,
-                    batches = outcome.batches,
-                    "transaction event retention deleted expired rows"
+                    partitions_created = outcome.partitions_created,
+                    partitions_dropped = outcome.partitions_dropped,
+                    lock_timeouts = outcome.lock_timeouts,
+                    "transaction event partition maintenance changed partitions"
                 );
             }
             Ok(_) => {}
             Err(err) => {
                 Metrics::transaction_event_retention_failures().increment(1);
-                error!(error = %err, "transaction event retention failed");
+                error!(error = %err, "transaction event partition maintenance failed");
             }
         }
     }
