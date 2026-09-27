@@ -6,7 +6,7 @@ use base_batcher_core::{
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
-    types::ErrorObjectOwned,
+    types::{ErrorCode, ErrorObjectOwned},
 };
 use tracing::warn;
 
@@ -72,7 +72,7 @@ impl BatcherAdminApiServerImpl {
             AdminError::NotSupported(_) => -32601,
             AdminError::ChannelClosed => -32001,
             AdminError::Stopped => -32002,
-            AdminError::InvalidThrottleConfig(_) => -32602,
+            AdminError::InvalidThrottleConfig(_) => ErrorCode::InvalidParams.code(),
         };
         ErrorObjectOwned::owned(code, e.to_string(), None::<()>)
     }
@@ -145,6 +145,6 @@ mod tests {
     fn admin_error_invalid_throttle_config_uses_invalid_params_code() {
         let config = ThrottleConfig { max_intensity: 2.0, ..ThrottleConfig::default() };
         let err = BatcherAdminApiServerImpl::admin_error(config.validate().unwrap_err().into());
-        assert_eq!(err.code(), -32602);
+        assert_eq!(err.code(), ErrorCode::InvalidParams.code());
     }
 }
