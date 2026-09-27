@@ -117,14 +117,24 @@ impl Eip8130Constants {
     pub const DELEGATION_INDICATOR_SIZE: usize = 23;
 
     /// `account_changes` entry type byte: account creation.
+    ///
+    /// Still decoded on this wire. A follow-up deletes `Create` rather than
+    /// gating it behind a feature.
     pub const ACCOUNT_CHANGE_TYPE_CREATE: u8 = 0x00;
+
+    /// `account_changes` entry type byte: code delegation.
+    ///
+    /// The launch wire keeps delegation, so it takes the low `0x01` slot.
+    /// `Create` stays at `0x00` and `ConfigChange` moves to `0x02` until the
+    /// follow-ups that delete them.
+    pub const ACCOUNT_CHANGE_TYPE_DELEGATION: u8 = 0x01;
 
     /// `account_changes` entry type byte: a signed account-change batch
     /// (`SignedAccountChanges`, applied via `applySignedAccountChanges`).
-    pub const ACCOUNT_CHANGE_TYPE_CONFIG: u8 = 0x01;
-
-    /// `account_changes` entry type byte: code delegation.
-    pub const ACCOUNT_CHANGE_TYPE_DELEGATION: u8 = 0x02;
+    ///
+    /// Still decoded on this wire. A follow-up deletes `ConfigChange` rather
+    /// than gating it behind a feature.
+    pub const ACCOUNT_CHANGE_TYPE_CONFIG: u8 = 0x02;
 
     /// `SignedAccountChanges.channel` byte: the Local channel (binds
     /// `block.chainid`; carries epoch + sequence and the unsequenced JIT mode).
