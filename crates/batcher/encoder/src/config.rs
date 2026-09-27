@@ -64,7 +64,7 @@ pub struct EncoderConfig {
     ///
     /// Brotli channels require Fjord.
     ///
-    /// Default: [`BrotliLevel::Brotli10`].
+    /// Default: [`BrotliLevel::Brotli9`].
     pub brotli_level: BrotliLevel,
 }
 
