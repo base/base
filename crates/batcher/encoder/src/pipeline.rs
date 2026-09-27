@@ -104,12 +104,12 @@ pub trait BatchPipeline: Send {
     /// Prune blocks at or below `safe_l2`.
     ///
     /// [`DerivationReconciliation::SafeHeadMismatch`] if the head is not on the buffered chain.
-    /// [`DerivationReconciliation::StalledChannel`] if `current_l1` (derivation cursor) passed a fully
-    /// confirmed channel whose tail is not yet safe. `None` skips that check.
+    /// [`DerivationReconciliation::StalledChannel`] if `current_l1`, the L1 block derivation is
+    /// processing, passed a fully confirmed channel whose tail is not yet safe.
     fn reconcile_derivation(
         &mut self,
         safe_l2: BlockInfo,
-        current_l1: Option<u64>,
+        current_l1: u64,
     ) -> DerivationReconciliation;
 
     /// Estimated DA bytes still awaiting confirmation.

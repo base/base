@@ -407,14 +407,8 @@ impl BatcherService {
             eyre::bail!("check_recent_txs_depth requires wait_node_sync");
         }
         match (self.config.batch_inbox_override, self.config.parity_validator_l2_rpc_url.as_ref()) {
-            (None, Some(_)) => {
-                eyre::bail!("parity validator L2 RPC URL requires shadow mode")
-            }
-            (Some(_), None) => {
-                eyre::bail!(
-                    "shadow mode requires a parity validator L2 RPC URL for its safe L2 head"
-                )
-            }
+            (None, Some(_)) => eyre::bail!("parity validator L2 RPC URL requires shadow mode"),
+            (Some(_), None) => eyre::bail!("shadow mode requires a parity validator L2 RPC URL"),
             _ => {}
         }
 
@@ -478,19 +472,11 @@ impl BatcherService {
             })
             .await?;
         let rollup_config = Arc::new(rollup_config);
-        let effective_batch_inbox =
-            self.config.batch_inbox_override.unwrap_or(rollup_config.batch_inbox_address);
+        let batch_inbox = self.config.batch_inbox(rollup_config.batch_inbox_address)?;
         if self.config.batch_inbox_override.is_some() {
-            warn!(
-                configured_inbox = %effective_batch_inbox,
-                rollup_config_inbox = %rollup_config.batch_inbox_address,
-                "using dangerous shadow batch inbox override"
-            );
+            warn!(inbox = %batch_inbox, "using dangerous shadow batch inbox override");
         } else {
-            info!(
-                inbox = %effective_batch_inbox,
-                "rollup config loaded"
-            );
+            info!(inbox = %batch_inbox, "rollup config loaded");
         }
 
         let validator_provider = if let Some(url) = &self.config.parity_validator_l2_rpc_url {
@@ -555,17 +541,11 @@ impl BatcherService {
             Self::rpc_retry("l1-head", retry, rpc_timeout, || l1_provider.get_block_number())
                 .await?;
 
-        let initial_derivation_status = if let Some(provider) = validator_provider.as_ref() {
-            Self::rpc_retry("parity-validator-safe-l2", retry, rpc_timeout, || {
-                provider.derivation_status()
-            })
-            .await?
-        } else {
+        let initial_derivation_status =
             Self::rpc_retry("optimism_syncStatus", retry, rpc_timeout, || {
                 rollup_client.derivation_status()
             })
-            .await?
-        };
+            .await?;
         let safe_l2 = initial_derivation_status.safe_l2;
         if safe_l2 == BlockInfo::default() {
             eyre::bail!("safe L2 head is empty");
@@ -687,30 +667,15 @@ impl BatcherService {
 
         let (derivation_status_tx, derivation_status_rx) = mpsc::channel(1);
 
-        // Canonical mode follows the rollup node's LocalSafeL2. Shadow mode
-        // follows the parity validator's safe label so canonical DA progress
-        // cannot cause shadow-only gaps to be skipped.
-        let derivation_status_handle = if let Some(provider) = validator_provider {
-            tokio::spawn(
-                DerivationStatusPoller::new(
-                    provider,
-                    self.config.poll_interval,
-                    initial_derivation_status,
-                    derivation_status_tx,
-                )
-                .run(runtime.clone()),
+        let derivation_status_handle = tokio::spawn(
+            DerivationStatusPoller::new(
+                rollup_client,
+                self.config.poll_interval,
+                initial_derivation_status,
+                derivation_status_tx,
             )
-        } else {
-            tokio::spawn(
-                DerivationStatusPoller::new(
-                    rollup_client,
-                    self.config.poll_interval,
-                    initial_derivation_status,
-                    derivation_status_tx,
-                )
-                .run(runtime.clone()),
-            )
-        };
+            .run(runtime.clone()),
+        );
         background_tasks.push(("derivation status poller", derivation_status_handle));
 
         // Build the driver.
@@ -720,7 +685,7 @@ impl BatcherService {
             encoder,
             tx_manager,
             base_batcher_core::BatchDriverConfig {
-                inbox: effective_batch_inbox,
+                inbox: batch_inbox,
                 max_pending_transactions: self.config.max_pending_transactions,
                 drain_timeout,
                 force_blobs_when_throttling: self.config.force_blobs_when_throttling,
@@ -756,6 +721,8 @@ mod tests {
     use std::sync::atomic::{AtomicU8, Ordering};
 
     use alloy_node_bindings::Anvil;
+    use alloy_primitives::Address;
+    use rstest::rstest;
 
     use super::*;
 
@@ -805,6 +772,39 @@ mod tests {
             error.to_string().contains("max_pending_transactions"),
             "error should name the setting, got {error}"
         );
+    }
+
+    /// Shadow mode needs the parity validator L2 endpoint, which is rejected without it.
+    #[rstest]
+    #[case::shadow_without_it(
+        Some(Address::ZERO),
+        None,
+        "shadow mode requires a parity validator L2 RPC URL"
+    )]
+    #[case::canonical_with_it(
+        None,
+        Some("http://127.0.0.1:1"),
+        "parity validator L2 RPC URL requires shadow mode"
+    )]
+    #[tokio::test]
+    async fn setup_rejects_a_parity_validator_url_that_does_not_match_shadow_mode(
+        #[case] batch_inbox_override: Option<Address>,
+        #[case] parity_validator_l2_rpc_url: Option<&str>,
+        #[case] expected: &str,
+    ) {
+        let config = BatcherConfig {
+            batch_inbox_override,
+            parity_validator_l2_rpc_url: parity_validator_l2_rpc_url
+                .map(|url| url.parse().unwrap()),
+            ..BatcherConfig::default()
+        };
+
+        let error = BatcherService::new(config)
+            .setup(TokioRuntime::new())
+            .await
+            .expect_err("a batcher whose endpoints do not match its mode must not start");
+
+        assert_eq!(error.to_string(), expected);
     }
 
     #[tokio::test]

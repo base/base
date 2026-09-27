@@ -39,10 +39,14 @@ pub struct BatcherConfig {
     /// Parity validator L2 RPC endpoint for shadow mode.
     ///
     /// Required with [`batch_inbox_override`](Self::batch_inbox_override) and
-    /// rejected without it. Its safe L2 head anchors shadow batcher recovery,
-    /// and its derived block hashes are compared with the sequencer.
+    /// rejected without it. The validator's derived block hashes are compared
+    /// with the sequencer's.
     pub parity_validator_l2_rpc_url: Option<Url>,
     /// Rollup node RPC endpoint(s).
+    ///
+    /// The batcher reads the rollup config of this node and follows its derivation, so the
+    /// node must derive the inbox the batcher posts to. In shadow mode it is the parity
+    /// validator's rollup node.
     ///
     /// Same connection-time failover semantics as [`l1_rpc_url`](Self::l1_rpc_url).
     /// Must be non-empty.
@@ -58,10 +62,9 @@ pub struct BatcherConfig {
     pub metrics_enabled: bool,
     /// Dangerous shadow-mode batch inbox override.
     ///
-    /// When set, the batcher still reads the canonical rollup config from the rollup
-    /// RPC, but submits L1 transactions to this address instead of
-    /// `rollup_config.batch_inbox_address`. This is only intended for explicit
-    /// shadow deployments; canonical deployments must leave it unset.
+    /// When set, the batcher submits L1 transactions to this address instead of the
+    /// canonical inbox. This is only intended for explicit shadow deployments. Canonical
+    /// deployments must leave it unset.
     pub batch_inbox_override: Option<Address>,
     /// L2 block polling interval.
     pub poll_interval: Duration,
@@ -135,5 +138,64 @@ impl Default for BatcherConfig {
             wait_node_sync_timeout: Duration::from_secs(600),
             force_blobs_when_throttling: true,
         }
+    }
+}
+
+impl BatcherConfig {
+    /// Returns the inbox the batcher posts to, [`batch_inbox_override`](Self::batch_inbox_override)
+    /// when set and otherwise `derived_inbox`, the inbox the rollup node derives.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the override differs from `derived_inbox`, because the batcher
+    /// follows the derivation of that node, see [`rollup_rpc_url`](Self::rollup_rpc_url).
+    pub fn batch_inbox(&self, derived_inbox: Address) -> eyre::Result<Address> {
+        match self.batch_inbox_override {
+            Some(inbox) if inbox != derived_inbox => eyre::bail!(
+                "the rollup node derives inbox {derived_inbox} instead of the shadow inbox \
+                 {inbox}, point the rollup RPC at the parity validator's rollup node"
+            ),
+            Some(inbox) => Ok(inbox),
+            None => Ok(derived_inbox),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use super::*;
+
+    const CANONICAL_INBOX: Address = Address::repeat_byte(0xca);
+    const SHADOW_INBOX: Address = Address::repeat_byte(0x5a);
+
+    #[rstest]
+    #[case::canonical(None, CANONICAL_INBOX, CANONICAL_INBOX)]
+    #[case::shadow(Some(SHADOW_INBOX), SHADOW_INBOX, SHADOW_INBOX)]
+    fn batch_inbox_is_the_inbox_the_rollup_node_derives(
+        #[case] batch_inbox_override: Option<Address>,
+        #[case] derived_inbox: Address,
+        #[case] expected: Address,
+    ) {
+        let config = BatcherConfig { batch_inbox_override, ..BatcherConfig::default() };
+
+        assert_eq!(config.batch_inbox(derived_inbox).unwrap(), expected);
+    }
+
+    #[test]
+    fn batch_inbox_rejects_a_rollup_node_that_derives_another_inbox() {
+        let config =
+            BatcherConfig { batch_inbox_override: Some(SHADOW_INBOX), ..BatcherConfig::default() };
+
+        let error = config.batch_inbox(CANONICAL_INBOX).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "the rollup node derives inbox {CANONICAL_INBOX} instead of the shadow inbox \
+                 {SHADOW_INBOX}, point the rollup RPC at the parity validator's rollup node"
+            )
+        );
     }
 }
