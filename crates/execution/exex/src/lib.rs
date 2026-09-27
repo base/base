@@ -709,14 +709,15 @@ mod tests {
     use alloy_consensus::private::alloy_primitives::B256;
     use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
     use base_execution_trie::{
-        BaseProofsStorage, BaseProofsStore, BlockStateDiff, RocksdbProofsStorage,
+        BaseProofsStorage, BaseProofsStore, BlockStateDiff, MdbxProofsStorage, RocksdbProofsStorage,
     };
     use reth_db::test_utils::tempdir_path;
     use reth_ethereum_primitives::{Block, Receipt};
     use reth_execution_types::{Chain, ExecutionOutcome};
-    use reth_primitives_traits::RecoveredBlock;
+    use reth_primitives_traits::{Account, RecoveredBlock};
     use reth_trie::{
-        ComputedTrieData, HashedPostStateSorted, LazyTrieData, updates::TrieUpdatesSorted,
+        ComputedTrieData, HashedPostState, HashedPostStateSorted, LazyTrieData,
+        hashed_cursor::HashedCursor, updates::TrieUpdatesSorted,
     };
 
     use super::*;
@@ -923,6 +924,113 @@ mod tests {
         // Storage unchanged (sync loop handles the actual revert)
         let latest = proofs.get_latest_block_number().expect("get latest block").expect("ok").0;
         assert_eq!(latest, 10);
+    }
+
+    async fn assert_queued_reorgs_replace_history<S: BaseProofsBatchStore + Clone + 'static>(
+        proofs: BaseProofsStorage<S>,
+    ) {
+        let account_key = b256(0xee);
+        init_storage(proofs.clone());
+        store_blocks(1, 5, &proofs);
+        let mut old_state = HashedPostState::default();
+        old_state.accounts.insert(account_key, Some(Account { nonce: 1, ..Default::default() }));
+        proofs
+            .store_trie_updates(
+                mk_block(6).block_with_parent(),
+                BlockStateDiff { sorted_post_state: old_state.into_sorted(), ..Default::default() },
+            )
+            .unwrap();
+        store_blocks(7, 10, &proofs);
+
+        // Branches B and C have distinct hashes and a shared account update at B6.
+        let chain = |from: u64, to: u64, offset: u8, mut parent: B256| {
+            let mut blocks = Vec::new();
+            let mut trie_data = BTreeMap::new();
+            for number in from..=to {
+                let mut block = mk_block(number);
+                block.set_hash(b256(offset + number as u8));
+                block.set_parent_hash(parent);
+                parent = block.hash();
+                blocks.push(block);
+                let mut state = HashedPostState::default();
+                if number == 6 {
+                    state
+                        .accounts
+                        .insert(account_key, Some(Account { nonce: 2, ..Default::default() }));
+                }
+                trie_data.insert(
+                    number,
+                    LazyTrieData::ready(ComputedTrieData::new(
+                        Arc::new(state.into_sorted()),
+                        Arc::new(TrieUpdatesSorted::default()),
+                    )),
+                );
+            }
+            Arc::new(Chain::new(blocks, ExecutionOutcome::default(), trie_data))
+        };
+        let (ctx, _handle) = reth_exex_test_utils::test_exex_context().await.unwrap();
+        let exex = build_test_exex(ctx, proofs.clone());
+        let target = SyncTarget::new();
+        exex.handle_notification(
+            ExExNotification::ChainReorged {
+                old: Arc::new(mk_chain_with_updates(5, 10, None)),
+                new: chain(5, 11, 0x40, hash_for_num(4)),
+            },
+            &target,
+        )
+        .unwrap();
+        exex.handle_notification(
+            ExExNotification::ChainReorged {
+                old: chain(9, 11, 0x40, b256(0x48)),
+                new: chain(9, 12, 0x80, b256(0x48)),
+            },
+            &target,
+        )
+        .unwrap();
+
+        let SyncTargetState::RevertThenSync { revert_to, sync_to } = target.take_state().unwrap()
+        else {
+            panic!("expected a rollback followed by forward sync");
+        };
+        proofs.unwind_history(revert_to).unwrap();
+        let latest = proofs.get_latest_block_number().unwrap().unwrap().0;
+        let blocks = ((latest + 1)..=sync_to)
+            .map(|number| {
+                let cached = target.take(number).unwrap();
+                let data = cached.trie_data.get();
+                BatchBlock::Cached {
+                    block_with_parent: cached.block_with_parent,
+                    sorted_trie_updates: Arc::clone(&data.sorted.trie_updates),
+                    sorted_post_state: Arc::clone(&data.sorted.hashed_state),
+                }
+            })
+            .collect();
+        let collector = LiveTrieCollector::new(
+            exex.ctx.evm_config().clone(),
+            exex.ctx.provider().clone(),
+            &proofs,
+        );
+        collector.execute_and_store_batch(blocks).unwrap();
+
+        assert_eq!(proofs.get_latest_block_number().unwrap(), Some((12, b256(0x8c))));
+        assert_eq!(
+            proofs.account_hashed_cursor(6).unwrap().seek(account_key).unwrap(),
+            Some((account_key, Account { nonce: 2, ..Default::default() }))
+        );
+    }
+
+    #[tokio::test]
+    async fn queued_reorgs_replace_history_mdbx() {
+        let dir = tempdir_path();
+        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).unwrap());
+        assert_queued_reorgs_replace_history(store.into()).await;
+    }
+
+    #[tokio::test]
+    async fn queued_reorgs_replace_history_rocksdb() {
+        let dir = tempdir_path();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).unwrap());
+        assert_queued_reorgs_replace_history(store.into()).await;
     }
 
     #[tokio::test]

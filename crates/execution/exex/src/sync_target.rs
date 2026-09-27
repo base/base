@@ -53,18 +53,24 @@ impl SyncTargetState {
             // If we are just syncing to tip already, replace with the new state.
             (Self::SyncUpTo { .. }, new) => new,
 
-            // If the new state is a revert, replace with the new state.
-            (_, Self::Revert { revert_to }) => Self::Revert { revert_to },
-            (_, Self::RevertThenSync { revert_to, sync_to }) => {
+            // If we're currently reverting, keep the deepest rollback and use the
+            // newest destination.
+            (Self::RevertThenSync { revert_to, .. } | Self::Revert { revert_to }, new) => {
+                let (new_revert_to, sync_to) = match new {
+                    Self::SyncUpTo { to } => (None, to),
+                    Self::Revert { revert_to } => {
+                        (Some(revert_to), revert_to.block.number.saturating_sub(1))
+                    }
+                    Self::RevertThenSync { revert_to, sync_to } => (Some(revert_to), sync_to),
+                };
+                let revert_to = match new_revert_to {
+                    Some(new_revert_to) if new_revert_to.block.number < revert_to.block.number => {
+                        new_revert_to
+                    }
+                    _ => *revert_to,
+                };
                 Self::RevertThenSync { revert_to, sync_to }
             }
-
-            // If we're currently reverting, replace the sync to value with the new
-            // state.
-            (
-                Self::RevertThenSync { revert_to, .. } | Self::Revert { revert_to },
-                Self::SyncUpTo { to },
-            ) => Self::RevertThenSync { revert_to: *revert_to, sync_to: to },
         };
     }
 }
@@ -124,7 +130,7 @@ impl SyncTarget {
     /// revert arrived while processing, the pending state is left unchanged.
     ///
     /// - Covered `RevertThenSync` → `SyncUpTo` (keeps the sync target)
-    /// - Covered `Revert` → `None`
+    /// - Covered `Revert` → `SyncUpTo` (syncs to the revert's parent)
     /// - Deeper revert or other states → unchanged
     pub fn mark_revert_complete(&self, reverted_to: &BlockWithParent) {
         let mut state = self.state.lock().expect("SyncTarget lock poisoned");
@@ -137,7 +143,9 @@ impl SyncTarget {
             Some(SyncTargetState::Revert { revert_to })
                 if revert_to.block.number >= reverted_to.block.number =>
             {
-                *state = None;
+                *state = Some(SyncTargetState::SyncUpTo {
+                    to: revert_to.block.number.saturating_sub(1),
+                });
             }
             _ => {}
         }
@@ -314,7 +322,8 @@ mod tests {
         state.apply_next(SyncTargetState::Revert { revert_to: new_revert });
         assert!(matches!(
             state,
-            SyncTargetState::Revert { revert_to } if revert_to.block.number == 3
+            SyncTargetState::RevertThenSync { revert_to, sync_to: 2 }
+            if revert_to.block.number == 3
         ));
     }
 
@@ -392,7 +401,7 @@ mod tests {
         target.update_state(SyncTargetState::Revert { revert_to });
 
         target.mark_revert_complete(&block_with_parent(5));
-        assert!(!target.has_pending_state());
+        assert!(matches!(target.take_state(), Some(SyncTargetState::SyncUpTo { to: 4 })));
     }
 
     #[test]
@@ -444,7 +453,7 @@ mod tests {
         target.update_state(SyncTargetState::Revert { revert_to });
 
         target.mark_revert_complete(&block_with_parent(5));
-        assert!(!target.has_pending_state());
+        assert!(matches!(target.take_state(), Some(SyncTargetState::SyncUpTo { to: 7 })));
     }
 
     #[test]
@@ -583,5 +592,64 @@ mod tests {
 
         let result = handle.await.expect("task should complete");
         assert!(matches!(result, Some(SyncTargetState::SyncUpTo { to: 42 })));
+    }
+
+    fn anchor(number: u64, hash: u8, parent: u8) -> BlockWithParent {
+        BlockWithParent::new([parent; 32].into(), NumHash::new(number, [hash; 32].into()))
+    }
+
+    #[test]
+    fn queued_reorgs_keep_earliest_anchor_and_latest_destination() {
+        let original = anchor(5, 0xa5, 0xa4);
+        for (next, expected) in [
+            (anchor(9, 0xb9, 0xb8), original),
+            (anchor(3, 0xa3, 0xa2), anchor(3, 0xa3, 0xa2)),
+            (anchor(5, 0xb5, 0xa4), original),
+        ] {
+            for previous_revert_only in [false, true] {
+                for next_revert_only in [false, true] {
+                    let target = SyncTarget::new();
+                    target.update_state(if previous_revert_only {
+                        SyncTargetState::Revert { revert_to: original }
+                    } else {
+                        SyncTargetState::RevertThenSync { revert_to: original, sync_to: 20 }
+                    });
+                    target.update_state(if next_revert_only {
+                        SyncTargetState::Revert { revert_to: next }
+                    } else {
+                        SyncTargetState::RevertThenSync { revert_to: next, sync_to: 12 }
+                    });
+                    let state = target.take_state().unwrap();
+                    let (actual, destination) = match state {
+                        SyncTargetState::RevertThenSync { revert_to, sync_to } => {
+                            (revert_to, sync_to)
+                        }
+                        SyncTargetState::Revert { revert_to } => {
+                            (revert_to, revert_to.block.number - 1)
+                        }
+                        state => panic!("lost rollback: {state:?}"),
+                    };
+                    assert_eq!(
+                        actual, expected,
+                        "previous_revert_only={previous_revert_only}, next_revert_only={next_revert_only}"
+                    );
+                    assert_eq!(
+                        destination,
+                        if next_revert_only { next.block.number - 1 } else { 12 }
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn completing_active_reorg_keeps_later_revert_destination() {
+        let target = SyncTarget::new();
+        let original = anchor(5, 0xa5, 0xa4);
+        target.update_state(SyncTargetState::RevertThenSync { revert_to: original, sync_to: 11 });
+        target.take_state().unwrap();
+        target.update_state(SyncTargetState::Revert { revert_to: anchor(9, 0xb9, 0xb8) });
+        target.mark_revert_complete(&original);
+        assert!(matches!(target.take_state(), Some(SyncTargetState::SyncUpTo { to: 8 })));
     }
 }
