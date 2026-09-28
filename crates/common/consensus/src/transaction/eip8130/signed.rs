@@ -360,25 +360,6 @@ impl Eip8130Signed {
         self.recover_eoa_sender_unchecked()?.ok_or_else(alloy_consensus::crypto::RecoveryError::new)
     }
 
-    /// Recovers the payer of an open-payer transaction
-    /// ([`TxEip8130::is_open_payer`]) from its raw 65-byte `payer_auth` over
-    /// [`TxEip8130::payer_signature_hash`] bound to `resolved_sender`, using
-    /// checked (low-`s`) recovery. Returns `Ok(None)` for any other payer mode.
-    #[cfg(feature = "k256")]
-    pub fn recover_open_payer(
-        &self,
-        resolved_sender: Address,
-    ) -> Result<Option<Address>, alloy_consensus::crypto::RecoveryError> {
-        if !self.tx.is_open_payer() {
-            return Ok(None);
-        }
-        Self::recover_raw_k1(
-            self.tx.payer_signature_hash(resolved_sender),
-            self.payer_auth.as_ref(),
-        )
-        .map(Some)
-    }
-
     /// Recovers a signer from a raw 65-byte `r || s || v` blob over `hash`.
     ///
     /// Requires `v in {27, 28}` and EIP-2 low-`s`. This is the single checked
@@ -409,9 +390,10 @@ impl Eip8130Signed {
     ) -> Result<Address, alloy_consensus::crypto::RecoveryError> {
         match self.tx.payer {
             None => Ok(resolved_sender),
-            Some(_) if self.tx.is_open_payer() => self
-                .recover_open_payer(resolved_sender)?
-                .ok_or_else(alloy_consensus::crypto::RecoveryError::new),
+            Some(_) if self.tx.is_open_payer() => Self::recover_raw_k1(
+                self.tx.payer_signature_hash(resolved_sender),
+                self.payer_auth.as_ref(),
+            ),
             Some(payer) => Ok(payer),
         }
     }
