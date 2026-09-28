@@ -72,9 +72,9 @@ fn test_safe_head_conflicts_reset_pipeline_and_source() {
         let regressed = safe_head(5);
         let replacement =
             BlockInfo { hash: B256::repeat_byte(0xff), number: 5, ..Default::default() };
-        status_tx.send(DerivationStatus::from_safe_l2(regressed)).await.unwrap();
-        status_tx.send(DerivationStatus::from_safe_l2(replacement)).await.unwrap();
-        status_tx.send(DerivationStatus::from_safe_l2(safe_head(10))).await.unwrap();
+        for safe_l2 in [regressed, replacement, safe_head(10)] {
+            status_tx.send(DerivationStatus { safe_l2, current_l1: safe_head(1) }).await.unwrap();
+        }
         ctx.sleep(Duration::from_millis(50)).await;
         ctx.cancel();
 
@@ -102,7 +102,7 @@ fn test_derivation_cursor_advance_replays_stalled_channel() {
         let handle = ctx.spawn(driver.run());
         let status_tx = handles.derivation_status_tx;
 
-        status_tx.send(DerivationStatus::new(safe_l2, safe_head(50))).await.unwrap();
+        status_tx.send(DerivationStatus { safe_l2, current_l1: safe_head(50) }).await.unwrap();
         ctx.sleep(Duration::from_millis(50)).await;
         ctx.cancel();
 

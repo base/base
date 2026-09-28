@@ -172,11 +172,7 @@ impl BatchPipeline for TrackingPipeline {
         }
     }
 
-    fn reconcile_derivation(
-        &mut self,
-        safe_l2: BlockInfo,
-        _: Option<u64>,
-    ) -> DerivationReconciliation {
+    fn reconcile_derivation(&mut self, safe_l2: BlockInfo, _: u64) -> DerivationReconciliation {
         let mut recorded = self.recorded.lock().unwrap();
         recorded.safe_numbers.push(safe_l2.number);
         recorded.calls.push(PipelineCall::ReconcileDerivation);
@@ -240,7 +236,7 @@ impl BatchPipeline for ReorgPipeline {
         Ok(())
     }
     fn advance_l1_head(&mut self, _: u64) {}
-    fn reconcile_derivation(&mut self, _: BlockInfo, _: Option<u64>) -> DerivationReconciliation {
+    fn reconcile_derivation(&mut self, _: BlockInfo, _: u64) -> DerivationReconciliation {
         DerivationReconciliation::Consistent
     }
 

@@ -194,11 +194,7 @@ fn test_throttle_transitions_from_active_to_inactive() {
             Ok(())
         }
         fn advance_l1_head(&mut self, _: u64) {}
-        fn reconcile_derivation(
-            &mut self,
-            _: BlockInfo,
-            _: Option<u64>,
-        ) -> DerivationReconciliation {
+        fn reconcile_derivation(&mut self, _: BlockInfo, _: u64) -> DerivationReconciliation {
             DerivationReconciliation::Consistent
         }
         fn reset(&mut self) {}
