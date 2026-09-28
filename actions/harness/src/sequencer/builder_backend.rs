@@ -419,6 +419,12 @@ mod tests {
             "genesis head hash must match the harness-derived genesis",
         );
 
+        // `LocalInstance` owns a dedicated runtime. Drop it from a blocking thread so its
+        // runtime and node resources never shut down from this test runtime's async context.
+        tokio::task::spawn_blocking(move || drop(backend))
+            .await
+            .expect("builder backend shutdown task must not panic");
+
         Ok(())
     }
 }
