@@ -527,7 +527,21 @@ where
             }),
             source = &mut heartbeat => {
                 if source.is_proof_cancelled() {
-                    self.cancel_active_backend_sessions(request).await;
+                    // Skip the drain below: the requester no longer wants this proof, so stop
+                    // generating now and only spend a bounded budget stopping the backend.
+                    if timeout(
+                        DEFAULT_PROOF_GENERATOR_HEARTBEAT_FAILURE_DRAIN_TIMEOUT,
+                        self.cancel_active_backend_sessions(request),
+                    )
+                    .await
+                    .is_err()
+                    {
+                        warn!(
+                            session_id = %request.claim.session_id,
+                            timeout = ?DEFAULT_PROOF_GENERATOR_HEARTBEAT_FAILURE_DRAIN_TIMEOUT,
+                            "timed out cancelling backend proof sessions"
+                        );
+                    }
                     return Err(ProofGeneratorError::Heartbeat {
                         session_id: request.claim.session_id.clone(),
                         source,

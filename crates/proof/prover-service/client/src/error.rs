@@ -218,6 +218,10 @@ mod tests {
         ),
         false
     )]
+    #[case::proof_cancelled(
+        rpc_call_error(ProverServiceClientError::ERROR_PROOF_CANCELLED, "cancelled"),
+        false
+    )]
     fn retry_classification_matches_expected(
         #[case] error: ProverServiceClientError,
         #[case] expected_retryable: bool,
@@ -262,5 +266,16 @@ mod tests {
         let other_precondition =
             rpc_call_error(ProverServiceClientError::ERROR_FAILED_PRECONDITION, "lease mismatch");
         assert!(!other_precondition.is_l1_head_conflict_for_session(session_id));
+    }
+
+    #[test]
+    fn proof_cancelled_code_is_detected() {
+        let cancelled =
+            rpc_call_error(ProverServiceClientError::ERROR_PROOF_CANCELLED, "cancelled");
+        assert!(cancelled.is_proof_cancelled());
+
+        let other_precondition =
+            rpc_call_error(ProverServiceClientError::ERROR_FAILED_PRECONDITION, "cancelled");
+        assert!(!other_precondition.is_proof_cancelled());
     }
 }
