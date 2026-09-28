@@ -161,8 +161,8 @@ Current behavior:
 
 Remaining gaps:
 
-- There is no real RPC tx manager, mempool, replacement, fee bumping,
-  cancellation, or timeout policy.
+- There is no real RPC tx manager, mempool, replacement, fee bumping, or
+  timeout policy.
 - Receipt polling is driven by explicit test calls instead of a background RPC
   polling task.
 

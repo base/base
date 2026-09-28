@@ -193,7 +193,7 @@ impl TxManagerError {
     ///
     /// Fee/replacement errors and infrastructure errors are retryable.
     /// Critical errors (nonce conflicts, insufficient funds, reverts,
-    /// deadline expiry, reservation conflicts) are not.
+    /// deadline expiry) are not.
     ///
     /// # Caller requirements
     ///
