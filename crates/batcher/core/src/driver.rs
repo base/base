@@ -145,10 +145,9 @@ where
     /// The I/O phase polls its arms in priority order: cancellation, admin commands,
     /// derivation status, receipts, L2 blocks, L1 heads. Admin commands come before the
     /// source so control-plane operations (stop, start, flush) are never starved by sustained
-    /// block throughput; derivation-status changes come before unsafe blocks so pruning and
+    /// block throughput. Derivation-status changes come before unsafe blocks so pruning and
     /// recovery cannot be starved by sequential catchup. Receipts come before unsafe blocks so
-    /// a failed submission is resent before anything a block releases: the retry then takes
-    /// back the nonce it freed, and its frames reach L1 in order, as derivation requires. A
+    /// a failed submission is resent before anything a block ready at the same wait releases. A
     /// stopped batcher does not poll its source at all.
     ///
     /// Cancellation ends the loop with a bounded drain of the in-flight submissions; see
@@ -859,8 +858,7 @@ mod tests {
     }
 
     /// A failed submission is resent before anything a block releases, even when both are
-    /// ready at the same wait: the retry takes back the nonce it freed, so its frames reach L1
-    /// before the newer ones, as derivation requires.
+    /// ready at the same wait.
     #[test]
     fn run_resends_a_failed_submission_before_a_block_releases_newer_ones() {
         Runner::start(Config::seeded(0), |ctx| async move {
