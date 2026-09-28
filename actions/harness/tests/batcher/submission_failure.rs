@@ -1,5 +1,4 @@
-//! Batcher recovery when an L1 submission fails: the driver requeues the frame and sends it
-//! again. The harness fails a send with an immediate error, without any L1 interaction.
+//! Action tests for a batcher whose L1 submission fails.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,

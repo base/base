@@ -293,9 +293,9 @@ async fn pre_holocene_past_singular_does_not_poison_channel() {
 #[tokio::test]
 async fn mixed_singular_and_span_batches_derive_before_and_after_holocene() {
     let batcher_cfg = HoloceneSpanFixture::batcher_config();
-    for mut harness in [
-        HoloceneSpanFixture::pre_holocene_harness(&batcher_cfg),
-        HoloceneSpanFixture::post_holocene_harness(&batcher_cfg),
+    for (fork, mut harness) in [
+        ("pre-Holocene", HoloceneSpanFixture::pre_holocene_harness(&batcher_cfg)),
+        ("post-Holocene", HoloceneSpanFixture::post_holocene_harness(&batcher_cfg)),
     ] {
         let l1_chain = SharedL1Chain::from_blocks(harness.l1.chain().to_vec());
         let mut sequencer = harness.create_l2_sequencer(l1_chain);
@@ -313,7 +313,7 @@ async fn mixed_singular_and_span_batches_derive_before_and_after_holocene() {
         node.initialize().await;
         let derived = node.run_until_idle().await;
 
-        assert_eq!(derived, 2, "singular and span batches should both derive");
-        assert_eq!(node.l2_safe_number(), 2, "safe head should include both batch formats");
+        assert_eq!(derived, 2, "{fork}: singular and span batches should both derive");
+        assert_eq!(node.l2_safe_number(), 2, "{fork}: safe head should include both batch formats");
     }
 }

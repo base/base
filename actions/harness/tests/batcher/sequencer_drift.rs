@@ -1,6 +1,4 @@
-//! Sequencer drift: past `max_sequencer_drift`, derivation drops batches with user
-//! transactions, and empty batches that keep a stale origin while a next one exists.
-//! Deposit-only blocks fill those slots only once the sequencing window closes.
+//! Action tests for batches past `max_sequencer_drift`.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
@@ -10,11 +8,6 @@ use base_batcher_encoder::{DaType, EncoderConfig};
 
 /// Past `max_sequencer_drift`, derivation drops the batches with user transactions and,
 /// once epoch 0's sequencing window closes, fills their slots with deposit-only blocks.
-///
-/// Fjord sets `max_sequencer_drift` to 1800 s. With an L2 block time of 300 s and the
-/// sequencer pinned to L1 genesis (time 0), blocks 1 to 6 are within drift and blocks 7 and
-/// 8 are past it. A sequencing window of 2 L1 blocks, with the batch in L1 block 2, closes at
-/// L1 block 3: L1 blocks 3 and 4 each yield one deposit-only block.
 #[tokio::test]
 async fn over_drift_batches_with_transactions_become_deposit_only_once_the_window_closes() {
     let l1_cfg = L1MinerConfig { block_time: 4, ..Default::default() };
@@ -110,10 +103,9 @@ async fn over_drift_batches_with_transactions_become_deposit_only_once_the_windo
     }
 }
 
-/// Past `max_sequencer_drift`, a batch that keeps the stale L1 origin while a next origin
-/// whose timestamp the batch has reached exists is dropped, even an empty one: derivation
-/// stops at the last block within drift and does not fill the dropped slots with deposit-only
-/// blocks while epoch 0's sequencing window is open.
+/// Past `max_sequencer_drift`, an empty batch that keeps the stale L1 origin is dropped too
+/// once the next origin is due. Derivation stops at the last block within drift, and fills no
+/// deposit-only block while epoch 0's sequencing window is open.
 #[tokio::test]
 async fn over_drift_empty_batches_are_dropped_when_a_next_origin_exists() {
     let l1_cfg = L1MinerConfig { block_time: 4, ..Default::default() };

@@ -182,7 +182,7 @@ test can read the tx manager's queues right after.
 
 ```rust
 use base_action_harness::{
-    ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
     TestRollupConfigBuilder,
 };
 
@@ -199,8 +199,8 @@ async fn example_action_test() {
         &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    let source = blocks.into_iter().collect();
-    Batcher::new(source, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
+    let batcher = Batcher::new(ActionL2Source::from_blocks(blocks), &h.rollup_config, batcher_cfg);
+    batcher.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
     // Derivation reads them back.

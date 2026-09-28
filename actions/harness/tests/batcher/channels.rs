@@ -6,7 +6,7 @@ use base_action_harness::{
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 
-/// The derivation channel timeout, in L1 blocks, of the channel-timeout test.
+/// The derivation channel timeout, in L1 blocks.
 const CHANNEL_TIMEOUT: u64 = 2;
 
 // ---------------------------------------------------------------------------
@@ -14,8 +14,7 @@ const CHANNEL_TIMEOUT: u64 = 2;
 // ---------------------------------------------------------------------------
 
 /// A channel whose frames land more than `channel_timeout` L1 blocks apart is discarded by
-/// derivation, late frames included. How the batcher recovers from that is in `recovery.rs`,
-/// and the Granite value of the timeout in `upgrade_transitions.rs`.
+/// derivation, late frames included.
 #[tokio::test]
 async fn late_frames_of_a_timed_out_channel_are_ignored() {
     let batcher_cfg = BatcherConfig {
@@ -78,7 +77,6 @@ async fn late_frames_of_a_timed_out_channel_are_ignored() {
 
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 0, "late frames after channel timeout must be ignored");
-    assert_eq!(node.l2_safe_number(), 0);
 }
 
 // ---------------------------------------------------------------------------

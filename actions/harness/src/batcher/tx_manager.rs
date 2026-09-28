@@ -344,9 +344,9 @@ mod tests {
         }
     }
 
-    /// Every submission is signed by the batcher key and sent where its candidate says, the
-    /// driver's inbox: calldata as an EIP-1559 transaction, blobs as an EIP-4844 transaction
-    /// whose versioned hashes are those of the sidecars handed to the miner.
+    /// Every submission is signed by the batcher key and sent to its candidate's recipient.
+    /// Calldata goes in an EIP-1559 transaction, and blobs in an EIP-4844 transaction whose
+    /// versioned hashes are those of the sidecars handed to the miner.
     #[tokio::test]
     async fn signed_submissions_go_to_the_candidate_recipient_from_the_batcher_key() {
         let inbox = Address::repeat_byte(0x42);

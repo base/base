@@ -230,7 +230,7 @@ async fn span_batch_stops_at_denim_and_recovers_with_single_batches() {
 /// Encode one L2 block into a multi-frame channel (`max_frame_size=80`), submit only frame 0
 /// in L1 block 1, then mine 51 more empty L1 blocks. The channel's `open_block_number` is 1
 /// and `1 + 50 = 51 < 52`, so the channel is timed out by the time the pipeline reaches L1
-/// block 52. How the batcher recovers from that is in `recovery.rs`.
+/// block 52.
 #[tokio::test]
 async fn granite_channel_timeout_enforced() {
     // All forks through Fjord at genesis, Granite at timestamp 6.

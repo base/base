@@ -6,7 +6,7 @@ use base_action_harness::{
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 use base_blobs::BlobDecoder;
-use base_protocol::{BlockInfo, Frame};
+use base_protocol::Frame;
 
 // ---------------------------------------------------------------------------
 // Blob DA end-to-end
@@ -69,7 +69,7 @@ async fn small_frames_share_one_blob_and_derive() {
     assert_eq!(sidecars.len(), 1, "fragmented frames should share one blob sidecar");
     let data = BlobDecoder::decode(&sidecars[0].1).expect("blob decodes");
     let frames = Frame::parse_frames(&data).expect("blob data parses");
-    assert!(frames.len() >= 2, "{} frames, the block must span several", frames.len());
+    assert!(frames.len() >= 2, "the block must span several frames, got {}", frames.len());
 
     let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut sequencer,

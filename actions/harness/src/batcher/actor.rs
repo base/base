@@ -63,7 +63,7 @@ impl BatcherConfig {
         PrivateKeySigner::from_bytes(&B256::repeat_byte(0xBA)).expect("valid default L1 signer")
     }
 
-    /// Configure a signer for production-mode L1 transaction construction.
+    /// Sign the batcher's submissions with `signer`, and make its address the batcher address.
     pub fn with_l1_signer(mut self, signer: PrivateKeySigner) -> Self {
         self.batcher_address = signer.address();
         self.l1_signer = signer;
@@ -153,7 +153,6 @@ impl Batcher {
                 },
             )
         });
-        // Production validates against the timestamp of the block after the safe head.
         let next_l2_timestamp = initial_safe_head.timestamp + rollup_config.block_time;
         config
             .encoder
