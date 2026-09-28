@@ -565,7 +565,9 @@ impl BatcherService {
         if safe_l2 == BlockInfo::default() {
             eyre::bail!("safe L2 head is empty");
         }
-        let next_l2_timestamp = safe_l2.timestamp.saturating_add(rollup_config.block_time);
+        // Derive the next EVM timestamp from the safe header number. The rollup-config schedule
+        // accounts for Denim's 200ms cadence before converting to whole-second EVM timestamps.
+        let next_l2_timestamp = rollup_config.l2_block_timestamp(safe_l2.number.saturating_add(1));
         self.config.encoder_config.validate_for_rollup_config(&rollup_config, next_l2_timestamp)?;
         info!(safe_l2 = %safe_l2.number, "fetched safe L2 head");
 
