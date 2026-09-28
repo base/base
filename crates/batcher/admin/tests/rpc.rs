@@ -1,5 +1,5 @@
-//! The admin JSON-RPC API end to end: a real [`AdminServer`] over a real `BatchDriver`, called
-//! over HTTP with the method names and payloads operators send.
+//! End-to-end tests of the admin JSON-RPC API. A real [`AdminServer`] over a running
+//! `BatchDriver` is called over HTTP with the method names and payloads operators send.
 
 use std::{
     net::Ipv4Addr,
@@ -30,7 +30,7 @@ struct AdminRpc {
     driver: JoinHandle<Result<(), BatchDriverError>>,
     recorded: Arc<Mutex<Recorded>>,
     _server: AdminServer,
-    /// Kept alive: the driver exits once the derivation status sender is dropped.
+    /// Kept alive because the driver exits once the derivation status sender is dropped.
     _handles: DriverHandles,
 }
 
@@ -112,8 +112,8 @@ async fn throttle_controller_is_set_read_and_reset() {
     let params = rpc_params!["step", throttle_config(0.5)];
     let () = rpc.client.request("admin_setThrottleController", params).await.unwrap();
 
-    // The backlog is above the threshold, so the step strategy throttles at half intensity:
-    // the limits sit halfway between their upper and lower bounds.
+    // The backlog is above the threshold, so the step strategy throttles at half intensity and
+    // the limits sit halfway between their lower and upper bounds.
     let info: Value =
         rpc.client.request("admin_getThrottleController", rpc_params![]).await.unwrap();
     assert_eq!(
