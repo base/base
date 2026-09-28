@@ -51,6 +51,17 @@ pub enum TxAuthError {
     #[error("delegation requires an admin actor")]
     DelegationUnauthorized,
 
+    /// The transaction needs the Keystore (a `Create` or `ConfigChange`, or a
+    /// named authorization with an authenticator other than native secp256k1),
+    /// which is not active before Zenith.
+    #[error("EIP-8130 Keystore features are not active before Zenith")]
+    KeystoreInactive,
+
+    /// A named sender or payer's native secp256k1 signature recovered to a
+    /// different address than the one named.
+    #[error("secp256k1 signature does not recover to the named account")]
+    SignerMismatch,
+
     /// A signed account-change batch's sequence does not match the account's
     /// current sequence for its channel. The contract reads the sequence from
     /// state, so a mismatch means the batch is stale or out of order (and its

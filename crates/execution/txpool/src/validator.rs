@@ -1001,6 +1001,9 @@ where
         let classification_generation = self.limit_class_cache_generation();
         let local_chain_id = self.inner.chain_spec().chain().id();
         let now = self.block_timestamp();
+        // Before Zenith there is no Keystore: authorization, lock state, and the
+        // high-rate payer classification never read `AccountConfiguration`.
+        let keystore = self.chain_spec().is_zenith_active_at_timestamp(now);
         let state = self.client().latest().map_err(|error| Self::provider_unavailable(error))?;
 
         // Authorize *and apply* the account changes against a writable overlay so
@@ -1015,7 +1018,7 @@ where
         ));
         let auth_start = Instant::now();
         let auth_result = StorageCtx::enter(&mut storage, |ctx| {
-            let applied = {
+            let applied = if keystore {
                 let mut account_config = AccountConfigurationStorage::new(ctx);
                 TransactionAuthorizer::authorize_and_apply(
                     signed,
@@ -1023,6 +1026,8 @@ where
                     local_chain_id,
                     now,
                 )?
+            } else {
+                TransactionAuthorizer::authorize_without_keystore(signed)?
             };
             if let Some(delegation) = applied.applied.delegation {
                 delegation.install(ctx).map_err(TxAuthError::from)?;
@@ -1173,15 +1178,21 @@ where
             });
         }
 
-        let sender_status = self.account_lock(
-            &*state,
-            local_chain_id,
-            now,
-            sender,
-            classification_generation,
-            Self::prefetched_account_state(&config_reads, sender),
-        );
-        let payer_status = if payer == sender {
+        let sender_status = if keystore {
+            self.account_lock(
+                &*state,
+                local_chain_id,
+                now,
+                sender,
+                classification_generation,
+                Self::prefetched_account_state(&config_reads, sender),
+            )
+        } else {
+            LockStatus::UNLOCKED
+        };
+        let payer_status = if !keystore {
+            LockStatus::UNLOCKED
+        } else if payer == sender {
             sender_status
         } else {
             self.account_lock(
@@ -1550,6 +1561,10 @@ where
             TxAuthError::BadSequence { .. } => "config change sequence mismatch",
             TxAuthError::StaleEpoch { .. } => "config change local epoch is stale",
             TxAuthError::SequenceSaturated => "config change channel sequence is saturated",
+            TxAuthError::KeystoreInactive => "EIP-8130 Keystore features require Zenith",
+            TxAuthError::SignerMismatch => {
+                "secp256k1 signature does not recover to the named account"
+            }
             TxAuthError::Apply(apply) => Self::map_apply_error(apply),
         };
         Self::eip8130_error(reason)
@@ -2278,7 +2293,15 @@ mod tests {
         address: Address,
         account: ExtendedAccount,
     ) -> TestValidator {
-        let chain_spec = everest_chain_spec();
+        build_test_validator_with_account_and_spec(address, account, everest_chain_spec())
+    }
+
+    /// [`build_test_validator_with_account`] against the given chain spec.
+    fn build_test_validator_with_account_and_spec(
+        address: Address,
+        account: ExtendedAccount,
+        chain_spec: Arc<BaseChainSpec>,
+    ) -> TestValidator {
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
             .with_genesis_block();
@@ -3678,6 +3701,39 @@ mod tests {
         assert_eq!(state.manifest.payer_max_cost(), state.payer_max_cost);
     }
 
+    /// Before Zenith, admitting an EOA transaction reads no Keystore state, so
+    /// no `AccountConfiguration` slot is captured or watched; at Zenith the
+    /// same transaction depends on the account's Keystore state.
+    #[test]
+    fn eip8130_admission_reads_keystore_only_at_zenith() {
+        let signer = PrivateKeySigner::random();
+        let sender = signer.address();
+        let tx = TxEip8130 { gas_limit: 100_000, ..minimal_valid_eoa_tx() };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let funded = || ExtendedAccount::new(0, U256::from(1_000_000_000_000u64));
+        let watches_keystore = |state: &Eip8130ValidationState| {
+            state.watch_set.iter().any(|key| {
+                matches!(key, InvalidationKey::Slot { address, .. }
+                    if *address == AccountConfigurationStorage::ADDRESS)
+            })
+        };
+
+        let everest = build_test_validator_with_account(sender, funded())
+            .validate_eip8130_full(&signed)
+            .expect("EOA transaction is admitted before Zenith");
+        assert!(everest.manifest.has_no_config_slots());
+        assert!(!watches_keystore(&everest));
+
+        let zenith =
+            build_test_validator_with_account_and_spec(sender, funded(), zenith_chain_spec())
+                .validate_eip8130_full(&signed)
+                .expect("EOA transaction is admitted at Zenith");
+        assert!(!zenith.manifest.has_no_config_slots());
+        assert!(watches_keystore(&zenith));
+    }
+
     /// A self-paying sender reserves its call value on top of gas, and is
     /// rejected when its balance cannot cover both.
     #[test]
@@ -3915,9 +3971,10 @@ mod tests {
 
         // Fund the counterfactual address so the self-paid fee check passes; it
         // is still "fresh" (nonce 0, no code) for the create freshness gate.
-        let validator = build_test_validator_with_account(
+        let validator = build_test_validator_with_account_and_spec(
             derived,
             ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)),
+            zenith_chain_spec(),
         );
 
         let state = validator

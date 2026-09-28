@@ -3,7 +3,8 @@
 //! their authorization, then authenticates the final sender/payer signatures
 //! against the resulting post-apply state.
 
-use base_common_consensus::{AccountChange, Delegation, Eip8130Signed};
+use alloy_primitives::{Address, B256};
+use base_common_consensus::{AccountChange, Delegation, Eip8130Constants, Eip8130Signed};
 
 use crate::{
     AccountChangeApplier, AccountConfigurationStorage, ActorTxVerifier, AppliedAccountChanges,
@@ -192,6 +193,94 @@ impl TransactionAuthorizer {
         }
 
         Ok(AppliedTransaction { actors, config_changes, applied, revoke_discount_slots })
+    }
+
+    /// Authorizes `signed` without the Keystore, as before Zenith.
+    ///
+    /// Never reads or writes `AccountConfiguration` storage. Every sender and
+    /// payer is authenticated by native secp256k1 recovery alone, and the
+    /// recovered key is the account's own full-authority key:
+    ///
+    /// - a bare `sender_auth` recovers the sender; a named sender needs
+    ///   `K1_AUTHENTICATOR || sig` recovering to that address;
+    /// - an open payer is whoever signed `payer_auth`; a named payer needs
+    ///   `K1_AUTHENTICATOR || sig` recovering to that address;
+    /// - the only account change is delegation, recorded as a deferred code
+    ///   effect.
+    ///
+    /// Returns [`TxAuthError::KeystoreInactive`] for anything that needs the
+    /// Keystore.
+    pub fn authorize_without_keystore(
+        signed: &Eip8130Signed,
+    ) -> Result<AppliedTransaction, TxAuthError> {
+        if signed.requires_keystore() {
+            return Err(TxAuthError::KeystoreInactive);
+        }
+        let tx = signed.tx();
+
+        let sender = match signed.explicit_sender() {
+            Some(account) => {
+                Self::recover_named_k1(account, tx.sender_signature_hash(), signed.sender_auth())?
+            }
+            None => RecoveredActorId::recover_eoa_sender(signed)
+                .map_err(|_| TxAuthError::SenderRecovery)?
+                .ok_or(TxAuthError::SenderRecovery)?
+                .address(),
+        };
+
+        let payer = match tx.payer {
+            None => None,
+            Some(_) if tx.is_open_payer() => Some(
+                RecoveredActorId::recover_k1(tx.payer_signature_hash(sender), signed.payer_auth())
+                    .map_err(|_| TxAuthError::PayerRecovery)?
+                    .address(),
+            ),
+            Some(account) => Some(Self::recover_named_k1(
+                account,
+                tx.payer_signature_hash(sender),
+                signed.payer_auth(),
+            )?),
+        };
+
+        let mut applied = AppliedAccountChanges::default();
+        for change in &tx.account_changes {
+            let AccountChange::Delegation(Delegation { target }) = change else {
+                return Err(TxAuthError::KeystoreInactive);
+            };
+            if applied.delegation.is_some() {
+                return Err(ApplyError::MultipleDelegations.into());
+            }
+            applied.delegation = Some(DelegationEffect::new(sender, *target));
+        }
+
+        let owner = |account| AuthorizedActor {
+            account,
+            resolved: ResolvedActor::unrestricted(AccountConfigurationStorage::self_actor_id(
+                account,
+            )),
+        };
+        Ok(AppliedTransaction {
+            actors: TxActors { sender: owner(sender), payer: payer.map(owner) },
+            config_changes: Vec::new(),
+            applied,
+            revoke_discount_slots: 0,
+        })
+    }
+
+    /// Recovers `auth` (`K1_AUTHENTICATOR || r || s || v`) over `hash` and
+    /// requires it to be `account`.
+    fn recover_named_k1(account: Address, hash: B256, auth: &[u8]) -> Result<Address, TxAuthError> {
+        let Some(signature) = auth.strip_prefix(Eip8130Constants::K1_AUTHENTICATOR.as_slice())
+        else {
+            return Err(TxAuthError::KeystoreInactive);
+        };
+        let recovered = RecoveredActorId::recover_k1(hash, signature)
+            .map_err(|error| TxAuthError::Authorize(AuthorizeError::Authenticate(error)))?
+            .address();
+        if recovered != account {
+            return Err(TxAuthError::SignerMismatch);
+        }
+        Ok(account)
     }
 
     /// Requires a delegation's final sender to be an admin (unrestricted) actor
