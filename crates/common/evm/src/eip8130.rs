@@ -25,8 +25,9 @@
 //! **phases**, each an ordered list of calls. Phases draw from a single gas pool
 //! and commit independently in sequence; the calls within a phase are atomic
 //! (all-or-nothing). If any call in a phase reverts, that phase's state changes
-//! are discarded and every later phase is skipped, but the gas already consumed is still charged and the transaction is
-//! still included (nonce consumed, fee paid). Each call is dispatched from
+//! are discarded and every later phase is skipped, but the gas already consumed
+//! is still charged and the transaction is still included (nonce consumed, fee
+//! paid). Each call is dispatched from
 //! `sender` to `call.to` with `msg.value == call.value` and `tx.origin == sender`.
 //!
 //! # Scope
@@ -810,8 +811,9 @@ impl Eip8130Executor {
 
     /// Runs the storage-backed pre-call pipeline (authorize, nonce, intrinsic
     /// gas, fee-cap check, account-change apply) over a gas-free
-    /// journal view, returning the resolved [`Eip8130Outcome`]. Storage writes land on the journal directly; the
-    /// caller discards the transaction on error.
+    /// journal view, returning the resolved [`Eip8130Outcome`]. Storage writes
+    /// land on the journal directly; the caller discards the transaction on
+    /// error.
     fn authorize_and_apply<DB>(
         ctx: &mut BaseContext<DB>,
         signed: &base_common_consensus::Eip8130Signed,
