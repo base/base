@@ -25,7 +25,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
 use super::{BlockObservation, BlockReceipt, InclusionPulse, ResultsTracker};
-use crate::utils::{BaselineError, Result};
+use crate::{rpc::RpcProviders, utils::{BaselineError, Result}};
 
 /// How frequently confirmation-only helpers poll for canonical blocks.
 const CONFIRMATION_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -50,8 +50,8 @@ const STARTUP_CATCHUP_WINDOW: Duration = Duration::from_secs(512);
 /// Blocks are independent, so they are fetched in parallel up to this bound.
 const RECEIPT_FETCH_CONCURRENCY: usize = 3;
 
-/// Set on the first `eth_getBlockReceipts` error response, so the headline "unavailable"
-/// warning below fires once per process instead of once per failed block.
+/// Set on the first `eth_getBlockReceipts` error response, so the headline warning
+/// fires once per process instead of once per failed block.
 static BLOCK_RECEIPTS_UNAVAILABLE_WARNED: AtomicBool = AtomicBool::new(false);
 
 /// Timing and gas information emitted when a new canonical block becomes visible.
@@ -786,7 +786,11 @@ impl BlockWatcher {
         block_number: u64,
     ) -> (Vec<BlockReceipt>, bool) {
         let block_id = BlockId::Number(BlockNumberOrTag::Number(block_number));
-        match tokio::time::timeout(RECEIPT_RPC_TIMEOUT, provider.get_block_receipts(block_id)).await
+        match tokio::time::timeout(RECEIPT_RPC_TIMEOUT, RpcProviders::retry_read(
+            "get block receipts",
+            || provider.get_block_receipts(block_id),
+        ))
+        .await
         {
             Ok(Ok(Some(receipts))) => {
                 let mapped = receipts
@@ -809,9 +813,8 @@ impl BlockWatcher {
                 if !BLOCK_RECEIPTS_UNAVAILABLE_WARNED.swap(true, Ordering::Relaxed) {
                     warn!(
                         error = %e,
-                        "eth_getBlockReceipts request failed; this RPC endpoint may not support \
-                         batch block receipts, so receipt confirmation will fall back to slower \
-                         per-transaction eth_getTransactionReceipt calls for the rest of this run"
+                        "eth_getBlockReceipts failed; setup confirmation may fall back to individual \
+                         eth_getTransactionReceipt calls, and end-of-run gas/revert metrics may be incomplete"
                     );
                 }
                 debug!(block = block_number, error = %e, "eth_getBlockReceipts failed");
@@ -831,6 +834,86 @@ impl BlockWatcher {
 
 #[cfg(test)]
 mod tests {
+    //! A local HTTP fixture is needed because Alloy provider-call builders cannot be mocked directly.
+    use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpListener};
+    use url::Url;
+
+    /// Serves scripted block-receipt responses and counts the requests actually received.
+    async fn receipt_provider(responses: Vec<Option<i64>>) -> (RootProvider<Base>, tokio::task::JoinHandle<usize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        let handle = tokio::spawn(async move {
+            let mut count = 0;
+            for response in responses {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut header_end = None;
+                let mut content_length = 0;
+                loop {
+                    let mut chunk = [0; 4096];
+                    let bytes = socket.read(&mut chunk).await.unwrap();
+                    assert!(bytes > 0, "client must complete the HTTP request");
+                    request.extend_from_slice(&chunk[..bytes]);
+                    if header_end.is_none() {
+                        if let Some(index) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                            header_end = Some(index + 4);
+                            let headers = String::from_utf8_lossy(&request[..index]).to_ascii_lowercase();
+                            content_length = headers.lines().find_map(|line| line.strip_prefix("content-length: ")).unwrap().trim().parse::<usize>().unwrap();
+                        }
+                    }
+                    if header_end.is_some_and(|end| request.len() >= end + content_length) { break; }
+                }
+                let id = serde_json::from_slice::<serde_json::Value>(&request[header_end.unwrap()..]).unwrap()["id"].clone();
+                let body = match response {
+                    Some(code) => serde_json::json!({"jsonrpc":"2.0", "id":id, "error":{"code":code,"message":"service temporarily unavailable"}}),
+                    None => serde_json::json!({"jsonrpc":"2.0", "id":id, "result":[]}),
+                }.to_string();
+                let status = if response == Some(429) { "429 Too Many Requests" } else { "200 OK" };
+                let reply = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                socket.write_all(reply.as_bytes()).await.unwrap();
+                count += 1;
+            }
+            count
+        });
+        (RootProvider::<Base>::new_http(url), handle)
+    }
+
+    #[tokio::test]
+    async fn block_receipts_retry_transient_error_then_succeed() {
+        let (provider, server) = receipt_provider(vec![Some(-32011), None]).await;
+        let (receipts, failed) = BlockWatcher::fetch_receipts(&provider, &[123]).await;
+        assert_eq!(receipts.len(), 0, "empty successful block should contain no receipts");
+        assert_eq!(failed, 0, "recovered block must not count as failed");
+        assert_eq!(server.await.unwrap(), 2, "transient error must trigger exactly one retry");
+    }
+
+    #[tokio::test]
+    async fn block_receipts_retry_http_rate_limit_with_json_rpc_body() {
+        let (provider, server) = receipt_provider(vec![Some(429), None]).await;
+        let (receipts, failed) = BlockWatcher::fetch_receipts(&provider, &[123]).await;
+        assert_eq!(receipts.len(), 0, "successful empty block must have no receipts");
+        assert_eq!(failed, 0, "HTTP rate limit with JSON-RPC error body must recover");
+        assert_eq!(server.await.unwrap(), 2, "JSON-RPC rate limit must be retried once");
+    }
+
+    #[tokio::test]
+    async fn block_receipts_stop_after_three_transient_failures() {
+        let (provider, server) = receipt_provider(vec![Some(-32011); 3]).await;
+        let (receipts, failed) = BlockWatcher::fetch_receipts(&provider, &[123]).await;
+        assert_eq!(receipts.len(), 0, "failed block must provide no receipts");
+        assert_eq!(failed, 1, "exhausted block must be counted once");
+        assert_eq!(server.await.unwrap(), 3, "transient errors must stop after three attempts");
+    }
+
+    #[tokio::test]
+    async fn block_receipts_do_not_retry_unsupported_method() {
+        let (provider, server) = receipt_provider(vec![Some(-32601)]).await;
+        let (receipts, failed) = BlockWatcher::fetch_receipts(&provider, &[123]).await;
+        assert_eq!(receipts.len(), 0, "unsupported method must provide no receipts");
+        assert_eq!(failed, 1, "unsupported method must count the block as failed");
+        assert_eq!(server.await.unwrap(), 1, "unsupported method must not be retried");
+    }
+
     use super::*;
 
     fn rpc_block(

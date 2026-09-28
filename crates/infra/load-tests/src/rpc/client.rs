@@ -1,4 +1,4 @@
-use std::{fmt::Display, time::Duration};
+use std::{fmt::Display, future::Future, time::Duration};
 
 use alloy_network::{Ethereum, EthereumWallet};
 use alloy_primitives::{Address, Bytes, TxHash};
@@ -6,6 +6,7 @@ use alloy_provider::{
     Identity, Provider, ProviderBuilder, RootProvider,
     fillers::{ChainIdFiller, FillProvider, JoinFill, WalletFiller},
 };
+use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use base_common_network::Base;
 use base_execution_txpool::ValidityPredicate;
 use futures::future::join_all;
@@ -52,6 +53,48 @@ impl RpcProviders {
             .build()
             .map_err(|e| BaselineError::Rpc(format!("failed to build RPC HTTP client: {e}")))?;
         Ok(ProviderBuilder::<Identity, Identity, Base>::default().connect_reqwest(client, url))
+    }
+
+    /// Retries transient read-only RPC failures up to three attempts with bounded backoff.
+    /// Never use this for transaction submission: an uncertain send may have already succeeded.
+    pub async fn retry_read<T, F, Fut>(operation: &'static str, mut read: F) -> TransportResult<T>
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output = TransportResult<T>>,
+    {
+        for attempt in 1..=3 {
+            match tokio::time::timeout(RPC_TIMEOUT, read()).await {
+                Ok(Ok(value)) => return Ok(value),
+                Ok(Err(error)) if attempt < 3 && Self::retryable_read_error(&error) => {
+                    warn!(operation, attempt, "transient RPC read failed, retrying");
+                }
+                Ok(Err(error)) => return Err(error),
+                Err(_) if attempt < 3 => {
+                    warn!(operation, attempt, "RPC read timed out, retrying");
+                }
+                Err(_) => return Err(TransportErrorKind::custom_str("RPC read timed out")),
+            }
+            tokio::time::sleep(Duration::from_millis(200 * attempt)).await;
+        }
+        unreachable!("retry loop always returns on its final attempt")
+    }
+
+    /// Classifies transient RPC reads without retrying invalid requests or unsupported methods.
+    pub fn retryable_read_error(error: &TransportError) -> bool {
+        match error {
+            TransportError::ErrorResp(response) => {
+                matches!(response.code, 429 | -32005 | -32011 | -32012 | -32016)
+            }
+            TransportError::Transport(TransportErrorKind::HttpError(http))
+            | TransportError::Transport(TransportErrorKind::HttpErrorWithRetryAfter { error: http, .. }) => {
+                matches!(http.status, 429 | 502 | 503 | 504)
+            }
+            TransportError::Transport(TransportErrorKind::Custom(source)) => source
+                .downcast_ref::<reqwest::Error>()
+                .is_some_and(|error| error.is_connect() || error.is_timeout() || error.is_request() || error.is_body()),
+            TransportError::Transport(TransportErrorKind::MissingBatchResponse(_)) => true,
+            _ => false,
+        }
     }
 }
 
@@ -591,6 +634,61 @@ mod tests {
                 other => panic!("expected error, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn retryable_read_error_distinguishes_transient_from_permanent_failures() {
+        let unavailable: TransportError = TransportError::err_resp(
+            serde_json::from_value(serde_json::json!({"code": -32011, "message": "service temporarily unavailable"})).unwrap(),
+        );
+        let unsupported: TransportError = TransportError::err_resp(
+            serde_json::from_value(serde_json::json!({"code": -32601, "message": "method not found"})).unwrap(),
+        );
+        assert!(RpcProviders::retryable_read_error(&unavailable), "temporary unavailability must retry");
+        let rate_limited: TransportError = TransportError::err_resp(
+            serde_json::from_value(serde_json::json!({"code": 429, "message": "over rate limit"})).unwrap(),
+        );
+        assert!(RpcProviders::retryable_read_error(&rate_limited), "JSON-RPC rate limit must retry even if HTTP returned 429 with a JSON body");
+        assert!(!RpcProviders::retryable_read_error(&unsupported), "unsupported method must fail immediately");
+        assert!(RpcProviders::retryable_read_error(&TransportErrorKind::http_error(429, String::new())), "HTTP rate limit must retry");
+        assert!(!RpcProviders::retryable_read_error(&TransportErrorKind::http_error(400, String::new())), "malformed request must not retry");
+    }
+
+    #[tokio::test]
+    async fn retry_read_recovers_and_stops_after_three_attempts() {
+        let mut calls = 0;
+        let result = RpcProviders::retry_read("test", || {
+            calls += 1;
+            let attempt = calls;
+            async move {
+                if attempt < 3 {
+                    Err(TransportErrorKind::http_error(503, String::new()))
+                } else {
+                    Ok(42u64)
+                }
+            }
+        }).await;
+        assert_eq!(result.unwrap(), 42, "third transient attempt should succeed");
+        assert_eq!(calls, 3, "read should stop immediately after success");
+
+        let mut calls = 0;
+        let result: TransportResult<u64> = RpcProviders::retry_read("test", || {
+            calls += 1;
+            async { Err(TransportErrorKind::http_error(503, String::new())) }
+        }).await;
+        assert!(result.is_err(), "persistent transient failure must surface");
+        assert_eq!(calls, 3, "persistent failure must stop after three attempts");
+    }
+
+    #[tokio::test]
+    async fn retry_read_does_not_repeat_permanent_failure() {
+        let mut calls = 0;
+        let result: TransportResult<u64> = RpcProviders::retry_read("test", || {
+            calls += 1;
+            async { Err(TransportErrorKind::http_error(400, String::new())) }
+        }).await;
+        assert!(result.is_err(), "permanent failure must surface");
+        assert_eq!(calls, 1, "permanent failure must not be retried");
     }
 
     #[test]

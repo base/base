@@ -20,7 +20,7 @@ use tracing::{debug, error, info, instrument, trace, warn};
 use super::{GasPricer, LoadRunner, TxType, load_runner::NONCE_RPC_TIMEOUT};
 use crate::{
     BaselineError, Result,
-    rpc::{BaseFeeExt, QueryProvider, RpcResultExt, TxpoolAdminClient, create_wallet_provider},
+    rpc::{BaseFeeExt, QueryProvider, RpcProviders, RpcResultExt, TxpoolAdminClient, create_wallet_provider},
     workload::{await_token_balances, encode_erc20_balance_of},
 };
 
@@ -124,11 +124,11 @@ impl LoadRunner {
             .get_transaction_count(funder_address)
             .await
             .rpc("get canonical transaction count")?;
-        let pending_nonce = funder_provider
-            .get_transaction_count(funder_address)
-            .pending()
-            .await
-            .rpc("get pending transaction count")?;
+        let pending_nonce = RpcProviders::retry_read("get pending transaction count", || {
+            async { funder_provider.get_transaction_count(funder_address).pending().await }
+        })
+        .await
+        .rpc("get pending transaction count")?;
         if pending_nonce < canonical_nonce {
             return Err(BaselineError::Transaction(format!(
                 "inconsistent funder nonces: canonical {canonical_nonce}, pending {pending_nonce}"
@@ -870,11 +870,11 @@ impl LoadRunner {
             )));
         }
 
-        let mut nonce = funder_provider
-            .get_transaction_count(funder_address)
-            .pending()
-            .await
-            .rpc("get pending transaction count")?;
+        let mut nonce = RpcProviders::retry_read("get pending transaction count", || {
+            async { funder_provider.get_transaction_count(funder_address).pending().await }
+        })
+        .await
+        .rpc("get pending transaction count")?;
 
         // Phase 3: Execute transfers for accounts that need tokens.
         let pb = self.progress_bar(transfers_needed.len() as u64, "Minting tokens");
@@ -1004,11 +1004,11 @@ impl LoadRunner {
                     let send_amount = balance.saturating_sub(drain_gas_cost);
                     let wallet = EthereumWallet::from(signer);
                     let provider = create_wallet_provider(primary_submission_rpc, wallet);
-                    let nonce = provider
-                        .get_transaction_count(address)
-                        .pending()
-                        .await
-                        .rpc("get pending transaction count")?;
+                    let nonce = RpcProviders::retry_read("get pending transaction count", || {
+                        async { provider.get_transaction_count(address).pending().await }
+                    })
+                    .await
+                    .rpc("get pending transaction count")?;
 
                     let tx = TransactionRequest::default()
                         .with_to(funder_address)

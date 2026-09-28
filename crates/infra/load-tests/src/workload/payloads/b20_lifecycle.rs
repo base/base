@@ -14,7 +14,7 @@ use tracing::{info, trace, warn};
 use super::B20TransferPayload;
 use crate::{
     BaselineError, Result,
-    rpc::{BaseFeeExt, RpcResultExt, WalletProvider, create_wallet_provider},
+    rpc::{BaseFeeExt, RpcProviders, RpcResultExt, WalletProvider, create_wallet_provider},
     workload::{
         b20_salt_for, b20_token_for,
         chain_prep::{ChainPrepContext, encode_erc20_balance_of, prep_submission_max_fee},
@@ -204,11 +204,11 @@ async fn submit_b20_create(
     replacement_max_fee: u128,
     replacement_priority_fee: u128,
 ) -> Result<PendingTransactionBuilder<Ethereum>> {
-    let nonce = provider
-        .get_transaction_count(sender)
-        .pending()
-        .await
-        .rpc("get pending transaction count")?;
+    let nonce = RpcProviders::retry_read("get pending transaction count", || {
+        async { provider.get_transaction_count(sender).pending().await }
+    })
+    .await
+    .rpc("get pending transaction count")?;
 
     let build = |nonce: u64, max_fee: u128, priority_fee: u128| {
         TransactionRequest::default()
@@ -236,11 +236,11 @@ async fn submit_b20_create(
                     })
             } else if msg.contains("nonce too low") {
                 // The pending nonce was stale; refetch and resend.
-                let fresh = provider
-                    .get_transaction_count(sender)
-                    .pending()
-                    .await
-                    .rpc("refetch pending transaction count")?;
+                let fresh = RpcProviders::retry_read("refetch pending transaction count", || {
+                    async { provider.get_transaction_count(sender).pending().await }
+                })
+                .await
+                .rpc("refetch pending transaction count")?;
                 provider.send_transaction(build(fresh, max_fee, max_priority_fee)).await.map_err(
                     |e| BaselineError::Transaction(format!("nonce-refreshed send failed: {e}")),
                 )
@@ -319,7 +319,9 @@ pub(super) async fn teardown(
             let wallet = EthereumWallet::from(signer);
             let provider = create_wallet_provider(rpc_url.clone(), wallet);
             Some(async move {
-                let sender_nonce = match provider.get_transaction_count(sender).pending().await {
+                let sender_nonce = match RpcProviders::retry_read("get pending transaction count", || {
+                    async { provider.get_transaction_count(sender).pending().await }
+                }).await {
                     Ok(n) => n,
                     Err(e) => {
                         return Err((sender, eyre::eyre!("nonce fetch failed: {e}")));

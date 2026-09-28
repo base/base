@@ -22,6 +22,7 @@ alloy-primitives.workspace = true
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
+alloy-transport.workspace = true
 
 # base
 base-cli-utils.workspace = true

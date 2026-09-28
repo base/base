@@ -282,12 +282,11 @@ impl LoadRunner {
             let account = &accounts[sender_index];
             let from = account.address;
             let to = accounts[recipient_index].address;
-            let nonce = self
-                .client
-                .get_transaction_count(from)
-                .pending()
-                .await
-                .rpc("get calibration transaction nonce")?;
+            let nonce = RpcProviders::retry_read("get calibration transaction nonce", || {
+                async { self.client.get_transaction_count(from).pending().await }
+            })
+            .await
+            .rpc("get calibration transaction nonce")?;
             let base_fee = self.client.get_base_fee().await?;
             let priority_fee = (base_fee / 10).max(1);
             let max_fee = SubmissionPipeline::submission_max_fee(
