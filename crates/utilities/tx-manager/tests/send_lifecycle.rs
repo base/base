@@ -8,16 +8,19 @@ mod common;
 
 use std::{
     sync::{Arc, atomic::AtomicBool},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use alloy_consensus::Transaction;
+use alloy_network::TransactionBuilder;
 use alloy_primitives::B256;
 use alloy_provider::{Provider, RootProvider};
+use alloy_rpc_types_eth::TransactionRequest;
 use base_tx_manager::{SendState, SimpleTxManager, TxManager, TxManagerConfig, TxManagerError};
 use common::{
-    SAFE_ABORT_DEPTH, mine_block, publish_simple_tx, setup_with_config, setup_with_failing_signer,
-    simple_tx_candidate,
+    SAFE_ABORT_DEPTH, TEST_RECIPIENT, mine_block, pending_transaction, publish_simple_tx,
+    setup_with_config, setup_with_failing_signer, setup_without_automine, simple_tx_candidate,
+    wait_for_publication,
 };
 use rstest::rstest;
 use tokio::sync::mpsc;
@@ -39,6 +42,24 @@ fn fast_send_config() -> TxManagerConfig {
         receipt_query_interval: Duration::from_millis(100),
         resubmission_timeout: Duration::from_secs(60),
         ..fast_polling_config()
+    }
+}
+
+/// Fee bump interval of [`bump_before_next_poll_config`].
+const BUMP_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Fees per gas of the foreign transaction, high enough to replace the manager's.
+const FOREIGN_FEES_PER_GAS: u128 = 100_000_000_000;
+
+/// Config where fees are bumped more often than receipts are polled, so a mined transaction
+/// can be bumped before its receipt is seen.
+fn bump_before_next_poll_config() -> TxManagerConfig {
+    TxManagerConfig {
+        num_confirmations: 1,
+        resubmission_timeout: BUMP_INTERVAL,
+        receipt_query_interval: BUMP_INTERVAL + BUMP_INTERVAL / 2,
+        safe_abort_nonce_too_low_count: SAFE_ABORT_DEPTH,
+        ..TxManagerConfig::default()
     }
 }
 
@@ -365,6 +386,89 @@ async fn query_receipt_returns_error_on_unreachable_provider() {
     .await;
 
     assert!(result.is_err(), "query_receipt should fail when provider is unreachable");
+}
+
+// ── refused fee bumps ─────────────────────────────────────────────────
+
+/// A fee bump refused because the transaction is already mined does not fail the send.
+#[tokio::test]
+async fn bump_refused_for_a_mined_transaction_still_delivers_its_receipt() {
+    let (manager, _anvil) = setup_without_automine(bump_before_next_poll_config()).await;
+
+    // Mine after the first receipt poll, which runs on publication, and before the first bump.
+    let handle = manager.send_async(simple_tx_candidate()).await;
+    wait_for_publication(manager.provider(), manager.sender_address()).await;
+    let published = pending_transaction(manager.provider()).await;
+    tokio::time::sleep(BUMP_INTERVAL / 2).await;
+    mine_block(manager.provider()).await;
+
+    let receipt = tokio::time::timeout(Duration::from_secs(10), handle)
+        .await
+        .expect("send_async should complete within 10 s")
+        .expect("a refused bump must not fail a mined transaction");
+    assert_eq!(receipt.transaction_hash, *published.inner.tx_hash());
+    assert_eq!(receipt.block_number, Some(1));
+}
+
+/// A fee bump refused because a replacement is already mined does not fail the send, which
+/// delivers the replacement's receipt.
+#[tokio::test]
+async fn bump_refused_for_a_mined_replacement_still_delivers_its_receipt() {
+    let (manager, _anvil) = setup_without_automine(bump_before_next_poll_config()).await;
+
+    // Mine after the first bump and before the second.
+    let handle = manager.send_async(simple_tx_candidate()).await;
+    wait_for_publication(manager.provider(), manager.sender_address()).await;
+    let original = pending_transaction(manager.provider()).await;
+    tokio::time::sleep(BUMP_INTERVAL + BUMP_INTERVAL / 2).await;
+    let replacement = pending_transaction(manager.provider()).await;
+    assert_ne!(replacement.inner.tx_hash(), original.inner.tx_hash(), "a bump happened");
+    mine_block(manager.provider()).await;
+
+    let receipt = tokio::time::timeout(Duration::from_secs(10), handle)
+        .await
+        .expect("send_async should complete within 10 s")
+        .expect("a refused bump must not fail a mined replacement");
+    assert_eq!(receipt.transaction_hash, *replacement.inner.tx_hash());
+}
+
+/// A send whose nonce is taken by a transaction it did not publish fails, but only after
+/// `safe_abort_nonce_too_low_count` refused bumps.
+#[tokio::test]
+async fn bumps_refused_for_a_foreign_transaction_fail_the_send() {
+    let (manager, _anvil) = setup_without_automine(bump_before_next_poll_config()).await;
+    let sender = manager.sender_address();
+    let started = Instant::now();
+    let handle = manager.send_async(simple_tx_candidate()).await;
+    wait_for_publication(manager.provider(), sender).await;
+
+    // Replace the transaction with a better-paid one that Anvil signs, then mine it.
+    let foreign = TransactionRequest::default()
+        .with_from(sender)
+        .with_to(TEST_RECIPIENT)
+        .with_nonce(0)
+        .with_gas_limit(21_000)
+        .with_max_fee_per_gas(FOREIGN_FEES_PER_GAS)
+        .with_max_priority_fee_per_gas(FOREIGN_FEES_PER_GAS);
+    let foreign_hash = *manager
+        .provider()
+        .send_transaction(foreign)
+        .await
+        .expect("anvil accepts the replacement")
+        .tx_hash();
+    mine_block(manager.provider()).await;
+
+    let error = tokio::time::timeout(Duration::from_secs(10), handle)
+        .await
+        .expect("send_async should complete within 10 s")
+        .expect_err("a nonce consumed by another transaction must fail the send");
+    assert!(matches!(error, TxManagerError::NonceTooLow), "got {error:?}");
+    assert!(
+        started.elapsed() >= SAFE_ABORT_DEPTH as u32 * BUMP_INTERVAL,
+        "the send must not fail before the counted refusals"
+    );
+    let mined = manager.provider().get_transaction_receipt(foreign_hash).await.unwrap();
+    assert!(mined.is_some(), "the foreign transaction took the nonce");
 }
 
 // ── send_async() nonce ordering ───────────────────────────────────────
