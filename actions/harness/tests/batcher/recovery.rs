@@ -12,8 +12,8 @@ use base_common_genesis::RollupConfig;
 /// The derivation channel timeout, in L1 blocks.
 const CHANNEL_TIMEOUT: u64 = 2;
 
-/// Calldata frames of 80 bytes, so one block spans several transactions, and a channel that
-/// closes one L1 block after it opened, below [`CHANNEL_TIMEOUT`] as
+/// Calldata frames of 80 bytes, so one block spans several transactions. Channels close one
+/// L1 block after they open, below [`CHANNEL_TIMEOUT`] as
 /// `EncoderConfig::validate_for_rollup_config` requires.
 fn batcher_config() -> BatcherConfig {
     BatcherConfig {
@@ -57,15 +57,15 @@ async fn batcher_replays_a_channel_that_timed_out_before_its_last_frame_landed()
     let frames = batcher.pending_count();
     assert!(frames >= 2, "the block must span several frames");
 
-    // Frame 0 lands in L1 block 1, the rest stays in the mempool.
+    // Frame 0 lands in L1 block 1, the rest stays pending in the tx manager.
     batcher.stage_n_frames(&mut h.l1, 1);
     h.mine_and_push(&chain);
     batcher.observe_l1_block(h.l1.tip()).await;
 
-    // The next CHANNEL_TIMEOUT + 1 L1 blocks carry nothing: once L1 passes the block frame
-    // 0 landed in plus CHANNEL_TIMEOUT, derivation has timed the channel out and the batcher
+    // The next CHANNEL_TIMEOUT + 1 L1 blocks carry nothing. Once L1 passes the block frame 0
+    // landed in plus CHANNEL_TIMEOUT, derivation times the channel out and the batcher
     // re-encodes the block in a fresh channel. That channel is still open, so the stale
-    // frames are all the batcher has in the mempool.
+    // frames are the only pending ones.
     for _ in 0..=CHANNEL_TIMEOUT {
         h.mine_and_push(&chain);
         batcher.observe_l1_block(h.l1.tip()).await;
@@ -87,7 +87,7 @@ async fn batcher_replays_a_channel_that_timed_out_before_its_last_frame_landed()
     );
 }
 
-/// A batch confirmed on L1 then dropped by an L1 reorg is never derived: derivation passes
+/// A batch confirmed on L1 then dropped by an L1 reorg is never derived, so derivation passes
 /// its inclusion height with the safe head unchanged. The batcher, told so, resends the block
 /// and derivation reads it on the new fork.
 #[tokio::test]
@@ -115,12 +115,11 @@ async fn batcher_resends_a_confirmed_batch_that_derivation_passed_over() {
     node.initialize().await;
     assert_eq!(node.run_until_idle().await, 0, "the batch is gone from L1");
     let status = node.derivation_status();
-    assert!(
-        status.current_l1.is_some_and(|l1| l1.number > inclusion),
-        "derivation passed the inclusion height"
-    );
+    assert!(status.current_l1.number > inclusion, "derivation passed the inclusion height");
 
+    // Derivation reports it passed the inclusion height, so the batcher re-encodes the block.
     batcher.observe_derivation(status).await;
+
     // The next L1 block closes the fresh channel, the one after carries it.
     h.mine_and_push(&chain);
     batcher.observe_l1_block(h.l1.tip()).await;
