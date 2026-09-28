@@ -1414,7 +1414,6 @@ where
     ///
     /// The task delegates to [`wait_mined`](Self::wait_mined), which polls
     /// internally until the transaction is confirmed or the manager shuts down.
-    /// It also stops once the receiver is dropped.
     ///
     /// Returns the [`JoinHandle`](tokio::task::JoinHandle) of the spawned
     /// task so callers can await its completion if needed.
