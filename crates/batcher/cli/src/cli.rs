@@ -46,12 +46,16 @@ pub struct BatcherArgs {
     /// Parity validator L2 RPC endpoint for shadow mode.
     ///
     /// Required with `--dangerously-override-batch-inbox-address` and rejected
-    /// without it. Its safe L2 head anchors shadow batcher recovery, and its
-    /// derived block hashes are compared with the sequencer.
+    /// without it. The validator's derived block hashes are compared with the
+    /// sequencer's.
     #[arg(long = "parity-validator-l2-rpc-url", env = "BASE_BATCHER_PARITY_VALIDATOR_L2_RPC_URL")]
     pub parity_validator_l2_rpc_url: Option<Url>,
 
     /// Rollup node RPC endpoint(s).
+    ///
+    /// The batcher reads the rollup config of this node and follows its
+    /// derivation, so the node must derive the inbox the batcher posts to. In
+    /// shadow mode it is the parity validator's rollup node.
     ///
     /// Accepts a comma-separated list with the same connection-time failover
     /// semantics as `--l1-rpc-url`.

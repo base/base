@@ -297,10 +297,7 @@ where
             return;
         }
 
-        match self
-            .pipeline
-            .reconcile_derivation(head, status.current_l1.map(|current_l1| current_l1.number))
-        {
+        match self.pipeline.reconcile_derivation(head, status.current_l1.number) {
             DerivationReconciliation::Consistent => {}
             DerivationReconciliation::SafeHeadMismatch => {
                 warn!(
@@ -312,7 +309,7 @@ where
             }
             DerivationReconciliation::StalledChannel => {
                 warn!(
-                    current_l1 = ?status.current_l1.map(|current_l1| current_l1.number),
+                    current_l1 = %status.current_l1.number,
                     safe_l2 = %head.number,
                     "rollup node passed a fully confirmed channel without deriving it, resetting pipeline"
                 );
@@ -798,7 +795,11 @@ mod tests {
             let mut queued =
                 queued_driver(ctx.clone(), [6], [], ImmediateConfirmTxManager { l1_block: 42 });
             queued.driver.pipeline.submissions.push_back(SubmissionStub::stub());
-            queued.status_tx.send(DerivationStatus::from_safe_l2(safe_head(5))).await.unwrap();
+            queued
+                .status_tx
+                .send(DerivationStatus { safe_l2: safe_head(5), current_l1: safe_head(1) })
+                .await
+                .unwrap();
 
             let handle = ctx.spawn(queued.driver.run());
             ctx.sleep(Duration::from_millis(10)).await;
@@ -822,7 +823,11 @@ mod tests {
         Runner::start(Config::seeded(0), |ctx| async move {
             let queued =
                 queued_driver(ctx.clone(), [], [9], ImmediateConfirmTxManager { l1_block: 1 });
-            queued.status_tx.send(DerivationStatus::from_safe_l2(safe_head(5))).await.unwrap();
+            queued
+                .status_tx
+                .send(DerivationStatus { safe_l2: safe_head(5), current_l1: safe_head(1) })
+                .await
+                .unwrap();
 
             let handle = ctx.spawn(queued.driver.run());
             ctx.sleep(Duration::from_millis(10)).await;
