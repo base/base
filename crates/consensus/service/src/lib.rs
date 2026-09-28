@@ -38,7 +38,7 @@ pub use actors::{
     DisabledL1WatcherDerivationClient, EngineActor, EngineActorRequest, EngineClientError,
     EngineClientResult, EngineConfig, EngineDerivationClient, EngineError, EngineProcessor,
     EngineRequestReceiver, EngineRpcProcessor, EngineRpcRequest, GetPayloadRequest,
-    GossipTransport, InsertUnsafePayloadRequest, L1BlockFetcher, L1OriginSelector,
+    GossipTransport, InsertUnsafePayloadRequest, IsolatedCatchup, L1BlockFetcher, L1OriginSelector,
     L1OriginSelectorError, L1OriginSelectorProvider, L1WatcherActor, L1WatcherActorError,
     L1WatcherDerivationClient, L1WatcherQueryExecutor, L1WatcherQueryProcessor, L2Finalizer,
     LogRetrier, NetworkActor, NetworkActorError, NetworkBuilder, NetworkBuilderError,

@@ -1024,6 +1024,122 @@ mod tests {
         assert!(matches!(result, Err(crate::EngineError::ChannelClosed)));
     }
 
+    #[tokio::test]
+    async fn isolated_sequencer_follows_gossip_until_start_then_drops_it() {
+        let parent = L2BlockInfo {
+            block_info: BlockInfo {
+                number: 10,
+                hash: B256::with_last_byte(10),
+                timestamp: 9,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let signed_payload = |number, parent_hash| {
+            let mut payload = unsafe_payload_with_l1_info(number, parent_hash, B256::ZERO);
+            let hash = payload
+                .execution_payload
+                .clone()
+                .try_into_block::<BaseTxEnvelope>()
+                .unwrap()
+                .hash_slow();
+            if let BaseExecutionPayload::V1(inner) = &mut payload.execution_payload {
+                inner.block_hash = hash;
+            }
+            (payload, hash)
+        };
+        let (child, child_hash) = signed_payload(11, parent.block_info.hash);
+        let (grandchild, _) = signed_payload(12, child_hash);
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, parent)
+                .with_block_info_by_tag(BlockNumberOrTag::Safe, parent)
+                .with_block_info_by_tag(BlockNumberOrTag::Finalized, parent)
+                .with_new_payload_v2_response(PayloadStatus {
+                    status: PayloadStatusEnum::Valid,
+                    latest_valid_hash: None,
+                })
+                .with_fork_choice_updated_v3_response(valid_fcu())
+                .build(),
+        );
+        let mut derivation = MockEngineDerivationClient::new();
+        derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
+        derivation.expect_notify_sync_completed().returning(|_| Ok(()));
+        let initial_state = TestEngineStateBuilder::new()
+            .with_unsafe_head(parent)
+            .with_safe_head(parent)
+            .with_finalized_head(parent)
+            .with_el_sync_finished(true)
+            .build();
+        let (state_tx, _) = watch::channel(initial_state);
+        let (queue_tx, _) = watch::channel(0usize);
+        let processor = EngineProcessor::new(
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            Box::new(derivation),
+            Engine::new(initial_state, state_tx, queue_tx),
+        );
+        let (unsafe_head_tx, mut unsafe_head_rx) = watch::channel(L2BlockInfo::default());
+        let (request_tx, request_rx) = mpsc::channel(4);
+        let handle =
+            SequencerEngineRequestCoordinator::new(processor, false, None, true, unsafe_head_tx)
+                .with_isolated_startup_sync()
+                .start(request_rx);
+        unsafe_head_rx.wait_for(|head| *head == parent).await.unwrap();
+
+        let reset = async |request_tx: &mpsc::Sender<EngineActorRequest>| {
+            let (result_tx, mut result_rx) = mpsc::channel(1);
+            request_tx
+                .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
+                    result_tx,
+                    origin: crate::ResetOrigin::Sequencer,
+                    reason: crate::ResetReason::SequencerStartup,
+                })))
+                .await
+                .unwrap();
+            result_rx.recv().await.unwrap()
+        };
+        let prepare_start = async |request_tx: &mpsc::Sender<EngineActorRequest>, hash| {
+            let (result_tx, mut result_rx) = mpsc::channel(1);
+            request_tx
+                .send(EngineActorRequest::PrepareSequencerStart { expected_hash: hash, result_tx })
+                .await
+                .unwrap();
+            result_rx.recv().await.unwrap()
+        };
+
+        assert!(
+            matches!(reset(&request_tx).await, Err(EngineClientError::ELSyncing)),
+            "startup reset must wait for canonical gossip"
+        );
+
+        request_tx
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(child)))
+            .await
+            .unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            unsafe_head_rx.wait_for(|head| head.block_info.hash == child_hash),
+        )
+        .await
+        .expect("catch-up must insert canonical gossip")
+        .unwrap();
+        prepare_start(&request_tx, child_hash).await.expect("caught-up start must be accepted");
+
+        request_tx
+            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(grandchild)))
+            .await
+            .unwrap();
+        prepare_start(&request_tx, child_hash)
+            .await
+            .expect("isolated sequencer must ignore canonical gossip after start");
+        assert_eq!(unsafe_head_rx.borrow().block_info.hash, child_hash);
+
+        drop(request_tx);
+        let result = handle.await.unwrap();
+        assert!(matches!(result, Err(crate::EngineError::ChannelClosed)));
+    }
+
     #[rstest]
     #[case::sequencer_enqueues_contiguous_external_payload(
         NodeMode::Sequencer,

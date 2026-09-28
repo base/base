@@ -468,13 +468,18 @@ impl RollupNode {
         let engine_handler = if node_mode.is_validator() {
             ConfiguredEngineReceiver::Validator(ValidatorEngineRequestHandler::new(processor))
         } else {
-            ConfiguredEngineReceiver::Sequencer(SequencerEngineRequestCoordinator::new(
+            let coordinator = SequencerEngineRequestCoordinator::new(
                 processor,
                 shadow_sequencer,
                 engine_conductor,
                 sequencer_stopped,
                 unsafe_head_tx,
-            ))
+            );
+            ConfiguredEngineReceiver::Sequencer(if node_mode.is_isolated() {
+                coordinator.with_isolated_startup_sync()
+            } else {
+                coordinator
+            })
         };
         let engine_actor =
             EngineActor::new(cancellation.clone(), engine_actor_request_rx, engine_handler);
@@ -519,46 +524,33 @@ impl RollupNode {
             NodeOperatingMode::IsolatedSequencer => None,
         };
 
-        // Create the p2p actor.
-        let (signer, network_rpc, queued_gossip_client, admin_network_access, network) =
-            match node_mode {
-                NodeOperatingMode::Validator
-                | NodeOperatingMode::Sequencer
-                | NodeOperatingMode::ShadowSequencer { .. } => {
-                    let (
-                        NetworkInboundData {
-                            signer,
-                            p2p_rpc: network_rpc,
-                            gossip_payload_tx,
-                            admin_rpc: net_admin_rpc,
-                        },
-                        network,
-                    ) = NetworkActor::new(
-                        QueuedNetworkEngineClient {
-                            engine_actor_request_tx: engine_actor_request_tx.clone(),
-                        },
-                        cancellation.clone(),
-                        self.network_builder(),
-                    )
-                    .await
-                    .map_err(|e| format!("Failed to start network actor: {e}"))?;
-                    (
-                        Some(signer),
-                        Some(network_rpc),
-                        Box::new(QueuedUnsafePayloadGossipClient::new(gossip_payload_tx))
-                            as Box<dyn UnsafePayloadGossipClient>,
-                        AdminNetworkAccess::Enabled(net_admin_rpc),
-                        Some(network),
-                    )
-                }
-                NodeOperatingMode::IsolatedSequencer => (
-                    None,
-                    None,
-                    Box::new(PrivateGossipClient) as Box<dyn UnsafePayloadGossipClient>,
-                    AdminNetworkAccess::Disabled,
-                    None,
-                ),
-            };
+        // Create the p2p actor. Isolated sequencers still need canonical gossip to rejoin the tip
+        // at startup, but never receive the publish sender or network RPC access.
+        let (NetworkInboundData { signer, p2p_rpc, gossip_payload_tx, admin_rpc }, network) =
+            NetworkActor::new(
+                QueuedNetworkEngineClient {
+                    engine_actor_request_tx: engine_actor_request_tx.clone(),
+                },
+                cancellation.clone(),
+                self.network_builder(),
+            )
+            .await
+            .map_err(|e| format!("Failed to start network actor: {e}"))?;
+        let (network_rpc, queued_gossip_client, admin_network_access) = match node_mode {
+            NodeOperatingMode::Validator
+            | NodeOperatingMode::Sequencer
+            | NodeOperatingMode::ShadowSequencer { .. } => (
+                Some(p2p_rpc),
+                Box::new(QueuedUnsafePayloadGossipClient::new(gossip_payload_tx))
+                    as Box<dyn UnsafePayloadGossipClient>,
+                AdminNetworkAccess::Enabled(admin_rpc),
+            ),
+            NodeOperatingMode::IsolatedSequencer => (
+                None,
+                Box::new(PrivateGossipClient) as Box<dyn UnsafePayloadGossipClient>,
+                AdminNetworkAccess::Disabled,
+            ),
+        };
 
         let (l1_head_updates_tx, l1_head_updates_rx) = watch::channel(None);
 
@@ -592,7 +584,7 @@ impl RollupNode {
             AlloyL1BlockFetcher(self.l1_config.engine_provider.clone()),
             l1_head_updates_tx.clone(),
             l1_derivation_client,
-            signer,
+            Some(signer),
             cancellation.clone(),
             head_stream,
             finalized_stream,
@@ -703,7 +695,7 @@ impl RollupNode {
                     }
                 )),
                 sequencer_actor.map(|s| (s, ())),
-                network.map(|network| (network, ())),
+                Some((network, ())),
                 Some((l1_watcher, ())),
                 Some((l1_query_processor, ())),
                 upgrade_signal_metrics_actor.map(|actor| (actor, ())),

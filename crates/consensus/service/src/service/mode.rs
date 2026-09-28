@@ -126,7 +126,7 @@ impl NodeOperatingMode {
         }
     }
 
-    /// Returns whether derivation and network actors should be constructed.
+    /// Returns whether the derivation actor should be constructed.
     pub const fn derivation_enabled(&self) -> bool {
         !self.is_isolated()
     }
