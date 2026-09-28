@@ -2,13 +2,20 @@
 //! head, a safe head off the buffered chain, and a fully confirmed channel derivation skipped.
 
 use alloy_primitives::B256;
-use base_batcher_encoder::{BatchPipeline, DerivationReconciliation, EncoderConfig, StepResult};
+use base_batcher_encoder::{
+    BatchPipeline, DerivationReconciliation, EncoderConfig, ReorgError, StepResult,
+};
 use base_protocol::BlockInfo;
 
 use crate::common::{
     BlockFixture, CHANNEL_TIMEOUT, EncoderFixture, MULTI_FRAME_PAYLOAD, SharedBlob,
     SubmissionFixture,
 };
+
+/// The L1 block derivation is processing, for the reconciliations that only move the safe
+/// head. None of them leaves a fully confirmed channel above the safe head, so none can
+/// report a stall, whatever this block.
+const DERIVATION_L1: u64 = 1;
 
 /// Blocks at or below the safe head are pruned whether or not they were encoded yet, and a
 /// channel left without blocks goes with them.
@@ -23,7 +30,7 @@ fn reconcile_prunes_blocks_up_to_the_safe_head() {
     assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
 
     assert_eq!(
-        encoder.reconcile_derivation(BlockInfo::from(&blocks[1]), None),
+        encoder.reconcile_derivation(BlockInfo::from(&blocks[1]), DERIVATION_L1),
         DerivationReconciliation::Consistent
     );
 
@@ -33,7 +40,7 @@ fn reconcile_prunes_blocks_up_to_the_safe_head() {
     assert_eq!(encoder.da_backlog_bytes(), 0);
 }
 
-/// A replay re-encodes only the blocks still above the safe head: the pruned start of the
+/// A replay re-encodes only the blocks still above the safe head, so the pruned start of the
 /// channel is never sent again.
 #[test]
 fn pruned_blocks_are_not_replayed() {
@@ -49,7 +56,7 @@ fn pruned_blocks_are_not_replayed() {
     encoder.confirm(submissions[0].id, 1);
     encoder.advance_l1_head(1);
     assert_eq!(
-        encoder.reconcile_derivation(BlockInfo::from(&blocks[0]), None),
+        encoder.reconcile_derivation(BlockInfo::from(&blocks[0]), DERIVATION_L1),
         DerivationReconciliation::Consistent
     );
     encoder.confirm(submissions[1].id, 4);
@@ -61,8 +68,8 @@ fn pruned_blocks_are_not_replayed() {
     assert_eq!(fixture.derive(&replay).concat(), BlockFixture::batches(&blocks[1..]));
 }
 
-/// Pruning a whole channel does not shift the next one: its replay re-encodes its own
-/// blocks, not the blocks at its former positions.
+/// Pruning a whole channel does not shift the next one, whose replay re-encodes its own
+/// blocks rather than the blocks now at its former positions.
 #[test]
 fn pruned_channel_does_not_shift_the_replay_of_the_next_one() {
     let fixture = EncoderFixture::small_calldata_frames();
@@ -78,7 +85,7 @@ fn pruned_channel_does_not_shift_the_replay_of_the_next_one() {
     encoder.confirm(second[0].id, 1);
 
     assert_eq!(
-        encoder.reconcile_derivation(BlockInfo::from(&blocks[0]), None),
+        encoder.reconcile_derivation(BlockInfo::from(&blocks[0]), DERIVATION_L1),
         DerivationReconciliation::Consistent
     );
     encoder.advance_l1_head(1 + CHANNEL_TIMEOUT + 1);
@@ -87,8 +94,8 @@ fn pruned_channel_does_not_shift_the_replay_of_the_next_one() {
     assert_eq!(fixture.derive(&replay).concat(), BlockFixture::batches(&blocks[1..]));
 }
 
-/// After a prune inside a channel, the channel still maps to the blocks it has left: a stall
-/// on its last block is reported, and a safe head covering it is consistent.
+/// After a prune inside a channel, the channel still maps to the blocks it has left, so a
+/// stall on its last block is reported and a safe head covering it is consistent.
 #[test]
 fn reconcile_follows_a_channel_after_a_prune_inside_it() {
     let fixture = EncoderFixture::new(EncoderConfig::default());
@@ -99,7 +106,7 @@ fn reconcile_follows_a_channel_after_a_prune_inside_it() {
         assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
     }
     assert_eq!(
-        encoder.reconcile_derivation(BlockInfo::from(&blocks[0]), None),
+        encoder.reconcile_derivation(BlockInfo::from(&blocks[0]), DERIVATION_L1),
         DerivationReconciliation::Consistent
     );
     for submission in encoder.encode_and_drain().unwrap() {
@@ -107,38 +114,46 @@ fn reconcile_follows_a_channel_after_a_prune_inside_it() {
     }
 
     assert_eq!(
-        encoder.reconcile_derivation(BlockInfo::from(&blocks[0]), Some(11)),
+        encoder.reconcile_derivation(BlockInfo::from(&blocks[0]), 11),
         DerivationReconciliation::StalledChannel
     );
     assert_eq!(
-        encoder.reconcile_derivation(BlockInfo::from(&blocks[1]), Some(11)),
+        encoder.reconcile_derivation(BlockInfo::from(&blocks[1]), 11),
         DerivationReconciliation::Consistent
     );
     assert_eq!(encoder.da_backlog_bytes(), 0);
 }
 
-/// With nothing buffered, any safe head anchors the chain: the next block must build on it.
+/// With nothing buffered, any safe head anchors the chain, and the next block must build on it.
 #[test]
 fn reconcile_with_nothing_buffered_anchors_the_chain() {
     let fixture = EncoderFixture::new(EncoderConfig::default());
     let mut encoder = fixture.encoder();
     let anchor = BlockInfo { hash: B256::repeat_byte(7), number: 2, ..Default::default() };
 
-    assert_eq!(encoder.reconcile_derivation(anchor, None), DerivationReconciliation::Consistent);
+    assert_eq!(
+        encoder.reconcile_derivation(anchor, DERIVATION_L1),
+        DerivationReconciliation::Consistent
+    );
 
-    assert!(encoder.add_block(BlockFixture::block(B256::ZERO, 3, 0)).is_err(), "off the anchor");
+    let (ReorgError::ParentMismatch { expected, .. }, _) =
+        encoder.add_block(BlockFixture::block(B256::ZERO, 3, 0)).unwrap_err();
+    assert_eq!(expected, anchor.hash);
     encoder.add_block(BlockFixture::block(anchor.hash, 3, 0)).unwrap();
 }
 
-/// A safe head that is not on the buffered chain is reported and changes nothing: the parent
-/// of the oldest block is the only head below it that fits, an unknown hash or a head above
-/// the buffered blocks does not.
+/// A safe head off the buffered chain is reported and changes nothing. Below the buffered
+/// blocks only the parent of the oldest one fits, and an unknown hash or a head above them
+/// never does.
 #[test]
 fn reconcile_reports_a_safe_head_off_the_buffered_chain() {
     let fixture = EncoderFixture::new(EncoderConfig::default());
     let mut encoder = fixture.encoder();
     let anchor = BlockInfo { hash: B256::repeat_byte(7), number: 2, ..Default::default() };
-    assert_eq!(encoder.reconcile_derivation(anchor, None), DerivationReconciliation::Consistent);
+    assert_eq!(
+        encoder.reconcile_derivation(anchor, DERIVATION_L1),
+        DerivationReconciliation::Consistent
+    );
     let block = BlockFixture::block(anchor.hash, 3, 0);
     encoder.add_block(block.clone()).unwrap();
     assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
@@ -146,26 +161,37 @@ fn reconcile_reports_a_safe_head_off_the_buffered_chain() {
     let mismatch = DerivationReconciliation::SafeHeadMismatch;
     let unknown = B256::repeat_byte(1);
     assert_eq!(
-        encoder.reconcile_derivation(BlockInfo { hash: unknown, number: 2, ..anchor }, None),
+        encoder
+            .reconcile_derivation(BlockInfo { hash: unknown, number: 2, ..anchor }, DERIVATION_L1),
         mismatch
     );
     assert_eq!(
-        encoder.reconcile_derivation(BlockInfo { hash: unknown, number: 3, ..anchor }, None),
+        encoder
+            .reconcile_derivation(BlockInfo { hash: unknown, number: 3, ..anchor }, DERIVATION_L1),
         mismatch
     );
-    assert_eq!(encoder.reconcile_derivation(BlockInfo { number: 1, ..anchor }, None), mismatch);
-    assert_eq!(encoder.reconcile_derivation(BlockInfo { number: 4, ..anchor }, None), mismatch);
+    assert_eq!(
+        encoder.reconcile_derivation(BlockInfo { number: 1, ..anchor }, DERIVATION_L1),
+        mismatch
+    );
+    assert_eq!(
+        encoder.reconcile_derivation(BlockInfo { number: 4, ..anchor }, DERIVATION_L1),
+        mismatch
+    );
 
     let next = BlockFixture::block(block.header.hash_slow(), 4, 0);
     encoder.add_block(next).expect("the buffered chain is untouched");
-    assert_eq!(encoder.reconcile_derivation(anchor, None), DerivationReconciliation::Consistent);
+    assert_eq!(
+        encoder.reconcile_derivation(anchor, DERIVATION_L1),
+        DerivationReconciliation::Consistent
+    );
 }
 
 /// A fully confirmed channel that derivation passed without making its last block safe is
-/// reported as stalled, and only then: without a derivation cursor, with the cursor still on
-/// the inclusion block, or with a frame still in flight, nothing can be concluded.
+/// reported as stalled. Nothing is concluded while derivation is still processing the
+/// inclusion block, or while a frame is still in flight.
 #[test]
-fn reconcile_reports_a_channel_derivation_passed_without_deriving() {
+fn reconcile_reports_a_confirmed_channel_derivation_skipped() {
     let fixture = EncoderFixture::small_calldata_frames();
     let mut encoder = fixture.encoder();
     let inclusion = 1_000;
@@ -184,33 +210,28 @@ fn reconcile_reports_a_channel_derivation_passed_without_deriving() {
     };
 
     assert_eq!(
-        encoder.reconcile_derivation(previous_safe_l2, Some(inclusion + 1)),
+        encoder.reconcile_derivation(previous_safe_l2, inclusion + 1),
         DerivationReconciliation::Consistent,
         "the last frame is still in flight"
     );
     encoder.confirm(last.id, inclusion);
     assert_eq!(
-        encoder.reconcile_derivation(previous_safe_l2, None),
-        DerivationReconciliation::Consistent,
-        "no derivation cursor"
-    );
-    assert_eq!(
-        encoder.reconcile_derivation(previous_safe_l2, Some(inclusion)),
+        encoder.reconcile_derivation(previous_safe_l2, inclusion),
         DerivationReconciliation::Consistent,
         "the inclusion block may still be processing"
     );
     assert_eq!(
-        encoder.reconcile_derivation(previous_safe_l2, Some(inclusion + 1)),
+        encoder.reconcile_derivation(previous_safe_l2, inclusion + 1),
         DerivationReconciliation::StalledChannel
     );
     assert_eq!(
-        encoder.reconcile_derivation(BlockInfo::from(&block), Some(inclusion + 1)),
+        encoder.reconcile_derivation(BlockInfo::from(&block), inclusion + 1),
         DerivationReconciliation::Consistent,
         "the channel was derived after all"
     );
 }
 
-/// A blob shared by a pruned channel and the next one keeps serving the next one: its retry
+/// A blob shared by a pruned channel and the next one keeps serving the next one. Its retry
 /// carries the same frames, and derivation reads both channels from what landed.
 #[test]
 fn shared_blob_keeps_serving_the_remaining_channel_after_a_prune() {
@@ -221,7 +242,7 @@ fn shared_blob_keeps_serving_the_remaining_channel_after_a_prune() {
 
     // The safe head proves the first channel landed, receipt or not.
     assert_eq!(
-        encoder.reconcile_derivation(BlockInfo::from(&shared.blocks[0]), None),
+        encoder.reconcile_derivation(BlockInfo::from(&shared.blocks[0]), DERIVATION_L1),
         DerivationReconciliation::Consistent
     );
     encoder.requeue(shared.packed.id);

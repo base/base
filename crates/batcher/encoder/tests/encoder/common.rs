@@ -63,8 +63,8 @@ impl SubmissionFixture {
     }
 }
 
-/// Two channels sharing a blob, on an encoder that closes each channel on its first block:
-/// the first channel fills a blob on its own, then its tail and the second channel fill the
+/// Two channels sharing a blob, on an encoder that closes each channel on its first block.
+/// The first channel fills a blob on its own, then its tail and the second channel fill the
 /// next one.
 #[derive(Debug)]
 pub struct SharedBlob {
@@ -93,8 +93,8 @@ impl SharedBlob {
     }
 }
 
-/// An open channel that has handed out its first submission: blocks of
-/// [`MULTI_BLOB_PAYLOAD`] fed one at a time until the encoder releases output.
+/// An open channel that has handed out its first submission, fed blocks of
+/// [`MULTI_BLOB_PAYLOAD`] one at a time until the encoder released output.
 #[derive(Debug)]
 pub struct OpenChannel {
     /// The chain the blocks come from.

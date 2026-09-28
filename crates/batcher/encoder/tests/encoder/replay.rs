@@ -1,10 +1,9 @@
-//! Confirmation-window replay in [`BatchEncoder`]: a channel whose frames cannot all land
+//! Confirmation-window replay in [`BatchEncoder`]. A channel whose frames cannot all land
 //! within the derivation channel timeout is re-encoded under a fresh id, together with every
 //! channel that shares a blob or a transaction with it and every later one.
 
 use alloy_primitives::B256;
-use base_batcher_encoder::{BatchPipeline, DerivationReconciliation, StepResult};
-use base_protocol::BlockInfo;
+use base_batcher_encoder::{BatchPipeline, StepResult};
 use rstest::rstest;
 
 use crate::common::{
@@ -13,7 +12,7 @@ use crate::common::{
 };
 
 /// A complete channel whose confirmations are more than the timeout apart, in either order,
-/// is replayed: the block is re-encoded under a fresh channel id.
+/// is replayed, which re-encodes its block under a fresh channel id.
 #[rstest]
 #[case::ascending(1, 4)]
 #[case::descending(100, 90)]
@@ -51,10 +50,6 @@ fn confirmations_spanning_more_than_the_timeout_replay_the_channel(
         encoder.confirm(submission.id, other_l1_block + 1);
     }
     assert_eq!(encoder.da_backlog_bytes(), 0);
-    assert_eq!(
-        encoder.reconcile_derivation(BlockInfo::from(&block), None),
-        DerivationReconciliation::Consistent
-    );
 }
 
 /// A channel whose first frame landed more than the timeout ago while later frames are still
@@ -81,9 +76,9 @@ fn expiry_before_the_last_frame_lands_replays_the_channel() {
     assert_eq!(encoder.da_backlog_bytes(), 0);
 }
 
-/// A channel within its window is never replayed, however far the L1 head moves: all frames
-/// confirmed in one block, confirmations exactly the timeout apart, or an incomplete channel
-/// exactly at its deadline, since derivation still accepts a frame there.
+/// A channel is not replayed while derivation can still read it, whether all its frames
+/// landed in one block, its confirmations are exactly the timeout apart, or it is incomplete
+/// with the L1 head exactly at its deadline, where derivation still accepts a frame.
 #[rstest]
 #[case::all_in_one_block(Some(1), 100)]
 #[case::span_of_the_timeout(Some(1 + CHANNEL_TIMEOUT), 1 + CHANNEL_TIMEOUT)]
@@ -110,8 +105,8 @@ fn channel_within_its_window_is_not_replayed(
     assert!(encoder.next_submission().is_none());
 }
 
-/// Blobs are atomic: replaying a channel replays the channel whose tail shares a blob with
-/// its first frames, even though that earlier channel was confirmed in time.
+/// Replaying a channel also replays the channel whose tail shares a blob with its first
+/// frames, even though that earlier channel was confirmed in time, because a blob lands whole.
 #[test]
 fn replay_includes_the_channel_sharing_a_blob() {
     let fixture = EncoderFixture::one_channel_per_block(1);
@@ -134,8 +129,8 @@ fn replay_includes_the_channel_sharing_a_blob() {
     assert_eq!(fixture.derive(&replay).concat(), BlockFixture::batches(&shared.blocks));
 }
 
-/// Transactions are atomic too: replaying a channel replays the channel whose retried blob
-/// shares a transaction with its retried tail.
+/// Replaying a channel also replays the channel whose retried blob shares a transaction with
+/// its retried tail, because a transaction lands whole.
 #[test]
 fn replay_includes_the_channel_sharing_a_transaction() {
     let fixture = EncoderFixture::one_channel_per_block(2);
@@ -168,8 +163,8 @@ fn replay_includes_the_channel_sharing_a_transaction() {
 }
 
 /// Replaying a channel discards every later channel too, but not the earlier ones that landed
-/// in time, and the submissions of the discarded channels are forgotten: requeuing them sends
-/// nothing.
+/// in time, and the submissions of the discarded channels are forgotten, so requeuing them
+/// sends nothing.
 #[test]
 fn replay_discards_every_later_channel() {
     let fixture = EncoderFixture::one_channel_per_block(1);

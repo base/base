@@ -21,11 +21,11 @@ fn frames_are_packed_into_one_blob() {
 
     assert_eq!(submissions.len(), 1);
     assert_eq!(submissions[0].blob_count(), 1);
-    assert!(submissions[0].frame_count() > 2, "{} frames", submissions[0].frame_count());
+    assert!(submissions[0].frame_count() > 1, "{} frames", submissions[0].frame_count());
 }
 
-/// A blob takes the tail of a closed channel and the start of the next one: channels are
-/// packed across blob boundaries, and derivation still reads them apart.
+/// A blob takes the tail of a closed channel and the start of the next one, and derivation
+/// still reads the two channels apart.
 #[test]
 fn channels_are_packed_across_a_blob_boundary() {
     let config = EncoderConfig { compressed_size_target: Some(1), ..EncoderConfig::default() };

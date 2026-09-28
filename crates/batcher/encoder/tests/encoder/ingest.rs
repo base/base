@@ -16,6 +16,9 @@ use rstest::rstest;
 
 use crate::common::{BlockFixture, EncoderFixture};
 
+/// Frames of one data byte, so a channel carries at most `Channel::MAX_FRAMES` bytes.
+const ONE_BYTE_FRAMES: usize = Frame::ENCODED_OVERHEAD + 1;
+
 /// The encoder validates its config on construction.
 #[test]
 fn new_rejects_an_invalid_config() {
@@ -46,8 +49,8 @@ fn add_block_rejects_a_block_off_the_buffered_chain() {
     encoder.add_block(blocks[1].clone()).unwrap();
 }
 
-/// A block that does not compose into a batch is fatal, and it stays queued: the next step
-/// fails the same way instead of skipping it, which would leave a gap in the L2 chain on L1.
+/// A block that does not compose into a batch is fatal and stays queued, so the next step
+/// fails the same way instead of skipping it and leaving a gap in the L2 chain on L1.
 #[rstest]
 #[case::no_transactions(BlockFixture::without_transactions, BatchComposeError::EmptyBlock)]
 #[case::no_deposit_first(BlockFixture::without_deposit, BatchComposeError::NotDepositTx)]
@@ -71,9 +74,6 @@ fn step_fails_on_a_block_that_does_not_compose(
         );
     }
 }
-
-/// Frames of one data byte: a channel then carries at most `Channel::MAX_FRAMES` bytes.
-const ONE_BYTE_FRAMES: usize = Frame::ENCODED_OVERHEAD + 1;
 
 /// A batch the open channel cannot take closes that channel on its protocol limit, and the
 /// block is retried in a new one. Derivation reads both blocks, in order.

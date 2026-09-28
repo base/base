@@ -32,7 +32,7 @@ fn channel_closes_at_its_effective_duration(
     assert!(encoder.next_submission().is_some(), "the close releases the channel");
 }
 
-/// An L1 head below the current one is ignored: a channel opened afterwards still measures
+/// An L1 head below the current one is ignored, so a channel opened afterwards still measures
 /// its duration from the highest head seen.
 #[test]
 fn l1_head_never_moves_backwards() {
@@ -98,8 +98,8 @@ fn size_closed_tail_keeps_its_original_deadline() {
     assert!(encoder.next_submission().is_some(), "the first tail is due");
 }
 
-/// An open channel emits every blob it fills without closing: the channel takes more blocks
-/// after the blob went out, and the frames emitted early and the rest decode as one channel.
+/// An open channel emits every blob it fills without closing. It takes more blocks after the
+/// blob went out, and the frames emitted early and the rest decode as one channel.
 #[test]
 fn open_channel_emits_full_blobs_without_closing() {
     let fixture = EncoderFixture::new(EncoderConfig::default());
