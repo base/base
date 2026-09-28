@@ -170,7 +170,7 @@ impl ChallengerE2e {
             // counters are still absolutely zero once the first scan completes.
             let submitted = Self::disputes_submitted(&config).await?;
 
-            let (nonce, raced) = Self::stage_path3(
+            let (nonce, dual_before) = Self::stage_path3(
                 &config,
                 &fork_url,
                 &verifier,
@@ -181,47 +181,25 @@ impl ChallengerE2e {
             )
             .await?;
 
-            // The challenger saw the game mid-staging as `InvalidDualProposal`.
-            // It may already be proving against that shape, and a Path 4
-            // nullification would then clear the ZK proof while satisfying every
-            // Path 3 assertion on the way past. The scenario cannot conclude
-            // anything, and the challenger is not at fault, so the Path 3 claim
-            // is abandoned rather than asserted or failed. Every other check
-            // still runs: the quiet window above already passed, and the
-            // collateral-damage check below still applies.
-            //
-            // ponytail: a fresh fork would recover the run; re-running the whole
-            // scenario is the job's business, not the driver's. Revisit if this
-            // shows up often enough to erode coverage.
-            if raced {
-                warn!(
-                    game = %game_b.address,
-                    "abandoning the Path 3 claim: the challenger scanned the game while it was \
-                     mid-staging, so a Path 4 dispute may be in flight; re-run on a fresh fork"
-                );
-            } else {
-                Self::await_path3(
-                    &config,
-                    &verifier,
-                    &provider,
-                    &challenger,
-                    game_b,
-                    nonce,
-                    submitted,
-                )
-                .await?;
-            }
+            // The ZK proof must go, whichever route cleared it. A timeout here
+            // fails the run: the game is still invalid, and an E2E that reports
+            // success over an undisputed invalid game is worse than no E2E.
+            let raced = Self::await_path3(
+                &config,
+                &verifier,
+                &provider,
+                &challenger,
+                game_b,
+                nonce,
+                submitted,
+                dual_before,
+            )
+            .await?;
 
-            // The bound inside `await_path3` is read the moment B's ZK proof
-            // disappears, so on its own it says nothing about the scans that
-            // follow. Nothing on the fork is actionable now — B is fully
-            // nullified and therefore terminal to the scanner, and everything
-            // else was always valid — so one more window with the same two
-            // checks covers disputes submitted after Path 3 completed.
             info!(window = ?config.quiet_window, "observing the fork after Path 3");
             tokio::time::sleep(config.quiet_window).await;
 
-            // Only meaningful on the unraced path. A challenger that saw the
+            // Only bounded on the unraced path. A challenger that saw the
             // staging window may legitimately have submitted a TEE attempt
             // against the dual-proof shape — which fails on its unregistered key
             // — and then a ZK fallback, and `ChallengeSubmitter` counts both. Two
@@ -511,16 +489,16 @@ impl ChallengerE2e {
     /// one transaction wide, with no proof request in between — before it
     /// becomes the ZK-only shape under test.
     ///
-    /// That window is measured rather than assumed shut: the challenger's
-    /// `invalid_dual_proposal_detected_total` is read either side of staging. A
-    /// challenger that scanned in there did nothing wrong — it correctly
-    /// classified the shape it was shown — so this is reported, not asserted,
-    /// and `run` abandons the scenario instead of failing it. Asserting would
-    /// turn a setup race into a recurring false failure on a job that runs
-    /// every deploy.
-    ///
     /// Returns the challenger's nonce, sampled before the fork is corrupted,
-    /// and whether the staging window was raced.
+    /// and the `invalid_dual_proposal_detected_total` reading from before
+    /// staging began.
+    ///
+    /// The counter is *not* judged here. The driver increments it only after
+    /// awaiting `validate_game` — a round trip to the L2 RPC — so a scan that
+    /// classified the game mid-staging may not have counted yet, and no amount
+    /// of waiting at this point distinguishes "did not see it" from "has not
+    /// finished looking". [`Self::await_path3`] compares it once the dispute
+    /// cycle is over, by which point any such scan has long since landed.
     async fn stage_path3(
         config: &Config,
         fork_url: &Url,
@@ -529,7 +507,7 @@ impl ChallengerE2e {
         driver: &PrivateKeySigner,
         challenger: &PrivateKeySigner,
         game: Candidate,
-    ) -> Result<(u64, bool)> {
+    ) -> Result<(u64, f64)> {
         let fork_config = Self::fork_config(config, fork_url, driver, game);
         // Sampled before anything is staged, for the reason given in `run_path1`.
         let nonce = provider.get_transaction_count(challenger.address()).await?;
@@ -619,32 +597,14 @@ impl ChallengerE2e {
              blocked"
         );
 
-        // The game was an invalid `InvalidDualProposal` between the patch and the
-        // nullify above. A challenger that scanned in that window may now have a
-        // Path 4 proof in flight, whose later ZK nullification would clear the
-        // game for reasons that have nothing to do with `InvalidZkProposal` — so
-        // the caller abandons the scenario rather than drawing a conclusion from
-        // it. Not a challenger failure: it classified exactly what it was shown.
-        //
-        // Reading the counter now would be too early. The driver classifies a
-        // game, then awaits `validate_game` — a round trip to the L2 RPC — and
-        // only increments the counter once that returns (`driver.rs:250-301`).
-        // A scan that started before the nullify landed can therefore still be
-        // in `validate_game` here, and would be missed. The driver loop is
-        // sequential (`scan` → validate → process, then sleep), so waiting for
-        // `games_scanned_total` to advance twice means any such scan has run to
-        // completion and had its chance to increment.
-        let raced = Self::await_scans_drained(config, 2).await? > dual_detected;
-
         info!(
             game = %game.address,
             tx_hash = %receipt.transaction_hash,
             zk_prover = %state.zk_prover,
             invalid_index = checkpoint.index,
-            raced,
             "staged Path 3: an invalid ZK-only proposal"
         );
-        Ok((nonce, raced))
+        Ok((nonce, dual_detected))
     }
 
     /// Runs `operation` with `verifier`'s bytecode replaced by
@@ -694,12 +654,31 @@ impl ChallengerE2e {
             .with_context(|| format!("anvil_setCode failed for {address}"))
     }
 
-    /// Path 3: the challenger must ZK-nullify the invalid ZK-only proposal.
+    /// Path 3: the challenger must clear the invalid ZK-only proposal.
+    ///
+    /// Waiting for the ZK proof to go is unconditional — the game is invalid,
+    /// and an E2E that returns `Ok` over an undisputed invalid game is worse
+    /// than none. A timeout here fails the run.
+    ///
+    /// *Which* path cleared it is judged afterwards, from
+    /// `invalid_dual_proposal_detected_total` against `dual_before`. The
+    /// challenger may have classified the game during the brief window when
+    /// staging had patched the root but not yet dropped the TEE proof; that is
+    /// correct behaviour on its part, and its Path 4 nullification would clear
+    /// the ZK proof without `InvalidZkProposal` ever being reached. In that case
+    /// the Path 3 *claim* is abandoned with a warning and `true` is returned.
+    /// Judging it here rather than at staging time is what makes it sound: the
+    /// driver increments the counter only after awaiting `validate_game`, so at
+    /// staging time an in-flight scan has not counted yet, and no wait
+    /// distinguishes "did not see it" from "has not finished looking".
     ///
     /// `submitted_before` is the dispute-submission count from before the game
     /// was patched. Exactly one dispute clears Path 3, so anything above that
     /// went somewhere this scenario never corrupted — and a dispute that
     /// reverts moves no game state, so the per-game assertions cannot see it.
+    ///
+    /// Returns whether the staging window was raced.
+    #[expect(clippy::too_many_arguments, reason = "assertion inputs, all distinct")]
     async fn await_path3(
         config: &Config,
         verifier: &AggregateVerifierContractClient,
@@ -708,7 +687,8 @@ impl ChallengerE2e {
         game: Candidate,
         nonce: u64,
         submitted_before: f64,
-    ) -> Result<()> {
+        dual_before: f64,
+    ) -> Result<bool> {
         let state = Self::poll_until(
             config,
             config.dispute_timeout,
@@ -719,6 +699,20 @@ impl ChallengerE2e {
             },
         )
         .await?;
+
+        // Judged now that the dispute cycle is over: any scan that classified the
+        // game mid-staging has long since finished `validate_game` and counted.
+        if Self::dual_proposals_detected(config).await? > dual_before {
+            warn!(
+                game = %game.address,
+                "abandoning the Path 3 claim: the challenger classified the game as \
+                 InvalidDualProposal while staging was in progress, so its ZK proof may have \
+                 been cleared by a Path 4 dispute rather than as an invalid ZK proposal; the \
+                 game was still disputed, but re-run on a fresh fork to assert Path 3"
+            );
+            return Ok(true);
+        }
+
         ensure!(
             state.tee_prover == Address::ZERO,
             "game {} grew a TEE proof during Path 3; only the challenger was acting on the fork",
@@ -761,7 +755,7 @@ impl ChallengerE2e {
         );
 
         info!(game = %game.address, disputes = submitted, "Path 3: invalid ZK proposal nullified");
-        Ok(())
+        Ok(false)
     }
 
     /// Sets a verifier's `nullified` flag directly, reproducing the global side
@@ -782,55 +776,6 @@ impl ChallengerE2e {
             .with_context(|| format!("anvil_setStorageAt failed for verifier {verifier}"))?;
         ensure!(updated, "anvil_setStorageAt returned false for verifier {verifier}");
         Ok(())
-    }
-
-    /// Waits for `count` further scans to complete, then returns the
-    /// dual-proposal detection count.
-    ///
-    /// The driver's loop is sequential — scan, validate, process, sleep — so a
-    /// scan that has incremented `games_scanned_total` has already finished
-    /// processing everything the previous scan found. Waiting two scans out
-    /// therefore drains any classification that was mid-`validate_game` when
-    /// staging finished.
-    ///
-    /// A timeout here is reported as "raced" rather than failing the run. The
-    /// caller treats a higher count as raced and then skips the Path 3 claim, so
-    /// the conservative reading of "the challenger is too slow to prove it did
-    /// not see the staging window" is to not make the claim. Failing instead
-    /// would turn a slow scan into a red run, which is the false-red this whole
-    /// branch exists to avoid.
-    async fn await_scans_drained(config: &Config, count: u64) -> Result<f64> {
-        let scrape = Scrape::fetch(&config.challenger_metrics_url).await?;
-        let target = scrape.sum("base_challenger_games_scanned_total") + count as f64;
-        let baseline = scrape.sum("base_challenger_invalid_dual_proposal_detected_total");
-
-        let drained = Self::poll_until(
-            config,
-            config.dispute_timeout,
-            "in-flight scans to drain",
-            || async {
-                let scrape = Scrape::fetch(&config.challenger_metrics_url).await?;
-                Ok((scrape.sum("base_challenger_games_scanned_total") >= target)
-                    .then(|| scrape.sum("base_challenger_invalid_dual_proposal_detected_total")))
-            },
-        )
-        .await;
-
-        match drained {
-            Ok(detected) => Ok(detected),
-            Err(error) => {
-                warn!(
-                    error = %error,
-                    scans = count,
-                    "the challenger did not complete the scans needed to rule out a staging \
-                     race; treating Path 3 as raced, because a stalled scan cannot show it \
-                     missed the staging window"
-                );
-                // Above the baseline by construction, so the caller reads it as
-                // raced whatever the baseline was.
-                Ok(baseline + 1.0)
-            }
-        }
     }
 
     /// Times the challenger has classified a game as `InvalidDualProposal`.

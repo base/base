@@ -156,15 +156,18 @@ Path 3 claim is **abandoned with a warning**, not failed — asserting would tur
 setup race into a recurring false failure on a job that runs every deploy. Re-run
 on a fresh fork.
 
-The counter is not read immediately. The driver classifies a game, then awaits
-`validate_game` — a round trip to the L2 RPC — and increments only once that
-returns, so a scan that began before the nullify landed can still be in flight.
-Its loop is sequential (scan, validate, process, sleep), so the driver waits for
-`games_scanned_total` to advance twice first: any such scan has then run to
-completion and had its chance to count. The wait happens after the nullify has
-confirmed, so it cannot widen the window it is measuring. If those scans never
-arrive the staging is treated as raced rather than failing the run — a challenger
-too stalled to complete two scans cannot show it missed the window either.
+The counter is compared **after** the dispute cycle finishes, not at staging
+time. The driver increments it only once `validate_game` returns — a round trip
+to the L2 RPC — so at staging time a scan that classified the game may not have
+counted yet, and no amount of waiting there distinguishes "did not see it" from
+"has not finished looking". (`games_scanned_total` cannot stand in for that
+wait: the scanner advances it by the size of the whole scanned range, so one
+scan of two games already moves it by two.)
+
+Waiting for the ZK proof to go is therefore unconditional, and a timeout fails
+the run — the game is invalid, and an E2E that reports success over an
+undisputed invalid game is worse than none. Only once the proof is gone is the
+counter compared to decide whether the *claim* can be made.
 
 On the raced path the one-dispute bound is also skipped. A challenger that saw
 the dual-proof shape may legitimately have tried a TEE nullification — which
