@@ -389,29 +389,47 @@ mod tests {
     }
 
     #[rstest]
-    #[case::default(ThrottleConfig::default(), true)]
+    #[case::default(ThrottleConfig::default(), Ok(()))]
     #[case::equal_limits(
         ThrottleConfig { block_size_lower_limit: 130_000, ..Default::default() },
-        true
+        Ok(())
     )]
-    #[case::intensity_above_one(ThrottleConfig { max_intensity: 1.5, ..Default::default() }, false)]
-    #[case::negative_intensity(ThrottleConfig { max_intensity: -0.1, ..Default::default() }, false)]
-    #[case::nan_intensity(ThrottleConfig { max_intensity: f64::NAN, ..Default::default() }, false)]
-    #[case::zero_block_lower(ThrottleConfig { block_size_lower_limit: 0, ..Default::default() }, false)]
-    #[case::zero_tx_lower(ThrottleConfig { tx_size_lower_limit: 0, ..Default::default() }, false)]
+    #[case::intensity_above_one(
+        ThrottleConfig { max_intensity: 1.5, ..Default::default() },
+        Err("max_intensity (1.5) must be within [0, 1]")
+    )]
+    #[case::negative_intensity(
+        ThrottleConfig { max_intensity: -0.1, ..Default::default() },
+        Err("max_intensity (-0.1) must be within [0, 1]")
+    )]
+    #[case::nan_intensity(
+        ThrottleConfig { max_intensity: f64::NAN, ..Default::default() },
+        Err("max_intensity (NaN) must be within [0, 1]")
+    )]
+    #[case::zero_block_lower(
+        ThrottleConfig { block_size_lower_limit: 0, ..Default::default() },
+        Err("block_size_lower_limit must be greater than zero")
+    )]
+    #[case::zero_tx_lower(
+        ThrottleConfig { tx_size_lower_limit: 0, ..Default::default() },
+        Err("tx_size_lower_limit must be greater than zero")
+    )]
     #[case::block_lower_above_upper(
         ThrottleConfig { block_size_lower_limit: 130_001, ..Default::default() },
-        false
+        Err("block_size_lower_limit (130001) must not exceed block_size_upper_limit (130000)")
     )]
     #[case::tx_lower_above_upper(
         ThrottleConfig { tx_size_lower_limit: 20_001, ..Default::default() },
-        false
+        Err("tx_size_lower_limit (20001) must not exceed tx_size_upper_limit (20000)")
     )]
     fn validate_accepts_only_limits_within_range(
         #[case] config: ThrottleConfig,
-        #[case] valid: bool,
+        #[case] expected: Result<(), &str>,
     ) {
-        assert_eq!(config.validate().is_ok(), valid, "{config:?}");
+        assert_eq!(
+            config.validate().map_err(|error| error.to_string()),
+            expected.map_err(String::from)
+        );
     }
 
     #[test]
