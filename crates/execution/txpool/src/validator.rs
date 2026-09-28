@@ -22,8 +22,8 @@ use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
     AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
-    IntrinsicGasInput, LockStatus, NonceError, NonceMode, NonceValidator, TransactionAuthorizer,
-    TxAuthError,
+    IntrinsicGasError, IntrinsicGasInput, LockStatus, NonceError, NonceMode, NonceValidator,
+    TransactionAuthorizer, TxAuthError,
 };
 use base_precompile_storage::{
     BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
@@ -1099,7 +1099,14 @@ where
                 signed.tx().payer.is_some(),
             ),
         )
-        .map_err(|_| Self::eip8130_error("intrinsic gas computation failed"))?;
+        .map_err(|err| {
+            Self::eip8130_error(match err {
+                IntrinsicGasError::PayerAuthGasExceeded(_) => {
+                    "payer authentication gas exceeds MAX_AUTHENTICATION_GAS"
+                }
+                _ => "intrinsic gas computation failed",
+            })
+        })?;
         if intrinsic.execution_gas_available(signed.tx().gas_limit).is_none() {
             return Err(InvalidTransactionError::GasTooLow.into());
         }
