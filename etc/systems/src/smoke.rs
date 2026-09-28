@@ -10,6 +10,7 @@ use std::{
     fs::{self, OpenOptions},
     num::NonZeroU64,
     path::PathBuf,
+    time::Instant,
 };
 
 use alloy_network::Ethereum;
@@ -27,12 +28,14 @@ use base_tx_forwarding::TxForwardingConfig;
 use eyre::ensure;
 use eyre::{OptionExt, Result, WrapErr};
 use tempfile::TempDir;
+use tracing::info;
 use url::Url;
 
 #[cfg(feature = "upgrade-signal")]
 use crate::upgrade_signal::{MockProtocolVersionsClient, UpgradeSignalStackOptions};
 use crate::{
-    BATCHER, BUILDER, DEPLOYER, DeployerContainer, RoleAddresses, SEQUENCER, SharedL1Runtime,
+    BATCHER, BUILDER, DEPLOYER, DeployerContainer, RoleAddresses, SEQUENCER, SetupPhaseTimer,
+    SharedL1Runtime,
     l1::{L1ContainerConfig, L1Execution, L1RpcProxy, L1Stack, L1StackConfig},
     l2::{
         L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencersConfig,
@@ -61,7 +64,9 @@ fn deploy_against_shared_l1(
         .write(true)
         .open(&deployment_lock_path)
         .wrap_err("failed to open shared L1 deployment lock")?;
+    let lock_wait = Instant::now();
     deployment_lock.lock().wrap_err("failed to acquire shared L1 deployment lock")?;
+    info!(wait_ms = lock_wait.elapsed().as_millis() as u64, "shared L1 deployment lock acquired");
 
     fs::create_dir_all(output_dir.join("el"))?;
     fs::write(output_dir.join("el/genesis.json"), &runtime.genesis_json)?;
@@ -691,6 +696,7 @@ impl SystemTestStackBuilder {
     /// Builds and starts the system test stack.
     pub async fn build(mut self) -> Result<SystemTestStack> {
         Self::initialize_test_tracing();
+        let mut timer = SetupPhaseTimer::start();
 
         if self.shared_l1.is_none()
             && !self.l1_fault_injection
@@ -784,6 +790,7 @@ impl SystemTestStackBuilder {
                     })
                     .await
                     .wrap_err("shared L1 deployment task panicked")??;
+                timer.finish("shared_l1_deployment");
                 (l1_genesis, l2_deployment, Some(deployment_lock))
             } else {
                 let (l1_genesis, l2_deployment) =
@@ -791,6 +798,7 @@ impl SystemTestStackBuilder {
                         .await
                         .wrap_err("Genesis setup task panicked")?
                         .wrap_err("Failed to generate L1/L2 genesis")?;
+                timer.finish("genesis");
                 (l1_genesis, l2_deployment, None)
             };
 
@@ -851,9 +859,11 @@ impl SystemTestStackBuilder {
             let execution = L1Execution::start(l1_config)
                 .await
                 .wrap_err("Failed to start L1 execution layer")?;
-            L1StackHandle::Dedicated(Box::new(
-                execution.start_consensus().await.wrap_err("Failed to start L1 consensus")?,
-            ))
+            timer.finish("l1_execution");
+            let stack =
+                execution.start_consensus().await.wrap_err("Failed to start L1 consensus")?;
+            timer.finish("l1_consensus");
+            L1StackHandle::Dedicated(Box::new(stack))
         };
 
         let jwt_secret = JwtSecret::random();
@@ -898,6 +908,7 @@ impl SystemTestStackBuilder {
                     )
                     .await
                     .wrap_err("Failed to deploy upgrade signal mock contract")?;
+                    timer.finish("upgrade_signal");
                     Some(client)
                 }
                 None => None,
@@ -957,6 +968,7 @@ impl SystemTestStackBuilder {
         let l2_stack_result = L2Stack::start(l2_config).await;
         drop(shared_l1_bootstrap_lock);
         let l2_stack = l2_stack_result.wrap_err("Failed to start L2 stack")?;
+        timer.finish("l2_stack");
 
         Ok(SystemTestStack {
             _temp_dir: temp_dir,

@@ -35,7 +35,10 @@ use super::{
     InProcessConsensusConfig, InProcessFollowConsensus, InProcessFollowConsensusConfig,
     InProcessNodeRuntime, L2ContainerConfig, ShadowSequencer, ShadowSequencerConfig,
 };
-use crate::config::{ANVIL_ACCOUNT_1, BATCHER, SEQUENCER};
+use crate::{
+    SetupPhaseTimer,
+    config::{ANVIL_ACCOUNT_1, BATCHER, SEQUENCER},
+};
 
 /// Consensus mode used by the L2 client node.
 #[derive(Debug, Clone, Copy, Default)]
@@ -194,6 +197,7 @@ impl L2Stack {
     ///
     /// Returns an error if any component fails to start.
     pub async fn start(config: L2StackConfig) -> Result<Self> {
+        let mut timer = SetupPhaseTimer::start();
         let container_config = config.container_config.as_ref();
 
         let l1_rpc_url: Url = config.l1_rpc_url.parse().wrap_err("Invalid L1 RPC URL")?;
@@ -236,6 +240,7 @@ impl L2Stack {
         let builder = InProcessBuilder::start(builder_config)
             .await
             .wrap_err("Failed to start in-process builder")?;
+        timer.finish("l2_builder");
 
         // 2. Start builder consensus (in-process CL, Sequencer mode).
         //    The sequencer starts in stopped mode so that blocks are not produced until the
@@ -264,6 +269,7 @@ impl L2Stack {
         let builder_consensus = InProcessConsensus::start(builder_consensus_config)
             .await
             .wrap_err("Failed to start builder consensus")?;
+        timer.finish("l2_builder_consensus");
 
         // 3. Start the normal batcher immediately. Delayed-shadow tests instead start a
         // short-lived, deterministic batcher after producing their historical prefix.
@@ -284,6 +290,7 @@ impl L2Stack {
                 .wrap_err("Failed to start in-process batcher")?,
             )
         };
+        timer.finish("l2_batcher");
 
         // 4. Start the client (in-process EL).
         // If tx forwarding is enabled, configure it with the builder's RPC URL
@@ -322,6 +329,7 @@ impl L2Stack {
         let client = InProcessClient::start(client_config)
             .await
             .wrap_err("Failed to start in-process client")?;
+        timer.finish("l2_client");
 
         // 5. Start client consensus.
         let client_consensus = match config.client_consensus_mode {
@@ -378,6 +386,7 @@ impl L2Stack {
                 L2ClientConsensus::Follow(client_consensus)
             }
         };
+        timer.finish("l2_client_consensus");
 
         // 6. Unless late startup was requested, shadows join the gossip mesh before active
         // sequencing begins. Preserve that ordering because it is the normal production path.
@@ -525,6 +534,7 @@ impl L2Stack {
                 }
                 shadow_sequencers.push(shadow);
             }
+            timer.finish("l2_shadow_sequencers");
         }
 
         // 7. In the default path, start active sequencing only after every shadow connected.
