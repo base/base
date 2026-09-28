@@ -1,6 +1,6 @@
 //! Fluent builder that wires a deterministic in-memory actor harness.
 
-use std::sync::Arc;
+use std::{num::NonZeroU64, sync::Arc};
 
 use alloy_consensus::Header as ConsensusHeader;
 use alloy_eips::{BlockNumHash, BlockNumberOrTag};
@@ -21,7 +21,7 @@ use super::{
 };
 use crate::{
     DerivationActor, DerivationActorRequest, DerivationState, EngineActorRequest, EngineProcessor,
-    EngineRequestReceiver, NodeActor, NodeMode, NodeOperatingMode, QueuedDerivationEngineClient,
+    EngineRequestReceiver, NodeActor, NodeMode, QueuedDerivationEngineClient,
     QueuedEngineDerivationClient, SequencerEngineRequestCoordinator, ValidatorEngineRequestHandler,
 };
 
@@ -288,10 +288,15 @@ impl HarnessBuilder {
                         .await
                 }
                 NodeMode::Sequencer | NodeMode::ShadowSequencer | NodeMode::IsolatedSequencer => {
+                    let mode = role
+                        .try_into_operating_mode(
+                            (role == NodeMode::ShadowSequencer).then_some(NonZeroU64::MIN),
+                        )
+                        .expect("harness supplies a shadow cycle length only in shadow mode");
                     let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
                     SequencerEngineRequestCoordinator::new(
                         engine_processor,
-                        NodeOperatingMode::Sequencer,
+                        mode,
                         None,
                         self.sequencer_stopped,
                         unsafe_head_tx,
