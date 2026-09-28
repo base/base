@@ -17,6 +17,9 @@ pub enum L2ProviderError {
     /// L2 block not found.
     #[error("L2 block not found: {0}")]
     BlockNotFound(u64),
+    /// L2 block not found by hash.
+    #[error("L2 block not found: {0}")]
+    BlockHashNotFound(B256),
     /// System config not found.
     #[error("system config not found for L2 block {0}")]
     SystemConfigNotFound(B256),
@@ -125,6 +128,15 @@ impl BatchValidationProvider for ActionL2ChainProvider {
             .get(&number)
             .copied()
             .ok_or(L2ProviderError::BlockNotFound(number))
+    }
+
+    async fn l2_block_info_by_hash(&mut self, hash: B256) -> Result<L2BlockInfo, L2ProviderError> {
+        self.blocks_by_hash
+            .lock()
+            .expect("L2 blocks by hash lock poisoned")
+            .get(&hash)
+            .copied()
+            .ok_or(L2ProviderError::BlockHashNotFound(hash))
     }
 
     async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, L2ProviderError> {

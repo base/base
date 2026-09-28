@@ -191,6 +191,14 @@ impl BatchValidationProvider for TestL2ChainProvider {
             .ok_or_else(|| TestProviderError::BlockNotFound)
     }
 
+    async fn l2_block_info_by_hash(&mut self, hash: B256) -> Result<L2BlockInfo, Self::Error> {
+        self.blocks
+            .iter()
+            .find(|b| b.block_info.hash == hash)
+            .copied()
+            .ok_or_else(|| TestProviderError::BlockNotFound)
+    }
+
     async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, Self::Error> {
         self.base_blocks
             .iter()

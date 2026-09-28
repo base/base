@@ -407,6 +407,13 @@ mod tests {
             Err(ResetError::BlockNotFound(BlockId::Number(number.into())))
         }
 
+        async fn l2_block_info_by_hash(
+            &mut self,
+            hash: alloy_primitives::B256,
+        ) -> Result<L2BlockInfo, Self::Error> {
+            Err(ResetError::BlockNotFound(hash.into()))
+        }
+
         async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, Self::Error> {
             Err(ResetError::BlockNotFound(BlockId::Number(number.into())))
         }
