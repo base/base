@@ -588,10 +588,10 @@ impl BatcherService {
             );
         }
 
-        if let Some(validator_provider) = validator_provider.as_ref() {
+        if let Some(validator_provider) = validator_provider {
             let handle = L2BlockParityMonitor::new(
                 RpcL2BlockProvider::new(Arc::clone(&l2_provider)),
-                validator_provider.clone(),
+                validator_provider,
                 L2BlockParityMonitorConfig::new(
                     safe_l2.number.saturating_add(1),
                     self.config.poll_interval,
@@ -774,14 +774,14 @@ mod tests {
         );
     }
 
-    /// Shadow mode needs the parity validator L2 endpoint, which is rejected without it.
+    /// Shadow mode requires the parity validator L2 RPC URL and canonical mode rejects it.
     #[rstest]
-    #[case::shadow_without_it(
+    #[case::shadow_without_url(
         Some(Address::ZERO),
         None,
         "shadow mode requires a parity validator L2 RPC URL"
     )]
-    #[case::canonical_with_it(
+    #[case::canonical_with_url(
         None,
         Some("http://127.0.0.1:1"),
         "parity validator L2 RPC URL requires shadow mode"

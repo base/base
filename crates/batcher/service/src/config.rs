@@ -148,7 +148,7 @@ impl BatcherConfig {
     /// # Errors
     ///
     /// Returns an error when the override differs from `derived_inbox`, because the batcher
-    /// follows the derivation of that node, see [`rollup_rpc_url`](Self::rollup_rpc_url).
+    /// follows the derivation of the [`rollup_rpc_url`](Self::rollup_rpc_url) node.
     pub fn batch_inbox(&self, derived_inbox: Address) -> eyre::Result<Address> {
         match self.batch_inbox_override {
             Some(inbox) if inbox != derived_inbox => eyre::bail!(
@@ -171,16 +171,15 @@ mod tests {
     const SHADOW_INBOX: Address = Address::repeat_byte(0x5a);
 
     #[rstest]
-    #[case::canonical(None, CANONICAL_INBOX, CANONICAL_INBOX)]
-    #[case::shadow(Some(SHADOW_INBOX), SHADOW_INBOX, SHADOW_INBOX)]
+    #[case::canonical(None, CANONICAL_INBOX)]
+    #[case::shadow(Some(SHADOW_INBOX), SHADOW_INBOX)]
     fn batch_inbox_is_the_inbox_the_rollup_node_derives(
         #[case] batch_inbox_override: Option<Address>,
         #[case] derived_inbox: Address,
-        #[case] expected: Address,
     ) {
         let config = BatcherConfig { batch_inbox_override, ..BatcherConfig::default() };
 
-        assert_eq!(config.batch_inbox(derived_inbox).unwrap(), expected);
+        assert_eq!(config.batch_inbox(derived_inbox).unwrap(), derived_inbox);
     }
 
     #[test]

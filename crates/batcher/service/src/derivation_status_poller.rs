@@ -163,7 +163,8 @@ mod tests {
         });
     }
 
-    /// A node that restarts reports an empty safe head until its engine is bootstrapped.
+    /// The poller skips the empty safe head a starting node reports until its engine is
+    /// bootstrapped.
     #[test]
     fn skips_a_status_without_a_safe_head() {
         Runner::start(Config::seeded(0), |ctx| async move {
