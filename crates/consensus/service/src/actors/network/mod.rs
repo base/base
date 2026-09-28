@@ -22,7 +22,8 @@ mod gossip;
 #[cfg(test)]
 pub use gossip::MockUnsafePayloadGossipClient;
 pub use gossip::{
-    QueuedUnsafePayloadGossipClient, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
+    PrivateGossipClient, QueuedUnsafePayloadGossipClient, UnsafePayloadGossipClient,
+    UnsafePayloadGossipClientError,
 };
 
 mod handler;
