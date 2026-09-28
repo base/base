@@ -199,6 +199,7 @@ benches:
     @just bench-node-runner
     @just bench-execution-trie-witness-reads
     @just bench-execution-trie-deep-history-reads
+    @just bench-execution-cli-proofs-download
     @just bench-builder-core
     @just bench-builder-publish
 
@@ -237,6 +238,10 @@ bench-execution-trie-witness-reads:
 # Runs execution trie deep history read benchmarks
 bench-execution-trie-deep-history-reads:
     cargo bench -p base-execution-trie --bench deep_history_reads
+
+# Runs proofs snapshot download and extraction benchmarks
+bench-execution-cli-proofs-download:
+    cargo bench -p base-execution-cli --bench proofs_download
 
 # Runs builder core state root benchmarks
 bench-builder-core:
