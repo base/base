@@ -157,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn prefixed_p256_sender_auth_is_priced_as_keystore() {
+    fn prefixed_p256_sender_auth_is_priced() {
         let req: BaseTransactionRequest = serde_json::from_value(json!({
             "sender": SENDER,
             "calls": [],
@@ -166,14 +166,13 @@ mod tests {
         .expect("valid request");
         let tx = req
             .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
-            .expect("a canonical Keystore authenticator is priced");
+            .expect("a canonical authenticator is priced");
         let s = signed(&tx);
         assert_eq!(s.tx().sender, Some(SENDER), "the blob selects the configured path");
-        assert!(s.requires_keystore(), "the RPC layer gates it to Zenith");
     }
 
     #[test]
-    fn prefixed_webauthn_sender_auth_is_priced_as_keystore() {
+    fn prefixed_webauthn_sender_auth_is_priced() {
         let req: BaseTransactionRequest = serde_json::from_value(json!({
             "sender": SENDER,
             "calls": [],
@@ -182,10 +181,9 @@ mod tests {
         .expect("valid request");
         let tx = req
             .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
-            .expect("a canonical Keystore authenticator is priced");
+            .expect("a canonical authenticator is priced");
         let s = signed(&tx);
         assert_eq!(s.tx().sender, Some(SENDER), "the blob selects the configured path");
-        assert!(s.requires_keystore(), "the RPC layer gates it to Zenith");
     }
 
     #[test]
@@ -263,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn delegate_prefixed_sender_auth_is_priced_as_keystore() {
+    fn delegate_prefixed_sender_auth_is_priced() {
         let delegate_account = address!("0x00000000000000000000000000000000000000d4");
         let mut nested = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
         nested.extend_from_slice(&[STUB_AUTH_FILL; 65]);
@@ -278,14 +276,13 @@ mod tests {
         .expect("valid request");
         let tx = req
             .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
-            .expect("a canonical Keystore authenticator is priced");
+            .expect("a canonical authenticator is priced");
         let s = signed(&tx);
         assert_eq!(s.tx().sender, Some(SENDER), "the blob selects the configured path");
-        assert!(s.requires_keystore(), "the RPC layer gates it to Zenith");
     }
 
     #[test]
-    fn delegate_prefixed_payer_auth_is_priced_as_keystore() {
+    fn delegate_prefixed_payer_auth_is_priced() {
         let payer = address!("0x00000000000000000000000000000000000000b2");
         let delegate_account = address!("0x00000000000000000000000000000000000000d4");
         let mut nested = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
@@ -302,10 +299,9 @@ mod tests {
         .expect("valid request");
         let tx = req
             .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
-            .expect("a canonical Keystore authenticator is priced");
+            .expect("a canonical authenticator is priced");
         let s = signed(&tx);
         assert_eq!(s.tx().payer, Some(payer), "the payer is set on the transaction");
-        assert!(s.requires_keystore(), "the RPC layer gates it to Zenith");
     }
 
     #[test]
@@ -470,7 +466,7 @@ mod tests {
     }
 
     #[test]
-    fn prefixed_p256_payer_auth_is_priced_as_keystore() {
+    fn prefixed_p256_payer_auth_is_priced() {
         let payer = address!("0x00000000000000000000000000000000000000b2");
         let req: BaseTransactionRequest = serde_json::from_value(json!({
             "sender": SENDER,
@@ -481,10 +477,9 @@ mod tests {
         .expect("valid request");
         let tx = req
             .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
-            .expect("a canonical Keystore authenticator is priced");
+            .expect("a canonical authenticator is priced");
         let s = signed(&tx);
         assert_eq!(s.tx().payer, Some(payer), "the payer is set on the transaction");
-        assert!(s.requires_keystore(), "the RPC layer gates it to Zenith");
     }
 
     #[test]

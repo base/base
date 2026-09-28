@@ -14,7 +14,7 @@ use alloy_evm::{
     eth::{EthTxResult, receipt_builder::ReceiptBuilderCtx},
 };
 use base_common_chains::Upgrades;
-use base_common_consensus::{DepositReceipt, Eip8130Signed, Predeploys};
+use base_common_consensus::{DepositReceipt, Predeploys};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 #[cfg(feature = "std")]
 use base_execution_eip8130::IntrinsicGas;
@@ -25,8 +25,8 @@ use revm::{
 };
 
 use crate::{
-    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseSpecId, BaseTime,
-    BaseTxEnv, BaseTxResult, BaseUpgrade, DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
+    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTime, BaseTxEnv,
+    BaseTxResult, DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
 };
 
 /// Block executor for Base.
@@ -217,17 +217,6 @@ where
         // prior, must be no greater than the block's gasLimit. For EIP-8130 the reserved amount is
         // `gas_limit + payer_auth`, since payer authentication is metered on top of the declared
         // gas_limit (see `reserved_block_gas`); for every other transaction it is `gas_limit`.
-        // The Keystore is only enabled at Zenith. Before it, an EIP-8130
-        // transaction may use only delegation and native secp256k1 keys.
-        if tx_env.eip8130_signed().is_some_and(Eip8130Signed::requires_keystore)
-            && !BaseSpecId::from_timestamp(&self.spec, self.evm.block().timestamp().saturating_to())
-                .is_enabled_in(BaseUpgrade::Zenith)
-        {
-            return Err(BlockExecutionError::other(
-                BaseBlockExecutionError::Eip8130KeystoreBeforeZenith,
-            ));
-        }
-
         let reserved_gas = Self::reserved_block_gas(&tx_env, tx.tx().gas_limit())?;
         let block_available_gas = self.evm.block().gas_limit().saturating_sub(self.gas_used);
         if reserved_gas > block_available_gas && (self.is_regolith || !is_deposit) {
@@ -391,7 +380,7 @@ mod tests {
     use alloy_primitives::{Address, Bytes, Signature, U256, uint};
     use base_common_chains::{BaseUpgradeExt, ChainUpgrades};
     use base_common_consensus::{
-        BaseTxEnvelope, Eip8130Constants, Eip8130Contracts, Eip8130Signed, Predeploys, TxEip8130,
+        BaseTxEnvelope, Eip8130Constants, Eip8130Signed, Predeploys, TxEip8130,
     };
     use base_common_genesis::BaseUpgrade;
     use revm::{
@@ -691,51 +680,6 @@ mod tests {
     /// `payer_auth` on top of the declared `gas_limit`: a transaction that fits
     /// on `gas_limit` alone is still rejected when `gas_limit + payer_auth`
     /// exceeds the available block gas.
-    /// Before Zenith an EIP-8130 transaction that uses the Keystore (here a named
-    /// sender authorized by P-256) is invalid in a block, not merely unpriced.
-    #[test]
-    fn eip8130_keystore_transaction_is_invalid_before_zenith() {
-        const JOVIAN_TIMESTAMP: u64 = 1746806402;
-
-        let mut sender_auth = Eip8130Contracts::P256_AUTHENTICATOR.to_vec();
-        sender_auth.extend_from_slice(&[0u8; 128]);
-        let signed = Eip8130Signed::new(
-            TxEip8130 {
-                sender: Some(Address::with_last_byte(0x22)),
-                gas_limit: 100_000,
-                ..Default::default()
-            },
-            Bytes::from(sender_auth),
-            Bytes::new(),
-        );
-        assert!(signed.requires_keystore());
-
-        let mut db = prepare_jovian_db(0);
-        let base_chain_upgrades = ChainUpgrades::new(
-            BaseUpgrade::mainnet()
-                .into_iter()
-                .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
-        );
-        let receipt_builder = AlloyReceiptBuilder::default();
-        let mut executor = build_executor(
-            &mut db,
-            &receipt_builder,
-            &base_chain_upgrades,
-            30_000_000,
-            JOVIAN_TIMESTAMP,
-        );
-
-        let tx = Recovered::new_unchecked(
-            BaseTxEnvelope::Eip8130(signed),
-            Address::with_last_byte(0x22),
-        );
-        let err = executor.execute_transaction(&tx).expect_err("the Keystore gate must reject");
-        assert!(
-            err.to_string().contains("uses the Keystore before Zenith"),
-            "unexpected error: {err}"
-        );
-    }
-
     #[test]
     fn eip8130_block_gas_reservation_includes_payer_auth() {
         const GAS_LIMIT: u64 = 100_000;

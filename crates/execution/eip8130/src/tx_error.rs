@@ -51,11 +51,15 @@ pub enum TxAuthError {
     #[error("delegation requires an admin actor")]
     DelegationUnauthorized,
 
-    /// The transaction needs the Keystore (a `Create` or `ConfigChange`, or a
-    /// named authorization with an authenticator other than native secp256k1),
-    /// which is not active before Zenith.
-    #[error("EIP-8130 Keystore features are not active before Zenith")]
-    KeystoreInactive,
+    /// The transaction carries an account change type this chain does not
+    /// support.
+    #[error("unsupported account change type")]
+    UnsupportedAccountChange,
+
+    /// A named sender or payer selects an authenticator this chain does not
+    /// support.
+    #[error("unsupported authenticator")]
+    UnsupportedAuthenticator,
 
     /// A named sender or payer's native secp256k1 signature recovered to a
     /// different address than the one named.

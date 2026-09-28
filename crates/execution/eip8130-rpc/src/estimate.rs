@@ -7,14 +7,12 @@ use alloy_evm::{
 };
 use alloy_primitives::U256;
 use alloy_rpc_types::state::EvmOverrides;
-use base_common_chains::{BaseUpgrade, Upgrades};
-use base_common_evm::{BaseSpecId, BaseTransaction as BaseRevm};
+use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_rpc_types::{BaseRpcTypes, BaseTransactionRequest};
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
-use reth_chainspec::ChainSpecProvider;
 use reth_evm::{EvmFactoryFor, HaltReasonFor, TxEnvFor};
 use reth_rpc_eth_api::{
-    FromEthApiError, RpcNodeCore,
+    FromEthApiError,
     helpers::{FullEthApi, LoadPendingBlock},
 };
 use reth_rpc_eth_types::error::api::{FromEvmHalt, FromRevert};
@@ -35,12 +33,8 @@ use revm::context::{Block, BlockEnv, TxEnv, result::ExecutionResult};
 /// the whole gas limit from scratch). The simulation is built from an unsigned
 /// request with a stub authentication blob and never commits state.
 ///
-/// **Everest is the caller's gate.** This does not check Everest activation;
-/// callers must gate via [`crate::Eip8130EverestGate`] before invoking it. It
-/// does reject a request that uses the Keystore
-/// ([`base_common_consensus::Eip8130Signed::requires_keystore`]) when Zenith is
-/// not active at the simulated block, matching txpool admission and block
-/// execution.
+/// **Fork-agnostic on purpose.** This does not check Everest activation; callers
+/// must gate via [`crate::Eip8130EverestGate`] before invoking it.
 ///
 /// **Revert semantics match standard `eth_estimateGas`.** If a phased call
 /// reverts (or the simulation halts), this returns an execution error carrying
@@ -91,8 +85,6 @@ impl Eip8130GasEstimator {
         // estimator (`FullEthApi` already guarantees these on `Eth::Error`).
         Eth::Error: FromRevert + FromEvmHalt<HaltReasonFor<Eth::Evm>>,
         ErrorObjectOwned: From<Eth::Error>,
-        <Eth as RpcNodeCore>::Provider: ChainSpecProvider,
-        <<Eth as RpcNodeCore>::Provider as ChainSpecProvider>::ChainSpec: Upgrades,
     {
         let (evm_env, at) = eth_api.evm_env_at(block_id).await?;
         let chain_id = evm_env.cfg_env.chain_id;
@@ -109,18 +101,6 @@ impl Eip8130GasEstimator {
                 None::<()>,
             )
         })?;
-        let timestamp = evm_env.block_env.timestamp.saturating_to();
-        if sim_tx.eip8130.as_ref().is_some_and(|parts| parts.signed.requires_keystore())
-            && !BaseSpecId::from_timestamp(eth_api.provider().chain_spec(), timestamp)
-                .is_enabled_in(BaseUpgrade::Zenith)
-        {
-            return Err(ErrorObjectOwned::owned(
-                INVALID_PARAMS_CODE,
-                "EIP-8130 Keystore features (Create, ConfigChange, or a non-secp256k1 \
-                 authenticator) are not active before Zenith",
-                None::<()>,
-            ));
-        }
 
         let EvmOverrides { state, block } = overrides;
 

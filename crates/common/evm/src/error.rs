@@ -21,9 +21,4 @@ pub enum BaseBlockExecutionError {
         /// The available block DA footprint.
         available_block_da_footprint: u64,
     },
-
-    /// An EIP-8130 transaction uses the Keystore (a `Create` or `ConfigChange`
-    /// account change, or a non-secp256k1 authenticator) before Zenith is active.
-    #[error("EIP-8130 transaction uses the Keystore before Zenith is active")]
-    Eip8130KeystoreBeforeZenith,
 }

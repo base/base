@@ -52,7 +52,7 @@ use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_execution_eip8130::{
     AccountChangeApplier, AccountConfigurationStorage, ApplyError, DelegationEffect,
     Eip8130GasSchedule, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator,
-    TransactionAuthorizer, TxAuthError,
+    TransactionAuthorizer,
 };
 use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 use revm::{
@@ -815,8 +815,9 @@ impl Eip8130Executor {
         // is unknown and published as `UNSIGNED_OPEN_PAYER`, never the sender.
         let payer = signed.resolved_payer(sender).unwrap_or(Self::UNSIGNED_OPEN_PAYER);
         let keystore = ctx.cfg().spec().is_enabled_in(BaseUpgrade::Zenith);
-        if !keystore && signed.requires_keystore() {
-            return Err(BaseTransactionError::eip8130(TxAuthError::KeystoreInactive));
+        if !keystore {
+            TransactionAuthorizer::check_without_keystore(signed)
+                .map_err(BaseTransactionError::eip8130)?;
         }
 
         let internals = EvmInternals::from_context(ctx);
@@ -1871,7 +1872,8 @@ mod tests {
     use alloy_sol_types::{SolEvent, SolValue, sol};
     use base_common_consensus::{
         AccountChange, AccountChangeChannel, BaseTxEnvelope, Call, ChangeType, CreateEntry,
-        Eip8130Signed, InitialActor, Predeploys, SignedAccountChanges, SignedChange, TxEip8130,
+        Eip8130Contracts, Eip8130Signed, InitialActor, Predeploys, SignedAccountChanges,
+        SignedChange, TxEip8130,
     };
     use base_common_precompiles::INonceManager;
     use base_execution_eip8130::AccountChangeApplier;
@@ -3432,6 +3434,41 @@ mod tests {
             panic!("expected an Eip8130 validity rejection, got {err:?}");
         };
         assert!(reason.contains("does not recover to the named account"), "got {reason:?}");
+    }
+
+    /// Before Zenith, a non-secp256k1 authenticator and a `Create` are rejected
+    /// as unsupported, in both execution and simulation.
+    #[test]
+    fn pre_zenith_rejects_unsupported_authenticator_and_account_change() {
+        let account = address!("0x00000000000000000000000000000000000000ce");
+        let mut tx = base_tx();
+        tx.sender = Some(account);
+        let mut auth = Eip8130Contracts::P256_AUTHENTICATOR.to_vec();
+        auth.extend_from_slice(&[0u8; 128]);
+        let p256 = Eip8130Signed::new(tx, Bytes::from(auth), Bytes::new());
+        let (derived, create) =
+            counterfactual_create_signed(&signing_key(0x9b), bytes!("00"), Vec::new());
+
+        for (signed, sender, reason) in [
+            (p256, account, "unsupported authenticator"),
+            (create, derived, "unsupported account change type"),
+        ] {
+            let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+            let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
+            let EVMError::Transaction(BaseTransactionError::Eip8130(got)) = err else {
+                panic!("expected an Eip8130 validity rejection, got {err:?}");
+            };
+            assert!(got.contains(reason), "got {got:?}, expected {reason:?}");
+
+            let mut sim = into_base_tx(&signed);
+            sim.base.caller = sender;
+            if let Some(parts) = sim.eip8130.as_mut() {
+                parts.mode = Eip8130ExecutionMode::Simulate;
+            }
+            evm.ctx_mut().tx = sim;
+            let err = Eip8130Executor::simulate(&mut evm).unwrap_err();
+            assert!(err.to_string().contains(reason), "got {err}, expected {reason:?}");
+        }
     }
 
     #[test]

@@ -208,14 +208,11 @@ impl TransactionAuthorizer {
     /// - the only account change is delegation, recorded as a deferred code
     ///   effect.
     ///
-    /// Returns [`TxAuthError::KeystoreInactive`] for anything that needs the
-    /// Keystore.
+    /// Anything else is rejected by [`Self::check_without_keystore`].
     pub fn authorize_without_keystore(
         signed: &Eip8130Signed,
     ) -> Result<AppliedTransaction, TxAuthError> {
-        if signed.requires_keystore() {
-            return Err(TxAuthError::KeystoreInactive);
-        }
+        Self::check_without_keystore(signed)?;
         let tx = signed.tx();
 
         let sender = match signed.explicit_sender() {
@@ -245,7 +242,7 @@ impl TransactionAuthorizer {
         let mut applied = AppliedAccountChanges::default();
         for change in &tx.account_changes {
             let AccountChange::Delegation(Delegation { target }) = change else {
-                return Err(TxAuthError::KeystoreInactive);
+                return Err(TxAuthError::UnsupportedAccountChange);
             };
             if applied.delegation.is_some() {
                 return Err(ApplyError::MultipleDelegations.into());
@@ -267,12 +264,31 @@ impl TransactionAuthorizer {
         })
     }
 
+    /// Checks the shape of `signed` without the Keystore, before any signature
+    /// is recovered: delegation is the only account change, and a named sender
+    /// or payer selects the native secp256k1 authenticator. An open payer's
+    /// `payer_auth` is a raw signature and carries no selector.
+    pub fn check_without_keystore(signed: &Eip8130Signed) -> Result<(), TxAuthError> {
+        let tx = signed.tx();
+        if tx.account_changes.iter().any(|change| !matches!(change, AccountChange::Delegation(_))) {
+            return Err(TxAuthError::UnsupportedAccountChange);
+        }
+        let named_k1 =
+            |auth: &[u8]| auth.starts_with(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
+        if (tx.sender.is_some() && !named_k1(signed.sender_auth()))
+            || (tx.payer.is_some() && !tx.is_open_payer() && !named_k1(signed.payer_auth()))
+        {
+            return Err(TxAuthError::UnsupportedAuthenticator);
+        }
+        Ok(())
+    }
+
     /// Recovers `auth` (`K1_AUTHENTICATOR || r || s || v`) over `hash` and
     /// requires it to be `account`.
     fn recover_named_k1(account: Address, hash: B256, auth: &[u8]) -> Result<Address, TxAuthError> {
         let Some(signature) = auth.strip_prefix(Eip8130Constants::K1_AUTHENTICATOR.as_slice())
         else {
-            return Err(TxAuthError::KeystoreInactive);
+            return Err(TxAuthError::UnsupportedAuthenticator);
         };
         let recovered = RecoveredActorId::recover_k1(hash, signature)
             .map_err(|error| TxAuthError::Authorize(AuthorizeError::Authenticate(error)))?
@@ -1278,5 +1294,67 @@ mod tests {
                 "expected CreateAndDelegation, got {err:?}"
             );
         });
+    }
+
+    /// Without the Keystore, delegation and native k1 keys (named, bare, or an
+    /// open payer's raw signature) authorize; every other account change or
+    /// authenticator is unsupported.
+    #[test]
+    fn authorizes_without_keystore_only_delegation_and_k1() {
+        let sender_key = key(0x61);
+        let payer_key = key(0x62);
+        let sender = addr(&sender_key);
+        let payer = addr(&payer_key);
+        let p256 = address!("0x0000000000000000000000000000000000000100");
+        let delegation = AccountChange::Delegation(Delegation { target: payer });
+
+        let eoa = eoa_signed(tx_with(None, None, vec![delegation]), &sender_key);
+        let applied = TransactionAuthorizer::authorize_without_keystore(&eoa).unwrap();
+        assert_eq!(applied.actors.sender.account, sender);
+        assert!(applied.actors.sender.resolved.is_admin());
+        assert!(applied.applied.delegation.is_some());
+
+        let named = configured_signed(
+            tx_with(Some(sender), Some(payer), Vec::new()),
+            &sender_key,
+            Some(&payer_key),
+        );
+        let applied = TransactionAuthorizer::authorize_without_keystore(&named).unwrap();
+        assert_eq!(applied.actors.payer.map(|actor| actor.account), Some(payer));
+
+        let open_tx = tx_with(None, Some(Eip8130Constants::OPEN_PAYER), Vec::new());
+        let payer_auth = sig(&payer_key, open_tx.payer_signature_hash(sender));
+        let sender_auth = sig(&sender_key, open_tx.sender_signature_hash());
+        let open = Eip8130Signed::new(open_tx, Bytes::from(sender_auth), Bytes::from(payer_auth));
+        let applied = TransactionAuthorizer::authorize_without_keystore(&open).unwrap();
+        assert_eq!(applied.actors.payer.map(|actor| actor.account), Some(payer));
+
+        let p256_sender = Eip8130Signed::new(
+            tx_with(Some(sender), None, Vec::new()),
+            auth_blob(p256, &[0; 64]),
+            Bytes::new(),
+        );
+        assert!(matches!(
+            TransactionAuthorizer::authorize_without_keystore(&p256_sender),
+            Err(TxAuthError::UnsupportedAuthenticator)
+        ));
+
+        let config_change = eoa_signed(
+            tx_with(
+                None,
+                None,
+                vec![AccountChange::ConfigChange(SignedAccountChanges {
+                    channel: AccountChangeChannel::Local,
+                    sequence: 0,
+                    changes: Vec::new(),
+                    signature: Bytes::new(),
+                })],
+            ),
+            &sender_key,
+        );
+        assert!(matches!(
+            TransactionAuthorizer::authorize_without_keystore(&config_change),
+            Err(TxAuthError::UnsupportedAccountChange)
+        ));
     }
 }

@@ -1534,6 +1534,9 @@ where
     fn map_tx_auth_error(error: TxAuthError) -> InvalidPoolTransactionError {
         tracing::debug!(error = ?error, "EIP-8130 actor authorization failed");
         let reason = match error {
+            TxAuthError::UnsupportedAccountChange | TxAuthError::UnsupportedAuthenticator => {
+                return InvalidTransactionError::TxTypeNotSupported.into();
+            }
             TxAuthError::Authorize(AuthorizeError::Authenticate(_)) => {
                 "actor authentication failed"
             }
@@ -1561,7 +1564,6 @@ where
             TxAuthError::BadSequence { .. } => "config change sequence mismatch",
             TxAuthError::StaleEpoch { .. } => "config change local epoch is stale",
             TxAuthError::SequenceSaturated => "config change channel sequence is saturated",
-            TxAuthError::KeystoreInactive => "EIP-8130 Keystore features require Zenith",
             TxAuthError::SignerMismatch => {
                 "secp256k1 signature does not recover to the named account"
             }
@@ -1733,13 +1735,12 @@ where
         if !self.chain_spec().is_everest_active_at_timestamp(now) {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
-        // The Keystore is only enabled at Zenith: before it an EIP-8130
-        // transaction may use only delegation and native secp256k1 keys.
-        if signed.requires_keystore()
-            && !BaseSpecId::from_timestamp(self.chain_spec(), now)
-                .is_enabled_in(BaseUpgrade::Zenith)
+        // Without the Keystore an EIP-8130 transaction may use only delegation
+        // and native secp256k1 keys; anything else is an unsupported type.
+        if !BaseSpecId::from_timestamp(self.chain_spec(), now).is_enabled_in(BaseUpgrade::Zenith)
+            && TransactionAuthorizer::check_without_keystore(signed).is_err()
         {
-            return Err(Self::eip8130_error("EIP-8130 Keystore features require Zenith"));
+            return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
         let local_chain_id = self.inner.chain_spec().chain().id();
         signed.validate_static(local_chain_id).map_err(InvalidPoolTransactionError::from)?;
@@ -2929,33 +2930,23 @@ mod tests {
         assert_unsupported(TestValidator::validate_payer_auth(&signed));
     }
 
-    /// A configured sender naming a canonical non-k1 authenticator is rejected
-    /// at admission.
+    /// A configured sender naming a canonical non-k1 authenticator is an
+    /// unsupported transaction type before Zenith, and admissible from it.
     #[test]
-    fn non_k1_sender_authenticator_requires_zenith() {
+    fn non_k1_sender_authenticator_is_unsupported_before_zenith() {
         let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
         let mut auth = Eip8130Contracts::P256_AUTHENTICATOR.as_slice().to_vec();
         auth.extend_from_slice(&[0u8; 64]);
         let signed = Eip8130Signed::new(tx, Bytes::from(auth), Bytes::new());
-        assert!(signed.requires_keystore());
 
-        let reason = |result: Result<(), InvalidPoolTransactionError>| match result {
-            Err(InvalidPoolTransactionError::Other(error)) => {
-                match error.as_any().downcast_ref::<BaseTxPoolError>() {
-                    Some(BaseTxPoolError::Eip8130Validation { reason }) => Some(*reason),
-                    _ => None,
-                }
-            }
-            _ => None,
-        };
-        const GATE: &str = "EIP-8130 Keystore features require Zenith";
-
-        // Before Zenith the Keystore gate rejects it outright.
-        assert_eq!(reason(build_test_validator().validate_eip8130_structural(&signed)), Some(GATE));
-        // From Zenith the gate passes and the P-256 shape passes the sender-auth
-        // wire check.
+        assert_unsupported(build_test_validator().validate_eip8130_structural(&signed));
         let zenith = build_test_validator_with_spec(zenith_chain_spec());
-        assert_ne!(reason(zenith.validate_eip8130_structural(&signed)), Some(GATE));
+        assert!(!matches!(
+            zenith.validate_eip8130_structural(&signed),
+            Err(InvalidPoolTransactionError::Consensus(
+                InvalidTransactionError::TxTypeNotSupported
+            ))
+        ));
         assert!(TestValidator::validate_sender_auth(&signed).is_ok());
     }
 

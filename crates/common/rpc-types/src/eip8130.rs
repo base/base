@@ -181,9 +181,9 @@ impl BaseTransactionRequest {
     }
 
     /// Whether the blob is a configured-account authorization: its leading 20
-    /// bytes name native k1 or a canonical Keystore authenticator. Any other
-    /// prefix is treated as a bare EOA signature. The RPC layer rejects the
-    /// Keystore authenticators before Zenith, matching txpool admission.
+    /// bytes name native k1 or a canonical authenticator. Any other prefix is
+    /// treated as a bare EOA signature. Simulation rejects an authenticator the
+    /// chain does not support, matching txpool admission.
     fn is_prefixed_auth(blob: &Bytes) -> bool {
         Self::authenticator_selector(blob).is_some_and(|selector| {
             selector == Eip8130Constants::K1_AUTHENTICATOR
