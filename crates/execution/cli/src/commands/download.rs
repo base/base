@@ -7,7 +7,7 @@
 use std::{
     ffi::OsString,
     io::{Read, SeekFrom},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -16,10 +16,11 @@ use std::{
 };
 
 use base_execution_chainspec::BaseChainSpec;
-use base_reth_cli::ProgressDisplay;
+use base_reth_cli::{OutputFileChecksum, ProgressDisplay};
 use clap::Parser;
 use eyre::Result;
 use futures::{StreamExt, future::try_join_all};
+use rayon::prelude::*;
 use reth_chainspec::EthChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::download::{DownloadCommand, DownloadDefaults};
@@ -28,7 +29,7 @@ use tokio::{
     io::{AsyncSeekExt, AsyncWriteExt},
     sync::Mutex,
 };
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Download Base node snapshots from R2 storage.
 ///
@@ -380,6 +381,8 @@ struct ProofsManifestEntry {
     file_name: String,
     expected_size: u64,
     archive_url: String,
+    /// Files the archive must extract to, relative to the target datadir.
+    output_files: Vec<OutputFileChecksum>,
 }
 
 /// Consecutive Range-resume attempts that write no new bytes before failing.
@@ -435,7 +438,7 @@ impl ProofsDownloader {
 
         let archive_path = Self::download_archive(&entry, &cache_dir, concurrency).await?;
 
-        Self::extract_and_cleanup(&archive_path, target_dir, &cache_dir).await
+        Self::extract_and_cleanup(&archive_path, target_dir, &cache_dir, entry.output_files).await
     }
 
     /// Fetches the manifest and extracts the proofs component metadata.
@@ -491,7 +494,22 @@ impl ProofsDownloader {
 
         let archive_url = format!("{archive_base_url}/{file_name}");
 
-        Ok(ProofsManifestEntry { file_name, expected_size, archive_url })
+        let output_files: Vec<OutputFileChecksum> = match proofs_component.get("output_files") {
+            Some(files) => serde_json::from_value(files.clone()).map_err(|e| {
+                eyre::eyre!("invalid 'output_files' for proofs component in manifest: {e}")
+            })?,
+            None => Vec::new(),
+        };
+        if let Some(file) = output_files.iter().find(|file| {
+            file.path.is_empty()
+                || Path::new(&file.path)
+                    .components()
+                    .any(|component| !matches!(component, Component::Normal(_)))
+        }) {
+            eyre::bail!("invalid proofs output file path in manifest: {}", file.path);
+        }
+
+        Ok(ProofsManifestEntry { file_name, expected_size, archive_url, output_files })
     }
 
     /// Downloads the proofs archive with in-process resume and size verification.
@@ -994,18 +1012,24 @@ impl ProofsDownloader {
         }
     }
 
-    /// Extracts the archive and cleans up the cache directory.
+    /// Extracts the archive, verifies the extracted files, and cleans up the cache directory.
+    ///
+    /// The cache is left in place when extraction or verification fails.
     async fn extract_and_cleanup(
         archive_path: &Path,
         target_dir: &Path,
         cache_dir: &Path,
+        output_files: Vec<OutputFileChecksum>,
     ) -> Result<()> {
         info!(target: "reth::cli", "Extracting proofs archive");
 
         let extract_target = target_dir.to_path_buf();
         let extract_path = archive_path.to_path_buf();
-        tokio::task::spawn_blocking(move || Self::extract_tar_zst(&extract_path, &extract_target))
-            .await??;
+        tokio::task::spawn_blocking(move || {
+            Self::extract_tar_zst(&extract_path, &extract_target)?;
+            Self::verify_output_files(&extract_target, &output_files)
+        })
+        .await??;
 
         tokio::fs::remove_file(archive_path).await.ok();
         tokio::fs::remove_dir_all(cache_dir).await.ok();
@@ -1023,6 +1047,58 @@ impl ProofsDownloader {
         let decoder = zstd::Decoder::new(progress)?;
         let mut archive = tar::Archive::new(decoder);
         archive.unpack(target_dir)?;
+        Ok(())
+    }
+
+    /// Verifies that every manifest output file exists under `target_dir` with the expected size
+    /// and BLAKE3 hash.
+    ///
+    /// Files are hashed in parallel on the Rayon pool. Manifests without `output_files` are
+    /// accepted with a warning, since they carry nothing to verify against.
+    fn verify_output_files(target_dir: &Path, output_files: &[OutputFileChecksum]) -> Result<()> {
+        if output_files.is_empty() {
+            warn!(target: "reth::cli", "Manifest lists no proofs output files, skipping verification");
+            return Ok(());
+        }
+
+        let total_bytes: u64 = output_files.iter().map(|file| file.size).sum();
+        info!(
+            target: "reth::cli",
+            files = output_files.len(),
+            size = %ProgressDisplay::bytes(total_bytes as f64),
+            "Verifying extracted proofs files"
+        );
+        let started = Instant::now();
+
+        output_files.par_iter().try_for_each(|expected| {
+            let path = target_dir.join(&expected.path);
+            let file = std::fs::File::open(&path)
+                .map_err(|e| eyre::eyre!("missing proofs file {}: {e}", expected.path))?;
+            let size = file.metadata()?.len();
+            if size != expected.size {
+                eyre::bail!(
+                    "proofs file {} has size {size}, manifest expects {}",
+                    expected.path,
+                    expected.size
+                );
+            }
+            let hash = blake3::Hasher::new().update_reader(file)?.finalize().to_hex();
+            if !hash.as_str().eq_ignore_ascii_case(&expected.blake3) {
+                eyre::bail!(
+                    "proofs file {} has BLAKE3 {hash}, manifest expects {}",
+                    expected.path,
+                    expected.blake3
+                );
+            }
+            Ok(())
+        })?;
+
+        info!(
+            target: "reth::cli",
+            files = output_files.len(),
+            elapsed = ?started.elapsed(),
+            "Verified extracted proofs files"
+        );
         Ok(())
     }
 }
@@ -1045,6 +1121,7 @@ mod tests {
         response::IntoResponse,
         routing::get,
     };
+    use base_reth_cli::{ManifestGenerationParams, SnapshotGenerator};
     use clap::Parser;
     use futures::stream;
 
@@ -1700,6 +1777,165 @@ mod tests {
         handle.abort();
     }
 
+    /// Packages `proofs` with the snapshotter's manifest generator and returns the generated
+    /// manifest JSON together with the proofs archive bytes.
+    fn generate_proofs_snapshot(proofs: &[(&str, &[u8])]) -> (serde_json::Value, Vec<u8>) {
+        let source = tempfile::tempdir().unwrap();
+        let output = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(source.path().join("db")).unwrap();
+        std::fs::write(source.path().join("db/mdbx.dat"), b"state-data").unwrap();
+        for (path, data) in proofs {
+            let path = source.path().join("proofs").join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, data).unwrap();
+        }
+
+        let remote_static_files = std::collections::HashMap::new();
+        SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
+            source_datadir: source.path(),
+            output_dir: Some(output.path()),
+            chain_id: 8453,
+            base_url: None,
+            block: Some(0),
+            blocks_per_file: None,
+            remote_static_files: &remote_static_files,
+            previous_manifest: None,
+            upload_proofs: true,
+        })
+        .unwrap();
+
+        let manifest =
+            serde_json::from_slice(&std::fs::read(output.path().join("manifest.json")).unwrap())
+                .unwrap();
+        let archive = std::fs::read(output.path().join("proofs.tar.zst")).unwrap();
+        (manifest, archive)
+    }
+
+    #[tokio::test]
+    async fn full_pipeline_verifies_generated_snapshot() {
+        let (manifest, archive) = generate_proofs_snapshot(&[
+            ("CURRENT", b"MANIFEST-000014\n"),
+            ("000060.sst", b"sst-data"),
+            ("nested/000801.log", b"wal-data"),
+        ]);
+        assert_eq!(manifest["components"]["proofs"]["output_files"].as_array().unwrap().len(), 3);
+
+        let (manifest_url, handle) = start_test_server(manifest, archive).await;
+        let target = tempfile::tempdir().unwrap();
+
+        ProofsDownloader::run_from_manifest(target.path(), &manifest_url, 1)
+            .await
+            .expect("generated snapshot should download and verify");
+
+        assert_eq!(std::fs::read(target.path().join("proofs/000060.sst")).unwrap(), b"sst-data");
+        assert_eq!(
+            std::fs::read(target.path().join("proofs/nested/000801.log")).unwrap(),
+            b"wal-data"
+        );
+        assert!(!target.path().join(".snapshot-cache").exists(), "cache should be cleaned up");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn full_pipeline_rejects_hash_mismatch() {
+        let (mut manifest, archive) =
+            generate_proofs_snapshot(&[("000060.sst", b"sst-data"), ("CURRENT", b"current")]);
+        let output_files = manifest["components"]["proofs"]["output_files"].as_array_mut().unwrap();
+        let sst = output_files.iter_mut().find(|file| file["path"] == "proofs/000060.sst").unwrap();
+        sst["blake3"] = serde_json::Value::String("00".repeat(32));
+
+        let (manifest_url, handle) = start_test_server(manifest, archive).await;
+        let target = tempfile::tempdir().unwrap();
+
+        let error = ProofsDownloader::run_from_manifest(target.path(), &manifest_url, 1)
+            .await
+            .expect_err("hash mismatch should fail the download");
+
+        assert!(error.to_string().contains("proofs/000060.sst"), "error: {error}");
+        assert!(
+            target.path().join(".snapshot-cache/proofs.tar.zst").exists(),
+            "archive should be kept for inspection or retry"
+        );
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn full_pipeline_rejects_size_mismatch() {
+        let (mut manifest, archive) = generate_proofs_snapshot(&[("000060.sst", b"sst-data")]);
+        manifest["components"]["proofs"]["output_files"][0]["size"] = serde_json::json!(9);
+
+        let (manifest_url, handle) = start_test_server(manifest, archive).await;
+        let target = tempfile::tempdir().unwrap();
+
+        let error = ProofsDownloader::run_from_manifest(target.path(), &manifest_url, 1)
+            .await
+            .expect_err("size mismatch should fail the download");
+
+        assert!(error.to_string().contains("size 8"), "error: {error}");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn full_pipeline_rejects_archive_missing_manifest_file() {
+        // The manifest lists a file that the archive does not contain, as happens when an
+        // archive is cut short at a tar entry boundary.
+        let (mut manifest, archive) =
+            generate_proofs_snapshot(&[("000060.sst", b"sst-data"), ("CURRENT", b"current")]);
+        let output_files = manifest["components"]["proofs"]["output_files"].as_array_mut().unwrap();
+        let mut missing = output_files[0].clone();
+        missing["path"] = serde_json::Value::String("proofs/000061.sst".to_string());
+        output_files.push(missing);
+
+        let (manifest_url, handle) = start_test_server(manifest, archive).await;
+        let target = tempfile::tempdir().unwrap();
+
+        let error = ProofsDownloader::run_from_manifest(target.path(), &manifest_url, 1)
+            .await
+            .expect_err("missing file should fail the download");
+
+        assert!(
+            error.to_string().contains("missing proofs file proofs/000061.sst"),
+            "error: {error}"
+        );
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn fetch_manifest_entry_rejects_output_file_traversal() {
+        for path in ["../escape", "/etc/passwd", "proofs/../../escape", ""] {
+            let manifest = serde_json::json!({
+                "block": 100,
+                "chain_id": 8453,
+                "storage_version": 2,
+                "timestamp": 1700000000,
+                "components": {
+                    "proofs": {
+                        "file": "proofs.tar.zst",
+                        "size": 100,
+                        "decompressed_size": 0,
+                        "output_files": [{ "path": path, "size": 1, "blake3": "00" }]
+                    }
+                }
+            });
+
+            let (manifest_url, handle) = start_test_server(manifest, vec![]).await;
+            let error = ProofsDownloader::fetch_manifest_entry(&manifest_url)
+                .await
+                .expect_err("unsafe output path should be rejected");
+
+            assert!(
+                error.to_string().contains("invalid proofs output file path"),
+                "path {path:?}: {error}"
+            );
+
+            handle.abort();
+        }
+    }
+
     #[test]
     fn extract_tar_zst_creates_files() {
         let src = tempfile::tempdir().unwrap();
@@ -1773,6 +2009,7 @@ mod tests {
             file_name: "proofs.tar.zst".to_string(),
             expected_size: archive.len() as u64,
             archive_url: format!("{base_url}/proofs.tar.zst"),
+            output_files: Vec::new(),
         };
 
         let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 1).await.unwrap();
@@ -1795,6 +2032,7 @@ mod tests {
             file_name: "proofs.tar.zst".to_string(),
             expected_size: archive.len() as u64,
             archive_url: format!("{base_url}/proofs.tar.zst"),
+            output_files: Vec::new(),
         };
 
         let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 1)
@@ -1841,6 +2079,7 @@ mod tests {
             file_name: "proofs.tar.zst".to_string(),
             expected_size: archive.len() as u64,
             archive_url: format!("{base_url}/proofs.tar.zst"),
+            output_files: Vec::new(),
         };
 
         let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 1)
@@ -1887,6 +2126,7 @@ mod tests {
             file_name: "proofs.tar.zst".to_string(),
             expected_size: archive.len() as u64,
             archive_url: format!("{base_url}/proofs.tar.zst"),
+            output_files: Vec::new(),
         };
 
         let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 4)
@@ -1972,6 +2212,7 @@ mod tests {
             file_name: "proofs.tar.zst".to_string(),
             expected_size: archive.len() as u64,
             archive_url: format!("{base_url}/proofs.tar.zst"),
+            output_files: Vec::new(),
         };
 
         let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 4)
@@ -2010,6 +2251,7 @@ mod tests {
             file_name: "proofs.tar.zst".to_string(),
             expected_size: archive.len() as u64,
             archive_url: format!("{base_url}/proofs.tar.zst"),
+            output_files: Vec::new(),
         };
 
         let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 4)
@@ -2053,6 +2295,7 @@ mod tests {
             file_name: "proofs.tar.zst".to_string(),
             expected_size: archive.len() as u64,
             archive_url: format!("{base_url}/proofs.tar.zst"),
+            output_files: Vec::new(),
         };
 
         let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 1)
@@ -2095,6 +2338,7 @@ mod tests {
             file_name: "proofs.tar.zst".to_string(),
             expected_size: archive.len() as u64,
             archive_url: format!("{base_url}/proofs.tar.zst"),
+            output_files: Vec::new(),
         };
 
         let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 4)
@@ -2121,6 +2365,7 @@ mod tests {
             file_name: "proofs.tar.zst".to_string(),
             expected_size: archive.len() as u64,
             archive_url: format!("{base_url}/proofs.tar.zst"),
+            output_files: Vec::new(),
         };
 
         let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 4)
@@ -2174,6 +2419,7 @@ mod tests {
             file_name: "proofs.tar.zst".to_string(),
             expected_size: archive.len() as u64,
             archive_url: format!("{base_url}/proofs.tar.zst"),
+            output_files: Vec::new(),
         };
 
         let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 1).await.unwrap();
@@ -2213,6 +2459,7 @@ mod tests {
             file_name: "proofs.tar.zst".to_string(),
             expected_size: archive.len() as u64,
             archive_url: format!("{base_url}/proofs.tar.zst"),
+            output_files: Vec::new(),
         };
 
         let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 1).await.unwrap();
@@ -2254,6 +2501,7 @@ mod tests {
             file_name: "proofs.tar.zst".to_string(),
             expected_size: archive.len() as u64 + 999,
             archive_url: format!("{base_url}/proofs.tar.zst"),
+            output_files: Vec::new(),
         };
 
         let result = ProofsDownloader::download_archive(&entry, cache_dir.path(), 1).await;

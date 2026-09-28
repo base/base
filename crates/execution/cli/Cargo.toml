@@ -64,6 +64,8 @@ base-upgrade-signal = { workspace = true, features = ["metrics"] }
 tar.workspace = true
 zstd.workspace = true
 eyre.workspace = true
+rayon.workspace = true
+blake3.workspace = true
 humantime.workspace = true
 url.workspace = true
 backon.workspace = true
