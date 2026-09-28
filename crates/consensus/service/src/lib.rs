@@ -54,6 +54,7 @@ pub use actors::{
     SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
     SequencerEngineClient, SequencerEngineRequestCoordinator, SequencerEngineState, ShadowCycle,
     ShadowFunding, ShadowReconciliationGate, ShadowReconciliationTask, ShadowSequencingState,
+    StartupSyncEngineRequestHandler, StartupSyncHandoffRequest, SyncOnStartupConfig, SyncProgress,
     UnsafePayloadGossipClient, UnsafePayloadGossipClientError, UnsealedPayloadHandle,
     UpgradeSignalMetricsActor, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
 };

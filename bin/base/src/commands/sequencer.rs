@@ -363,12 +363,47 @@ mod tests {
     }
 
     #[test]
-    fn rejects_sequencer_mode_arg() {
+    fn defaults_to_sequencer_mode() {
+        let cli = BaseCli::parse_from(sequencer_args(&[
+            "base",
+            "sequencer",
+            "--p2p.sequencer.key",
+            SEQUENCER_KEY,
+        ]));
+
+        let BaseCommand::Sequencer(sequencer) = cli.command else {
+            panic!("expected sequencer command");
+        };
+
+        assert_eq!(sequencer.consensus.node_mode.to_string(), "Sequencer");
+    }
+
+    #[test]
+    fn parses_isolated_sequencer_mode_with_sync_on_startup() {
+        let cli = BaseCli::parse_from(sequencer_args(&[
+            "base",
+            "sequencer",
+            "--mode",
+            "IsolatedSequencer",
+            "--sequencer.sync-on-startup",
+        ]));
+
+        let BaseCommand::Sequencer(sequencer) = cli.command else {
+            panic!("expected sequencer command");
+        };
+        let config: ConsensusNodeConfigArgs = sequencer.consensus.into();
+
+        assert_eq!(config.node_mode.to_string(), "IsolatedSequencer");
+        assert!(config.sequencer_flags.sync_on_startup);
+    }
+
+    #[test]
+    fn rejects_validator_mode_arg() {
         let err = BaseCli::try_parse_from(sequencer_args(&[
             "base",
             "sequencer",
             "--mode",
-            "sequencer",
+            "Validator",
             "--p2p.sequencer.key",
             SEQUENCER_KEY,
         ]))

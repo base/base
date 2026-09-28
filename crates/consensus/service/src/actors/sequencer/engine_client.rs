@@ -6,10 +6,10 @@ use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_engine::EngineState;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use derive_more::Constructor;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::{
-    EngineClientError, EngineClientResult,
+    EngineClientError, EngineClientResult, StartupSyncHandoffRequest,
     actors::engine::{
         BuildRequest, EngineActorRequest, GetPayloadRequest, InsertUnsafePayloadRequest,
         ReconcileShadowRequest, ResetOrigin, ResetReason, ResetRequest,
@@ -73,6 +73,17 @@ pub trait SequencerEngineClient: Debug + Send + Sync {
 
     /// Returns whether the engine has completed execution-layer sync.
     async fn el_sync_finished(&self) -> EngineClientResult<bool>;
+
+    /// Returns the latest engine state.
+    async fn engine_state(&self) -> EngineClientResult<EngineState> {
+        Err(EngineClientError::RequestError("engine state unavailable".to_string()))
+    }
+
+    /// Asks the engine to leave the sync-on-startup phase. Returns the unsafe head handed to the
+    /// sequencer, or [`None`] while the engine is not ready.
+    async fn request_startup_handoff(&self) -> EngineClientResult<Option<L2BlockInfo>> {
+        Err(EngineClientError::RequestError("sync-on-startup unavailable".to_string()))
+    }
 }
 
 /// Blanket implementation so [`Arc<T>`] can be used wherever `T: SequencerEngineClient`.
@@ -129,6 +140,14 @@ impl<T: SequencerEngineClient> SequencerEngineClient for Arc<T> {
     async fn el_sync_finished(&self) -> EngineClientResult<bool> {
         (**self).el_sync_finished().await
     }
+
+    async fn engine_state(&self) -> EngineClientResult<EngineState> {
+        (**self).engine_state().await
+    }
+
+    async fn request_startup_handoff(&self) -> EngineClientResult<Option<L2BlockInfo>> {
+        (**self).request_startup_handoff().await
+    }
 }
 
 /// Queue-based implementation of the [`SequencerEngineClient`] trait. This handles all
@@ -141,6 +160,8 @@ pub struct QueuedSequencerEngineClient {
     pub unsafe_head_rx: watch::Receiver<L2BlockInfo>,
     /// A channel to receive the latest engine state.
     pub engine_state_rx: watch::Receiver<EngineState>,
+    /// Sync-on-startup handoff requests to the engine, when sync-on-startup is enabled.
+    pub startup_handoff_tx: Option<mpsc::Sender<StartupSyncHandoffRequest>>,
 }
 
 impl QueuedSequencerEngineClient {
@@ -176,6 +197,24 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
 
     async fn el_sync_finished(&self) -> EngineClientResult<bool> {
         Ok(self.engine_state_rx.borrow().el_sync_finished)
+    }
+
+    async fn engine_state(&self) -> EngineClientResult<EngineState> {
+        Ok(*self.engine_state_rx.borrow())
+    }
+
+    async fn request_startup_handoff(&self) -> EngineClientResult<Option<L2BlockInfo>> {
+        let handoff_tx = self.startup_handoff_tx.as_ref().ok_or_else(|| {
+            EngineClientError::RequestError("sync-on-startup unavailable".to_string())
+        })?;
+        let (reply_tx, reply_rx) = oneshot::channel();
+        handoff_tx
+            .send(reply_tx)
+            .await
+            .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
+        reply_rx
+            .await
+            .map_err(|_| EngineClientError::ResponseError("response channel closed.".to_string()))
     }
 
     async fn reconcile_shadow(
@@ -365,7 +404,8 @@ mod tests {
         let (request_tx, _request_rx) = mpsc::channel(1);
         let (_, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
         let (engine_state_tx, engine_state_rx) = watch::channel(EngineState::default());
-        let client = QueuedSequencerEngineClient::new(request_tx, unsafe_head_rx, engine_state_rx);
+        let client =
+            QueuedSequencerEngineClient::new(request_tx, unsafe_head_rx, engine_state_rx, None);
 
         assert!(!client.el_sync_finished().await.expect("read engine state"));
 
@@ -380,7 +420,8 @@ mod tests {
         let (_, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
         let (_, engine_state_rx) = watch::channel(EngineState::default());
         let inserted_head = l2_head(1);
-        let client = QueuedSequencerEngineClient::new(request_tx, unsafe_head_rx, engine_state_rx);
+        let client =
+            QueuedSequencerEngineClient::new(request_tx, unsafe_head_rx, engine_state_rx, None);
 
         let insert_handle =
             tokio::spawn(async move { client.insert_unsafe_payload(dummy_envelope()).await });
@@ -404,7 +445,8 @@ mod tests {
         let (_, engine_state_rx) = watch::channel(EngineState::default());
         let shadow_head = l2_head(12);
         let reconciled_head = l2_head(12);
-        let client = QueuedSequencerEngineClient::new(request_tx, unsafe_head_rx, engine_state_rx);
+        let client =
+            QueuedSequencerEngineClient::new(request_tx, unsafe_head_rx, engine_state_rx, None);
 
         let reconcile_handle =
             tokio::spawn(async move { client.reconcile_shadow(shadow_head).await });

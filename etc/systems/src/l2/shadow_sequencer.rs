@@ -103,6 +103,8 @@ impl ShadowSequencer {
             txpool_max_transactions: None,
             txpool_max_size_mb: None,
             txpool_max_account_slots: None,
+            p2p_secret_key: None,
+            disable_tx_gossip: false,
         })
         .await
         .wrap_err("Failed to start shadow builder")?;
@@ -125,6 +127,7 @@ impl ShadowSequencer {
             sequencer_stopped: true,
             verifier_l1_confs: 0,
             shadow_blocks_per_cycle: Some(config.shadow_blocks_per_cycle),
+            sync_on_startup: None,
             upgrade_signal: None,
         })
         .await

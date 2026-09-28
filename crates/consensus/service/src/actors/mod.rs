@@ -58,6 +58,11 @@ pub use network::{
     QueuedUnsafePayloadGossipClient, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
 };
 
+mod sync_on_startup;
+pub use sync_on_startup::{
+    StartupSyncEngineRequestHandler, StartupSyncHandoffRequest, SyncOnStartupConfig, SyncProgress,
+};
+
 mod sequencer;
 pub use sequencer::{
     BuildOutcome, BuildPipelineState, CanonicalReconciliationInputs, CanonicalUnsafeCatchup,

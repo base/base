@@ -217,6 +217,11 @@ impl SystemTestStack {
         self.l1_stack.rpc_url().await
     }
 
+    /// Returns the public beacon API URL of the L1 beacon node.
+    pub async fn l1_beacon_url(&self) -> Result<Url> {
+        self.l1_stack.beacon_url().await?.parse().wrap_err("invalid L1 beacon URL")
+    }
+
     /// Returns the public RPC URL of the L2 builder node.
     pub fn l2_rpc_url(&self) -> Result<Url> {
         self.l2_stack().rpc_url()

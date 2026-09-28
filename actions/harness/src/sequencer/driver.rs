@@ -284,6 +284,7 @@ impl<E: SequencerEngineBackend> L2Sequencer<E> {
             unsafe_payload_gossip_client: Box::new(ActionUnsafePayloadGossipClient),
             sealer: None,
             pending_stop: None,
+            sync_on_startup: None,
         };
 
         self.admin_api_tx = Some(admin_api_tx);

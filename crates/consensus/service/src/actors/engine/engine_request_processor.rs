@@ -105,6 +105,17 @@ where
         self.engine.enqueue(task);
     }
 
+    /// Returns whether EL sync completed and derivation was notified, including the initial
+    /// engine reset when one was needed.
+    pub const fn el_sync_complete(&self) -> bool {
+        self.el_sync_complete
+    }
+
+    /// Replaces the client used to signal the derivation actor.
+    pub fn set_derivation_client(&mut self, derivation_client: Box<dyn EngineDerivationClient>) {
+        self.derivation_client = derivation_client;
+    }
+
     /// Constructs a new [`EngineProcessor`] from the params.
     pub fn new(
         client: Arc<EngineClient_>,

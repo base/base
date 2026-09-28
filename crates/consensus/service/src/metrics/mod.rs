@@ -150,6 +150,12 @@ base_metrics::define_metrics! {
     l1_verifier_derivation_head: counter,
     #[describe("Failed attempts to fetch a delayed L1 block for verifier confirmation")]
     l1_verifier_delayed_fetch_errors: counter,
+    #[describe("Sync-on-startup phase: 0 while syncing, 1 after switching to the sequencer mode")]
+    sync_on_startup_phase: gauge,
+    #[describe("Safe head age in seconds while sync-on-startup is syncing")]
+    sync_on_startup_safe_head_age_seconds: gauge,
+    #[describe("Unsafe head age in seconds while sync-on-startup is syncing")]
+    sync_on_startup_unsafe_head_lag_seconds: gauge,
 }
 
 impl Metrics {

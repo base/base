@@ -26,4 +26,8 @@ pub enum SequencerActorError {
     /// An error occurred while attempting to schedule unsafe payload gossip.
     #[error("An error occurred while attempting to schedule unsafe payload gossip: {0}")]
     PayloadGossip(#[from] UnsafePayloadGossipClientError),
+    /// Sync-on-startup did not catch up before its timeout, so the sequencer refuses to start on a
+    /// stale head.
+    #[error("sync-on-startup did not catch up within {0:?}")]
+    StartupSyncTimeout(std::time::Duration),
 }

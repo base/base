@@ -21,7 +21,7 @@ use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
 use crate::{
     CancellableContext, Metrics, NodeActor, NodeOperatingMode, ResetReason, SequencerAdminQuery,
-    UnsafePayloadGossipClient,
+    SyncOnStartupConfig, SyncProgress, UnsafePayloadGossipClient,
     actors::{
         SequencerEngineClient,
         engine::{EngineClientError, EngineClientResult},
@@ -85,6 +85,9 @@ where
     /// Stashed response sender for a pending `stop_sequencer` call that is waiting
     /// for the in-flight seal pipeline to complete before responding.
     pub pending_stop: Option<PendingStopSender>,
+    /// When [`Some`], the sequencer stays stopped while the engine follows the canonical chain,
+    /// asks the engine to hand off once caught up, then activates in [`Self::mode`].
+    pub sync_on_startup: Option<SyncOnStartupConfig>,
 }
 
 impl<AttributesBuilder_, Conductor_, OriginSelector_, SequencerEngineClient_>
@@ -250,6 +253,118 @@ where
                 }
             }
         }
+    }
+
+    /// Waits until the engine has followed the canonical chain to a fresh head and handed off,
+    /// servicing admin queries meanwhile. Returns `false` on cancellation.
+    async fn wait_for_startup_sync(
+        &mut self,
+        config: SyncOnStartupConfig,
+        next_payload: &mut Option<UnsealedPayloadHandle>,
+    ) -> Result<bool, SequencerActorError> {
+        Metrics::sync_on_startup_phase().set(0.0);
+        info!(
+            target: "sequencer",
+            mode = ?self.mode,
+            max_safe_age = ?config.max_safe_age,
+            max_unsafe_lag = ?config.max_unsafe_lag,
+            timeout = ?config.timeout,
+            "sync-on-startup: syncing"
+        );
+        let deadline = config.timeout.map(|timeout| tokio::time::Instant::now() + timeout);
+        let mut ticker = tokio::time::interval(SyncOnStartupConfig::POLL_INTERVAL);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            select! {
+                biased;
+                _ = self.cancellation_token.cancelled() => return Ok(false),
+                Some(query) = self.admin_api_rx.recv() => match query {
+                    SequencerAdminQuery::StartSequencer(_, tx) => {
+                        let error = SequencerAdminAPIError::RequestError(
+                            "sync-on-startup in progress; the sequencer starts once caught up"
+                                .to_string(),
+                        );
+                        if tx.send(Err(error)).is_err() {
+                            warn!(target: "sequencer", "Failed to send response for start_sequencer query");
+                        }
+                    }
+                    query => {
+                        self.handle_admin_query(next_payload, query).await;
+                    }
+                },
+                _ = async {
+                    match deadline {
+                        Some(deadline) => tokio::time::sleep_until(deadline).await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    let timeout = config.timeout.unwrap_or_default();
+                    error!(target: "sequencer", timeout = ?timeout, "sync-on-startup: timed out before catching up");
+                    self.cancellation_token.cancel();
+                    return Err(SequencerActorError::StartupSyncTimeout(timeout));
+                }
+                _ = ticker.tick() => {
+                    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+                    let progress = SyncProgress::observe(&self.engine_client.engine_state().await?, now);
+                    Metrics::sync_on_startup_safe_head_age_seconds().set(progress.safe_age.as_secs_f64());
+                    Metrics::sync_on_startup_unsafe_head_lag_seconds().set(progress.unsafe_lag.as_secs_f64());
+                    if !config.is_caught_up(&progress) {
+                        debug!(
+                            target: "sequencer",
+                            el_sync_finished = progress.el_sync_finished,
+                            safe_age = ?progress.safe_age,
+                            unsafe_lag = ?progress.unsafe_lag,
+                            unsafe_head = progress.unsafe_head.block_info.number,
+                            "sync-on-startup: not caught up"
+                        );
+                        continue;
+                    }
+                    let Some(head) = self.engine_client.request_startup_handoff().await? else {
+                        debug!(target: "sequencer", "sync-on-startup: engine not ready for handoff");
+                        continue;
+                    };
+                    info!(
+                        target: "sequencer",
+                        safe_age = ?progress.safe_age,
+                        unsafe_lag = ?progress.unsafe_lag,
+                        head_number = head.block_info.number,
+                        head_hash = %head.block_info.hash,
+                        "sync-on-startup: caught up"
+                    );
+                    Metrics::sync_on_startup_phase().set(1.0);
+                    return Ok(true);
+                }
+            }
+        }
+    }
+
+    /// Activates the sequencer after sync-on-startup, as a node started directly in
+    /// [`Self::mode`] would be. [`NodeOperatingMode::Sequencer`] goes through
+    /// `admin_startSequencer` semantics so conductor leadership still applies.
+    async fn activate_after_startup_sync(&mut self) -> Result<(), SequencerActorError> {
+        let head = self.engine_client.get_unsafe_head().await?;
+        if self.mode == NodeOperatingMode::Sequencer {
+            if let Err(error) = self.start_sequencer(head.block_info.hash).await {
+                warn!(
+                    target: "sequencer",
+                    error = ?error,
+                    "sync-on-startup: sequencer not started; waiting for admin_startSequencer"
+                );
+                return Ok(());
+            }
+        } else {
+            self.is_active = true;
+            self.update_metrics();
+        }
+        info!(
+            target: "sequencer",
+            mode = ?self.mode,
+            head_number = head.block_info.number,
+            head_hash = %head.block_info.hash,
+            "sync-on-startup: switched to sequencer mode"
+        );
+        Ok(())
     }
 
     /// Discards private work after a coordinated admin reset and starts a fresh canonical cycle.
@@ -635,9 +750,22 @@ where
 
         let mut pipeline = BuildPipelineState::default();
 
+        let synced_on_startup = match self.sync_on_startup.take() {
+            Some(config) => {
+                if !self.wait_for_startup_sync(config, &mut pipeline.next_payload_to_seal).await? {
+                    return Ok(());
+                }
+                true
+            }
+            None => false,
+        };
+
         // Reset the engine state prior to beginning block building.
         // Admin API queries are serviced during this phase (see schedule_initial_reset).
         self.schedule_initial_reset(&mut pipeline.next_payload_to_seal).await?;
+        if synced_on_startup {
+            self.activate_after_startup_sync().await?;
+        }
         let mut shadow: Option<ShadowSequencingState> = if self.is_shadow_sequencer() {
             Some(ShadowSequencingState::new(self.engine_client.get_unsafe_head().await?)?)
         } else {
@@ -770,6 +898,153 @@ mod tests {
             parent_beacon_block_root: None,
         };
         (PayloadSealer::new(envelope), head, config)
+    }
+
+    fn synced_head() -> L2BlockInfo {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        L2BlockInfo {
+            block_info: BlockInfo {
+                hash: B256::repeat_byte(0x07),
+                number: 7,
+                timestamp: now,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn engine_state(safe_age: Duration) -> base_consensus_engine::EngineState {
+        let mut safe_head = synced_head();
+        safe_head.block_info.timestamp -= safe_age.as_secs();
+        let mut state = base_consensus_engine::EngineState::default();
+        state.sync_state =
+            state.sync_state.apply_update(base_consensus_engine::EngineSyncStateUpdate {
+                unsafe_head: Some(synced_head()),
+                safe_head: Some(safe_head),
+                ..Default::default()
+            });
+        state.el_sync_finished = true;
+        state
+    }
+
+    fn syncing_actor(
+        mode: NodeOperatingMode,
+        engine: crate::MockSequencerEngineClient,
+    ) -> (
+        SequencerActor<
+            base_consensus_derive::test_utils::TestAttributesBuilder,
+            crate::MockConductor,
+            crate::MockOriginSelector,
+            crate::MockSequencerEngineClient,
+        >,
+        mpsc::Sender<SequencerAdminQuery>,
+    ) {
+        let (admin_tx, admin_rx) = mpsc::channel(4);
+        let mut actor = test_actor();
+        actor.engine_client = Arc::new(engine);
+        actor.admin_api_rx = admin_rx;
+        actor.is_active = false;
+        actor.mode = mode;
+        (actor, admin_tx)
+    }
+
+    fn head_engine() -> crate::MockSequencerEngineClient {
+        let mut engine = crate::MockSequencerEngineClient::new();
+        engine.expect_get_unsafe_head().returning(|| Ok(synced_head()));
+        engine
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn startup_sync_hands_off_once_after_engine_is_ready() {
+        let mut engine = crate::MockSequencerEngineClient::new();
+        engine.expect_engine_state().returning(|| Ok(engine_state(Duration::from_secs(30))));
+        let mut handoffs = mockall::Sequence::new();
+        // The first request arrives before the initial derivation reset has run.
+        engine
+            .expect_request_startup_handoff()
+            .times(1)
+            .in_sequence(&mut handoffs)
+            .returning(|| Ok(None));
+        engine
+            .expect_request_startup_handoff()
+            .times(1)
+            .in_sequence(&mut handoffs)
+            .returning(|| Ok(Some(synced_head())));
+        let (mut actor, admin_tx) = syncing_actor(NodeOperatingMode::IsolatedSequencer, engine);
+        let (start_reply_tx, start_reply_rx) = oneshot::channel();
+        admin_tx
+            .send(SequencerAdminQuery::StartSequencer(synced_head().hash(), start_reply_tx))
+            .await
+            .unwrap();
+        let (active_reply_tx, active_reply_rx) = oneshot::channel();
+        admin_tx.send(SequencerAdminQuery::SequencerActive(active_reply_tx)).await.unwrap();
+
+        let handed_off =
+            actor.wait_for_startup_sync(SyncOnStartupConfig::default(), &mut None).await;
+
+        assert!(handed_off.unwrap());
+        assert!(start_reply_rx.await.unwrap().is_err());
+        assert!(!active_reply_rx.await.unwrap().unwrap());
+        assert!(!actor.is_active);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn startup_sync_times_out_on_stale_safe_head_without_handoff() {
+        let mut engine = crate::MockSequencerEngineClient::new();
+        engine
+            .expect_engine_state()
+            .returning(|| Ok(engine_state(SyncOnStartupConfig::DEFAULT_MAX_SAFE_AGE * 2)));
+        engine.expect_request_startup_handoff().times(0);
+        let (mut actor, _admin_tx) = syncing_actor(NodeOperatingMode::IsolatedSequencer, engine);
+        let config = SyncOnStartupConfig {
+            timeout: Some(Duration::from_secs(5)),
+            ..SyncOnStartupConfig::default()
+        };
+
+        let result = actor.wait_for_startup_sync(config, &mut None).await;
+
+        assert!(matches!(result, Err(SequencerActorError::StartupSyncTimeout(_))));
+        assert!(actor.cancellation_token.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn startup_sync_cancellation_stops_waiting() {
+        let (mut actor, _admin_tx) = syncing_actor(
+            NodeOperatingMode::IsolatedSequencer,
+            crate::MockSequencerEngineClient::new(),
+        );
+        actor.cancellation_token.cancel();
+
+        let result = actor.wait_for_startup_sync(SyncOnStartupConfig::default(), &mut None).await;
+
+        assert!(!result.unwrap());
+    }
+
+    #[rstest::rstest]
+    #[case::isolated(NodeOperatingMode::IsolatedSequencer)]
+    #[case::shadow(NodeOperatingMode::ShadowSequencer {
+        blocks_per_cycle: std::num::NonZeroU64::new(10).unwrap(),
+    })]
+    #[case::sequencer_without_conductor(NodeOperatingMode::Sequencer)]
+    #[tokio::test]
+    async fn startup_sync_activates_after_handoff(#[case] mode: NodeOperatingMode) {
+        let (mut actor, _admin_tx) = syncing_actor(mode, head_engine());
+
+        actor.activate_after_startup_sync().await.unwrap();
+
+        assert!(actor.is_active);
+    }
+
+    #[tokio::test]
+    async fn startup_sync_sequencer_stays_stopped_when_not_conductor_leader() {
+        let (mut actor, _admin_tx) = syncing_actor(NodeOperatingMode::Sequencer, head_engine());
+        let mut conductor = crate::MockConductor::new();
+        conductor.expect_leader().returning(|| Ok(false));
+        actor.conductor = Some(conductor);
+
+        actor.activate_after_startup_sync().await.unwrap();
+
+        assert!(!actor.is_active);
     }
 
     #[tokio::test]

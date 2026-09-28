@@ -275,6 +275,23 @@ pub struct EmbeddedConsensusNodeConfigArgs {
 /// Consensus node configuration arguments for embedded sequencer callers.
 #[derive(Args, Clone, Debug)]
 pub struct EmbeddedSequencerConsensusNodeConfigArgs {
+    /// The sequencer mode to run the node in. `Validator` is rejected; use `base rpc` instead.
+    #[arg(
+        long = "mode",
+        default_value_t = NodeMode::Sequencer,
+        env = "BASE_NODE_MODE",
+        value_parser = Self::parse_sequencer_mode,
+        help = format!(
+            "The sequencer mode to run the node in. Supported modes are: {}",
+            NodeMode::iter()
+                .filter(NodeMode::is_sequencer)
+                .map(|mode| format!("\"{mode}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    )]
+    pub node_mode: NodeMode,
+
     /// L1 RPC CLI arguments.
     #[clap(flatten)]
     pub l1_rpc_args: L1ClientArgs,
@@ -312,6 +329,17 @@ pub struct EmbeddedSequencerConsensusNodeConfigArgs {
     pub checkpoint_path: Option<PathBuf>,
 }
 
+impl EmbeddedSequencerConsensusNodeConfigArgs {
+    /// Parses `--mode` for `base sequencer`, accepting only sequencer modes.
+    pub fn parse_sequencer_mode(arg: &str) -> Result<NodeMode, String> {
+        let mode = arg.parse::<NodeMode>().map_err(|e| e.to_string())?;
+        if mode.is_validator() {
+            return Err(format!("`{mode}` is not a sequencer mode; use `base rpc` instead"));
+        }
+        Ok(mode)
+    }
+}
+
 impl From<EmbeddedConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
     fn from(args: EmbeddedConsensusNodeConfigArgs) -> Self {
         Self {
@@ -322,7 +350,10 @@ impl From<EmbeddedConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
             l2_config: args.l2_config,
             p2p_flags: args.p2p_flags.into(),
             rpc_flags: args.rpc_flags.into(),
-            sequencer_flags: SequencerArgs::default(),
+            // `SequencerArgs::default()` parses the process environment. Validators never
+            // sync-then-sequence, so pin the flag off instead of inheriting an env value that
+            // would make `base rpc` fail validation.
+            sequencer_flags: SequencerArgs { sync_on_startup: false, ..SequencerArgs::default() },
             safedb_path: args.safedb_path,
             checkpoint_path: args.checkpoint_path,
             upgrade_signal: UpgradeSignalArgs::default(),
@@ -333,7 +364,7 @@ impl From<EmbeddedConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
 impl From<EmbeddedSequencerConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
     fn from(args: EmbeddedSequencerConsensusNodeConfigArgs) -> Self {
         Self {
-            node_mode: NodeMode::Sequencer,
+            node_mode: args.node_mode,
             l1_rpc_args: args.l1_rpc_args,
             l2_client_args: args.l2_client_args.into(),
             l1_config: args.l1_config,
@@ -364,6 +395,17 @@ impl ConsensusNodeArgs {
             && self.config.node_mode != NodeMode::IsolatedSequencer
         {
             eyre::bail!("--sequencer.isolated is deprecated; use --mode IsolatedSequencer instead");
+        }
+        Ok(())
+    }
+
+    /// Validates that `--sequencer.sync-on-startup` is only used with a sequencer `--mode`.
+    pub fn validate_sync_on_startup(&self) -> eyre::Result<()> {
+        if self.config.sequencer_flags.sync_on_startup && self.config.node_mode.is_validator() {
+            eyre::bail!(
+                "--sequencer.sync-on-startup requires --mode Sequencer, ShadowSequencer, or \
+                 IsolatedSequencer"
+            );
         }
         Ok(())
     }
@@ -473,6 +515,7 @@ impl ConsensusNodeArgs {
         startup_mode: UpgradeSignalStartupMode,
     ) -> eyre::Result<RollupNode> {
         self.validate_isolated_flag()?;
+        self.validate_sync_on_startup()?;
         self.validate_sequencer_key()?;
         self.validate_shadow_funding()?;
         self.validate_da_batcher_sender_override()?;
@@ -1156,11 +1199,100 @@ mod tests {
         ));
     }
 
+    #[rstest]
+    #[case::sequencer(NodeMode::Sequencer, true)]
+    #[case::shadow(NodeMode::ShadowSequencer, true)]
+    #[case::isolated(NodeMode::IsolatedSequencer, true)]
+    #[case::validator(NodeMode::Validator, false)]
+    fn validates_sync_on_startup_mode(#[case] mode: NodeMode, #[case] expected_ok: bool) {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs {
+                node_mode: mode,
+                sequencer_flags: SequencerArgs {
+                    sync_on_startup: true,
+                    ..SequencerArgs::default()
+                },
+                ..default_node_config_args()
+            },
+        );
+
+        assert_eq!(args.validate_sync_on_startup().is_ok(), expected_ok);
+    }
+
+    #[test]
+    fn isolated_sequencer_without_sync_on_startup_keeps_it_off() {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs {
+                node_mode: NodeMode::IsolatedSequencer,
+                ..default_node_config_args()
+            },
+        );
+
+        assert!(args.validate_sync_on_startup().is_ok());
+        assert_eq!(args.config.sequencer_flags.config().sync_on_startup, None);
+    }
+
+    #[test]
+    fn embedded_validator_ignores_sync_on_startup_from_env() {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .arg("--exact")
+            .arg("node::tests::embedded_validator_ignores_sync_on_startup_from_env_child")
+            .arg("--ignored")
+            .env("BASE_NODE_SEQUENCER_SYNC_ON_STARTUP", "true");
+        let output = command.output().unwrap();
+
+        assert!(
+            output.status.success(),
+            "child env parsing test failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    #[ignore = "spawned by embedded_validator_ignores_sync_on_startup_from_env with its env"]
+    fn embedded_validator_ignores_sync_on_startup_from_env_child() {
+        let embedded = CommandParser::<EmbeddedConsensusNodeConfigArgs>::parse_from([
+            "base",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+        ])
+        .args;
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs::from(embedded),
+        );
+
+        assert!(!args.config.sequencer_flags.sync_on_startup);
+        assert!(args.validate_sync_on_startup().is_ok());
+    }
+
+    #[rstest]
+    #[case::sequencer("Sequencer", Some(NodeMode::Sequencer))]
+    #[case::shadow("ShadowSequencer", Some(NodeMode::ShadowSequencer))]
+    #[case::isolated("IsolatedSequencer", Some(NodeMode::IsolatedSequencer))]
+    #[case::validator("Validator", None)]
+    fn embedded_sequencer_mode_accepts_only_sequencer_modes(
+        #[case] arg: &str,
+        #[case] expected: Option<NodeMode>,
+    ) {
+        assert_eq!(
+            EmbeddedSequencerConsensusNodeConfigArgs::parse_sequencer_mode(arg).ok(),
+            expected
+        );
+    }
+
     #[test]
     fn embedded_sequencer_args_force_sequencer_mode_and_preserve_flags() {
         let key = B256::ZERO;
         let conductor_rpc = Url::parse("http://localhost:9090").unwrap();
         let args = EmbeddedSequencerConsensusNodeConfigArgs {
+            node_mode: NodeMode::Sequencer,
             p2p_flags: P2PArgs {
                 signer: SignerArgs { sequencer_key: Some(key), ..Default::default() },
                 ..P2PArgs::default()

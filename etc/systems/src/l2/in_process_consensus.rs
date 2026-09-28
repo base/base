@@ -20,7 +20,7 @@ use base_common_genesis::RollupConfig;
 use base_consensus_disc::LocalNode;
 use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
-    UpgradeSignalBuilderConfig,
+    SyncOnStartupConfig, UpgradeSignalBuilderConfig,
 };
 use base_consensus_peers::{PeerScoreLevel, SecretKeyLoader};
 use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient, RollupNodeApiClient, RpcBuilder};
@@ -83,6 +83,8 @@ pub struct InProcessConsensusConfig {
     /// shadow sequencer: it buffers canonical payloads gossiped by the active sequencer, builds
     /// the given number of private blocks per cycle, then reconciles back to the canonical chain.
     pub shadow_blocks_per_cycle: Option<NonZeroU64>,
+    /// Sync to the canonical chain before switching to the sequencer `mode`.
+    pub sync_on_startup: Option<SyncOnStartupConfig>,
     /// Optional L1 upgrade signal configuration.
     ///
     /// When the mode applies at startup, the schedule is read from L1 (over `l1_rpc_url`) and
@@ -251,6 +253,7 @@ impl InProcessConsensus {
         if config.mode.is_sequencer() {
             builder = builder.with_sequencer_config(SequencerConfig {
                 sequencer_stopped: config.sequencer_stopped,
+                sync_on_startup: config.sync_on_startup,
                 l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
                 ..Default::default()
             });

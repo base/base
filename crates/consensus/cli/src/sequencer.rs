@@ -9,7 +9,7 @@ use alloy_primitives::{
     Address, U256,
     utils::{Unit, parse_ether},
 };
-use base_consensus_node::{SequencerConfig, ShadowFunding};
+use base_consensus_node::{SequencerConfig, ShadowFunding, SyncOnStartupConfig};
 use base_protocol::DEFAULT_SEAL_OFFSET;
 use clap::Parser;
 use url::Url;
@@ -110,6 +110,46 @@ pub struct SequencerArgs {
         env = "BASE_NODE_CONDUCTOR_BINARY_COMMIT"
     )]
     pub conductor_binary_commit: bool,
+
+    /// Follow the canonical chain like a validator at startup, then switch to the configured
+    /// sequencer mode once caught up. Requires a sequencer `--mode`.
+    #[arg(
+        long = "sequencer.sync-on-startup",
+        default_value = "false",
+        env = "BASE_NODE_SEQUENCER_SYNC_ON_STARTUP",
+        conflicts_with = "stopped"
+    )]
+    pub sync_on_startup: bool,
+
+    /// Maximum age of the safe head, in seconds, for sync-on-startup to consider the node caught
+    /// up.
+    #[arg(
+        long = "sequencer.sync-max-safe-age",
+        default_value = "900",
+        env = "BASE_NODE_SEQUENCER_SYNC_MAX_SAFE_AGE",
+        value_parser = Self::parse_seconds
+    )]
+    pub sync_max_safe_age: Duration,
+
+    /// Maximum age of the unsafe head, in seconds, for sync-on-startup to consider the node
+    /// caught up.
+    #[arg(
+        long = "sequencer.sync-max-unsafe-lag",
+        default_value = "60",
+        env = "BASE_NODE_SEQUENCER_SYNC_MAX_UNSAFE_LAG",
+        value_parser = Self::parse_seconds
+    )]
+    pub sync_max_unsafe_lag: Duration,
+
+    /// Seconds to wait for sync-on-startup to catch up before exiting with an error. `0` waits
+    /// forever.
+    #[arg(
+        long = "sequencer.sync-timeout",
+        default_value = "0",
+        env = "BASE_NODE_SEQUENCER_SYNC_TIMEOUT",
+        value_parser = Self::parse_seconds
+    )]
+    pub sync_timeout: Duration,
 }
 
 impl Default for SequencerArgs {
@@ -121,9 +161,24 @@ impl Default for SequencerArgs {
 }
 
 impl SequencerArgs {
+    /// Parses a whole number of seconds.
+    pub fn parse_seconds(arg: &str) -> Result<Duration, ParseIntError> {
+        Ok(Duration::from_secs(arg.parse()?))
+    }
+
+    /// Returns the sync-on-startup configuration, or [`None`] when the flag is off.
+    pub fn sync_on_startup_config(&self) -> Option<SyncOnStartupConfig> {
+        self.sync_on_startup.then(|| SyncOnStartupConfig {
+            max_safe_age: self.sync_max_safe_age,
+            max_unsafe_lag: self.sync_max_unsafe_lag,
+            timeout: (!self.sync_timeout.is_zero()).then_some(self.sync_timeout),
+        })
+    }
+
     /// Creates a [`SequencerConfig`] from the [`SequencerArgs`].
     pub fn config(&self) -> SequencerConfig {
         SequencerConfig {
+            sync_on_startup: self.sync_on_startup_config(),
             sequencer_stopped: self.stopped,
             sequencer_recovery_mode: self.recover,
             shadow_funding: self.shadow_funding_address.map(|address| {
@@ -151,7 +206,7 @@ mod tests {
         Address, U256, address,
         utils::{Unit, parse_ether},
     };
-    use base_consensus_node::ShadowFunding;
+    use base_consensus_node::{ShadowFunding, SyncOnStartupConfig};
     use clap::{Parser, error::ErrorKind};
 
     use super::{SequencerArgs, SequencerConfig};
@@ -251,6 +306,65 @@ mod tests {
             "base-consensus",
             "--sequencer.isolated",
             "--sequencer.recover",
+        ])
+        .unwrap_err();
+
+        assert_eq!(error.kind(), ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn sync_on_startup_defaults_off_with_documented_thresholds() {
+        let args = SequencerArgs::try_parse_from(["base-consensus"]).unwrap();
+
+        assert!(!args.sync_on_startup);
+        assert_eq!(args.sync_on_startup_config(), None);
+        assert_eq!(args.sync_max_safe_age, SyncOnStartupConfig::DEFAULT_MAX_SAFE_AGE);
+        assert_eq!(args.sync_max_unsafe_lag, SyncOnStartupConfig::DEFAULT_MAX_UNSAFE_LAG);
+    }
+
+    #[test]
+    fn parses_sync_on_startup_config() {
+        let args = SequencerArgs::try_parse_from([
+            "base-consensus",
+            "--sequencer.sync-on-startup",
+            "--sequencer.sync-max-safe-age",
+            "120",
+            "--sequencer.sync-max-unsafe-lag",
+            "10",
+            "--sequencer.sync-timeout",
+            "3600",
+        ])
+        .unwrap();
+
+        assert_eq!(
+            args.config().sync_on_startup,
+            Some(SyncOnStartupConfig {
+                max_safe_age: Duration::from_secs(120),
+                max_unsafe_lag: Duration::from_secs(10),
+                timeout: Some(Duration::from_secs(3600)),
+            })
+        );
+    }
+
+    #[test]
+    fn zero_sync_timeout_waits_forever() {
+        let args = SequencerArgs::try_parse_from([
+            "base-consensus",
+            "--sequencer.sync-on-startup",
+            "--sequencer.sync-timeout",
+            "0",
+        ])
+        .unwrap();
+
+        assert_eq!(args.sync_on_startup_config().unwrap().timeout, None);
+    }
+
+    #[test]
+    fn rejects_sync_on_startup_with_stopped() {
+        let error = SequencerArgs::try_parse_from([
+            "base-consensus",
+            "--sequencer.sync-on-startup",
+            "--sequencer.stopped",
         ])
         .unwrap_err();
 

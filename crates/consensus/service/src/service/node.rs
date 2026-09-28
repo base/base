@@ -38,7 +38,8 @@ use crate::{
     QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
     QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
     RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
-    SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
+    SequencerEngineRequestCoordinator, StartupSyncEngineRequestHandler, UpgradeSignalNodeConfig,
+    ValidatorEngineRequestHandler,
     actors::{
         BlockStream, NetworkInboundData, PrivateGossipClient, QueuedUnsafePayloadGossipClient,
         UnsafePayloadGossipClient,
@@ -51,6 +52,7 @@ const DERIVATION_PROVIDER_CACHE_SIZE: usize = 1024;
 enum ConfiguredEngineReceiver<E: EngineClient + 'static> {
     Validator(ValidatorEngineRequestHandler<E>),
     Sequencer(SequencerEngineRequestCoordinator<E>),
+    StartupSync(StartupSyncEngineRequestHandler<E>),
 }
 
 impl<E: EngineClient + 'static> EngineRequestReceiver for ConfiguredEngineReceiver<E> {
@@ -61,6 +63,7 @@ impl<E: EngineClient + 'static> EngineRequestReceiver for ConfiguredEngineReceiv
         match self {
             Self::Validator(receiver) => receiver.start(request_channel),
             Self::Sequencer(receiver) => receiver.start(request_channel),
+            Self::StartupSync(receiver) => receiver.start(request_channel),
         }
     }
 }
@@ -455,18 +458,29 @@ impl RollupNode {
         let node_mode = self.mode();
         let shadow_sequencer = node_mode.is_shadow_sequencer();
         let sequencer_stopped = self.sequencer_config.sequencer_stopped;
-        let derivation_client: Box<dyn EngineDerivationClient> = match node_mode {
-            NodeOperatingMode::Validator
-            | NodeOperatingMode::Sequencer
-            | NodeOperatingMode::ShadowSequencer { .. } => {
-                Box::new(QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone()))
-            }
-            NodeOperatingMode::IsolatedSequencer => Box::new(DisabledEngineDerivationClient),
+        let sync_on_startup =
+            self.sequencer_config.sync_on_startup.filter(|_| node_mode.is_sequencer());
+        // Sync-on-startup follows the canonical chain first, so it needs network and derivation
+        // even when the target mode is isolated.
+        let canonical_ingress = !node_mode.is_isolated() || sync_on_startup.is_some();
+        let (handoff_tx, handoff_rx) = mpsc::channel(1);
+        let derivation_client: Box<dyn EngineDerivationClient> = if canonical_ingress {
+            Box::new(QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone()))
+        } else {
+            Box::new(DisabledEngineDerivationClient)
         };
         let (processor, engine_rpc_processor, sequencer_engine_state_rx) =
             self.create_engine_processor(engine_client, derivation_client, checkpoint_client);
         let engine_handler = if node_mode.is_validator() {
             ConfiguredEngineReceiver::Validator(ValidatorEngineRequestHandler::new(processor))
+        } else if sync_on_startup.is_some() {
+            ConfiguredEngineReceiver::StartupSync(StartupSyncEngineRequestHandler {
+                validator: ValidatorEngineRequestHandler::new(processor),
+                target: node_mode,
+                conductor: engine_conductor,
+                unsafe_head_tx,
+                handoff_rx,
+            })
         } else {
             ConfiguredEngineReceiver::Sequencer(SequencerEngineRequestCoordinator::new(
                 processor,
@@ -481,10 +495,8 @@ impl RollupNode {
 
         // Select the concrete derivation actor implementation based on
         // RollupNode configuration.
-        let derivation: Option<ConfiguredDerivationActor<P>> = match node_mode {
-            NodeOperatingMode::Validator
-            | NodeOperatingMode::Sequencer
-            | NodeOperatingMode::ShadowSequencer { .. } => {
+        let derivation: Option<ConfiguredDerivationActor<P>> = if canonical_ingress {
+            {
                 Some(if let Some(provider) = self.derivation_delegate_provider.clone() {
                     // L1 Provider for sanity checking Derivation Delegation
                     let l1_provider = AlloyChainProvider::new(
@@ -516,48 +528,47 @@ impl RollupNode {
                     )))
                 })
             }
-            NodeOperatingMode::IsolatedSequencer => None,
+        } else {
+            None
         };
 
         // Create the p2p actor.
-        let (signer, network_rpc, queued_gossip_client, admin_network_access, network) =
-            match node_mode {
-                NodeOperatingMode::Validator
-                | NodeOperatingMode::Sequencer
-                | NodeOperatingMode::ShadowSequencer { .. } => {
-                    let (
-                        NetworkInboundData {
-                            signer,
-                            p2p_rpc: network_rpc,
-                            gossip_payload_tx,
-                            admin_rpc: net_admin_rpc,
-                        },
-                        network,
-                    ) = NetworkActor::new(
-                        QueuedNetworkEngineClient {
-                            engine_actor_request_tx: engine_actor_request_tx.clone(),
-                        },
-                        cancellation.clone(),
-                        self.network_builder(),
-                    )
-                    .await
-                    .map_err(|e| format!("Failed to start network actor: {e}"))?;
-                    (
-                        Some(signer),
-                        Some(network_rpc),
-                        Box::new(QueuedUnsafePayloadGossipClient::new(gossip_payload_tx))
-                            as Box<dyn UnsafePayloadGossipClient>,
-                        AdminNetworkAccess::Enabled(net_admin_rpc),
-                        Some(network),
-                    )
+        let (signer, network_rpc, gossip_payload_tx, admin_network_access, network) =
+            if canonical_ingress {
+                let (
+                    NetworkInboundData {
+                        signer,
+                        p2p_rpc: network_rpc,
+                        gossip_payload_tx,
+                        admin_rpc: net_admin_rpc,
+                    },
+                    network,
+                ) = NetworkActor::new(
+                    QueuedNetworkEngineClient {
+                        engine_actor_request_tx: engine_actor_request_tx.clone(),
+                    },
+                    cancellation.clone(),
+                    self.network_builder(),
+                )
+                .await
+                .map_err(|e| format!("Failed to start network actor: {e}"))?;
+                (
+                    Some(signer),
+                    Some(network_rpc),
+                    Some(gossip_payload_tx),
+                    AdminNetworkAccess::Enabled(net_admin_rpc),
+                    Some(network),
+                )
+            } else {
+                (None, None, None, AdminNetworkAccess::Disabled, None)
+            };
+        // Isolated sequencers never publish, including after a sync-on-startup transition.
+        let queued_gossip_client: Box<dyn UnsafePayloadGossipClient> =
+            match gossip_payload_tx.filter(|_| !node_mode.is_isolated()) {
+                Some(gossip_payload_tx) => {
+                    Box::new(QueuedUnsafePayloadGossipClient::new(gossip_payload_tx))
                 }
-                NodeOperatingMode::IsolatedSequencer => (
-                    None,
-                    None,
-                    Box::new(PrivateGossipClient) as Box<dyn UnsafePayloadGossipClient>,
-                    AdminNetworkAccess::Disabled,
-                    None,
-                ),
+                None => Box::new(PrivateGossipClient),
             };
 
         let (l1_head_updates_tx, l1_head_updates_rx) = watch::channel(None);
@@ -579,13 +590,10 @@ impl RollupNode {
         )?;
 
         // Create the [`L1WatcherActor`]. Previously known as the DA watcher actor.
-        let l1_derivation_client: Box<dyn L1WatcherDerivationClient> = match node_mode {
-            NodeOperatingMode::Validator
-            | NodeOperatingMode::Sequencer
-            | NodeOperatingMode::ShadowSequencer { .. } => {
-                Box::new(QueuedL1WatcherDerivationClient::new(derivation_actor_request_tx))
-            }
-            NodeOperatingMode::IsolatedSequencer => Box::new(DisabledL1WatcherDerivationClient),
+        let l1_derivation_client: Box<dyn L1WatcherDerivationClient> = if canonical_ingress {
+            Box::new(QueuedL1WatcherDerivationClient::new(derivation_actor_request_tx))
+        } else {
+            Box::new(DisabledL1WatcherDerivationClient)
         };
         let l1_watcher = L1WatcherActor::new(
             Arc::clone(&self.config),
@@ -614,7 +622,6 @@ impl RollupNode {
             .upgrade_signal_config
             .as_ref()
             .map(|c| c.metrics_actor(upgrade_signal_refresher.clone(), cancellation.clone()));
-        let node_mode = self.mode();
         // Create the sequencer if needed
         let (sequencer_actor, sequencer_admin_client) = if node_mode.is_sequencer() {
             let delayed_l1_provider = DelayedL1OriginSelectorProvider::new(
@@ -630,6 +637,7 @@ impl RollupNode {
                 engine_actor_request_tx: engine_actor_request_tx.clone(),
                 unsafe_head_rx,
                 engine_state_rx: sequencer_engine_state_rx,
+                startup_handoff_tx: sync_on_startup.map(|_| handoff_tx),
             };
 
             // Create the admin API channel
@@ -650,7 +658,7 @@ impl RollupNode {
                     cancellation_token: cancellation.clone(),
                     conductor,
                     engine_client,
-                    is_active: self.sequencer_config.sequencer_stopped.not(),
+                    is_active: sequencer_stopped.not() && sync_on_startup.is_none(),
                     mode: self.mode(),
                     shadow_funding: self.sequencer_config.shadow_funding,
                     recovery_mode,
@@ -659,6 +667,7 @@ impl RollupNode {
                     unsafe_payload_gossip_client: queued_gossip_client,
                     sealer: None,
                     pending_stop: None,
+                    sync_on_startup,
                 }),
                 Some(QueuedSequencerAdminAPIClient::new(sequencer_admin_api_tx)),
             )

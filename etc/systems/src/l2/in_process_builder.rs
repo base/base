@@ -7,7 +7,7 @@
 use core::net::{Ipv4Addr, SocketAddr};
 use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
-use alloy_primitives::hex::ToHexExt;
+use alloy_primitives::{B256, hex::ToHexExt};
 use alloy_rpc_types_engine::JwtSecret;
 use base_builder_core::{BuilderConfig, test_utils::get_available_port};
 use base_builder_multiplex::MultiplexingServiceBuilder;
@@ -82,6 +82,10 @@ pub struct InProcessBuilderConfig {
     pub txpool_max_size_mb: Option<usize>,
     /// Optional maximum number of transaction slots retained per sender.
     pub txpool_max_account_slots: Option<usize>,
+    /// Devp2p identity key. [`None`] uses the shared builder key.
+    pub p2p_secret_key: Option<B256>,
+    /// Disables transaction gossip so the mempool only holds transactions sent to this node.
+    pub disable_tx_gossip: bool,
 }
 
 impl InProcessBuilderConfig {
@@ -434,8 +438,9 @@ fn create_node_config(
     } else {
         NetworkArgs::default().with_unused_ports()
     };
-    network.p2p_secret_key_hex = Some(BUILDER.private_key);
+    network.p2p_secret_key_hex = Some(config.p2p_secret_key.unwrap_or(BUILDER.private_key));
     network.discovery.disable_discovery = true;
+    network.disable_tx_gossip = config.disable_tx_gossip;
     if let Some(port) = config.p2p_port {
         network.port = port;
     }

@@ -111,6 +111,8 @@ impl SnapshotL2Stack {
             txpool_max_transactions: Some(150_000),
             txpool_max_size_mb: Some(1_024),
             txpool_max_account_slots: Some(1_024),
+            p2p_secret_key: None,
+            disable_tx_gossip: false,
         })
         .await
         .wrap_err("failed to start snapshot builder")?;

@@ -270,6 +270,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             engine_actor_request_tx,
             unsafe_head_rx,
             engine_state_rx,
+            startup_handoff_tx: None,
         });
         let (_sequencer_admin_tx, sequencer_admin_rx) = mpsc::channel(1024);
         let recovery_mode = RecoveryModeGuard::new(false);
@@ -293,6 +294,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             unsafe_payload_gossip_client: Box::new(StandaloneUnsafePayloadGossipClient),
             sealer: None,
             pending_stop: None,
+            sync_on_startup: None,
             seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
         };
 

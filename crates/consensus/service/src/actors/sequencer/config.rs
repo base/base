@@ -7,6 +7,7 @@ use std::time::Duration;
 use url::Url;
 
 use super::ShadowFunding;
+use crate::SyncOnStartupConfig;
 
 /// Default conductor RPC timeout (1 second), matching the CLI default.
 const DEFAULT_CONDUCTOR_RPC_TIMEOUT: Duration = Duration::from_secs(1);
@@ -22,6 +23,9 @@ const DEFAULT_CONDUCTOR_RPC_TIMEOUT: Duration = Duration::from_secs(1);
 pub struct SequencerConfig {
     /// Whether or not the sequencer is enabled at startup.
     pub sequencer_stopped: bool,
+    /// When [`Some`], follow the canonical chain like a validator at startup and switch to the
+    /// configured sequencer mode once caught up.
+    pub sync_on_startup: Option<SyncOnStartupConfig>,
     /// Whether or not the sequencer is in recovery mode.
     pub sequencer_recovery_mode: bool,
     /// Optional account funding for the first private block of each shadow cycle.
@@ -61,6 +65,7 @@ impl Default for SequencerConfig {
     fn default() -> Self {
         Self {
             sequencer_stopped: false,
+            sync_on_startup: None,
             sequencer_recovery_mode: false,
             shadow_funding: None,
             conductor_rpc_url: None,

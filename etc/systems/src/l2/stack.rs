@@ -232,6 +232,8 @@ impl L2Stack {
             txpool_max_transactions: None,
             txpool_max_size_mb: None,
             txpool_max_account_slots: None,
+            p2p_secret_key: None,
+            disable_tx_gossip: false,
         };
         let builder = InProcessBuilder::start(builder_config)
             .await
@@ -248,7 +250,7 @@ impl L2Stack {
             l1_rpc_url: l1_rpc_url.clone(),
             l1_beacon_url: l1_beacon_url.clone(),
             l2_engine_url: builder.engine_url()?,
-            mode: NodeMode::ShadowSequencer,
+            mode: NodeMode::Sequencer,
             sequencer_key: Some(config.sequencer_key),
             p2p_key: Some(config.p2p_key),
             rpc_port: container_config.and_then(|c| c.builder_consensus_rpc_port),
@@ -259,6 +261,7 @@ impl L2Stack {
             sequencer_stopped: true,
             verifier_l1_confs: 0,
             shadow_blocks_per_cycle: None,
+            sync_on_startup: None,
             upgrade_signal: config.upgrade_signal.clone(),
         };
         let builder_consensus = InProcessConsensus::start(builder_consensus_config)
@@ -344,6 +347,7 @@ impl L2Stack {
                     sequencer_stopped: false,
                     verifier_l1_confs: config.verifier_l1_confs,
                     shadow_blocks_per_cycle: None,
+                    sync_on_startup: None,
                     upgrade_signal: config.upgrade_signal.clone(),
                 };
                 let client_consensus = InProcessConsensus::start(client_consensus_config)
