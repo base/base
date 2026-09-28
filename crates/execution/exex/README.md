@@ -78,7 +78,7 @@ Once `latest` tracks the chain tip, `eth_getProof` calls for every block within
 base-reth-node proofs prune \
   --datadir /path/to/reth-datadir \
   --proofs-history.storage-path /path/to/proofs-db \
-  --proofs-history.window 1296000
+  --proofs-history.window 6480000
 ```
 
 **Unwind** — recover from corruption by reverting to a specific block:

@@ -47,8 +47,8 @@ pub struct PruneCommand<C: ChainSpecParser> {
     pub proofs_history_rocksdb: ProofsHistoryRocksdbArgs,
 
     /// The window to span blocks for proofs history. Value is the number of blocks.
-    /// Default is 1 month of blocks based on 2 seconds block time.
-    /// 30 * 24 * 60 * 60 / 2 = `1_296_000`
+    /// Default is 15 days of blocks based on 200ms block time.
+    /// 15 * 24 * 60 * 60 * 5 = `6_480_000`
     ///
     /// Must be greater than 12 hours of blocks based on 2 seconds block time.
     #[arg(

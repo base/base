@@ -13,8 +13,8 @@ use base_execution_txpool::{DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT};
 use base_upgrade_signal::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs};
 use clap::{ArgAction, ValueEnum, builder::ArgPredicate};
 
-/// Default proofs history window: 1 month of blocks at 2s block time.
-pub const DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS: u64 = 1_296_000;
+/// Default proofs history window: 15 days of blocks at 200ms block time.
+pub const DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS: u64 = 6_480_000;
 
 /// Twelve hours of blocks at 2s block time.
 pub const TWELVE_HOURS_IN_BLOCKS: u64 = 21_600;
@@ -432,8 +432,8 @@ pub struct RollupArgs {
     pub proofs_history_mdbx: ProofsHistoryMdbxArgs,
 
     /// The window to span blocks for proofs history. Value is the number of blocks.
-    /// Default is 1 month of blocks based on 2 seconds block time.
-    /// 30 * 24 * 60 * 60 / 2 = `1_296_000`
+    /// Default is 15 days of blocks based on 200ms block time.
+    /// 15 * 24 * 60 * 60 * 5 = `6_480_000`
     ///
     /// Must be greater than 12 hours of blocks based on 2 seconds block time.
     #[arg(

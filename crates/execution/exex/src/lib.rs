@@ -39,8 +39,8 @@ const DEFAULT_MAX_PRUNE_BLOCKS_STARTUP: u64 = 100_000;
 /// How many blocks to process in a single sync turn before yielding.
 const SYNC_BLOCKS_PER_TURN: usize = 50;
 
-/// Default proofs history window: 1 month of blocks at 2s block time
-const DEFAULT_PROOFS_HISTORY_WINDOW: u64 = 1_296_000;
+/// Default proofs history window: 15 days of blocks at 200ms block time.
+const DEFAULT_PROOFS_HISTORY_WINDOW: u64 = 6_480_000;
 
 /// Default interval between proof-storage prune runs. Default is 15 seconds.
 const DEFAULT_PRUNE_INTERVAL: Duration = Duration::from_secs(15);
@@ -157,7 +157,7 @@ where
 /// # ).into();
 ///
 /// let storage_exec = storage.clone();
-/// let proofs_history_window = 1_296_000u64;
+/// let proofs_history_window = 6_480_000u64;
 /// let proofs_history_prune_interval = Duration::from_secs(3600);
 ///
 /// // Verification interval: perform full execution every N blocks
