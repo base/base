@@ -1084,20 +1084,6 @@ where
 
         let (nonce_key_first_use, sender_nonce) =
             self.eip8130_nonce_state(&*state, local_chain_id, now, signed, sender, protocol_nonce)?;
-        // Pin auto-delegation to the body-derivable worst case
-        // ([`IntrinsicGasInput::sender_auto_delegated`]), the *same* classifier the
-        // `eth_estimateGas` estimate uses. It intentionally ignores the sender's
-        // current on-chain code state: a sender already delegated (has code) at
-        // admission time may lose its delegation before inclusion (e.g. a native
-        // EIP-7702 revocation), so always budgeting `DELEGATION_DEPOSIT_COST` in
-        // `gas_limit` prevents a hard intrinsic-gas error at block production. The
-        // overestimate is safe: if execution finds the sender already has code,
-        // `auto_delegate_codeless_sender` is a no-op and the reserved gas flows into
-        // execution gas instead. Sharing the classifier with estimation keeps
-        // admission from exceeding the estimate (which would reject a
-        // `gas_limit == estimate` submission with `GasTooLow`).
-        let sender_auto_delegated =
-            IntrinsicGasInput::sender_auto_delegated(&signed.tx().account_changes);
         let encoded = self.eip8130_encoded(signed);
         // Admission uses the same safe ceiling as `eth_estimateGas`, so a tx whose
         // `gas_limit` was set from the estimate is never rejected here and can
@@ -1107,11 +1093,7 @@ where
         let intrinsic = IntrinsicGas::compute(
             signed,
             encoded.as_ref(),
-            &IntrinsicGasInput::worst_case(
-                nonce_key_first_use,
-                sender_auto_delegated,
-                signed.tx().payer.is_some(),
-            ),
+            &IntrinsicGasInput::worst_case(nonce_key_first_use, signed.tx().payer.is_some()),
         )
         .map_err(|_| Self::eip8130_error("intrinsic gas computation failed"))?;
         if intrinsic.execution_gas_available(signed.tx().gas_limit).is_none() {
