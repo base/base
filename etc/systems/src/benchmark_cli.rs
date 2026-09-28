@@ -824,15 +824,14 @@ impl AggregateBenchmarkArgs {
                     continue;
                 }
                 let identity = Self::latest_benchmark_key(&run)?;
-                let replace = match latest_by_benchmark.get(&identity) {
-                    Some(existing) => created_at
+                let replace = latest_by_benchmark.get(&identity).is_none_or(|existing| {
+                    created_at
                         .cmp(&Self::parse_created_at(existing).expect("selected run was validated"))
                         .then_with(|| {
                             run.result.client_version.cmp(&existing.result.client_version)
                         })
-                        .is_ge(),
-                    None => true,
-                };
+                        .is_ge()
+                });
                 if replace {
                     latest_by_benchmark.insert(identity, run);
                 }
@@ -1255,6 +1254,7 @@ mod tests {
 
     use alloy_primitives::Address;
     use base_load_tests::MetricsSummary;
+    use chrono::{DateTime, SecondsFormat, Utc};
     use clap::Parser;
 
     use super::{
