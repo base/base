@@ -7,8 +7,8 @@ use crate::common::{
     BlockFixture, EncoderFixture, MULTI_FRAME_PAYLOAD, SMALL_FRAME_SIZE, SubmissionFixture,
 };
 
-/// Two submissions requeued newest first come back oldest first, each with exactly its own
-/// frames, the older one under a new id.
+/// Requeued submissions come back with their own frames under new ids, in the order they were
+/// produced, whatever the requeue order.
 #[test]
 fn requeued_submissions_resend_their_frames_in_production_order() {
     let config = EncoderConfig {
@@ -38,8 +38,8 @@ fn requeued_submissions_resend_their_frames_in_production_order() {
     assert!(encoder.next_submission().is_none());
 }
 
-/// A retry goes out as the transaction that failed, never packed with blobs built after its
-/// requeue.
+/// A retry is never packed with blobs built after its requeue, so the transaction that failed
+/// is resent as it was.
 #[test]
 fn a_retry_is_not_packed_with_newer_output() {
     let config = EncoderConfig { max_blobs_per_tx: 2, ..EncoderConfig::default() };
@@ -60,10 +60,9 @@ fn a_retry_is_not_packed_with_newer_output() {
     assert_eq!(fixture.derive(&[retry, newer]).concat(), BlockFixture::batches(&blocks));
 }
 
-/// Requeuing one submission resends exactly its frames, and none from the other submissions of
-/// its channel still in flight.
+/// Requeuing one submission does not resend the frames of another that was confirmed.
 #[test]
-fn requeue_resends_only_that_submission() {
+fn requeue_does_not_resend_confirmed_frames() {
     let config = EncoderConfig {
         da_type: DaType::Calldata,
         max_frame_size: SMALL_FRAME_SIZE,
@@ -76,10 +75,11 @@ fn requeue_resends_only_that_submission() {
     assert!(submissions.len() > 1, "{} submissions", submissions.len());
 
     encoder.requeue(submissions[0].id);
+    encoder.confirm(submissions[1].id, 1);
 
     let retry = encoder.next_submission().expect("retry");
     assert_eq!(SubmissionFixture::frames(&retry), SubmissionFixture::frames(&submissions[0]));
-    assert!(encoder.next_submission().is_none(), "no other submission is resent");
+    assert!(encoder.next_submission().is_none(), "the confirmed frame is not resent");
 }
 
 /// A reset does not reuse ids, so a confirmation or requeue for a submission issued before the

@@ -1,7 +1,9 @@
 //! How `BatchEncoder` packs blobs into transactions, and the blob override.
 
 use alloy_primitives::B256;
-use base_batcher_encoder::{BatchPipeline, DaType, EncoderConfig, StepResult};
+use base_batcher_encoder::{
+    BatchPipeline, BatchSubmission, DaType, EncoderConfig, StepResult, SubmissionPayload,
+};
 use rstest::rstest;
 
 use crate::common::{BlockFixture, EncoderFixture, SubmissionFixture, THREE_BLOB_PAYLOAD};
@@ -9,9 +11,12 @@ use crate::common::{BlockFixture, EncoderFixture, SubmissionFixture, THREE_BLOB_
 /// A transaction carries `max_blobs_per_tx` blobs while blobs are ready, and that cap cuts
 /// transactions, not channels, so one channel spans several transactions.
 #[rstest]
-#[case(1)]
-#[case(2)]
-fn transactions_carry_up_to_max_blobs_per_tx(#[case] max_blobs_per_tx: usize) {
+#[case::one_per_transaction(1, vec![1, 1, 1])]
+#[case::two_per_transaction(2, vec![2, 1])]
+fn transactions_carry_up_to_max_blobs_per_tx(
+    #[case] max_blobs_per_tx: usize,
+    #[case] blob_counts: Vec<usize>,
+) {
     let config = EncoderConfig { max_blobs_per_tx, ..EncoderConfig::default() };
     let fixture = EncoderFixture::new(config);
     let mut encoder = fixture.encoder();
@@ -19,9 +24,9 @@ fn transactions_carry_up_to_max_blobs_per_tx(#[case] max_blobs_per_tx: usize) {
 
     let submissions = encoder.encode_and_drain().unwrap();
 
-    assert!(submissions.len() >= 2, "{} submissions", submissions.len());
-    assert_eq!(submissions[0].blob_count(), max_blobs_per_tx);
-    assert_eq!(fixture.derive(&submissions).len(), 1);
+    let counts: Vec<_> = submissions.iter().map(BatchSubmission::blob_count).collect();
+    assert_eq!(counts, blob_counts);
+    assert_eq!(fixture.derive(&submissions).len(), 1, "one channel");
 }
 
 /// While the blob override is active, a calldata encoder emits blobs, and a retry keeps the
@@ -63,10 +68,10 @@ fn a_blob_retry_is_not_packed_with_calldata() {
     encoder.requeue(blob.id);
     encoder.requeue(calldata.id);
 
-    let retry = encoder.next_submission().expect("the blob retry");
-    assert_eq!(retry.da_type(), DaType::Blob);
-    assert_eq!(SubmissionFixture::frames(&retry), SubmissionFixture::frames(&blob));
-    let retry = encoder.next_submission().expect("the calldata retry");
-    assert_eq!(retry.da_type(), DaType::Calldata);
-    assert_eq!(SubmissionFixture::frames(&retry), SubmissionFixture::frames(&calldata));
+    let blob_retry = encoder.next_submission().expect("the blob retry");
+    assert_eq!(blob_retry.da_type(), DaType::Blob);
+    assert_eq!(SubmissionFixture::frames(&blob_retry), SubmissionFixture::frames(&blob));
+    let calldata_retry = encoder.next_submission().expect("the calldata retry");
+    assert_eq!(calldata_retry.da_type(), DaType::Calldata);
+    assert_eq!(SubmissionFixture::frames(&calldata_retry), SubmissionFixture::frames(&calldata));
 }

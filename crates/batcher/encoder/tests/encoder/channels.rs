@@ -120,8 +120,8 @@ fn open_channel_emits_full_blobs_without_closing() {
     assert_eq!(derived.concat(), batches);
 }
 
-/// An open calldata channel emits every full frame without closing, and nothing shorter: the
-/// frames emitted early and the rest of the channel decode together.
+/// An open calldata channel emits every full frame without closing, and nothing shorter. The
+/// frames emitted early and the rest of the channel decode as one channel.
 #[test]
 fn open_channel_emits_full_calldata_frames_without_closing() {
     let max_frame_size = 1_000;

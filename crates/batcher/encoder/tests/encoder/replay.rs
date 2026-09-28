@@ -149,7 +149,7 @@ fn replay_includes_the_channel_sharing_a_transaction() {
     assert_eq!(encoder.da_backlog_bytes(), 0);
 }
 
-/// A transaction that landed confirms the channels it carried: replaying one of them does
+/// A transaction that landed confirms the channels it carried, so replaying one of them does
 /// not pull in the other, which is fully confirmed.
 #[test]
 fn a_landed_transaction_does_not_pull_its_other_channel_into_a_replay() {
