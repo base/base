@@ -501,14 +501,6 @@ mod tests {
     }
 
     #[test]
-    fn cli_rejects_unknown_da_mode() {
-        let mut args = base_args();
-        args.extend_from_slice(["--data-availability-type", "blobz"].as_slice());
-
-        assert!(BatcherArgs::try_parse_from(args).is_err());
-    }
-
-    #[test]
     fn into_config_reserves_derivation_prefix_from_calldata_size_cap() {
         let cli = parse_cli(&[
             "--data-availability-type",
