@@ -4302,6 +4302,7 @@ dependencies = [
  "base-upgrade-signal",
  "blake3",
  "clap",
+ "criterion",
  "eyre",
  "futures",
  "humantime",
