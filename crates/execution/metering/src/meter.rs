@@ -2,19 +2,22 @@
 
 use std::{sync::Arc, time::Instant};
 
-use alloy_consensus::{BlockHeader, Transaction as _};
+use alloy_consensus::{BlockHeader, Transaction as _, transaction::Recovered};
 use alloy_evm::block::TxResult as _;
 use alloy_primitives::{
     Address, B256, U256,
     map::{HashMap, HashSet},
 };
 use base_bundles::{BundleExtensions, BundleTxs, OpcodeGas, ParsedBundle, TransactionResult};
+use base_common_chains::ChainConfig;
+use base_common_consensus::{BaseTxEnvelope, SystemAddresses};
 use base_common_evm::{BaseSpecId, BaseUpgrade, L1BlockInfo};
 use base_common_precompiles::{
     ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
 };
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
+use base_protocol::BaseTimeUpdateTx;
 use eyre::{Result as EyreResult, eyre};
 use reth_evm::{ConfigureEvm, Evm as _, execute::BlockBuilder};
 use reth_primitives_traits::{Account, SealedHeader};
@@ -27,12 +30,28 @@ use revm_bytecode::opcode::OpCode;
 
 use crate::{inspector::MeteringInspector, transaction::validate_tx};
 
-const BLOCK_TIME: u64 = 2; // 2 seconds per block
 // Static floor from the current minimum base fee for metering simulation.
 // The protocol has a dynamic min_base_fee via system config, but for metering
 // we use a static floor to reject transactions that will never make it onchain.
 const MIN_BASEFEE: u64 = 5_000_000;
 const MAX_NONCE_AHEAD: u64 = 10_000; // max nonce distance from on-chain state
+const LEGACY_BLOCK_TIME: u64 = 2;
+
+/// Returns the scheduled timestamp and optional `BaseTime` update for the simulated child block.
+fn next_block_schedule(
+    header: &SealedHeader,
+    schedule: Option<(u64, u16, bool)>,
+) -> EyreResult<(u64, Option<BaseTimeUpdateTx>)> {
+    let Some((timestamp, timestamp_millis_part, denim_active)) = schedule else {
+        return Ok((header.timestamp().saturating_add(LEGACY_BLOCK_TIME), None));
+    };
+    let base_time = denim_active
+        .then(|| BaseTimeUpdateTx::new(timestamp_millis_part))
+        .transpose()
+        .map_err(|error| eyre!("invalid canonical BaseTime update: {error}"))?;
+
+    Ok((timestamp, base_time))
+}
 
 /// Output from metering a bundle of transactions
 #[derive(Debug)]
@@ -715,8 +734,14 @@ where
         account_infos.insert(addr, account);
     }
 
-    // Set up next block attributes
-    let timestamp = header.timestamp() + BLOCK_TIME;
+    // Derive the next block from the rollup schedule, rather than from the parent header. Denim
+    // advances BaseTime by 200ms while the EVM header retains a whole-second timestamp.
+    let next_block_number = header.number().saturating_add(1);
+    let schedule = ChainConfig::rollup_config_by_chain_id(chain_spec.chain().id()).map(|config| {
+        let (timestamp, timestamp_millis_part) = config.l2_block_timestamp_parts(next_block_number);
+        (timestamp, timestamp_millis_part, config.is_denim_active(timestamp))
+    });
+    let (timestamp, base_time) = next_block_schedule(header, schedule)?;
     let attributes = BaseNextBlockEnvAttributes {
         timestamp,
         suggested_fee_recipient: header.beneficiary(),
@@ -747,6 +772,14 @@ where
         let block = &mut builder.evm_mut().block;
         block.basefee = block.basefee.min(MIN_BASEFEE);
         builder.apply_pre_execution_changes()?;
+
+        if let Some(base_time) = base_time {
+            let base_time_tx = Recovered::new_unchecked(
+                BaseTxEnvelope::from(base_time.into_deposit_tx(next_block_number)),
+                SystemAddresses::DEPOSITOR_ACCOUNT,
+            );
+            builder.execute_transaction(base_time_tx)?;
+        }
 
         // TX_EFFECT_ETH_* classifies top-level ETH transfers. Within a
         // bundle, only earlier successful top-level value transfers update this
@@ -862,7 +895,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::transaction::Recovered;
+    use alloy_consensus::{Header, transaction::Recovered};
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, Bytes, keccak256, utils::Unit};
     use alloy_sol_types::{SolCall, SolValue};
@@ -889,6 +922,68 @@ mod tests {
         let bundle = Bundle { txs };
 
         ParsedBundle::try_from(bundle).map_err(|e| eyre::eyre!(e))
+    }
+
+    #[test]
+    fn next_block_schedule_uses_denim_base_time_at_the_activation_boundary() {
+        let mut rollup_config = ChainConfig::devnet().rollup_config();
+        rollup_config.set_upgrade_activation_timestamp(BaseUpgrade::Denim, 4);
+        let activation_parent =
+            SealedHeader::seal_slow(Header { number: 1, timestamp: 2, ..Default::default() });
+        let activation_block_number = activation_parent.number().saturating_add(1);
+        let (activation_timestamp, activation_millis_part) =
+            rollup_config.l2_block_timestamp_parts(activation_block_number);
+        let (activation_timestamp, activation_base_time) = next_block_schedule(
+            &activation_parent,
+            Some((
+                activation_timestamp,
+                activation_millis_part,
+                rollup_config.is_denim_active(activation_timestamp),
+            )),
+        )
+        .unwrap();
+        assert_eq!(activation_block_number, 2);
+        assert_eq!(activation_timestamp, 4);
+        assert_eq!(
+            activation_base_time.unwrap().timestamp_millis_part(),
+            0,
+            "the first Denim block remains on a whole-second timestamp"
+        );
+
+        let post_denim_parent =
+            SealedHeader::seal_slow(Header { number: 2, timestamp: 4, ..Default::default() });
+        let block_number = post_denim_parent.number().saturating_add(1);
+        let (timestamp, timestamp_millis_part) =
+            rollup_config.l2_block_timestamp_parts(block_number);
+        let (timestamp, base_time) = next_block_schedule(
+            &post_denim_parent,
+            Some((timestamp, timestamp_millis_part, rollup_config.is_denim_active(timestamp))),
+        )
+        .unwrap();
+        let base_time = base_time.expect("post-Denim blocks must update BaseTime");
+        let deposit = base_time.into_deposit_tx(block_number);
+
+        assert_eq!(block_number, 3);
+        assert_eq!(timestamp, 4, "EVM timestamps retain whole-second precision");
+        assert_eq!(base_time.timestamp_millis_part(), 200);
+        assert_eq!(
+            BaseTimeUpdateTx::validate_deposit(deposit.inner(), block_number)
+                .unwrap()
+                .timestamp_millis_part(),
+            200,
+            "the simulated system transaction exposes the 200ms BaseTime schedule to user transactions"
+        );
+    }
+
+    #[test]
+    fn next_block_schedule_preserves_legacy_timing_for_unknown_chains() {
+        let header =
+            SealedHeader::seal_slow(Header { number: 42, timestamp: 1_000, ..Default::default() });
+
+        let (timestamp, base_time) = next_block_schedule(&header, None).unwrap();
+
+        assert_eq!(timestamp, 1_002);
+        assert!(base_time.is_none());
     }
 
     fn create_call_tx(
