@@ -39,10 +39,13 @@ pub struct IsolatedCatchup {
 }
 
 impl IsolatedCatchup {
-    /// Records a canonical unsafe payload if it is the highest one seen so far.
+    /// Records a canonical unsafe payload at or above the highest height seen so far.
+    ///
+    /// A later payload at the same height replaces the earlier one, matching the engine, which
+    /// follows the most recently inserted block at a height.
     pub fn observe(&mut self, envelope: &BaseExecutionPayloadEnvelope) {
         let number = envelope.execution_payload.block_number();
-        if self.highest_observed.is_none_or(|highest| number > highest.number) {
+        if self.highest_observed.is_none_or(|highest| number >= highest.number) {
             self.highest_observed =
                 Some(BlockNumHash::new(number, envelope.execution_payload.block_hash()));
         }
@@ -497,12 +500,24 @@ mod tests {
 
         catchup.observe(&payload(12, B256::with_last_byte(11), tip.block_info.hash));
         catchup.observe(&payload(11, B256::with_last_byte(10), B256::with_last_byte(11)));
-        catchup.observe(&payload(12, B256::with_last_byte(11), B256::with_last_byte(99)));
 
         assert!(catchup.has_observations());
         assert!(!catchup.is_complete(head(11, B256::with_last_byte(11))));
         assert!(!catchup.is_complete(head(12, B256::with_last_byte(99))));
         assert!(catchup.is_complete(tip));
+    }
+
+    #[test]
+    fn isolated_catchup_follows_same_height_replacement() {
+        let original = head(12, B256::with_last_byte(12));
+        let replacement = head(12, B256::with_last_byte(99));
+        let mut catchup = IsolatedCatchup::default();
+
+        catchup.observe(&payload(12, B256::with_last_byte(11), original.block_info.hash));
+        catchup.observe(&payload(12, B256::with_last_byte(11), replacement.block_info.hash));
+
+        assert!(!catchup.is_complete(original));
+        assert!(catchup.is_complete(replacement));
     }
 
     #[test]
