@@ -356,6 +356,9 @@ pub struct Delegation {
 /// `0x00` is reserved and does not decode. `Create` and `ConfigChange` are the
 /// Keystore's entries and are only valid once Zenith is active.
 ///
+/// In JSON the entry is an object whose `type` field is the type byte as a hex
+/// quantity (`"0x1"`; `"0x01"` is also accepted), alongside the body fields.
+///
 /// The type byte is a genuine list element (not an EIP-2718-style `type_byte ||
 /// rlp(...)` prefix), so each entry is one self-contained RLP item and the
 /// surrounding `account_changes` list frames as one item per entry. This mirrors
@@ -366,15 +369,18 @@ pub struct Delegation {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "camelCase"))]
+#[cfg_attr(feature = "serde", serde(tag = "type"))]
 pub enum AccountChange {
     /// Create a new account.
+    #[cfg_attr(feature = "serde", serde(rename = "0x2", alias = "0x02"))]
     Create(CreateEntry),
     /// Apply a signed batch of account changes (`applySignedAccountChanges`).
+    #[cfg_attr(feature = "serde", serde(rename = "0x3", alias = "0x03"))]
     ConfigChange(SignedAccountChanges),
     /// Set or clear an [EIP-7702]-style delegation.
     ///
     /// [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
+    #[cfg_attr(feature = "serde", serde(rename = "0x1", alias = "0x01"))]
     Delegation(Delegation),
 }
 
@@ -650,6 +656,29 @@ mod tests {
         // `[0x00]` is the RLP list `0xc1 0x80`.
         let buf = [0xc1u8, 0x80];
         assert!(AccountChange::decode(&mut &buf[..]).is_err());
+    }
+
+    /// JSON names each entry by its type byte, as a hex quantity.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn account_change_json_type_is_the_type_byte() {
+        let target = Address::repeat_byte(0x11);
+        let delegation = AccountChange::Delegation(Delegation { target });
+        let json = serde_json::to_value(&delegation).unwrap();
+        assert_eq!(json, serde_json::json!({ "type": "0x1", "target": target }));
+
+        for tag in ["0x1", "0x01"] {
+            let parsed: AccountChange =
+                serde_json::from_value(serde_json::json!({ "type": tag, "target": target }))
+                    .unwrap();
+            assert_eq!(parsed, delegation);
+        }
+        assert!(
+            serde_json::from_value::<AccountChange>(
+                serde_json::json!({ "type": "delegation", "target": target })
+            )
+            .is_err()
+        );
     }
 
     #[test]
