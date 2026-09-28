@@ -78,8 +78,7 @@ impl SendState {
     /// - [`TxManagerError::AlreadyReserved`] sets the already-reserved flag.
     /// - Any other [retryable](TxManagerError::is_retryable) error sets the
     ///   bump-fees flag for the next send attempt.
-    /// - Other critical errors are no-ops: the initial publication returns
-    ///   them, and a fee bump only logs them.
+    /// - Other critical errors are no-ops (handled at a higher level).
     ///
     /// Note: `NonceTooLow` is not retryable, so the nonce-too-low branch and
     /// the bump-fees branch are mutually exclusive.

@@ -124,8 +124,7 @@ pub struct TxManagerConfig {
     /// Mempool appearance timeout (zero = disabled).
     pub tx_not_in_mempool_timeout: Duration,
     /// Maximum time [`wait_mined`](crate::SimpleTxManager::wait_mined) polls for a
-    /// transaction that is not mined. The send loop is not bound by it: it polls every
-    /// version it published until the send ends.
+    /// transaction that is not mined. Sends do not use it.
     pub confirmation_timeout: Duration,
     /// Minimum blob base fee (in wei) to use for blob transactions.
     pub min_blob_fee: u128,
@@ -169,10 +168,9 @@ impl TxManagerConfig {
     /// - `publish_retry_delay` must be > 0
     /// - `receipt_query_interval` must be > 0
     /// - `confirmation_timeout` must be > 0
-    /// - a receipt poll must fit between the first refused fee bump and the abort it may
-    ///   lead to: `(safe_abort_nonce_too_low_count - 1) * resubmission_timeout` must be
-    ///   above `receipt_query_interval`, or a transaction mined right after a poll would be
-    ///   taken for a nonce consumed by someone else
+    /// - `(safe_abort_nonce_too_low_count - 1) * resubmission_timeout` must exceed
+    ///   `receipt_query_interval`, so a receipt poll runs before a send aborts on
+    ///   refused fee bumps
     pub fn validate(&self) -> Result<(), ConfigError> {
         macro_rules! reject_zero {
             ($($field:ident),+ $(,)?) => {$(
@@ -219,7 +217,7 @@ impl TxManagerConfig {
         {
             return Err(ConfigError::OutOfRange {
                 field: "safe_abort_nonce_too_low_count",
-                constraint: "high enough for a receipt poll between the first refused fee bump and the abort: (count - 1) * resubmission_timeout > receipt_query_interval",
+                constraint: "(count - 1) * resubmission_timeout > receipt_query_interval",
                 value: format!(
                     "count {}, resubmission_timeout {:?}, receipt_query_interval {:?}",
                     self.safe_abort_nonce_too_low_count,
@@ -332,8 +330,6 @@ mod tests {
         );
     }
 
-    /// The refused bumps before an abort must leave room for a receipt poll, or a send whose
-    /// transaction was mined right after a poll would abort.
     #[rstest]
     #[case::one_refusal(1, 48, 12, false)]
     #[case::polls_at_the_abort(3, 6, 12, false)]

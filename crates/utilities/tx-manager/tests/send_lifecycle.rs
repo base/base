@@ -45,15 +45,14 @@ fn fast_send_config() -> TxManagerConfig {
     }
 }
 
-/// How often the bump tests bump fees.
+/// Fee bump interval of [`bump_before_next_poll_config`].
 const BUMP_INTERVAL: Duration = Duration::from_secs(1);
 
-/// The fees of the transaction that takes the manager's nonce in the foreign-transaction test.
+/// Fees per gas of the foreign transaction, high enough to replace the manager's.
 const FOREIGN_FEES_PER_GAS: u128 = 100_000_000_000;
 
-/// Config where a fee bump comes before the next receipt poll, so a transaction mined right
-/// after a poll is bumped before the poller sees it. As in production, a receipt poll fits
-/// between the first refused bump and the abort `SAFE_ABORT_DEPTH` refusals would bring.
+/// Config where fees are bumped more often than receipts are polled, so a mined transaction
+/// can be bumped before its receipt is seen.
 fn bump_before_next_poll_config() -> TxManagerConfig {
     TxManagerConfig {
         num_confirmations: 1,
@@ -389,15 +388,14 @@ async fn query_receipt_returns_error_on_unreachable_provider() {
     assert!(result.is_err(), "query_receipt should fail when provider is unreachable");
 }
 
-// ── fee bump against a mined transaction ──────────────────────────────
+// ── refused fee bumps ─────────────────────────────────────────────────
 
-/// A fee bump refused with `nonce too low` because the transaction was mined between two
-/// receipt polls is not a failure: the send delivers the receipt at the next poll.
+/// A fee bump refused because the transaction is already mined does not fail the send.
 #[tokio::test]
 async fn bump_refused_for_a_mined_transaction_still_delivers_its_receipt() {
     let (manager, _anvil) = setup_without_automine(bump_before_next_poll_config()).await;
 
-    // The first receipt poll happens on publication. Mine between it and the first bump.
+    // Mine after the first receipt poll, which runs on publication, and before the first bump.
     let handle = manager.send_async(simple_tx_candidate()).await;
     wait_for_publication(manager.provider(), manager.sender_address()).await;
     let published = pending_transaction(manager.provider()).await;
@@ -412,14 +410,13 @@ async fn bump_refused_for_a_mined_transaction_still_delivers_its_receipt() {
     assert_eq!(receipt.block_number, Some(1));
 }
 
-/// The same holds when the mined version is a replacement: every published version is
-/// polled, and the send delivers the replacement's receipt.
+/// A fee bump refused because a replacement is already mined does not fail the send, which
+/// delivers the replacement's receipt.
 #[tokio::test]
 async fn bump_refused_for_a_mined_replacement_still_delivers_its_receipt() {
     let (manager, _anvil) = setup_without_automine(bump_before_next_poll_config()).await;
 
-    // Mine between the first bump, which replaces the transaction in the mempool, and the
-    // second one.
+    // Mine after the first bump and before the second.
     let handle = manager.send_async(simple_tx_candidate()).await;
     wait_for_publication(manager.provider(), manager.sender_address()).await;
     let original = pending_transaction(manager.provider()).await;
@@ -435,9 +432,8 @@ async fn bump_refused_for_a_mined_replacement_still_delivers_its_receipt() {
     assert_eq!(receipt.transaction_hash, *replacement.inner.tx_hash());
 }
 
-/// A nonce consumed by a transaction the manager never published is a failure, reported
-/// once `safe_abort_nonce_too_low_count` bumps were refused with none of its own versions
-/// mined, and not before.
+/// A send whose nonce is taken by a transaction it did not publish fails, but only after
+/// `safe_abort_nonce_too_low_count` refused bumps.
 #[tokio::test]
 async fn bumps_refused_for_a_foreign_transaction_fail_the_send() {
     let (manager, _anvil) = setup_without_automine(bump_before_next_poll_config()).await;
@@ -446,8 +442,7 @@ async fn bumps_refused_for_a_foreign_transaction_fail_the_send() {
     let handle = manager.send_async(simple_tx_candidate()).await;
     wait_for_publication(manager.provider(), sender).await;
 
-    // Anvil signs for its unlocked accounts: replace the transaction at the same nonce
-    // with a better-paid one the manager knows nothing about, and mine it.
+    // Replace the transaction with a better-paid one that Anvil signs, then mine it.
     let foreign = TransactionRequest::default()
         .with_from(sender)
         .with_to(TEST_RECIPIENT)

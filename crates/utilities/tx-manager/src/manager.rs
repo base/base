@@ -1190,14 +1190,8 @@ where
 
     /// Performs a fee bump attempt and applies the result to the tracked state.
     ///
-    /// A failed bump never ends the send by itself: a version already published
-    /// may still be mined, so the loop keeps waiting for a receipt, and aborting
-    /// is left to [`SendState::critical_error_at`]. In particular, `NonceTooLow`
-    /// on a bump usually means a version was mined since the last receipt poll:
-    /// the nonce is consumed, and the poller of that version records it as mined
-    /// within one polling interval. A nonce consumed by a transaction of another
-    /// origin is told apart by the `NonceTooLow` that [`SendState`] counts, with
-    /// none of the published versions seen mined.
+    /// A failed bump is logged and the send keeps waiting, because a version published
+    /// earlier may still be mined. Aborting is left to [`SendState::critical_error_at`].
     async fn try_fee_bump(
         &self,
         candidate: &TxCandidate,
@@ -1218,7 +1212,7 @@ where
         match self.handle_fee_bump(candidate, send_state, receipt_tx, state).await {
             Ok(new_state) => *state = new_state,
             Err(error) => {
-                warn!(error = %error, "fee bump failed, waiting for a receipt or the next tick");
+                warn!(error = %error, "fee bump failed, will retry next tick");
             }
         }
     }
@@ -1400,9 +1394,7 @@ where
                 } else if matches!(classified, TxManagerError::NonceTooLow)
                     && send_state.has_published()
                 {
-                    // Expected when a published version was mined since the last receipt
-                    // poll. The send loop keeps waiting for the receipt.
-                    warn!(error = %classified, "nonce consumed, a published transaction may be mined");
+                    warn!(error = %classified, "nonce too low, a published version may be mined");
                 } else {
                     error!(error = %classified, "publish failed with non-retryable error");
                 }
@@ -1470,12 +1462,11 @@ where
         })
     }
 
-    /// Spawns a receipt polling task on the configured runtime for one published version
-    /// of the transaction.
+    /// Spawns a task on the configured runtime that polls the receipt of one published
+    /// version of the transaction.
     ///
-    /// The task polls until the version is confirmed or the send ends, whichever comes
-    /// first, with no other bound: a version mined late must be seen, or the send would
-    /// take a refused fee bump for a consumed nonce and abort.
+    /// The task runs until the version is confirmed, the send ends or the manager shuts
+    /// down. It has no timeout because the version can be mined at any point of the send.
     fn spawn_wait_for_tx(
         &self,
         send_state: Arc<SendState>,
@@ -1500,8 +1491,8 @@ where
         });
     }
 
-    /// Polls for a transaction receipt using this manager's configured runtime, without
-    /// the `confirmation_timeout` bound.
+    /// Polls for a transaction receipt using this manager's configured runtime, with no
+    /// timeout.
     async fn wait_mined_for_tx(
         &self,
         send_state: &SendState,
@@ -1547,8 +1538,8 @@ where
 
     /// Runtime-backed implementation of [`wait_mined`](Self::wait_mined).
     ///
-    /// Gives up after `timeout` if the transaction is not mined by then. Without one, polls
-    /// until the transaction is confirmed or the manager is closed.
+    /// Polls until the transaction is confirmed or the manager is closed, or gives up once
+    /// `timeout` has passed with the transaction still not mined.
     async fn wait_mined_using_runtime<Rt>(
         runtime: &Rt,
         send_state: &SendState,
@@ -1592,8 +1583,8 @@ where
                 }
             }
 
-            // Give up at the deadline only if the transaction is not mined: a mined
-            // transaction is polled until the confirmation depth is reached.
+            // Give up at the deadline only if the transaction is not mined, so a mined one
+            // is polled until it is confirmed.
             if let Some(timeout) = timeout
                 && runtime.now() >= started + timeout
                 && !send_state.is_mined(tx_hash)
@@ -1989,17 +1980,16 @@ mod tests {
         }
     }
 
-    /// A send-loop poller is not bound by `confirmation_timeout`: a version mined after
-    /// it is still delivered, so the send does not take the refused fee bump that
-    /// follows for a nonce consumed by someone else.
+    /// A send-loop poller ignores `confirmation_timeout` and delivers a version mined
+    /// after it.
     #[test]
     fn send_loop_poller_outlives_the_confirmation_timeout() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let tx_hash = B256::with_last_byte(1);
             let (receipt, block) = mined_receipt(tx_hash, 10);
 
-            // Not mined for the first 4 polls, then mined and confirmed at 4 s, past the
-            // 3 s timeout.
+            // Report the transaction unmined for 4 polls, then mined and confirmed at 4 s,
+            // after the 3 s timeout.
             let asserter = Asserter::new();
             for _ in 0..4 {
                 asserter.push_success(&1u64);

@@ -42,8 +42,8 @@ pub async fn setup_with_config(
     setup_manager(provider, wallet, anvil, config).await
 }
 
-/// Creates a [`SimpleTxManager`] backed by a fresh Anvil instance with automine off: a
-/// transaction stays in the mempool until the test mines a block with [`mine_block`].
+/// Creates a [`SimpleTxManager`] backed by a fresh Anvil instance with automine off, so
+/// transactions stay in the mempool until [`mine_block`].
 pub async fn setup_without_automine(
     config: TxManagerConfig,
 ) -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
@@ -70,8 +70,8 @@ async fn setup_manager(
     (manager, anvil)
 }
 
-/// Waits until the first transaction of `sender` is in the mempool: `send_async` publishes
-/// from a spawned task, after it returns.
+/// Waits until the first transaction of `sender` is in the mempool, since `send_async`
+/// returns before it publishes.
 pub async fn wait_for_publication(provider: &RootProvider, sender: Address) {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         while provider.get_transaction_count(sender).pending().await.expect("tx count") == 0 {
@@ -82,7 +82,7 @@ pub async fn wait_for_publication(provider: &RootProvider, sender: Address) {
     .expect("the transaction should reach the mempool within 5 s");
 }
 
-/// The one transaction Anvil holds in its mempool.
+/// Returns the only transaction in Anvil's mempool.
 pub async fn pending_transaction(provider: &RootProvider) -> alloy_rpc_types_eth::Transaction {
     let block = provider
         .get_block_by_number(BlockNumberOrTag::Pending)
