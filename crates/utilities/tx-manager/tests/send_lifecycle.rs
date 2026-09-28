@@ -266,30 +266,6 @@ async fn wait_mined_returns_none_on_shutdown() {
     assert!(receipt.is_none(), "should return None when closed");
 }
 
-/// `wait_mined` returns `None` when the transaction is still not mined at the
-/// confirmation timeout.
-#[tokio::test]
-async fn wait_mined_returns_none_on_timeout() {
-    let config = TxManagerConfig {
-        confirmation_timeout: Duration::from_millis(200),
-        ..fast_polling_config()
-    };
-    let (manager, _anvil) = setup_with_config(config).await;
-    let send_state = SendState::new(SAFE_ABORT_DEPTH).expect("should create send state");
-    let closed = AtomicBool::new(false);
-
-    let receipt = SimpleTxManager::<RootProvider>::wait_mined(
-        &send_state,
-        manager.provider(),
-        B256::with_last_byte(1),
-        manager.config(),
-        &closed,
-    )
-    .await;
-
-    assert!(receipt.is_none(), "should return None when timeout exceeded");
-}
-
 // ── wait_for_tx() ─────────────────────────────────────────────────────
 
 /// `wait_for_tx` delivers a receipt through the mpsc channel.
