@@ -42,7 +42,7 @@ impl BlockFixture {
     }
 
     /// The batches derivation must read back from `blocks`. They come from the encoder's own
-    /// composer, which has its own tests: the round trip is about encoding, not composition.
+    /// composer because the round trip checks encoding, not composition, which has its own tests.
     pub fn batches(blocks: &[BaseBlock]) -> Vec<SingleBatch> {
         blocks
             .iter()
@@ -94,7 +94,7 @@ pub struct EncoderFixture {
 
 impl EncoderFixture {
     /// `config` over the default rollup config with Holocene, hence Granite and Fjord, active
-    /// from genesis. Only pairs production accepts are allowed.
+    /// from genesis. Panics if production would reject the pair.
     pub fn new(config: EncoderConfig) -> Self {
         let rollup_config = RollupConfig {
             upgrades: UpgradeConfig {
@@ -115,9 +115,9 @@ impl EncoderFixture {
             .expect("the config was validated")
     }
 
-    /// What derivation reads from `submissions`, taken as the L1 transactions they become, all
-    /// included in this order within the channel timeout, at an L1 origin at genesis: the
-    /// batches of each channel, in the order their terminal frames landed.
+    /// The batches derivation reads from `submissions`, one list per channel, in the order the
+    /// channels complete. The submissions are taken as L1 transactions included in this order,
+    /// within the channel timeout, at an L1 origin at genesis.
     ///
     /// Panics where derivation would drop data, under the strict frame order of Holocene: a
     /// transaction payload that does not parse, a frame out of order or from another channel

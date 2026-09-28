@@ -1,6 +1,5 @@
-//! Round trip through the flush path: derivation reads back the batches of the blocks the
-//! encoder was given, in order, through six wire shapes: both DA types, small and full
-//! frames, a channel over several blobs and transactions, several channels in one blob.
+//! Round trip through the flush path. Derivation reads back the batches of the blocks the
+//! encoder was given, in order, whatever the wire shape the encoder config produces.
 
 use base_batcher_encoder::{BatchPipeline, BatchSubmission, DaType, EncoderConfig};
 use rstest::rstest;
@@ -10,9 +9,8 @@ use crate::common::{BlockFixture, EncoderFixture};
 /// The number of blocks every case encodes.
 const BLOCK_COUNT: u64 = 4;
 
-/// Every block encoded comes back as its batch, in order, and the submissions have the wire
-/// shape the configuration asks for: `blob_count` blobs over all of them, `channel_count`
-/// channels read back.
+/// Every encoded block comes back as its batch, in order, from `blob_count` blobs in total
+/// and `channel_count` channels.
 #[rstest]
 #[case::blobs(EncoderConfig::default(), 1_000, 1, 1)]
 #[case::calldata(
