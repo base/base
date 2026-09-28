@@ -123,8 +123,10 @@ pub struct TxManagerConfig {
     pub tx_send_timeout: Duration,
     /// Mempool appearance timeout (zero = disabled).
     pub tx_not_in_mempool_timeout: Duration,
-    /// Maximum time [`wait_mined`](crate::SimpleTxManager::wait_mined) polls for a
-    /// transaction that is not mined. Sends do not use it.
+    /// Maximum time [`wait_mined`](crate::SimpleTxManager::wait_mined) and
+    /// [`wait_for_tx`](crate::SimpleTxManager::wait_for_tx) poll for a transaction that is
+    /// not mined. `send` and `send_async` ignore it and poll every version they publish
+    /// until the send ends.
     pub confirmation_timeout: Duration,
     /// Minimum blob base fee (in wei) to use for blob transactions.
     pub min_blob_fee: u128,
