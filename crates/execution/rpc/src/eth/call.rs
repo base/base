@@ -11,6 +11,7 @@ use alloy_rpc_types_eth::{
     simulate::{SimBlock, SimulatePayload, SimulatedBlock},
 };
 use base_common_chains::BaseUpgrade;
+use base_execution_evm::BaseNextBlockEnvAttributes;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks, Hardforks};
 use reth_errors::RethError;
 use reth_evm::{ConfigureEvm, Evm, execute::BlockBuilder};
@@ -292,30 +293,12 @@ fn sanitize_base_chain<TxReq, H>(
 where
     H: BlockHeader,
 {
-    const LEGACY_BLOCK_TIME: u64 = 2;
-    const DENIM_BLOCK_TIME_MS: u64 = 200;
-
-    let activation_block = denim_timestamp.map(|timestamp| {
-        genesis_number
-            .saturating_add(timestamp.saturating_sub(genesis_timestamp).div_ceil(LEGACY_BLOCK_TIME))
-    });
-    let activation_timestamp = activation_block.map(|block| {
-        genesis_timestamp
-            .saturating_add(block.saturating_sub(genesis_number).saturating_mul(LEGACY_BLOCK_TIME))
-    });
     let timestamp_for_block = |block_number: u64| {
-        if let (Some(activation_block), Some(activation_timestamp)) =
-            (activation_block, activation_timestamp)
-            && block_number >= activation_block
-        {
-            return activation_timestamp.saturating_add(
-                block_number.saturating_sub(activation_block).saturating_mul(DENIM_BLOCK_TIME_MS)
-                    / 1_000,
-            );
-        }
-
-        genesis_timestamp.saturating_add(
-            block_number.saturating_sub(genesis_number).saturating_mul(LEGACY_BLOCK_TIME),
+        BaseNextBlockEnvAttributes::timestamp_for_block(
+            block_number,
+            genesis_number,
+            genesis_timestamp,
+            denim_timestamp,
         )
     };
     let next_timestamp = |block_number: u64, prev_timestamp: u64| {
@@ -325,7 +308,7 @@ where
         } else if denim_timestamp.is_some_and(|activation| prev_timestamp >= activation) {
             Some(prev_timestamp)
         } else {
-            prev_timestamp.checked_add(LEGACY_BLOCK_TIME)
+            prev_timestamp.checked_add(BaseNextBlockEnvAttributes::LEGACY_BLOCK_TIME_SECONDS)
         }
     };
 

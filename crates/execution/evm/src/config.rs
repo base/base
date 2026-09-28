@@ -6,7 +6,7 @@ use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 #[cfg(feature = "std")]
 use alloy_primitives::Bytes;
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseUpgrade, Upgrades};
 use base_common_consensus::{BasePrimitives, DepositReceiptExt, EIP1559ParamError};
 use base_common_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseReceiptBuilder,
@@ -61,14 +61,88 @@ impl<H: alloy_consensus::BlockHeader> reth_rpc_eth_api::helpers::pending_block::
         block_overrides: Option<&alloy_rpc_types_eth::BlockOverrides>,
     ) -> Self {
         Self {
-            timestamp: block_overrides
-                .and_then(|overrides| overrides.time)
-                .unwrap_or_else(|| parent.timestamp().saturating_add(12)),
+            timestamp: block_overrides.and_then(|overrides| overrides.time).unwrap_or_else(|| {
+                parent.timestamp().saturating_add(Self::LEGACY_BLOCK_TIME_SECONDS)
+            }),
             suggested_fee_recipient: parent.beneficiary(),
             prev_randao: B256::random(),
             gas_limit: parent.gas_limit(),
             parent_beacon_block_root: parent.parent_beacon_block_root(),
             extra_data: parent.extra_data().clone(),
+        }
+    }
+}
+
+impl BaseNextBlockEnvAttributes {
+    /// Legacy Base block cadence in seconds.
+    pub const LEGACY_BLOCK_TIME_SECONDS: u64 = 2;
+
+    /// Denim block cadence in milliseconds.
+    pub const DENIM_BLOCK_TIME_MILLIS: u64 = 200;
+
+    /// Returns the scheduled EVM timestamp for an absolute Base block number.
+    ///
+    /// This is the seconds-denominated projection of the canonical rollup schedule:
+    /// legacy blocks use a two-second cadence, while Denim advances the millisecond timestamp by
+    /// 200ms per block and truncates it for the EVM header.
+    pub const fn timestamp_for_block(
+        block_number: u64,
+        genesis_number: u64,
+        genesis_timestamp: u64,
+        denim_timestamp: Option<u64>,
+    ) -> u64 {
+        let blocks_since_genesis = block_number.saturating_sub(genesis_number);
+        let legacy_timestamp = genesis_timestamp
+            .saturating_add(blocks_since_genesis.saturating_mul(Self::LEGACY_BLOCK_TIME_SECONDS));
+
+        let Some(denim_timestamp) = denim_timestamp else {
+            return legacy_timestamp;
+        };
+
+        let denim_activation_block = denim_timestamp
+            .saturating_sub(genesis_timestamp)
+            .div_ceil(Self::LEGACY_BLOCK_TIME_SECONDS);
+        if blocks_since_genesis < denim_activation_block {
+            return legacy_timestamp;
+        }
+
+        let denim_activation_timestamp = genesis_timestamp
+            .saturating_add(denim_activation_block.saturating_mul(Self::LEGACY_BLOCK_TIME_SECONDS));
+        denim_activation_timestamp
+            .saturating_mul(1_000)
+            .saturating_add(
+                blocks_since_genesis
+                    .saturating_sub(denim_activation_block)
+                    .saturating_mul(Self::DENIM_BLOCK_TIME_MILLIS),
+            )
+            .saturating_div(1_000)
+    }
+
+    /// Returns the EVM timestamp for the next block in a Base pending-block simulation.
+    ///
+    /// Base blocks use a two-second cadence before Denim. Denim keeps the EVM timestamp in
+    /// seconds while advancing the `BaseTime` millisecond part by 200ms per block, so several
+    /// consecutive blocks can have the same EVM timestamp.
+    pub fn pending_timestamp<H: alloy_consensus::BlockHeader>(
+        parent: &SealedHeader<H>,
+        chain_spec: &(impl Upgrades + EthChainSpec),
+    ) -> u64 {
+        let genesis = chain_spec.genesis_header();
+        let next_block = parent.number().saturating_add(1);
+        let denim_timestamp = chain_spec.fork_condition(BaseUpgrade::Denim).as_timestamp();
+        let scheduled = Self::timestamp_for_block(
+            next_block,
+            genesis.number(),
+            genesis.timestamp(),
+            denim_timestamp,
+        );
+
+        if scheduled > parent.timestamp() {
+            scheduled
+        } else if denim_timestamp.is_some_and(|activation| parent.timestamp() >= activation) {
+            parent.timestamp()
+        } else {
+            parent.timestamp().saturating_add(Self::LEGACY_BLOCK_TIME_SECONDS)
         }
     }
 }
@@ -268,22 +342,27 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_consensus::{Header, Receipt};
-    use alloy_eips::eip7685::Requests;
+    use alloy_eips::{eip1898::BlockNumHash, eip7685::Requests};
     use alloy_genesis::Genesis;
     use alloy_primitives::{
         Address, B256, LogData, U256, bytes,
         map::{AddressMap, B256Map, HashMap},
     };
+    use base_common_chains::BaseUpgrade;
     use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
     use base_common_evm::BaseSpecId;
-    use base_common_genesis::BaseUpgrade;
+    use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, RollupConfig, UpgradeConfig};
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use reth_chainspec::ChainSpec;
+    #[cfg(feature = "rpc")]
+    use reth_chainspec::ForkCondition;
     use reth_evm::{ConfigureEvm, EvmEnv, execute::ProviderError};
     use reth_execution_types::{
         AccountRevertInit, BundleStateInit, Chain, ExecutionOutcome, RevertsInit,
     };
-    use reth_primitives_traits::{Account, RecoveredBlock, constants::MAX_TX_GAS_LIMIT_OSAKA};
+    use reth_primitives_traits::{
+        Account, RecoveredBlock, SealedHeader, constants::MAX_TX_GAS_LIMIT_OSAKA,
+    };
     use revm::{
         context::{BlockEnv, CfgEnv},
         database::{BundleState, CacheDB},
@@ -293,7 +372,102 @@ mod tests {
         state::AccountInfo,
     };
 
-    use super::BaseEvmConfig;
+    use super::{BaseEvmConfig, BaseNextBlockEnvAttributes};
+
+    #[cfg(feature = "rpc")]
+    #[test]
+    fn pending_env_uses_base_legacy_cadence_and_time_override() {
+        use alloy_rpc_types_eth::BlockOverrides;
+        use reth_primitives_traits::SealedHeader;
+        use reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv;
+
+        let parent = SealedHeader::seal_slow(Header { timestamp: 100, ..Default::default() });
+        let attributes = BaseNextBlockEnvAttributes::build_pending_env(&parent, None);
+        assert_eq!(attributes.timestamp, 102);
+
+        let overrides = BlockOverrides { time: Some(777), ..Default::default() };
+        let attributes = BaseNextBlockEnvAttributes::build_pending_env(&parent, Some(&overrides));
+        assert_eq!(attributes.timestamp, 777);
+    }
+
+    #[cfg(feature = "rpc")]
+    #[test]
+    fn pending_env_uses_denim_evm_seconds_for_200ms_base_time_cadence() {
+        use reth_primitives_traits::SealedHeader;
+
+        let chain_spec = BaseChainSpecBuilder::default()
+            .chain(0.into())
+            .genesis(Genesis::default())
+            .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(10))
+            .build();
+
+        let parent =
+            SealedHeader::seal_slow(Header { number: 4, timestamp: 8, ..Default::default() });
+        assert_eq!(BaseNextBlockEnvAttributes::pending_timestamp(&parent, &chain_spec), 10);
+
+        let parent =
+            SealedHeader::seal_slow(Header { number: 5, timestamp: 10, ..Default::default() });
+        assert_eq!(BaseNextBlockEnvAttributes::pending_timestamp(&parent, &chain_spec), 10);
+
+        let parent =
+            SealedHeader::seal_slow(Header { number: 9, timestamp: 10, ..Default::default() });
+        assert_eq!(BaseNextBlockEnvAttributes::pending_timestamp(&parent, &chain_spec), 11);
+    }
+
+    #[cfg(feature = "rpc")]
+    #[test]
+    fn pending_env_matches_rollup_schedule_for_nonzero_genesis_and_rounded_activation() {
+        let genesis = Genesis { number: Some(50), timestamp: 10, ..Default::default() };
+        let chain_spec = BaseChainSpecBuilder::default()
+            .chain(0.into())
+            .genesis(genesis)
+            .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(15))
+            .build();
+
+        let parent =
+            SealedHeader::seal_slow(Header { number: 52, timestamp: 14, ..Default::default() });
+        assert_eq!(BaseNextBlockEnvAttributes::pending_timestamp(&parent, &chain_spec), 16);
+
+        let rollup_config = RollupConfig {
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 50, ..Default::default() },
+                l2_time: 10,
+                ..Default::default()
+            },
+            block_time: 2,
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { denim: Some(15), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            BaseNextBlockEnvAttributes::timestamp_for_block(53, 50, 10, Some(15)),
+            rollup_config.l2_block_timestamp(53)
+        );
+    }
+
+    #[cfg(feature = "rpc")]
+    #[test]
+    fn pending_env_observes_runtime_denim_activation_updates() {
+        use base_common_genesis::RuntimeUpgradeRegistry;
+
+        let chain_id = 9_100_098;
+        let chain_spec = BaseChainSpecBuilder::default()
+            .chain(chain_id.into())
+            .genesis(Genesis::default())
+            .build();
+        let parent =
+            SealedHeader::seal_slow(Header { number: 5, timestamp: 10, ..Default::default() });
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        assert_eq!(BaseNextBlockEnvAttributes::pending_timestamp(&parent, &chain_spec), 12);
+
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Denim, 10);
+        assert_eq!(BaseNextBlockEnvAttributes::pending_timestamp(&parent, &chain_spec), 10);
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
 
     fn test_evm_config() -> BaseEvmConfig {
         BaseEvmConfig::base(Arc::new(BaseChainSpec::mainnet()))
@@ -340,7 +514,7 @@ mod tests {
             (Some(9), 9, BaseUpgrade::Canyon, 900),
             (Some(10), 10, BaseUpgrade::Azul, 980),
             (Some(40), 40, BaseUpgrade::Azul, 980),
-            (None, 13, BaseUpgrade::Azul, 980),
+            (None, 3, BaseUpgrade::Canyon, 900),
         ] {
             let overrides = BlockOverrides { time, ..Default::default() };
             let attributes =

@@ -10,6 +10,7 @@ pub use base_time::BaseTimeCache;
 mod block;
 mod call;
 mod pending_block;
+pub use pending_block::BasePendingEnvBuilder;
 mod pubsub;
 
 use std::{
@@ -20,11 +21,12 @@ use std::{
 
 use alloy_primitives::U256;
 use base_common_rpc_types::BaseRpcTypes;
+use base_execution_chainspec::BaseChainSpec;
 use eyre::WrapErr;
 pub use receipt::{BaseReceiptBuilder, ReceiptFieldsBuilder};
-use reth_chainspec::{EthereumHardforks, Hardforks};
+use reth_chainspec::ChainSpecProvider;
 use reth_evm::ConfigureEvm;
-use reth_node_api::{FullNodeComponents, FullNodeTypes, HeaderTy, NodeTypes};
+use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeTypes};
 use reth_node_builder::rpc::{EthApiBuilder, EthApiCtx};
 use reth_rpc::eth::core::EthApiInner;
 use reth_rpc_eth_api::{
@@ -32,7 +34,7 @@ use reth_rpc_eth_api::{
     RpcNodeCoreExt, RpcTypes,
     helpers::{
         EthApiSpec, EthFees, EthState, GetBlockAccessList, LoadFee, LoadPendingBlock, LoadState,
-        SpawnBlocking, Trace, pending_block::BuildPendingEnv,
+        SpawnBlocking, Trace,
     },
 };
 use reth_rpc_eth_types::{EthStateCache, FeeHistoryCache, GasPriceOracle};
@@ -378,8 +380,8 @@ impl<NetworkT> BaseEthApiBuilder<NetworkT> {
 impl<N, NetworkT> EthApiBuilder<N> for BaseEthApiBuilder<NetworkT>
 where
     N: FullNodeComponents<
-            Evm: ConfigureEvm<NextBlockEnvCtx: BuildPendingEnv<HeaderTy<N::Types>>>,
-            Types: NodeTypes<ChainSpec: Hardforks + EthereumHardforks>,
+            Evm: ConfigureEvm<NextBlockEnvCtx = base_execution_evm::BaseNextBlockEnvAttributes>,
+            Types: NodeTypes<ChainSpec = BaseChainSpec>,
         >,
     NetworkT: RpcTypes,
     BaseRpcConvert<N, NetworkT>: RpcConvert<Network = NetworkT>,
@@ -395,6 +397,7 @@ where
         let rpc_converter =
             RpcConverter::new(BaseReceiptConverter::new(provider.clone(), base_time.clone()))
                 .with_mapper(BaseTxInfoMapper::new(provider, base_time.clone()));
+        let chain_spec = ctx.components.provider().chain_spec();
 
         let sequencer_client = if let Some(url) = sequencer_url {
             Some(
@@ -406,7 +409,11 @@ where
             None
         };
 
-        let eth_api = ctx.eth_api_builder().with_rpc_converter(rpc_converter).build_inner();
+        let eth_api = ctx
+            .eth_api_builder()
+            .with_rpc_converter(rpc_converter)
+            .with_pending_env_builder(BasePendingEnvBuilder::new(chain_spec))
+            .build_inner();
 
         Ok(BaseEthApi::new(
             eth_api,

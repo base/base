@@ -39,7 +39,7 @@ reth-tasks = { workspace = true, features = ["rayon"] }
 # op-reth
 base-protocol.workspace = true
 base-common-evm.workspace = true
-base-execution-evm.workspace = true
+base-execution-evm = { workspace = true, features = ["rpc"] }
 base-execution-trie.workspace = true
 base-execution-txpool.workspace = true
 base-observability-events.workspace = true
@@ -65,6 +65,7 @@ revm-inspectors.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-rpc-types = { workspace = true, features = ["reth"] }
 base-common-rpc-types-engine = { workspace = true, features = ["reth"] }
+base-execution-chainspec.workspace = true
 
 # async
 serde.workspace = true
@@ -96,9 +97,8 @@ metrics = { workspace = true, optional = true }
 criterion.workspace = true
 alloy-signer.workspace = true
 reth-network-api.workspace = true
+alloy-genesis.workspace = true
 alloy-signer-local.workspace = true
-base-execution-chainspec.workspace = true
-base-execution-evm = { workspace = true, features = ["rpc"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 
 [[bench]]
