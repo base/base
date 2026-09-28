@@ -347,10 +347,9 @@ impl Batcher {
     }
 
     /// Show a mined L1 block to the driver, as the tx manager's receipt polling and the L1
-    /// head source would:
-    /// fire the receipts of the staged submissions the block includes, deliver its number as
-    /// the new L1 head, and wait until the driver has applied both. A block without any of
-    /// the batcher's transactions only advances the L1 head.
+    /// head source would. Fires the receipts of the staged submissions the block includes,
+    /// delivers its number as the new L1 head and waits until the driver has applied both. A
+    /// block without any of the batcher's transactions only advances the L1 head.
     ///
     /// # Panics
     ///

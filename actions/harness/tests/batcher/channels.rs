@@ -373,7 +373,7 @@ async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
         "incomplete channel after block 1; safe head must stay at genesis"
     );
 
-    // Mine an empty L1 block 2 and show it to the batcher: encode_only() already closed the
+    // Mine an empty L1 block 2 and show it to the batcher. encode_only() already closed the
     // channel (admin flush), so this fires no receipt and only moves the driver's L1 head to 2.
     // The remaining frames are already in `pending`.
     h.l1.mine_block();
