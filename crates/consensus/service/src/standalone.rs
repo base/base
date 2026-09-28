@@ -261,8 +261,13 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             Box::new(DisabledEngineDerivationClient),
             engine,
         );
-        let coordinator =
-            SequencerEngineRequestCoordinator::new(processor, false, None, false, unsafe_head_tx);
+        let coordinator = SequencerEngineRequestCoordinator::new(
+            processor,
+            NodeOperatingMode::Sequencer,
+            None,
+            false,
+            unsafe_head_tx,
+        );
         let engine_actor =
             EngineActor::new(cancellation.clone(), engine_actor_request_rx, coordinator);
 

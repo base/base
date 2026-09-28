@@ -116,13 +116,17 @@ where
         Metrics::sequencer_total_transactions_sequenced()
             .increment(handle.attributes_with_parent.count_transactions());
 
-        if self.is_shadow_sequencer() {
-            Ok(PayloadSealer::new_private(envelope, "shadow"))
-        } else if self.mode.is_isolated() {
-            Ok(PayloadSealer::new_private(envelope, "isolated"))
-        } else {
-            Ok(PayloadSealer::new(envelope))
-        }
+        Ok(match self.mode {
+            NodeOperatingMode::Validator | NodeOperatingMode::Sequencer => {
+                PayloadSealer::new(envelope)
+            }
+            NodeOperatingMode::ShadowSequencer { .. } => {
+                PayloadSealer::new_private(envelope, "shadow")
+            }
+            NodeOperatingMode::IsolatedSequencer => {
+                PayloadSealer::new_private(envelope, "isolated")
+            }
+        })
     }
 
     /// Attempts to seal a pre-built payload, first checking whether it is still fresh.
@@ -831,9 +835,18 @@ mod tests {
         );
         let (request_tx, request_rx) = mpsc::channel(8);
         let (head_tx, mut head_rx) = watch::channel(L2BlockInfo::default());
-        let coordinator =
-            SequencerEngineRequestCoordinator::new(processor, shadow, None, true, head_tx)
-                .start(request_rx);
+        let coordinator = SequencerEngineRequestCoordinator::new(
+            processor,
+            if shadow {
+                NodeOperatingMode::ShadowSequencer { blocks_per_cycle: NonZeroU64::MIN }
+            } else {
+                NodeOperatingMode::Sequencer
+            },
+            None,
+            true,
+            head_tx,
+        )
+        .start(request_rx);
         tokio::time::timeout(Duration::from_secs(1), head_rx.wait_for(|value| *value == head))
             .await
             .unwrap()

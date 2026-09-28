@@ -453,7 +453,6 @@ impl RollupNode {
             conductor.clone().map(|c| Arc::new(c) as Arc<dyn Conductor>);
 
         let node_mode = self.mode();
-        let shadow_sequencer = node_mode.is_shadow_sequencer();
         let sequencer_stopped = self.sequencer_config.sequencer_stopped;
         let derivation_client: Box<dyn EngineDerivationClient> = match node_mode {
             NodeOperatingMode::Validator
@@ -468,18 +467,13 @@ impl RollupNode {
         let engine_handler = if node_mode.is_validator() {
             ConfiguredEngineReceiver::Validator(ValidatorEngineRequestHandler::new(processor))
         } else {
-            let coordinator = SequencerEngineRequestCoordinator::new(
+            ConfiguredEngineReceiver::Sequencer(SequencerEngineRequestCoordinator::new(
                 processor,
-                shadow_sequencer,
+                node_mode,
                 engine_conductor,
                 sequencer_stopped,
                 unsafe_head_tx,
-            );
-            ConfiguredEngineReceiver::Sequencer(if node_mode.is_isolated() {
-                coordinator.with_isolated_startup_sync()
-            } else {
-                coordinator
-            })
+            ))
         };
         let engine_actor =
             EngineActor::new(cancellation.clone(), engine_actor_request_rx, engine_handler);

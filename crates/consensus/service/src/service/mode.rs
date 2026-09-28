@@ -49,11 +49,10 @@ impl NodeMode {
     /// Converts this CLI mode into a [`NodeOperatingMode`], attaching the shadow-cycle block count
     /// when the mode is [`Self::ShadowSequencer`].
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `self` is [`Self::ShadowSequencer`] and `shadow_blocks_per_cycle` is [`None`].
-    /// The CLI validates that `--sequencer.shadow-blocks-per-cycle` is provided before this is
-    /// called.
+    /// Returns an error if `shadow_blocks_per_cycle` is [`None`] for [`Self::ShadowSequencer`], or
+    /// is set for [`Self::Sequencer`].
     pub const fn try_into_operating_mode(
         self,
         shadow_blocks_per_cycle: Option<NonZeroU64>,
@@ -79,7 +78,7 @@ impl NodeMode {
 
 /// Runtime node operating mode with all configuration attached.
 ///
-/// Constructed from a [`NodeMode`] via [`NodeMode::into_operating_mode`] after CLI argument
+/// Constructed from a [`NodeMode`] via [`NodeMode::try_into_operating_mode`] after CLI argument
 /// resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeOperatingMode {
