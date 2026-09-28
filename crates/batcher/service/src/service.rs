@@ -359,12 +359,12 @@ impl BatcherService {
 
     /// Initialise all batcher components and return a [`ReadyBatcher`].
     ///
-    /// Connects to the L2 and L1 RPC endpoints, fetches the rollup config, validates the
-    /// private key, checks outside shadow mode that the signer is the batcher the L1
-    /// `SystemConfig` authorizes, and constructs the driver. One-shot startup RPCs retry with
-    /// exponential backoff until [`BatcherConfig::wait_node_sync_timeout`]. Returns an error if
-    /// any of those steps fail — the caller sees the failure immediately, before any background
-    /// work is spawned.
+    /// Requires a signer, connects to the L2 RPC, fetches the rollup config and checks that its
+    /// node derives the inbox the batcher posts to, connects to L1, checks outside shadow mode
+    /// that the signer is the batcher the L1 `SystemConfig` authorizes, and constructs the
+    /// driver. One-shot startup RPCs retry with exponential backoff until
+    /// [`BatcherConfig::wait_node_sync_timeout`]. Returns an error if any of those steps fail,
+    /// before any background work is spawned.
     ///
     /// The runtime's cancellation token is forwarded to the derivation-status poller
     /// spawned here so it stops cleanly when the batcher shuts down.
@@ -750,6 +750,13 @@ mod tests {
 
     use super::*;
 
+    /// The `SystemConfig` address of the mocked rollup config.
+    const SYSTEM_CONFIG: Address = Address::repeat_byte(0x5c);
+
+    /// The batch inbox of the mocked rollup config, which a shadow batcher following that rollup
+    /// node declares as its override.
+    const BATCH_INBOX: Address = Address::repeat_byte(0x1b);
+
     fn test_retry() -> RetryConfig {
         RetryConfig::unbounded(Duration::from_millis(1), Duration::from_millis(1))
     }
@@ -784,7 +791,8 @@ mod tests {
     /// mock of the `batcherHash()` call.
     async fn mock_system_config(server: &MockServer, authorized: Address) -> Mock<'_> {
         let rollup_config = RollupConfig {
-            l1_system_config_address: Address::repeat_byte(0x5c),
+            batch_inbox_address: BATCH_INBOX,
+            l1_system_config_address: SYSTEM_CONFIG,
             ..RollupConfig::default()
         };
         mock_rpc(
@@ -898,10 +906,12 @@ mod tests {
             .await
             .expect_err("a batcher whose batches derivation ignores must not start");
 
-        let error = error.to_string();
-        assert!(
-            error.contains(&signer.to_string()) && error.contains(&authorized.to_string()),
-            "error should name both addresses, got {error}"
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "signer {signer} is not the batcher {authorized} authorized by the L1 \
+                 SystemConfig at {SYSTEM_CONFIG}"
+            )
         );
     }
 
@@ -910,7 +920,7 @@ mod tests {
         let server = MockServer::start_async().await;
         let signer = Address::repeat_byte(0x51);
         mock_system_config(&server, signer).await;
-        // The first L1 read after the check: once it is served, setup went past the check.
+        // Setup reads the L1 head right after the check, so a served read means the check passed.
         let l1_head = mock_rpc(&server, r#"{"method":"eth_blockNumber"}"#, r#""0x1""#.into()).await;
 
         // Setup fails later, on the reads this test does not mock.
@@ -924,10 +934,10 @@ mod tests {
     async fn setup_skips_the_batcher_check_in_shadow_mode() {
         let server = MockServer::start_async().await;
         let batcher_hash = mock_system_config(&server, Address::repeat_byte(0xba)).await;
-        // The first L1 read after the check: once it is served, setup went past the check.
+        // Setup reads the L1 head right after the check, so a served read means setup got that far.
         let l1_head = mock_rpc(&server, r#"{"method":"eth_blockNumber"}"#, r#""0x1""#.into()).await;
         let config = BatcherConfig {
-            batch_inbox_override: Some(Address::repeat_byte(0x1b)),
+            batch_inbox_override: Some(BATCH_INBOX),
             parity_validator_l2_rpc_url: Some(server.url("/").parse().unwrap()),
             ..mocked_config(&server, Address::repeat_byte(0x51))
         };
