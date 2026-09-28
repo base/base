@@ -271,11 +271,6 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         self.safe_l1_number
     }
 
-    /// Return the current L1 origin the pipeline is positioned at.
-    pub fn l1_origin(&self) -> Option<BlockInfo> {
-        self.pipeline.origin()
-    }
-
     /// Returns the derivation progress this node reports to the batcher, which is its safe L2
     /// head and the L1 block its derivation pipeline is processing. Before the pipeline has an
     /// origin, that block is the default one, as `optimism_syncStatus` reports it. See
@@ -283,7 +278,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
     pub fn derivation_status(&self) -> DerivationStatus {
         DerivationStatus {
             safe_l2: self.safe_head.block_info,
-            current_l1: self.l1_origin().unwrap_or_default(),
+            current_l1: self.pipeline.origin().unwrap_or_default(),
         }
     }
 
