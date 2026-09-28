@@ -10,7 +10,6 @@ use base_execution_trie::{
 };
 use base_node_core::{
     DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs,
-    TWELVE_HOURS_IN_BLOCKS,
 };
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
@@ -50,13 +49,13 @@ pub struct PruneCommand<C: ChainSpecParser> {
     /// Default is 15 days of blocks based on 200ms block time.
     /// 15 * 24 * 60 * 60 * 5 = `6_480_000`
     ///
-    /// Must be greater than 12 hours of blocks based on 2 seconds block time.
+    /// Must be at least 1 block.
     #[arg(
         long = "proofs-history.window",
         visible_alias = "proofs.window",
         default_value_t = DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS,
         value_name = "PROOFS_HISTORY_WINDOW",
-        value_parser = clap::value_parser!(u64).range((TWELVE_HOURS_IN_BLOCKS + 1)..)
+        value_parser = clap::value_parser!(u64).range(1..)
     )]
     pub proofs_history_window: u64,
 
@@ -169,5 +168,31 @@ impl<C: ChainSpecParser> PruneCommand<C> {
     /// Returns the underlying chain being used to run this command
     pub const fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
         Some(&self.env.chain)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chainspec::BaseChainSpecParser;
+
+    #[test]
+    fn proofs_history_window_accepts_one_block_but_rejects_zero() {
+        let args = ["prune", "--proofs-history.storage-path", "/tmp/proofs"];
+        let command = PruneCommand::<BaseChainSpecParser>::parse_from(args);
+        assert_eq!(command.proofs_history_window, 6_480_000);
+        for flag in ["--proofs-history.window", "--proofs.window"] {
+            let command = PruneCommand::<BaseChainSpecParser>::try_parse_from(
+                args.into_iter().chain([flag, "1"]),
+            )
+            .unwrap();
+            assert_eq!(command.proofs_history_window, 1);
+            assert!(
+                PruneCommand::<BaseChainSpecParser>::try_parse_from(
+                    args.into_iter().chain([flag, "0"]),
+                )
+                .is_err()
+            );
+        }
     }
 }
