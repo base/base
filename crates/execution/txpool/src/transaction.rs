@@ -188,7 +188,9 @@ where
         if self.ty() == EIP8130_TX_TYPE_ID || replacement.ty() == EIP8130_TX_TYPE_ID {
             // EIP-8130 requires both fee fields to rise by the bump, including
             // when the replacement's priority fee is zero (which the default
-            // check exempts).
+            // check exempts). The bump is keyed on the existing transaction's
+            // type, as in the default check, so a non-8130 transaction replaced
+            // by an 8130 one uses the non-8130 bump.
             let bump = price_bumps.price_bump(self.ty());
             let bumped = |fee: u128| fee.saturating_mul(100 + bump).div_ceil(100);
             return replacement.max_fee_per_gas() < bumped(self.max_fee_per_gas())
