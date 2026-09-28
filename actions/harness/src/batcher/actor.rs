@@ -319,13 +319,13 @@ impl Batcher {
     }
 
     /// Report derivation progress to the driver, as the production `DerivationStatusPoller`
-    /// does on each change, and wait until the driver is idle again: it has reconciled with
-    /// the status and, after a reset, caught up and resubmitted from the new safe head. See
+    /// does on each change, and wait until the driver is idle again. By then it has reconciled
+    /// with `status` and, after a reset, caught up from the new safe head. See
     /// [`TestRollupNode::derivation_status`](crate::TestRollupNode::derivation_status).
     pub async fn observe_derivation(&self, status: DerivationStatus) {
-        // The channel holds one status and is empty here: every async method returns once the
-        // driver answered a marker, and the driver takes a waiting status before it answers
-        // one. So the send only fails once the driver has exited.
+        // The channel holds one status and is empty here, because every async method returns once
+        // the driver answered a marker and the driver takes a waiting status before it answers
+        // one. So the send fails only once the driver has exited.
         self.derivation_status_tx.try_send(status).expect("the batch driver has exited");
         self.wait_until_idle().await;
     }
