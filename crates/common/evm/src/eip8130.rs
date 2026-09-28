@@ -757,11 +757,12 @@ impl Eip8130Executor {
         // Use the declared payer (sponsor) so the payer published to the
         // `TxContext` precompile matches a real execution: a call that reads it
         // must see the same address it would on-chain, or it could take a
-        // different path and skew the estimate. No signature is verified here.
-        // An open-mode placeholder `payer_auth` does not recover. Estimation
-        // charges the sender for that stub so `eth_estimateGas` still prices
-        // the transaction. Included transactions recover a real payer.
-        let payer = signed.resolved_payer(sender).unwrap_or(sender);
+        // different path and skew the estimate. A named payer's signature is not
+        // verified here. An open payer is only defined by the signer its
+        // `payer_auth` recovers to, so one that does not recover is rejected.
+        let payer = signed.resolved_payer(sender).map_err(|_| {
+            BaseTransactionError::eip8130("EIP-8130 open payer_auth does not recover")
+        })?;
 
         let internals = EvmInternals::from_context(ctx);
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
@@ -2503,6 +2504,29 @@ mod tests {
         assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
         assert!(outcome.state[&payer].info.balance < initial, "payer must be charged");
         assert!(outcome.state[&sender].info.balance.is_zero(), "sender must not be charged");
+    }
+
+    /// An open payer is defined by the signer its `payer_auth` recovers to, so
+    /// estimation rejects one that does not recover instead of substituting
+    /// the sender.
+    #[test]
+    fn simulate_rejects_an_open_payer_that_does_not_recover() {
+        let key = signing_key(0x36);
+        let sender = eoa_address(&key);
+        let tx = TxEip8130 { payer: Some(Eip8130Constants::OPEN_PAYER), ..base_tx() };
+        let sender_auth = eoa_sig(&key, tx.sender_signature_hash());
+        // `v = 0` is never a valid recovery byte.
+        let signed = Eip8130Signed::new(tx, sender_auth, Bytes::from(vec![0u8; 65]));
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+        evm.ctx_mut().tx = into_base_tx(&signed);
+        evm.ctx_mut().tx.base.caller = sender;
+
+        let error = Eip8130Executor::simulate(&mut evm).unwrap_err();
+
+        let EVMError::Transaction(BaseTransactionError::Eip8130(reason)) = error else {
+            panic!("an unrecoverable open payer must be rejected, got {error:?}");
+        };
+        assert!(reason.contains("open payer_auth does not recover"), "unexpected reason: {reason}");
     }
 
     #[test]
