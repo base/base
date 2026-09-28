@@ -1205,15 +1205,13 @@ where
         // calldata has already executed (e.g. `GameAlreadyExists`),
         // producing noisy error logs even though the proposal will succeed.
         if send_state.is_waiting_for_confirmation() {
-            info!("skipping fee bump — a published tx is already mined, awaiting confirmation");
+            info!("skipping fee bump, a published tx is already mined and awaits confirmation");
             return;
         }
 
         match self.handle_fee_bump(candidate, send_state, receipt_tx, state).await {
             Ok(new_state) => *state = new_state,
-            Err(error) => {
-                warn!(error = %error, "fee bump failed, will retry next tick");
-            }
+            Err(error) => warn!(error = %error, "fee bump failed, will retry next tick"),
         }
     }
 
@@ -1491,8 +1489,7 @@ where
         });
     }
 
-    /// Polls for a transaction receipt using this manager's configured runtime, with no
-    /// timeout.
+    /// Polls for a transaction receipt using this manager's configured runtime.
     async fn wait_mined_for_tx(
         &self,
         send_state: &SendState,

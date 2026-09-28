@@ -4,7 +4,7 @@
 //! binary uses every item.
 #![allow(dead_code, unreachable_pub)]
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::SignableTransaction;
 use alloy_eips::BlockNumberOrTag;
@@ -73,9 +73,9 @@ async fn setup_manager(
 /// Waits until the first transaction of `sender` is in the mempool, since `send_async`
 /// returns before it publishes.
 pub async fn wait_for_publication(provider: &RootProvider, sender: Address) {
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(5), async {
         while provider.get_transaction_count(sender).pending().await.expect("tx count") == 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
