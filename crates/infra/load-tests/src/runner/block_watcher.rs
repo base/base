@@ -25,7 +25,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
 use super::{BlockObservation, BlockReceipt, InclusionPulse, ResultsTracker};
-use crate::{rpc::RpcProviders, utils::{BaselineError, Result}};
+use crate::{
+    rpc::RpcProviders,
+    utils::{BaselineError, Result},
+};
 
 /// How frequently confirmation-only helpers poll for canonical blocks.
 const CONFIRMATION_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -786,10 +789,12 @@ impl BlockWatcher {
         block_number: u64,
     ) -> (Vec<BlockReceipt>, bool) {
         let block_id = BlockId::Number(BlockNumberOrTag::Number(block_number));
-        match tokio::time::timeout(RECEIPT_RPC_TIMEOUT, RpcProviders::retry_read(
-            "get block receipts",
-            || provider.get_block_receipts(block_id),
-        ))
+        match tokio::time::timeout(
+            RECEIPT_RPC_TIMEOUT,
+            RpcProviders::retry_read("get block receipts", || {
+                provider.get_block_receipts(block_id)
+            }),
+        )
         .await
         {
             Ok(Ok(Some(receipts))) => {
@@ -835,11 +840,16 @@ impl BlockWatcher {
 #[cfg(test)]
 mod tests {
     //! A local HTTP fixture is needed because Alloy provider-call builders cannot be mocked directly.
-    use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpListener};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
     use url::Url;
 
     /// Serves scripted block-receipt responses and counts the requests actually received.
-    async fn receipt_provider(responses: Vec<Option<i64>>) -> (RootProvider<Base>, tokio::task::JoinHandle<usize>) {
+    async fn receipt_provider(
+        responses: Vec<Option<i64>>,
+    ) -> (RootProvider<Base>, tokio::task::JoinHandle<usize>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
         let handle = tokio::spawn(async move {
@@ -854,22 +864,40 @@ mod tests {
                     let bytes = socket.read(&mut chunk).await.unwrap();
                     assert!(bytes > 0, "client must complete the HTTP request");
                     request.extend_from_slice(&chunk[..bytes]);
-                    if header_end.is_none() {
-                        if let Some(index) = request.windows(4).position(|window| window == b"\r\n\r\n") {
-                            header_end = Some(index + 4);
-                            let headers = String::from_utf8_lossy(&request[..index]).to_ascii_lowercase();
-                            content_length = headers.lines().find_map(|line| line.strip_prefix("content-length: ")).unwrap().trim().parse::<usize>().unwrap();
-                        }
+                    if header_end.is_none()
+                        && let Some(index) =
+                            request.windows(4).position(|window| window == b"\r\n\r\n")
+                    {
+                        header_end = Some(index + 4);
+                        let headers =
+                            String::from_utf8_lossy(&request[..index]).to_ascii_lowercase();
+                        content_length = headers
+                            .lines()
+                            .find_map(|line| line.strip_prefix("content-length: "))
+                            .unwrap()
+                            .trim()
+                            .parse::<usize>()
+                            .unwrap();
                     }
-                    if header_end.is_some_and(|end| request.len() >= end + content_length) { break; }
+                    if header_end.is_some_and(|end| request.len() >= end + content_length) {
+                        break;
+                    }
                 }
-                let id = serde_json::from_slice::<serde_json::Value>(&request[header_end.unwrap()..]).unwrap()["id"].clone();
-                let body = match response {
-                    Some(code) => serde_json::json!({"jsonrpc":"2.0", "id":id, "error":{"code":code,"message":"service temporarily unavailable"}}),
-                    None => serde_json::json!({"jsonrpc":"2.0", "id":id, "result":[]}),
-                }.to_string();
+                let id =
+                    serde_json::from_slice::<serde_json::Value>(&request[header_end.unwrap()..])
+                        .unwrap()["id"]
+                        .clone();
+                let body = response
+                    .map_or_else(
+                        || serde_json::json!({"jsonrpc":"2.0", "id":id, "result":[]}),
+                        |code| serde_json::json!({"jsonrpc":"2.0", "id":id, "error":{"code":code,"message":"service temporarily unavailable"}}),
+                    )
+                    .to_string();
                 let status = if response == Some(429) { "429 Too Many Requests" } else { "200 OK" };
-                let reply = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                let reply = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
                 socket.write_all(reply.as_bytes()).await.unwrap();
                 count += 1;
             }

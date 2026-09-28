@@ -204,8 +204,8 @@ async fn submit_b20_create(
     replacement_max_fee: u128,
     replacement_priority_fee: u128,
 ) -> Result<PendingTransactionBuilder<Ethereum>> {
-    let nonce = RpcProviders::retry_read("get pending transaction count", || {
-        async { provider.get_transaction_count(sender).pending().await }
+    let nonce = RpcProviders::retry_read("get pending transaction count", || async {
+        provider.get_transaction_count(sender).pending().await
     })
     .await
     .rpc("get pending transaction count")?;
@@ -236,11 +236,12 @@ async fn submit_b20_create(
                     })
             } else if msg.contains("nonce too low") {
                 // The pending nonce was stale; refetch and resend.
-                let fresh = RpcProviders::retry_read("refetch pending transaction count", || {
-                    async { provider.get_transaction_count(sender).pending().await }
-                })
-                .await
-                .rpc("refetch pending transaction count")?;
+                let fresh =
+                    RpcProviders::retry_read("refetch pending transaction count", || async {
+                        provider.get_transaction_count(sender).pending().await
+                    })
+                    .await
+                    .rpc("refetch pending transaction count")?;
                 provider.send_transaction(build(fresh, max_fee, max_priority_fee)).await.map_err(
                     |e| BaselineError::Transaction(format!("nonce-refreshed send failed: {e}")),
                 )
@@ -319,14 +320,17 @@ pub(super) async fn teardown(
             let wallet = EthereumWallet::from(signer);
             let provider = create_wallet_provider(rpc_url.clone(), wallet);
             Some(async move {
-                let sender_nonce = match RpcProviders::retry_read("get pending transaction count", || {
-                    async { provider.get_transaction_count(sender).pending().await }
-                }).await {
-                    Ok(n) => n,
-                    Err(e) => {
-                        return Err((sender, eyre::eyre!("nonce fetch failed: {e}")));
-                    }
-                };
+                let sender_nonce =
+                    match RpcProviders::retry_read("get pending transaction count", || async {
+                        provider.get_transaction_count(sender).pending().await
+                    })
+                    .await
+                    {
+                        Ok(n) => n,
+                        Err(e) => {
+                            return Err((sender, eyre::eyre!("nonce fetch failed: {e}")));
+                        }
+                    };
 
                 let burn_call = IB20::burnCall { amount: balance };
                 let tx = TransactionRequest::default()

@@ -398,11 +398,12 @@ pub async fn recover_real_tokens(
                 let mut summary = RealTokenRecoverySummary::default();
                 let wallet = EthereumWallet::from(signer);
                 let provider = create_wallet_provider(primary_submission_rpc, wallet);
-                let mut nonce = RpcProviders::retry_read("get pending transaction count", || {
-                    async { provider.get_transaction_count(sender).pending().await }
-                })
-                .await
-                .rpc("get pending transaction count")?;
+                let mut nonce =
+                    RpcProviders::retry_read("get pending transaction count", || async {
+                        provider.get_transaction_count(sender).pending().await
+                    })
+                    .await
+                    .rpc("get pending transaction count")?;
 
                 let pair_balance =
                     read_erc20_balance(&client, setup.pair_token.token, sender).await?;

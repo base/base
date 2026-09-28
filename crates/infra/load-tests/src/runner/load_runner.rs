@@ -282,8 +282,8 @@ impl LoadRunner {
             let account = &accounts[sender_index];
             let from = account.address;
             let to = accounts[recipient_index].address;
-            let nonce = RpcProviders::retry_read("get calibration transaction nonce", || {
-                async { self.client.get_transaction_count(from).pending().await }
+            let nonce = RpcProviders::retry_read("get calibration transaction nonce", || async {
+                self.client.get_transaction_count(from).pending().await
             })
             .await
             .rpc("get calibration transaction nonce")?;
