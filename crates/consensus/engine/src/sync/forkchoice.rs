@@ -46,9 +46,9 @@ impl Display for L2ForkchoiceState {
 impl L2ForkchoiceState {
     /// Fetches the current forkchoice state of the L2 execution layer.
     ///
-    /// - The finalized block may not always be available. If it is not, we fall back to genesis.
-    /// - The safe block may not always be available. If it is not, we fall back to the finalized
-    ///   block.
+    /// - The finalized label may not always exist. If it does not, we fall back to genesis. Errors
+    ///   for unavailable block bodies are propagated.
+    /// - The safe label may not always exist. If it does not, we fall back to the finalized block.
     /// - The unsafe block is always assumed to be available.
     pub async fn current<EngineClient_: EngineClient>(
         cfg: &RollupConfig,
@@ -320,21 +320,21 @@ async fn find_earliest_unpruned_block<EngineClient_: EngineClient>(
 
 /// Wrapper function around [`EngineClient::get_l2_block`] to handle compatibility issues with clients.
 /// When serving a block-by-number request, these clients will return non-standard errors for the safe
-/// and finalized heads when the chain has just started and nothing is marked as safe or finalized yet.
+/// and finalized labels when the chain has just started and neither label exists yet. Errors for
+/// unavailable block bodies are not treated as missing labels.
 async fn get_block_compat<EngineClient_: EngineClient>(
     engine_client: &EngineClient_,
     block_id: BlockId,
 ) -> TransportResult<Option<<Base as Network>::BlockResponse>> {
     match engine_client.get_l2_block(block_id).full().await {
         Err(e) => {
+            if e.as_error_resp().is_some_and(|err| err.code == 4444) {
+                return Err(e);
+            }
             let err_str = e.to_string();
-            // EIP-4444 error code for pruned state unavailable, or known string-based
-            // "not found" responses from geth/erigon for safe/finalized when the chain
-            // has just started and nothing is marked safe or finalized yet.
-            if e.as_error_resp().is_some_and(|err| err.code == 4444)
-                || err_str.contains("block not found")
-                || err_str.contains("Unknown block")
-            {
+            // Known string-based "not found" responses from geth/erigon for safe/finalized
+            // when the chain has just started and nothing is marked safe or finalized yet.
+            if err_str.contains("block not found") || err_str.contains("Unknown block") {
                 Ok(None)
             } else {
                 Err(e)
@@ -348,25 +348,33 @@ async fn get_block_compat<EngineClient_: EngineClient>(
 mod tests {
     use alloy_eips::BlockNumberOrTag;
     use alloy_json_rpc::ErrorPayload;
+    use rstest::rstest;
 
     use super::get_block_compat;
     use crate::test_utils::{MockL2BlockError, test_engine_client_builder};
 
+    #[rstest]
+    #[case(BlockNumberOrTag::Finalized, "history unavailable")]
+    #[case(BlockNumberOrTag::Safe, "block not found")]
+    #[case(BlockNumberOrTag::Latest, "Unknown block")]
     #[tokio::test]
-    async fn get_block_compat_eip4444_error_code_returns_none() {
+    async fn get_block_compat_eip4444_error_code_propagates(
+        #[case] tag: BlockNumberOrTag,
+        #[case] message: &'static str,
+    ) {
         let client = test_engine_client_builder()
             .with_l2_block_error(
-                BlockNumberOrTag::Finalized.into(),
+                tag.into(),
                 MockL2BlockError::ErrorResp(ErrorPayload {
                     code: 4444,
-                    message: "history unavailable".into(),
+                    message: message.into(),
                     data: None,
                 }),
             )
             .build();
 
-        let result = get_block_compat(&client, BlockNumberOrTag::Finalized.into()).await.unwrap();
-        assert!(result.is_none());
+        let error = get_block_compat(&client, tag.into()).await.unwrap_err();
+        assert_eq!(error.as_error_resp().unwrap().code, 4444);
     }
 
     #[tokio::test]
