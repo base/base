@@ -39,7 +39,10 @@ pub trait ProverRequesterApi {
         request: GetProofRequest,
     ) -> jsonrpsee::core::RpcResult<GetProofResponse>;
 
-    /// Cancel a queued or running proof request.
+    /// Cancel a queued or running Cluster or Network proof request.
+    ///
+    /// The request is failed with `PROOF_REQUEST_CANCELLED_MESSAGE`, and the owning
+    /// worker is told on its next heartbeat so it can stop the backend proof.
     #[method(name = "cancelProofRequest")]
     async fn cancel_proof_request(
         &self,

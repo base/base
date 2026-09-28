@@ -247,6 +247,9 @@ impl ProofRequestRepo {
     }
 
     /// Cancel a non-terminal Cluster or Network proof request by public session id.
+    ///
+    /// The request is failed with [`PROOF_REQUEST_CANCELLED_MESSAGE`] and its worker
+    /// claim is cleared, so a late submit from the previous owner is rejected.
     pub async fn cancel_proof_request_by_session_id(
         &self,
         session_id: &str,
@@ -255,9 +258,14 @@ impl ProofRequestRepo {
             .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
         let mut tx = self.pool.begin().await?;
 
+        // `zk_backend` is NULL for TEE rows and for ZK rows written before
+        // migration 014, which the claim query treats as `cluster`.
         let row = sqlx::query(
             r#"
-            SELECT status, error_message, api_proof_type, proof_type, zk_backend
+            SELECT status, error_message,
+                   api_proof_type IS DISTINCT FROM 'tee'
+                       AND COALESCE(zk_backend, 'cluster') IN ('cluster', 'network')
+                       AS cancellable
             FROM proof_requests
             WHERE COALESCE(session_id, id::text) = $1
             FOR UPDATE
@@ -272,24 +280,7 @@ impl ProofRequestRepo {
             return Ok(CancelProofRequestOutcome::NotFound);
         };
 
-        let proof_type = row
-            .get::<Option<&str>, _>("proof_type")
-            .map(ProofType::try_from)
-            .transpose()
-            .map_err(sqlx::Error::Protocol)?;
-        let api_proof_type = row
-            .get::<Option<&str>, _>("api_proof_type")
-            .map(ApiProofType::try_from)
-            .transpose()
-            .map_err(sqlx::Error::Protocol)?
-            .unwrap_or_else(|| api_proof_type_for_backend(proof_type));
-        let zk_backend = row
-            .get::<Option<&str>, _>("zk_backend")
-            .map(parse_zk_backend)
-            .transpose()?
-            .or_else(|| fallback_zk_backend_for_request(api_proof_type));
-
-        if !matches!(zk_backend, Some(ZkBackend::Cluster | ZkBackend::Network)) {
+        if !row.get::<bool, _>("cancellable") {
             tx.rollback().await?;
             return Ok(CancelProofRequestOutcome::UnsupportedBackend);
         }

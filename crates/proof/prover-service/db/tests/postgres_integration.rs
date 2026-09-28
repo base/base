@@ -1290,12 +1290,10 @@ async fn test_create_for_worker_queue_rejects_succeeded_row_with_new_l1_head() {
 
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_cancel_proof_request_cluster_only_rejects_tee_and_dry_run() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool.clone());
+async fn test_cancel_proof_request_by_session_id_rejects_tee_and_dry_run() {
+    let repo = test_repo(test_pool().await);
 
-    let cluster_id = Uuid::new_v4();
-    let cluster_session = cluster_id.to_string();
+    let cluster_session = Uuid::new_v4().to_string();
     let mut cluster = compressed_request_at_with_backend(100, ZkBackend::Cluster);
     set_request_session_id(&mut cluster, cluster_session.clone());
     repo.create_for_worker_queue(cluster, TEST_MAX_PROOF_RETRIES, true).await.unwrap();

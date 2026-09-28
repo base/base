@@ -458,6 +458,7 @@ where
         }
     }
 
+    /// Best-effort stop of any running backend session after the requester cancelled the job.
     async fn cancel_active_backend_sessions(&self, request: &ProofGeneratorRequest) {
         let Ok(prover) = self.prover_for(&request.request) else {
             return;

@@ -33,12 +33,6 @@ pub trait ProofRequesterProvider: Send + Sync {
         request: GetProofRequest,
     ) -> Result<GetProofResponse, ProverServiceClientError>;
 
-    /// Cancel a queued or running proof request.
-    async fn cancel_proof_request(
-        &self,
-        request: CancelProofRequest,
-    ) -> Result<(), ProverServiceClientError>;
-
     /// Delete a completed proof request so the same session id can be retried.
     async fn delete_proof_request(
         &self,
@@ -157,7 +151,7 @@ impl ProofRequesterClient {
         .await
     }
 
-    /// Cancel a queued or running proof request.
+    /// Cancel a queued or running Cluster or Network proof request.
     pub async fn cancel_proof_request(
         &self,
         request: CancelProofRequest,
@@ -269,13 +263,6 @@ impl ProofRequesterProvider for ProofRequesterClient {
         request: GetProofRequest,
     ) -> Result<GetProofResponse, ProverServiceClientError> {
         Self::get_proof(self, request).await
-    }
-
-    async fn cancel_proof_request(
-        &self,
-        request: CancelProofRequest,
-    ) -> Result<(), ProverServiceClientError> {
-        Self::cancel_proof_request(self, request).await
     }
 
     async fn delete_proof_request(
@@ -603,7 +590,8 @@ mod tests {
         }
 
         let cancel_request = CancelProofRequest { session_id: "session-get".to_owned() };
-        provider
+        server
+            .client
             .cancel_proof_request(cancel_request.clone())
             .await
             .expect("cancel_proof_request should succeed");

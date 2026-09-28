@@ -22,8 +22,8 @@ use base_proof_rpc::{
 };
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
-    CancelProofRequest, DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest,
-    GetProofResponse, ListProofsRequest, ListProofsResponse, PROOF_REQUEST_NOT_FOUND_MESSAGE,
+    DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
+    ListProofsRequest, ListProofsResponse, PROOF_REQUEST_NOT_FOUND_MESSAGE,
     ProofRequestIdCollisionMessage, ProofRequestKind as ApiProofRequestKind,
     ProofResult as ApiProofResult, ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse,
     TeeKind, TeeProofResult,
@@ -552,13 +552,6 @@ impl ProofRequesterProvider for MockProofRequester {
                 tee_signer: Address::repeat_byte(0x11),
             })),
         })
-    }
-
-    async fn cancel_proof_request(
-        &self,
-        _request: CancelProofRequest,
-    ) -> Result<(), ProverServiceClientError> {
-        unimplemented!("tests do not cancel proofs")
     }
 
     async fn delete_proof_request(
