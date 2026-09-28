@@ -38,6 +38,13 @@ async fn setup() -> eyre::Result<(TestHarness, RpcClient)> {
     setup_with(build_test_genesis_everest()).await
 }
 
+/// Hex `authenticator || data` blob with `data_len` filler bytes.
+fn auth_blob(authenticator: Address, data_len: usize) -> String {
+    let mut v = authenticator.as_slice().to_vec();
+    v.resize(v.len() + data_len, 0xff);
+    alloy_primitives::hex::encode_prefixed(v)
+}
+
 /// `nonce_key == 0` must delegate to the standard protocol-nonce path
 /// (`EthState::transaction_count`) rather than reading the precompile.
 #[tokio::test]
