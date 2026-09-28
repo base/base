@@ -341,10 +341,23 @@ where
                 ..
             }) => {
                 let backend_session_id = submit.await?;
-                handle
+                if let Err(error) = handle
                     .record(session_type, backend_session_id.clone(), BackendSessionState::Running)
                     .await
-                    .map_err(|error| ZkProverError::Session(Box::new(error)))?;
+                {
+                    // A cancel that lands between submit and record leaves this backend
+                    // session untracked, so the heartbeat cleanup cannot find it.
+                    if error.is_proof_cancelled() {
+                        self.cancel_backend_session(
+                            request,
+                            prover,
+                            session_type,
+                            &backend_session_id,
+                        )
+                        .await;
+                    }
+                    return Err(ZkProverError::Session(Box::new(error)));
+                }
                 info!(
                     session_id = %request.claim.session_id,
                     backend_session_id = %backend_session_id,
@@ -485,21 +498,33 @@ where
                 }
             };
 
-            match prover.cancel(&session.backend_session_id).await {
-                Ok(()) => info!(
-                    session_id = %request.claim.session_id,
-                    backend_session_id = %session.backend_session_id,
-                    ?session_type,
-                    "requested backend proof cancellation"
-                ),
-                Err(error) => warn!(
-                    session_id = %request.claim.session_id,
-                    backend_session_id = %session.backend_session_id,
-                    ?session_type,
-                    error = %error,
-                    "failed to cancel backend proof session"
-                ),
-            }
+            self.cancel_backend_session(request, prover, session_type, &session.backend_session_id)
+                .await;
+        }
+    }
+
+    /// Best-effort stop of one backend session after the requester cancelled the job.
+    async fn cancel_backend_session(
+        &self,
+        request: &ProofGeneratorRequest,
+        prover: &Arc<dyn ZkProver>,
+        session_type: SessionType,
+        backend_session_id: &str,
+    ) {
+        match prover.cancel(backend_session_id).await {
+            Ok(()) => info!(
+                session_id = %request.claim.session_id,
+                backend_session_id = %backend_session_id,
+                ?session_type,
+                "requested backend proof cancellation"
+            ),
+            Err(error) => warn!(
+                session_id = %request.claim.session_id,
+                backend_session_id = %backend_session_id,
+                ?session_type,
+                error = %error,
+                "failed to cancel backend proof session"
+            ),
         }
     }
 
@@ -653,4 +678,104 @@ pub enum ProofGeneratorError {
         #[source]
         source: ProofSubmitterError,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use base_prover_service_protocol::{
+        AbandonProofRequest, AbandonProofResponse, GetNextProofRequest, GetNextProofResponse,
+        GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest, HeartbeatResponse,
+        RecordProofSessionRequest, RecordProofSessionResponse, WorkerSubmitProofResponse,
+        ZkProofRequest, ZkVm,
+    };
+
+    use super::*;
+    use crate::prover::MockZkProver;
+
+    /// Worker client for a job that is cancelled after backend submit but before the
+    /// worker records the backend session.
+    #[derive(Clone, Debug)]
+    struct CancelledBeforeRecordClient;
+
+    #[async_trait]
+    impl ProverWorkerProvider for CancelledBeforeRecordClient {
+        async fn get_next_proof(
+            &self,
+            _request: GetNextProofRequest,
+        ) -> Result<GetNextProofResponse, ProverServiceClientError> {
+            unreachable!("not called while proving a claimed job")
+        }
+
+        async fn heartbeat(
+            &self,
+            _request: HeartbeatRequest,
+        ) -> Result<HeartbeatResponse, ProverServiceClientError> {
+            unreachable!("not called while proving a claimed job")
+        }
+
+        async fn abandon_proof(
+            &self,
+            _request: AbandonProofRequest,
+        ) -> Result<AbandonProofResponse, ProverServiceClientError> {
+            unreachable!("not called while proving a claimed job")
+        }
+
+        async fn submit_proof(
+            &self,
+            _request: WorkerSubmitProofRequest,
+        ) -> Result<WorkerSubmitProofResponse, ProverServiceClientError> {
+            unreachable!("not called while proving a claimed job")
+        }
+
+        async fn get_proof_session(
+            &self,
+            _request: GetProofSessionRequest,
+        ) -> Result<GetProofSessionResponse, ProverServiceClientError> {
+            Ok(GetProofSessionResponse { session: None })
+        }
+
+        async fn record_proof_session(
+            &self,
+            _request: RecordProofSessionRequest,
+        ) -> Result<RecordProofSessionResponse, ProverServiceClientError> {
+            Err(ProverServiceClientError::ProofCancelled)
+        }
+    }
+
+    #[tokio::test]
+    async fn cancels_submitted_backend_session_when_record_reports_cancellation() {
+        let mut prover = MockZkProver::new();
+        prover.expect_submit().returning(|_, _| Ok("backend-1".to_owned()));
+        prover.expect_cancel().withf(|id| id == "backend-1").times(1).returning(|_| Ok(()));
+
+        let generator = ProofGenerator::new(
+            HashMap::from([(ZkBackend::Cluster, Arc::new(prover) as Arc<dyn ZkProver>)]),
+            ProofSubmitter::new(CancelledBeforeRecordClient),
+            ProofGeneratorHeartbeatConfig::default(),
+        );
+        let request = ProofGeneratorRequest {
+            claim: ClaimedProofJobMetadata {
+                session_id: "session-1".to_owned(),
+                lock_id: "lock-1".to_owned(),
+                worker_id: "worker-1".to_owned(),
+            },
+            lock_expires_at: None,
+            request: ZkProofRequestKind::Compressed(ZkProofRequest {
+                start_block_number: 100,
+                number_of_blocks_to_prove: 5,
+                sequence_window: None,
+                l1_head: None,
+                intermediate_root_interval: None,
+                schedule_l2_block_number: None,
+                zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
+            }),
+        };
+
+        let error = generator
+            .prove_to_completion(&request)
+            .await
+            .expect_err("a cancelled record should fail the stage");
+        assert!(matches!(error, ZkProverError::Session(_)));
+    }
 }

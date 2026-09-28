@@ -118,7 +118,7 @@ impl ProofRequestRepo {
             SELECT id, COALESCE(session_id, id::text) AS session_id,
                    request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
                    start_block_number, number_of_blocks_to_prove, sequence_window,
-                   proof_type, status, prover_address, l1_head,
+                   proof_type, status, error_message, prover_address, l1_head,
                    intermediate_root_interval, retry_count
             FROM proof_requests
             WHERE COALESCE(session_id, id::text) = $1
@@ -178,6 +178,12 @@ impl ProofRequestRepo {
                 Ok(CreateProofRequestOutcome::Replayed(existing_id))
             }
             ProofStatus::Failed => {
+                if row.get::<Option<&str>, _>("error_message")
+                    == Some(PROOF_REQUEST_CANCELLED_MESSAGE)
+                {
+                    tx.rollback().await?;
+                    return Ok(CreateProofRequestOutcome::Cancelled(existing_id));
+                }
                 if !retry_failed {
                     tx.rollback().await?;
                     return Ok(CreateProofRequestOutcome::RetryNotAllowed(existing_id));
@@ -1299,7 +1305,7 @@ impl ProofRequestRepo {
 
         let claim = sqlx::query(
             r#"
-            SELECT id, job_status, lock_id, worker_id, lock_expires_at
+            SELECT id, job_status, lock_id, worker_id, lock_expires_at, error_message
             FROM proof_requests
             WHERE COALESCE(session_id, id::text) = $1
             FOR UPDATE
@@ -1312,6 +1318,8 @@ impl ProofRequestRepo {
         let Some(claim) = claim else {
             return Ok(RecordSessionOutcome::NotFound);
         };
+        let cancelled =
+            claim.get::<Option<&str>, _>("error_message") == Some(PROOF_REQUEST_CANCELLED_MESSAGE);
 
         let proof_request_id: Uuid = claim.get("id");
         let job_status_str: &str = claim.get("job_status");
@@ -1334,6 +1342,7 @@ impl ProofRequestRepo {
             now,
         ) {
             ClaimAuth::Authorized => {}
+            ClaimAuth::Terminal if cancelled => return Ok(RecordSessionOutcome::Cancelled),
             ClaimAuth::Terminal => return Ok(RecordSessionOutcome::Terminal),
             ClaimAuth::NotClaimed => return Ok(RecordSessionOutcome::NotClaimed),
             ClaimAuth::StaleLock => return Ok(RecordSessionOutcome::StaleLock),

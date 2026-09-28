@@ -223,6 +223,9 @@ pub enum CreateProofRequestOutcome {
     RetryNotAllowed(Uuid),
     /// An existing failed row is at the retry cap; no requeue.
     RetryExhausted(Uuid),
+    /// An existing row was cancelled by a requester and is never requeued by a
+    /// replay; it must be deleted before the session id can be proved again.
+    Cancelled(Uuid),
 }
 
 impl CreateProofRequestOutcome {
@@ -233,7 +236,8 @@ impl CreateProofRequestOutcome {
             | Self::Requeued(id)
             | Self::Replayed(id)
             | Self::RetryNotAllowed(id)
-            | Self::RetryExhausted(id) => *id,
+            | Self::RetryExhausted(id)
+            | Self::Cancelled(id) => *id,
         }
     }
 }
@@ -1200,6 +1204,8 @@ pub enum RecordSessionOutcome {
     Expired,
     /// The job is already terminal.
     Terminal,
+    /// The job was cancelled by a requester.
+    Cancelled,
     /// The requested session status is terminal and must be coordinated with job completion.
     TerminalSessionStatus,
 }

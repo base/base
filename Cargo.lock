@@ -5706,6 +5706,7 @@ dependencies = [
  "base-prover-service-client",
  "base-prover-service-protocol",
  "chrono",
+ "mockall",
  "thiserror 2.0.19",
  "tokio",
  "tokio-util",

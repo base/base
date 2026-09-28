@@ -510,6 +510,9 @@ impl ProverServiceServer {
                 &request.session_id,
                 "job has already reached a terminal state",
             )),
+            RecordSessionOutcome::Cancelled => {
+                Err(proof_cancelled(PROOF_REQUEST_CANCELLED_MESSAGE))
+            }
             RecordSessionOutcome::TerminalSessionStatus => Err(reject_ownership(
                 "record_proof_session",
                 &request.session_id,

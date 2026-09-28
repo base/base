@@ -1323,6 +1323,54 @@ async fn test_cancel_proof_request_by_session_id_rejects_tee_and_dry_run() {
 
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_cancel_proof_request_blocks_replay_and_worker_session_writes() {
+    let repo = test_repo(test_pool().await);
+    drain_claimable_compressed_jobs(&repo).await;
+
+    let session_id = Uuid::new_v4().to_string();
+    let mut request = compressed_request();
+    set_request_session_id(&mut request, session_id.clone());
+    repo.create_for_worker_queue(request.clone(), TEST_MAX_PROOF_RETRIES, true).await.unwrap();
+    let claim = repo
+        .claim_next_proof_job(compressed_claim("cancel-worker", 1))
+        .await
+        .unwrap()
+        .expect("compressed job should be claimed");
+    assert_eq!(claim.session_id, session_id);
+
+    assert!(matches!(
+        repo.cancel_proof_request_by_session_id(&session_id).await.unwrap(),
+        CancelProofRequestOutcome::Cancelled(_)
+    ));
+
+    // A replay with the default retry_failed = true must not requeue a cancelled request.
+    assert!(matches!(
+        repo.create_for_worker_queue(request, TEST_MAX_PROOF_RETRIES, true).await.unwrap(),
+        CreateProofRequestOutcome::Cancelled(_)
+    ));
+    let job = repo.get_proof_job_by_session_id(&session_id).await.unwrap().unwrap();
+    assert_eq!(job.job_status, ProofJobStatus::Failed);
+    assert_eq!(job.error_message.as_deref(), Some(PROOF_REQUEST_CANCELLED_MESSAGE));
+
+    // The previous owner recording a backend session it submitted just before the cancel
+    // is told the job was cancelled, so it can stop that backend proof.
+    let recorded = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id,
+            lock_id: claim.lock_id.expect("claimed job has lock"),
+            worker_id: "cancel-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: "backend-after-cancel".to_owned(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(recorded, RecordSessionOutcome::Cancelled));
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_delete_proof_request_by_session_id_deletes_terminal_rows() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
