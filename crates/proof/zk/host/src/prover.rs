@@ -89,7 +89,6 @@ pub enum ZkProverError {
 }
 
 /// Drives a single ZK proving job on a backend.
-#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait ZkProver: Send + Sync + std::fmt::Debug {
     /// Submit the range (STARK) proof to the backend and return its backend session id.

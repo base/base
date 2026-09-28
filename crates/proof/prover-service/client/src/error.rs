@@ -218,10 +218,6 @@ mod tests {
         ),
         false
     )]
-    #[case::proof_cancelled(
-        rpc_call_error(ProverServiceClientError::ERROR_PROOF_CANCELLED, "cancelled"),
-        false
-    )]
     fn retry_classification_matches_expected(
         #[case] error: ProverServiceClientError,
         #[case] expected_retryable: bool,
@@ -273,6 +269,7 @@ mod tests {
         let cancelled =
             rpc_call_error(ProverServiceClientError::ERROR_PROOF_CANCELLED, "cancelled");
         assert!(cancelled.is_proof_cancelled());
+        assert!(!cancelled.is_retryable());
 
         let other_precondition =
             rpc_call_error(ProverServiceClientError::ERROR_FAILED_PRECONDITION, "cancelled");

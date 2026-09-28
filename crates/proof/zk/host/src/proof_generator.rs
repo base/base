@@ -682,6 +682,8 @@ pub enum ProofGeneratorError {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use base_prover_service_protocol::{
         AbandonProofRequest, AbandonProofResponse, GetNextProofRequest, GetNextProofResponse,
         GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest, HeartbeatResponse,
@@ -690,7 +692,40 @@ mod tests {
     };
 
     use super::*;
-    use crate::prover::MockZkProver;
+
+    /// Records which backend session ids were cancelled.
+    #[derive(Debug)]
+    struct RecordingProver {
+        cancelled: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl ZkProver for RecordingProver {
+        async fn submit(
+            &self,
+            _request: &ZkProofRequest,
+            _request_session_id: &str,
+        ) -> Result<String, ZkProverError> {
+            Ok("backend-1".to_owned())
+        }
+
+        async fn poll(&self, _backend_session_id: &str) -> Result<ZkSessionState, ZkProverError> {
+            unreachable!("not called when recording the session fails")
+        }
+
+        async fn cancel(&self, backend_session_id: &str) -> Result<(), ZkProverError> {
+            self.cancelled.lock().expect("cancel log").push(backend_session_id.to_owned());
+            Ok(())
+        }
+
+        async fn download(
+            &self,
+            _session_type: SessionType,
+            _backend_session_id: &str,
+        ) -> Result<ProofResult, ZkProverError> {
+            unreachable!("not called when recording the session fails")
+        }
+    }
 
     /// Worker client for a job that is cancelled after backend submit but before the
     /// worker records the backend session.
@@ -744,12 +779,9 @@ mod tests {
 
     #[tokio::test]
     async fn cancels_submitted_backend_session_when_record_reports_cancellation() {
-        let mut prover = MockZkProver::new();
-        prover.expect_submit().returning(|_, _| Ok("backend-1".to_owned()));
-        prover.expect_cancel().withf(|id| id == "backend-1").times(1).returning(|_| Ok(()));
-
+        let prover = Arc::new(RecordingProver { cancelled: Mutex::new(Vec::new()) });
         let generator = ProofGenerator::new(
-            HashMap::from([(ZkBackend::Cluster, Arc::new(prover) as Arc<dyn ZkProver>)]),
+            HashMap::from([(ZkBackend::Cluster, Arc::clone(&prover) as Arc<dyn ZkProver>)]),
             ProofSubmitter::new(CancelledBeforeRecordClient),
             ProofGeneratorHeartbeatConfig::default(),
         );
@@ -777,5 +809,6 @@ mod tests {
             .await
             .expect_err("a cancelled record should fail the stage");
         assert!(matches!(error, ZkProverError::Session(_)));
+        assert_eq!(prover.cancelled.lock().expect("cancel log").as_slice(), ["backend-1"]);
     }
 }
