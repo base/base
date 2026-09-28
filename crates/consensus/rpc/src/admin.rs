@@ -86,7 +86,7 @@ where
         Self { sequencer_admin_client, network_access, upgrade_signal_refresher: None }
     }
 
-    /// Constructs an admin RPC for an isolated sequencer without a network actor.
+    /// Constructs an admin RPC for an isolated sequencer without network-backed methods.
     pub const fn new_isolated(sequencer_admin_client: Option<SequencerAdminAPIClient_>) -> Self {
         Self::new(sequencer_admin_client, AdminNetworkAccess::Disabled)
     }

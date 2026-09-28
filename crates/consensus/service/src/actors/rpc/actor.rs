@@ -50,7 +50,7 @@ pub struct RpcContext {
     pub p2p_network: Option<mpsc::Sender<P2pRpcRequest>>,
     /// The network admin rpc sender.
     pub network_admin: Option<mpsc::Sender<NetworkAdminQuery>>,
-    /// Whether the node is an isolated sequencer without a network actor.
+    /// Whether the node is an isolated sequencer without network RPC access.
     pub isolated_sequencer: bool,
     /// The l1 watcher queries sender.
     pub l1_watcher_queries: mpsc::Sender<L1WatcherQueries>,

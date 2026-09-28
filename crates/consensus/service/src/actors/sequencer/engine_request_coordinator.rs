@@ -19,7 +19,10 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-use super::{CanonicalUnsafeCatchup, Conductor, SequencerEngineState, ShadowReconciliationGate};
+use super::{
+    CanonicalUnsafeCatchup, Conductor, IsolatedCatchup, SequencerEngineState,
+    ShadowReconciliationGate,
+};
 use crate::{
     BuildRequest, EngineActorRequest, EngineClientError, EngineDerivationClient, EngineError,
     EngineProcessor, EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest, Metrics,
@@ -76,6 +79,24 @@ where
         Self { processor, sequencer_state, conductor, sequencer_stopped, unsafe_head_tx }
     }
 
+    /// Creates a request handler for an isolated sequencer.
+    ///
+    /// The handler inserts canonical unsafe gossip until the engine reaches the highest gossiped
+    /// block, then ignores canonical ingress while the sequencer produces private blocks.
+    pub fn new_isolated(
+        processor: EngineProcessor<EngineClient_, DerivationClient>,
+        sequencer_stopped: bool,
+        unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
+    ) -> Self {
+        Self {
+            processor,
+            sequencer_state: SequencerEngineState::IsolatedCatchingUp(IsolatedCatchup::default()),
+            conductor: None,
+            sequencer_stopped,
+            unsafe_head_tx,
+        }
+    }
+
     /// Returns the coordinator's sequencer routing state.
     pub const fn sequencer_state(&self) -> &SequencerEngineState {
         &self.sequencer_state
@@ -117,6 +138,18 @@ where
 
         if !self.processor.engine_state().el_sync_finished {
             return Err(EngineClientError::ELSyncing);
+        }
+
+        match &self.sequencer_state {
+            SequencerEngineState::IsolatedCatchingUp(catchup) => {
+                if catchup.has_observations() && !catchup.is_complete(head) {
+                    return Err(EngineClientError::ELSyncing);
+                }
+                self.sequencer_state = SequencerEngineState::Isolated;
+                return Ok(());
+            }
+            SequencerEngineState::Isolated => return Ok(()),
+            _ => {}
         }
 
         if let SequencerEngineState::CatchingUp { catchup, .. } = &self.sequencer_state {
@@ -259,6 +292,12 @@ where
             let at_genesis = opt_head
                 .is_none_or(|head| head.block_info.hash == self.processor.rollup().genesis.l2.hash);
 
+            // A chain still at genesis has no canonical tip to rejoin.
+            if at_genesis
+                && matches!(self.sequencer_state, SequencerEngineState::IsolatedCatchingUp(_))
+            {
+                self.sequencer_state = SequencerEngineState::Isolated;
+            }
             let bootstrap_role = self.resolve_bootstrap_role().await;
             if bootstrap_role == BootstrapRole::ConductorFollower
                 && !at_genesis
@@ -470,6 +509,20 @@ where
                             SequencerEngineState::ShadowActive(gate) => {
                                 gate.buffer_payload(*envelope);
                             }
+                            // Unlike shadow catch-up, isolated catch-up has no derivation to fill
+                            // gaps, so reth must sync them from its own peers.
+                            SequencerEngineState::IsolatedCatchingUp(catchup) => {
+                                catchup.observe(&envelope);
+                                self.processor.handle_external_unsafe_l2_block(*envelope);
+                            }
+                            SequencerEngineState::Isolated => {
+                                debug!(
+                                    target: "engine",
+                                    block_number = envelope.execution_payload.block_number(),
+                                    block_hash = %envelope.execution_payload.block_hash(),
+                                    "Isolated sequencer dropped canonical unsafe payload"
+                                );
+                            }
                             SequencerEngineState::Regular => {
                                 let block_number = envelope.execution_payload.block_number();
                                 let unsafe_head =
@@ -514,7 +567,11 @@ where
                             SequencerEngineState::ShadowActive(_) => {
                                 warn!(target: "engine", "Ignoring admin unsafe payload on shadow sequencer");
                             }
+                            SequencerEngineState::Isolated => {
+                                warn!(target: "engine", "Ignoring admin unsafe payload on isolated sequencer");
+                            }
                             SequencerEngineState::Regular
+                            | SequencerEngineState::IsolatedCatchingUp(_)
                             | SequencerEngineState::CatchingUp { shadow: false, .. } => {
                                 self.processor.handle_admin_unsafe_l2_block(*envelope);
                             }
@@ -542,7 +599,9 @@ where
                                 }
                             }
                             SequencerEngineState::Regular
-                            | SequencerEngineState::CatchingUp { .. } => {
+                            | SequencerEngineState::CatchingUp { .. }
+                            | SequencerEngineState::IsolatedCatchingUp(_)
+                            | SequencerEngineState::Isolated => {
                                 Err(EngineClientError::ShadowReconciliationDisabled)
                             }
                         };
@@ -563,6 +622,34 @@ where
                         let sync_state = self.processor.engine_state().sync_state;
                         let head = sync_state.unsafe_head();
                         let unsafe_before = head;
+                        if origin != ResetOrigin::Derivation
+                            && let SequencerEngineState::IsolatedCatchingUp(catchup) =
+                                &self.sequencer_state
+                        {
+                            if !catchup.is_complete(head) {
+                                warn!(target: "engine", "Deferring isolated sequencer reset until canonical catch-up completes");
+                                Metrics::record_engine_reset(
+                                    origin,
+                                    reason,
+                                    ResetRequestOutcome::Deferred,
+                                    reset_started.elapsed(),
+                                    unsafe_before,
+                                    head,
+                                );
+                                if result_tx.send(Err(EngineClientError::ELSyncing)).await.is_err()
+                                {
+                                    warn!(target: "engine", "Sending ELSyncing response failed");
+                                }
+                                continue;
+                            }
+                            info!(
+                                target: "engine",
+                                canonical_head = head.block_info.number,
+                                canonical_hash = %head.block_info.hash,
+                                "Isolated sequencer canonical catch-up completed"
+                            );
+                            self.sequencer_state = SequencerEngineState::Isolated;
+                        }
                         if origin != ResetOrigin::Derivation
                             && let SequencerEngineState::CatchingUp { shadow, catchup } =
                                 &self.sequencer_state
@@ -686,7 +773,9 @@ where
                                 SequencerEngineState::CatchingUp { catchup, .. } => {
                                     *catchup = CanonicalUnsafeCatchup::default();
                                 }
-                                SequencerEngineState::Regular => {}
+                                SequencerEngineState::Regular
+                                | SequencerEngineState::IsolatedCatchingUp(_)
+                                | SequencerEngineState::Isolated => {}
                             }
                             self.unsafe_head_tx.send_replace(anchor);
                             if let Err(error) =
@@ -775,8 +864,8 @@ mod tests {
 
     use super::{BootstrapRole, SequencerEngineRequestCoordinator, SequencerEngineState};
     use crate::{
-        CanonicalUnsafeCatchup, Conductor, ConductorError, EngineProcessor, MockConductor,
-        MockEngineDerivationClient, ShadowReconciliationGate,
+        CanonicalUnsafeCatchup, Conductor, ConductorError, EngineProcessor, IsolatedCatchup,
+        MockConductor, MockEngineDerivationClient, ShadowReconciliationGate,
     };
 
     fn coordinator(
@@ -952,6 +1041,71 @@ mod tests {
             requested_hash == 100
         );
         assert!(matches!(coordinator.sequencer_state(), SequencerEngineState::ShadowActive(_)));
+    }
+
+    #[rstest]
+    #[case::no_observations(true, None, true)]
+    #[case::caught_up(true, Some(100), true)]
+    #[case::behind_tip(true, Some(101), false)]
+    #[case::el_syncing(false, None, false)]
+    fn prepare_start_hands_off_isolated_catchup_only_at_canonical_tip(
+        #[case] el_synced: bool,
+        #[case] observed: Option<u8>,
+        #[case] accepted: bool,
+    ) {
+        let head = L2BlockInfo {
+            block_info: BlockInfo {
+                number: 100,
+                hash: B256::with_last_byte(100),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let state = TestEngineStateBuilder::new()
+            .with_unsafe_head(head)
+            .with_el_sync_finished(el_synced)
+            .build();
+        let (state_tx, _) = watch::channel(state);
+        let (queue_tx, _) = watch::channel(0usize);
+        let processor = EngineProcessor::new(
+            Arc::new(test_engine_client_builder().build()),
+            Arc::new(RollupConfig::default()),
+            MockEngineDerivationClient::new(),
+            Engine::new(state, state_tx, queue_tx),
+        );
+        let (head_tx, _) = watch::channel(head);
+        let mut coordinator =
+            SequencerEngineRequestCoordinator::new_isolated(processor, true, head_tx);
+        let mut catchup = IsolatedCatchup::default();
+        if let Some(number) = observed {
+            catchup.observe(&BaseExecutionPayloadEnvelope {
+                execution_payload: BaseExecutionPayload::V1(ExecutionPayloadV1 {
+                    block_number: u64::from(number),
+                    block_hash: B256::with_last_byte(number),
+                    parent_hash: B256::ZERO,
+                    fee_recipient: Default::default(),
+                    state_root: B256::ZERO,
+                    receipts_root: B256::ZERO,
+                    logs_bloom: Default::default(),
+                    prev_randao: B256::ZERO,
+                    gas_limit: 30_000_000,
+                    gas_used: 0,
+                    timestamp: u64::from(number),
+                    extra_data: Default::default(),
+                    base_fee_per_gas: Default::default(),
+                    transactions: vec![],
+                }),
+                parent_beacon_block_root: None,
+            });
+        }
+        *coordinator.sequencer_state_mut() = SequencerEngineState::IsolatedCatchingUp(catchup);
+
+        let result = coordinator.prepare_sequencer_start(head.block_info.hash);
+        assert_eq!(result.is_ok(), accepted, "{result:?}");
+        assert_eq!(
+            matches!(coordinator.sequencer_state(), SequencerEngineState::Isolated),
+            accepted
+        );
     }
 
     #[rstest]

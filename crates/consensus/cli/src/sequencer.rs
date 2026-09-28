@@ -51,7 +51,8 @@ pub struct SequencerArgs {
     )]
     pub recover: bool,
 
-    /// Run the sequencer without canonical-chain ingress or payload publication.
+    /// Run the sequencer without derivation or payload publication, following canonical gossip
+    /// only until it reaches the canonical tip at startup.
     #[arg(
         long = "sequencer.isolated",
         default_value = "false",

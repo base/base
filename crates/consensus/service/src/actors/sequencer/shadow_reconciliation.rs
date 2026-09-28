@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
+use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_engine::ConsolidateInput;
@@ -24,6 +25,41 @@ pub enum SequencerEngineState {
     },
     /// Private block production is active and canonical inputs are buffered for reconciliation.
     ShadowActive(Box<ShadowReconciliationGate>),
+    /// An isolated sequencer is inserting canonical unsafe gossip so the execution layer can
+    /// sync to the canonical tip before private block production starts.
+    IsolatedCatchingUp(IsolatedCatchup),
+    /// An isolated sequencer is producing private blocks and ignores canonical ingress.
+    Isolated,
+}
+
+/// Tracks the canonical unsafe tip seen on gossip while an isolated sequencer catches up.
+#[derive(Debug, Default)]
+pub struct IsolatedCatchup {
+    highest_observed: Option<BlockNumHash>,
+}
+
+impl IsolatedCatchup {
+    /// Records a canonical unsafe payload if it is the highest one seen so far.
+    pub fn observe(&mut self, envelope: &BaseExecutionPayloadEnvelope) {
+        let number = envelope.execution_payload.block_number();
+        if self.highest_observed.is_none_or(|highest| number > highest.number) {
+            self.highest_observed =
+                Some(BlockNumHash::new(number, envelope.execution_payload.block_hash()));
+        }
+    }
+
+    /// Returns whether any canonical unsafe payload has been observed.
+    pub const fn has_observations(&self) -> bool {
+        self.highest_observed.is_some()
+    }
+
+    /// Returns whether the unsafe head is the highest canonical payload seen on gossip.
+    pub fn is_complete(&self, unsafe_head: L2BlockInfo) -> bool {
+        self.highest_observed.is_some_and(|highest| {
+            unsafe_head.block_info.number == highest.number
+                && unsafe_head.block_info.hash == highest.hash
+        })
+    }
 }
 
 /// Rolling canonical unsafe payloads retained while safe derivation catches up.
@@ -334,7 +370,7 @@ mod tests {
     use base_consensus_engine::{ConsolidateInput, test_utils::TestAttributesBuilder};
     use base_protocol::{BlockInfo, L2BlockInfo};
 
-    use super::{CanonicalUnsafeCatchup, ShadowReconciliationGate};
+    use super::{CanonicalUnsafeCatchup, IsolatedCatchup, ShadowReconciliationGate};
     use crate::EngineClientError;
 
     fn head(number: u64, hash: B256) -> L2BlockInfo {
@@ -450,6 +486,23 @@ mod tests {
 
         assert!(catchup.is_faulted());
         assert!(!catchup.is_complete(original, L2BlockInfo::default()));
+    }
+
+    #[test]
+    fn isolated_catchup_completes_only_at_highest_observed_payload() {
+        let tip = head(12, B256::with_last_byte(12));
+        let mut catchup = IsolatedCatchup::default();
+        assert!(!catchup.has_observations());
+        assert!(!catchup.is_complete(tip));
+
+        catchup.observe(&payload(12, B256::with_last_byte(11), tip.block_info.hash));
+        catchup.observe(&payload(11, B256::with_last_byte(10), B256::with_last_byte(11)));
+        catchup.observe(&payload(12, B256::with_last_byte(11), B256::with_last_byte(99)));
+
+        assert!(catchup.has_observations());
+        assert!(!catchup.is_complete(head(11, B256::with_last_byte(11))));
+        assert!(!catchup.is_complete(head(12, B256::with_last_byte(99))));
+        assert!(catchup.is_complete(tip));
     }
 
     #[test]

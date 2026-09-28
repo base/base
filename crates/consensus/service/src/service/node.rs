@@ -307,6 +307,12 @@ impl RollupNode {
             ConfiguredEngineReceiver::Validator(ValidatorEngineRequestHandler::new(
                 engine_processor,
             ))
+        } else if self.sequencer_config.isolated {
+            ConfiguredEngineReceiver::Sequencer(SequencerEngineRequestCoordinator::new_isolated(
+                engine_processor,
+                self.sequencer_config.sequencer_stopped,
+                unsafe_head_tx,
+            ))
         } else {
             ConfiguredEngineReceiver::Sequencer(SequencerEngineRequestCoordinator::new(
                 engine_processor,
@@ -528,36 +534,28 @@ impl RollupNode {
             None
         };
 
-        // Create the p2p actor.
-        let (signer, network_rpc, gossip_payload_tx, net_admin_rpc, network) =
-            if self.sequencer_config.network_enabled() {
-                let (
-                    NetworkInboundData {
-                        signer,
-                        p2p_rpc: network_rpc,
-                        gossip_payload_tx,
-                        admin_rpc: net_admin_rpc,
-                    },
-                    network,
-                ) = NetworkActor::new(
-                    QueuedNetworkEngineClient {
-                        engine_actor_request_tx: engine_actor_request_tx.clone(),
-                    },
-                    cancellation.clone(),
-                    self.network_builder(),
-                )
-                .await
-                .map_err(|e| format!("Failed to start network actor: {e}"))?;
-                (
-                    Some(signer),
-                    Some(network_rpc),
-                    Some(gossip_payload_tx),
-                    Some(net_admin_rpc),
-                    Some(network),
-                )
-            } else {
-                (None, None, None, None, None)
-            };
+        // Create the p2p actor. Isolated sequencers still need canonical gossip to rejoin the tip
+        // at startup, but never receive the publish sender or network RPC access.
+        let (
+            NetworkInboundData {
+                signer,
+                p2p_rpc: network_rpc,
+                gossip_payload_tx,
+                admin_rpc: net_admin_rpc,
+            },
+            network,
+        ) = NetworkActor::new(
+            QueuedNetworkEngineClient { engine_actor_request_tx: engine_actor_request_tx.clone() },
+            cancellation.clone(),
+            self.network_builder(),
+        )
+        .await
+        .map_err(|e| format!("Failed to start network actor: {e}"))?;
+        let (network_rpc, gossip_payload_tx, net_admin_rpc) = if self.sequencer_config.isolated {
+            (None, None, None)
+        } else {
+            (Some(network_rpc), Some(gossip_payload_tx), Some(net_admin_rpc))
+        };
 
         let (l1_head_updates_tx, l1_head_updates_rx) = watch::channel(None);
 
@@ -587,7 +585,7 @@ impl RollupNode {
             } else {
                 QueuedL1WatcherDerivationClient::disabled()
             },
-            signer,
+            Some(signer),
             cancellation.clone(),
             head_stream,
             finalized_stream,
@@ -704,7 +702,7 @@ impl RollupNode {
                     }
                 )),
                 sequencer_actor.map(|s| (s, ())),
-                network.map(|network| (network, ())),
+                Some((network, ())),
                 Some((l1_watcher, ())),
                 Some((l1_query_processor, ())),
                 upgrade_signal_metrics_actor.map(|actor| (actor, ())),
