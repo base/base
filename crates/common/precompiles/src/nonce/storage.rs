@@ -270,6 +270,7 @@ impl NonceManagerStorage<'_> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, address};
+    use base_common_genesis::RollupConfig;
     use base_precompile_storage::{
         BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx, StorageKey,
     };
@@ -561,36 +562,41 @@ mod tests {
     /// Worst case: the chain is packed end-to-end with the cheapest possible
     /// nonce-free transactions for the entire window. The number of
     /// simultaneously-live entries is then
-    /// `(block_gas_limit / min_tx_gas) * ceil(window / block_time)`, which must
-    /// not exceed [`NonceManagerStorage::REPLAY_BUFFER_CAPACITY`].
+    /// `(block_gas_limit / min_tx_gas) * ceil(window / block_interval)`, which
+    /// must not exceed [`NonceManagerStorage::REPLAY_BUFFER_CAPACITY`].
     ///
-    /// This test pins the throughput ceiling the buffer is sized for (matching
-    /// the "~10k TPS for ~30s" note on `REPLAY_BUFFER_CAPACITY`). Raising
-    /// [`NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW`] without growing the
-    /// buffer (or shrinking the supported gas limit) breaks the invariant and
-    /// fails here — a deliberate fork-level tripwire.
+    /// Denim produces blocks every 200 ms, rather than every legacy two-second
+    /// interval. Its canonical gas-parameter scaling factor divides the gas
+    /// limit by ten at the same transition, preserving the ~10k TPS throughput
+    /// this buffer is sized for. The cadence and scaling factor come from
+    /// [`RollupConfig`], the protocol source of truth, rather than duplicating
+    /// them here. Raising [`NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW`]
+    /// without growing the buffer (or shrinking the supported gas limit) breaks
+    /// the invariant and fails here — a deliberate fork-level tripwire.
     #[test]
     fn replay_buffer_covers_peak_nonce_free_throughput() {
-        // Conservative Base worst-case chain parameters.
-        const BLOCK_GAS_LIMIT: u64 = 600_000_000;
-        const BLOCK_TIME_SECS: u64 = 2;
+        // Conservative pre-Denim Base gas limit. The protocol divides this by
+        // DENIM_GAS_PARAMETER_SCALING_FACTOR as it moves to 200 ms blocks.
+        const PRE_DENIM_BLOCK_GAS_LIMIT: u64 = 600_000_000;
         const MIN_TX_GAS: u64 = 30_000;
 
-        let max_txs_per_block = BLOCK_GAS_LIMIT / MIN_TX_GAS;
-        // NONCE_FREE_EXPIRY_WINDOW is in milliseconds; the block cadence is in
-        // seconds, so convert the window before dividing.
-        let window_secs = NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW / 1_000;
+        let block_gas_limit = PRE_DENIM_BLOCK_GAS_LIMIT
+            / u64::from(RollupConfig::DENIM_GAS_PARAMETER_SCALING_FACTOR);
+        let block_interval_millis = RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS;
+        let max_txs_per_block = block_gas_limit / MIN_TX_GAS;
         // Round the window up to whole blocks so we never under-count.
-        let blocks_per_window = window_secs.div_ceil(BLOCK_TIME_SECS);
+        let blocks_per_window =
+            NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW.div_ceil(block_interval_millis);
         let max_live_entries = max_txs_per_block * blocks_per_window;
 
         assert!(
             u64::from(NonceManagerStorage::REPLAY_BUFFER_CAPACITY) >= max_live_entries,
             "replay buffer capacity {} cannot hold peak live entries {max_live_entries} \
-             (block_gas_limit={BLOCK_GAS_LIMIT}, min_tx_gas={MIN_TX_GAS}, \
-             window={window_secs}s, block_time={BLOCK_TIME_SECS}s): grow REPLAY_BUFFER_CAPACITY \
+             (block_gas_limit={block_gas_limit}, min_tx_gas={MIN_TX_GAS}, \
+             window={}ms, block_interval={block_interval_millis}ms): grow REPLAY_BUFFER_CAPACITY \
              or lower NONCE_FREE_EXPIRY_WINDOW",
             NonceManagerStorage::REPLAY_BUFFER_CAPACITY,
+            NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW,
         );
     }
 }
