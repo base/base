@@ -17,8 +17,8 @@ use base_common_precompiles::{ActivationFeature, B20Variant, IB20};
 use base_common_rpc_types::BaseTransactionReceipt;
 use base_optimism_rpc::OptimismRollupProviderExt;
 use base_system_tests::{
-    ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, B20PrecompileClient, InProcessProverService, InProcessZkHost,
-    SystemTestStackBuilder,
+    ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, B20PrecompileClient, DevnetConfig, InProcessProverService,
+    InProcessZkHost, SystemTestStackBuilder,
 };
 use eyre::{Result, WrapErr, ensure};
 
@@ -74,7 +74,7 @@ async fn send_b20_transfer(provider: &RootProvider<Base>) -> Result<BaseTransact
     let recipient = ANVIL_ACCOUNT_6.address;
     balance::wait_for_balance(provider, admin.address()).await?;
 
-    let b20 = B20PrecompileClient::new(provider, &admin, common::L2_CHAIN_ID)
+    let b20 = B20PrecompileClient::new(provider, &admin, DevnetConfig::DEFAULT_L2_CHAIN_ID)
         .with_receipt_timeout(balance::TX_RECEIPT_TIMEOUT);
     b20.activate_feature(ActivationFeature::B20Asset.id()).await?;
 

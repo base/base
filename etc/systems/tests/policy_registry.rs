@@ -11,7 +11,9 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolEvent};
 use base_common_precompiles::{ActivationFeature, IPolicyRegistry, PolicyRegistryStorage};
 use base_common_rpc_types::BaseTransactionReceipt;
-use base_system_tests::{ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, ANVIL_ACCOUNT_7, B20PrecompileClient};
+use base_system_tests::{
+    ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, ANVIL_ACCOUNT_7, B20PrecompileClient, DevnetConfig,
+};
 use eyre::{Result, WrapErr};
 
 /// `createPolicy` emits the expected policy-registry events over RPC receipts.
@@ -22,7 +24,7 @@ async fn test_policy_registry_create_policy_emits_events() -> Result<()> {
         .wrap_err("Failed to parse system test private key")?;
     beryl::wait_for_balance(&provider, caller.address()).await?;
 
-    let client = B20PrecompileClient::new(&provider, &caller, common::L2_CHAIN_ID)
+    let client = B20PrecompileClient::new(&provider, &caller, DevnetConfig::DEFAULT_L2_CHAIN_ID)
         .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
     client.activate_feature(ActivationFeature::PolicyRegistry.id()).await?;
 
@@ -69,7 +71,7 @@ async fn test_policy_registry_policy_exists() -> Result<()> {
         .wrap_err("Failed to parse system test private key")?;
     beryl::wait_for_balance(&provider, caller.address()).await?;
 
-    let client = B20PrecompileClient::new(&provider, &caller, common::L2_CHAIN_ID)
+    let client = B20PrecompileClient::new(&provider, &caller, DevnetConfig::DEFAULT_L2_CHAIN_ID)
         .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
     client.activate_feature(ActivationFeature::PolicyRegistry.id()).await?;
 
@@ -98,10 +100,11 @@ async fn test_policy_registry_lifecycle_and_error_paths() -> Result<()> {
     beryl::wait_for_balance(&provider, admin.address()).await?;
     beryl::wait_for_balance(&provider, next_admin.address()).await?;
 
-    let client = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
+    let client = B20PrecompileClient::new(&provider, &admin, DevnetConfig::DEFAULT_L2_CHAIN_ID)
         .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
-    let next_admin_client = B20PrecompileClient::new(&provider, &next_admin, common::L2_CHAIN_ID)
-        .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
+    let next_admin_client =
+        B20PrecompileClient::new(&provider, &next_admin, DevnetConfig::DEFAULT_L2_CHAIN_ID)
+            .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
     client.activate_feature(ActivationFeature::PolicyRegistry.id()).await?;
 
     let allowlist_id = create_policy(
@@ -262,7 +265,7 @@ async fn test_policy_registry_deactivated_views_and_write_gate() -> Result<()> {
         .wrap_err("Failed to parse policy admin key")?;
     beryl::wait_for_balance(&provider, admin.address()).await?;
 
-    let client = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
+    let client = B20PrecompileClient::new(&provider, &admin, DevnetConfig::DEFAULT_L2_CHAIN_ID)
         .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
     client.activate_feature(ActivationFeature::PolicyRegistry.id()).await?;
 

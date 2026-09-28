@@ -17,8 +17,8 @@ use base_common_precompiles::{
 };
 use base_common_rpc_types::BaseTransactionReceipt;
 use base_system_tests::{
-    ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, ANVIL_ACCOUNT_7, B20PrecompileClient, SystemTestStack,
-    SystemTestStackBuilder,
+    ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, ANVIL_ACCOUNT_7, B20PrecompileClient, DevnetConfig,
+    SystemTestStack, SystemTestStackBuilder,
 };
 use eyre::{Result, WrapErr, ensure};
 
@@ -39,8 +39,6 @@ const UPDATED_MULTIPLIER: U256 = U256::from_limbs([2_000_000_000_000_000_000, 0,
 
 async fn start_beryl_system_before_activation() -> Result<(SystemTestStack, RootProvider<Base>)> {
     let system = SystemTestStackBuilder::new()
-        .with_l1_chain_id(common::L1_CHAIN_ID)
-        .with_l2_chain_id(common::L2_CHAIN_ID)
         .with_base_azul_activation_block(common::BASE_AZUL_ACTIVATION_BLOCK)
         .with_base_beryl_activation_block(PRE_BERYL_TEST_ACTIVATION_BLOCK)
         .build()
@@ -66,7 +64,7 @@ async fn activated_feature_client<'a>(
     admin: &'a PrivateKeySigner,
     features: impl IntoIterator<Item = ActivationFeature>,
 ) -> Result<B20PrecompileClient<'a>> {
-    let b20 = B20PrecompileClient::new(provider, admin, common::L2_CHAIN_ID)
+    let b20 = B20PrecompileClient::new(provider, admin, DevnetConfig::DEFAULT_L2_CHAIN_ID)
         .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
     for feature in features {
         b20.activate_feature(feature.id()).await?;
@@ -172,8 +170,9 @@ async fn test_b20_approve_and_transfer_from() -> Result<()> {
     beryl::wait_for_balance(&provider, spender.address()).await?;
 
     let b20_admin = activated_b20_client(&provider, &admin).await?;
-    let b20_spender = B20PrecompileClient::new(&provider, &spender, common::L2_CHAIN_ID)
-        .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
+    let b20_spender =
+        B20PrecompileClient::new(&provider, &spender, DevnetConfig::DEFAULT_L2_CHAIN_ID)
+            .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
 
     let salt = B256::repeat_byte(0x11);
     let params = B20PrecompileClient::token_params(
@@ -277,7 +276,7 @@ async fn test_b20_stablecoin_create_and_currency_via_rpc() -> Result<()> {
         .wrap_err("Failed to parse admin key")?;
     beryl::wait_for_balance(&provider, admin.address()).await?;
 
-    let b20 = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
+    let b20 = B20PrecompileClient::new(&provider, &admin, DevnetConfig::DEFAULT_L2_CHAIN_ID)
         .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
     b20.activate_feature(ActivationFeature::B20Stablecoin.id()).await?;
 
@@ -741,7 +740,7 @@ async fn test_beryl_precompiles_do_not_execute_before_activation_block() -> Resu
     let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
         .wrap_err("Failed to parse admin key")?;
     beryl::wait_for_balance(&provider, admin.address()).await?;
-    let b20 = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
+    let b20 = B20PrecompileClient::new(&provider, &admin, DevnetConfig::DEFAULT_L2_CHAIN_ID)
         .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
     let salt = B256::repeat_byte(0x1a);
     let params = B20PrecompileClient::token_params(

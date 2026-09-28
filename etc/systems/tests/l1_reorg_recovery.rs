@@ -15,8 +15,6 @@ use base_system_tests::{
 use eyre::{OptionExt, Result, WrapErr, ensure};
 use tokio::time::{sleep, timeout};
 
-const L1_CHAIN_ID: u64 = 1337;
-const L2_CHAIN_ID: u64 = 84538453;
 const L1_BLOCK_TIME: u64 = 4;
 const REORG_DEPTH: u64 = 6;
 const OUTAGE_BLOCKS: u64 = 10;
@@ -29,8 +27,6 @@ const RECOVERY_TIMEOUT: Duration = Duration::from_secs(180);
 async fn sequencer_recovers_from_l1_outage_and_deep_reorg() -> Result<()> {
     base_node_runner::test_utils::init_silenced_tracing();
     let system = SystemTestStackBuilder::new()
-        .with_l1_chain_id(L1_CHAIN_ID)
-        .with_l2_chain_id(L2_CHAIN_ID)
         .with_slot_duration(L1_BLOCK_TIME)
         .with_l1_fault_injection()
         .build()

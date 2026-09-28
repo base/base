@@ -20,7 +20,7 @@ use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionReceipt;
 use base_optimism_rpc::OptimismRollupProviderExt;
 use base_system_tests::{
-    ANVIL_ACCOUNT_1, InProcessProverService, InProcessZkHost, SystemTestProviderExt,
+    ANVIL_ACCOUNT_1, DevnetConfig, InProcessProverService, InProcessZkHost, SystemTestProviderExt,
     SystemTestStackBuilder,
 };
 use eyre::{Result, WrapErr, ensure};
@@ -102,7 +102,7 @@ async fn send_minimal_eip8130(
 
     let nonce_sequence = provider.get_transaction_count(signer.address()).await?;
     let tx = TxEip8130 {
-        chain_id: common::L2_CHAIN_ID,
+        chain_id: DevnetConfig::DEFAULT_L2_CHAIN_ID,
         sender: None,
         nonce_key: U256::ZERO,
         nonce_sequence,

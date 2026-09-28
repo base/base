@@ -7,8 +7,6 @@ use base_common_network::Base;
 use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};
 
-pub(crate) const L1_CHAIN_ID: u64 = 1337;
-pub(crate) const L2_CHAIN_ID: u64 = 84538453;
 pub(crate) const BASE_AZUL_ACTIVATION_BLOCK: u64 = 0;
 pub(crate) const BASE_BERYL_ACTIVATION_BLOCK: u64 = 3;
 pub(crate) const BLOCK_PRODUCTION_TIMEOUT: Duration = Duration::from_secs(30);

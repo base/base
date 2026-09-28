@@ -6,7 +6,7 @@ use eyre::{Result, WrapErr};
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
 
-use crate::{L1ContainerConfig, L1Stack, L1StackConfig, SetupContainer};
+use crate::{DevnetConfig, L1ContainerConfig, L1Stack, L1StackConfig, SetupContainer};
 
 /// Environment variable pointing at the CI-scoped shared-L1 manifest.
 pub const SHARED_L1_RUNTIME_ENV: &str = "BASE_SYSTEM_TEST_SHARED_L1_RUNTIME";
@@ -89,7 +89,7 @@ impl SharedL1 {
         .await
         .wrap_err("failed to start shared L1")?;
         let runtime = SharedL1Runtime {
-            chain_id: 1337,
+            chain_id: DevnetConfig::DEFAULT_L1_CHAIN_ID,
             network_name,
             rpc_url: stack.rpc_url().await?.to_string(),
             internal_rpc_url: stack.reth().internal_rpc_url(),

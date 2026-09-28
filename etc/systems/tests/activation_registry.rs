@@ -14,7 +14,7 @@ use alloy_sol_types::{SolCall, SolEvent};
 use base_common_precompiles::{ActivationFeature, ActivationRegistryStorage, IActivationRegistry};
 use base_common_rpc_types::BaseTransactionReceipt;
 use base_system_tests::{
-    ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, B20PrecompileClient, SystemTestStackBuilder,
+    ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, B20PrecompileClient, DevnetConfig, SystemTestStackBuilder,
 };
 use eyre::{Result, WrapErr};
 
@@ -26,7 +26,7 @@ async fn test_activation_registry_is_activated_default() -> Result<()> {
         .wrap_err("Failed to parse system test private key")?;
     beryl::wait_for_balance(&provider, admin.address()).await?;
 
-    let client = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
+    let client = B20PrecompileClient::new(&provider, &admin, DevnetConfig::DEFAULT_L2_CHAIN_ID)
         .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
 
     let output = client
@@ -51,7 +51,7 @@ async fn test_activation_registry_admin() -> Result<()> {
         .wrap_err("Failed to parse system test private key")?;
     beryl::wait_for_balance(&provider, caller.address()).await?;
 
-    let client = B20PrecompileClient::new(&provider, &caller, common::L2_CHAIN_ID)
+    let client = B20PrecompileClient::new(&provider, &caller, DevnetConfig::DEFAULT_L2_CHAIN_ID)
         .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
 
     let output =
@@ -72,7 +72,7 @@ async fn test_activation_registry_set_admin_reverts_before_cobalt() -> Result<()
         .wrap_err("Failed to parse system test private key")?;
     beryl::wait_for_balance(&provider, admin.address()).await?;
 
-    let client = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
+    let client = B20PrecompileClient::new(&provider, &admin, DevnetConfig::DEFAULT_L2_CHAIN_ID)
         .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
 
     let succeeded = client
@@ -100,10 +100,12 @@ async fn test_activation_registry_cobalt_admin_rotation() -> Result<()> {
     beryl::wait_for_balance(&provider, admin.address()).await?;
     beryl::wait_for_balance(&provider, new_admin.address()).await?;
 
-    let admin_client = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
-        .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
-    let new_admin_client = B20PrecompileClient::new(&provider, &new_admin, common::L2_CHAIN_ID)
-        .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
+    let admin_client =
+        B20PrecompileClient::new(&provider, &admin, DevnetConfig::DEFAULT_L2_CHAIN_ID)
+            .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
+    let new_admin_client =
+        B20PrecompileClient::new(&provider, &new_admin, DevnetConfig::DEFAULT_L2_CHAIN_ID)
+            .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
 
     assert_eq!(admin_address(&admin_client).await?, admin.address());
 
@@ -153,7 +155,7 @@ async fn test_activation_registry_admin_lifecycle() -> Result<()> {
         .wrap_err("Failed to parse system test private key")?;
     beryl::wait_for_balance(&provider, admin.address()).await?;
 
-    let client = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
+    let client = B20PrecompileClient::new(&provider, &admin, DevnetConfig::DEFAULT_L2_CHAIN_ID)
         .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
     let feature = ActivationFeature::B20Stablecoin.id();
 
@@ -220,7 +222,7 @@ async fn test_activation_registry_unauthorized_activate_reverts() -> Result<()> 
         .wrap_err("Failed to parse system test private key")?;
     beryl::wait_for_balance(&provider, non_admin.address()).await?;
 
-    let client = B20PrecompileClient::new(&provider, &non_admin, common::L2_CHAIN_ID)
+    let client = B20PrecompileClient::new(&provider, &non_admin, DevnetConfig::DEFAULT_L2_CHAIN_ID)
         .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
 
     let succeeded = client
@@ -255,7 +257,7 @@ async fn test_activation_registry_check_activated_gate() -> Result<()> {
         .wrap_err("Failed to parse system test private key")?;
     beryl::wait_for_balance(&provider, admin.address()).await?;
 
-    let client = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
+    let client = B20PrecompileClient::new(&provider, &admin, DevnetConfig::DEFAULT_L2_CHAIN_ID)
         .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
     let feature = ActivationFeature::B20Asset.id();
 

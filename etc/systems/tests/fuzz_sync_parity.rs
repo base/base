@@ -33,15 +33,12 @@ use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_load_tests::{CalldataPayload, TransferPayload, WorkloadConfig, WorkloadGenerator};
 use base_system_tests::{
-    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4, Account,
+    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4, Account, DevnetConfig,
     SystemTestStackBuilder,
 };
 use eyre::{Result, WrapErr, eyre};
 use tokio::time::{sleep, timeout};
 use tracing::info;
-
-const L1_CHAIN_ID: u64 = 1337;
-const L2_CHAIN_ID: u64 = 84538453;
 
 /// Default seed so a failing run replays deterministically. Override with the
 /// `FUZZ_SEED` env var to explore more of the input space across runs.
@@ -72,11 +69,7 @@ async fn fuzz_sync_parity() -> Result<()> {
     let seed = seed_from_env();
 
     // 1. Boot the devnet: sequencer (builder) + gossip-following validator (client).
-    let system = SystemTestStackBuilder::new()
-        .with_l1_chain_id(L1_CHAIN_ID)
-        .with_l2_chain_id(L2_CHAIN_ID)
-        .build()
-        .await?;
+    let system = SystemTestStackBuilder::new().build().await?;
     let sequencer = system.l2_builder_provider()?;
     let validator = system.l2_client_provider()?;
 
@@ -242,7 +235,7 @@ fn complete_and_sign(signer: &PrivateKeySigner, tx: &FuzzedTx, nonce: u64) -> Re
         .with_gas_limit(TX_GAS_LIMIT)
         .with_max_fee_per_gas(1_000_000_000)
         .with_max_priority_fee_per_gas(0)
-        .with_chain_id(L2_CHAIN_ID)
+        .with_chain_id(DevnetConfig::DEFAULT_L2_CHAIN_ID)
         .with_nonce(nonce);
     let typed =
         request.build_typed_tx().map_err(|req| eyre!("invalid transaction request: {req:?}"))?;

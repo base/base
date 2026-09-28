@@ -335,11 +335,16 @@ pub struct DevnetConfig {
 }
 
 impl DevnetConfig {
+    /// L1 chain ID of the standard fresh local devnet.
+    pub const DEFAULT_L1_CHAIN_ID: u64 = 1337;
+    /// L2 chain ID of the standard fresh local devnet.
+    pub const DEFAULT_L2_CHAIN_ID: u64 = 84_538_453;
+
     /// Returns the standard fresh local devnet configuration.
     pub fn standard() -> Self {
         Self {
-            l1_chain_id: 1337,
-            l2_chain_id: 84_538_453,
+            l1_chain_id: Self::DEFAULT_L1_CHAIN_ID,
+            l2_chain_id: Self::DEFAULT_L2_CHAIN_ID,
             l1_slot_duration: DEFAULT_SLOT_DURATION,
             l1_mode: DevnetL1Mode::Real,
             l2_state: DevnetL2State::Fresh,

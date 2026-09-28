@@ -22,16 +22,14 @@ use base_execution_txpool::{
     ValidityPredicate,
 };
 use base_system_tests::{
-    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4, SystemTestProviderExt,
-    SystemTestStack, SystemTestStackBuilder,
+    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4, DevnetConfig,
+    SystemTestProviderExt, SystemTestStack, SystemTestStackBuilder,
 };
 use base_tx_forwarding::TxForwardingConfig;
 use base_txpool_rpc::SendRawTransactionValidityOptions;
 use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};
 
-const L1_CHAIN_ID: u64 = 1337;
-const L2_CHAIN_ID: u64 = 84538453;
 const DENIM_ACTIVATION_BLOCK: u64 = 0;
 const EVEREST_ACTIVATION_BLOCK: u64 = 0;
 const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -66,8 +64,6 @@ fn block_expiry_bound(current_block: u64) -> ValidityPredicate {
 /// transport enabled on both nodes and Everest active for EIP-8130 transactions.
 async fn start_validity_system() -> Result<SystemTestStack> {
     let system = SystemTestStackBuilder::new()
-        .with_l1_chain_id(L1_CHAIN_ID)
-        .with_l2_chain_id(L2_CHAIN_ID)
         .with_base_cobalt_activation_block(0)
         .with_base_denim_activation_block(DENIM_ACTIVATION_BLOCK)
         .with_base_everest_activation_block(EVEREST_ACTIVATION_BLOCK)
@@ -155,11 +151,7 @@ fn create_signed_eip8130_tx(
 /// 3. The transaction is included in a block on the builder
 #[tokio::test]
 async fn test_insert_validated_transaction_single() -> Result<()> {
-    let system = SystemTestStackBuilder::new()
-        .with_l1_chain_id(L1_CHAIN_ID)
-        .with_l2_chain_id(L2_CHAIN_ID)
-        .build()
-        .await?;
+    let system = SystemTestStackBuilder::new().build().await?;
 
     let builder_provider = system.l2_builder_provider()?;
 
@@ -191,7 +183,7 @@ async fn test_insert_validated_transaction_single() -> Result<()> {
     // Create a signed transaction
     let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;
     let (sender, raw_tx, expected_tx_hash) =
-        create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
+        create_signed_eip1559_tx(&signer, DevnetConfig::DEFAULT_L2_CHAIN_ID, nonce, recipient)?;
 
     // Create the ValidatedTransaction payload
     let validated_tx =
@@ -253,12 +245,7 @@ async fn test_tx_forwarding_pipeline_system() -> Result<()> {
         "inline simulation must stay off so this path still inserts then forwards"
     );
 
-    let system = SystemTestStackBuilder::new()
-        .with_l1_chain_id(L1_CHAIN_ID)
-        .with_l2_chain_id(L2_CHAIN_ID)
-        .with_tx_forwarding(forwarding)
-        .build()
-        .await?;
+    let system = SystemTestStackBuilder::new().with_tx_forwarding(forwarding).build().await?;
 
     let builder_provider = system.l2_builder_provider()?;
     let client_provider = system.l2_client_provider()?;
@@ -301,7 +288,7 @@ async fn test_tx_forwarding_pipeline_system() -> Result<()> {
     // Create a signed transaction
     let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;
     let (_, raw_tx, expected_tx_hash) =
-        create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
+        create_signed_eip1559_tx(&signer, DevnetConfig::DEFAULT_L2_CHAIN_ID, nonce, recipient)?;
 
     // Send the transaction to the CLIENT node (not builder)
     // The forwarding pipeline should forward it to the builder
@@ -356,7 +343,7 @@ async fn test_matching_validity_predicates_are_forwarded_and_included() -> Resul
     let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;
     let recipient_balance_before = builder_provider.get_balance(recipient).await?;
     let (_, raw_tx, expected_tx_hash) =
-        create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
+        create_signed_eip1559_tx(&signer, DevnetConfig::DEFAULT_L2_CHAIN_ID, nonce, recipient)?;
     let current_block = builder_provider.get_block_number().await?;
     let validity = vec![
         ValidityPredicate::Balance {
@@ -419,7 +406,7 @@ async fn test_validity_transaction_submitted_directly_to_builder_is_included() -
     let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;
     let recipient_balance_before = builder_provider.get_balance(recipient).await?;
     let (_, raw_tx, expected_tx_hash) =
-        create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
+        create_signed_eip1559_tx(&signer, DevnetConfig::DEFAULT_L2_CHAIN_ID, nonce, recipient)?;
     let current_block = builder_provider.get_block_number().await?;
     let rpc_client = RpcClient::builder().http(system.l2_rpc_url()?);
     let tx_hash: B256 = rpc_client
@@ -472,7 +459,7 @@ async fn test_eip8130_validity_transaction_is_included_by_native_builder() -> Re
 
     let nonce_sequence = client_provider.get_transaction_count(sender).await?;
     let (raw_tx, expected_tx_hash) =
-        create_signed_eip8130_tx(&signer, L2_CHAIN_ID, nonce_sequence)?;
+        create_signed_eip8130_tx(&signer, DevnetConfig::DEFAULT_L2_CHAIN_ID, nonce_sequence)?;
     let current_block = client_provider.get_block_number().await?;
     let rpc_client = RpcClient::builder().http(system.l2_client_rpc_url()?);
     let tx_hash: B256 = rpc_client
@@ -522,8 +509,12 @@ async fn test_validity_transaction_lands_after_balance_predicate_becomes_true() 
 
     let validity_nonce = client_provider.get_transaction_count(validity_signer.address()).await?;
     let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;
-    let (_, raw_validity_tx, validity_tx_hash) =
-        create_signed_eip1559_tx(&validity_signer, L2_CHAIN_ID, validity_nonce, recipient)?;
+    let (_, raw_validity_tx, validity_tx_hash) = create_signed_eip1559_tx(
+        &validity_signer,
+        DevnetConfig::DEFAULT_L2_CHAIN_ID,
+        validity_nonce,
+        recipient,
+    )?;
     let current_block = client_provider.get_block_number().await?;
     let rpc_client = RpcClient::builder().http(system.l2_client_rpc_url()?);
     let submitted_hash: B256 = rpc_client
@@ -558,8 +549,12 @@ async fn test_validity_transaction_lands_after_balance_predicate_becomes_true() 
     );
 
     let trigger_nonce = client_provider.get_transaction_count(trigger_signer.address()).await?;
-    let (_, raw_trigger_tx, trigger_tx_hash) =
-        create_signed_eip1559_tx(&trigger_signer, L2_CHAIN_ID, trigger_nonce, watched)?;
+    let (_, raw_trigger_tx, trigger_tx_hash) = create_signed_eip1559_tx(
+        &trigger_signer,
+        DevnetConfig::DEFAULT_L2_CHAIN_ID,
+        trigger_nonce,
+        watched,
+    )?;
     let pending_trigger = client_provider.send_raw_transaction(&raw_trigger_tx).await?;
     assert_eq!(*pending_trigger.tx_hash(), trigger_tx_hash);
 
@@ -599,14 +594,26 @@ async fn test_validity_block_predicates_defer_and_expire_transactions() -> Resul
     let target_block = current_block + 50;
     let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;
     let future_nonce = client_provider.get_transaction_count(future_signer.address()).await?;
-    let (_, raw_future_tx, future_tx_hash) =
-        create_signed_eip1559_tx(&future_signer, L2_CHAIN_ID, future_nonce, recipient)?;
+    let (_, raw_future_tx, future_tx_hash) = create_signed_eip1559_tx(
+        &future_signer,
+        DevnetConfig::DEFAULT_L2_CHAIN_ID,
+        future_nonce,
+        recipient,
+    )?;
     let expiring_nonce = client_provider.get_transaction_count(expiring_signer.address()).await?;
-    let (_, raw_expiring_tx, expiring_tx_hash) =
-        create_signed_eip1559_tx(&expiring_signer, L2_CHAIN_ID, expiring_nonce, recipient)?;
+    let (_, raw_expiring_tx, expiring_tx_hash) = create_signed_eip1559_tx(
+        &expiring_signer,
+        DevnetConfig::DEFAULT_L2_CHAIN_ID,
+        expiring_nonce,
+        recipient,
+    )?;
     let storage_nonce = client_provider.get_transaction_count(storage_signer.address()).await?;
-    let (_, raw_storage_tx, storage_tx_hash) =
-        create_signed_eip1559_tx(&storage_signer, L2_CHAIN_ID, storage_nonce, recipient)?;
+    let (_, raw_storage_tx, storage_tx_hash) = create_signed_eip1559_tx(
+        &storage_signer,
+        DevnetConfig::DEFAULT_L2_CHAIN_ID,
+        storage_nonce,
+        recipient,
+    )?;
     let rpc_client = RpcClient::builder().http(system.l2_client_rpc_url()?);
 
     let submitted_future: B256 = rpc_client
@@ -723,7 +730,8 @@ async fn test_invalid_validity_batches_are_rejected_at_mempool_ingress() -> Resu
     client_provider.wait_for_balance(signer.address(), Duration::from_secs(15)).await?;
     let nonce = client_provider.get_transaction_count(signer.address()).await?;
     let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;
-    let (_, raw_tx, tx_hash) = create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
+    let (_, raw_tx, tx_hash) =
+        create_signed_eip1559_tx(&signer, DevnetConfig::DEFAULT_L2_CHAIN_ID, nonce, recipient)?;
     let repeated_predicate = ValidityPredicate::Balance {
         address: signer.address(),
         op: ValidityOperator::GreaterThan,
@@ -783,8 +791,6 @@ async fn test_tx_forwarding_pipeline_system_high_load() -> Result<()> {
     let accounts = [&*ANVIL_ACCOUNT_1, &*ANVIL_ACCOUNT_2, &*ANVIL_ACCOUNT_3, &*ANVIL_ACCOUNT_4];
 
     let system = SystemTestStackBuilder::new()
-        .with_l1_chain_id(L1_CHAIN_ID)
-        .with_l2_chain_id(L2_CHAIN_ID)
         .with_tx_forwarding(
             TxForwardingConfig::new(vec![]).with_max_rps(1).with_resend_after_ms(30_000), // high resend window so we don't double-send
         )
@@ -851,8 +857,12 @@ async fn test_tx_forwarding_pipeline_system_high_load() -> Result<()> {
     for tx_idx in 0..TXS_PER_ACCOUNT {
         for (acct_idx, signer) in signers.iter().enumerate() {
             let nonce = nonces[acct_idx] + tx_idx as u64;
-            let (_, raw_tx, expected_tx_hash) =
-                create_signed_eip1559_tx(signer, L2_CHAIN_ID, nonce, recipient)?;
+            let (_, raw_tx, expected_tx_hash) = create_signed_eip1559_tx(
+                signer,
+                DevnetConfig::DEFAULT_L2_CHAIN_ID,
+                nonce,
+                recipient,
+            )?;
 
             let pending_tx = client_provider
                 .send_raw_transaction(&raw_tx)

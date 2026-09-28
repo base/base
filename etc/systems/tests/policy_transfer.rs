@@ -20,7 +20,9 @@ use base_common_network::Base;
 use base_common_precompiles::{
     ActivationFeature, B20PolicyType, B20Variant, IB20, IPolicyRegistry, PolicyRegistryStorage,
 };
-use base_system_tests::{ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, ANVIL_ACCOUNT_7, B20PrecompileClient};
+use base_system_tests::{
+    ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, ANVIL_ACCOUNT_7, B20PrecompileClient, DevnetConfig,
+};
 use eyre::{Result, WrapErr};
 
 const INITIAL_SUPPLY: u64 = 1_000_000;
@@ -37,7 +39,7 @@ async fn activated_client<'a>(
     provider: &'a RootProvider<Base>,
     admin: &'a PrivateKeySigner,
 ) -> Result<B20PrecompileClient<'a>> {
-    let client = B20PrecompileClient::new(provider, admin, common::L2_CHAIN_ID)
+    let client = B20PrecompileClient::new(provider, admin, DevnetConfig::DEFAULT_L2_CHAIN_ID)
         .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
     client.activate_feature(ActivationFeature::B20Asset.id()).await?;
     client.activate_feature(ActivationFeature::PolicyRegistry.id()).await?;
@@ -179,8 +181,9 @@ async fn test_allowlist_gates_transfer() -> Result<()> {
     assert_eq!(client.balance_of(token, non_member.address()).await?, U256::from(TRANSFER_AMOUNT));
 
     // Non-member is not on the allowlist: transfer must revert.
-    let non_member_client = B20PrecompileClient::new(&provider, &non_member, common::L2_CHAIN_ID)
-        .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
+    let non_member_client =
+        B20PrecompileClient::new(&provider, &non_member, DevnetConfig::DEFAULT_L2_CHAIN_ID)
+            .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
     let blocked = non_member_client
         .try_send_call(
             token,
@@ -275,8 +278,9 @@ async fn test_blocklist_gates_transfer() -> Result<()> {
     );
 
     // Transfer from the (not-yet-blocked) sender must succeed.
-    let sender_client = B20PrecompileClient::new(&provider, &blocked_sender, common::L2_CHAIN_ID)
-        .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
+    let sender_client =
+        B20PrecompileClient::new(&provider, &blocked_sender, DevnetConfig::DEFAULT_L2_CHAIN_ID)
+            .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
     let first_transfer = sender_client
         .try_send_call(
             token,

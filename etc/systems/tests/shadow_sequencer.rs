@@ -24,12 +24,10 @@ use alloy_signer_local::PrivateKeySigner;
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_system_tests::{
-    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, SystemTestProviderExt, SystemTestStackBuilder,
+    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, DevnetConfig, SystemTestProviderExt, SystemTestStackBuilder,
 };
 use eyre::{Result, WrapErr};
 
-const L1_CHAIN_ID: u64 = 1337;
-const L2_CHAIN_ID: u64 = 84538453;
 const BLOCK_PRODUCTION_TIMEOUT: Duration = Duration::from_secs(30);
 const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 const BALANCE_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
@@ -42,8 +40,6 @@ static SHADOW_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(
 async fn shadow_builds_privately_then_reconciles_to_canonical() -> Result<()> {
     let _guard = SHADOW_TEST_LOCK.lock().await;
     let system = SystemTestStackBuilder::new()
-        .with_l1_chain_id(L1_CHAIN_ID)
-        .with_l2_chain_id(L2_CHAIN_ID)
         .with_shadow_sequencers(1)
         .with_shadow_blocks_per_cycle(NonZeroU64::new(10).expect("nonzero"))
         .build()
@@ -150,8 +146,6 @@ async fn shadow_reconciles_across_multiple_cycles() -> Result<()> {
     let _guard = SHADOW_TEST_LOCK.lock().await;
     let blocks_per_cycle = NonZeroU64::new(2).expect("nonzero");
     let system = SystemTestStackBuilder::new()
-        .with_l1_chain_id(L1_CHAIN_ID)
-        .with_l2_chain_id(L2_CHAIN_ID)
         .with_shadow_sequencers(1)
         .with_shadow_blocks_per_cycle(blocks_per_cycle)
         .build()
@@ -181,8 +175,6 @@ async fn late_shadow_catches_up_then_reconciles_private_blocks() -> Result<()> {
     let _guard = SHADOW_TEST_LOCK.lock().await;
     let start_height = 3;
     let system = SystemTestStackBuilder::new()
-        .with_l1_chain_id(L1_CHAIN_ID)
-        .with_l2_chain_id(L2_CHAIN_ID)
         .with_shadow_sequencers(1)
         .with_shadow_blocks_per_cycle(NonZeroU64::new(3).expect("nonzero"))
         .with_shadow_start_block(start_height)
@@ -311,7 +303,7 @@ async fn send_transfer(
         .with_gas_limit(21000)
         .with_max_fee_per_gas(1_000_000_000)
         .with_max_priority_fee_per_gas(0)
-        .with_chain_id(L2_CHAIN_ID)
+        .with_chain_id(DevnetConfig::DEFAULT_L2_CHAIN_ID)
         .with_nonce(nonce);
 
     let tx = tx_request

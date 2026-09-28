@@ -21,8 +21,6 @@ use tokio::time::{Instant, sleep};
 /// `jsonb_path_query_array` used by migration 0004.
 const POSTGRES_TAG: &str = "16-alpine";
 
-const L1_CHAIN_ID: u64 = 1337;
-const L2_CHAIN_ID: u64 = 84538453;
 const BLOCK_PRODUCTION_TIMEOUT: Duration = Duration::from_secs(60);
 const DB_POLL_TIMEOUT: Duration = Duration::from_secs(20);
 const DB_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -54,12 +52,7 @@ async fn shadow_indexer_persists_no_canonical_blocks() -> Result<()> {
         retention: ShadowRetentionConfig { period: RETENTION_PERIOD, interval: RETENTION_INTERVAL },
     }));
 
-    let system = SystemTestStackBuilder::new()
-        .with_l1_chain_id(L1_CHAIN_ID)
-        .with_l2_chain_id(L2_CHAIN_ID)
-        .with_builder_extension(ext)
-        .build()
-        .await?;
+    let system = SystemTestStackBuilder::new().with_builder_extension(ext).build().await?;
 
     let builder = system.l2_builder_provider()?;
     let target = builder

@@ -13,14 +13,12 @@ use base_common_flashblocks::{FlashblocksPayloadV1, Metadata};
 use base_common_genesis::{BaseUpgrade, RollupConfig};
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
-use base_system_tests::{ANVIL_ACCOUNT_1, SystemTestStackBuilder};
+use base_system_tests::{ANVIL_ACCOUNT_1, DevnetConfig, SystemTestStackBuilder};
 use eyre::{OptionExt, Result, WrapErr};
 use futures::StreamExt;
 use tokio::time::{sleep, timeout};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-const L1_CHAIN_ID: u64 = 1337;
-const L2_CHAIN_ID: u64 = 84538453;
 // Leave enough pre-Denim runway for both stacks to start under the system-test concurrency used
 // in CI. A very early activation makes the "pre-cutover" transaction race node startup.
 const DENIM_ACTIVATION_BLOCK: u64 = 25;
@@ -41,8 +39,6 @@ async fn verify_cutover(zenith_activation_block: Option<u64>) -> Result<()> {
     base_node_runner::test_utils::init_silenced_tracing();
 
     let mut setup = SystemTestStackBuilder::new()
-        .with_l1_chain_id(L1_CHAIN_ID)
-        .with_l2_chain_id(L2_CHAIN_ID)
         .with_base_cobalt_activation_block(0)
         .with_base_denim_activation_block(DENIM_ACTIVATION_BLOCK)
         .with_payload_builder_cutover();
@@ -135,7 +131,7 @@ async fn send_transaction(provider: &RootProvider<Base>, signer: &PrivateKeySign
         .with_gas_limit(21_000)
         .with_max_fee_per_gas(2_000_000_000)
         .with_max_priority_fee_per_gas(1_000_000)
-        .with_chain_id(L2_CHAIN_ID)
+        .with_chain_id(DevnetConfig::DEFAULT_L2_CHAIN_ID)
         .with_nonce(nonce)
         .build_typed_tx()
         .map_err(|error| eyre::eyre!("invalid transaction: {error:?}"))?;
