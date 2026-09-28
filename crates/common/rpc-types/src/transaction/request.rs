@@ -151,12 +151,18 @@ pub struct Eip8130RequestFields {
     /// the gas limit, as in execution).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer: Option<Address>,
-    /// Raw payer authentication blob (`authenticator(20) || data`) whose shape
-    /// is priced when a `payer` is declared. Absent defaults to a representative
-    /// secp256k1 payer authorization. Unlike `sender_auth`, a supplied blob is
-    /// always the prefixed form and its leading 20 bytes must be the native k1
-    /// authenticator. Any other selector, including P256, `WebAuthn`, and the
-    /// delegate authenticator, is rejected as `INVALID_PARAMS` rather than priced.
+    /// Raw payer authentication blob whose shape is priced when a `payer` is
+    /// declared.
+    ///
+    /// For a named payer this is `authenticator(20) || data`, and absent
+    /// defaults to a representative secp256k1 payer authorization. A supplied
+    /// blob's leading 20 bytes must be the native k1 authenticator. Any other
+    /// selector, including P256, `WebAuthn`, and the delegate authenticator, is
+    /// rejected as `INVALID_PARAMS` rather than priced.
+    ///
+    /// In open payer mode this is the payer's raw 65-byte signature and is
+    /// required: the payer is recovered from it, so a request without one, or
+    /// with one that does not recover, is rejected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer_auth: Option<Bytes>,
     /// Optional acting-actor hint for simulation. Estimation never recovers a

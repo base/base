@@ -436,6 +436,32 @@ mod tests {
         assert_eq!(auth.len(), 20 + 65);
     }
 
+    /// An open payer is whoever signed `payer_auth`, so the request must carry
+    /// that signature: there is no stub to synthesize and no fallback payer.
+    #[test]
+    fn open_payer_requires_payer_auth() {
+        let without: BaseTransactionRequest = serde_json::from_value(json!({
+            "sender": SENDER,
+            "calls": [],
+            "payer": Eip8130Constants::OPEN_PAYER,
+        }))
+        .expect("valid request");
+        assert!(
+            without.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
+            "an open payer without payer_auth is rejected"
+        );
+
+        let tx = sim_tx(json!({
+            "sender": SENDER,
+            "calls": [],
+            "payer": Eip8130Constants::OPEN_PAYER,
+            "payerAuth": blob(None, 65),
+        }));
+        let s = signed(&tx);
+        assert_eq!(s.tx().payer, Some(Eip8130Constants::OPEN_PAYER));
+        assert_eq!(s.payer_auth().len(), 65, "the supplied signature is used verbatim");
+    }
+
     #[test]
     fn prefixed_p256_payer_auth_is_rejected() {
         let payer = address!("0x00000000000000000000000000000000000000b2");
