@@ -26,7 +26,7 @@ use super::{
 use crate::{
     BuildRequest, EngineActorRequest, EngineClientError, EngineError, EngineProcessor,
     EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest, Metrics,
-    ReconcileShadowRequest, ResetOrigin, ResetRequest, ResetRequestOutcome,
+    NodeOperatingMode, ReconcileShadowRequest, ResetOrigin, ResetRequest, ResetRequestOutcome,
     actors::engine::ResetOutcome,
 };
 
@@ -57,41 +57,31 @@ impl<EngineClient_> SequencerEngineRequestCoordinator<EngineClient_>
 where
     EngineClient_: EngineClient,
 {
-    /// Creates a request handler with optional shadow request routing.
+    /// Creates a request handler whose initial routing state follows the sequencer `mode`.
+    ///
+    /// Shadow sequencers start catching up to the canonical chain before building private blocks.
+    /// Isolated sequencers insert canonical unsafe gossip until they reach the canonical tip, then
+    /// ignore canonical ingress while they produce private blocks.
     pub fn new(
         processor: EngineProcessor<EngineClient_>,
-        shadow_mode: bool,
+        mode: NodeOperatingMode,
         conductor: Option<Arc<dyn Conductor>>,
         sequencer_stopped: bool,
         unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
     ) -> Self {
-        let sequencer_state = if shadow_mode {
-            SequencerEngineState::CatchingUp {
+        let sequencer_state = match mode {
+            NodeOperatingMode::Validator | NodeOperatingMode::Sequencer => {
+                SequencerEngineState::Regular
+            }
+            NodeOperatingMode::ShadowSequencer { .. } => SequencerEngineState::CatchingUp {
                 shadow: true,
                 catchup: CanonicalUnsafeCatchup::default(),
+            },
+            NodeOperatingMode::IsolatedSequencer => {
+                SequencerEngineState::IsolatedCatchingUp(IsolatedCatchup::default())
             }
-        } else {
-            SequencerEngineState::Regular
         };
         Self { processor, sequencer_state, conductor, sequencer_stopped, unsafe_head_tx }
-    }
-
-    /// Creates a request handler for an isolated sequencer.
-    ///
-    /// The handler inserts canonical unsafe gossip until the engine reaches the highest gossiped
-    /// block, then ignores canonical ingress while the sequencer produces private blocks.
-    pub fn new_isolated(
-        processor: EngineProcessor<EngineClient_>,
-        sequencer_stopped: bool,
-        unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
-    ) -> Self {
-        Self {
-            processor,
-            sequencer_state: SequencerEngineState::IsolatedCatchingUp(IsolatedCatchup::default()),
-            conductor: None,
-            sequencer_stopped,
-            unsafe_head_tx,
-        }
     }
 
     /// Returns the coordinator's sequencer routing state.
@@ -842,7 +832,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{num::NonZeroU64, sync::Arc};
 
     use alloy_primitives::B256;
     use alloy_rpc_types_engine::ExecutionPayloadV1;
@@ -860,7 +850,7 @@ mod tests {
     use super::{BootstrapRole, SequencerEngineRequestCoordinator, SequencerEngineState};
     use crate::{
         CanonicalUnsafeCatchup, Conductor, ConductorError, EngineProcessor, IsolatedCatchup,
-        MockConductor, MockEngineDerivationClient, ShadowReconciliationGate,
+        MockConductor, MockEngineDerivationClient, NodeOperatingMode, ShadowReconciliationGate,
     };
 
     fn coordinator(
@@ -880,7 +870,11 @@ mod tests {
         let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
         SequencerEngineRequestCoordinator::new(
             processor,
-            shadow,
+            if shadow {
+                NodeOperatingMode::ShadowSequencer { blocks_per_cycle: NonZeroU64::MIN }
+            } else {
+                NodeOperatingMode::Sequencer
+            },
             conductor,
             stopped,
             unsafe_head_tx,
@@ -983,8 +977,17 @@ mod tests {
             Engine::new(state, state_tx, queue_tx),
         );
         let (head_tx, _) = watch::channel(head);
-        let mut coordinator =
-            SequencerEngineRequestCoordinator::new(processor, shadow, None, true, head_tx);
+        let mut coordinator = SequencerEngineRequestCoordinator::new(
+            processor,
+            if shadow {
+                NodeOperatingMode::ShadowSequencer { blocks_per_cycle: NonZeroU64::MIN }
+            } else {
+                NodeOperatingMode::Sequencer
+            },
+            None,
+            true,
+            head_tx,
+        );
         let mut catchup = CanonicalUnsafeCatchup::default();
         for &(number, hash) in observations {
             catchup.buffer_payload(BaseExecutionPayloadEnvelope {
@@ -1069,8 +1072,13 @@ mod tests {
             Engine::new(state, state_tx, queue_tx),
         );
         let (head_tx, _) = watch::channel(head);
-        let mut coordinator =
-            SequencerEngineRequestCoordinator::new_isolated(processor, true, head_tx);
+        let mut coordinator = SequencerEngineRequestCoordinator::new(
+            processor,
+            NodeOperatingMode::IsolatedSequencer,
+            None,
+            true,
+            head_tx,
+        );
         let mut catchup = IsolatedCatchup::default();
         if let Some(number) = observed {
             catchup.observe(&BaseExecutionPayloadEnvelope {
