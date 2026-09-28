@@ -1,8 +1,8 @@
 //! Test [`BatchPipeline`] implementation for the driver tests.
 //!
-//! Hand-rolled rather than mocked: the driver tests need one call log ordered across several
-//! trait methods, and the pipeline holds state (queued submissions, blocks left to encode)
-//! that the driver consumes while it runs.
+//! Hand-rolled rather than mocked because the driver tests need one call log ordered across
+//! several trait methods, and the pipeline holds state (queued submissions, blocks left to
+//! encode) that the driver consumes while it runs.
 
 use std::{
     collections::VecDeque,
@@ -156,7 +156,7 @@ pub struct TrackingPipeline {
     add_block_reorgs: bool,
     /// When set, `flush` records the call then returns this error.
     flush_error: Option<StepError>,
-    /// Blocks left to encode: `step` reports one encoded block per call while above zero.
+    /// Blocks left to encode. `step` reports one encoded block per call until it reaches zero.
     encoding_steps: usize,
 }
 

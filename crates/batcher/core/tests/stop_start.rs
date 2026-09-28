@@ -47,7 +47,7 @@ fn test_stop_resets_pipeline() {
 #[test]
 fn test_start_triggers_catchup_from_safe_head() {
     Runner::start(Config::seeded(0), |ctx| async move {
-        let (source, _source_tx, catchup_heads) = TrackingSource::new();
+        let (source, catchup_heads) = TrackingSource::new();
         let safe_head = BlockInfo { number: 42, ..Default::default() };
 
         let (driver, handles) = DriverFixture::new(

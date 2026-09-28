@@ -508,9 +508,9 @@ mod tests {
         )
     }
 
-    // The loop polls its arms in priority order; each test below makes several arms ready at
-    // once and checks which one the driver serves first. Each test checks the start of the
-    // call log: the shutdown flush always ends it.
+    // The loop polls its arms in priority order. Each test below makes several arms ready at
+    // once and checks which one the driver serves first. Each test checks only the start of the
+    // call log, because the shutdown flush always ends it.
 
     #[test]
     fn run_prioritizes_cancellation_over_ready_admin() {
@@ -532,7 +532,8 @@ mod tests {
 
             assert!(driver.run().await.is_ok());
             assert!(flush.await.unwrap().is_err(), "a cancelled driver must not serve the flush");
-            // Only the shutdown flush: neither the admin flush, the block nor the head is served.
+            // Only the shutdown flush is recorded, so neither the admin flush, the block nor the
+            // head was served.
             assert_eq!(recorded.lock().unwrap().calls, [PipelineCall::Flush]);
         });
     }
@@ -588,7 +589,7 @@ mod tests {
             ctx.cancel();
             assert!(handle.await.unwrap().is_ok());
 
-            // The receipt confirms at L1 block 1 before the L1 head source's head 9 arrives; the
+            // The receipt confirms at L1 block 1 before the L1 head source's head 9 arrives. The
             // other way round, head 1 would not advance past 9.
             let recorded = recorded.lock().unwrap();
             assert!(
@@ -841,7 +842,11 @@ mod tests {
 
             assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
             let recorded = recorded.lock().unwrap();
-            assert_eq!(recorded.dequeued().len(), 2, "both submissions must be dequeued");
+            assert_eq!(
+                recorded.dequeued(),
+                [SubmissionId(0), SubmissionId(1)],
+                "both submissions must be dequeued"
+            );
             assert_eq!(
                 recorded.confirmed(),
                 [SubmissionId(0), SubmissionId(1)],

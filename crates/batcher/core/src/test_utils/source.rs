@@ -1,16 +1,13 @@
 //! Test [`UnsafeBlockSource`] and [`L1HeadSource`] implementations.
 //!
-//! Hand-rolled rather than mocked: `next` either parks forever or awaits a channel the test
-//! feeds while the driver runs, which `mockall` expectations cannot express.
+//! Hand-rolled rather than mocked because `next` parks forever, which `mockall` expectations
+//! cannot express.
 
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use base_batcher_source::{
-    L1HeadSource, L2BlockEvent, UnsafeBlockSource, test_utils::ChannelBlockSource,
-};
+use base_batcher_source::{L1HeadSource, L2BlockEvent, UnsafeBlockSource};
 use base_protocol::BlockInfo;
-use tokio::sync::mpsc;
 
 /// [`UnsafeBlockSource`] that parks the select arm forever.
 ///
@@ -27,28 +24,24 @@ impl UnsafeBlockSource for PendingSource {
     }
 }
 
-/// [`UnsafeBlockSource`] fed by a channel, which records the safe heads the driver asks it
-/// to catch up from.
+/// [`UnsafeBlockSource`] that records sequential catchup requests and otherwise parks.
 #[derive(Debug)]
 pub struct TrackingSource {
-    events: ChannelBlockSource,
     catchup_heads: Arc<Mutex<Vec<BlockInfo>>>,
 }
 
 impl TrackingSource {
-    /// Create a source, the sender that feeds it and its shared catch-up log. The source
-    /// parks once the sender is dropped.
-    pub fn new() -> (Self, mpsc::UnboundedSender<L2BlockEvent>, Arc<Mutex<Vec<BlockInfo>>>) {
-        let (events, events_tx) = ChannelBlockSource::new();
+    /// Create a source and its shared catchup call log.
+    pub fn new() -> (Self, Arc<Mutex<Vec<BlockInfo>>>) {
         let catchup_heads = Arc::new(Mutex::new(Vec::new()));
-        (Self { events, catchup_heads: Arc::clone(&catchup_heads) }, events_tx, catchup_heads)
+        (Self { catchup_heads: Arc::clone(&catchup_heads) }, catchup_heads)
     }
 }
 
 #[async_trait]
 impl UnsafeBlockSource for TrackingSource {
     async fn next(&mut self) -> L2BlockEvent {
-        self.events.next().await
+        std::future::pending().await
     }
 
     fn reset_catchup(&mut self, safe_head: BlockInfo) {

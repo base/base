@@ -1,7 +1,7 @@
 //! Test [`TxManager`] implementation for the driver tests.
 //!
-//! Hand-rolled rather than mocked: `send_async` returns a [`SendHandle`] that a test settles
-//! while the driver runs, which `mockall` expectations cannot express.
+//! Hand-rolled rather than mocked because `send_async` returns a [`SendHandle`] that a test
+//! settles while the driver runs, which `mockall` expectations cannot express.
 
 use std::{
     collections::VecDeque,
@@ -48,7 +48,7 @@ pub struct Script {
 /// [`TxManager`] that applies a scripted [`SendOutcome`] to each send, and records every
 /// candidate.
 ///
-/// Clones share their state: keep one in the test and hand the other to the driver.
+/// Clones share their state, so a test keeps one and hands the other to the driver.
 #[derive(Debug, Clone)]
 pub struct ScriptedTxManager {
     script: Arc<Mutex<Script>>,

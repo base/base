@@ -53,7 +53,7 @@ fn test_safe_head_conflicts_reset_pipeline_and_source() {
         let pipeline =
             TrackingPipeline::new().with_reconciliation(DerivationReconciliation::SafeHeadMismatch);
         let recorded = pipeline.recorded();
-        let (source, _source_tx, catchup_heads) = TrackingSource::new();
+        let (source, catchup_heads) = TrackingSource::new();
 
         let (driver, handles) =
             DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
@@ -86,7 +86,7 @@ fn test_derivation_cursor_advance_replays_stalled_channel() {
         let pipeline =
             TrackingPipeline::new().with_reconciliation(DerivationReconciliation::StalledChannel);
         let recorded = pipeline.recorded();
-        let (source, _source_tx, catchup_heads) = TrackingSource::new();
+        let (source, catchup_heads) = TrackingSource::new();
         let safe_l2 = safe_head(10);
 
         let (driver, handles) =
@@ -106,7 +106,7 @@ fn test_derivation_cursor_advance_replays_stalled_channel() {
         assert_eq!(
             recorded.lock().unwrap().calls,
             [
-                PipelineCall::ReconcileDerivation { safe_l2: safe_l2.number, current_l1: Some(50) },
+                PipelineCall::ReconcileDerivation { safe_l2: safe_l2.number, current_l1: 50 },
                 PipelineCall::Reset,
                 PipelineCall::Flush,
             ]
