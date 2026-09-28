@@ -1,6 +1,5 @@
 use base_prover_service_db::{
-    ApiProofType, CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
-    canonical_session_id,
+    CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome, canonical_session_id,
 };
 use base_prover_service_protocol::{
     ProofRequestIdCollisionMessage, ProveBlockRangeRequest, ProveBlockRangeResponse,
