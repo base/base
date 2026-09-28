@@ -143,9 +143,8 @@ fn test_driver_finishes_pending_work_before_waiting_for_events() {
             !before_receipt.is_empty() && before_receipt.iter().all(|&dequeued| dequeued == 1),
             "the driver must wait on the source with the first submission in flight: {polls:?}"
         );
-        assert!(!after_receipt.is_empty(), "the driver must wait on the source after the receipt");
         assert!(
-            after_receipt.iter().all(|&dequeued| dequeued == 2),
+            !after_receipt.is_empty() && after_receipt.iter().all(|&dequeued| dequeued == 2),
             "the submission released by the receipt must be sent before the driver waits again: {polls:?}"
         );
     });

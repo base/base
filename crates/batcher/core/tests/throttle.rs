@@ -60,11 +60,10 @@ fn test_throttle_transitions_from_active_to_inactive() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let (source, source_tx) = ChannelBlockSource::new();
 
-        // Start with 2 MB backlog — above the default 1 MB threshold.
-        let pipeline = TrackingPipeline::new().with_da_backlog(2_000_000);
+        let config = ThrottleConfig::default();
+        let pipeline = TrackingPipeline::new().with_da_backlog(2 * config.threshold_bytes);
         let backlog = Arc::clone(&pipeline.da_backlog_bytes);
 
-        let config = ThrottleConfig::default();
         let lower_limits = (config.tx_size_lower_limit, config.block_size_lower_limit);
         let upper_limits = (config.tx_size_upper_limit, config.block_size_upper_limit);
         let throttle = ThrottleController::new(config, ThrottleStrategy::Linear);
