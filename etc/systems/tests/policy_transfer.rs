@@ -39,8 +39,7 @@ async fn activated_client<'a>(
     provider: &'a RootProvider<Base>,
     admin: &'a PrivateKeySigner,
 ) -> Result<B20PrecompileClient<'a>> {
-    let client = B20PrecompileClient::new(provider, admin, DevnetConfig::DEFAULT_L2_CHAIN_ID)
-        .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
+    let client = B20PrecompileClient::new(provider, admin, DevnetConfig::DEFAULT_L2_CHAIN_ID);
     client.activate_feature(ActivationFeature::B20Asset.id()).await?;
     client.activate_feature(ActivationFeature::PolicyRegistry.id()).await?;
     Ok(client)
@@ -93,9 +92,6 @@ async fn create_token(
     let params =
         B20PrecompileClient::token_params(name, symbol, admin, U256::from(INITIAL_SUPPLY), admin);
     let token = client.create_token(B20Variant::Asset, params, salt).await?;
-    client
-        .wait_for_token_code(token, beryl::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL)
-        .await?;
     Ok(token)
 }
 
@@ -182,8 +178,7 @@ async fn test_allowlist_gates_transfer() -> Result<()> {
 
     // Non-member is not on the allowlist: transfer must revert.
     let non_member_client =
-        B20PrecompileClient::new(&provider, &non_member, DevnetConfig::DEFAULT_L2_CHAIN_ID)
-            .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
+        B20PrecompileClient::new(&provider, &non_member, DevnetConfig::DEFAULT_L2_CHAIN_ID);
     let blocked = non_member_client
         .try_send_call(
             token,
@@ -279,8 +274,7 @@ async fn test_blocklist_gates_transfer() -> Result<()> {
 
     // Transfer from the (not-yet-blocked) sender must succeed.
     let sender_client =
-        B20PrecompileClient::new(&provider, &blocked_sender, DevnetConfig::DEFAULT_L2_CHAIN_ID)
-            .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
+        B20PrecompileClient::new(&provider, &blocked_sender, DevnetConfig::DEFAULT_L2_CHAIN_ID);
     let first_transfer = sender_client
         .try_send_call(
             token,

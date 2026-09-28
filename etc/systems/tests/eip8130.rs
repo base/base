@@ -8,6 +8,8 @@ mod everest;
 #[path = "common/zk_dry_run.rs"]
 mod zk_dry_run;
 
+use std::time::Duration;
+
 use alloy_consensus::Typed2718;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::ReceiptResponse;
@@ -27,6 +29,7 @@ use eyre::{Result, WrapErr, ensure};
 
 /// EIP-8130 transaction type byte.
 const EIP8130_TX_TYPE: u8 = 0x79;
+const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Mines a minimal EOA-path EIP-8130 transaction on the Everest system-test stack.
 #[tokio::test]
@@ -133,7 +136,7 @@ async fn send_minimal_eip8130(
     ensure!(*pending.tx_hash() == tx_hash, "sent EIP-8130 hash must match the signed envelope");
     drop(pending);
     let receipt = provider
-        .wait_for_receipt(tx_hash, balance::TX_RECEIPT_TIMEOUT)
+        .wait_for_receipt(tx_hash, TX_RECEIPT_TIMEOUT)
         .await
         .wrap_err("EIP-8130 receipt timed out")?;
     Ok((tx_hash, receipt))

@@ -145,9 +145,6 @@ impl B20ZkProvingBench {
 
         display.setup_message("setup creating benchmark B-20 token");
         let token = Self::create_b20_token(&b20, admin.address()).await?;
-        display.setup_message("setup waiting for benchmark token bytecode");
-        b20.wait_for_token_code(token, config.tx_receipt_timeout, config.block_poll_interval)
-            .await?;
         display.setup_done(token);
 
         let reports = B20CallSender {

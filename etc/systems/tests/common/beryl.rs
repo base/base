@@ -5,7 +5,7 @@ use base_common_network::Base;
 use base_system_tests::{SystemTestStack, SystemTestStackBuilder};
 use eyre::Result;
 
-pub(crate) use super::balance::{TX_RECEIPT_TIMEOUT, wait_for_balance};
+pub(crate) use super::balance::wait_for_balance;
 use super::common::{BASE_AZUL_ACTIVATION_BLOCK, BASE_BERYL_ACTIVATION_BLOCK, wait_for_block};
 
 /// Starts a system test stack with Beryl active at block 3 and waits for block 4.

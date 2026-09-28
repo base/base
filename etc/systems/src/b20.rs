@@ -60,6 +60,9 @@ impl<'a> B20PrecompileClient<'a> {
     /// Default receipt timeout used after sending B-20 transactions.
     pub const DEFAULT_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 
+    /// Poll interval used while waiting for a created token's bytecode.
+    pub const TOKEN_CODE_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
     /// Creates a B-20 precompile client.
     pub const fn new(
         provider: &'a RootProvider<Base>,
@@ -164,6 +167,9 @@ impl<'a> B20PrecompileClient<'a> {
     }
 
     /// Creates a B-20 token through the factory and returns the token address plus receipt.
+    ///
+    /// Returns once the token's bytecode is readable at the latest block, which can trail the
+    /// receipt when the node serves pre-confirmed receipts.
     pub async fn create_token_with_receipt(
         &self,
         variant: B20Variant,
@@ -200,6 +206,7 @@ impl<'a> B20PrecompileClient<'a> {
         };
         let receipt =
             self.send_call_receipt(B20FactoryStorage::ADDRESS, call, "create B-20 token").await?;
+        self.wait_for_token_code(token).await?;
         Ok((token, receipt))
     }
 
@@ -231,19 +238,14 @@ impl<'a> B20PrecompileClient<'a> {
     }
 
     /// Waits for a created token address to return non-empty bytecode.
-    pub async fn wait_for_token_code(
-        &self,
-        token: Address,
-        wait_timeout: Duration,
-        poll_interval: Duration,
-    ) -> Result<()> {
-        timeout(wait_timeout, async {
+    async fn wait_for_token_code(&self, token: Address) -> Result<()> {
+        timeout(self.receipt_timeout, async {
             loop {
                 let code = self.provider.get_code_at(token).await?;
                 if !code.is_empty() {
                     return Ok::<_, eyre::Error>(());
                 }
-                sleep(poll_interval).await;
+                sleep(Self::TOKEN_CODE_POLL_INTERVAL).await;
             }
         })
         .await
