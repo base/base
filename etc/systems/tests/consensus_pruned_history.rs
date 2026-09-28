@@ -15,8 +15,8 @@ use base_common_rpc_types::Transaction as BaseTransaction;
 use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
 use base_consensus_derive::Signal;
 use base_consensus_engine::{
-    Engine, EngineResetError, EngineState, ForkchoiceCheckpointError, ForkchoiceCheckpointLabel,
-    ForkchoiceCheckpointReader, SyncStartError,
+    Engine, EngineState, ForkchoiceCheckpointError, ForkchoiceCheckpointLabel,
+    ForkchoiceCheckpointReader,
     test_utils::{MockEngineClient, MockL2BlockError, test_engine_client_builder},
 };
 use base_consensus_node::{
@@ -76,17 +76,22 @@ impl ForkchoiceCheckpointReader for StaticCheckpointReader {
     }
 }
 
-/// A validator must fail closed when its initial reset receives `4444: pruned history unavailable`
-/// for a historical finalized block: it surfaces the RPC error without lowering finality or
-/// sending a forkchoice update that names genesis as finalized.
+/// A validator seeds its unsafe head from reth, accepts its first unsafe payload, then performs the
+/// initial reset after EL sync completes. Some pruned reth nodes return `4444: pruned history
+/// unavailable` for full historical labeled-block requests during that reset. The consensus
+/// service should treat the labeled block as unavailable, fall back to genesis, and continue
+/// startup instead of exiting the engine processor.
+///
+/// The observed failure mode is an engine task exit with
+/// `EngineReset(SyncStart(RpcError(...)))`.
 #[tokio::test]
-async fn validator_initial_reset_fails_closed_when_pruned_history_is_unavailable() {
+async fn validator_initial_reset_survives_pruned_history_unavailable_from_reth() {
     let mut processor = PrunedHistoryStartup::new().start_validator_processor();
 
     processor.wait_for_validator_bootstrap().await;
-    let observed_finalized_head = processor.state_rx.borrow().sync_state.finalized_head();
     processor.process_first_unsafe_payload().await;
-    processor.assert_initial_reset_fails_closed(observed_finalized_head).await;
+    processor.assert_completes_initial_reset().await;
+    processor.shutdown().await;
 }
 
 #[derive(Debug)]
@@ -171,7 +176,6 @@ impl PrunedHistoryStartup {
             state_rx,
             request_tx,
             handle,
-            client: self.client,
             genesis_head: self.genesis_head,
             reth_latest_head: self.reth_latest_head,
             next_unsafe_hash: self.next_unsafe_hash,
@@ -183,7 +187,6 @@ struct RunningValidatorProcessor {
     state_rx: watch::Receiver<EngineState>,
     request_tx: mpsc::Sender<EngineActorRequest>,
     handle: JoinHandle<Result<(), EngineError>>,
-    client: Arc<MockEngineClient>,
     genesis_head: L2BlockInfo,
     reth_latest_head: L2BlockInfo,
     next_unsafe_hash: B256,
@@ -210,37 +213,57 @@ impl RunningValidatorProcessor {
             .expect("engine processor request channel closed");
     }
 
-    async fn assert_initial_reset_fails_closed(&mut self, observed_finalized_head: L2BlockInfo) {
-        let result = tokio::time::timeout(ENGINE_RESET_TIMEOUT, &mut self.handle)
-            .await
-            .expect("timed out waiting for initial reset to surface pruned-history error")
-            .expect("engine processor task panicked");
-        let Err(EngineError::EngineReset(EngineResetError::SyncStart(SyncStartError::RpcError(
-            error,
-        )))) = result
-        else {
-            panic!(
-                "expected initial reset to surface the pruned-history RPC error, got {result:?}"
-            );
-        };
-        let error = error.as_error_resp().expect("expected structured RPC error response");
-        assert_eq!(error.code, PRUNED_HISTORY_UNAVAILABLE_CODE);
-        assert_eq!(error.message, PRUNED_HISTORY_UNAVAILABLE_MESSAGE);
-        assert!(error.data.is_none());
+    async fn assert_completes_initial_reset(&mut self) {
+        let wait_for_reset = self.state_rx.wait_for(|state| {
+            state.el_sync_finished
+                && state.sync_state.safe_head() == self.genesis_head
+                && state.sync_state.finalized_head() == self.genesis_head
+        });
 
-        assert_eq!(
-            self.state_rx.borrow().sync_state.finalized_head(),
-            observed_finalized_head,
-            "failed reset must preserve previously observed finality"
-        );
-        let storage = self.client.storage();
-        let storage = storage.read().await;
+        tokio::select! {
+            result = &mut self.handle => {
+                panic!(
+                    "engine processor exited before initial reset completed after pruned history unavailable: {result:?}"
+                );
+            }
+            result = tokio::time::timeout(ENGINE_RESET_TIMEOUT, wait_for_reset) => {
+                match result {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(err)) => {
+                        if self.handle.is_finished() {
+                            let result = (&mut self.handle).await;
+                            panic!(
+                                "engine processor exited before initial reset completed after pruned history unavailable: {result:?}"
+                            );
+                        }
+
+                        panic!(
+                            "engine state channel closed before initial reset after pruned history unavailable: {err:?}"
+                        );
+                    }
+                    Err(_) => {
+                        if self.handle.is_finished() {
+                            let result = (&mut self.handle).await;
+                            panic!(
+                                "engine processor exited before initial reset completed after pruned history unavailable: {result:?}"
+                            );
+                        }
+
+                        panic!(
+                            "timed out waiting for initial reset after pruned history unavailable"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    async fn shutdown(self) {
+        drop(self.request_tx);
+        let result = self.handle.await.expect("engine processor task panicked");
         assert!(
-            storage
-                .fork_choice_updated_v3_requests
-                .iter()
-                .all(|(state, _)| state.finalized_block_hash != self.genesis_head.block_info.hash),
-            "failed reset must not send a forkchoice update finalizing genesis"
+            matches!(result, Err(EngineError::ChannelClosed)),
+            "expected clean ChannelClosed shutdown after test, got {result:?}"
         );
     }
 }

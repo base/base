@@ -4032,7 +4032,6 @@ dependencies = [
  "alloy-consensus 2.4.1",
  "alloy-eips 2.4.1",
  "alloy-genesis",
- "alloy-json-rpc 2.4.1",
  "alloy-network 2.4.1",
  "alloy-primitives",
  "alloy-provider",

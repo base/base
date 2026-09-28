@@ -707,7 +707,6 @@ mod tests {
 
     use alloy_consensus::transaction::Recovered;
     use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag, NumHash, eip2718::Encodable2718};
-    use alloy_json_rpc::ErrorPayload;
     use alloy_primitives::{Address, B256, Bloom, Sealed, U256};
     use alloy_rpc_types_engine::{
         ExecutionPayloadV1, ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
@@ -724,11 +723,11 @@ mod tests {
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_consensus_derive::Signal;
     use base_consensus_engine::{
-        ConsolidateInput, Engine, EngineClient, EngineResetError, EngineState, EngineTaskError,
+        ConsolidateInput, Engine, EngineClient, EngineState, EngineTaskError,
         EngineTaskErrorSeverity, ForkchoiceCheckpointError, ForkchoiceCheckpointLabel,
-        ForkchoiceCheckpointReader, SyncStartError,
+        ForkchoiceCheckpointReader,
         test_utils::{
-            MockL2BlockError, TestAttributesBuilder, TestEngineStateBuilder, test_block_info,
+            TestAttributesBuilder, TestEngineStateBuilder, test_block_info,
             test_engine_client_builder,
         },
     };
@@ -2106,75 +2105,6 @@ mod tests {
             .drain()
             .await
             .expect("validator restart must not crash when reth pruned historical block bodies");
-    }
-
-    #[tokio::test]
-    async fn reset_pruned_finalized_rpc_preserves_finality_without_fcu() {
-        let cfg = Arc::new(RollupConfig {
-            genesis: ChainGenesis {
-                l2: BlockNumHash { number: 0, hash: B256::with_last_byte(0x50) },
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-        let finalized = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 100,
-                hash: B256::with_last_byte(0x64),
-                parent_hash: B256::with_last_byte(0x63),
-                timestamp: 100,
-            },
-            ..Default::default()
-        };
-        let latest =
-            full_reth_l2_block_with_l1_info(101, finalized.block_info.hash, finalized.l1_origin);
-        let latest_info = L2BlockInfo {
-            block_info: BlockInfo {
-                number: 101,
-                hash: latest.clone().into_consensus().hash_slow(),
-                parent_hash: finalized.block_info.hash,
-                timestamp: 101,
-            },
-            ..Default::default()
-        };
-        let client = Arc::new(
-            test_engine_client_builder()
-                .with_config(Arc::clone(&cfg))
-                .with_l2_block_error(
-                    BlockNumberOrTag::Finalized.into(),
-                    MockL2BlockError::ErrorResp(ErrorPayload {
-                        code: 4444,
-                        message: "history unavailable".into(),
-                        data: None,
-                    }),
-                )
-                .with_l2_block(BlockNumberOrTag::Safe.into(), latest.clone())
-                .with_l2_block(BlockNumberOrTag::Latest.into(), latest)
-                .with_l1_block(0u64.into(), RpcBlock::<EthTransaction>::default())
-                .with_fork_choice_updated_v3_response(valid_fcu())
-                .build(),
-        );
-        let initial_state = TestEngineStateBuilder::new()
-            .with_unsafe_head(latest_info)
-            .with_safe_head(latest_info)
-            .with_finalized_head(finalized)
-            .build();
-        let (state_tx, state_rx) = watch::channel(initial_state);
-        let (queue_tx, _) = watch::channel(0usize);
-        let mut engine = Engine::new(initial_state, state_tx, queue_tx);
-        let checkpoint =
-            TestCheckpointReader { safe: Some(latest_info), finalized: Some(finalized) };
-
-        let result =
-            engine.reset_with_checkpoint_reader(Arc::clone(&client), cfg, &checkpoint).await;
-
-        assert_eq!(engine.state().sync_state.finalized_head(), finalized);
-        assert_eq!(state_rx.borrow().sync_state.finalized_head(), finalized);
-        assert!(client.storage().read().await.fork_choice_updated_v3_requests.is_empty());
-        let Err(EngineResetError::SyncStart(SyncStartError::RpcError(error))) = result else {
-            panic!("expected a pruned-history RPC error, got {result:?}");
-        };
-        assert_eq!(error.as_error_resp().unwrap().code, 4444);
     }
 
     /// Verifies the engine actor reset boundary rejects an orphaned L1 origin even when the
