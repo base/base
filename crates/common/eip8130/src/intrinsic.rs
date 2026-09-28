@@ -1337,7 +1337,9 @@ mod tests {
         );
         assert_eq!(
             policy_gated.payer_auth,
-            Eip8130GasSchedule::AUTH_EXEC_P256 + Eip8130GasSchedule::COLD_SLOAD * 2
+            Eip8130GasSchedule::AUTH_EXEC_P256
+                + Eip8130GasSchedule::COLD_SLOAD * 2
+                + IntrinsicGas::data_cost(&payer_auth)
         );
     }
 
