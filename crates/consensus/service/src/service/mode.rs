@@ -52,26 +52,24 @@ impl NodeMode {
     /// # Errors
     ///
     /// Returns an error if `shadow_blocks_per_cycle` is [`None`] for [`Self::ShadowSequencer`], or
-    /// is set for [`Self::Sequencer`].
+    /// is set for any other mode.
     pub const fn try_into_operating_mode(
         self,
         shadow_blocks_per_cycle: Option<NonZeroU64>,
     ) -> Result<NodeOperatingMode, &'static str> {
-        match self {
-            Self::Validator => Ok(NodeOperatingMode::Validator),
-            Self::Sequencer => match shadow_blocks_per_cycle {
-                None => Ok(NodeOperatingMode::Sequencer),
-                Some(_) => {
-                    Err("--sequencer.shadow-blocks-per-cycle requires --mode ShadowSequencer")
-                }
-            },
-            Self::ShadowSequencer => match shadow_blocks_per_cycle {
-                Some(blocks_per_cycle) => {
-                    Ok(NodeOperatingMode::ShadowSequencer { blocks_per_cycle })
-                }
-                None => Err("--mode ShadowSequencer requires --sequencer.shadow-blocks-per-cycle"),
-            },
-            Self::IsolatedSequencer => Ok(NodeOperatingMode::IsolatedSequencer),
+        match (self, shadow_blocks_per_cycle) {
+            (Self::ShadowSequencer, Some(blocks_per_cycle)) => {
+                Ok(NodeOperatingMode::ShadowSequencer { blocks_per_cycle })
+            }
+            (Self::ShadowSequencer, None) => {
+                Err("--mode ShadowSequencer requires --sequencer.shadow-blocks-per-cycle")
+            }
+            (_, Some(_)) => {
+                Err("--sequencer.shadow-blocks-per-cycle requires --mode ShadowSequencer")
+            }
+            (Self::Validator, None) => Ok(NodeOperatingMode::Validator),
+            (Self::Sequencer, None) => Ok(NodeOperatingMode::Sequencer),
+            (Self::IsolatedSequencer, None) => Ok(NodeOperatingMode::IsolatedSequencer),
         }
     }
 }
@@ -128,5 +126,31 @@ impl NodeOperatingMode {
     /// Returns whether the derivation actor should be constructed.
     pub const fn derivation_enabled(&self) -> bool {
         !self.is_isolated()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroU64;
+
+    use rstest::rstest;
+
+    use super::{NodeMode, NodeOperatingMode};
+
+    #[rstest]
+    #[case::validator(NodeMode::Validator)]
+    #[case::sequencer(NodeMode::Sequencer)]
+    #[case::isolated(NodeMode::IsolatedSequencer)]
+    fn rejects_shadow_cycle_length_outside_shadow_mode(#[case] mode: NodeMode) {
+        assert!(mode.try_into_operating_mode(Some(NonZeroU64::MIN)).is_err());
+    }
+
+    #[test]
+    fn attaches_shadow_cycle_length_to_shadow_mode() {
+        assert_eq!(
+            NodeMode::ShadowSequencer.try_into_operating_mode(Some(NonZeroU64::MIN)),
+            Ok(NodeOperatingMode::ShadowSequencer { blocks_per_cycle: NonZeroU64::MIN })
+        );
+        assert!(NodeMode::ShadowSequencer.try_into_operating_mode(None).is_err());
     }
 }
