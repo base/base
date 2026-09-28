@@ -1,4 +1,4 @@
-//! The submission lease in [`BatchEncoder`]: ids, requeue, and what a reset forgets.
+//! The submission lease in [`BatchEncoder`], its ids, its requeue, and what a reset forgets.
 
 use alloy_primitives::B256;
 use base_batcher_encoder::{BatchPipeline, DaType, EncoderConfig, StepResult};

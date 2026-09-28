@@ -1,5 +1,5 @@
-//! Channel lifecycle in [`BatchEncoder`]: when a channel closes, when its partial output is
-//! released, and what a flush does.
+//! When a channel of [`BatchEncoder`] closes, when its partial output is released, and what a
+//! flush does.
 
 use alloy_primitives::B256;
 use base_batcher_encoder::{BatchPipeline, DaEgress, EncoderConfig, StepResult, SubmissionPayload};

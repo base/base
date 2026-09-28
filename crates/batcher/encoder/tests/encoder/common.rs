@@ -1,6 +1,7 @@
-//! Shared fixtures: the payload sizes the tests rely on, L2 block chains, the pair of configs a
-//! test builds its encoder from, the derivation-side reader that turns the encoder's
-//! submissions back into batches, and the encoder states several tests start from.
+//! Fixtures shared by the encoder tests. They provide the payload sizes the tests rely on, L2
+//! block chains, the pair of configs a test builds its encoder from, the derivation-side reader
+//! that turns the encoder's submissions back into batches, and the encoder states several tests
+//! start from.
 
 use std::{collections::HashSet, sync::Arc};
 
@@ -239,7 +240,7 @@ impl EncoderFixture {
     }
 
     /// Like [`new`](Self::new), with both channel timeouts set to [`CHANNEL_TIMEOUT`].
-    pub fn with_channel_timeout(config: EncoderConfig) -> Self {
+    fn with_channel_timeout(config: EncoderConfig) -> Self {
         let rollup_config = RollupConfig {
             channel_timeout: CHANNEL_TIMEOUT,
             granite_channel_timeout: CHANNEL_TIMEOUT,

@@ -1,5 +1,6 @@
-//! Reconciliation of [`BatchEncoder`] with derivation progress: pruning below the safe L2
-//! head, a safe head off the buffered chain, and a fully confirmed channel derivation skipped.
+//! Reconciliation of [`BatchEncoder`] with derivation progress, covering the pruning below the
+//! safe L2 head, a safe head off the buffered chain, and a fully confirmed channel derivation
+//! skipped.
 
 use alloy_primitives::B256;
 use base_batcher_encoder::{

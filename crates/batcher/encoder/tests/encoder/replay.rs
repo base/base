@@ -1,6 +1,6 @@
 //! Confirmation-window replay in [`BatchEncoder`]. A channel whose frames cannot all land
 //! within the derivation channel timeout is re-encoded under a fresh id, together with every
-//! channel that shares a blob or a transaction with it and every later one.
+//! channel that shares a blob or an in-flight transaction with it and every later one.
 
 use alloy_primitives::B256;
 use base_batcher_encoder::{BatchPipeline, StepResult};

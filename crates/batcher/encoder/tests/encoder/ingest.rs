@@ -1,6 +1,6 @@
-//! Construction and block intake of [`BatchEncoder`]: the config check, the parent check, one
-//! transition per step, the retry of a block the open channel cannot take, and the fatal
-//! errors that stop the batcher rather than skip a block.
+//! Construction and block intake of [`BatchEncoder`], covering the config check, the parent
+//! check, one transition per step, the retry of a block the open channel cannot take, and the
+//! fatal errors that stop the batcher rather than skip a block.
 
 use std::sync::Arc;
 
