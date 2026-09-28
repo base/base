@@ -821,10 +821,7 @@ mod tests {
             .await
             .expect_err("a throttle that can send a zero limit must not start");
 
-        assert!(
-            error.to_string().contains("block_size_lower_limit"),
-            "error should name the setting, got {error}"
-        );
+        assert_eq!(error.to_string(), "block_size_lower_limit must be greater than zero");
     }
 
     #[tokio::test]

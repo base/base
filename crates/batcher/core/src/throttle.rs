@@ -2,9 +2,8 @@
 
 /// Configuration for the throttle controller.
 ///
-/// Must pass [`validate`](Self::validate) before use: the limits it produces are sent to the
-/// block builder, which reads a limit of 0 as no limit at all, and throttling must keep them
-/// between each lower and upper limit.
+/// Must pass [`validate`](Self::validate) before use because the block builder reads a DA
+/// limit of 0 as no limit at all.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ThrottleConfig {
     /// Backlog threshold in bytes at which throttling activates.
@@ -57,7 +56,7 @@ impl ThrottleConfig {
         Self::validate_limits("tx_size", self.tx_size_lower_limit, self.tx_size_upper_limit)
     }
 
-    /// Checks one pair of limits: the lower one is what full intensity sends.
+    /// Checks one lower and upper limit pair. Full intensity sends the lower limit.
     const fn validate_limits(
         name: &'static str,
         lower: u64,
@@ -76,10 +75,8 @@ impl ThrottleConfig {
 /// Errors returned when validating [`ThrottleConfig`].
 #[derive(Debug, thiserror::Error)]
 pub enum ThrottleConfigError {
-    /// `max_intensity` is outside `[0, 1]`, or `NaN`.
-    ///
-    /// Above 1 the limits fall below their lower limit, and a negative one is sent as 0. Below
-    /// 0 throttling raises the limits above their upper limit.
+    /// `max_intensity` is outside `[0, 1]`, or `NaN`, so throttling would push a limit outside
+    /// its `[lower, upper]` range.
     #[error("max_intensity ({max_intensity}) must be within [0, 1]")]
     MaxIntensityOutOfRange {
         /// The configured maximum intensity.

@@ -32,8 +32,8 @@ pub trait BatcherAdminApi {
 
     /// Replace the throttle strategy and configuration.
     ///
-    /// `config` sets the full throttle configuration; all fields are required. Fails if
-    /// `config` is invalid, see [`ThrottleConfig::validate`].
+    /// `config` sets the full throttle configuration, and all fields are required. Fails if
+    /// `config` does not pass [`ThrottleConfig::validate`].
     #[method(name = "setThrottleController")]
     async fn set_throttle_controller(
         &self,

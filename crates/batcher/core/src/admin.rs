@@ -138,8 +138,8 @@ impl AdminHandle {
 
     /// Replace the throttle strategy and configuration.
     ///
-    /// The full [`ThrottleConfig`] is required: partial updates are not supported. The new
-    /// limits are pushed to the block builder right after. An invalid `config` is rejected
+    /// The full [`ThrottleConfig`] is required because partial updates are not supported. The
+    /// new limits are pushed to the block builder right after. An invalid `config` is rejected
     /// with [`AdminError::InvalidThrottleConfig`] before reaching the driver.
     pub async fn set_throttle(
         &self,
