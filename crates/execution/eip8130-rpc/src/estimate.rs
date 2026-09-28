@@ -7,8 +7,8 @@ use alloy_evm::{
 };
 use alloy_primitives::U256;
 use alloy_rpc_types::state::EvmOverrides;
-use base_common_chains::Upgrades;
-use base_common_evm::BaseTransaction as BaseRevm;
+use base_common_chains::{BaseUpgrade, Upgrades};
+use base_common_evm::{BaseSpecId, BaseTransaction as BaseRevm};
 use base_common_rpc_types::{BaseRpcTypes, BaseTransactionRequest};
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 use reth_chainspec::ChainSpecProvider;
@@ -111,7 +111,8 @@ impl Eip8130GasEstimator {
         })?;
         let timestamp = evm_env.block_env.timestamp.saturating_to();
         if sim_tx.eip8130.as_ref().is_some_and(|parts| parts.signed.requires_keystore())
-            && !eth_api.provider().chain_spec().is_zenith_active_at_timestamp(timestamp)
+            && !BaseSpecId::from_timestamp(eth_api.provider().chain_spec(), timestamp)
+                .is_enabled_in(BaseUpgrade::Zenith)
         {
             return Err(ErrorObjectOwned::owned(
                 INVALID_PARAMS_CODE,

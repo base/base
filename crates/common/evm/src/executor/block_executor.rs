@@ -25,8 +25,8 @@ use revm::{
 };
 
 use crate::{
-    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTime, BaseTxEnv,
-    BaseTxResult, DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
+    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseSpecId, BaseTime,
+    BaseTxEnv, BaseTxResult, BaseUpgrade, DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
 };
 
 /// Block executor for Base.
@@ -220,9 +220,8 @@ where
         // The Keystore is only enabled at Zenith. Before it, an EIP-8130
         // transaction may use only delegation and native secp256k1 keys.
         if tx_env.eip8130_signed().is_some_and(Eip8130Signed::requires_keystore)
-            && !self
-                .spec
-                .is_zenith_active_at_timestamp(self.evm.block().timestamp().saturating_to())
+            && !BaseSpecId::from_timestamp(&self.spec, self.evm.block().timestamp().saturating_to())
+                .is_enabled_in(BaseUpgrade::Zenith)
         {
             return Err(BlockExecutionError::other(
                 BaseBlockExecutionError::Eip8130KeystoreBeforeZenith,

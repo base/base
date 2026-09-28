@@ -12,7 +12,7 @@ use std::{
 use alloy_consensus::{BlockHeader, Transaction, constants::KECCAK_EMPTY};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseUpgrade, Upgrades};
 use base_common_consensus::{
     AccountChange, ChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
     Eip8130TimestampError, InitialActor, SignedChange,
@@ -1003,7 +1003,8 @@ where
         let now = self.block_timestamp();
         // Before Zenith there is no Keystore: authorization, lock state, and the
         // high-rate payer classification never read `AccountConfiguration`.
-        let keystore = self.chain_spec().is_zenith_active_at_timestamp(now);
+        let keystore =
+            BaseSpecId::from_timestamp(self.chain_spec(), now).is_enabled_in(BaseUpgrade::Zenith);
         let state = self.client().latest().map_err(|error| Self::provider_unavailable(error))?;
 
         // Authorize *and apply* the account changes against a writable overlay so
@@ -1178,31 +1179,30 @@ where
             });
         }
 
-        let sender_status = if keystore {
-            self.account_lock(
+        let (sender_status, payer_status) = if keystore {
+            let sender_status = self.account_lock(
                 &*state,
                 local_chain_id,
                 now,
                 sender,
                 classification_generation,
                 Self::prefetched_account_state(&config_reads, sender),
-            )
+            );
+            let payer_status = if payer == sender {
+                sender_status
+            } else {
+                self.account_lock(
+                    &*state,
+                    local_chain_id,
+                    now,
+                    payer,
+                    classification_generation,
+                    Self::prefetched_account_state(&config_reads, payer),
+                )
+            };
+            (sender_status, payer_status)
         } else {
-            LockStatus::UNLOCKED
-        };
-        let payer_status = if !keystore {
-            LockStatus::UNLOCKED
-        } else if payer == sender {
-            sender_status
-        } else {
-            self.account_lock(
-                &*state,
-                local_chain_id,
-                now,
-                payer,
-                classification_generation,
-                Self::prefetched_account_state(&config_reads, payer),
-            )
+            (LockStatus::UNLOCKED, LockStatus::UNLOCKED)
         };
         // Only a pending unlock has a knowable timestamp; a hard lock reports
         // `UNLOCKS_AT_MAX`, which must never surface as a timed expiry-bucket (it
@@ -1735,7 +1735,10 @@ where
         }
         // The Keystore is only enabled at Zenith: before it an EIP-8130
         // transaction may use only delegation and native secp256k1 keys.
-        if signed.requires_keystore() && !self.chain_spec().is_zenith_active_at_timestamp(now) {
+        if signed.requires_keystore()
+            && !BaseSpecId::from_timestamp(self.chain_spec(), now)
+                .is_enabled_in(BaseUpgrade::Zenith)
+        {
             return Err(Self::eip8130_error("EIP-8130 Keystore features require Zenith"));
         }
         let local_chain_id = self.inner.chain_spec().chain().id();
