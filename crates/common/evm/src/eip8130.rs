@@ -2012,6 +2012,9 @@ mod tests {
         let base = Eip8130Outcome {
             sender: Address::ZERO,
             payer: Address::ZERO,
+            sender_actor_id: B256::ZERO,
+            policy_gated: false,
+            policy_target: Address::ZERO,
             gas_limit: 1_000_000,
             sender_intrinsic: 100_000,
             sender_floor: 130_000,
