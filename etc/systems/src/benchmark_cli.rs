@@ -844,6 +844,9 @@ impl AggregateBenchmarkArgs {
                     "BenchmarkRun".to_owned(),
                     serde_json::Value::String(format!("{cohort}--latest")),
                 );
+                // `ClientVersion` intentionally stays only in the result metadata: it would
+                // otherwise make the visualizer split this stable latest page by version.
+                latest_page.test_config.remove("ClientVersion");
                 latest_page.test_name = format!("Latest - {original_name}");
                 latest_page.created_at = latest_created_at.clone();
                 pages.push(latest_page);
@@ -1744,6 +1747,7 @@ real_token_setup:
             run["testName"] == "Latest - Base Sepolia snapshot throughput"
                 && run["createdAt"] == rfc3339(now + chrono::TimeDelta::milliseconds(1))
                 && run["result"]["clientVersion"] == "base/new"
+                && run["testConfig"].get("ClientVersion").is_none()
         }));
         assert!(runs.iter().any(|run| {
             run["testConfig"]["BenchmarkRun"] == "sepolia-transfer-100mgas--base-old"
@@ -1805,6 +1809,7 @@ real_token_setup:
             run["id"] == "week-b20" && run["result"]["clientVersion"] == "base/old"
         }));
         assert!(latest.iter().all(|run| run["id"] != "stale-eth"));
+        assert!(latest.iter().all(|run| run["testConfig"].get("ClientVersion").is_none()));
         assert!(
             latest.iter().all(|run| {
                 run["createdAt"] == rfc3339(now + chrono::TimeDelta::milliseconds(1))
