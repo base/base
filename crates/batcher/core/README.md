@@ -27,7 +27,7 @@ reset and keep counting against the limit until they settle; the reset pipeline 
 stale ids they report.
 
 `TxOutcome` represents the two terminal states of an L1 submission: `Confirmed { l1_block }`
-and `Failed`. Failed frames are requeued for retry.
+and `Failed`.
 
 The throttle subsystem controls how much DA data the sequencer may include per block and per
 transaction based on the L1 DA backlog. `ThrottleController` takes a `ThrottleConfig` and a

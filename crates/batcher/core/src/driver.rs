@@ -765,8 +765,8 @@ mod tests {
         });
     }
 
-    /// A failed submission is requeued and resent, and `advance_l1_head` is not called: there
-    /// is no confirmed L1 block to report.
+    /// A failed submission is requeued and resent, and `advance_l1_head` is not called
+    /// because there is no confirmed L1 block to report.
     #[test]
     fn test_failed_submission_is_resent_without_advancing_l1_head() {
         Runner::start(Config::seeded(0), |ctx| async move {
