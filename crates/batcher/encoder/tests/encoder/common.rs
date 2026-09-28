@@ -1,5 +1,6 @@
-//! Shared fixtures: L2 block chains, the pair of configs a test builds its encoder from, and
-//! the derivation-side reader that turns the encoder's submissions back into batches.
+//! Fixtures shared by the encoder tests. They provide L2 block chains, the pair of configs a
+//! test builds its encoder from, and the derivation-side reader that turns the encoder's
+//! submissions back into batches.
 
 use std::{collections::HashSet, sync::Arc};
 
@@ -119,14 +120,14 @@ impl EncoderFixture {
     /// channels complete. The submissions are taken as L1 transactions included in this order,
     /// within the channel timeout, at an L1 origin at genesis.
     ///
-    /// Panics where derivation would drop data, under the strict frame order of Holocene: a
+    /// Panics where derivation would drop data under the strict frame order of Holocene, on a
     /// transaction payload that does not parse, a frame out of order or from another channel
     /// than the open one, a channel replaced or left without its terminal frame, a channel
     /// above the RLP limit, and channel data that does not decompress or decode. Also enforces
-    /// what the encoder promises beyond that: channel ids used once, Brotli channels, every
-    /// frame within `max_frame_size`, every blob payload fitting a blob, and one to
-    /// `max_blobs_per_tx` blobs per transaction. Batch validity (epoch, timestamp, sequence
-    /// window) is out of scope.
+    /// channel ids used once, Brotli channels, every frame within `max_frame_size`, every blob
+    /// payload fitting a blob, and one to `max_blobs_per_tx` blobs per transaction, which the
+    /// encoder promises beyond that. Batch validity (epoch, timestamp, sequence window) is out
+    /// of scope.
     pub fn derive(&self, submissions: &[BatchSubmission]) -> Vec<Vec<SingleBatch>> {
         let max_rlp_bytes = self.rollup_config.max_rlp_bytes_per_channel(GENESIS_TIMESTAMP);
         let mut channels = Vec::new();
