@@ -580,8 +580,8 @@ mod tests {
         const PRE_DENIM_BLOCK_GAS_LIMIT: u64 = 600_000_000;
         const MIN_TX_GAS: u64 = 30_000;
 
-        let block_gas_limit = PRE_DENIM_BLOCK_GAS_LIMIT
-            / u64::from(RollupConfig::DENIM_GAS_PARAMETER_SCALING_FACTOR);
+        let block_gas_limit =
+            PRE_DENIM_BLOCK_GAS_LIMIT / u64::from(RollupConfig::DENIM_GAS_PARAMETER_SCALING_FACTOR);
         let block_interval_millis = RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS;
         let max_txs_per_block = block_gas_limit / MIN_TX_GAS;
         // Round the window up to whole blocks so we never under-count.
