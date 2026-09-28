@@ -11,7 +11,7 @@ use base_batcher_encoder::{
     BatchEncoder, BatchPipeline, BatchSubmission, DaType, EncoderConfig, SubmissionPayload,
 };
 use base_blobs::BlobEncoder;
-use base_protocol::{BlockInfo, Frame};
+use base_protocol::Frame;
 use base_tx_manager::TxCandidate;
 
 fn submission_frames(submission: &BatchSubmission) -> Vec<Arc<Frame>> {
@@ -176,22 +176,21 @@ async fn batcher_da_switching() {
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..BatcherConfig::default()
     };
-    let blob_cfg = BatcherConfig::default(); // DaType::Blob by default
 
     // Blocks 1-3: submit as calldata.
     let calldata_batcher =
         Batcher::new(ActionL2Source::new(), &h.rollup_config, calldata_cfg.clone());
-    let mut last_block = None;
     for _ in 1..=3u64 {
-        let block = sequencer.build_next_block_with_single_transaction().await;
-        last_block = Some(BlockInfo::from(&block));
-        calldata_batcher.push_block(block);
+        calldata_batcher.push_block(sequencer.build_next_block_with_single_transaction().await);
         calldata_batcher.advance(&mut h.l1).await;
     }
 
     // Blocks 4-6: submit as blobs, from a batcher restarted at the safe head its node reports.
-    let blob_cfg = BatcherConfig { initial_safe_head: last_block, ..blob_cfg };
-    let blob_batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, blob_cfg.clone());
+    let blob_cfg = BatcherConfig {
+        initial_safe_head: Some(sequencer.head().block_info),
+        ..BatcherConfig::default() // DaType::Blob by default
+    };
+    let blob_batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, blob_cfg);
     for _ in 4..=6u64 {
         blob_batcher.push_block(sequencer.build_next_block_with_single_transaction().await);
         blob_batcher.advance(&mut h.l1).await;

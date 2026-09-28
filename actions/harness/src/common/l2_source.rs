@@ -1,9 +1,9 @@
 use base_common_consensus::BaseBlock;
 
-/// The [`BaseBlock`]s a batcher is created with, in order: its L2 chain so far.
+/// The [`BaseBlock`]s a batcher is created with, in order, which form its L2 chain so far.
 ///
-/// Each block must start with its L1-info deposit: the batcher reads the block's L1 epoch
-/// from it.
+/// Each block must start with its L1-info deposit, because the batcher reads the block's L1
+/// epoch from it.
 #[derive(Debug, Default)]
 pub struct ActionL2Source {
     blocks: Vec<BaseBlock>,

@@ -1,12 +1,12 @@
 //! The L2 chain a test builds, and the block source that polls it for the driver the way the
 //! production source polls its L2 node.
 //!
-//! Hand-rolled rather than built on [`PollingBlockSource`]: that one waits its poll interval
-//! when a block is not there yet, so a push would not wake it and the driver could answer an
-//! idle marker before taking the block. This source wakes on every push, which keeps "idle"
-//! meaning "every pushed block was taken". The test `ChannelBlockSource` would not do either:
-//! once delivered, a block is gone from it, so it cannot catch up from the safe head after a
-//! reset.
+//! Hand-rolled rather than built on [`PollingBlockSource`], because that one waits its poll
+//! interval when a block is not there yet. A push would not wake it, so the driver could
+//! answer an idle marker before taking the block. This source wakes on every push, which
+//! keeps "idle" meaning "every pushed block was taken". The test `ChannelBlockSource` would
+//! not do either, because a delivered block is gone from it, so it cannot catch up from the
+//! safe head after a reset.
 //!
 //! [`PollingBlockSource`]: base_batcher_source::PollingBlockSource
 
@@ -20,7 +20,7 @@ use tokio::sync::watch;
 
 /// The L2 chain a test builds for its batcher, shared between the test and the driver's
 /// block source.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct SharedL2Chain {
     /// The chain, one block per number.
     blocks: Arc<Mutex<Vec<BaseBlock>>>,
@@ -34,8 +34,8 @@ impl SharedL2Chain {
         Self::default()
     }
 
-    /// Make `block` the head of the chain, as a node would: the blocks at or above its number
-    /// are gone, so a block on another parent is a fork replacing them.
+    /// Make `block` the head of the chain, as a node would. The blocks at or above its number
+    /// are dropped, so a block on another parent is a fork replacing them.
     pub fn push(&self, block: BaseBlock) {
         let mut blocks = self.blocks.lock().unwrap();
         blocks.retain(|kept| kept.header.number < block.header.number);
@@ -49,7 +49,7 @@ impl SharedL2Chain {
 /// Like [`PollingBlockSource`](base_batcher_source::PollingBlockSource), it delivers the
 /// block after its tip once the test has pushed it, reports a reorg when that block does not
 /// build on the tip, and starts again above the safe head on `reset_catchup`. A reorg is
-/// reported once per state of the chain: a reset that finds the same block again waits for
+/// reported once per state of the chain. A reset that finds the same block again waits for
 /// the next push, as production waits its poll interval, instead of reporting it forever.
 /// Until that push the source is silent, even if the safe head moves meanwhile.
 #[derive(Debug)]
@@ -187,8 +187,9 @@ mod tests {
         chain.push(block(1, B256::repeat_byte(0xcd)));
         assert!(matches!(source.next().await, L2BlockEvent::Reorg), "a new chain state");
         source.reset_catchup(genesis);
-        chain.push(block(1, genesis.hash));
-        assert!(matches!(source.next().await, L2BlockEvent::Block(_)));
+        let first = block(1, genesis.hash);
+        chain.push(first.clone());
+        assert!(matches!(source.next().await, L2BlockEvent::Block(block) if *block == first));
     }
 
     #[tokio::test]
@@ -215,7 +216,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn parks_once_the_chain_is_dropped() {
+    async fn the_source_parks_once_the_chain_is_dropped() {
         let chain = SharedL2Chain::new();
         let mut source = HarnessBlockSource::new(&chain, BlockInfo::default());
         drop(chain);

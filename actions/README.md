@@ -145,8 +145,8 @@ in-memory.
 
 ## ActionL2Source and BaseBlock
 
-The batcher actor needs to read L2 blocks in order to know what to batch.
-`ActionL2Source` is a `VecDeque<BaseBlock>`. Tests usually fill it with blocks
+`ActionL2Source` holds the `BaseBlock`s a batcher is created with, its L2 chain
+so far. Tests usually fill it with blocks
 produced by `L2Sequencer`, which uses the production L1 origin selector,
 attributes builder, and in-process engine client. Each block therefore
 contains a real L1-info deposit transaction and signed user transactions,
@@ -161,8 +161,8 @@ manually.
 ## Batcher actor
 
 `Batcher` runs a production `BatchDriver` in a background tokio task over the
-L2 chain the test builds: the blocks of an `ActionL2Source`, plus those pushed
-later with `push_block`. The driver polls that chain by block number like the
+L2 chain the test builds, made of the blocks of an `ActionL2Source` and those
+pushed later with `push_block`. The driver polls that chain by block number like the
 production source polls its L2 node, so after a reset it catches up again from
 the safe head. The driver owns a `BatchEncoder`, channel manager behavior,
 calldata/blob frame construction, and submission flow. The harness-owned

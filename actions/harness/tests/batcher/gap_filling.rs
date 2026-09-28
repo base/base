@@ -10,14 +10,11 @@ use base_action_harness::{
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 
-/// Batches posted after a gap do not advance the safe head, batches filling the gap do, and
-/// the ones posted twice are harmless.
-///
 /// Each phase posts its blocks from a fresh batcher, which starts from the parent of the
-/// first block it is given: in phase 2 that is block 7, as if its node were ahead of the
+/// first block it is given. In phase 2 that is block 7, as if its node were ahead of the
 /// verifier.
 #[tokio::test]
-async fn batcher_gap_fill_separate_instances() {
+async fn batcher_gap_fill() {
     let batcher_cfg = BatcherConfig {
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..BatcherConfig::default()

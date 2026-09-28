@@ -37,10 +37,10 @@ pub struct BatcherConfig {
     /// signer address becomes [`batcher_address`](BatcherConfig::batcher_address)
     /// so production calldata/blob sources can recover the expected sender.
     pub l1_signer: PrivateKeySigner,
-    /// The safe L2 head the batcher starts from, as its node would report it: it posts the
-    /// blocks above it. `None` is the parent of the first block given to [`Batcher::new`], or
-    /// the L2 genesis of the rollup config when none is: a batcher created without blocks
-    /// starts at genesis, so the first block pushed to it must be block 1.
+    /// The safe L2 head the batcher starts from, as its node would report it. The batcher
+    /// posts the blocks above it. `None` means the parent of the first block given to
+    /// [`Batcher::new`], or the L2 genesis of the rollup config when it is given none, so the
+    /// first block pushed to such a batcher must be block 1.
     pub initial_safe_head: Option<BlockInfo>,
 }
 
@@ -75,17 +75,17 @@ impl BatcherConfig {
 ///
 /// On construction, `Batcher` spawns a [`BatchDriver`] as a background tokio task backed by
 /// a [`HarnessBlockSource`] polling the L2 chain the test builds, a [`HarnessL1HeadSource`]
-/// for L1 heads, and an admin channel. This mirrors the production batcher architecture: the
-/// driver owns its encoding pipeline and transaction manager and runs its own async loop,
-/// and catches up from the safe head again after a reset. The test plays the world around
-/// it: it pushes L2 blocks with [`push_block`], and mines L1 blocks and shows them to the
-/// driver with [`observe_l1_block`].
+/// for L1 heads, and an admin channel. As in production, the driver owns its encoding
+/// pipeline and transaction manager, runs its own async loop and catches up from the safe
+/// head again after a reset. The test plays the world around it. It pushes L2 blocks with
+/// [`push_block`], and mines L1 blocks and shows them to the driver with
+/// [`observe_l1_block`].
 ///
 /// Every `async` method returns once the driver is idle again, that is once it has taken
 /// what it was given, encoded it, handed the resulting submissions to the tx manager and
 /// applied every receipt. The harness waits for that with a marker queued in the L1 head
-/// source; see [`L1HeadItem::Marker`]. It panics if the driver task has exited, or did not go
-/// idle within [`IDLE_TIMEOUT`](Batcher::IDLE_TIMEOUT).
+/// source, see [`L1HeadItem::Marker`]. Each of them panics if the driver task has exited, or
+/// did not go idle within [`IDLE_TIMEOUT`](Batcher::IDLE_TIMEOUT).
 ///
 /// Each call to [`advance`] drives one complete batch cycle:
 /// 1. Wait for the driver to take and encode every block pushed so far.
@@ -121,7 +121,7 @@ impl Batcher {
     pub const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 
     /// Create a new [`Batcher`] backed by a persistent [`BatchDriver`] task, with the blocks
-    /// of `l2_source` as its L2 chain so far; see
+    /// of `l2_source` as its L2 chain so far, see
     /// [`BatcherConfig::initial_safe_head`] for where it starts.
     ///
     /// Spawns the driver immediately.
@@ -129,8 +129,8 @@ impl Batcher {
     /// # Panics
     ///
     /// Panics if `config.encoder` is invalid, if `config.batcher_address` is not the address
-    /// of `config.l1_signer`, or if the first block is the genesis block, which no batcher
-    /// posts.
+    /// of `config.l1_signer`, or if `config.initial_safe_head` is `None` and the first block is
+    /// the genesis block, which no batcher posts.
     pub fn new(
         l2_source: ActionL2Source,
         rollup_config: &RollupConfig,
@@ -207,8 +207,8 @@ impl Batcher {
     }
 
     /// Make `block` the head of the L2 chain, dropping the blocks at or above its number, as
-    /// a node would. The driver takes it once it has taken the block before it, and resets to
-    /// its safe head when the block after the last one it took does not build on it.
+    /// a node would. The driver resets to its safe head when the next block it expects does not
+    /// build on the last one it took.
     pub fn push_block(&self, block: BaseBlock) {
         self.chain.push(block);
     }
@@ -314,8 +314,8 @@ impl Batcher {
     /// delivers its number as the new L1 head and waits until the driver has applied both. A
     /// block without any of the batcher's transactions only advances the L1 head.
     pub async fn observe_l1_block(&self, block: &L1Block) {
-        // Receipts first: the driver serves them before L1 heads, so a failed submission is
-        // requeued before the head advances.
+        // Fire the receipts first because the driver serves them before L1 heads, so a failed
+        // submission is requeued before the head advances.
         self.tx_manager.confirm_block(block);
         self.deliver_l1_head(block.number()).await;
     }
