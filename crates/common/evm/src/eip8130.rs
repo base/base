@@ -7,9 +7,9 @@
 //! EIP-8130 intrinsic gas schedule, validates the fee caps, applies the
 //! transaction's account changes (config changes, account creation, and
 //! delegation) — installing the deferred account-*code* effects — and
-//! pre-charges the gas payer. It then dispatches the transaction's `calls` as
-//! real EVM call frames, settling the final fee and refunding unused gas
-//! afterwards.
+//! pre-charges the gas payer. It then publishes the payer to the
+//! [transaction context] and dispatches the transaction's `calls` as real EVM
+//! call frames, settling the final fee and refunding unused gas afterwards.
 //!
 //! Pre-call storage access goes through a gas-free [`JournalStorageProvider`], so
 //! the enshrined schedule is the single source of gas accounting for the pre-call
@@ -40,6 +40,7 @@
 //! reverted) is reported through the returned [`ExecutionResult`] variant
 //! ([`ExecutionResult::Success`] vs [`ExecutionResult::Revert`]).
 //!
+//! [transaction context]: TxContextStorage
 //! [`BaseEvm::transact_raw`]: crate::BaseEvm
 
 use alloc::{boxed::Box, rc::Rc, vec::Vec};
@@ -47,7 +48,7 @@ use alloc::{boxed::Box, rc::Rc, vec::Vec};
 use alloy_evm::{Database as AlloyDatabase, EvmInternals};
 use alloy_primitives::{Address, Bytes, U256};
 use base_common_consensus::{AccountChange, Delegation, Eip8130Constants, Predeploys};
-use base_common_precompiles::NonceManagerStorage;
+use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_execution_eip8130::{
     AccountChangeApplier, AccountConfigurationStorage, ApplyError, DelegationEffect, FeeCheck,
     IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator, TransactionAuthorizer,
@@ -752,7 +753,10 @@ impl Eip8130Executor {
         let gas_limit = tx.gas_limit;
         let max_fee = tx.max_fee_per_gas;
         let max_priority = tx.max_priority_fee_per_gas;
-        // Use the declared payer (sponsor); no signature is verified here.
+        // Use the declared payer (sponsor) so the payer published to the
+        // `TxContext` precompile matches a real execution: a call that reads it
+        // must see the same address it would on-chain, or it could take a
+        // different path and skew the estimate. No signature is verified here.
         let payer = tx.payer.unwrap_or(sender);
 
         let internals = EvmInternals::from_context(ctx);
@@ -795,6 +799,9 @@ impl Eip8130Executor {
                     gas_limit,
                 )?;
 
+            // 4. Publish the payer for the `TxContext` precompile.
+            TxContextStorage::new(sctx).set_payer(payer).map_err(BaseTransactionError::eip8130)?;
+
             Ok(Eip8130Outcome {
                 sender,
                 payer,
@@ -811,9 +818,9 @@ impl Eip8130Executor {
 
     /// Runs the storage-backed pre-call pipeline (authorize, nonce, intrinsic
     /// gas, fee-cap check, account-change apply) over a gas-free
-    /// journal view, returning the resolved [`Eip8130Outcome`]. Storage writes
-    /// land on the journal directly; the caller discards the transaction on
-    /// error.
+    /// journal view and publishes the payer to the transaction context,
+    /// returning the resolved [`Eip8130Outcome`]. Storage writes land on the
+    /// journal directly; the caller discards the transaction on error.
     fn authorize_and_apply<DB>(
         ctx: &mut BaseContext<DB>,
         signed: &base_common_consensus::Eip8130Signed,
@@ -969,6 +976,10 @@ impl Eip8130Executor {
                 .map_err(BaseTransactionError::eip8130)?;
             FeeCheck::validate_balance(payer_balance, gas_limit, payer_auth, max_fee)
                 .map_err(BaseTransactionError::eip8130)?;
+
+            // 6. Publish the payer so the `TxContext` precompile can read it
+            //    during `calls`.
+            TxContextStorage::new(sctx).set_payer(payer).map_err(BaseTransactionError::eip8130)?;
 
             Ok(Eip8130Outcome {
                 sender,
@@ -1627,12 +1638,12 @@ impl Eip8130Executor {
 mod tests {
     use alloy_evm::{Evm, FromTxWithEncoded, precompiles::PrecompilesMap};
     use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, keccak256};
-    use alloy_sol_types::SolEvent;
+    use alloy_sol_types::{SolCall, SolEvent};
     use base_common_consensus::{
         AccountChange, BaseTxEnvelope, Call, CreateEntry, Eip8130Signed, InitialActor, Predeploys,
         TxEip8130,
     };
-    use base_common_precompiles::INonceManager;
+    use base_common_precompiles::{INonceManager, ITransactionContext};
     use base_execution_eip8130::AccountChangeApplier;
     use k256::ecdsa::SigningKey;
     use revm::{
@@ -2413,6 +2424,75 @@ mod tests {
         let mut evm = evm_with(U256::from(1_000u64), sender);
         let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
         assert!(matches!(err, EVMError::Transaction(BaseTransactionError::Eip8130(_))));
+    }
+
+    /// A sponsored transaction publishes its payer to the `TxContext`
+    /// precompile, so a call reading `getTransactionPayer` sees the sponsor
+    /// rather than the `tx.origin` fallback (the sender).
+    #[test]
+    fn tx_context_reports_the_sponsoring_payer() {
+        let sender_key = signing_key(0x61);
+        let payer_key = signing_key(0x62);
+        let sender = eoa_address(&sender_key);
+        let payer = eoa_address(&payer_key);
+        let reader = address!("0x00000000000000000000000000000000000000c7");
+
+        // mstore(0, selector << 224); staticcall(gas, TX_CONTEXT, 0, 4, 0, 32);
+        // sstore(0, mload(0)); stop.
+        let mut code = vec![0x63];
+        code.extend_from_slice(&ITransactionContext::getTransactionPayerCall::SELECTOR);
+        code.extend_from_slice(&[0x60, 0xe0, 0x1b, 0x60, 0x00, 0x52]);
+        code.extend_from_slice(&[0x60, 0x20, 0x60, 0x00, 0x60, 0x04, 0x60, 0x00, 0x73]);
+        code.extend_from_slice(TxContextStorage::ADDRESS.as_slice());
+        code.extend_from_slice(&[0x5a, 0xfa, 0x50, 0x60, 0x00, 0x51, 0x60, 0x00, 0x55, 0x00]);
+        let code = Bytes::from(code);
+
+        let mut tx = base_tx();
+        tx.payer = Some(payer);
+        tx.calls = vec![vec![Call { to: reader, value: U256::ZERO, data: Bytes::new() }]];
+        let sender_auth = eoa_sig(&sender_key, tx.sender_signature_hash());
+        let mut payer_auth = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
+        payer_auth.extend_from_slice(&eoa_sig(&payer_key, tx.payer_signature_hash(sender)));
+        let signed = Eip8130Signed::new(tx, sender_auth, Bytes::from(payer_auth));
+
+        // `TxContext` is installed from Cobalt on.
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            payer,
+            AccountInfo { balance: U256::from(10u64).pow(U256::from(18u64)), ..Default::default() },
+        );
+        db.insert_account_info(
+            reader,
+            AccountInfo {
+                code_hash: keccak256(&code),
+                code: Some(Bytecode::new_raw(code)),
+                ..Default::default()
+            },
+        );
+        let mut evm = Context::base()
+            .with_db(db)
+            .with_cfg(
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Cobalt)).with_chain_id(CHAIN_ID),
+            )
+            .with_block(BlockEnv {
+                number: U256::from(1u64),
+                timestamp: U256::from(NOW),
+                basefee: BASE_FEE,
+                beneficiary: BENEFICIARY,
+                ..Default::default()
+            })
+            .build_with_inspector(NoOpInspector);
+
+        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("sponsored tx should execute");
+        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+        let stored = outcome
+            .state
+            .get(&reader)
+            .and_then(|account| account.storage.get(&U256::ZERO))
+            .map(|slot| slot.present_value)
+            .expect("reader stored the payer");
+        assert_eq!(Address::from_word(B256::from(stored.to_be_bytes::<32>())), payer);
+        assert_ne!(payer, sender, "the payer must differ from the tx.origin fallback");
     }
 
     #[test]
