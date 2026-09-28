@@ -46,10 +46,14 @@ pub struct Eip8130Signed {
     sender_auth: Bytes,
     /// Payer authentication payload, or empty for self-pay.
     ///
-    /// When `tx.payer.is_some()` this carries the payer's authorization (a raw
-    /// 65-byte signature in open payer mode, otherwise `authenticator || data`),
-    /// formatted as `authenticator(20) || authenticator_data` and validated against
-    /// [`TxEip8130::payer_signature_hash`] (with the resolved sender substituted).
+    /// When `tx.payer.is_some()` this carries the payer's authorization over
+    /// [`TxEip8130::payer_signature_hash`] (with the resolved sender
+    /// substituted):
+    ///
+    /// - Open payer mode: a raw 65-byte `r || s || v` signature, from which the
+    ///   payer is recovered.
+    /// - Named payer: `authenticator(20) || authenticator_data`.
+    ///
     /// When `tx.payer.is_none()` this is empty.
     payer_auth: Bytes,
     /// Cached EIP-2718 transaction hash (`keccak256(encode_2718(self))`).
