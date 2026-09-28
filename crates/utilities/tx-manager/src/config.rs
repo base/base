@@ -123,11 +123,6 @@ pub struct TxManagerConfig {
     pub tx_send_timeout: Duration,
     /// Mempool appearance timeout (zero = disabled).
     pub tx_not_in_mempool_timeout: Duration,
-    /// Maximum time [`wait_mined`](crate::SimpleTxManager::wait_mined) and
-    /// [`wait_for_tx`](crate::SimpleTxManager::wait_for_tx) poll for a transaction that is
-    /// not mined. `send` and `send_async` ignore it and poll every version they publish
-    /// until the send ends.
-    pub confirmation_timeout: Duration,
     /// Minimum blob base fee (in wei) to use for blob transactions.
     pub min_blob_fee: u128,
 }
@@ -148,7 +143,6 @@ impl Default for TxManagerConfig {
             receipt_query_interval: Duration::from_secs(12),
             tx_send_timeout: Duration::ZERO,
             tx_not_in_mempool_timeout: Duration::from_secs(120),
-            confirmation_timeout: Duration::from_secs(300),
             min_blob_fee: 1_000_000_000, // 1 gwei
         }
     }
@@ -169,7 +163,6 @@ impl TxManagerConfig {
     /// - `publish_max_retries` must be >= 1
     /// - `publish_retry_delay` must be > 0
     /// - `receipt_query_interval` must be > 0
-    /// - `confirmation_timeout` must be > 0
     /// - `(safe_abort_nonce_too_low_count - 1) * resubmission_timeout` must exceed
     ///   `receipt_query_interval`, so a receipt poll runs before a send aborts on
     ///   refused fee bumps
@@ -209,7 +202,6 @@ impl TxManagerConfig {
             resubmission_timeout,
             publish_retry_delay,
             receipt_query_interval,
-            confirmation_timeout,
         );
         reject_zero!(min_blob_fee);
         let refusals_before_abort =
@@ -319,17 +311,6 @@ mod tests {
     #[test]
     fn default_min_blob_fee_is_one_gwei() {
         assert_eq!(TxManagerConfig::default().min_blob_fee, 1_000_000_000);
-    }
-
-    #[test]
-    fn validation_rejects_zero_confirmation_timeout() {
-        let config =
-            TxManagerConfig { confirmation_timeout: Duration::ZERO, ..TxManagerConfig::default() };
-        let err = config.validate().unwrap_err();
-        assert!(
-            matches!(err, ConfigError::OutOfRange { field: "confirmation_timeout", .. }),
-            "expected OutOfRange for confirmation_timeout, got: {err}"
-        );
     }
 
     #[rstest]

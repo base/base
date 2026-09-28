@@ -1413,8 +1413,7 @@ where
     /// sends it through the provided channel once confirmed.
     ///
     /// The task delegates to [`wait_mined`](Self::wait_mined), which polls
-    /// internally until the transaction is confirmed, the manager shuts down
-    /// or `confirmation_timeout` passes with the transaction still not mined.
+    /// internally until the transaction is confirmed or the manager shuts down.
     ///
     /// Returns the [`JoinHandle`](tokio::task::JoinHandle) of the spawned
     /// task so callers can await its completion if needed.
@@ -1464,7 +1463,7 @@ where
     /// version of the transaction.
     ///
     /// The task runs until the version is confirmed, the send ends or the manager shuts
-    /// down. It has no timeout because the version can be mined at any point of the send.
+    /// down.
     fn spawn_wait_for_tx(
         &self,
         send_state: Arc<SendState>,
@@ -1501,7 +1500,6 @@ where
             &self.provider,
             tx_hash,
             &self.config,
-            None,
             &self.closed,
         )
         .await
@@ -1511,9 +1509,8 @@ where
     /// the transaction is mined and confirmed to the required depth.
     ///
     /// Returns `Some(receipt)` when the transaction reaches
-    /// `num_confirmations` depth, or `None` if the manager is closed or
-    /// the transaction is still not mined when the `confirmation_timeout`
-    /// deadline is exceeded.
+    /// `num_confirmations` depth, or `None` if the manager is closed. Callers
+    /// that need a bound wrap it in a timeout.
     pub async fn wait_mined(
         send_state: &SendState,
         provider: &P,
@@ -1527,29 +1524,23 @@ where
             provider,
             tx_hash,
             config,
-            Some(config.confirmation_timeout),
             closed,
         )
         .await
     }
 
     /// Runtime-backed implementation of [`wait_mined`](Self::wait_mined).
-    ///
-    /// Polls until the transaction is confirmed or the manager is closed, or gives up once
-    /// `timeout` has passed with the transaction still not mined.
     async fn wait_mined_using_runtime<Rt>(
         runtime: &Rt,
         send_state: &SendState,
         provider: &P,
         tx_hash: B256,
         config: &TxManagerConfig,
-        timeout: Option<Duration>,
         closed: &AtomicBool,
     ) -> Option<TransactionReceipt>
     where
         Rt: Runtime,
     {
-        let started = runtime.now();
         let mut poll_immediately = true;
 
         loop {
@@ -1578,16 +1569,6 @@ where
                 Err(e) => {
                     warn!(tx_hash = %tx_hash, error = %e, "receipt query failed");
                 }
-            }
-
-            // Give up at the deadline only if the transaction is not mined, so a mined one
-            // is polled until it is confirmed.
-            if let Some(timeout) = timeout
-                && runtime.now() >= started + timeout
-                && !send_state.is_mined(tx_hash)
-            {
-                warn!(tx_hash = %tx_hash, timeout = ?timeout, "confirmation timeout exceeded");
-                return None;
             }
 
             // Check shutdown state each iteration to support cancellation.
@@ -1798,7 +1779,7 @@ mod tests {
     use alloy_transport::mock::Asserter;
     use base_runtime::{
         Clock,
-        deterministic::{Config, Context, Runner},
+        deterministic::{Config, Runner},
     };
     use rstest::rstest;
     use tokio::sync::mpsc;
@@ -1977,16 +1958,14 @@ mod tests {
         }
     }
 
-    /// A send-loop poller ignores `confirmation_timeout` and delivers a version mined
-    /// after it.
+    /// A poller keeps polling an unmined transaction and delivers it once it is mined.
     #[test]
-    fn send_loop_poller_outlives_the_confirmation_timeout() {
+    fn receipt_polling_waits_for_the_transaction_to_be_mined() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let tx_hash = B256::with_last_byte(1);
             let (receipt, block) = mined_receipt(tx_hash, 10);
 
-            // Report the transaction unmined for 4 polls, then mined and confirmed at 4 s,
-            // after the 3 s timeout.
+            // Report the transaction unmined for 4 polls, then mined and confirmed at 4 s.
             let asserter = Asserter::new();
             for _ in 0..4 {
                 asserter.push_success(&1u64);
@@ -2000,7 +1979,6 @@ mod tests {
             let config = TxManagerConfig {
                 num_confirmations: 5,
                 receipt_query_interval: Duration::from_secs(1),
-                confirmation_timeout: Duration::from_secs(3),
                 network_timeout: Duration::from_secs(30),
                 ..TxManagerConfig::default()
             };
@@ -2057,50 +2035,6 @@ mod tests {
         block.header.hash = block_hash;
 
         (receipt, block)
-    }
-
-    /// A mined transaction that reaches the confirmation depth only after the
-    /// confirmation timeout must still be delivered: once it is mined nothing
-    /// else watches it, so abandoning it would leave the send pending forever.
-    #[test]
-    fn wait_mined_keeps_polling_mined_tx_past_confirmation_timeout() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let tx_hash = B256::with_last_byte(1);
-            let (receipt, block) = mined_receipt(tx_hash, 10);
-
-            // Script the chain tip so the 5 required confirmations are only reached at tip 14,
-            // on the poll after the 3s timeout.
-            let asserter = Asserter::new();
-            for tip in [10u64, 10, 10, 10, 14] {
-                asserter.push_success(&tip);
-                asserter.push_success(&Some(&receipt));
-                asserter.push_success(&Some(&block));
-            }
-            let provider = ProviderBuilder::new().connect_mocked_client(asserter);
-
-            let send_state = SendState::new(3).expect("send state should be valid");
-            let config = TxManagerConfig {
-                num_confirmations: 5,
-                receipt_query_interval: Duration::from_secs(1),
-                confirmation_timeout: Duration::from_secs(3),
-                network_timeout: Duration::from_secs(30),
-                ..TxManagerConfig::default()
-            };
-
-            let confirmed = SimpleTxManager::<_, Context>::wait_mined_using_runtime(
-                &ctx,
-                &send_state,
-                &provider,
-                tx_hash,
-                &config,
-                Some(config.confirmation_timeout),
-                &AtomicBool::new(false),
-            )
-            .await;
-
-            assert_eq!(confirmed.map(|receipt| receipt.transaction_hash), Some(tx_hash));
-            assert_eq!(ctx.now(), Duration::from_secs(4));
-        });
     }
 
     /// A poller stops querying L1 once the receipt receiver is dropped, as happens when the

@@ -173,18 +173,6 @@ macro_rules! define_tx_manager_cli {
             )]
             pub tx_not_in_mempool_timeout: ::std::time::Duration,
 
-            /// Maximum time `wait_mined` and `wait_for_tx` poll for a
-            /// transaction that is not mined (e.g., "5m", "300s"). `send` and
-            /// `send_async` ignore it and poll every version they publish until
-            /// the send ends.
-            #[arg(
-                long = "tx-manager.confirmation-timeout",
-                env = concat!($prefix, "_", "CONFIRMATION_TIMEOUT"),
-                default_value = "5m",
-                value_parser = ::humantime::parse_duration
-            )]
-            pub confirmation_timeout: ::std::time::Duration,
-
             /// Minimum blob base fee (in gwei) to use for blob transactions.
             /// Accepts decimal strings (e.g. `"1"`, `"0.5"`).
             /// Stored as wei after parsing.
@@ -221,7 +209,6 @@ macro_rules! define_tx_manager_cli {
                     receipt_query_interval: cli.receipt_query_interval,
                     tx_send_timeout: cli.tx_send_timeout,
                     tx_not_in_mempool_timeout: cli.tx_not_in_mempool_timeout,
-                    confirmation_timeout: cli.confirmation_timeout,
                     min_blob_fee: cli.min_blob_fee,
                 };
                 config.validate()?;
