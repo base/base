@@ -1718,6 +1718,11 @@ where
         if !self.chain_spec().is_everest_active_at_timestamp(now) {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
+        // The Keystore is only enabled at Zenith: before it an EIP-8130
+        // transaction may use only delegation and native secp256k1 keys.
+        if signed.requires_keystore() && !self.chain_spec().is_zenith_active_at_timestamp(now) {
+            return Err(Self::eip8130_error("EIP-8130 Keystore features require Zenith"));
+        }
         let local_chain_id = self.inner.chain_spec().chain().id();
         signed.validate_static(local_chain_id).map_err(InvalidPoolTransactionError::from)?;
         // The validity window is evaluated in milliseconds against
@@ -1818,19 +1823,30 @@ where
     }
 
     /// Returns `true` when an authenticator selector may be used directly on the
-    /// EIP-8130 transaction validation path. Only the native k1 authenticator
-    /// is accepted.
+    /// EIP-8130 transaction validation path: native k1 or a canonical Keystore
+    /// authenticator. Non-k1 selectors only reach this after the Zenith gate in
+    /// [`Self::validate_eip8130_structural`].
     fn authenticator_allowed_for_tx_path(authenticator: &Address) -> bool {
         *authenticator == Eip8130Constants::K1_AUTHENTICATOR
+            || Eip8130Contracts::is_canonical_authenticator(authenticator)
     }
 
-    /// Performs the cheap k1 wire check that does not require running an
-    /// authenticator. Native k1 must carry exactly `r || s || v`.
-    ///
-    /// Callers reject every other selector in [`Self::authenticator_allowed_for_tx_path`]
-    /// before this runs, so a delegate-authenticator shape is not checked here.
+    /// Performs cheap selector-specific wire checks that do not require running
+    /// an authenticator. Native k1 must carry exactly `r || s || v`; delegated
+    /// auth must be depth-1 and name a canonical nested authenticator.
     fn authenticator_payload_well_formed(authenticator: &Address, data: &[u8]) -> bool {
-        *authenticator == Eip8130Constants::K1_AUTHENTICATOR && data.len() == 65
+        if *authenticator == Eip8130Constants::K1_AUTHENTICATOR {
+            return data.len() == 65;
+        }
+        if *authenticator == Eip8130Contracts::DELEGATE_AUTHENTICATOR {
+            if data.len() < 40 {
+                return false;
+            }
+            let nested = Address::from_slice(&data[20..40]);
+            return nested != Eip8130Contracts::DELEGATE_AUTHENTICATOR
+                && Self::authenticator_allowed_for_tx_path(&nested);
+        }
+        true
     }
 
     /// Enforces the interim total-account-changes admission cap
@@ -2204,6 +2220,20 @@ mod tests {
     fn everest_chain_spec() -> Arc<BaseChainSpec> {
         let mut genesis = build_test_genesis_everest();
         genesis.config.chain_id = test_chain_id();
+        Arc::new(BaseChainSpec::from_genesis(genesis))
+    }
+
+    /// An Everest chain spec with Zenith (and so the Keystore) also active at
+    /// genesis.
+    fn zenith_chain_spec() -> Arc<BaseChainSpec> {
+        let mut genesis = build_test_genesis_everest();
+        genesis.config.chain_id = test_chain_id();
+        genesis.config.extra_fields.insert(
+            "base".to_string(),
+            serde_json::json!({
+                "azul": 0, "beryl": 0, "cobalt": 0, "denim": 0, "everest": 0, "zenith": 0
+            }),
+        );
         Arc::new(BaseChainSpec::from_genesis(genesis))
     }
 
@@ -2876,12 +2906,31 @@ mod tests {
     /// A configured sender naming a canonical non-k1 authenticator is rejected
     /// at admission.
     #[test]
-    fn rejects_eip8130_non_k1_sender_authenticator() {
+    fn non_k1_sender_authenticator_requires_zenith() {
         let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
         let mut auth = Eip8130Contracts::P256_AUTHENTICATOR.as_slice().to_vec();
         auth.extend_from_slice(&[0u8; 64]);
         let signed = Eip8130Signed::new(tx, Bytes::from(auth), Bytes::new());
-        assert_unsupported(TestValidator::validate_sender_auth(&signed));
+        assert!(signed.requires_keystore());
+
+        let reason = |result: Result<(), InvalidPoolTransactionError>| match result {
+            Err(InvalidPoolTransactionError::Other(error)) => {
+                match error.as_any().downcast_ref::<BaseTxPoolError>() {
+                    Some(BaseTxPoolError::Eip8130Validation { reason }) => Some(*reason),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        const GATE: &str = "EIP-8130 Keystore features require Zenith";
+
+        // Before Zenith the Keystore gate rejects it outright.
+        assert_eq!(reason(build_test_validator().validate_eip8130_structural(&signed)), Some(GATE));
+        // From Zenith the gate passes and the P-256 shape passes the sender-auth
+        // wire check.
+        let zenith = build_test_validator_with_spec(zenith_chain_spec());
+        assert_ne!(reason(zenith.validate_eip8130_structural(&signed)), Some(GATE));
+        assert!(TestValidator::validate_sender_auth(&signed).is_ok());
     }
 
     /// Returns an authenticator address comfortably above the `K1_AUTHENTICATOR`

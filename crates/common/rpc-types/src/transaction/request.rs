@@ -19,10 +19,10 @@ use crate::Transaction;
 
 /// Named EIP-8130 authenticator selectors.
 ///
-/// [`Self::Secp256k1`] sizes the default authorization when a blob is absent
-/// and is the only selector launch-wire simulation prices. P256, `WebAuthn`, and
-/// the delegate authenticator are rejected by `eth_call` / `eth_estimateGas`,
-/// matching txpool admission.
+/// [`Self::Secp256k1`] sizes the default authorization when a blob is absent.
+/// P256, `WebAuthn`, and the delegate authenticator are Keystore authenticators:
+/// `eth_estimateGas` prices them once Zenith is active and rejects them before
+/// it, matching txpool admission.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Eip8130AuthScheme {
@@ -67,8 +67,8 @@ impl Eip8130AuthScheme {
     /// `eip8130_auth_scheme_all_lists_every_variant` test for the
     /// compile-time guard that keeps this in sync with the enum.
     ///
-    /// Simulation prices only [`Self::Secp256k1`]. The other variants name
-    /// authenticators the launch wire rejects.
+    /// The variants other than [`Self::Secp256k1`] are Keystore authenticators,
+    /// only accepted once Zenith is active.
     pub const ALL: [Self; 3] = [Self::Secp256k1, Self::P256, Self::WebAuthn];
 }
 
@@ -137,8 +137,9 @@ pub struct Eip8130RequestFields {
     ///   authenticates with a k1 key, exactly as for a 1559 transaction.
     /// - `authenticator(20) || data` prefixed with the native k1 authenticator
     ///   prices the configured-account path.
-    /// - A prefix that names P256, `WebAuthn`, or the delegate authenticator is
-    ///   rejected, matching txpool admission.
+    /// - A prefix that names P256, `WebAuthn`, or the delegate authenticator is a
+    ///   Keystore authorization: priced once Zenith is active and rejected before
+    ///   it, matching txpool admission.
     ///
     /// An absent blob defaults by intent: a declared `sender` synthesizes a
     /// k1-prefixed configured-account authorization; a `from`-only request
@@ -158,9 +159,9 @@ pub struct Eip8130RequestFields {
     ///
     /// For a named payer this is `authenticator(20) || data`, and absent
     /// defaults to a representative secp256k1 payer authorization. A supplied
-    /// blob's leading 20 bytes must be the native k1 authenticator. Any other
-    /// selector, including P256, `WebAuthn`, and the delegate authenticator, is
-    /// rejected as `INVALID_PARAMS` rather than priced.
+    /// blob's leading 20 bytes must name the native k1 authenticator, or, once
+    /// Zenith is active, a canonical Keystore authenticator. Any other selector
+    /// is rejected as `INVALID_PARAMS` rather than priced.
     ///
     /// In open payer mode this is the payer's raw 65-byte signature, from which
     /// the payer is recovered. It is optional: before any payer has signed, an

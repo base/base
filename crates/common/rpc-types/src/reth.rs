@@ -157,31 +157,35 @@ mod tests {
     }
 
     #[test]
-    fn prefixed_p256_sender_auth_is_rejected() {
+    fn prefixed_p256_sender_auth_is_priced_as_keystore() {
         let req: BaseTransactionRequest = serde_json::from_value(json!({
             "sender": SENDER,
             "calls": [],
             "senderAuth": blob(Some(Eip8130Contracts::P256_AUTHENTICATOR), 128),
         }))
         .expect("valid request");
-        assert!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
-            "a P256 sender authenticator is rejected, matching pool admission",
-        );
+        let tx = req
+            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
+            .expect("a canonical Keystore authenticator is priced");
+        let s = signed(&tx);
+        assert_eq!(s.tx().sender, Some(SENDER), "the blob selects the configured path");
+        assert!(s.requires_keystore(), "the RPC layer gates it to Zenith");
     }
 
     #[test]
-    fn prefixed_webauthn_sender_auth_is_rejected() {
+    fn prefixed_webauthn_sender_auth_is_priced_as_keystore() {
         let req: BaseTransactionRequest = serde_json::from_value(json!({
             "sender": SENDER,
             "calls": [],
             "senderAuth": blob(Some(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR), 512),
         }))
         .expect("valid request");
-        assert!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
-            "a WebAuthn sender authenticator is rejected, matching pool admission",
-        );
+        let tx = req
+            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
+            .expect("a canonical Keystore authenticator is priced");
+        let s = signed(&tx);
+        assert_eq!(s.tx().sender, Some(SENDER), "the blob selects the configured path");
+        assert!(s.requires_keystore(), "the RPC layer gates it to Zenith");
     }
 
     #[test]
@@ -259,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn delegate_prefixed_sender_auth_is_rejected() {
+    fn delegate_prefixed_sender_auth_is_priced_as_keystore() {
         let delegate_account = address!("0x00000000000000000000000000000000000000d4");
         let mut nested = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
         nested.extend_from_slice(&[STUB_AUTH_FILL; 65]);
@@ -272,14 +276,16 @@ mod tests {
             "senderAuth": alloy_primitives::hex::encode_prefixed(&blob),
         }))
         .expect("valid request");
-        assert!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
-            "a delegate sender authenticator is rejected, not priced as a bare EOA",
-        );
+        let tx = req
+            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
+            .expect("a canonical Keystore authenticator is priced");
+        let s = signed(&tx);
+        assert_eq!(s.tx().sender, Some(SENDER), "the blob selects the configured path");
+        assert!(s.requires_keystore(), "the RPC layer gates it to Zenith");
     }
 
     #[test]
-    fn delegate_prefixed_payer_auth_is_rejected() {
+    fn delegate_prefixed_payer_auth_is_priced_as_keystore() {
         let payer = address!("0x00000000000000000000000000000000000000b2");
         let delegate_account = address!("0x00000000000000000000000000000000000000d4");
         let mut nested = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
@@ -294,10 +300,12 @@ mod tests {
             "payerAuth": alloy_primitives::hex::encode_prefixed(&blob),
         }))
         .expect("valid request");
-        assert!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
-            "a delegate payer authenticator is rejected, matching pool admission",
-        );
+        let tx = req
+            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
+            .expect("a canonical Keystore authenticator is priced");
+        let s = signed(&tx);
+        assert_eq!(s.tx().payer, Some(payer), "the payer is set on the transaction");
+        assert!(s.requires_keystore(), "the RPC layer gates it to Zenith");
     }
 
     #[test]
@@ -462,7 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn prefixed_p256_payer_auth_is_rejected() {
+    fn prefixed_p256_payer_auth_is_priced_as_keystore() {
         let payer = address!("0x00000000000000000000000000000000000000b2");
         let req: BaseTransactionRequest = serde_json::from_value(json!({
             "sender": SENDER,
@@ -471,10 +479,12 @@ mod tests {
             "payerAuth": blob(Some(Eip8130Contracts::P256_AUTHENTICATOR), 128),
         }))
         .expect("valid request");
-        assert!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
-            "a P256 payer authenticator is rejected, matching pool admission",
-        );
+        let tx = req
+            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
+            .expect("a canonical Keystore authenticator is priced");
+        let s = signed(&tx);
+        assert_eq!(s.tx().payer, Some(payer), "the payer is set on the transaction");
+        assert!(s.requires_keystore(), "the RPC layer gates it to Zenith");
     }
 
     #[test]

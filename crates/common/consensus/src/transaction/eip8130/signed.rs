@@ -25,7 +25,9 @@ use reth_codecs::Compact;
 #[cfg(feature = "reth")]
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
 
-use crate::transaction::eip8130::{constants::Eip8130Constants, tx::TxEip8130};
+use crate::transaction::eip8130::{
+    account_changes::AccountChange, constants::Eip8130Constants, tx::TxEip8130,
+};
 
 /// Signed [EIP-8130] Account Abstraction transaction envelope.
 ///
@@ -200,6 +202,24 @@ impl Eip8130Signed {
     /// Returns the cached EIP-2718 transaction hash.
     pub const fn hash(&self) -> &B256 {
         &self.hash
+    }
+
+    /// Whether this transaction uses the Keystore, and is therefore only valid
+    /// once Zenith is active.
+    ///
+    /// That is a `Create` or `ConfigChange` account change, or a named sender or
+    /// payer whose authorization selects an authenticator other than native
+    /// secp256k1. Without the Keystore an account has only its own k1 key, so
+    /// every other surface is reachable only through these.
+    #[must_use]
+    pub fn requires_keystore(&self) -> bool {
+        let named_non_k1 = |auth: &Bytes| {
+            auth.get(..Address::len_bytes()) != Some(Eip8130Constants::K1_AUTHENTICATOR.as_slice())
+        };
+        let tx = &self.tx;
+        tx.account_changes.iter().any(|change| !matches!(change, AccountChange::Delegation(_)))
+            || (tx.sender.is_some() && named_non_k1(&self.sender_auth))
+            || (tx.payer.is_some() && !tx.is_open_payer() && named_non_k1(&self.payer_auth))
     }
 
     /// Validates static admission rules without node-specific dependencies.
@@ -813,9 +833,79 @@ mod tests {
 
     use super::*;
     use crate::transaction::eip8130::{
-        account_changes::{AccountChange, Delegation},
+        account_changes::{AccountChange, AccountChangeChannel, Delegation, SignedAccountChanges},
         call::Call,
     };
+
+    fn prefixed(authenticator: Address) -> Bytes {
+        let mut blob = authenticator.to_vec();
+        blob.extend_from_slice(&[0xab; 65]);
+        Bytes::from(blob)
+    }
+
+    /// Delegation and native k1 keys need no Keystore; `Create`, `ConfigChange`,
+    /// and any non-k1 named authorization do.
+    #[test]
+    fn requires_keystore_flags_only_keystore_surfaces() {
+        let sender = address!("0x00000000000000000000000000000000000000aa");
+        let payer = address!("0x00000000000000000000000000000000000000bb");
+        let p256 = address!("0x0000000000000000000000000000000000000100");
+        let k1 = Eip8130Constants::K1_AUTHENTICATOR;
+        let base = TxEip8130 { chain_id: 8453, ..Default::default() };
+
+        let eoa = Eip8130Signed::new(
+            TxEip8130 {
+                account_changes: vec![AccountChange::Delegation(Delegation { target: payer })],
+                ..base.clone()
+            },
+            Bytes::from(vec![0xab; 65]),
+            Bytes::new(),
+        );
+        assert!(!eoa.requires_keystore(), "an EOA delegating is not the Keystore");
+
+        let named_k1 = Eip8130Signed::new(
+            TxEip8130 { sender: Some(sender), payer: Some(payer), ..base.clone() },
+            prefixed(k1),
+            prefixed(k1),
+        );
+        assert!(!named_k1.requires_keystore(), "k1 named sender and payer are not the Keystore");
+
+        let open_payer = Eip8130Signed::new(
+            TxEip8130 { payer: Some(Eip8130Constants::OPEN_PAYER), ..base.clone() },
+            Bytes::from(vec![0xab; 65]),
+            Bytes::from(vec![0xab; 65]),
+        );
+        assert!(!open_payer.requires_keystore(), "an open payer's raw signature is k1");
+
+        let non_k1_sender = Eip8130Signed::new(
+            TxEip8130 { sender: Some(sender), ..base.clone() },
+            prefixed(p256),
+            Bytes::new(),
+        );
+        assert!(non_k1_sender.requires_keystore());
+
+        let non_k1_payer = Eip8130Signed::new(
+            TxEip8130 { payer: Some(payer), ..base.clone() },
+            Bytes::from(vec![0xab; 65]),
+            prefixed(p256),
+        );
+        assert!(non_k1_payer.requires_keystore());
+
+        let config_change = Eip8130Signed::new(
+            TxEip8130 {
+                account_changes: vec![AccountChange::ConfigChange(SignedAccountChanges {
+                    channel: AccountChangeChannel::Local,
+                    sequence: 0,
+                    changes: Vec::new(),
+                    signature: Bytes::new(),
+                })],
+                ..base
+            },
+            Bytes::from(vec![0xab; 65]),
+            Bytes::new(),
+        );
+        assert!(config_change.requires_keystore());
+    }
 
     fn sample_signed(payer_present: bool) -> Eip8130Signed {
         let tx = TxEip8130 {
