@@ -1,6 +1,6 @@
-//! Recovery of one persistent [`Batcher`] on every fork scheduled on Base mainnet: a channel
-//! that timed out in derivation, a confirmed batch that derivation passed over, and a safe
-//! head that went back. Each test ends with derivation reading what the same batcher resent.
+//! Recovery of one persistent [`Batcher`] on every fork scheduled on Base mainnet, after a
+//! channel that timed out in derivation, a confirmed batch that derivation passed over, and a
+//! safe head that went back. Each test ends with derivation reading what the same batcher resent.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
