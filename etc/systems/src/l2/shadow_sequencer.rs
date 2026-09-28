@@ -114,7 +114,7 @@ impl ShadowSequencer {
             l1_rpc_url: config.l1_rpc_url,
             l1_beacon_url: config.l1_beacon_url,
             l2_engine_url: builder.engine_url()?,
-            mode: NodeMode::Sequencer,
+            mode: NodeMode::ShadowSequencer,
             sequencer_key: Some(config.sequencer_key),
             p2p_key: None,
             rpc_port: None,

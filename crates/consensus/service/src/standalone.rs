@@ -19,9 +19,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     ConductorClient, DisabledEngineDerivationClient, EngineActor, EngineProcessor,
-    L1OriginSelectorError, NodeActor, OriginSelector, PayloadBuilder, QueuedSequencerEngineClient,
-    RecoveryModeGuard, SequencerActor, SequencerEngineRequestCoordinator,
-    UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
+    L1OriginSelectorError, NodeActor, NodeOperatingMode, OriginSelector, PayloadBuilder,
+    QueuedSequencerEngineClient, RecoveryModeGuard, SequencerActor,
+    SequencerEngineRequestCoordinator, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
 };
 
 /// Builds payload attributes by extending the L1 epoch captured in an L2 snapshot.
@@ -261,8 +261,13 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             Box::new(DisabledEngineDerivationClient),
             engine,
         );
-        let coordinator =
-            SequencerEngineRequestCoordinator::new(processor, false, None, false, unsafe_head_tx);
+        let coordinator = SequencerEngineRequestCoordinator::new(
+            processor,
+            NodeOperatingMode::Sequencer,
+            None,
+            false,
+            unsafe_head_tx,
+        );
         let engine_actor =
             EngineActor::new(cancellation.clone(), engine_actor_request_rx, coordinator);
 
@@ -286,7 +291,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             conductor: None,
             engine_client: sequencer_engine_client,
             is_active: true,
-            shadow_blocks_per_cycle: None,
+            mode: NodeOperatingMode::Sequencer,
             shadow_funding: None,
             recovery_mode,
             rollup_config: Arc::clone(&self.rollup_config),

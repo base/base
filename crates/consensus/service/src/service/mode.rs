@@ -1,8 +1,10 @@
 //! Contains enums that configure the mode for the node to operate in.
 
-/// The [`NodeMode`] enum represents the modes of operation for the [`RollupNode`].
-///
-/// [`RollupNode`]: crate::RollupNode
+use std::num::NonZeroU64;
+
+/// CLI-facing node mode. Variants carry no associated data; use
+/// [`NodeMode::try_into_operating_mode`] to attach runtime configuration and obtain a
+/// [`NodeOperatingMode`].
 #[derive(
     Debug,
     Default,
@@ -19,19 +21,112 @@ pub enum NodeMode {
     #[display("Validator")]
     #[default]
     Validator,
-    /// Sequencer mode.
+    /// Active sequencer: produces and publishes canonical unsafe blocks.
     #[display("Sequencer")]
     Sequencer,
+    /// Shadow sequencer: produces private blocks before reconciling with the canonical chain.
+    ///
+    /// Requires `--sequencer.shadow-blocks-per-cycle`.
+    #[display("ShadowSequencer")]
+    ShadowSequencer,
+    /// Isolated sequencer: produces private blocks without derivation or payload publication,
+    /// following canonical gossip only until it reaches the canonical tip at startup.
+    #[display("IsolatedSequencer")]
+    IsolatedSequencer,
 }
 
 impl NodeMode {
-    /// Returns `true` if [`Self`] is [`Self::Validator`].
+    /// Returns `true` if this is [`Self::Validator`].
     pub const fn is_validator(&self) -> bool {
         matches!(self, Self::Validator)
     }
 
-    /// Returns `true` if [`Self`] is [`Self::Sequencer`].
+    /// Returns `true` if this is any sequencer variant.
     pub const fn is_sequencer(&self) -> bool {
-        matches!(self, Self::Sequencer)
+        !self.is_validator()
+    }
+
+    /// Converts this CLI mode into a [`NodeOperatingMode`], attaching the shadow-cycle block count
+    /// when the mode is [`Self::ShadowSequencer`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `shadow_blocks_per_cycle` is [`None`] for [`Self::ShadowSequencer`], or
+    /// is set for [`Self::Sequencer`].
+    pub const fn try_into_operating_mode(
+        self,
+        shadow_blocks_per_cycle: Option<NonZeroU64>,
+    ) -> Result<NodeOperatingMode, &'static str> {
+        match self {
+            Self::Validator => Ok(NodeOperatingMode::Validator),
+            Self::Sequencer => match shadow_blocks_per_cycle {
+                None => Ok(NodeOperatingMode::Sequencer),
+                Some(_) => {
+                    Err("--sequencer.shadow-blocks-per-cycle requires --mode ShadowSequencer")
+                }
+            },
+            Self::ShadowSequencer => match shadow_blocks_per_cycle {
+                Some(blocks_per_cycle) => {
+                    Ok(NodeOperatingMode::ShadowSequencer { blocks_per_cycle })
+                }
+                None => Err("--mode ShadowSequencer requires --sequencer.shadow-blocks-per-cycle"),
+            },
+            Self::IsolatedSequencer => Ok(NodeOperatingMode::IsolatedSequencer),
+        }
+    }
+}
+
+/// Runtime node operating mode with all configuration attached.
+///
+/// Constructed from a [`NodeMode`] via [`NodeMode::try_into_operating_mode`] after CLI argument
+/// resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeOperatingMode {
+    /// Validator mode.
+    Validator,
+    /// Active sequencer: produces and publishes canonical unsafe blocks.
+    Sequencer,
+    /// Shadow sequencer: produces private blocks before reconciling with the canonical chain.
+    ShadowSequencer {
+        /// Number of private blocks to build per cycle before reconciling.
+        blocks_per_cycle: NonZeroU64,
+    },
+    /// Isolated sequencer: produces private blocks without derivation or payload publication,
+    /// following canonical gossip only until it reaches the canonical tip at startup.
+    IsolatedSequencer,
+}
+
+impl NodeOperatingMode {
+    /// Returns `true` if this is [`Self::Validator`].
+    pub const fn is_validator(&self) -> bool {
+        matches!(self, Self::Validator)
+    }
+
+    /// Returns `true` if this is any sequencer variant.
+    pub const fn is_sequencer(&self) -> bool {
+        !self.is_validator()
+    }
+
+    /// Returns `true` if this is [`Self::IsolatedSequencer`].
+    pub const fn is_isolated(&self) -> bool {
+        matches!(self, Self::IsolatedSequencer)
+    }
+
+    /// Returns `true` if this is [`Self::ShadowSequencer`].
+    pub const fn is_shadow_sequencer(&self) -> bool {
+        matches!(self, Self::ShadowSequencer { .. })
+    }
+
+    /// Returns the shadow-cycle block count, or [`None`] when not in shadow mode.
+    pub const fn shadow_blocks_per_cycle(&self) -> Option<NonZeroU64> {
+        match self {
+            Self::ShadowSequencer { blocks_per_cycle } => Some(*blocks_per_cycle),
+            _ => None,
+        }
+    }
+
+    /// Returns whether the derivation actor should be constructed.
+    pub const fn derivation_enabled(&self) -> bool {
+        !self.is_isolated()
     }
 }

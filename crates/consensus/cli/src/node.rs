@@ -8,7 +8,7 @@ use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::{
-    EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder,
+    EngineConfig, L1ConfigBuilder, NodeMode, NodeOperatingMode, RollupNode, RollupNodeBuilder,
     UpgradeSignalBuilderConfig,
 };
 use base_upgrade_signal::{
@@ -358,26 +358,43 @@ impl ConsensusNodeArgs {
         Ok(config)
     }
 
+    /// Validates that legacy `--sequencer.isolated` flag is consistent with `--mode`.
+    pub fn validate_isolated_flag(&self) -> eyre::Result<()> {
+        if self.config.sequencer_flags.isolated
+            && self.config.node_mode != NodeMode::IsolatedSequencer
+        {
+            eyre::bail!("--sequencer.isolated is deprecated; use --mode IsolatedSequencer instead");
+        }
+        Ok(())
+    }
+
     /// Validates the signing-key requirements for the configured sequencer mode.
     pub fn validate_sequencer_key(&self) -> eyre::Result<()> {
         if self.config.node_mode.is_sequencer() {
-            let sequencer = self.config.sequencer_flags.config();
             let signer = &self.config.p2p_flags.signer;
             let has_signing_key = signer.sequencer_key.is_some()
                 || signer.sequencer_key_path.is_some()
                 || signer.endpoint.is_some();
-            if sequencer.isolated && has_signing_key {
-                eyre::bail!("isolated sequencer must not configure a signing key");
-            }
-            if !sequencer.isolated && !sequencer.is_shadow_sequencer() && !has_signing_key {
+            let operating_mode = self.operating_mode()?;
+            if matches!(operating_mode, NodeOperatingMode::Sequencer) && !has_signing_key {
                 eyre::bail!(
                     "sequencer mode requires a signing key; \
                      provide --p2p.sequencer.key, --p2p.sequencer.key.path, \
                      or --p2p.signer.endpoint"
                 );
             }
+            if matches!(operating_mode, NodeOperatingMode::IsolatedSequencer) && has_signing_key {
+                eyre::bail!("isolated sequencer must not configure a signing key");
+            }
         }
         Ok(())
+    }
+
+    fn operating_mode(&self) -> eyre::Result<NodeOperatingMode> {
+        self.config
+            .node_mode
+            .try_into_operating_mode(self.config.sequencer_flags.shadow_blocks_per_cycle)
+            .map_err(|e| eyre::eyre!(e))
     }
 
     /// Validates that synthetic account funding is confined to shadow sequencers.
@@ -455,6 +472,7 @@ impl ConsensusNodeArgs {
         overrides: ConsensusNodeOverrides,
         startup_mode: UpgradeSignalStartupMode,
     ) -> eyre::Result<RollupNode> {
+        self.validate_isolated_flag()?;
         self.validate_sequencer_key()?;
         self.validate_shadow_funding()?;
         self.validate_da_batcher_sender_override()?;
@@ -536,7 +554,7 @@ impl ConsensusNodeArgs {
             l2_jwt_secret: jwt_secret,
             l1_url: self.config.l1_rpc_args.l1_eth_rpc.clone(),
             l1_rpc_timeout: self.config.l1_rpc_args.l1_rpc_timeout,
-            mode: self.config.node_mode,
+            mode: self.operating_mode()?,
         };
 
         let mut builder = RollupNodeBuilder::new(
@@ -986,7 +1004,7 @@ mod tests {
         let args = ConsensusNodeArgs::new(
             ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
             ConsensusNodeConfigArgs {
-                node_mode: NodeMode::Sequencer,
+                node_mode: NodeMode::ShadowSequencer,
                 sequencer_flags: SequencerArgs {
                     shadow_blocks_per_cycle: std::num::NonZeroU64::new(10),
                     ..SequencerArgs::default()
@@ -1003,8 +1021,7 @@ mod tests {
         let args = ConsensusNodeArgs::new(
             ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
             ConsensusNodeConfigArgs {
-                node_mode: NodeMode::Sequencer,
-                sequencer_flags: SequencerArgs { isolated: true, ..SequencerArgs::default() },
+                node_mode: NodeMode::IsolatedSequencer,
                 ..default_node_config_args()
             },
         );
@@ -1026,9 +1043,8 @@ mod tests {
         let args = ConsensusNodeArgs::new(
             ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
             ConsensusNodeConfigArgs {
-                node_mode: NodeMode::Sequencer,
+                node_mode: NodeMode::IsolatedSequencer,
                 p2p_flags: P2PArgs { signer, ..P2PArgs::default() },
-                sequencer_flags: SequencerArgs { isolated: true, ..SequencerArgs::default() },
                 ..default_node_config_args()
             },
         );
