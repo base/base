@@ -47,13 +47,12 @@ pub enum ResetOutcome {
 /// this, it uses the [`Engine`] task queue to order Engine API  interactions based off of
 /// the [`Ord`] implementation of [`EngineTask`].
 #[derive(Debug)]
-pub struct EngineProcessor<EngineClient_, DerivationClient>
+pub struct EngineProcessor<EngineClient_>
 where
     EngineClient_: EngineClient,
-    DerivationClient: EngineDerivationClient,
 {
     /// The client used to send messages to the [`crate::DerivationActor`].
-    derivation_client: DerivationClient,
+    derivation_client: Box<dyn EngineDerivationClient>,
     /// Whether the EL sync is complete. This should only ever go from false to true.
     el_sync_complete: bool,
     /// The last safe head update sent.
@@ -77,10 +76,9 @@ where
     skip_reset: bool,
 }
 
-impl<EngineClient_, DerivationClient> EngineProcessor<EngineClient_, DerivationClient>
+impl<EngineClient_> EngineProcessor<EngineClient_>
 where
     EngineClient_: EngineClient + 'static,
-    DerivationClient: EngineDerivationClient + 'static,
 {
     /// Returns the engine client's shared handle.
     pub const fn client(&self) -> &Arc<EngineClient_> {
@@ -111,7 +109,7 @@ where
     pub fn new(
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
-        derivation_client: DerivationClient,
+        derivation_client: Box<dyn EngineDerivationClient>,
         engine: Engine<EngineClient_>,
     ) -> Self {
         Self::new_with_checkpoint(
@@ -129,7 +127,7 @@ where
     pub fn new_skip_reset(
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
-        derivation_client: DerivationClient,
+        derivation_client: Box<dyn EngineDerivationClient>,
         engine: Engine<EngineClient_>,
     ) -> Self {
         let mut processor = Self::new(client, config, derivation_client, engine);
@@ -141,7 +139,7 @@ where
     pub fn new_with_checkpoint(
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
-        derivation_client: DerivationClient,
+        derivation_client: Box<dyn EngineDerivationClient>,
         engine: Engine<EngineClient_>,
         checkpoint_reader: Arc<dyn ForkchoiceCheckpointReader>,
         checkpoint_writer: Arc<dyn CheckpointWriter>,
@@ -834,15 +832,12 @@ mod tests {
         safe_head: Option<L2BlockInfo>,
         config: RollupConfig,
     ) -> (
-        EngineProcessor<
-            base_consensus_engine::test_utils::MockEngineClient,
-            MockEngineDerivationClient,
-        >,
+        EngineProcessor<base_consensus_engine::test_utils::MockEngineClient>,
         watch::Receiver<usize>,
     ) {
         let client = Arc::new(test_engine_client_builder().build());
         let config = Arc::new(config);
-        let derivation_client = MockEngineDerivationClient::new();
+        let derivation_client = Box::new(MockEngineDerivationClient::new());
         let mut initial_state_builder = TestEngineStateBuilder::new()
             .with_unsafe_head(unsafe_head)
             .with_el_sync_finished(el_sync_finished);
@@ -961,7 +956,7 @@ mod tests {
         let processor = EngineProcessor::new(
             Arc::clone(&client),
             Arc::new(RollupConfig::default()),
-            derivation,
+            Box::new(derivation),
             Engine::new(initial_state, state_tx, queue_tx),
         );
         let (unsafe_head_tx, mut unsafe_head_rx) = watch::channel(L2BlockInfo::default());
@@ -1081,7 +1076,7 @@ mod tests {
         let processor = EngineProcessor::new(
             Arc::clone(&client),
             Arc::new(RollupConfig::default()),
-            derivation,
+            Box::new(derivation),
             Engine::new(initial_state, state_tx, queue_tx),
         );
         let (unsafe_head_tx, mut unsafe_head_rx) = watch::channel(L2BlockInfo::default());
@@ -1338,7 +1333,7 @@ mod tests {
                 .build(),
         );
 
-        let mut mock_derivation = MockEngineDerivationClient::new();
+        let mut mock_derivation = Box::new(MockEngineDerivationClient::new());
         // Called by send_derivation_actor_safe_head_if_updated in the first drain() loop:
         // safe_head is advanced to block_90 so it differs from last_safe_head_sent.
         mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
@@ -1402,7 +1397,7 @@ mod tests {
                 .build(),
         );
 
-        let mut mock_derivation = MockEngineDerivationClient::new();
+        let mut mock_derivation = Box::new(MockEngineDerivationClient::new());
         // In the Syncing path, seed_state advances safe_head (block_90) so
         // send_derivation_actor_safe_head_if_updated fires after seed.
         mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
@@ -1478,7 +1473,7 @@ mod tests {
                 .build(),
         );
 
-        let mut mock_derivation = MockEngineDerivationClient::new();
+        let mut mock_derivation = Box::new(MockEngineDerivationClient::new());
         // el_sync_finished is set (Valid) → mark_el_sync_complete fires → reset + notify.
         mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
         mock_derivation.expect_notify_sync_completed().returning(|_| Ok(()));
@@ -1554,7 +1549,7 @@ mod tests {
                 .build(),
         );
 
-        let mut mock_derivation = MockEngineDerivationClient::new();
+        let mut mock_derivation = Box::new(MockEngineDerivationClient::new());
         mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
         mock_derivation.expect_notify_sync_completed().returning(|_| Ok(()));
         mock_derivation.expect_send_signal().returning(|_| Ok(()));
@@ -1630,7 +1625,7 @@ mod tests {
                 .build(),
         );
 
-        let mut mock_derivation = MockEngineDerivationClient::new();
+        let mut mock_derivation = Box::new(MockEngineDerivationClient::new());
         mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
         mock_derivation.expect_notify_sync_completed().returning(|_| Ok(()));
         mock_derivation.expect_send_signal().returning(|_| Ok(()));
@@ -1715,7 +1710,7 @@ mod tests {
                 .with_fork_choice_updated_v3_response(valid_fcu())
                 .build(),
         );
-        let mut derivation = MockEngineDerivationClient::new();
+        let mut derivation = Box::new(MockEngineDerivationClient::new());
         derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
         derivation.expect_notify_sync_completed().returning(|_| Ok(()));
 
@@ -1831,7 +1826,7 @@ mod tests {
 
         // No derivation calls: el_sync_finished stays false on the fixed validator path so
         // mark_el_sync_complete_and_notify_derivation_actor never fires.
-        let mock_derivation = MockEngineDerivationClient::new();
+        let mock_derivation = Box::new(MockEngineDerivationClient::new());
 
         let (state_tx, state_rx) = watch::channel(EngineState::default());
         let (queue_tx, _) = watch::channel(0usize);
@@ -1894,7 +1889,7 @@ mod tests {
 
         // No derivation calls: el_sync_finished stays false so
         // mark_el_sync_complete_and_notify_derivation_actor never fires.
-        let mock_derivation = MockEngineDerivationClient::new();
+        let mock_derivation = Box::new(MockEngineDerivationClient::new());
 
         let (state_tx, state_rx) = watch::channel(EngineState::default());
         let (queue_tx, _) = watch::channel(0usize);
@@ -1997,7 +1992,7 @@ mod tests {
                 .build(),
         );
 
-        let mut mock_derivation = MockEngineDerivationClient::new();
+        let mut mock_derivation = Box::new(MockEngineDerivationClient::new());
         // On unfixed main: engine.reset() succeeds and el_sync_finished is set to true.
         // Then mark_el_sync_complete fires: finalized = genesis (not default) → skip
         // inner reset, call notify_sync_completed. safe_head changes → send_new_engine_safe_head.
@@ -2191,7 +2186,7 @@ mod tests {
                 .build(),
         );
 
-        let mut mock_derivation = MockEngineDerivationClient::new();
+        let mut mock_derivation = Box::new(MockEngineDerivationClient::new());
         mock_derivation.expect_send_signal().returning(|_| Ok(()));
         mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
         mock_derivation.expect_notify_sync_completed().returning(|_| Ok(()));
@@ -2298,7 +2293,7 @@ mod tests {
             "test precondition failed: orphan must remain retrievable by hash"
         );
 
-        let mut mock_derivation = MockEngineDerivationClient::new();
+        let mut mock_derivation = Box::new(MockEngineDerivationClient::new());
         mock_derivation.expect_send_signal().times(1).returning(|_| Ok(()));
         mock_derivation.expect_send_new_engine_safe_head().times(1).returning(|_| Ok(()));
         mock_derivation.expect_notify_sync_completed().times(1).returning(|_| Ok(()));
@@ -2382,7 +2377,7 @@ mod tests {
         );
 
         let (signal_tx, mut signal_rx) = mpsc::channel(4);
-        let mut mock_derivation = MockEngineDerivationClient::new();
+        let mut mock_derivation = Box::new(MockEngineDerivationClient::new());
         // Bootstrap and per-block plumbing calls — accept any number of calls so the
         // test focuses on the Flush dispatch alone.
         mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));

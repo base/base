@@ -197,7 +197,7 @@ async fn test_on_time_or_late_insert_starts_child_build_immediately(#[case] seco
     actor.builder.rollup_config = Arc::clone(&rollup_config);
     actor.engine_client = engine_client;
     actor.rollup_config = rollup_config;
-    actor.unsafe_payload_gossip_client = gossip;
+    actor.unsafe_payload_gossip_client = Box::new(gossip);
 
     let cancellation_token = actor.cancellation_token.clone();
     let actor_task = tokio::spawn(actor.start(()));
@@ -339,7 +339,7 @@ async fn test_early_insert_defers_child_build_until_parent_timestamp() {
     actor.builder.rollup_config = Arc::clone(&rollup_config);
     actor.engine_client = engine_client;
     actor.rollup_config = rollup_config;
-    actor.unsafe_payload_gossip_client = gossip;
+    actor.unsafe_payload_gossip_client = Box::new(gossip);
 
     let cancellation_token = actor.cancellation_token.clone();
     let actor_task = tokio::spawn(actor.start(()));
@@ -440,7 +440,7 @@ async fn test_stop_discards_queued_parent_and_restart_builds_immediately_on_fres
     actor.builder.rollup_config = Arc::clone(&rollup_config);
     actor.engine_client = engine_client;
     actor.rollup_config = rollup_config;
-    actor.unsafe_payload_gossip_client = gossip;
+    actor.unsafe_payload_gossip_client = Box::new(gossip);
 
     let cancellation_token = actor.cancellation_token.clone();
     let actor_task = tokio::spawn(actor.start(()));
@@ -883,7 +883,7 @@ async fn isolated_private_sealing_is_not_capped_by_shadow_cycle_limit() {
     actor.engine_client = Arc::new(client);
     let mut private_sealing = MockUnsafePayloadGossipClient::new();
     private_sealing.expect_seals_privately().times(private_block_count).return_const(true);
-    actor.unsafe_payload_gossip_client = private_sealing;
+    actor.unsafe_payload_gossip_client = Box::new(private_sealing);
     let handle = UnsealedPayloadHandle {
         payload_id: Default::default(),
         attributes_with_parent: dummy_attributes_with_parent(),
@@ -1088,7 +1088,6 @@ type TestSequencerActor = SequencerActor<
     MockConductor,
     MockOriginSelector,
     MockSequencerEngineClient,
-    MockUnsafePayloadGossipClient,
 >;
 
 /// Returns a test actor whose rollup config anchors L2 genesis at 100s with 2s blocks and

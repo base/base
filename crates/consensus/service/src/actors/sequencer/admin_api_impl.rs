@@ -4,10 +4,7 @@ use base_consensus_rpc::SequencerAdminAPIError;
 use tokio::sync::oneshot;
 
 use super::{SequencerActor, build::UnsealedPayloadHandle};
-use crate::{
-    Conductor, Metrics, OriginSelector, ResetReason, SequencerEngineClient,
-    UnsafePayloadGossipClient,
-};
+use crate::{Conductor, Metrics, OriginSelector, ResetReason, SequencerEngineClient};
 
 /// The query types to the sequencer actor for the admin api.
 #[derive(Debug)]
@@ -31,26 +28,13 @@ pub enum SequencerAdminQuery {
 }
 
 /// Handler for the Sequencer Admin API.
-impl<
-    AttributesBuilder_,
-    Conductor_,
-    OriginSelector_,
-    SequencerEngineClient_,
-    UnsafePayloadGossipClient_,
->
-    SequencerActor<
-        AttributesBuilder_,
-        Conductor_,
-        OriginSelector_,
-        SequencerEngineClient_,
-        UnsafePayloadGossipClient_,
-    >
+impl<AttributesBuilder_, Conductor_, OriginSelector_, SequencerEngineClient_>
+    SequencerActor<AttributesBuilder_, Conductor_, OriginSelector_, SequencerEngineClient_>
 where
     AttributesBuilder_: AttributesBuilder,
     Conductor_: Conductor,
     OriginSelector_: OriginSelector,
     SequencerEngineClient_: SequencerEngineClient,
-    UnsafePayloadGossipClient_: UnsafePayloadGossipClient,
 {
     /// Handles the provided [`SequencerAdminQuery`], sending the response via the provided sender.
     /// This function is used to decouple admin API logic from the response mechanism (channels).
