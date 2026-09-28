@@ -53,7 +53,7 @@ pub struct Inner {
     pending: Vec<Pending>,
     /// Submissions in the miner's queue, waiting for a receipt.
     staged: Vec<Pending>,
-    /// Next nonce to use for signed production-mode transactions.
+    /// Nonce of the next signed transaction.
     next_nonce: u64,
     /// Number of upcoming `send_async` calls to immediately fail with
     /// [`TxManagerError::Rpc`] before falling through to normal queuing.
@@ -206,8 +206,8 @@ impl L1MinerTxManager {
         info!(block_number = %block_number, drained = %drained, "simulated L1 reorg");
     }
 
-    /// Build a signed transaction envelope and matching blob sidecar index for
-    /// production-mode DA.
+    /// Build the signed transaction envelope of `candidate` and the blob sidecars it
+    /// references.
     pub fn sign_candidate(
         &self,
         candidate: &TxCandidate,
