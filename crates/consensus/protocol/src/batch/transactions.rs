@@ -644,6 +644,7 @@ mod tests {
             tx.max_fee_per_gas = 5_000_000_000;
             tx.calls = vec![vec![Call {
                 to: address!("00000000000000000000000000000000000000dd"),
+                value: U256::ZERO,
                 data: bytes!("deadbeef"),
             }]];
             eip8130_raw(tx, Bytes::from_static(&[0xab; 65]), Bytes::new())
@@ -704,14 +705,16 @@ mod tests {
                 vec![
                     Call {
                         to: address!("0000000000000000000000000000000000000001"),
+                        value: U256::ZERO,
                         data: bytes!("11"),
                     },
                     Call {
                         to: address!("0000000000000000000000000000000000000002"),
+                        value: U256::ZERO,
                         data: bytes!("2222"),
                     },
                 ],
-                vec![Call { to: Address::ZERO, data: Bytes::new() }],
+                vec![Call { to: Address::ZERO, value: U256::ZERO, data: Bytes::new() }],
             ];
             tx.metadata = bytes!("decafbad");
             let mut sender_auth = sender.as_slice().to_vec();

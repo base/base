@@ -61,7 +61,7 @@ impl CoinbaseTipAffordability {
         let Some(signed) = tx.as_eip8130() else {
             return false;
         };
-        let Some(tip) = CoinbaseTip::decode(signed.tx(), tx.sender()) else {
+        let Some(tip) = CoinbaseTip::decode(signed.tx()) else {
             return false;
         };
         let sender = tx.sender();

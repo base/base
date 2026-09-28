@@ -97,6 +97,14 @@ harness = false
 name = "cursor_iteration"
 harness = false
 
+[[bench]]
+name = "tombstone_skip_reads"
+harness = false
+
+[[bench]]
+name = "dead_key_reads"
+harness = false
+
 [features]
 serde-bincode-compat = [
 	"alloy-consensus/serde-bincode-compat",

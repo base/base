@@ -1,4 +1,4 @@
-//! End-to-end wire checks for canonical Denim RPC timestamps.
+//! End-to-end wire checks for canonical and pending Denim RPC timestamps.
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
@@ -40,6 +40,50 @@ fn receipt_logs(receipts: &Value, transaction_hash: &str) -> Value {
         .find(|receipt| receipt["transactionHash"] == transaction_hash)
         .expect("log-emitting transaction receipt should be present")["logs"]
         .clone()
+}
+
+#[tokio::test]
+async fn pending_denim_timestamp_is_independent_of_request_order() -> eyre::Result<()> {
+    let mut genesis = build_test_genesis();
+    genesis.config.extra_fields.insert("base".into(), json!({ "denim": 3 }));
+    let harness = TestHarness::builder()
+        .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(genesis)))
+        .build()
+        .await?;
+    let client = harness.rpc_client()?;
+    let base_time = BaseTimeUpdateTx::new(TIMESTAMP_MILLIS_PART)?.into_deposit_tx(BLOCK_NUMBER);
+    let prepared = harness
+        .prepare_unsafe_block(vec![L1_BLOCK_INFO_DEPOSIT_TX, base_time.encoded_2718().into()])
+        .await?;
+
+    let cold =
+        request(&client, "eth_getTransactionByBlockNumberAndIndex", json!(["pending", "0x1"]))
+            .await?;
+    assert_eq!(cold["blockHash"], json!(prepared.new_block_hash));
+    assert_eq!(cold["hash"], json!(base_time.hash()));
+
+    // Even a hashes-only block request warms the timestamp cache.
+    let block = request(&client, "eth_getBlockByNumber", json!(["pending", false])).await?;
+    assert_eq!(block["hash"], json!(prepared.new_block_hash));
+    assert_quantity(&block, "timestampMs");
+    let warm =
+        request(&client, "eth_getTransactionByBlockNumberAndIndex", json!(["pending", "0x1"]))
+            .await?;
+    assert_quantity(&warm, "blockTimestampMs");
+    assert_eq!(cold, warm, "a block request must not change pending transaction metadata");
+    assert_quantity(&cold, "blockTimestampMs");
+
+    // Neither RPC request is allowed to advance forkchoice.
+    let latest = request(&client, "eth_getBlockByNumber", json!(["latest", false])).await?;
+    assert_eq!(latest["hash"], json!(prepared.parent_hash));
+    harness.engine().update_forkchoice(prepared.parent_hash, prepared.new_block_hash, None).await?;
+    harness.wait_for_header(prepared.new_block_hash, prepared.new_block_number).await?;
+    let canonical =
+        request(&client, "eth_getTransactionByBlockNumberAndIndex", json!(["latest", "0x1"]))
+            .await?;
+    assert_eq!(canonical["hash"], cold["hash"]);
+    assert_quantity(&canonical, "blockTimestampMs");
+    Ok(())
 }
 
 #[tokio::test]
