@@ -1,21 +1,26 @@
-//! L2 block timestamp scheduling.
+//! Denim L2 block timestamp scheduling.
 
 use core::num::NonZeroU64;
 
-/// The deterministic L2 block timestamp schedule.
+/// The L2 timestamp schedule for the legacy-to-Denim transition.
+///
+/// Before Denim, timestamps follow the legacy interval from the genesis anchor. Activation
+/// rounds up to the first legacy slot at or after the configured time; subsequent blocks
+/// advance every 200 milliseconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BlockTimestampSchedule {
+pub struct DenimTimestampSchedule {
     /// Absolute L2 genesis block number.
     pub genesis_block_number: u64,
     /// L2 genesis timestamp in seconds.
     pub genesis_timestamp: u64,
     /// Legacy block interval in seconds.
     pub legacy_block_interval: NonZeroU64,
-    /// Denim activation timestamp.
+    /// Configured Denim activation time in seconds. Activation uses the first legacy block
+    /// slot at or after this timestamp.
     pub denim_activation_timestamp: u64,
 }
 
-impl BlockTimestampSchedule {
+impl DenimTimestampSchedule {
     /// Milliseconds between blocks after Denim.
     pub const DENIM_BLOCK_INTERVAL_MILLIS: u64 = 200;
 

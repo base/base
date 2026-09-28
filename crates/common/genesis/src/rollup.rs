@@ -7,7 +7,7 @@ use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
 
 use crate::{
-    BaseUpgrade, BlockTimestampSchedule, ChainGenesis, FeeConfig, RuntimeUpgradeRegistry,
+    BaseUpgrade, ChainGenesis, DenimTimestampSchedule, FeeConfig, RuntimeUpgradeRegistry,
     UpgradeActivation, UpgradeActivationSink, UpgradeConfig,
 };
 
@@ -374,12 +374,15 @@ impl RollupConfig {
     ///
     /// If Denim is not configured or the block time is zero, returns [`None`].
     pub fn denim_activation_block_number(&self) -> Option<u64> {
-        self.block_timestamp_schedule().map(|schedule| schedule.denim_activation_block_number())
+        self.denim_timestamp_schedule().map(|schedule| schedule.denim_activation_block_number())
     }
 
-    /// Returns the shared timestamp schedule when Denim and a nonzero block time are configured.
-    pub fn block_timestamp_schedule(&self) -> Option<BlockTimestampSchedule> {
-        Some(BlockTimestampSchedule {
+    /// Returns the legacy-to-Denim timestamp schedule.
+    ///
+    /// Returns `None` when Denim is unscheduled or the legacy block time is zero.
+    /// [`Self::l2_block_timestamp_millis`] uses the legacy formula in that case.
+    pub fn denim_timestamp_schedule(&self) -> Option<DenimTimestampSchedule> {
+        Some(DenimTimestampSchedule {
             genesis_block_number: self.genesis.l2.number,
             genesis_timestamp: self.genesis.l2_time,
             legacy_block_interval: NonZeroU64::new(self.block_time)?,
@@ -410,7 +413,7 @@ impl RollupConfig {
     /// block number (`self.genesis.l2.number`), which is non-zero for chains whose L2 genesis
     /// was anchored at a later block.
     pub fn l2_block_timestamp_millis(&self, block_number: u64) -> u64 {
-        if let Some(schedule) = self.block_timestamp_schedule() {
+        if let Some(schedule) = self.denim_timestamp_schedule() {
             return schedule.block_timestamp_millis(block_number);
         }
         self.genesis
@@ -480,7 +483,7 @@ impl RollupConfig {
 
     /// The fixed cadence once subsecond blocks activates.
     pub const NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS: u64 =
-        BlockTimestampSchedule::DENIM_BLOCK_INTERVAL_MILLIS;
+        DenimTimestampSchedule::DENIM_BLOCK_INTERVAL_MILLIS;
 
     /// The number of Denim blocks produced in one legacy two-second block interval.
     pub const DENIM_GAS_PARAMETER_SCALING_FACTOR: u32 = 10;

@@ -10,7 +10,7 @@ use alloy_primitives::{Address, B256, U256};
 use base_common_chains::{BaseUpgradeExt, ChainConfig, Upgrades};
 use base_common_consensus::Predeploys;
 use base_common_genesis::{
-    BaseUpgrade, BlockTimestampSchedule, RuntimeUpgradeRegistry, UpgradeActivation,
+    BaseUpgrade, DenimTimestampSchedule, RuntimeUpgradeRegistry, UpgradeActivation,
     UpgradeActivationSink,
 };
 use base_protocol::OutputRoot;
@@ -253,10 +253,15 @@ impl BaseChainSpec {
         Ok(Self { inner: value, activation_admin_address, block_time })
     }
 
-    /// Returns the runtime-aware timestamp schedule, or `None` when Denim is unscheduled.
-    pub fn block_timestamp_schedule(
+    /// Returns the runtime-aware Denim timestamp schedule, or `Ok(None)` when unscheduled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BaseChainSpecError::InvalidDenimBlockTime`] when Denim is scheduled but the
+    /// legacy block interval is missing or zero.
+    pub fn denim_timestamp_schedule(
         &self,
-    ) -> Result<Option<BlockTimestampSchedule>, BaseChainSpecError> {
+    ) -> Result<Option<DenimTimestampSchedule>, BaseChainSpecError> {
         let ForkCondition::Timestamp(denim_activation_timestamp) = self.fork(BaseUpgrade::Denim)
         else {
             return Ok(None);
@@ -264,7 +269,7 @@ impl BaseChainSpec {
         let Some(legacy_block_interval) = self.block_time.and_then(NonZeroU64::new) else {
             return Err(BaseChainSpecError::InvalidDenimBlockTime);
         };
-        Ok(Some(BlockTimestampSchedule {
+        Ok(Some(DenimTimestampSchedule {
             genesis_block_number: self.genesis_header.number(),
             genesis_timestamp: self.genesis_header.timestamp(),
             legacy_block_interval,
@@ -1885,7 +1890,7 @@ mod tests {
             .build();
         let converted = BaseChainSpec::from(parsed.inner.clone());
         for spec in [parsed, built, converted] {
-            let schedule = spec.block_timestamp_schedule().unwrap().unwrap();
+            let schedule = spec.denim_timestamp_schedule().unwrap().unwrap();
             assert!(!schedule.is_denim_active_at_block(9));
             assert!(schedule.is_denim_active_at_block(10));
             assert_eq!(schedule.block_timestamp_parts(9), (106, 0));
@@ -1924,26 +1929,26 @@ mod tests {
             .chain(chain_id.into())
             .genesis(Genesis { timestamp: 100, ..Default::default() })
             .build();
-        assert!(spec.block_timestamp_schedule().unwrap().is_none());
+        assert!(spec.denim_timestamp_schedule().unwrap().is_none());
         RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Denim, 105);
         for interval in [None, Some(0)] {
             spec.block_time = interval;
             assert!(matches!(
-                spec.block_timestamp_schedule(),
+                spec.denim_timestamp_schedule(),
                 Err(BaseChainSpecError::InvalidDenimBlockTime)
             ));
         }
         spec.block_time = Some(2);
         assert_eq!(
-            spec.block_timestamp_schedule().unwrap().unwrap().block_timestamp_parts(4),
+            spec.denim_timestamp_schedule().unwrap().unwrap().block_timestamp_parts(4),
             (106, 200)
         );
         RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Denim, 107);
         assert_eq!(
-            spec.block_timestamp_schedule().unwrap().unwrap().block_timestamp_parts(4),
+            spec.denim_timestamp_schedule().unwrap().unwrap().block_timestamp_parts(4),
             (108, 0)
         );
         RuntimeUpgradeRegistry::clear_chain(chain_id);
-        assert!(spec.block_timestamp_schedule().unwrap().is_none());
+        assert!(spec.denim_timestamp_schedule().unwrap().is_none());
     }
 }

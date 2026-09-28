@@ -41,4 +41,4 @@ mod rollup;
 pub use rollup::RollupConfig;
 
 mod schedule;
-pub use schedule::BlockTimestampSchedule;
+pub use schedule::DenimTimestampSchedule;
