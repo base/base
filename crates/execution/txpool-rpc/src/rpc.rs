@@ -192,6 +192,14 @@ impl<Provider> SendRawTransactionValidityApiImpl<Provider>
 where
     Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>,
 {
+    /// Returns the furthest block a submission made now may name as its block-number upper
+    /// bound, or `None` when no canonical head exists.
+    pub fn latest_block_expiry_bound(&self) -> RpcResult<Option<u64>> {
+        Ok(self.latest_block_number_and_timestamp()?.map(|(number, timestamp)| {
+            number.saturating_add(1).saturating_add(self.max_validity_expiry_blocks(timestamp))
+        }))
+    }
+
     /// Returns the latest committed header's `(number, timestamp)`, or `None` when no canonical
     /// head exists (e.g. before genesis is committed).
     fn latest_block_number_and_timestamp(&self) -> RpcResult<Option<(u64, u64)>> {
@@ -1027,6 +1035,26 @@ mod tests {
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
         assert!(error.message().contains("expires too far in the future"));
+    }
+
+    #[test]
+    fn latest_block_expiry_bound_is_the_furthest_accepted_bound() {
+        let empty = SendRawTransactionValidityApiImpl::new(
+            pre_everest_provider(),
+            test_transaction_sender(),
+        );
+        assert_eq!(empty.latest_block_expiry_bound().unwrap(), Some(31));
+
+        let provider = pre_everest_provider();
+        provider.add_block(
+            B256::repeat_byte(8),
+            BaseBlock {
+                header: Header { number: 100, ..Default::default() },
+                body: BlockBody::default(),
+            },
+        );
+        let rpc = SendRawTransactionValidityApiImpl::new(provider, test_transaction_sender());
+        assert_eq!(rpc.latest_block_expiry_bound().unwrap(), Some(131));
     }
 
     #[tokio::test]

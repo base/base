@@ -209,6 +209,7 @@ base-shadow-indexer = { path = "crates/execution/shadow-indexer" }
 base-shadow-indexer-db = { path = "crates/execution/shadow-indexer-db" }
 base-execution-exex = { path = "crates/execution/exex" }
 base-execution-trie = { path = "crates/execution/trie" }
+base-execution-payer = { path = "crates/execution/payer" }
 base-txpool-rpc = { path = "crates/execution/txpool-rpc" }
 base-flashblocks = { path = "crates/execution/flashblocks" }
 base-execution-txpool = { path = "crates/execution/txpool" }

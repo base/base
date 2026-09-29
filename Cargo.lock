@@ -4520,6 +4520,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-execution-payer"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus 2.4.1",
+ "alloy-eips 2.4.1",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types-eth 2.4.1",
+ "alloy-signer 2.4.1",
+ "alloy-signer-local 2.4.1",
+ "alloy-sol-types",
+ "alloy-transport",
+ "base-common-chains",
+ "base-common-consensus",
+ "base-common-price-feed",
+ "base-execution-chainspec",
+ "base-execution-txpool",
+ "base-test-utils",
+ "base-txpool-rpc",
+ "jsonrpsee",
+ "mockall",
+ "reth-chainspec",
+ "reth-provider",
+ "reth-revm",
+ "reth-storage-api",
+ "revm",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "toml 1.1.3+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
 name = "base-execution-payload-builder"
 version = "0.0.0"
 dependencies = [
