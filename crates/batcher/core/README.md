@@ -32,14 +32,15 @@ and `Failed`.
 The throttle subsystem controls how much DA data the sequencer may include per block and per
 transaction based on the L1 DA backlog. `ThrottleController` takes a `ThrottleConfig` and a
 `ThrottleStrategy` and produces `ThrottleParams` from a raw backlog byte count.
-`ThrottleStrategy::Off` disables throttling entirely. `ThrottleStrategy::Step` applies full
-intensity when the backlog exceeds the configured threshold. `ThrottleStrategy::Linear` grows
+`ThrottleStrategy::Off` disables throttling entirely. `ThrottleStrategy::Step` applies
+`max_intensity` once the backlog reaches the configured threshold. `ThrottleStrategy::Linear` grows
 intensity linearly from zero at the threshold to `max_intensity` at twice the threshold.
 `ThrottleParams` carries a fractional `intensity` value and the corresponding
 `max_block_size` and `max_tx_size` byte limits computed by
 interpolating between the upper and lower limits in `ThrottleConfig`. `DaThrottle` wraps a
 `ThrottleController` and a `ThrottleClient` with a last-applied dedup cache so that the
-`miner_setMaxDASize` RPC call is only issued when the computed limits actually change between ticks.
+`miner_setMaxDASize` RPC call is only issued when the computed limits change, and again after a
+push the block builder refused.
 
 `ThrottleClient` is the async trait that connects the throttle controller to the block builder.
 Its single method, `set_max_da_size`, forwards the per-transaction and per-block byte limits to

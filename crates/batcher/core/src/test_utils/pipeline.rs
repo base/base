@@ -8,7 +8,7 @@ use std::{
     collections::VecDeque,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
@@ -74,26 +74,10 @@ impl Recorded {
         })
     }
 
-    /// The submission ids passed to `confirm`, in order.
-    pub fn confirmed(&self) -> Vec<SubmissionId> {
-        self.pick(|call| match call {
-            PipelineCall::Confirm(id, _) => Some(*id),
-            _ => None,
-        })
-    }
-
     /// The L1 heads the pipeline advanced to, in order.
     pub fn l1_heads(&self) -> Vec<u64> {
         self.pick(|call| match call {
             PipelineCall::AdvanceL1Head(l1_block) => Some(*l1_block),
-            _ => None,
-        })
-    }
-
-    /// The safe L2 block numbers passed to `reconcile_derivation`, in order.
-    pub fn reconciled(&self) -> Vec<u64> {
-        self.pick(|call| match call {
-            PipelineCall::ReconcileDerivation { safe_l2, .. } => Some(*safe_l2),
             _ => None,
         })
     }
@@ -137,6 +121,9 @@ pub struct TrackingPipeline {
     /// Value returned by `da_backlog_bytes`, shared so a test can change it while the driver
     /// runs.
     pub da_backlog_bytes: Arc<AtomicU64>,
+    /// The value last passed to `set_blob_override`, shared so a test can read it while the
+    /// driver runs.
+    pub blob_override: Arc<AtomicBool>,
     /// Submissions handed out and neither confirmed nor requeued since.
     in_flight: Vec<(SubmissionId, SubmissionPayload)>,
     /// The id of the next submission handed out.
@@ -150,6 +137,8 @@ pub struct TrackingPipeline {
     add_block_reorgs: bool,
     /// When set, `flush` records the call then returns this error.
     flush_error: Option<StepError>,
+    /// When set, the next `step` returns this error.
+    step_error: Option<StepError>,
     /// Blocks left to encode. `step` reports one encoded block per call until it reaches zero.
     encoding_steps: usize,
 }
@@ -160,12 +149,14 @@ impl Default for TrackingPipeline {
             recorded: Arc::default(),
             submissions: VecDeque::new(),
             da_backlog_bytes: Arc::default(),
+            blob_override: Arc::default(),
             in_flight: Vec::new(),
             next_id: 0,
             l1_head: 0,
             reconciliation: DerivationReconciliation::Consistent,
             add_block_reorgs: false,
             flush_error: None,
+            step_error: None,
             encoding_steps: 0,
         }
     }
@@ -212,6 +203,12 @@ impl TrackingPipeline {
         self
     }
 
+    /// Make the next `step` fail.
+    pub fn with_step_error(mut self, error: StepError) -> Self {
+        self.step_error = Some(error);
+        self
+    }
+
     fn record(&self, call: PipelineCall) {
         self.recorded.lock().unwrap().calls.push(call);
     }
@@ -238,6 +235,9 @@ impl BatchPipeline for TrackingPipeline {
     }
 
     fn step(&mut self) -> Result<StepResult, StepError> {
+        if let Some(error) = self.step_error.take() {
+            return Err(error);
+        }
         if self.encoding_steps == 0 {
             return Ok(StepResult::Idle);
         }
@@ -298,5 +298,9 @@ impl BatchPipeline for TrackingPipeline {
 
     fn da_backlog_bytes(&self) -> u64 {
         self.da_backlog_bytes.load(Ordering::SeqCst)
+    }
+
+    fn set_blob_override(&mut self, active: bool) {
+        self.blob_override.store(active, Ordering::SeqCst);
     }
 }

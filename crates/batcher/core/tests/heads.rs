@@ -6,7 +6,7 @@ use alloy_primitives::B256;
 use base_batcher_core::{
     BatchDriverError, DerivationStatus,
     test_utils::{
-        DriverFixture, PipelineCall, ScriptedTxManager, TrackingPipeline, TrackingSource,
+        BlockStub, DriverFixture, PipelineCall, ScriptedTxManager, TrackingPipeline, TrackingSource,
     },
 };
 use base_batcher_encoder::DerivationReconciliation;
@@ -16,10 +16,6 @@ use base_runtime::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
 };
-
-fn safe_head(number: u64) -> BlockInfo {
-    BlockInfo { hash: B256::with_last_byte(number as u8), number, ..Default::default() }
-}
 
 /// When the L1 head source delivers a new head, the driver must call
 /// `advance_l1_head` on the pipeline with the new value.
@@ -47,6 +43,9 @@ fn test_l1_head_source_advances_pipeline() {
     });
 }
 
+/// A safe head below the one the driver holds, a replacement at the same height, or one the
+/// pipeline reports off its buffered chain, each resets the pipeline and the source. Only the
+/// last one reaches reconciliation.
 #[test]
 fn test_safe_head_conflicts_reset_pipeline_and_source() {
     Runner::start(Config::seeded(0), |ctx| async move {
@@ -58,25 +57,35 @@ fn test_safe_head_conflicts_reset_pipeline_and_source() {
         let (driver, handles) =
             DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
                 .source(source)
-                .safe_head(safe_head(10))
+                .safe_head(BlockStub::info(10))
                 .build();
         let handle = ctx.spawn(driver.run());
         let status_tx = handles.derivation_status_tx;
 
-        let regressed = safe_head(5);
+        let regressed = BlockStub::info(5);
         let replacement =
             BlockInfo { hash: B256::repeat_byte(0xff), number: 5, ..Default::default() };
-        for safe_l2 in [regressed, replacement, safe_head(10)] {
-            status_tx.send(DerivationStatus { safe_l2, current_l1: safe_head(1) }).await.unwrap();
+        for safe_l2 in [regressed, replacement, BlockStub::info(10)] {
+            status_tx
+                .send(DerivationStatus { safe_l2, current_l1: BlockStub::info(1) })
+                .await
+                .unwrap();
         }
         ctx.sleep(Duration::from_millis(50)).await;
         ctx.cancel();
 
         assert!(handle.await.unwrap().is_ok());
-        let recorded = recorded.lock().unwrap();
-        assert_eq!(recorded.resets(), 3);
-        assert_eq!(recorded.reconciled(), [10]);
-        assert_eq!(*catchup_heads.lock().unwrap(), [regressed, replacement, safe_head(10)]);
+        assert_eq!(
+            recorded.lock().unwrap().calls,
+            [
+                PipelineCall::Reset,
+                PipelineCall::Reset,
+                PipelineCall::ReconcileDerivation { safe_l2: 10, current_l1: 1 },
+                PipelineCall::Reset,
+                PipelineCall::Flush,
+            ]
+        );
+        assert_eq!(*catchup_heads.lock().unwrap(), [regressed, replacement, BlockStub::info(10)]);
     });
 }
 
@@ -87,7 +96,7 @@ fn test_stalled_channel_resets_pipeline_and_source() {
             TrackingPipeline::new().with_reconciliation(DerivationReconciliation::StalledChannel);
         let recorded = pipeline.recorded();
         let (source, catchup_heads) = TrackingSource::new();
-        let safe_l2 = safe_head(10);
+        let safe_l2 = BlockStub::info(10);
 
         let (driver, handles) =
             DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
@@ -97,7 +106,10 @@ fn test_stalled_channel_resets_pipeline_and_source() {
         let handle = ctx.spawn(driver.run());
         let status_tx = handles.derivation_status_tx;
 
-        status_tx.send(DerivationStatus { safe_l2, current_l1: safe_head(50) }).await.unwrap();
+        status_tx
+            .send(DerivationStatus { safe_l2, current_l1: BlockStub::info(50) })
+            .await
+            .unwrap();
         ctx.sleep(Duration::from_millis(50)).await;
         ctx.cancel();
 

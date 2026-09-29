@@ -42,7 +42,7 @@ fn test_stop_resets_pipeline() {
 
 /// `AdminCommand::Start` must reanchor the source at the safe head so it
 /// delivers missed blocks sequentially after that head. Starting a batcher that
-/// is already running must not reanchor it again: that would replay blocks the
+/// is already running must not reanchor it again, which would replay blocks the
 /// pipeline already holds.
 #[test]
 fn test_start_triggers_catchup_from_safe_head() {
@@ -75,7 +75,7 @@ fn test_start_triggers_catchup_from_safe_head() {
     });
 }
 
-/// While stopped, the batcher does not read its source: the pipeline receives no blocks.
+/// While stopped, the batcher does not read its source, so the pipeline receives no blocks.
 /// Once started again, the blocks queued meanwhile reach the pipeline.
 #[test]
 fn test_stopped_leaves_the_source_unread() {
@@ -89,7 +89,7 @@ fn test_stopped_leaves_the_source_unread() {
                 .build();
         let handle = ctx.spawn(driver.run());
 
-        // Stop, then send a block: it stays in the source.
+        // A block sent after the stop stays in the source.
         handles.admin.stop().await.unwrap();
         source_tx.send(L2BlockEvent::Block(Box::new(BlockStub::with_number(1)))).unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
@@ -98,7 +98,7 @@ fn test_stopped_leaves_the_source_unread() {
             "a stopped batcher must not ingest blocks"
         );
 
-        // Start: the queued block and the next one reach the pipeline.
+        // After the start, the queued block and the next one reach the pipeline.
         handles.admin.start().await.unwrap();
         source_tx.send(L2BlockEvent::Block(Box::new(BlockStub::with_number(2)))).unwrap();
         ctx.sleep(Duration::from_millis(10)).await;

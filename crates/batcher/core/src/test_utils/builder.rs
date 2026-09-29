@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::Header;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use base_batcher_encoder::{BatchPipeline, BlobPayload, SubmissionPayload};
 use base_batcher_source::{L1HeadSource, UnsafeBlockSource};
 use base_common_consensus::BaseBlock;
@@ -27,6 +27,11 @@ impl BlockStub {
     /// or the driver drops it as already safe.
     pub fn with_number(number: u64) -> BaseBlock {
         BaseBlock { header: Header { number, ..Default::default() }, body: Default::default() }
+    }
+
+    /// Returns a [`BlockInfo`] numbered `number`, with a hash derived from that number.
+    pub fn info(number: u64) -> BlockInfo {
+        BlockInfo { hash: B256::with_last_byte(number as u8), number, ..Default::default() }
     }
 }
 

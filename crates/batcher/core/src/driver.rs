@@ -423,14 +423,15 @@ where
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use alloy_primitives::B256;
-    use base_batcher_encoder::{BlobPayload, FrameEncoder, SubmissionId, SubmissionPayload};
+    use base_batcher_encoder::{
+        BlobPayload, ChannelLimit, FrameEncoder, StepError, SubmissionId, SubmissionPayload,
+    };
     use base_batcher_source::{
         L2BlockEvent,
         test_utils::{ChannelBlockSource, ChannelL1HeadSource},
     };
     use base_blobs::{BlobDecoder, BlobEncoder};
-    use base_protocol::{BlockInfo, Frame};
+    use base_protocol::Frame;
     use base_runtime::{
         Cancellation, Clock, Spawner,
         deterministic::{Config, Runner},
@@ -438,16 +439,12 @@ mod tests {
 
     use super::STEP_BUDGET;
     use crate::{
-        BatchDriverError, DerivationStatus,
+        BatchDriverError, BatchTxCandidateError, DerivationStatus,
         test_utils::{
             BlockStub, DriverFixture, PipelineCall, ScriptedTxManager, SendOutcome, SubmissionStub,
             TrackingPipeline,
         },
     };
-
-    fn safe_head(number: u64) -> BlockInfo {
-        BlockInfo { hash: B256::with_last_byte(number as u8), number, ..Default::default() }
-    }
 
     /// Sources that deliver the given blocks and L1 heads, then park.
     fn queued_sources(
@@ -475,35 +472,42 @@ mod tests {
 
             let (_driver, _handles) = DriverFixture::new(ctx, pipeline, ScriptedTxManager::new([]))
                 .initial_l1_head(50)
-                .safe_head(safe_head(10))
                 .build();
 
             assert_eq!(recorded.lock().unwrap().l1_heads(), [50]);
         });
     }
 
-    /// Build a [`SubmissionPayload`] of `frame_count` frames that each exactly fill one blob
-    /// payload, leaving no room for any additional frame alongside it.
-    ///
-    /// `payload = 1 (DERIVATION_VERSION_0) + FRAME_OVERHEAD + data.len() = BLOB_MAX_DATA_SIZE`
-    fn blob_filling_payload(frame_count: usize) -> SubmissionPayload {
-        let data_len = BlobEncoder::BLOB_MAX_DATA_SIZE - 1 - BlobEncoder::FRAME_OVERHEAD;
-        SubmissionPayload::Blobs(
-            (0..frame_count)
-                .map(|number| {
-                    BlobPayload::new(vec![Arc::new(Frame {
-                        number: number.try_into().expect("frame number fits in u16"),
-                        data: vec![0u8; data_len],
-                        ..Frame::default()
-                    })])
-                })
-                .collect(),
-        )
+    /// Blocks at or below the safe head are already derived, so the driver drops them instead
+    /// of batching them again.
+    #[test]
+    fn run_drops_blocks_at_or_below_the_safe_head() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
+            let (source, l1_head_source) = queued_sources([4, 5, 6], []);
+            let (driver, _handles) =
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                    .source(source)
+                    .l1_head_source(l1_head_source)
+                    .safe_head(BlockStub::info(5))
+                    .build();
+
+            let handle = ctx.spawn(driver.run());
+            ctx.sleep(Duration::from_millis(10)).await;
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok());
+
+            assert_eq!(
+                recorded.lock().unwrap().calls,
+                [PipelineCall::AddBlock(6), PipelineCall::Flush]
+            );
+        });
     }
 
     // The loop polls its arms in priority order. Each test in this group makes several arms
-    // ready at once and checks which one the driver serves first. Call logs are checked from
-    // their start because the shutdown flush ends them.
+    // ready at once and checks which one the driver serves first. Every call log ends with the
+    // shutdown flush.
 
     #[test]
     fn run_prioritizes_cancellation_over_ready_admin() {
@@ -573,11 +577,9 @@ mod tests {
             assert!(handle.await.unwrap().is_ok());
             assert!(flush.await.unwrap().is_ok());
 
-            let recorded = recorded.lock().unwrap();
-            assert!(
-                recorded.calls.starts_with(&[PipelineCall::Flush, PipelineCall::AddBlock(1)]),
-                "{:?}",
-                recorded.calls
+            assert_eq!(
+                recorded.lock().unwrap().calls,
+                [PipelineCall::Flush, PipelineCall::AddBlock(1), PipelineCall::Flush]
             );
         });
     }
@@ -603,17 +605,16 @@ mod tests {
 
             // The receipt confirms at L1 block 1 before the L1 head source's head 9 arrives. The
             // other way round, head 1 would not advance past 9.
-            let recorded = recorded.lock().unwrap();
-            assert!(
-                recorded.calls.starts_with(&[
+            assert_eq!(
+                recorded.lock().unwrap().calls,
+                [
                     PipelineCall::Dequeue(SubmissionId(0)),
                     PipelineCall::Confirm(SubmissionId(0), 1),
                     PipelineCall::AdvanceL1Head(1),
                     PipelineCall::AddBlock(1),
                     PipelineCall::AdvanceL1Head(9),
-                ]),
-                "{:?}",
-                recorded.calls
+                    PipelineCall::Flush,
+                ]
             );
         });
     }
@@ -632,7 +633,10 @@ mod tests {
                     .build();
             handles
                 .derivation_status_tx
-                .send(DerivationStatus { safe_l2: safe_head(5), current_l1: safe_head(1) })
+                .send(DerivationStatus {
+                    safe_l2: BlockStub::info(5),
+                    current_l1: BlockStub::info(1),
+                })
                 .await
                 .unwrap();
 
@@ -641,17 +645,16 @@ mod tests {
             ctx.cancel();
             assert!(handle.await.unwrap().is_ok());
 
-            let recorded = recorded.lock().unwrap();
-            assert!(
-                recorded.calls.starts_with(&[
+            assert_eq!(
+                recorded.lock().unwrap().calls,
+                [
                     PipelineCall::Dequeue(SubmissionId(0)),
                     PipelineCall::ReconcileDerivation { safe_l2: 5, current_l1: 1 },
                     PipelineCall::Confirm(SubmissionId(0), 42),
                     PipelineCall::AdvanceL1Head(42),
                     PipelineCall::AddBlock(6),
-                ]),
-                "{:?}",
-                recorded.calls
+                    PipelineCall::Flush,
+                ]
             );
         });
     }
@@ -681,16 +684,15 @@ mod tests {
             ctx.cancel();
             assert!(handle.await.unwrap().is_ok());
 
-            let recorded = recorded.lock().unwrap();
-            assert!(
-                recorded.calls.starts_with(&[
+            assert_eq!(
+                recorded.lock().unwrap().calls,
+                [
                     PipelineCall::Dequeue(SubmissionId(0)),
                     PipelineCall::Requeue(SubmissionId(0)),
                     PipelineCall::Dequeue(SubmissionId(1)),
                     PipelineCall::AddBlock(1),
-                ]),
-                "{:?}",
-                recorded.calls
+                    PipelineCall::Flush,
+                ]
             );
         });
     }
@@ -737,7 +739,7 @@ mod tests {
         });
     }
 
-    /// The driver yields to other tasks between encoding slices: a task can send an admin
+    /// The driver yields to other tasks between encoding slices, so a task can send an admin
     /// command in the middle of a backlog and have it served before the backlog is done.
     #[test]
     fn run_yields_to_other_tasks_between_encoding_slices() {
@@ -749,8 +751,8 @@ mod tests {
                 DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::new([])).build();
 
             let handle = ctx.spawn(driver.run());
-            // Send the stop once the first slice is done: the driver must yield for this task
-            // to observe that.
+            // Send the stop once the first slice is done, which this task only sees if the driver
+            // yields.
             while recorded.lock().unwrap().encoded_steps() < STEP_BUDGET {
                 tokio::task::yield_now().await;
             }
@@ -763,10 +765,26 @@ mod tests {
         });
     }
 
+    /// A fatal encoding error halts the driver instead of being skipped.
+    #[test]
+    fn run_halts_on_a_fatal_step_error() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let pipeline =
+                TrackingPipeline::new().with_step_error(StepError::BlockExceedsChannelLimit {
+                    cursor: 0,
+                    limit: ChannelLimit::RlpBytes { required: 1, maximum: 0 },
+                });
+            let (driver, _handles) =
+                DriverFixture::new(ctx, pipeline, ScriptedTxManager::confirming_at(1)).build();
+
+            assert!(matches!(driver.run().await, Err(BatchDriverError::Step(_))));
+        });
+    }
+
     // The tests below check how ready submissions become L1 transactions.
 
-    /// A blob submission that cannot be built into a transaction is fatal: a retry would fail
-    /// the same way and hold back every submission behind it.
+    /// A blob submission that cannot be built into a transaction is fatal, because a retry would
+    /// fail the same way and hold back every submission behind it.
     #[test]
     fn test_blob_encoding_failure_is_fatal() {
         Runner::start(Config::seeded(0), |ctx| async move {
@@ -780,88 +798,50 @@ mod tests {
             ])]));
 
             let (driver, _handles) =
-                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
-                    .build();
+                DriverFixture::new(ctx, pipeline, ScriptedTxManager::confirming_at(1)).build();
 
-            let result = ctx.spawn(driver.run()).await.unwrap();
-            assert!(matches!(result, Err(BatchDriverError::Blob(_))), "got {result:?}");
-        });
-    }
-
-    /// The driver sends each pipeline submission as its own L1 tx, because the pipeline
-    /// chooses the frames that belong in a transaction.
-    #[test]
-    fn test_each_pipeline_submission_is_sent_as_one_tx() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let mut pipeline = TrackingPipeline::new();
-            let recorded = pipeline.recorded();
-            pipeline.submissions.push_back(SubmissionStub::stub());
-            pipeline.submissions.push_back(SubmissionStub::stub());
-            let tx_manager = ScriptedTxManager::confirming_at(10);
-
-            let (driver, _handles) = DriverFixture::new(ctx.clone(), pipeline, tx_manager.clone())
-                .max_pending(2)
-                .build();
-            let handle = ctx.spawn(driver.run());
-
-            ctx.sleep(Duration::from_millis(50)).await;
-            ctx.cancel();
-
-            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
-            assert_eq!(
-                tx_manager.candidates().len(),
-                2,
-                "separate pipeline submissions must not be coalesced into one L1 tx"
-            );
-            assert_eq!(
-                recorded.lock().unwrap().confirmed(),
-                [SubmissionId(0), SubmissionId(1)],
-                "each pipeline submission should produce its own confirmation"
+            let result = driver.run().await;
+            assert!(
+                matches!(
+                    result,
+                    Err(BatchDriverError::Blob(BatchTxCandidateError::BlobEncoding(_)))
+                ),
+                "got {result:?}"
             );
         });
     }
 
-    /// A single submission may contain multiple blob-filling frames when
-    /// `max_blobs_per_tx > 1`. Each frame becomes its own blob in the same L1
-    /// transaction.
+    /// Each blob payload of a submission becomes its own blob of one L1 transaction, in order,
+    /// even when all their frames would fit in one blob.
     #[test]
-    fn test_multi_frame_blob_submission_maps_frames_to_blobs() {
+    fn test_blob_submission_keeps_each_blob_payload_as_its_own_blob() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let mut pipeline = TrackingPipeline::new();
-            let payload = blob_filling_payload(3);
-            let SubmissionPayload::Blobs(payloads) = &payload else {
-                panic!("helper must create blob payloads");
-            };
-            let expected_blob_payloads: Vec<_> = payloads
-                .iter()
-                .map(|payload| FrameEncoder::to_calldata(&payload.frames()[0]))
-                .collect();
-            pipeline.submissions.push_back(payload);
+            let frames: Vec<_> =
+                (0..3).map(|number| Arc::new(Frame { number, ..Frame::default() })).collect();
+            pipeline.submissions.push_back(SubmissionPayload::Blobs(
+                frames.iter().map(|frame| BlobPayload::new(vec![Arc::clone(frame)])).collect(),
+            ));
             let tx_manager = ScriptedTxManager::confirming_at(10);
-
             let (driver, _handles) =
                 DriverFixture::new(ctx.clone(), pipeline, tx_manager.clone()).build();
+
             let handle = ctx.spawn(driver.run());
-
-            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.sleep(Duration::from_millis(10)).await;
             ctx.cancel();
+            assert!(handle.await.unwrap().is_ok());
 
-            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
             let candidates = tx_manager.candidates();
-            assert_eq!(candidates.len(), 1, "multi-frame submission should use one L1 tx");
-            assert!(
-                candidates[0].tx_data.is_empty(),
-                "blob transactions must not also carry calldata"
-            );
-            let decoded_blob_payloads: Vec<_> = candidates[0]
+            assert_eq!(candidates.len(), 1);
+            assert!(candidates[0].tx_data.is_empty(), "a blob transaction carries no calldata");
+            let blobs: Vec<_> = candidates[0]
                 .blobs
                 .iter()
-                .map(|blob| BlobDecoder::decode(blob).expect("blob payload should decode"))
+                .map(|blob| BlobDecoder::decode(blob).expect("the blob decodes"))
                 .collect();
-            assert_eq!(
-                decoded_blob_payloads, expected_blob_payloads,
-                "each frame in the submission must become its own blob payload"
-            );
+            let frames: Vec<_> =
+                frames.iter().map(|frame| FrameEncoder::to_calldata(frame)).collect();
+            assert_eq!(blobs, frames);
         });
     }
 

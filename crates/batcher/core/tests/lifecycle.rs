@@ -1,5 +1,5 @@
-//! Integration tests for [`BatchDriver`] lifecycle: drain and the order of work and waiting
-//! in the loop.
+//! Integration tests for the [`BatchDriver`] shutdown drain and the order of work and waiting
+//! in its loop.
 
 use std::{
     sync::{Arc, Mutex},
@@ -90,8 +90,8 @@ fn test_shutdown_drains_in_flight_before_returning_flush_error() {
 /// Source that never delivers an event and records, each time the driver waits on it, how
 /// many submissions have been dequeued so far.
 ///
-/// Hand-rolled rather than mocked: the count must be read when the driver polls, not when
-/// the mock's scripted response is built.
+/// Hand-rolled rather than mocked because the count must be read when the driver polls, not
+/// when the mock's scripted response is built.
 struct PollRecorder {
     recorded: Arc<Mutex<Recorded>>,
     dequeued_at_poll: Arc<Mutex<Vec<usize>>>,
@@ -106,7 +106,7 @@ impl UnsafeBlockSource for PollRecorder {
     }
 }
 
-/// The driver does all the work it can before waiting for the next event: a receipt that
+/// The driver does all the work it can before waiting for the next event. A receipt that
 /// frees an in-flight slot gets the next ready submission sent before any source is waited on
 /// again.
 #[test]
@@ -120,8 +120,8 @@ fn test_driver_finishes_pending_work_before_waiting_for_events() {
         let dequeued_at_poll = Arc::new(Mutex::new(Vec::new()));
         let source = PollRecorder { recorded, dequeued_at_poll: Arc::clone(&dequeued_at_poll) };
 
-        // One tx in flight at most: the second submission can only leave the pipeline once the
-        // receipt of the first one has been processed.
+        // With one tx in flight at most, the second submission can only leave the pipeline once
+        // the receipt of the first one has been processed.
         let (driver, _handles) = DriverFixture::new(ctx.clone(), pipeline, tx_manager.clone())
             .source(source)
             .max_pending(1)
