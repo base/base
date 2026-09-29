@@ -56,6 +56,8 @@ actions/
     ├── node.rs                 TestRollupNode, derivation / verifier pipelines
     ├── batcher/
     │   ├── actor.rs            Batcher actor
+    │   ├── l2_chain.rs         SharedL2Chain, HarnessBlockSource
+    │   ├── source.rs           HarnessL1HeadSource
     │   └── tx_manager.rs       L1MinerTxManager (inbox submission)
     └── providers/
         └── l2.rs               ActionL2ChainProvider
