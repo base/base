@@ -65,7 +65,7 @@ impl SubmissionFixture {
 }
 
 /// Two channels sharing a blob, on an encoder that closes each channel on its first block.
-/// The first channel fills a blob on its own, then its tail and the second channel fill the
+/// The first channel fills a blob on its own, then its tail and the second channel share the
 /// next one.
 #[derive(Debug)]
 pub struct SharedBlob {
@@ -73,13 +73,15 @@ pub struct SharedBlob {
     pub blocks: Vec<BaseBlock>,
     /// The blob the first channel fills.
     pub first: BatchSubmission,
-    /// The blob its tail shares with the second channel.
+    /// The transaction whose first blob carries the first channel's tail and the start of the
+    /// second channel.
     pub packed: BatchSubmission,
 }
 
 impl SharedBlob {
-    /// Feed `encoder` the two blocks and take the two blobs, checking that the first tail is
-    /// held back until the second channel fills the blob.
+    /// Feed `encoder` the two blocks and take the two submissions, checking that the first tail
+    /// is held back until the second channel fills the blob, and that the blob carries frames of
+    /// both channels.
     pub fn encode(encoder: &mut BatchEncoder) -> Self {
         let blocks = BlockFixture::chain(2, MULTI_BLOB_PAYLOAD);
         for block in &blocks {
@@ -90,6 +92,11 @@ impl SharedBlob {
         assert!(encoder.next_submission().is_none(), "its tail waits for more data");
         assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
         let packed = encoder.next_submission().expect("the tail and the next channel fill a blob");
+        let SubmissionPayload::Blobs(blobs) = packed.payload() else {
+            panic!("expected a blob submission");
+        };
+        let channels: HashSet<_> = blobs[0].frames().iter().map(|frame| frame.id).collect();
+        assert_eq!(channels.len(), 2, "the blob carries frames of both channels");
         Self { blocks, first, packed }
     }
 }
@@ -192,25 +199,6 @@ impl BlockFixture {
                 ..Default::default()
             },
         }
-    }
-
-    /// `block` without any transaction.
-    pub fn without_transactions(mut block: BaseBlock) -> BaseBlock {
-        block.body.transactions.clear();
-        block
-    }
-
-    /// `block` without its L1-info deposit.
-    pub fn without_deposit(mut block: BaseBlock) -> BaseBlock {
-        block.body.transactions.remove(0);
-        block
-    }
-
-    /// `block` with an L1-info deposit whose calldata does not decode.
-    pub fn with_undecodable_l1_info(mut block: BaseBlock) -> BaseBlock {
-        let deposit = TxDeposit { input: Bytes::new(), ..Default::default() };
-        block.body.transactions[0] = BaseTxEnvelope::Deposit(Sealed::new(deposit));
-        block
     }
 
     /// `len` pseudo-random bytes determined by `seed`.

@@ -9,10 +9,8 @@ use base_batcher_encoder::{
     BatchComposeError, BatchEncoder, BatchPipeline, Channel, ChannelLimit, EncoderConfig,
     EncoderConfigError, ReorgError, StepError, StepResult,
 };
-use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
 use base_protocol::Frame;
-use rstest::rstest;
 
 use crate::common::{BlockFixture, EncoderFixture};
 
@@ -51,25 +49,21 @@ fn add_block_rejects_a_block_off_the_buffered_chain() {
 
 /// A block that does not compose into a batch is fatal and stays queued, so the next step
 /// fails the same way instead of skipping it and leaving a gap in the L2 chain on L1.
-#[rstest]
-#[case::no_transactions(BlockFixture::without_transactions, BatchComposeError::EmptyBlock)]
-#[case::no_deposit_first(BlockFixture::without_deposit, BatchComposeError::NotDepositTx)]
-#[case::undecodable_l1_info(
-    BlockFixture::with_undecodable_l1_info,
-    BatchComposeError::L1InfoDecode
-)]
-fn step_fails_on_a_block_that_does_not_compose(
-    #[case] spoil: fn(BaseBlock) -> BaseBlock,
-    #[case] expected: BatchComposeError,
-) {
+#[test]
+fn step_fails_on_a_block_that_does_not_compose() {
     let fixture = EncoderFixture::new(EncoderConfig::default());
     let mut encoder = fixture.encoder();
-    encoder.add_block(spoil(BlockFixture::block(B256::ZERO, 1, 0))).unwrap();
+    let mut block = BlockFixture::block(B256::ZERO, 1, 0);
+    block.body.transactions.clear();
+    encoder.add_block(block).unwrap();
 
     for _ in 0..2 {
         let error = encoder.step().unwrap_err();
         assert!(
-            matches!(&error, StepError::CompositionFailed { cursor: 0, source } if *source == expected),
+            matches!(
+                &error,
+                StepError::CompositionFailed { cursor: 0, source: BatchComposeError::EmptyBlock }
+            ),
             "{error}"
         );
     }

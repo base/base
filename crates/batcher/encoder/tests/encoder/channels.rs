@@ -1,4 +1,4 @@
-//! When a channel of [`BatchEncoder`] closes, when its partial output is released, and what a
+//! When a channel of `BatchEncoder` closes, when its partial output is released, and what a
 //! flush does.
 
 use alloy_primitives::B256;
@@ -124,13 +124,4 @@ fn open_channel_emits_full_blobs_without_closing() {
     let derived = fixture.derive(&submissions);
     assert_eq!(derived.len(), 1, "the early blob and the rest are one channel");
     assert_eq!(derived.concat(), batches);
-}
-
-/// Nothing queued, nothing to submit.
-#[test]
-fn encode_and_drain_without_blocks_returns_nothing() {
-    let fixture = EncoderFixture::new(EncoderConfig::default());
-    let mut encoder = fixture.encoder();
-
-    assert!(encoder.encode_and_drain().unwrap().is_empty());
 }

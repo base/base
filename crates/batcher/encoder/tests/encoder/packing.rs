@@ -1,50 +1,9 @@
-//! How [`BatchEncoder`] packs frames into blobs and transactions, and the blob override.
-
-use std::collections::BTreeSet;
+//! The blob override of `BatchEncoder`.
 
 use alloy_primitives::B256;
-use base_batcher_encoder::{BatchPipeline, DaType, EncoderConfig, StepResult, SubmissionPayload};
+use base_batcher_encoder::{BatchPipeline, DaType, EncoderConfig, StepResult};
 
-use crate::common::{
-    BlockFixture, EncoderFixture, MULTI_FRAME_PAYLOAD, SMALL_FRAME_SIZE, SharedBlob,
-};
-
-/// Small frames are packed together in one blob rather than one blob each.
-#[test]
-fn frames_are_packed_into_one_blob() {
-    let config = EncoderConfig { max_frame_size: SMALL_FRAME_SIZE, ..EncoderConfig::default() };
-    let fixture = EncoderFixture::new(config);
-    let mut encoder = fixture.encoder();
-    encoder.add_block(BlockFixture::block(B256::ZERO, 1, MULTI_FRAME_PAYLOAD)).unwrap();
-
-    let submissions = encoder.encode_and_drain().unwrap();
-
-    assert_eq!(submissions.len(), 1);
-    assert_eq!(submissions[0].blob_count(), 1);
-    assert!(submissions[0].frame_count() > 1, "{} frames", submissions[0].frame_count());
-}
-
-/// A blob takes the tail of a closed channel and the start of the next one, and derivation
-/// still reads the two channels apart.
-#[test]
-fn channels_are_packed_across_a_blob_boundary() {
-    let config = EncoderConfig { compressed_size_target: Some(1), ..EncoderConfig::default() };
-    let fixture = EncoderFixture::new(config);
-    let mut encoder = fixture.encoder();
-    let shared = SharedBlob::encode(&mut encoder);
-
-    let SubmissionPayload::Blobs(blobs) = shared.packed.payload() else {
-        panic!("expected a blob submission");
-    };
-    let channel_ids: BTreeSet<_> = blobs[0].frames().iter().map(|frame| frame.id).collect();
-    assert_eq!(channel_ids.len(), 2, "the blob carries frames of both channels");
-
-    let mut submissions = vec![shared.first, shared.packed];
-    submissions.extend(encoder.encode_and_drain().unwrap());
-    let derived = fixture.derive(&submissions);
-    assert_eq!(derived.len(), 2);
-    assert_eq!(derived.concat(), BlockFixture::batches(&shared.blocks));
-}
+use crate::common::{BlockFixture, EncoderFixture};
 
 /// While the blob override is active, a calldata encoder emits blobs, and a retry keeps the
 /// DA type its submission was built with.

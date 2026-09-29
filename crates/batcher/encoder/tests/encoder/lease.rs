@@ -1,4 +1,4 @@
-//! The submission lease in [`BatchEncoder`], its ids, its requeue, and what a reset forgets.
+//! The submission lease in `BatchEncoder`, its ids, its requeue, and what a reset forgets.
 
 use alloy_primitives::B256;
 use base_batcher_encoder::{BatchPipeline, DaType, EncoderConfig, StepResult};
@@ -94,7 +94,7 @@ fn stale_ids_do_not_touch_submissions_issued_after_a_reset() {
 fn reset_drops_buffered_state_and_accepts_any_parent() {
     let fixture = EncoderFixture::new(EncoderConfig::default());
     let mut encoder = fixture.encoder();
-    let blocks = BlockFixture::chain(2, MULTI_FRAME_PAYLOAD);
+    let blocks = BlockFixture::chain(2, 0);
     for block in &blocks {
         encoder.add_block(block.clone()).unwrap();
     }

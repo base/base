@@ -1,4 +1,4 @@
-//! Confirmation-window replay in [`BatchEncoder`]. A channel whose frames cannot all land
+//! Confirmation-window replay in `BatchEncoder`. A channel whose frames cannot all land
 //! within the derivation channel timeout is re-encoded under a fresh id, together with every
 //! channel that shares a blob or an in-flight transaction with it and every later one.
 
@@ -53,7 +53,7 @@ fn confirmations_spanning_more_than_the_timeout_replay_the_channel(
 }
 
 /// A channel whose first frame landed more than the timeout ago while later frames are still
-/// unconfirmed is replayed, and the backlog follows the replay.
+/// unconfirmed is replayed, and confirming the replay clears the backlog.
 #[test]
 fn expiry_before_the_last_frame_lands_replays_the_channel() {
     let fixture = EncoderFixture::small_calldata_frames();
