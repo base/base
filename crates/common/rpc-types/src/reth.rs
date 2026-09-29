@@ -436,20 +436,21 @@ mod tests {
         assert_eq!(auth.len(), 20 + 65);
     }
 
-    /// An open payer is whoever signed `payer_auth`, so the request must carry
-    /// that signature: there is no stub to synthesize and no fallback payer.
+    /// An open payer request is estimated before any payer has signed, so an
+    /// absent `payer_auth` is priced as a 65-byte signature that never recovers
+    /// (the payer stays unknown, never the sender); a supplied one is used
+    /// verbatim.
     #[test]
-    fn open_payer_requires_payer_auth() {
-        let without: BaseTransactionRequest = serde_json::from_value(json!({
+    fn open_payer_without_payer_auth_prices_a_signature() {
+        let tx = sim_tx(json!({
             "sender": SENDER,
             "calls": [],
             "payer": Eip8130Constants::OPEN_PAYER,
-        }))
-        .expect("valid request");
-        assert!(
-            without.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
-            "an open payer without payer_auth is rejected"
-        );
+        }));
+        let s = signed(&tx);
+        assert_eq!(s.tx().payer, Some(Eip8130Constants::OPEN_PAYER));
+        assert_eq!(s.payer_auth().len(), 65, "priced as a raw secp256k1 signature");
+        assert!(s.resolved_payer(SENDER).is_err(), "the stub never recovers");
 
         let tx = sim_tx(json!({
             "sender": SENDER,
@@ -457,9 +458,7 @@ mod tests {
             "payer": Eip8130Constants::OPEN_PAYER,
             "payerAuth": blob(None, 65),
         }));
-        let s = signed(&tx);
-        assert_eq!(s.tx().payer, Some(Eip8130Constants::OPEN_PAYER));
-        assert_eq!(s.payer_auth().len(), 65, "the supplied signature is used verbatim");
+        assert_eq!(signed(&tx).payer_auth().len(), 65, "the supplied signature is used verbatim");
     }
 
     #[test]

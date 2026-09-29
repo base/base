@@ -46,7 +46,7 @@
 use alloc::{boxed::Box, rc::Rc, vec::Vec};
 
 use alloy_evm::{Database as AlloyDatabase, EvmInternals};
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, address};
 use base_common_consensus::{AccountChange, Delegation, Eip8130Constants, Predeploys};
 use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_execution_eip8130::{
@@ -164,6 +164,12 @@ struct CallsResult {
 pub struct Eip8130Executor;
 
 impl Eip8130Executor {
+    /// Payer published to the `TxContext` precompile when simulating an open
+    /// payer transaction before any payer has signed (its `payer_auth` does not
+    /// recover). The real payer is unknown, and the context cannot carry the
+    /// zero address, which would read back as `tx.origin` (the sender).
+    pub const UNSIGNED_OPEN_PAYER: Address = address!("0x0000000000000000000000000000000000008130");
+
     /// Executes the EIP-8130 transaction currently set on `evm`, mutating the
     /// journal in place and returning the [`ExecutionResult`]. A success result
     /// is returned for an included transaction whether or not its `calls`
@@ -781,11 +787,10 @@ impl Eip8130Executor {
         // `TxContext` precompile matches a real execution: a call that reads it
         // must see the same address it would on-chain, or it could take a
         // different path and skew the estimate. A named payer's signature is not
-        // verified here. An open payer is only defined by the signer its
-        // `payer_auth` recovers to, so one that does not recover is rejected.
-        let payer = signed.resolved_payer(sender).map_err(|_| {
-            BaseTransactionError::eip8130("EIP-8130 open payer_auth does not recover")
-        })?;
+        // verified here. An open payer is the signer its `payer_auth` recovers
+        // to; before a payer has signed (a stub that does not recover) the payer
+        // is unknown and published as `UNSIGNED_OPEN_PAYER`, never the sender.
+        let payer = signed.resolved_payer(sender).unwrap_or(Self::UNSIGNED_OPEN_PAYER);
 
         let internals = EvmInternals::from_context(ctx);
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
@@ -2734,27 +2739,26 @@ mod tests {
         assert!(outcome.state[&sender].info.balance.is_zero(), "sender must not be charged");
     }
 
-    /// An open payer is defined by the signer its `payer_auth` recovers to, so
-    /// estimation rejects one that does not recover instead of substituting
-    /// the sender.
+    /// The sender estimates an open payer transaction before any payer has
+    /// signed: a `payer_auth` that does not recover still simulates, with the
+    /// payer unknown rather than the sender.
     #[test]
-    fn simulate_rejects_an_open_payer_that_does_not_recover() {
+    fn simulate_prices_an_open_payer_that_has_not_signed() {
         let key = signing_key(0x36);
         let sender = eoa_address(&key);
         let tx = TxEip8130 { payer: Some(Eip8130Constants::OPEN_PAYER), ..base_tx() };
         let sender_auth = eoa_sig(&key, tx.sender_signature_hash());
-        // `v = 0` is never a valid recovery byte.
-        let signed = Eip8130Signed::new(tx, sender_auth, Bytes::from(vec![0u8; 65]));
+        // `v = 0xff` is never a valid recovery byte.
+        let signed = Eip8130Signed::new(tx, sender_auth, Bytes::from(vec![0xffu8; 65]));
         let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
         evm.ctx_mut().tx = into_base_tx(&signed);
         evm.ctx_mut().tx.base.caller = sender;
+        if let Some(parts) = evm.ctx_mut().tx.eip8130.as_mut() {
+            parts.mode = Eip8130ExecutionMode::Simulate;
+        }
 
-        let error = Eip8130Executor::simulate(&mut evm).unwrap_err();
-
-        let EVMError::Transaction(BaseTransactionError::Eip8130(reason)) = error else {
-            panic!("an unrecoverable open payer must be rejected, got {error:?}");
-        };
-        assert!(reason.contains("open payer_auth does not recover"), "unexpected reason: {reason}");
+        let result = Eip8130Executor::simulate(&mut evm).expect("an unsigned open payer simulates");
+        assert!(result.is_success(), "expected success, got {result:?}");
     }
 
     #[test]

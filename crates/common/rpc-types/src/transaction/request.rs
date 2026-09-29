@@ -160,9 +160,11 @@ pub struct Eip8130RequestFields {
     /// selector, including P256, `WebAuthn`, and the delegate authenticator, is
     /// rejected as `INVALID_PARAMS` rather than priced.
     ///
-    /// In open payer mode this is the payer's raw 65-byte signature and is
-    /// required: the payer is recovered from it, so a request without one, or
-    /// with one that does not recover, is rejected.
+    /// In open payer mode this is the payer's raw 65-byte signature, from which
+    /// the payer is recovered. It is optional: before any payer has signed, an
+    /// absent (or unrecoverable) signature is priced as 65 bytes and the payer
+    /// is simulated as the placeholder address
+    /// `0x0000000000000000000000000000000000008130`, never as the sender.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer_auth: Option<Bytes>,
     /// Optional acting-actor hint for simulation. Estimation never recovers a

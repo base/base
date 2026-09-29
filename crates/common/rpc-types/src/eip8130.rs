@@ -110,11 +110,18 @@ impl BaseTransactionRequest {
         let (payer, payer_auth) = match aa.payer {
             None => (None, Bytes::new()),
             Some(Eip8130Constants::OPEN_PAYER) => {
-                // The open payer is whoever signed `payer_auth`, so there is no
-                // stub to synthesize: without a signature there is no payer.
-                let blob = aa.payer_auth.as_ref()?;
-                Self::check_auth_len(blob, false)?;
-                (Some(Eip8130Constants::OPEN_PAYER), blob.clone())
+                // The sender estimates before any payer has signed, so an absent
+                // `payer_auth` is priced as a 65-byte signature. The stub never
+                // recovers, leaving the payer unknown rather than a random
+                // address or the sender.
+                let blob = match &aa.payer_auth {
+                    Some(blob) => {
+                        Self::check_auth_len(blob, false)?;
+                        blob.clone()
+                    }
+                    None => Self::default_bare_auth(),
+                };
+                (Some(Eip8130Constants::OPEN_PAYER), blob)
             }
             Some(payer) => {
                 let blob = match &aa.payer_auth {
