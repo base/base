@@ -185,7 +185,7 @@ async fn batcher_da_switching() {
         calldata_batcher.advance(&mut h.l1).await;
     }
 
-    // Blocks 4-6: submit as blobs, from a batcher restarted at the safe head its node reports.
+    // Blocks 4-6: submit as blobs, from a second batcher that starts after block 3.
     let blob_cfg = BatcherConfig {
         initial_safe_head: Some(sequencer.head().block_info),
         ..BatcherConfig::default() // DaType::Blob by default

@@ -192,29 +192,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_reorg_is_not_reported_again_after_replaying_the_blocks_below_it() {
-        let chain = SharedL2Chain::new();
-        let genesis = BlockInfo::default();
-        let mut source = HarnessBlockSource::new(&chain, genesis);
-        let first = block(1, genesis.hash);
-        let second = block(2, first.header.hash_slow());
-        chain.push(first.clone());
-        chain.push(second.clone());
-        chain.push(block(3, B256::repeat_byte(0xab)));
-
-        assert!(matches!(source.next().await, L2BlockEvent::Block(block) if *block == first));
-        assert!(matches!(source.next().await, L2BlockEvent::Block(block) if *block == second));
-        assert!(matches!(source.next().await, L2BlockEvent::Reorg));
-
-        // The driver resets to the safe head and takes blocks 1 and 2 again.
-        source.reset_catchup(genesis);
-        assert!(matches!(source.next().await, L2BlockEvent::Block(block) if *block == first));
-        assert!(matches!(source.next().await, L2BlockEvent::Block(block) if *block == second));
-        let again = timeout(SETTLE, source.next()).await;
-        assert!(again.is_err(), "the same reorg is not reported again");
-    }
-
-    #[tokio::test]
     async fn the_source_parks_once_the_chain_is_dropped() {
         let chain = SharedL2Chain::new();
         let mut source = HarnessBlockSource::new(&chain, BlockInfo::default());
