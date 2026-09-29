@@ -124,7 +124,8 @@ impl BaseNode {
                     })
                     .with_additional_trusted_delegation_targets(
                         self.args.mempool_trusted_delegation_targets.iter().copied(),
-                    ),
+                    )
+                    .with_trusted_payers(self.args.mempool_trusted_payers.iter().copied()),
             )
             .executor(BaseExecutorBuilder::default())
             .payload(BasePayloadServiceBuilder::new(

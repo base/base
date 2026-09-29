@@ -682,6 +682,9 @@ pub struct BaseTransactionValidator<Client, Tx, Evm> {
     /// implementations. Precomputed so classification is an O(1) code-hash lookup
     /// with no code fetch or bytecode parsing.
     trusted_proxy_code_hashes: Arc<HashSet<B256>>,
+    /// Payers the operator trusts as balance-bounded without a lock or trusted
+    /// code, such as the sequencer's own token payer.
+    trusted_payers: Arc<AddressSet>,
     limit_class_cache: Arc<RwLock<LimitClassCache>>,
     limit_class_cache_generation: Arc<AtomicU64>,
 }
@@ -750,6 +753,20 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
         }
     }
 
+    /// Trusts `payers` as balance-bounded payers regardless of their lock or code.
+    ///
+    /// The pool still caps each payer's pending sponsorship at its ETH balance,
+    /// but it no longer relies on a lock to keep that balance in place, so only
+    /// payers whose outflows the operator controls belong here.
+    pub fn with_trusted_payers(self, payers: AddressSet) -> Self {
+        Self {
+            trusted_payers: Arc::new(payers),
+            limit_class_cache: Arc::default(),
+            limit_class_cache_generation: Arc::default(),
+            ..self
+        }
+    }
+
     /// Returns the cache generation used to close validation/invalidation races.
     pub fn limit_class_cache_generation(&self) -> u64 {
         self.limit_class_cache_generation.load(Ordering::Acquire)
@@ -787,7 +804,10 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
             // classified into the cache during that validation. Ordinary balance
             // churn — the vast majority, and unrelated to any book — must not
             // advance the generation and bounce unrelated admissions.
-            if diff.balance.is_some() && cache.is_trusted_cached(diff.address) {
+            if diff.balance.is_some()
+                && (cache.is_trusted_cached(diff.address)
+                    || self.trusted_payers.contains(&diff.address))
+            {
                 changed = true;
             }
         }
@@ -841,6 +861,7 @@ where
             require_l1_data_gas_fee: true,
             trusted_delegation_targets: Arc::new(trusted_delegation_targets),
             trusted_proxy_code_hashes: Arc::new(trusted_proxy_code_hashes),
+            trusted_payers: Arc::default(),
             limit_class_cache: Arc::default(),
             limit_class_cache_generation: Arc::default(),
         }
@@ -1236,12 +1257,13 @@ where
         // hard-lock → pending-unlock transition writes the account-state slot, so
         // the slot watch above drains any already-admitted transactions naturally
         // — no timed bucket is needed for the trusted dimension.
-        let payer_trusted = Self::qualifies_as_high_rate_lock(&payer_status)
-            && self.is_high_rate_account(
-                payer,
-                payer_account.bytecode_hash,
-                classification_generation,
-            );
+        let payer_trusted = self.trusted_payers.contains(&payer)
+            || (Self::qualifies_as_high_rate_lock(&payer_status)
+                && self.is_high_rate_account(
+                    payer,
+                    payer_account.bytecode_hash,
+                    classification_generation,
+                ));
         if payer_trusted {
             watch_set.push(InvalidationKey::CodeHash(payer));
         }
@@ -2418,6 +2440,44 @@ mod tests {
             after_trusted,
             "a nonce-only change must not advance the generation"
         );
+    }
+
+    #[test]
+    fn operator_trusted_payer_balance_diff_advances_classification_generation() {
+        let payer = Address::repeat_byte(7);
+        let mut payers = AddressSet::default();
+        payers.insert(payer);
+        let validator = build_test_validator().with_trusted_payers(payers);
+
+        // No cached classification exists yet, so only the override can make
+        // this balance change invalidate pending admissions.
+        let before = validator.limit_class_cache_generation();
+        validator.invalidate_limit_class_cache(&[balance_diff(payer, 5)]);
+
+        assert!(validator.limit_class_cache_generation() > before);
+    }
+
+    #[test]
+    fn operator_trusted_payer_is_balance_bounded_without_lock() {
+        let signer = PrivateKeySigner::random();
+        let payer = signer.address();
+        let tx = TxEip8130 { gas_limit: 100_000, ..minimal_valid_eoa_tx() };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let validator = build_test_validator_with_account(
+            payer,
+            ExtendedAccount::new(0, U256::from(1_000_000_000_000u64)),
+        );
+
+        let unlocked = validator.validate_eip8130_full(&signed).expect("funded EOA is admitted");
+        assert!(!unlocked.payer_trusted, "an unlocked EOA payer is count-limited");
+
+        let mut payers = AddressSet::default();
+        payers.insert(payer);
+        let validator = validator.with_trusted_payers(payers);
+        let trusted = validator.validate_eip8130_full(&signed).expect("funded EOA is admitted");
+        assert!(trusted.payer_trusted, "an operator-trusted payer is balance-bounded");
     }
 
     /// Packs an account-state word with the given flags and lock union, leaving

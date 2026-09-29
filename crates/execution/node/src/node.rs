@@ -276,7 +276,8 @@ impl BaseNode {
                     })
                     .with_additional_trusted_delegation_targets(
                         self.args.mempool_trusted_delegation_targets.iter().copied(),
-                    ),
+                    )
+                    .with_trusted_payers(self.args.mempool_trusted_payers.iter().copied()),
             )
             .payload(BasePayloadServiceBuilder::new(
                 BasePayloadBuilder::new()
@@ -882,6 +883,8 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
     pub guard_limits: GuardLimits,
     /// Additional trusted EIP-7702 delegation targets for locked payers.
     pub additional_trusted_delegation_targets: AddressSet,
+    /// Payers trusted as balance-bounded regardless of their lock or code.
+    pub trusted_payers: AddressSet,
     /// Marker for the pooled transaction type.
     _pd: core::marker::PhantomData<T>,
 }
@@ -894,6 +897,7 @@ impl<T> Default for BasePoolBuilder<T> {
             max_inflight_delegated_slots: 4,
             guard_limits: GuardLimits::default(),
             additional_trusted_delegation_targets: AddressSet::default(),
+            trusted_payers: AddressSet::default(),
             _pd: Default::default(),
         }
     }
@@ -909,6 +913,7 @@ impl<T> Clone for BasePoolBuilder<T> {
             additional_trusted_delegation_targets: self
                 .additional_trusted_delegation_targets
                 .clone(),
+            trusted_payers: self.trusted_payers.clone(),
             _pd: core::marker::PhantomData,
         }
     }
@@ -950,6 +955,12 @@ impl<T> BasePoolBuilder<T> {
         self.additional_trusted_delegation_targets = targets.into_iter().collect();
         self
     }
+
+    /// Sets payers trusted as balance-bounded regardless of their lock or code.
+    pub fn with_trusted_payers(mut self, payers: impl IntoIterator<Item = Address>) -> Self {
+        self.trusted_payers = payers.into_iter().collect();
+        self
+    }
 }
 
 impl<Node, T, Evm> PoolBuilder<Node, Evm> for BasePoolBuilder<T>
@@ -971,6 +982,7 @@ where
             max_inflight_delegated_slots,
             guard_limits,
             additional_trusted_delegation_targets,
+            trusted_payers,
             ..
         } = self;
 
@@ -997,6 +1009,7 @@ where
                         .with_additional_trusted_delegation_targets(
                             additional_trusted_delegation_targets.clone(),
                         )
+                        .with_trusted_payers(trusted_payers.clone())
                 });
 
         let mut final_pool_config = pool_config_overrides.apply(ctx.pool_config());

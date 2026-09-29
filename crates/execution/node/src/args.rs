@@ -391,6 +391,15 @@ pub struct RollupArgs {
     #[arg(long = "rollup.mempool-trusted-delegation-targets", value_delimiter = ',')]
     pub mempool_trusted_delegation_targets: Vec<Address>,
 
+    /// Payers this node trusts as balance-bounded without a lock or trusted code, such as the
+    /// sequencer's own token payer.
+    ///
+    /// This is local, non-consensus mempool policy. The pool still caps each payer's pending
+    /// sponsorship at its ETH balance, but no longer relies on a lock to keep that balance in
+    /// place, so only configure payers whose ETH outflows this operator controls.
+    #[arg(long = "rollup.mempool-trusted-payers", value_delimiter = ',')]
+    pub mempool_trusted_payers: Vec<Address>,
+
     /// If true, initialize external-proofs exex to save and serve trie nodes to provide proofs
     /// faster.
     #[arg(
@@ -507,6 +516,7 @@ impl Default for RollupArgs {
             mempool_sender_limit: DEFAULT_SIGNATURE_LIMIT,
             mempool_payer_limit: DEFAULT_PAYMENT_LIMIT,
             mempool_trusted_delegation_targets: Vec::new(),
+            mempool_trusted_payers: Vec::new(),
             proofs_history: false,
             proofs_history_storage_path: None,
             proofs_history_db: ProofsHistoryDbBackend::default(),
@@ -609,6 +619,7 @@ mod tests {
         assert_eq!(args.mempool_sender_limit, DEFAULT_SIGNATURE_LIMIT);
         assert_eq!(args.mempool_payer_limit, DEFAULT_PAYMENT_LIMIT);
         assert!(args.mempool_trusted_delegation_targets.is_empty());
+        assert!(args.mempool_trusted_payers.is_empty());
     }
 
     #[test]
@@ -621,6 +632,8 @@ mod tests {
             "16",
             "--rollup.mempool-trusted-delegation-targets",
             "0x0000000000000000000000000000000000000001,0x0000000000000000000000000000000000000002",
+            "--rollup.mempool-trusted-payers",
+            "0x0000000000000000000000000000000000000003",
         ])
         .args;
         assert_eq!(args.mempool_sender_limit, 8);
@@ -631,6 +644,10 @@ mod tests {
                 "0x0000000000000000000000000000000000000001".parse::<Address>().unwrap(),
                 "0x0000000000000000000000000000000000000002".parse::<Address>().unwrap(),
             ]
+        );
+        assert_eq!(
+            args.mempool_trusted_payers,
+            vec!["0x0000000000000000000000000000000000000003".parse::<Address>().unwrap()]
         );
     }
 
