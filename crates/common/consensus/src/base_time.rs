@@ -3,13 +3,12 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{Bytes, Sealable, Sealed, TxKind, U256};
-use base_common_consensus::{
-    BaseTimeDepositSource, BaseTransaction, DepositSourceDomain, Predeploys, SystemAddresses,
-    TxDeposit,
-};
 use base_common_genesis::{DenimTimestampSchedule, RollupConfig};
 
-use crate::REGOLITH_SYSTEM_TX_GAS;
+use crate::{
+    BaseTimeDepositSource, BaseTransaction, DepositSourceDomain, Predeploys,
+    REGOLITH_SYSTEM_TX_GAS, SystemAddresses, TxDeposit,
+};
 
 /// Versioned calldata for the `BaseTime` metadata deposit.
 ///
@@ -310,16 +309,16 @@ pub enum BaseTimeScheduleError {
 mod tests {
     use alloy_consensus::{Sealable, TxLegacy};
     use alloy_primitives::{Address, B256, Signature, TxKind, U256};
-    use base_common_consensus::{
-        BaseTransactionSigned, BaseTypedTransaction, Predeploys, SystemAddresses, TxDeposit,
-    };
     use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, RollupConfig, UpgradeConfig};
 
     use super::{
         BaseTimeMetadataError, BaseTimeScheduleError, BaseTimeUpdateDecodeError,
         BaseTimeUpdateError, BaseTimeUpdateTx,
     };
-    use crate::REGOLITH_SYSTEM_TX_GAS;
+    use crate::{
+        BaseTransactionSigned, BaseTypedTransaction, Predeploys, REGOLITH_SYSTEM_TX_GAS,
+        SystemAddresses, TxDeposit,
+    };
 
     fn base_time_deposit(block_number: u64, timestamp_millis_part: u16) -> TxDeposit {
         BaseTimeUpdateTx::new(timestamp_millis_part)
