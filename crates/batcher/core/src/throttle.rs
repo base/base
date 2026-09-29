@@ -1,6 +1,9 @@
 //! Throttle controller for DA backlog management.
 
 /// Configuration for the throttle controller.
+///
+/// Must pass [`validate`](Self::validate) before use because the block builder reads a DA
+/// limit of 0 as no limit at all.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ThrottleConfig {
     /// Backlog threshold in bytes at which throttling activates.
@@ -34,6 +37,67 @@ impl Default for ThrottleConfig {
             tx_size_upper_limit: 20_000,
         }
     }
+}
+
+impl ThrottleConfig {
+    /// Checks that every limit the throttle can produce stays within its `[lower, upper]`
+    /// range and above zero.
+    pub fn validate(&self) -> Result<(), ThrottleConfigError> {
+        if !(0.0..=1.0).contains(&self.max_intensity) {
+            return Err(ThrottleConfigError::MaxIntensityOutOfRange {
+                max_intensity: self.max_intensity,
+            });
+        }
+        Self::validate_limits(
+            "block_size",
+            self.block_size_lower_limit,
+            self.block_size_upper_limit,
+        )?;
+        Self::validate_limits("tx_size", self.tx_size_lower_limit, self.tx_size_upper_limit)
+    }
+
+    /// Checks one lower and upper limit pair. Full intensity sends the lower limit.
+    const fn validate_limits(
+        name: &'static str,
+        lower: u64,
+        upper: u64,
+    ) -> Result<(), ThrottleConfigError> {
+        if lower == 0 {
+            return Err(ThrottleConfigError::ZeroLowerLimit { name });
+        }
+        if lower > upper {
+            return Err(ThrottleConfigError::LowerAboveUpper { name, lower, upper });
+        }
+        Ok(())
+    }
+}
+
+/// Errors returned when validating [`ThrottleConfig`].
+#[derive(Debug, thiserror::Error)]
+pub enum ThrottleConfigError {
+    /// `max_intensity` is outside `[0, 1]`, or `NaN`, so throttling would push a limit outside
+    /// its `[lower, upper]` range.
+    #[error("max_intensity ({max_intensity}) must be within [0, 1]")]
+    MaxIntensityOutOfRange {
+        /// The configured maximum intensity.
+        max_intensity: f64,
+    },
+    /// A lower limit is 0, which full intensity sends as is.
+    #[error("{name}_lower_limit must be greater than zero")]
+    ZeroLowerLimit {
+        /// The limit pair, `block_size` or `tx_size`.
+        name: &'static str,
+    },
+    /// A lower limit is above its upper limit, so throttling would raise the limit.
+    #[error("{name}_lower_limit ({lower}) must not exceed {name}_upper_limit ({upper})")]
+    LowerAboveUpper {
+        /// The limit pair, `block_size` or `tx_size`.
+        name: &'static str,
+        /// The configured lower limit.
+        lower: u64,
+        /// The configured upper limit.
+        upper: u64,
+    },
 }
 
 /// Parameters to apply when throttling is active.
@@ -322,6 +386,50 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[rstest]
+    #[case::default(ThrottleConfig::default(), Ok(()))]
+    #[case::equal_limits(
+        ThrottleConfig { block_size_lower_limit: 130_000, ..Default::default() },
+        Ok(())
+    )]
+    #[case::intensity_above_one(
+        ThrottleConfig { max_intensity: 1.5, ..Default::default() },
+        Err("max_intensity (1.5) must be within [0, 1]")
+    )]
+    #[case::negative_intensity(
+        ThrottleConfig { max_intensity: -0.1, ..Default::default() },
+        Err("max_intensity (-0.1) must be within [0, 1]")
+    )]
+    #[case::nan_intensity(
+        ThrottleConfig { max_intensity: f64::NAN, ..Default::default() },
+        Err("max_intensity (NaN) must be within [0, 1]")
+    )]
+    #[case::zero_block_lower(
+        ThrottleConfig { block_size_lower_limit: 0, ..Default::default() },
+        Err("block_size_lower_limit must be greater than zero")
+    )]
+    #[case::zero_tx_lower(
+        ThrottleConfig { tx_size_lower_limit: 0, ..Default::default() },
+        Err("tx_size_lower_limit must be greater than zero")
+    )]
+    #[case::block_lower_above_upper(
+        ThrottleConfig { block_size_lower_limit: 130_001, ..Default::default() },
+        Err("block_size_lower_limit (130001) must not exceed block_size_upper_limit (130000)")
+    )]
+    #[case::tx_lower_above_upper(
+        ThrottleConfig { tx_size_lower_limit: 20_001, ..Default::default() },
+        Err("tx_size_lower_limit (20001) must not exceed tx_size_upper_limit (20000)")
+    )]
+    fn validate_accepts_only_limits_within_range(
+        #[case] config: ThrottleConfig,
+        #[case] expected: Result<(), &str>,
+    ) {
+        assert_eq!(
+            config.validate().map_err(|error| error.to_string()),
+            expected.map_err(String::from)
+        );
     }
 
     #[test]

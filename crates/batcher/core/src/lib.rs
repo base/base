@@ -15,7 +15,8 @@ pub use outcome::TxOutcome;
 
 mod throttle;
 pub use throttle::{
-    DaThrottle, ThrottleConfig, ThrottleController, ThrottleInfo, ThrottleParams, ThrottleStrategy,
+    DaThrottle, ThrottleConfig, ThrottleConfigError, ThrottleController, ThrottleInfo,
+    ThrottleParams, ThrottleStrategy,
 };
 
 mod throttle_client;

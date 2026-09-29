@@ -371,6 +371,9 @@ impl BatcherService {
         let cancellation = runtime.token().clone();
         let mut background_tasks = Vec::new();
         self.config.encoder_config.validate()?;
+        if let Some(throttle) = &self.config.throttle {
+            throttle.validate()?;
+        }
 
         if self.config.poll_interval.is_zero() {
             eyre::bail!("poll_interval must be greater than zero");
@@ -722,6 +725,7 @@ mod tests {
 
     use alloy_node_bindings::Anvil;
     use alloy_primitives::Address;
+    use base_batcher_core::ThrottleConfig;
     use rstest::rstest;
 
     use super::*;
@@ -805,6 +809,19 @@ mod tests {
             .expect_err("a batcher whose endpoints do not match its mode must not start");
 
         assert_eq!(error.to_string(), expected);
+    }
+
+    #[tokio::test]
+    async fn setup_rejects_invalid_throttle_config() {
+        let throttle = ThrottleConfig { block_size_lower_limit: 0, ..ThrottleConfig::default() };
+        let config = BatcherConfig { throttle: Some(throttle), ..BatcherConfig::default() };
+
+        let error = BatcherService::new(config)
+            .setup(TokioRuntime::new())
+            .await
+            .expect_err("a throttle that can send a zero limit must not start");
+
+        assert_eq!(error.to_string(), "block_size_lower_limit must be greater than zero");
     }
 
     #[tokio::test]
