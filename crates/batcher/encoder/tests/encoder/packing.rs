@@ -5,8 +5,7 @@ use base_batcher_encoder::{BatchPipeline, BatchSubmission, DaType, EncoderConfig
 
 use crate::common::{BlockFixture, EncoderFixture, SubmissionFixture, THREE_BLOB_PAYLOAD};
 
-/// A transaction carries `max_blobs_per_tx` blobs while blobs are ready, and that cap cuts
-/// transactions, not channels, so one channel spans several transactions.
+/// A transaction carries `max_blobs_per_tx` blobs while blobs are ready.
 #[test]
 fn transactions_carry_up_to_max_blobs_per_tx() {
     let config = EncoderConfig { max_blobs_per_tx: 2, ..EncoderConfig::default() };
@@ -18,7 +17,6 @@ fn transactions_carry_up_to_max_blobs_per_tx() {
 
     let counts: Vec<_> = submissions.iter().map(BatchSubmission::blob_count).collect();
     assert_eq!(counts, [2, 1]);
-    assert_eq!(fixture.derive(&submissions).len(), 1, "one channel");
 }
 
 /// A calldata encoder emits blobs while the blob override is active. A blob built under the

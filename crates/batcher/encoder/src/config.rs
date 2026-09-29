@@ -380,7 +380,12 @@ mod tests {
             ..EncoderConfig::default()
         };
 
-        assert!(matches!(cfg.validate(), Err(EncoderConfigError::FrameSizeTooLarge { .. })));
+        assert!(matches!(
+            cfg.validate(),
+            Err(EncoderConfigError::FrameSizeTooLarge { max_frame_size, max_protocol_frame_size })
+                if max_frame_size == Frame::ENCODED_OVERHEAD + Frame::MAX_LEN + 1
+                    && max_protocol_frame_size == Frame::ENCODED_OVERHEAD + Frame::MAX_LEN
+        ));
     }
 
     /// A frame must leave room for the blob derivation prefix even on a calldata batcher, whose

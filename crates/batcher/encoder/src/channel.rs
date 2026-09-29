@@ -515,7 +515,7 @@ mod tests {
 
         assert!(matches!(
             channel.add_batch(&batch(1), 1).unwrap(),
-            ChannelAddOutcome::Rejected(ChannelLimit::AssembledBytes { .. })
+            ChannelAddOutcome::Rejected(ChannelLimit::AssembledBytes { maximum: m, .. }) if m == maximum
         ));
         assert_eq!(channel.input_bytes, maximum - 1_000);
         assert_eq!(channel.blocks_added(), 0);
