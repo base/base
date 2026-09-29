@@ -26,6 +26,7 @@ use base_runtime::{
 fn test_upper_limits_are_pushed_once_without_backlog() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let pipeline = TrackingPipeline::new();
+        let recorded = pipeline.recorded();
         let (l1_head_source, l1_head_tx) = ChannelL1HeadSource::new();
 
         let config = ThrottleConfig::default();
@@ -48,6 +49,7 @@ fn test_upper_limits_are_pushed_once_without_backlog() {
         ctx.cancel();
         assert!(handle.await.unwrap().is_ok());
 
+        assert_eq!(recorded.lock().unwrap().l1_heads(), [1, 2, 3]);
         assert_eq!(*throttle_recorded.lock().unwrap(), [upper_limits]);
     });
 }

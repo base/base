@@ -81,7 +81,7 @@ fn test_safe_head_conflicts_reset_pipeline_and_source() {
 }
 
 #[test]
-fn test_derivation_cursor_advance_replays_stalled_channel() {
+fn test_stalled_channel_resets_pipeline_and_source() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let pipeline =
             TrackingPipeline::new().with_reconciliation(DerivationReconciliation::StalledChannel);
