@@ -193,7 +193,7 @@ impl L2Stack {
     /// # Errors
     ///
     /// Returns an error if any component fails to start.
-    pub async fn start(config: L2StackConfig) -> Result<Self> {
+    pub async fn start(mut config: L2StackConfig) -> Result<Self> {
         let container_config = config.container_config.as_ref();
 
         let l1_rpc_url: Url = config.l1_rpc_url.parse().wrap_err("Invalid L1 RPC URL")?;
@@ -204,6 +204,11 @@ impl L2Stack {
         if config.shadow_sequencers.as_ref().is_some_and(|shadow| shadow.start_block.is_some()) {
             rollup_config.block_time = 2;
         }
+        // op-deployer supplies the legacy interval in rollup.json, not the EL genesis.
+        let mut genesis: serde_json::Value =
+            serde_json::from_slice(&config.l2_genesis).wrap_err("Failed to parse L2 genesis")?;
+        genesis["config"]["blockTime"] = rollup_config.block_time.into();
+        config.l2_genesis = serde_json::to_vec(&genesis)?;
         let l1_chain_config: ChainConfig = serde_json::from_slice(&config.l1_genesis)
             .wrap_err("Failed to parse L1 chain config")?;
         let builder_chain_spec =
