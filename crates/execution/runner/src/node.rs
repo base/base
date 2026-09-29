@@ -50,6 +50,8 @@ pub struct BaseNode {
     pub resource_metering: ResourceMeteringConfig,
     /// Shared, cross-job cache of permanently rejected transaction hashes.
     pub rejection_cache: RejectionCache,
+    /// Whether the node runs a real transaction pool instead of a noop pool.
+    pub txpool_enabled: bool,
 }
 
 impl Default for BaseNode {
@@ -68,6 +70,7 @@ impl BaseNode {
             manifest_precheck_enabled: true,
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
+            txpool_enabled: false,
         }
     }
 
@@ -101,6 +104,12 @@ impl BaseNode {
         self
     }
 
+    /// Configure whether the node runs a real transaction pool instead of a noop pool.
+    pub const fn with_txpool_enabled(mut self, enabled: bool) -> Self {
+        self.txpool_enabled = enabled;
+        self
+    }
+
     /// Returns the components for the given [`RollupArgs`].
     pub fn components<Node>(&self) -> BaseNodeComponentBuilder<Node>
     where
@@ -117,6 +126,7 @@ impl BaseNode {
             .node_types::<Node>()
             .pool(
                 BasePoolBuilder::default()
+                    .with_enabled(self.txpool_enabled)
                     .with_max_inflight_delegated_slots(max_inflight_delegated_slots)
                     .with_guard_limits(GuardLimits {
                         signature_limit: mempool_sender_limit,

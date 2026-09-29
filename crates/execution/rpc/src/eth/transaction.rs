@@ -25,18 +25,29 @@ use reth_rpc_eth_api::{
     TxInfoMapper,
     helpers::{EthTransactions, LoadReceipt, LoadTransaction, SpawnBlocking, spec::SignersForRpc},
 };
-use reth_rpc_eth_types::{EthApiError, TransactionSource, block::convert_transaction_receipt};
+use reth_rpc_eth_types::{
+    EthApiError, TransactionSource, block::convert_transaction_receipt, error::RpcPoolError,
+};
 use reth_storage_api::{
     BlockReader, BlockReaderIdExt, ProviderTx, ReceiptProvider, TransactionsProvider,
     errors::ProviderError,
 };
 use reth_transaction_pool::{
-    AddedTransactionOutcome, PoolTransaction, TransactionOrigin, TransactionPool,
+    AddedTransactionOutcome, EthPoolTransaction, PoolTransaction, TransactionOrigin,
+    TransactionPool, noop::NoopInsertError,
 };
 use tracing::{debug, instrument, warn};
 
 use super::BaseTimeCache;
 use crate::{BaseEthApi, BaseEthApiError, BaseInvalidTransactionError, SequencerClient};
+
+/// Returns `true` if `err` is the rejection produced by the noop transaction pool.
+fn is_noop_pool_rejection<T: EthPoolTransaction>(err: &EthApiError) -> bool {
+    matches!(
+        err,
+        EthApiError::PoolError(RpcPoolError::Other(source)) if source.is::<NoopInsertError<T>>()
+    )
+}
 
 impl<N, Rpc> EthTransactions for BaseEthApi<N, Rpc>
 where
@@ -92,9 +103,12 @@ where
                     debug!(target: "rpc::eth", error = %err, hash=% *pool_transaction.hash(), "failed to forward raw transaction");
                 })?;
 
-            // Retain tx in local tx pool after forwarding, for local RPC usage.
+            // Retain tx in local tx pool after forwarding, for local RPC usage. Nodes running the
+            // noop pool reject every insert by design, so that is not worth a warning.
             let _ = self.inner.eth_api.add_pool_transaction(origin, pool_transaction).await.inspect_err(|err| {
-                warn!(target: "rpc::eth", error = %err, %hash, "successfully sent tx to sequencer, but failed to persist in local tx pool");
+                if !is_noop_pool_rejection::<<N::Pool as TransactionPool>::Transaction>(err) {
+                    warn!(target: "rpc::eth", error = %err, %hash, "successfully sent tx to sequencer, but failed to persist in local tx pool");
+                }
             });
 
             return Ok(hash);

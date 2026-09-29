@@ -56,7 +56,7 @@ async fn test_base_node_custom_genesis_number() {
     let node_handle = NodeBuilder::new(config.clone())
         .with_database(db)
         .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
-        .with_components(BaseNode::default().components())
+        .with_components(BaseNode::default().with_txpool_enabled(true).components())
         .with_add_ons(BaseNode::new(Default::default()).add_ons())
         .launch_with_fn(|builder| {
             let launcher = EngineNodeLauncher::new(

@@ -58,6 +58,7 @@ fn main() {
         let manifest_precheck_enabled = builder_config.manifest_precheck_enabled;
 
         let mut runner = BaseNodeRunner::new(rollup_args.clone())
+            .with_txpool_enabled(true)
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config)
             .with_manifest_precheck_enabled(manifest_precheck_enabled)

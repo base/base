@@ -96,7 +96,7 @@ where
     let RollupArgs { discovery_v4, .. } = RollupArgs::default();
     ComponentsBuilder::default()
         .node_types::<Node>()
-        .pool(BasePoolBuilder::default())
+        .pool(BasePoolBuilder::default().with_enabled(true))
         .executor(BaseExecutorBuilder::default())
         .payload(BasePayloadServiceBuilder::new(
             BasePayloadBuilder::new().with_transactions(CustomTxPriority { chain_id }),

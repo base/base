@@ -213,6 +213,7 @@ impl LocalInstance {
         let metering_provider = Arc::clone(&builder_config.metering_provider);
 
         let base_node = BaseNode::new(RollupArgs::default())
+            .with_txpool_enabled(true)
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config);
 
