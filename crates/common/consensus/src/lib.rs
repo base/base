@@ -25,8 +25,6 @@ pub use receipts::{
 };
 
 mod transaction;
-#[cfg(feature = "serde")]
-pub use transaction::serde_deposit_tx_rpc;
 pub use transaction::{
     AccountChange, AccountChangeChannel, BasePooledTransaction, BaseTransaction,
     BaseTransactionInfo, BaseTxEnvelope, BaseTypedTransaction, Call, ChangeType, CoinbaseTip,
@@ -35,6 +33,8 @@ pub use transaction::{
     Eip8130StaticError, Eip8130TimestampError, IDefaultAccount, InitialActor, OpTxType, Scope,
     SignedAccountChanges, SignedChange, TxDeposit, TxEip8130, decode_2718_canonical,
 };
+#[cfg(feature = "serde")]
+pub use transaction::{Eip8130PayerSerde, serde_deposit_tx_rpc};
 
 mod extra;
 pub use extra::{EIP1559ParamEncoder, EIP1559ParamError, HoloceneExtraData, JovianExtraData};

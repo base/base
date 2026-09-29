@@ -385,6 +385,11 @@ impl BaseReceiptBuilder {
             };
             mapped_receipt.into_with_bloom()
         });
+        // An EIP-8130 transaction has no single recipient; its calls are in
+        // `calls`. Report `to: null`, not the zero address its `kind` carries.
+        if tx_signed.as_eip8130().is_some() {
+            core_receipt.to = None;
+        }
 
         // In jovian, we're using the blob gas used field to store the current da
         // footprint's value.

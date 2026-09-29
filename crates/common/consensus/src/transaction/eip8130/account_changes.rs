@@ -110,6 +110,7 @@ pub struct InitialActor {
     /// Address of the authenticator contract (e.g. an ERC-1271 authenticator).
     pub authenticator: Address,
     /// Scope bitfield (`uint16`; `0x0000` = unrestricted admin), stored verbatim.
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub scope: u16,
     /// Policy data: empty (no policy attached) or exactly
     /// `manager (20) || commitment (32)`. Attachment is length-based and
@@ -141,14 +142,19 @@ impl InitialActor {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ChangeType {
     /// Authorize (upsert) an actor. Payload: `abi.encode(actorId, ActorConfig, policyData)`.
+    #[cfg_attr(feature = "serde", serde(rename = "0x0", alias = "0x00"))]
     AuthorizeActor,
     /// Revoke an actor. Payload: `abi.encode(actorId)`.
+    #[cfg_attr(feature = "serde", serde(rename = "0x1", alias = "0x01"))]
     RevokeActor,
     /// Increment the local epoch (either channel; empty payload).
+    #[cfg_attr(feature = "serde", serde(rename = "0x2", alias = "0x02"))]
     IncrementLocalEpoch,
     /// Lock the account (Local only; standalone; payload: `abi.encode(uint16 unlockDelay)`).
+    #[cfg_attr(feature = "serde", serde(rename = "0x3", alias = "0x03"))]
     Lock,
     /// Unlock the account (Local only; standalone; empty payload).
+    #[cfg_attr(feature = "serde", serde(rename = "0x4", alias = "0x04"))]
     Unlock,
 }
 
@@ -189,8 +195,10 @@ impl ChangeType {
 pub enum AccountChangeChannel {
     /// Local channel: binds `block.chainid`; epoch + sequence + JIT mode.
     #[default]
+    #[cfg_attr(feature = "serde", serde(rename = "0x0", alias = "0x00"))]
     Local,
     /// Multichain channel: binds `chain_id == 0`; plain monotonic counter.
+    #[cfg_attr(feature = "serde", serde(rename = "0x1", alias = "0x01"))]
     Multichain,
 }
 
@@ -323,6 +331,7 @@ pub struct SignedAccountChanges {
     /// `localEpoch(32, high) || localSequence(32, low)` (low half
     /// [`Eip8130Constants::UNSEQUENCED`] marks an unsequenced JIT batch); on
     /// Multichain it is a plain monotonic `u64` counter.
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub sequence: u64,
     /// The ordered ops, applied all-or-nothing.
     pub changes: Vec<SignedChange>,
@@ -356,6 +365,11 @@ pub struct Delegation {
 /// `0x00` is reserved and does not decode. `Create` and `ConfigChange` are the
 /// Keystore's entries and are only valid once Zenith is active.
 ///
+/// In JSON the entry is an object whose `type` field is the type byte as a hex
+/// quantity (`"0x1"`; `"0x01"` is also accepted), alongside the body fields.
+/// Every other discriminant (channel, change type) and integer is likewise a
+/// hex quantity.
+///
 /// The type byte is a genuine list element (not an EIP-2718-style `type_byte ||
 /// rlp(...)` prefix), so each entry is one self-contained RLP item and the
 /// surrounding `account_changes` list frames as one item per entry. This mirrors
@@ -366,15 +380,18 @@ pub struct Delegation {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "camelCase"))]
+#[cfg_attr(feature = "serde", serde(tag = "type"))]
 pub enum AccountChange {
     /// Create a new account.
+    #[cfg_attr(feature = "serde", serde(rename = "0x2", alias = "0x02"))]
     Create(CreateEntry),
     /// Apply a signed batch of account changes (`applySignedAccountChanges`).
+    #[cfg_attr(feature = "serde", serde(rename = "0x3", alias = "0x03"))]
     ConfigChange(SignedAccountChanges),
     /// Set or clear an [EIP-7702]-style delegation.
     ///
     /// [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
+    #[cfg_attr(feature = "serde", serde(rename = "0x1", alias = "0x01"))]
     Delegation(Delegation),
 }
 
@@ -650,6 +667,69 @@ mod tests {
         // `[0x00]` is the RLP list `0xc1 0x80`.
         let buf = [0xc1u8, 0x80];
         assert!(AccountChange::decode(&mut &buf[..]).is_err());
+    }
+
+    /// JSON names each entry by its type byte, as a hex quantity.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn account_change_json_type_is_the_type_byte() {
+        let target = Address::repeat_byte(0x11);
+        let delegation = AccountChange::Delegation(Delegation { target });
+        let json = serde_json::to_value(&delegation).unwrap();
+        assert_eq!(json, serde_json::json!({ "type": "0x1", "target": target }));
+
+        for tag in ["0x1", "0x01"] {
+            let parsed: AccountChange =
+                serde_json::from_value(serde_json::json!({ "type": tag, "target": target }))
+                    .unwrap();
+            assert_eq!(parsed, delegation);
+        }
+        assert!(
+            serde_json::from_value::<AccountChange>(
+                serde_json::json!({ "type": "delegation", "target": target })
+            )
+            .is_err()
+        );
+    }
+
+    /// A signed account-change batch and a create entry encode every
+    /// discriminant and integer as a hex quantity.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn signed_account_changes_json_uses_quantities() {
+        let config = AccountChange::ConfigChange(SignedAccountChanges {
+            channel: AccountChangeChannel::Multichain,
+            sequence: 7,
+            changes: vec![SignedChange {
+                change_type: ChangeType::RevokeActor,
+                payload: Bytes::from_static(&[0xab]),
+            }],
+            signature: Bytes::from_static(&[0xcd]),
+        });
+        let json = serde_json::json!({
+            "type": "0x3",
+            "channel": "0x1",
+            "sequence": "0x7",
+            "changes": [{ "changeType": "0x1", "payload": "0xab" }],
+            "signature": "0xcd",
+        });
+        assert_eq!(serde_json::to_value(&config).unwrap(), json);
+        assert_eq!(serde_json::from_value::<AccountChange>(json).unwrap(), config);
+
+        let create = AccountChange::Create(CreateEntry {
+            user_salt: B256::ZERO,
+            code: Bytes::from_static(&[0x00]),
+            initial_actors: vec![InitialActor {
+                actor_id: B256::ZERO,
+                authenticator: Address::ZERO,
+                scope: 0x0a,
+                policy_data: Bytes::new(),
+            }],
+        });
+        let json = serde_json::to_value(&create).unwrap();
+        assert_eq!(json["type"], "0x2");
+        assert_eq!(json["initialActors"][0]["scope"], "0xa");
+        assert_eq!(serde_json::from_value::<AccountChange>(json).unwrap(), create);
     }
 
     #[test]

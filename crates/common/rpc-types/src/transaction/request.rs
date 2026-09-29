@@ -11,7 +11,7 @@ use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, TransactionInput, TransactionRequest};
 use base_common_consensus::{
     AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, Eip8130Constants, Eip8130Contracts,
-    TxDeposit,
+    Eip8130PayerSerde, TxDeposit,
 };
 use serde::{Deserialize, Serialize};
 
@@ -100,18 +100,22 @@ pub struct Eip8130RequestFields {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_changes: Option<Vec<AccountChange>>,
     /// The phased call batches dispatched by the sender account.
+    ///
+    /// Alternatively, a single call can be given as the standard top-level
+    /// `to` / `value` / `data`. Setting both `calls` and any of those is
+    /// rejected as ambiguous.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub calls: Option<Vec<Vec<Call>>>,
     /// Optional lower bound of the validity window, in Unix seconds or
     /// milliseconds (the unit is detected from the magnitude; `0` or absent
     /// means no lower bound). Checked as `block.timestamp * 1000 >=` the
     /// bound in milliseconds.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub valid_after: Option<u64>,
     /// Optional upper bound of the validity window, in Unix seconds or
     /// milliseconds (the unit is detected from the magnitude; `0` or absent
     /// means no expiry). Required (non-zero) for nonce-free transactions.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub valid_before: Option<u64>,
     /// Opaque, non-executed transaction metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -149,10 +153,14 @@ pub struct Eip8130RequestFields {
     /// filler-byte stub of the right length); you need not sign first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_auth: Option<Bytes>,
-    /// Sponsoring payer account, or the zero address for open payer mode. When
-    /// set, the estimate includes payer authentication gas (metered on top of
-    /// the gas limit, as in execution).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Sponsoring payer account, or the zero address (also accepted as `"0x00"`)
+    /// for open payer mode. When set, the estimate includes payer
+    /// authentication gas (metered on top of the gas limit, as in execution).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "Eip8130PayerSerde::deserialize"
+    )]
     pub payer: Option<Address>,
     /// Raw payer authentication blob whose shape is priced when a `payer` is
     /// declared.
