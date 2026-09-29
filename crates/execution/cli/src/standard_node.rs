@@ -7,6 +7,7 @@ use base_builder_metering::{
     MeteringStoreExtension,
 };
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
+use base_execution_payer::{PayerExtension, PayerExtensionConfig};
 use base_execution_payload_builder::{
     NoopMeteringProvider, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache,
     ResourceMeteringConfig, SharedMeteringProvider,
@@ -768,6 +769,12 @@ impl StandardBaseRethNode {
         runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
+        if let Some(sequencer_url) = args.rpc.rollup_args.sequencer.clone() {
+            runner.install_ext::<PayerExtension>(PayerExtensionConfig::Proxy {
+                sequencer_url,
+                sequencer_headers: args.rpc.rollup_args.sequencer_headers.clone(),
+            });
+        }
         // Query nodes proxy validity metadata to their sequencer; forwarders submit locally.
         if args.rpc.enable_tx_forwarding
             || args.rpc.rollup_args.sequencer.is_some()

@@ -10,6 +10,7 @@ use base_builder_core::BuilderApiExtension;
 use base_builder_metering::MeteringStoreExtension;
 use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_execution_cli::{Cli, StandardBaseRethNode};
+use base_execution_payer::{PayerExtension, PayerExtensionConfig};
 use base_node_runner::BaseNodeRunner;
 use base_observability_events::GlobalTransactionEventWriter;
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
@@ -34,7 +35,11 @@ fn main() {
 
     let cli = base_cli_utils::parse_cli!(BuilderCli);
 
-    cli.run(|builder, builder_args| async move {
+    cli.run(|builder, mut builder_args| async move {
+        let payer = builder_args.payer.load()?;
+        if let Some(payer) = &payer {
+            builder_args.rollup_args.mempool_trusted_payers.push(payer.config.terms.payer);
+        }
         let rollup_args = builder_args.rollup_args.clone();
         let builder =
             StandardBaseRethNode::apply_initial_upgrade_signal(builder, &builder_args).await?;
@@ -78,6 +83,14 @@ fn main() {
                 ..Default::default()
             },
         );
+        if let Some(payer) = payer {
+            runner.install_ext::<PayerExtension>(PayerExtensionConfig::Sponsor(Box::new(
+                payer.with_validity_limits(
+                    builder_api_config.max_validity_predicates,
+                    builder_api_config.accept_experimental_validity_transactions,
+                ),
+            )));
+        }
         runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);
         StandardBaseRethNode::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         runner.add_started_callback(|| {

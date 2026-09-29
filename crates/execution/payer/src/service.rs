@@ -17,10 +17,10 @@ use revm::{Database, context::BlockEnv};
 use tracing::{info, warn};
 
 use crate::{
-    GasDiagnostic, GasEstimate, GetTermsParams, GetTermsResult, OfferConditions, PayerConfigError,
-    PayerErrorCode, PayerRejection, PayerTerms, PayerToken, PaymentOption, Requote, Revert,
-    SendTransactionResult, Shortfall, TokenCharged, TokenChoice, TokenPayment, TokenPaymentOffer,
-    TransferOutcome, ValidityIngress,
+    GasDiagnostic, GasEstimate, GetTermsParams, GetTermsResult, OfferConditions, PayerConfig,
+    PayerConfigError, PayerErrorCode, PayerRejection, PayerTerms, PayerToken, PaymentOption,
+    Requote, Revert, SendTransactionResult, Shortfall, TokenBook, TokenCharged, TokenChoice,
+    TokenPayment, TokenPaymentOffer, TransferOutcome, ValidityIngress,
 };
 
 /// Payer that accepts ERC-20 tokens for gas on EIP-8130 transactions.
@@ -32,7 +32,7 @@ use crate::{
 #[derive(Debug)]
 pub struct PayerService<Client, Ingress, S> {
     terms: PayerTerms,
-    tokens: Vec<PayerToken>,
+    book: TokenBook,
     client: Client,
     ingress: Ingress,
     signer: S,
@@ -47,21 +47,31 @@ where
     /// Multiplier on the latest base fee quoted as `maxFeePerGas`.
     pub const BASE_FEE_HEADROOM: u128 = 2;
 
-    /// Creates a payer; `signer` must hold the payer account's own key.
+    /// Creates a payer from a validated `config`; `signer` must hold the payer
+    /// account's own key.
+    ///
+    /// Tokens are resolved against the latest state on first use, so the node
+    /// need not be synced yet.
     pub fn new(
-        terms: PayerTerms,
-        tokens: Vec<PayerToken>,
+        config: PayerConfig,
         client: Client,
         ingress: Ingress,
         signer: S,
     ) -> Result<Self, PayerConfigError> {
-        if signer.address() != terms.payer {
+        config.validate()?;
+        if signer.address() != config.terms.payer {
             return Err(PayerConfigError::SignerMismatch {
-                payer: terms.payer,
+                payer: config.terms.payer,
                 signer: signer.address(),
             });
         }
-        Ok(Self { terms, tokens, client, ingress, signer })
+        Ok(Self {
+            terms: config.terms,
+            book: TokenBook::new(config.eth_usd, config.tokens),
+            client,
+            ingress,
+            signer,
+        })
     }
 
     /// Quotes every token whose price can be read at the latest state.
@@ -79,16 +89,17 @@ where
         })?;
         let max_fee_per_gas =
             u128::from(header.base_fee_per_gas().unwrap_or_default()) * Self::BASE_FEE_HEADROOM;
-        let payment_gas = self.tokens.iter().map(|token| token.payment_gas).max().unwrap_or(0);
+        let state = self.client.latest().map_err(Self::unavailable)?;
+        let mut db = StateProviderDatabase::new(&state);
+        let accepted = self.book.tokens(&mut db, header.timestamp());
+        let payment_gas = accepted.iter().map(|token| token.payment_gas).max().unwrap_or(0);
         let gas_limit = params
             .gas_limit
             .map_or(self.terms.default_gas_limit, |gas| gas.to::<u64>())
             .saturating_add(payment_gas);
 
-        let state = self.client.latest().map_err(Self::unavailable)?;
-        let mut db = StateProviderDatabase::new(&state);
-        let mut tokens = Vec::with_capacity(self.tokens.len());
-        for token in &self.tokens {
+        let mut tokens = Vec::with_capacity(accepted.len());
+        for token in accepted.iter() {
             let rate = match token.quote(&mut db) {
                 Ok(rate) => rate,
                 Err(error) => {
@@ -108,7 +119,7 @@ where
                 payment_gas: U64::from(token.payment_gas),
             });
         }
-        if tokens.is_empty() && !self.tokens.is_empty() {
+        if tokens.is_empty() && !self.book.is_empty() {
             return Err(PayerRejection::new(
                 PayerErrorCode::TemporarilyUnavailable,
                 "no token price is readable",
@@ -194,7 +205,7 @@ where
         &self,
         signed: &Eip8130Signed,
         now_ms: u64,
-    ) -> RpcResult<(&PayerToken, Address, TokenPayment)> {
+    ) -> RpcResult<(PayerToken, Address, TokenPayment)> {
         let tx = signed.tx();
         if tx.chain_id != self.client.chain_spec().chain_id() {
             return Err(Self::invalid("wrong chain id"));
@@ -211,19 +222,35 @@ where
         self.check_gas(tx.gas_limit, tx.max_fee_per_gas)?;
 
         let payment = TokenPayment::from_phases(&tx.calls)?;
-        let Some(token) = self.tokens.iter().find(|token| token.address == payment.token) else {
+        if !self.book.is_configured(payment.token) {
             return Err(PayerRejection::new(
                 PayerErrorCode::UnsupportedToken,
                 "token is not accepted",
             )
             .into());
-        };
+        }
         if payment.recipient != self.terms.payer {
             return Err(Self::invalid("phase 0 must pay the payer"));
         }
 
+        let header = self.client.latest_header().map_err(Self::unavailable)?.ok_or_else(|| {
+            PayerRejection::new(PayerErrorCode::TemporarilyUnavailable, "no canonical head")
+        })?;
         let state = self.client.latest().map_err(Self::unavailable)?;
         let mut db = StateProviderDatabase::new(&state);
+        let Some(token) = self
+            .book
+            .tokens(&mut db, header.timestamp())
+            .iter()
+            .find(|token| token.address == payment.token)
+            .cloned()
+        else {
+            return Err(PayerRejection::new(
+                PayerErrorCode::TemporarilyUnavailable,
+                "token feeds are unavailable",
+            )
+            .into());
+        };
         let rate = token.quote(&mut db).map_err(|error| {
             warn!(token = %token.symbol, error = %error, "failed to price payment token");
             PayerRejection::new(PayerErrorCode::TemporarilyUnavailable, "token price unavailable")
@@ -264,9 +291,6 @@ where
             .into());
         }
 
-        let header = self.client.latest_header().map_err(Self::unavailable)?.ok_or_else(|| {
-            PayerRejection::new(PayerErrorCode::TemporarilyUnavailable, "no canonical head")
-        })?;
         let block = BlockEnv {
             number: U256::from(header.number()),
             timestamp: U256::from(header.timestamp()),
@@ -339,21 +363,26 @@ where
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use alloy_primitives::{B256, Bytes, hex};
+    use alloy_primitives::{B256, Bytes};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use alloy_sol_types::SolCall;
     use base_common_consensus::{BasePrimitives, Call, TxEip8130};
-    use base_common_price_feed::{ChainlinkFeed, ChainlinkLayout, PriceLeg, PricePath, PriceQuote};
+    use base_common_price_feed::test_utils::{MockFeed, ViewContract};
     use base_execution_chainspec::BaseChainSpec;
     use base_test_utils::build_test_genesis_everest;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
     use super::*;
-    use crate::{BalanceLayout, IERC20, MockValidityIngress};
+    use crate::{
+        BalanceLayout, FeedConfig, IERC20, LegConfig, MockValidityIngress, PriceConfig,
+        QuoteConfig, TokenConfig,
+    };
 
     const CHAIN_ID: u64 = 8453;
     const TOKEN: Address = Address::repeat_byte(0x83);
+    const PROBE: Address = Address::repeat_byte(0x70);
+    const PROBE_BALANCE: u64 = 1_000_000;
     const NOW_MS: u64 = 1_800_000_000_000;
     const VALID_BEFORE_SECS: u64 = 1_800_000_005;
     const GAS_LIMIT: u64 = 70_000;
@@ -361,76 +390,79 @@ mod tests {
     /// 70,000 gas at 1.5 gwei priced at 2,000 USDC per ETH.
     const REQUIRED: u64 = 210_000;
     const EXPIRY_BOUND: u64 = 31;
-    /// Token runtime whose every call returns `true`.
-    const RETURNS_TRUE: &[u8] = &hex!("600160005260206000f3");
-    /// Token runtime whose every call reverts with `0xdead`.
-    const REVERTS: &[u8] = &hex!("61dead6000526002601efd");
 
     type Provider = MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>;
     type Service = PayerService<Provider, MockValidityIngress, PrivateKeySigner>;
 
-    /// Writes a single-round OCR2 feed with `answer` at 8 decimals.
-    fn feed(provider: &Provider, byte: u8, answer: u64) -> ChainlinkFeed {
-        let feed = ChainlinkFeed {
-            aggregator: Address::repeat_byte(byte),
-            layout: ChainlinkLayout::Ocr2,
-            decimals: 8,
-        };
-        let hot_vars = U256::from(1) << ChainlinkLayout::ROUND_ID_BIT_OFFSET;
+    fn eth_usd() -> MockFeed {
+        MockFeed::new(0xe1, 2_000 * 100_000_000)
+    }
+
+    fn usdc_usd() -> MockFeed {
+        MockFeed::new(0xe2, 100_000_000)
+    }
+
+    fn add_feed(provider: &Provider, feed: &MockFeed) {
+        provider.add_account(
+            feed.proxy,
+            ExtendedAccount::new(0, U256::ZERO).with_bytecode(feed.proxy_code()),
+        );
         provider.add_account(
             feed.aggregator,
-            ExtendedAccount::new(0, U256::ZERO).extend_storage([
-                (B256::from(feed.layout.hot_vars_slot()), hot_vars),
-                (B256::from(feed.layout.transmission_slot(1)), U256::from(answer)),
-            ]),
-        );
-        feed
-    }
-
-    /// Provider after Everest holding ETH at $2,000, USDC at $1, and a USDC
-    /// token running `token_code` with balance word `balance_word` for `sender`.
-    fn provider(
-        sender: Address,
-        balance_word: U256,
-        token_code: &'static [u8],
-    ) -> (Provider, PayerToken) {
-        let mut genesis = build_test_genesis_everest();
-        genesis.config.chain_id = CHAIN_ID;
-        let provider = MockEthProvider::<BasePrimitives>::new()
-            .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(genesis)))
-            .with_genesis_block();
-        let eth_usd = feed(&provider, 0xe1, 2_000 * 100_000_000);
-        let usdc_usd = feed(&provider, 0xe2, 100_000_000);
-        let balance = BalanceLayout::FiatToken;
-        provider.add_account(
-            TOKEN,
             ExtendedAccount::new(0, U256::ZERO)
-                .with_bytecode(Bytes::from_static(token_code))
-                .extend_storage([(B256::from(balance.slot(sender)), balance_word)]),
+                .with_bytecode(feed.aggregator_code(feed.answer))
+                .extend_storage(
+                    feed.aggregator_storage().map(|(slot, value)| (B256::from(slot), value)),
+                ),
         );
-        let token = PayerToken {
-            symbol: "USDC".to_owned(),
-            address: TOKEN,
-            decimals: 6,
-            spread_bps: 0,
-            payment_gas: 20_000,
-            price: PricePath {
-                quote: PriceQuote::Usd { eth_usd },
-                legs: vec![PriceLeg { feed: usdc_usd, invert: false }],
-            },
-            balance,
-        };
-        (provider, token)
     }
 
-    fn terms(payer: Address) -> PayerTerms {
-        PayerTerms {
-            payer,
-            max_expiry_secs: 10,
-            quote_ttl_secs: 15,
-            default_gas_limit: 100_000,
-            max_gas_limit: Some(1_000_000),
-            max_cost_wei: Some(U256::from(200_000_000_000_000u64)),
+    /// USDC runtime whose `transfer` returns `true` or reverts with `0xdead`,
+    /// and whose `balanceOf` reports the probe holder's balance.
+    fn token_code(transfer_reverts: bool) -> Bytes {
+        let contract = ViewContract::new().returns(
+            IERC20::balanceOfCall::SELECTOR,
+            IERC20::balanceOfCall::abi_encode_returns(&U256::from(PROBE_BALANCE)),
+        );
+        if transfer_reverts {
+            contract.reverts(IERC20::transferCall::SELECTOR, [0xde, 0xad])
+        } else {
+            contract.returns(
+                IERC20::transferCall::SELECTOR,
+                IERC20::transferCall::abi_encode_returns(&true),
+            )
+        }
+        .bytecode()
+    }
+
+    fn config(payer: Address) -> PayerConfig {
+        PayerConfig {
+            terms: PayerTerms {
+                payer,
+                max_expiry_secs: 10,
+                quote_ttl_secs: 15,
+                default_gas_limit: 100_000,
+                max_gas_limit: Some(1_000_000),
+                max_cost_wei: Some(U256::from(200_000_000_000_000u64)),
+            },
+            eth_usd: FeedConfig { proxy: eth_usd().proxy, deviation_bps: 0 },
+            tokens: vec![TokenConfig {
+                symbol: "USDC".to_owned(),
+                address: TOKEN,
+                decimals: 6,
+                spread_bps: 0,
+                payment_gas: 20_000,
+                probe_holder: PROBE,
+                price: PriceConfig {
+                    quote: QuoteConfig::Usd,
+                    legs: vec![LegConfig {
+                        proxy: usdc_usd().proxy,
+                        deviation_bps: 0,
+                        invert: false,
+                    }],
+                },
+                balance: BalanceLayout::FiatToken,
+            }],
         }
     }
 
@@ -439,7 +471,8 @@ mod tests {
         sender: PrivateKeySigner,
         tx: TxEip8130,
         balance_word: U256,
-        token_code: &'static [u8],
+        transfer_reverts: bool,
+        feeds: bool,
     }
 
     impl Fixture {
@@ -472,8 +505,34 @@ mod tests {
                 sender: PrivateKeySigner::random(),
                 tx,
                 balance_word: U256::from(REQUIRED),
-                token_code: RETURNS_TRUE,
+                transfer_reverts: false,
+                feeds: true,
             }
+        }
+
+        /// Provider after Everest holding ETH at $2,000, USDC at $1, and a
+        /// USDC token with balance word `balance_word` for the sender.
+        fn provider(&self) -> Provider {
+            let mut genesis = build_test_genesis_everest();
+            genesis.config.chain_id = CHAIN_ID;
+            let provider = MockEthProvider::<BasePrimitives>::new()
+                .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(genesis)))
+                .with_genesis_block();
+            if self.feeds {
+                add_feed(&provider, &eth_usd());
+                add_feed(&provider, &usdc_usd());
+            }
+            let balance = BalanceLayout::FiatToken;
+            provider.add_account(
+                TOKEN,
+                ExtendedAccount::new(0, U256::ZERO)
+                    .with_bytecode(token_code(self.transfer_reverts))
+                    .extend_storage([
+                        (B256::from(balance.slot(self.sender.address())), self.balance_word),
+                        (B256::from(balance.slot(PROBE)), U256::from(PROBE_BALANCE)),
+                    ]),
+            );
+            provider
         }
 
         fn transfer(to: Address, amount: u64) -> Call {
@@ -496,22 +555,18 @@ mod tests {
                 .into()
         }
 
-        fn service(&self, ingress: MockValidityIngress) -> (Service, PayerToken) {
-            let (provider, token) =
-                provider(self.sender.address(), self.balance_word, self.token_code);
-            let service = PayerService::new(
-                terms(self.payer.address()),
-                vec![token.clone()],
-                provider,
+        fn service(&self, ingress: MockValidityIngress) -> Service {
+            PayerService::new(
+                config(self.payer.address()),
+                self.provider(),
                 ingress,
                 self.payer.clone(),
             )
-            .unwrap();
-            (service, token)
+            .unwrap()
         }
 
         async fn reject(&self) -> PayerRejection {
-            let (service, _) = self.service(MockValidityIngress::new());
+            let service = self.service(MockValidityIngress::new());
             let error = service.sponsor(&self.raw(), NOW_MS).await.unwrap_err();
             assert_eq!(error.code(), PayerRejection::RPC_CODE);
             serde_json::from_str(error.data().unwrap().get()).unwrap()
@@ -530,7 +585,7 @@ mod tests {
             *captured.lock().unwrap() = Some((raw, validity));
             Ok(hash)
         });
-        let (service, token) = fixture.service(ingress);
+        let service = fixture.service(ingress);
 
         let result = service.sponsor(&fixture.raw(), NOW_MS).await.unwrap();
 
@@ -556,7 +611,11 @@ mod tests {
         assert_eq!(
             validity,
             vec![
-                token.balance.predicate(TOKEN, fixture.sender.address(), U256::from(REQUIRED)),
+                BalanceLayout::FiatToken.predicate(
+                    TOKEN,
+                    fixture.sender.address(),
+                    U256::from(REQUIRED)
+                ),
                 ValidityPredicate::BlockNumber {
                     op: ValidityOperator::LessThanOrEqual,
                     value: U256::from(EXPIRY_BOUND),
@@ -603,7 +662,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_payment_that_fails_to_transfer() {
         let mut fixture = Fixture::new();
-        fixture.token_code = REVERTS;
+        fixture.transfer_reverts = true;
 
         let rejection = fixture.reject().await;
 
@@ -643,7 +702,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_transaction_already_co_signed() {
         let fixture = Fixture::new();
-        let (service, _) = fixture.service(MockValidityIngress::new());
+        let service = fixture.service(MockValidityIngress::new());
         let raw: Bytes =
             Eip8130Signed::new(fixture.tx.clone(), fixture.sender_auth(), Bytes::from_static(&[1]))
                 .encoded_2718()
@@ -658,12 +717,10 @@ mod tests {
     #[test]
     fn rejects_signer_for_another_account() {
         let fixture = Fixture::new();
-        let (provider, token) = provider(fixture.sender.address(), U256::ZERO, RETURNS_TRUE);
 
         let error = PayerService::new(
-            terms(fixture.payer.address()),
-            vec![token],
-            provider,
+            config(fixture.payer.address()),
+            fixture.provider(),
             MockValidityIngress::new(),
             fixture.sender,
         )
@@ -675,7 +732,7 @@ mod tests {
     #[test]
     fn quotes_tokens_at_the_advisory_gas_estimate() {
         let fixture = Fixture::new();
-        let (service, _) = fixture.service(MockValidityIngress::new());
+        let service = fixture.service(MockValidityIngress::new());
         let params = GetTermsParams {
             chain_id: U64::from(CHAIN_ID),
             gas_limit: Some(U64::from(50_000)),
@@ -706,11 +763,26 @@ mod tests {
     #[test]
     fn get_terms_rejects_other_chains() {
         let fixture = Fixture::new();
-        let (service, _) = fixture.service(MockValidityIngress::new());
+        let service = fixture.service(MockValidityIngress::new());
         let params = GetTermsParams { chain_id: U64::from(1), ..Default::default() };
 
         let error = service.terms(&params).unwrap_err();
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+    }
+
+    #[tokio::test]
+    async fn is_temporarily_unavailable_until_feeds_resolve() {
+        let mut fixture = Fixture::new();
+        fixture.feeds = false;
+        let service = fixture.service(MockValidityIngress::new());
+        let params = GetTermsParams { chain_id: U64::from(CHAIN_ID), ..Default::default() };
+
+        let terms_error = service.terms(&params).unwrap_err();
+        let terms_rejection: PayerRejection =
+            serde_json::from_str(terms_error.data().unwrap().get()).unwrap();
+
+        assert_eq!(terms_rejection.code, PayerErrorCode::TemporarilyUnavailable);
+        assert_eq!(fixture.reject().await.code, PayerErrorCode::TemporarilyUnavailable);
     }
 }

@@ -14,6 +14,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
 };
+use base_execution_payer::{PayerExtension, PayerExtensionConfig};
 use base_node_runner::BaseNodeRunner;
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
 use base_txpool_rpc::{
@@ -66,6 +67,10 @@ impl SequencerCommand {
         let consensus_args = ConsensusNodeArgs::new(consensus_chain, consensus_config);
         let mut rollup_config = consensus_args.load_rollup_config()?;
 
+        let payer = builder.payer.load()?;
+        if let Some(payer) = &payer {
+            builder.rollup_args.mempool_trusted_payers.push(payer.config.terms.payer);
+        }
         let rollup_args = builder.rollup_args.clone();
         let sequencer_rpc = rollup_args.sequencer.clone();
         let metering_provider: base_builder_core::SharedMeteringProvider =
@@ -124,6 +129,14 @@ impl SequencerCommand {
                     ..Default::default()
                 },
             );
+            if let Some(payer) = payer {
+                runner.install_ext::<PayerExtension>(PayerExtensionConfig::Sponsor(Box::new(
+                    payer.with_validity_limits(
+                        builder_api_config.max_validity_predicates,
+                        builder_api_config.accept_experimental_validity_transactions,
+                    ),
+                )));
+            }
             runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);
             StandardBaseRethNode::install_upgrade_signal_runtime_extension(
                 &mut runner,
@@ -359,6 +372,33 @@ mod tests {
                 .as_ref()
                 .map(|url| url.as_str()),
             Some("http://finalized-l1:8545/")
+        );
+    }
+
+    #[test]
+    fn parses_payer_args() {
+        let cli = BaseCli::parse_from(sequencer_args(&[
+            "base",
+            "sequencer",
+            "--p2p.sequencer.key",
+            SEQUENCER_KEY,
+            "--payer.config",
+            "/etc/base/payer.toml",
+            "--payer.key.path",
+            "/run/secrets/payer-key",
+        ]));
+
+        let BaseCommand::Sequencer(sequencer) = cli.command else {
+            panic!("expected sequencer command");
+        };
+
+        assert_eq!(
+            sequencer.builder.payer.config.as_deref(),
+            Some(std::path::Path::new("/etc/base/payer.toml"))
+        );
+        assert_eq!(
+            sequencer.builder.payer.key_path.as_deref(),
+            Some(std::path::Path::new("/run/secrets/payer-key"))
         );
     }
 

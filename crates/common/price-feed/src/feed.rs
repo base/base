@@ -1,13 +1,10 @@
 //! Chainlink feed reads from aggregator storage.
 
 use alloy_primitives::{Address, I256, U256, aliases::U80};
-use alloy_provider::Provider;
-use alloy_rpc_types_eth::{BlockId, TransactionInput, TransactionRequest};
-use alloy_sol_types::{SolCall, sol};
-use alloy_transport::TransportError;
+use alloy_sol_types::sol;
 use revm::Database;
 
-use crate::ChainlinkLayout;
+use crate::{ChainlinkLayout, StateCall, StateCallError};
 
 sol! {
     /// Chainlink `EACAggregatorProxy` reads used to resolve a feed.
@@ -70,18 +67,13 @@ pub enum FeedReadError<E> {
 
 /// Error resolving a feed proxy to a verified [`ChainlinkFeed`].
 #[derive(Debug, thiserror::Error)]
-pub enum FeedResolveError {
-    /// An RPC request failed.
-    #[error("feed RPC request failed: {0}")]
-    Transport(#[from] TransportError),
-    /// A contract returned data that does not decode as the expected type.
-    #[error("failed to decode call output from {to}: {source}")]
-    Decode {
-        /// Contract that returned the data.
-        to: Address,
-        /// Decoding error.
-        source: alloy_sol_types::Error,
-    },
+pub enum FeedResolveError<E> {
+    /// A proxy or aggregator call failed.
+    #[error(transparent)]
+    Call(#[from] StateCallError<E>),
+    /// The aggregator's latest round could not be read from storage.
+    #[error(transparent)]
+    Read(#[from] FeedReadError<E>),
     /// The proxy delegates to an aggregator whose storage layout is unknown.
     #[error("proxy {proxy} delegates to unsupported aggregator {aggregator} ({type_and_version})")]
     UnsupportedAggregator {
@@ -91,14 +83,6 @@ pub enum FeedResolveError {
         aggregator: Address,
         /// `typeAndVersion()` reported by the aggregator.
         type_and_version: String,
-    },
-    /// The latest round cannot be used as a price.
-    #[error("aggregator {aggregator} has no usable answer: {reason}")]
-    InvalidAnswer {
-        /// Aggregator whose round was rejected.
-        aggregator: Address,
-        /// Why the round was rejected.
-        reason: InvalidAnswer,
     },
     /// Reading storage with the selected layout disagrees with `latestRoundData()`.
     #[error("storage of aggregator {aggregator} does not match latestRoundData() under {layout:?}")]
@@ -174,22 +158,19 @@ impl ChainlinkFeed {
             .map_err(|reason| FeedReadError::InvalidAnswer { aggregator: self.aggregator, reason })
     }
 
-    /// Resolves `proxy` to its current aggregator and verifies the aggregator's
-    /// storage layout.
+    /// Resolves `proxy` to its current aggregator in `db` and verifies the
+    /// aggregator's storage layout.
     ///
-    /// Every read is pinned to the provider's latest block, and the feed is
-    /// accepted only if the storage read equals `latestRoundData()` there.
-    pub async fn resolve<P: Provider>(
-        provider: &P,
+    /// The feed is accepted only if the storage read equals `latestRoundData()`
+    /// in the same state.
+    pub fn resolve<DB: Database>(
+        db: &mut DB,
         proxy: Address,
-    ) -> Result<Self, FeedResolveError> {
-        let block = BlockId::number(provider.get_block_number().await?);
-        let aggregator =
-            Self::call(provider, proxy, IChainlinkProxy::aggregatorCall {}, block).await?;
-        let decimals = Self::call(provider, proxy, IChainlinkProxy::decimalsCall {}, block).await?;
+    ) -> Result<Self, FeedResolveError<DB::Error>> {
+        let aggregator = StateCall::call(db, proxy, &IChainlinkProxy::aggregatorCall {})?;
+        let decimals = StateCall::call(db, proxy, &IChainlinkProxy::decimalsCall {})?;
         let type_and_version =
-            Self::call(provider, aggregator, IChainlinkAggregator::typeAndVersionCall {}, block)
-                .await?;
+            StateCall::call(db, aggregator, &IChainlinkAggregator::typeAndVersionCall {})?;
         let Some(layout) = ChainlinkLayout::from_type_and_version(&type_and_version) else {
             return Err(FeedResolveError::UnsupportedAggregator {
                 proxy,
@@ -197,51 +178,27 @@ impl ChainlinkFeed {
                 type_and_version,
             });
         };
-
-        let hot_vars =
-            provider.get_storage_at(aggregator, layout.hot_vars_slot()).block_id(block).await?;
-        let round_id = ChainlinkLayout::latest_round_id(hot_vars);
-        let transmission = provider
-            .get_storage_at(aggregator, layout.transmission_slot(round_id))
-            .block_id(block)
-            .await?;
-        let answer = FeedAnswer::decode(round_id, transmission)
-            .map_err(|reason| FeedResolveError::InvalidAnswer { aggregator, reason })?;
-
+        let feed = Self { aggregator, layout, decimals };
+        let answer = feed.read(db)?;
         let latest =
-            Self::call(provider, aggregator, IChainlinkAggregator::latestRoundDataCall {}, block)
-                .await?;
+            StateCall::call(db, aggregator, &IChainlinkAggregator::latestRoundDataCall {})?;
         if !answer.matches(&latest) {
             return Err(FeedResolveError::LayoutMismatch { aggregator, layout });
         }
-        Ok(Self { aggregator, layout, decimals })
-    }
-
-    async fn call<P: Provider, C: SolCall>(
-        provider: &P,
-        to: Address,
-        call: C,
-        block: BlockId,
-    ) -> Result<C::Return, FeedResolveError> {
-        let request = TransactionRequest::default()
-            .to(to)
-            .input(TransactionInput::new(call.abi_encode().into()));
-        let output = provider.call(request).block(block).await?;
-        C::abi_decode_returns(&output).map_err(|source| FeedResolveError::Decode { to, source })
+        Ok(feed)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Bytes, U64, address, uint};
-    use alloy_provider::ProviderBuilder;
-    use alloy_transport::mock::Asserter;
-    use revm::database::InMemoryDB;
+    use alloy_primitives::{Bytes, address, uint};
+    use alloy_sol_types::SolCall;
+    use revm::{bytecode::Bytecode, database::InMemoryDB, state::AccountInfo};
 
     use super::*;
+    use crate::test_utils::{MockFeed, ViewContract};
 
     const AGGREGATOR: Address = address!("0x68bE4C50235205Ede361ac8244B1ee221CDDA5E2");
-    const PROXY: Address = address!("0x7e860098F58bBFC8648a4311b374B1D669a2bc6B");
 
     /// Base mainnet USDC/USD (OCR2) storage at block 51951686.
     const HOT_VARS: U256 = uint!(0x2900004b9a0603_U256);
@@ -260,42 +217,20 @@ mod tests {
         ChainlinkFeed { aggregator: AGGREGATOR, layout: ChainlinkLayout::Ocr2, decimals: 8 }
     }
 
-    fn latest_round(answer: i64) -> Bytes {
-        Bytes::from(IChainlinkAggregator::latestRoundDataCall::abi_encode_returns(
-            &IChainlinkAggregator::latestRoundDataReturn {
-                roundId: U80::from(41),
-                answer: I256::try_from(answer).unwrap(),
-                startedAt: U256::from(1_790_685_963u64),
-                updatedAt: U256::from(1_790_685_977u64),
-                answeredInRound: U80::from(41),
-            },
-        ))
+    fn install(db: &mut InMemoryDB, address: Address, code: Bytes) {
+        db.insert_account_info(address, AccountInfo::default().with_code(Bytecode::new_raw(code)));
     }
 
-    /// Queues the proxy and `typeAndVersion()` responses [`ChainlinkFeed::resolve`]
-    /// requests first, in order.
-    fn proxy_responses(type_and_version: &str) -> Asserter {
-        let asserter = Asserter::new();
-        asserter.push_success(&U64::from(51_951_686u64));
-        asserter.push_success(&Bytes::from(IChainlinkProxy::aggregatorCall::abi_encode_returns(
-            &AGGREGATOR,
-        )));
-        asserter.push_success(&Bytes::from(IChainlinkProxy::decimalsCall::abi_encode_returns(&8)));
-        asserter.push_success(&Bytes::from(
-            IChainlinkAggregator::typeAndVersionCall::abi_encode_returns(
-                &type_and_version.to_owned(),
-            ),
-        ));
-        asserter
-    }
-
-    /// Queues every response [`ChainlinkFeed::resolve`] requests, in order.
-    fn resolve_responses(latest: Bytes) -> Asserter {
-        let asserter = proxy_responses(ChainlinkLayout::OCR2_TYPE_AND_VERSION);
-        asserter.push_success(&HOT_VARS);
-        asserter.push_success(&TRANSMISSION);
-        asserter.push_success(&latest);
-        asserter
+    /// State holding `mock` behind its proxy, with the aggregator reporting
+    /// `reported` from `latestRoundData()`.
+    fn feed_db(mock: &MockFeed, reported: U256) -> InMemoryDB {
+        let mut db = InMemoryDB::default();
+        install(&mut db, mock.proxy, mock.proxy_code());
+        install(&mut db, mock.aggregator, mock.aggregator_code(reported));
+        for (slot, value) in mock.aggregator_storage() {
+            db.insert_account_storage(mock.aggregator, slot, value).unwrap();
+        }
+        db
     }
 
     #[test]
@@ -336,37 +271,54 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn resolves_proxy_when_storage_matches_latest_round() {
-        let provider = ProviderBuilder::new()
-            .connect_mocked_client(resolve_responses(latest_round(99_997_146)));
+    #[test]
+    fn resolves_proxy_when_storage_matches_latest_round() {
+        let mock = MockFeed::new(0xa0, 99_997_146);
+        let mut db = feed_db(&mock, mock.answer);
 
-        assert_eq!(ChainlinkFeed::resolve(&provider, PROXY).await.unwrap(), feed());
+        assert_eq!(ChainlinkFeed::resolve(&mut db, mock.proxy).unwrap(), mock.feed());
     }
 
-    #[tokio::test]
-    async fn rejects_layout_that_disagrees_with_latest_round() {
-        let provider = ProviderBuilder::new()
-            .connect_mocked_client(resolve_responses(latest_round(100_000_000)));
+    #[test]
+    fn rejects_layout_that_disagrees_with_latest_round() {
+        let mock = MockFeed::new(0xa0, 99_997_146);
+        let mut db = feed_db(&mock, U256::from(100_000_000));
 
-        let error = ChainlinkFeed::resolve(&provider, PROXY).await.unwrap_err();
+        let error = ChainlinkFeed::resolve(&mut db, mock.proxy).unwrap_err();
 
         assert!(matches!(
             error,
-            FeedResolveError::LayoutMismatch {
-                aggregator: AGGREGATOR,
-                layout: ChainlinkLayout::Ocr2
-            }
+            FeedResolveError::LayoutMismatch { aggregator, layout: ChainlinkLayout::Ocr2 }
+                if aggregator == mock.aggregator
         ));
     }
 
-    #[tokio::test]
-    async fn rejects_unknown_aggregator_implementation() {
-        let provider =
-            ProviderBuilder::new().connect_mocked_client(proxy_responses("OCR2Aggregator 2.0.0"));
+    #[test]
+    fn rejects_unknown_aggregator_implementation() {
+        let mock = MockFeed::new(0xa0, 99_997_146);
+        let mut db = feed_db(&mock, mock.answer);
+        install(
+            &mut db,
+            mock.aggregator,
+            ViewContract::new()
+                .returns(
+                    IChainlinkAggregator::typeAndVersionCall::SELECTOR,
+                    IChainlinkAggregator::typeAndVersionCall::abi_encode_returns(
+                        &"OCR2Aggregator 2.0.0".to_owned(),
+                    ),
+                )
+                .bytecode(),
+        );
 
-        let error = ChainlinkFeed::resolve(&provider, PROXY).await.unwrap_err();
+        let error = ChainlinkFeed::resolve(&mut db, mock.proxy).unwrap_err();
 
         assert!(matches!(error, FeedResolveError::UnsupportedAggregator { .. }));
+    }
+
+    #[test]
+    fn rejects_proxy_without_code() {
+        let error = ChainlinkFeed::resolve(&mut InMemoryDB::default(), AGGREGATOR).unwrap_err();
+
+        assert!(matches!(error, FeedResolveError::Call(StateCallError::Decode { .. })));
     }
 }

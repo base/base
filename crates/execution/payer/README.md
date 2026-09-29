@@ -1,6 +1,6 @@
 # `base-execution-payer`
 
-ERC-8168 token payer for EIP-8130 transactions, run on the sequencer.
+ERC-8168 token payer for EIP-8130 transactions, run on the block-building node.
 
 The payer accepts ERC-20 tokens for gas. A wallet builds a transaction that
 names the payer, pays it in phase 0 with a single `IERC20.transfer`, and
@@ -60,9 +60,19 @@ price = { quote = "usd", legs = [
 ] }
 ```
 
-`PayerConfig::resolve` verifies every feed and balance layout against an RPC
-provider before the payer starts.
+`TokenBook` resolves every token's feeds and verifies its balance layout
+against the node's latest state, on first use and again once
+`TokenBook::RESOLVE_INTERVAL_SECS` of chain time has passed. A token that fails
+to resolve, for example because the node has not synced its feeds yet, is left
+out of offers and rejected with `TEMPORARILY_UNAVAILABLE` until it resolves.
 
-The pool caps an ordinary payer's pending sponsored transactions. Run the
-sequencer with `--rollup.mempool-trusted-payers <payer>` so the payer is bounded
-only by its ETH balance.
+## Running
+
+A block-building node (`base sequencer` or `base-builder`) serves the payer
+when started with `--payer.config <path>` and the payer account's key, from
+either `--payer.key` or a hex file at `--payer.key.path`. The key must control
+`terms.payer`. The node adds the payer to `--rollup.mempool-trusted-payers`,
+so the pool bounds its pending sponsored transactions only by its ETH balance.
+
+Nodes started with `--rollup.sequencer` forward `payer_*` to the sequencer,
+passing its rejections through unchanged.

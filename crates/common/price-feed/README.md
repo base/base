@@ -24,8 +24,10 @@ Slot indices differ by aggregator implementation. [`ChainlinkLayout`] covers:
 Wallets and config name a feed by its proxy, which delegates to an aggregator
 that can change on a Chainlink phase upgrade. [`ChainlinkFeed::resolve`] follows
 the proxy to its aggregator, selects the layout from `typeAndVersion()`, and
-rejects the feed unless a storage read equals `latestRoundData()` at the same
-block. Callers resolve at startup and re-resolve to pick up phase upgrades.
+rejects the feed unless a storage read equals `latestRoundData()` in the same
+state. It makes those view calls with [`StateCall`], which executes them against
+the same [`revm::Database`], so resolution needs no RPC endpoint. Callers
+re-resolve periodically to pick up phase upgrades.
 
 [`PricePath`] multiplies one or more feeds, each optionally inverted (for
 feeds quoted the other way round, such as `USD / ARS`), into a token price in

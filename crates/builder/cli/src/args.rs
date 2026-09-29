@@ -9,6 +9,7 @@ use base_builder_core::{
 };
 use base_builder_metering::MeteringStore;
 use base_execution_cli::ShadowIndexerArgs;
+use base_execution_payer::PayerArgs;
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
@@ -313,6 +314,10 @@ pub struct Args {
     /// Shadow indexer `ExEx` configuration
     #[command(flatten)]
     pub shadow_indexer: ShadowIndexerArgs,
+
+    /// ERC-8168 token payer configuration
+    #[command(flatten)]
+    pub payer: PayerArgs,
 }
 
 impl HasRollupArgs for Args {
@@ -368,6 +373,7 @@ impl Default for Args {
             basic_payload_builder: false,
             transaction_events: TransactionEventsArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
+            payer: PayerArgs::default(),
         }
     }
 }

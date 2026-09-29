@@ -1,20 +1,25 @@
 //! Operator configuration for the payer.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, path::Path};
 
 use alloy_primitives::{Address, U256};
-use alloy_provider::Provider;
-use alloy_rpc_types_eth::{BlockId, TransactionInput, TransactionRequest};
-use alloy_sol_types::SolCall;
-use alloy_transport::TransportError;
-use base_common_price_feed::{ChainlinkFeed, FeedResolveError, PriceLeg, PricePath, PriceQuote};
+use base_common_price_feed::{
+    ChainlinkFeed, FeedResolveError, PriceLeg, PricePath, PriceQuote, StateCall, StateCallError,
+};
+use revm::Database;
 use serde::{Deserialize, Serialize};
 
 use crate::{BalanceLayout, IERC20, PayerToken};
 
-/// Error validating or resolving a [`PayerConfig`].
+/// Error loading or validating a [`PayerConfig`].
 #[derive(Debug, thiserror::Error)]
 pub enum PayerConfigError {
+    /// The configuration file could not be read.
+    #[error("failed to read payer config: {0}")]
+    Io(#[from] std::io::Error),
+    /// The configuration file is not valid TOML for a [`PayerConfig`].
+    #[error("failed to parse payer config: {0}")]
+    Parse(#[from] toml::de::Error),
     /// `max_expiry_secs` is zero, so no transaction could be co-signed.
     #[error("max_expiry_secs must be positive")]
     ZeroExpiry,
@@ -42,47 +47,6 @@ pub enum PayerConfigError {
         /// Summed deviation thresholds of the token's feeds.
         deviation_bps: u32,
     },
-    /// A feed proxy could not be resolved and verified.
-    #[error("failed to resolve feed proxy {proxy}: {source}")]
-    Feed {
-        /// Feed proxy.
-        proxy: Address,
-        /// Resolution error.
-        source: Box<FeedResolveError>,
-    },
-    /// An RPC request verifying a balance layout failed.
-    #[error("balance layout RPC request failed: {0}")]
-    Transport(#[from] TransportError),
-    /// `balanceOf` returned data that does not decode.
-    #[error("failed to decode {symbol} balanceOf output: {source}")]
-    Decode {
-        /// Token symbol.
-        symbol: String,
-        /// Decoding error.
-        source: alloy_sol_types::Error,
-    },
-    /// The probe holder has no balance, so it cannot verify the layout.
-    #[error("{symbol} probe holder {holder} has no balance")]
-    EmptyProbe {
-        /// Token symbol.
-        symbol: String,
-        /// Probe holder.
-        holder: Address,
-    },
-    /// The configured layout does not locate the probe holder's balance.
-    #[error(
-        "{symbol} balance layout reads {stored} for {holder}, but balanceOf returns {balance_of}"
-    )]
-    BalanceLayoutMismatch {
-        /// Token symbol.
-        symbol: String,
-        /// Probe holder.
-        holder: Address,
-        /// Balance read through the layout.
-        stored: U256,
-        /// Balance reported by the token.
-        balance_of: U256,
-    },
     /// The signing key is not the payer account's own key.
     #[error("signer {signer} cannot co-sign for payer {payer}")]
     SignerMismatch {
@@ -90,6 +54,41 @@ pub enum PayerConfigError {
         payer: Address,
         /// Signer address.
         signer: Address,
+    },
+}
+
+/// Error resolving a [`TokenConfig`] against chain state.
+#[derive(Debug, thiserror::Error)]
+pub enum TokenResolveError<E> {
+    /// A feed proxy could not be resolved and verified.
+    #[error("failed to resolve feed proxy {proxy}: {source}")]
+    Feed {
+        /// Feed proxy.
+        proxy: Address,
+        /// Resolution error.
+        source: Box<FeedResolveError<E>>,
+    },
+    /// `balanceOf` could not be called on the token.
+    #[error(transparent)]
+    BalanceOf(#[from] StateCallError<E>),
+    /// The balance slot could not be read.
+    #[error("failed to read balance slot: {0}")]
+    Database(E),
+    /// The probe holder has no balance, so it cannot verify the layout.
+    #[error("probe holder {holder} has no balance")]
+    EmptyProbe {
+        /// Probe holder.
+        holder: Address,
+    },
+    /// The configured layout does not locate the probe holder's balance.
+    #[error("balance layout reads {stored} for {holder}, but balanceOf returns {balance_of}")]
+    BalanceLayoutMismatch {
+        /// Probe holder.
+        holder: Address,
+        /// Balance read through the layout.
+        stored: U256,
+        /// Balance reported by the token.
+        balance_of: U256,
     },
 }
 
@@ -201,9 +200,75 @@ impl TokenConfig {
         };
         self.price.legs.iter().fold(quote, |total, leg| total.saturating_add(leg.deviation_bps))
     }
+
+    /// Resolves the token's feeds in `db` and verifies its balance layout
+    /// there.
+    pub fn resolve<DB: Database>(
+        &self,
+        db: &mut DB,
+        eth_usd: &FeedConfig,
+    ) -> Result<PayerToken, TokenResolveError<DB::Error>> {
+        let quote = match self.price.quote {
+            QuoteConfig::Eth => PriceQuote::Eth,
+            QuoteConfig::Usd => PriceQuote::Usd { eth_usd: Self::feed(db, eth_usd.proxy)? },
+        };
+        let legs = self
+            .price
+            .legs
+            .iter()
+            .map(|leg| Ok(PriceLeg { feed: Self::feed(db, leg.proxy)?, invert: leg.invert }))
+            .collect::<Result<_, TokenResolveError<DB::Error>>>()?;
+        self.verify_balance_layout(db)?;
+        Ok(PayerToken {
+            symbol: self.symbol.clone(),
+            address: self.address,
+            decimals: self.decimals,
+            spread_bps: self.spread_bps,
+            payment_gas: self.payment_gas,
+            price: PricePath { quote, legs },
+            balance: self.balance,
+        })
+    }
+
+    fn feed<DB: Database>(
+        db: &mut DB,
+        proxy: Address,
+    ) -> Result<ChainlinkFeed, TokenResolveError<DB::Error>> {
+        ChainlinkFeed::resolve(db, proxy)
+            .map_err(|source| TokenResolveError::Feed { proxy, source: Box::new(source) })
+    }
+
+    /// Checks that the balance read through the layout equals `balanceOf` for
+    /// the probe holder.
+    fn verify_balance_layout<DB: Database>(
+        &self,
+        db: &mut DB,
+    ) -> Result<(), TokenResolveError<DB::Error>> {
+        let holder = self.probe_holder;
+        let balance_of =
+            StateCall::call(db, self.address, &IERC20::balanceOfCall { account: holder })?;
+        if balance_of.is_zero() {
+            return Err(TokenResolveError::EmptyProbe { holder });
+        }
+        let word = db
+            .storage(self.address, self.balance.slot(holder))
+            .map_err(TokenResolveError::Database)?;
+        let stored = self.balance.balance(word);
+        if stored != balance_of {
+            return Err(TokenResolveError::BalanceLayoutMismatch { holder, stored, balance_of });
+        }
+        Ok(())
+    }
 }
 
 impl PayerConfig {
+    /// Reads and validates the TOML configuration at `path`.
+    pub fn load(path: &Path) -> Result<Self, PayerConfigError> {
+        let config: Self = toml::from_str(&std::fs::read_to_string(path)?)?;
+        config.validate()?;
+        Ok(config)
+    }
+
     /// Checks the configuration without reading chain state.
     pub fn validate(&self) -> Result<(), PayerConfigError> {
         if self.terms.max_expiry_secs == 0 {
@@ -228,96 +293,14 @@ impl PayerConfig {
         }
         Ok(())
     }
-
-    /// Validates the configuration, then resolves every feed and verifies every
-    /// balance layout against `provider`.
-    pub async fn resolve<P: Provider>(
-        &self,
-        provider: &P,
-    ) -> Result<Vec<PayerToken>, PayerConfigError> {
-        self.validate()?;
-        let mut eth_usd = None;
-        let mut tokens = Vec::with_capacity(self.tokens.len());
-        for token in &self.tokens {
-            let quote = match token.price.quote {
-                QuoteConfig::Eth => PriceQuote::Eth,
-                QuoteConfig::Usd => {
-                    let feed = match eth_usd {
-                        Some(feed) => feed,
-                        None => *eth_usd.insert(Self::feed(provider, self.eth_usd.proxy).await?),
-                    };
-                    PriceQuote::Usd { eth_usd: feed }
-                }
-            };
-            let mut legs = Vec::with_capacity(token.price.legs.len());
-            for leg in &token.price.legs {
-                legs.push(PriceLeg {
-                    feed: Self::feed(provider, leg.proxy).await?,
-                    invert: leg.invert,
-                });
-            }
-            Self::verify_balance_layout(provider, token).await?;
-            tokens.push(PayerToken {
-                symbol: token.symbol.clone(),
-                address: token.address,
-                decimals: token.decimals,
-                spread_bps: token.spread_bps,
-                payment_gas: token.payment_gas,
-                price: PricePath { quote, legs },
-                balance: token.balance,
-            });
-        }
-        Ok(tokens)
-    }
-
-    async fn feed<P: Provider>(
-        provider: &P,
-        proxy: Address,
-    ) -> Result<ChainlinkFeed, PayerConfigError> {
-        ChainlinkFeed::resolve(provider, proxy)
-            .await
-            .map_err(|source| PayerConfigError::Feed { proxy, source: Box::new(source) })
-    }
-
-    /// Checks that the balance read through the layout equals `balanceOf` for
-    /// the token's probe holder, both at the same block.
-    async fn verify_balance_layout<P: Provider>(
-        provider: &P,
-        token: &TokenConfig,
-    ) -> Result<(), PayerConfigError> {
-        let block = BlockId::number(provider.get_block_number().await?);
-        let holder = token.probe_holder;
-        let request = TransactionRequest::default().to(token.address).input(TransactionInput::new(
-            IERC20::balanceOfCall { account: holder }.abi_encode().into(),
-        ));
-        let output = provider.call(request).block(block).await?;
-        let balance_of = IERC20::balanceOfCall::abi_decode_returns(&output)
-            .map_err(|source| PayerConfigError::Decode { symbol: token.symbol.clone(), source })?;
-        if balance_of.is_zero() {
-            return Err(PayerConfigError::EmptyProbe { symbol: token.symbol.clone(), holder });
-        }
-        let word = provider
-            .get_storage_at(token.address, token.balance.slot(holder))
-            .block_id(block)
-            .await?;
-        let stored = token.balance.balance(word);
-        if stored != balance_of {
-            return Err(PayerConfigError::BalanceLayoutMismatch {
-                symbol: token.symbol.clone(),
-                holder,
-                stored,
-                balance_of,
-            });
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Bytes, U64};
-    use alloy_provider::ProviderBuilder;
-    use alloy_transport::mock::Asserter;
+    use alloy_primitives::Bytes;
+    use alloy_sol_types::SolCall;
+    use base_common_price_feed::test_utils::{MockFeed, ViewContract};
+    use revm::{bytecode::Bytecode, database::InMemoryDB, state::AccountInfo};
 
     use super::*;
 
@@ -399,49 +382,88 @@ mod tests {
         assert!(matches!(no_expiry.validate(), Err(PayerConfigError::ZeroExpiry)));
     }
 
-    /// Queues the responses verifying the balance layout of `config().tokens[0]`.
-    fn probe_responses(balance_of: u64, stored: U256) -> Asserter {
-        let asserter = Asserter::new();
-        asserter.push_success(&U64::from(51_951_686u64));
-        asserter.push_success(&Bytes::from(IERC20::balanceOfCall::abi_encode_returns(
-            &U256::from(balance_of),
-        )));
-        asserter.push_success(&stored);
-        asserter
+    fn install(db: &mut InMemoryDB, address: Address, code: Bytes) {
+        db.insert_account_info(address, AccountInfo::default().with_code(Bytecode::new_raw(code)));
     }
 
-    #[tokio::test]
-    async fn verifies_balance_layout_against_balance_of() {
-        let token = &config().tokens[0];
+    fn install_feed(db: &mut InMemoryDB, feed: &MockFeed) {
+        install(db, feed.proxy, feed.proxy_code());
+        install(db, feed.aggregator, feed.aggregator_code(feed.answer));
+        for (slot, value) in feed.aggregator_storage() {
+            db.insert_account_storage(feed.aggregator, slot, value).unwrap();
+        }
+    }
+
+    /// State pricing ETH at $2,000 and USDC at $1, with USDC reporting
+    /// `balance_of` for every holder and storing `stored` for the probe holder.
+    fn usdc_state(balance_of: u64, stored: U256) -> (InMemoryDB, FeedConfig, TokenConfig) {
+        let eth_usd = MockFeed::new(0xe1, 2_000 * 100_000_000);
+        let usdc_usd = MockFeed::new(0xe2, 100_000_000);
+        let mut token = config().tokens.remove(0);
+        token.price.legs[0].proxy = usdc_usd.proxy;
+
+        let mut db = InMemoryDB::default();
+        install_feed(&mut db, &eth_usd);
+        install_feed(&mut db, &usdc_usd);
+        install(
+            &mut db,
+            token.address,
+            ViewContract::new()
+                .returns(
+                    IERC20::balanceOfCall::SELECTOR,
+                    IERC20::balanceOfCall::abi_encode_returns(&U256::from(balance_of)),
+                )
+                .bytecode(),
+        );
+        db.insert_account_storage(token.address, token.balance.slot(token.probe_holder), stored)
+            .unwrap();
+        (db, FeedConfig { proxy: eth_usd.proxy, deviation_bps: 15 }, token)
+    }
+
+    #[test]
+    fn resolves_feeds_and_verifies_balance_layout() {
         let blacklisted = (U256::from(1) << 255) | U256::from(79_178_602_637u64);
-        let provider = ProviderBuilder::new()
-            .connect_mocked_client(probe_responses(79_178_602_637, blacklisted));
+        let (mut db, eth_usd, config) = usdc_state(79_178_602_637, blacklisted);
 
-        PayerConfig::verify_balance_layout(&provider, token).await.unwrap();
+        let token = config.resolve(&mut db, &eth_usd).unwrap();
+
+        assert_eq!(token.price.quote, PriceQuote::Usd { eth_usd: MockFeed::new(0xe1, 0).feed() });
+        assert_eq!(
+            token.price.legs,
+            vec![PriceLeg { feed: MockFeed::new(0xe2, 0).feed(), invert: false }]
+        );
+        assert_eq!(token.address, config.address);
     }
 
-    #[tokio::test]
-    async fn rejects_balance_layout_that_misses_the_probe_balance() {
-        let token = &config().tokens[0];
-        let provider = ProviderBuilder::new()
-            .connect_mocked_client(probe_responses(79_178_602_637, U256::ZERO));
+    #[test]
+    fn rejects_balance_layout_that_misses_the_probe_balance() {
+        let (mut db, eth_usd, config) = usdc_state(79_178_602_637, U256::ZERO);
 
-        let error = PayerConfig::verify_balance_layout(&provider, token).await.unwrap_err();
+        let error = config.resolve(&mut db, &eth_usd).unwrap_err();
 
         assert!(matches!(
             error,
-            PayerConfigError::BalanceLayoutMismatch { holder, stored, .. }
-                if holder == token.probe_holder && stored.is_zero()
+            TokenResolveError::BalanceLayoutMismatch { holder, stored, .. }
+                if holder == config.probe_holder && stored.is_zero()
         ));
     }
 
-    #[tokio::test]
-    async fn rejects_empty_probe_holder() {
-        let token = &config().tokens[0];
-        let provider = ProviderBuilder::new().connect_mocked_client(probe_responses(0, U256::ZERO));
+    #[test]
+    fn rejects_empty_probe_holder() {
+        let (mut db, eth_usd, config) = usdc_state(0, U256::ZERO);
 
-        let error = PayerConfig::verify_balance_layout(&provider, token).await.unwrap_err();
+        let error = config.resolve(&mut db, &eth_usd).unwrap_err();
 
-        assert!(matches!(error, PayerConfigError::EmptyProbe { .. }));
+        assert!(matches!(error, TokenResolveError::EmptyProbe { .. }));
+    }
+
+    #[test]
+    fn rejects_token_whose_feed_is_missing() {
+        let (mut db, _, config) = usdc_state(1, U256::from(1));
+        let missing = FeedConfig { proxy: Address::repeat_byte(0x99), deviation_bps: 15 };
+
+        let error = config.resolve(&mut db, &missing).unwrap_err();
+
+        assert!(matches!(error, TokenResolveError::Feed { proxy, .. } if proxy == missing.proxy));
     }
 }
