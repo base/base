@@ -517,8 +517,8 @@ mod tests {
             block_info: BlockInfo {
                 number: 300,
                 hash: B256::repeat_byte(0x33),
+                parent_hash: B256::with_last_byte(299_u64 as u8),
                 timestamp: cfg.l2_block_timestamp(300),
-                ..Default::default()
             },
             l1_origin: origin.id(),
             ..Default::default()
@@ -548,6 +548,7 @@ mod tests {
                     block_info: BlockInfo {
                         number,
                         hash: B256::with_last_byte(number as u8),
+                        parent_hash: B256::with_last_byte(number.saturating_sub(1) as u8),
                         ..Default::default()
                     },
                     ..Default::default()
