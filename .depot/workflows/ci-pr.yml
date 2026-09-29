@@ -6,7 +6,9 @@ on:
     types: [opened, reopened, synchronize, labeled]
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  # A label is an explicit request for an optional suite. Do not discard useful
+  # build/test work already in flight merely to service that request.
+  cancel-in-progress: ${{ github.event.action != 'labeled' }}
 permissions:
   checks: write
   contents: read

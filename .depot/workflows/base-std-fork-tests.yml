@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event.action != 'labeled' }}
 env:
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: "sccache"
@@ -24,6 +24,9 @@ permissions:
 jobs:
   changes:
     name: Detect Base Std Interface Changes
+    # Merge-queue and manual runs always execute the matrix, so path detection
+    # is only useful for a PR.
+    if: github.event_name == 'pull_request'
     runs-on: depot-ubuntu-latest
     permissions:
       contents: read
@@ -57,10 +60,10 @@ jobs:
     name: Base Std Interface Tests (${{ matrix.fork }})
     needs: changes
     if: >-
-      github.event_name != 'pull_request' ||
+      always() && (github.event_name != 'pull_request' ||
       needs.changes.outputs.base-std == 'true' ||
       contains(github.event.pull_request.labels.*.name, 'ci:base-std') ||
-      contains(github.event.pull_request.labels.*.name, 'ci:full')
+      contains(github.event.pull_request.labels.*.name, 'ci:full'))
     runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 120
     strategy:

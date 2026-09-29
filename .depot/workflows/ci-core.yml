@@ -76,9 +76,9 @@ jobs:
               - 'crates/execution/trie/**'
               - 'etc/scripts/ci/**'
               - '.depot/workflows/ci-core.yml'
-            # A deliberately broad integration boundary. Add paths here rather
-            # than relying on an unrelated PR to exercise them; merge-queue CI
-            # remains exhaustive regardless of this PR-only filter.
+            # System tests link most of the workspace directly or transitively.
+            # Keep this broad: a false positive costs a runner, while a false
+            # negative can defer an integration regression until merge queue.
             system-tests:
               - 'Cargo.toml'
               - 'Cargo.lock'
@@ -93,26 +93,8 @@ jobs:
               - '.env.sepolia'
               - '.depot/actions/setup/**'
               - '.depot/workflows/ci-core.yml'
-              - 'bin/base/**'
-              - 'bin/node/**'
-              - 'bin/builder/**'
-              - 'bin/proposer/**'
-              - 'bin/challenger/**'
-              - 'crates/batcher/**'
-              - 'crates/builder/**'
-              - 'crates/consensus/**'
-              - 'crates/execution/node/**'
-              - 'crates/execution/consensus/**'
-              - 'crates/execution/payload/**'
-              - 'crates/execution/runner/**'
-              - 'crates/execution/txpool/**'
-              - 'crates/execution/tx-forwarding/**'
-              - 'crates/execution/flashblocks/**'
-              - 'crates/execution/flashblocks-node/**'
-              - 'crates/execution/chainspec/**'
-              - 'crates/infra/**'
-              - 'crates/proof/**'
-              - 'crates/utilities/test-utils/**'
+              - 'bin/**'
+              - 'crates/**'
   metadata-checks:
     name: Metadata Checks
     runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
