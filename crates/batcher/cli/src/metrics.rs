@@ -1,3 +1,5 @@
+//! Prometheus histogram buckets for the batcher metrics.
+
 use metrics_exporter_prometheus::{BuildError, Matcher, PrometheusBuilder};
 
 const COMPRESSION_RATIO_BUCKETS: &[f64] =

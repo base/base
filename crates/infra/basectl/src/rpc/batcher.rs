@@ -97,6 +97,7 @@ mod tests {
             })
             .unwrap();
         module.register_method("admin_stopBatcher", |_, _, _| ()).unwrap();
+        module.register_method("admin_startBatcher", |_, _, _| ()).unwrap();
         module
             .register_method("admin_flushBatcher", |_, _, _| {
                 Err::<(), _>(ErrorObjectOwned::owned(-32002, "batcher is stopped", None::<()>))
@@ -111,6 +112,7 @@ mod tests {
         assert_eq!(status, BatcherStatus { stopped: true, in_flight: 2, da_backlog_bytes: 7 });
 
         BatcherClient::stop(&rpc).await.unwrap();
+        BatcherClient::start(&rpc).await.unwrap();
 
         let error = BatcherClient::flush(&rpc).await.unwrap_err().to_string();
         assert_eq!(

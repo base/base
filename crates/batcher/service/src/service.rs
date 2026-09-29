@@ -744,6 +744,7 @@ mod tests {
     use alloy_primitives::Address;
     use base_batcher_core::ThrottleConfig;
     use base_common_genesis::RollupConfig;
+    use base_protocol::SyncStatus;
     use base_tx_manager::SignerConfig;
     use httpmock::{Mock, prelude::*};
     use rstest::rstest;
@@ -828,71 +829,85 @@ mod tests {
         )
         .await
         .expect_err("retry should time out while the RPC keeps failing");
-        assert!(
-            error.to_string().contains("test-op"),
-            "timeout error should name the operation, got {error}"
-        );
+        assert_eq!(error.to_string(), "test-op timed out after 20ms");
     }
 
-    #[tokio::test]
-    async fn setup_rejects_zero_max_pending_transactions() {
-        let config = BatcherConfig { max_pending_transactions: 0, ..BatcherConfig::default() };
-
-        let error = BatcherService::new(config)
-            .setup(TokioRuntime::new())
-            .await
-            .expect_err("a batcher that can never submit must not start");
-
-        assert!(
-            error.to_string().contains("max_pending_transactions"),
-            "error should name the setting, got {error}"
-        );
-    }
-
-    /// Shadow mode requires the parity validator L2 RPC URL and canonical mode rejects it.
+    /// Setup refuses a config the batcher cannot run before connecting to anything.
     #[rstest]
-    #[case::shadow_without_url(
-        Some(Address::ZERO),
-        None,
+    #[case::zero_max_pending_transactions(
+        BatcherConfig { max_pending_transactions: 0, ..BatcherConfig::default() },
+        "max_pending_transactions must be greater than zero: the batcher would never submit a \
+         transaction"
+    )]
+    #[case::stopped_without_admin_server(
+        BatcherConfig { stopped: true, ..BatcherConfig::default() },
+        "--stopped requires --admin-port: the batcher would start stopped with no way to start \
+         it because the admin JSON-RPC server is not enabled"
+    )]
+    #[case::recent_txs_without_node_sync(
+        BatcherConfig { check_recent_txs_depth: 1, ..BatcherConfig::default() },
+        "check_recent_txs_depth requires wait_node_sync"
+    )]
+    #[case::shadow_without_parity_validator(
+        BatcherConfig { batch_inbox_override: Some(Address::ZERO), ..BatcherConfig::default() },
         "shadow mode requires a parity validator L2 RPC URL"
     )]
-    #[case::canonical_with_url(
-        None,
-        Some("http://127.0.0.1:1"),
+    #[case::parity_validator_without_shadow(
+        BatcherConfig {
+            parity_validator_l2_rpc_url: Some("http://127.0.0.1:1".parse().unwrap()),
+            ..BatcherConfig::default()
+        },
         "parity validator L2 RPC URL requires shadow mode"
     )]
+    #[case::throttle_with_a_zero_limit(
+        BatcherConfig {
+            throttle: Some(ThrottleConfig { block_size_lower_limit: 0, ..ThrottleConfig::default() }),
+            ..BatcherConfig::default()
+        },
+        "block_size_lower_limit must be greater than zero"
+    )]
     #[tokio::test]
-    async fn setup_rejects_a_parity_validator_url_that_does_not_match_shadow_mode(
-        #[case] batch_inbox_override: Option<Address>,
-        #[case] parity_validator_l2_rpc_url: Option<&str>,
+    async fn setup_refuses_a_config_it_cannot_run(
+        #[case] config: BatcherConfig,
         #[case] expected: &str,
     ) {
-        let config = BatcherConfig {
-            batch_inbox_override,
-            parity_validator_l2_rpc_url: parity_validator_l2_rpc_url
-                .map(|url| url.parse().unwrap()),
-            ..BatcherConfig::default()
-        };
-
-        let error = BatcherService::new(config)
-            .setup(TokioRuntime::new())
-            .await
-            .expect_err("a batcher whose endpoints do not match its mode must not start");
+        let error = BatcherService::new(config).setup(TokioRuntime::new()).await.unwrap_err();
 
         assert_eq!(error.to_string(), expected);
     }
 
+    /// Startup goes on once the rollup node has processed the L1 target, and gives up at the
+    /// timeout while the node is behind it.
+    #[rstest]
+    #[case::reached(5, Ok(()))]
+    #[case::behind(6, Err("wait_for_node_sync timed out"))]
     #[tokio::test]
-    async fn setup_rejects_invalid_throttle_config() {
-        let throttle = ThrottleConfig { block_size_lower_limit: 0, ..ThrottleConfig::default() };
-        let config = BatcherConfig { throttle: Some(throttle), ..BatcherConfig::default() };
+    async fn wait_for_node_sync_waits_for_the_l1_target(
+        #[case] target_l1: u64,
+        #[case] expected: Result<(), &str>,
+    ) {
+        let server = MockServer::start_async().await;
+        let status = SyncStatus {
+            current_l1: BlockInfo { number: 5, ..Default::default() },
+            ..Default::default()
+        };
+        mock_rpc(
+            &server,
+            r#"{"method":"optimism_syncStatus"}"#,
+            serde_json::to_string(&status).unwrap(),
+        )
+        .await;
+        let client = HttpClientBuilder::default().build(server.url("/")).unwrap();
 
-        let error = BatcherService::new(config)
-            .setup(TokioRuntime::new())
-            .await
-            .expect_err("a throttle that can send a zero limit must not start");
+        let result = BatcherService::wait_for_node_sync(
+            &client,
+            target_l1,
+            Duration::from_millis(10),
+            Duration::from_millis(100),
+        )
+        .await;
 
-        assert_eq!(error.to_string(), "block_size_lower_limit must be greater than zero");
+        assert_eq!(result.map_err(|error| error.to_string()), expected.map_err(String::from));
     }
 
     #[tokio::test]
@@ -954,7 +969,7 @@ mod tests {
         let anvil = Anvil::new().spawn();
         let mut heads = BatcherService::build_l1_head_stream(Some(&anvil.ws_endpoint_url())).await;
 
-        // The builder has returned: the stream alone must keep the WS provider alive.
+        // The builder has returned, so the stream alone must keep the WS provider alive.
         let miner = RootProvider::<Base>::new_http(anvil.endpoint_url());
         for expected in 1..=2 {
             miner.raw_request::<(), String>("evm_mine".into(), ()).await.unwrap();

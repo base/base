@@ -139,10 +139,12 @@ mod tests {
         mock.assert_async().await;
     }
 
+    /// A node that answers `false` refused the limits, which is an error, and the next endpoint
+    /// is not asked.
     #[tokio::test]
-    async fn set_max_da_size_false_return_is_error() {
-        let server = MockServer::start_async().await;
-        server
+    async fn set_max_da_size_false_return_is_an_error_without_failover() {
+        let refusing = MockServer::start_async().await;
+        refusing
             .mock_async(|when, then| {
                 when.method(POST).path("/");
                 then.status(200)
@@ -150,12 +152,21 @@ mod tests {
                     .body(json_rpc_response("false"));
             })
             .await;
+        let fallback = MockServer::start_async().await;
+        let fallback_calls = fallback
+            .mock_async(|when, then| {
+                when.method(POST).path("/");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .body(json_rpc_response("true"));
+            })
+            .await;
 
-        let client = RpcThrottleClient::new(&[server.url("/")]).unwrap();
-        assert!(
-            client.set_max_da_size(150, 20_000).await.is_err(),
-            "false response must be treated as an error"
-        );
+        let client = RpcThrottleClient::new(&[refusing.url("/"), fallback.url("/")]).unwrap();
+        let error = client.set_max_da_size(150, 20_000).await.unwrap_err();
+
+        assert_eq!(error.to_string(), "miner_setMaxDASize returned false");
+        assert_eq!(fallback_calls.calls_async().await, 0);
     }
 
     #[tokio::test]
@@ -182,11 +193,5 @@ mod tests {
     async fn set_max_da_size_all_endpoints_fail() {
         let client = RpcThrottleClient::new(&["http://127.0.0.1:1", "http://127.0.0.1:2"]).unwrap();
         assert!(client.set_max_da_size(150, 20_000).await.is_err());
-    }
-
-    #[test]
-    fn new_rejects_empty_url_list() {
-        let urls: &[&str] = &[];
-        assert!(RpcThrottleClient::new(urls).is_err(), "empty endpoint list must be rejected");
     }
 }

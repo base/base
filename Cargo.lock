@@ -3122,6 +3122,7 @@ dependencies = [
  "httpmock",
  "jsonrpsee",
  "metrics",
+ "mockall",
  "rstest",
  "serde_json",
  "tokio",

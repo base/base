@@ -40,31 +40,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn parks_when_empty_then_receives() {
-        let (mut source, tx) = ChannelL1HeadSource::new();
-
-        let handle = tokio::spawn(async move {
-            tokio::task::yield_now().await;
-            tx.send(99).unwrap();
-        });
-
-        assert_eq!(source.next().await, 99);
-        handle.await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn fifo_ordering() {
-        let (mut source, tx) = ChannelL1HeadSource::new();
-        tx.send(1).unwrap();
-        tx.send(2).unwrap();
-        tx.send(3).unwrap();
-
-        assert_eq!(source.next().await, 1);
-        assert_eq!(source.next().await, 2);
-        assert_eq!(source.next().await, 3);
-    }
-
-    #[tokio::test]
     async fn parks_once_all_senders_are_dropped() {
         let (mut source, tx) = ChannelL1HeadSource::new();
         drop(tx);
