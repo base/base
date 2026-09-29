@@ -41,6 +41,7 @@ alloy-primitives = { workspace = true, features = ["serde", "std"] }
 jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 
 [dev-dependencies]
+rstest.workspace = true
 httpmock.workspace = true
 alloy-node-bindings.workspace = true
 base-runtime = { workspace = true, features = ["test-utils"] }

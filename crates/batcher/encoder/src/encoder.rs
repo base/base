@@ -635,12 +635,12 @@ impl BatchPipeline for BatchEncoder {
     fn reconcile_derivation(
         &mut self,
         safe_l2: BlockInfo,
-        current_l1: Option<u64>,
+        current_l1: u64,
     ) -> DerivationReconciliation {
         if !self.prune_safe(safe_l2) {
             return DerivationReconciliation::SafeHeadMismatch;
         }
-        if current_l1.is_some_and(|current_l1| self.is_derivation_stalled(current_l1, safe_l2)) {
+        if self.is_derivation_stalled(current_l1, safe_l2) {
             return DerivationReconciliation::StalledChannel;
         }
         DerivationReconciliation::Consistent
@@ -1734,24 +1734,19 @@ mod tests {
 
         let previous_safe_l2 = BlockInfo { number: 100, ..Default::default() };
         assert_eq!(
-            encoder.reconcile_derivation(previous_safe_l2, None),
-            DerivationReconciliation::Consistent,
-            "providers without a derivation cursor cannot prove the channel stalled",
-        );
-        assert_eq!(
-            encoder.reconcile_derivation(previous_safe_l2, Some(1_000)),
+            encoder.reconcile_derivation(previous_safe_l2, 1_000),
             DerivationReconciliation::Consistent,
             "the current L1 block may still be processing",
         );
         assert_eq!(
-            encoder.reconcile_derivation(previous_safe_l2, Some(1_001)),
+            encoder.reconcile_derivation(previous_safe_l2, 1_001),
             DerivationReconciliation::StalledChannel,
             "passing the last inclusion without making the channel safe requires replay",
         );
         assert_eq!(
             encoder.reconcile_derivation(
                 BlockInfo { hash: block_hash, number: 101, ..Default::default() },
-                Some(1_001),
+                1_001,
             ),
             DerivationReconciliation::Consistent,
             "a safe head covering the channel does not require replay",

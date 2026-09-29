@@ -536,6 +536,13 @@ mod tests {
             pending().await
         }
 
+        async fn l2_block_info_by_hash(
+            &mut self,
+            _: alloy_primitives::B256,
+        ) -> Result<L2BlockInfo, Self::Error> {
+            unreachable!()
+        }
+
         async fn block_by_number(&mut self, _: u64) -> Result<BaseBlock, Self::Error> {
             unreachable!()
         }

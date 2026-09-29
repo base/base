@@ -63,7 +63,7 @@ use alloy_rpc_types_eth::Filter;
 use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_network::Base;
 use base_common_rpc_types::{BaseLogResponse, BaseRpcTypes, BaseTransactionRequest};
-use base_execution_eip8130_rpc::{ChannelNonceReader, Eip8130GasEstimator, Eip8130ZenithGate};
+use base_execution_eip8130_rpc::{ChannelNonceReader, Eip8130EverestGate, Eip8130GasEstimator};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -220,13 +220,9 @@ where
             if pending_blocks.as_ref().is_some() {
                 return Ok(pending_blocks.get_block(full));
             }
-            // No pending state available — treat `pending` as `latest`
-            EthBlocks::rpc_block(&self.eth_api, BlockNumberOrTag::Latest.into(), full)
-                .await
-                .map_err(Into::into)
-        } else {
-            EthBlocks::rpc_block(&self.eth_api, number.into(), full).await.map_err(Into::into)
         }
+
+        EthBlocks::rpc_block(&self.eth_api, number.into(), full).await.map_err(Into::into)
     }
 
     async fn get_transaction_receipt(
@@ -296,14 +292,18 @@ where
         if let Some(key) = nonce_key
             && key != U256::ZERO
         {
-            Eip8130ZenithGate::check(&self.eth_api, block_id)?;
+            Eip8130EverestGate::check(&self.eth_api, block_id)?;
             Metrics::rpc_get_transaction_count().increment(1);
             let (resolved_block, overrides) = if block_id.is_pending() {
                 let pending_blocks = self.flashblocks_state.get_pending_blocks();
-                (
-                    pending_blocks.get_canonical_block_number().into(),
-                    pending_blocks.get_state_overrides(),
-                )
+                if pending_blocks.is_some() {
+                    (
+                        pending_blocks.get_canonical_block_number().into(),
+                        pending_blocks.get_state_overrides(),
+                    )
+                } else {
+                    (block_id, None)
+                }
             } else {
                 (block_id, None)
             };
@@ -322,15 +322,17 @@ where
         if block_id.is_pending() {
             Metrics::rpc_get_transaction_count().increment(1);
             let pending_blocks = self.flashblocks_state.get_pending_blocks();
-            let canon_block = pending_blocks.get_canonical_block_number();
-            let fb_count = pending_blocks.get_transaction_count(address);
+            if pending_blocks.is_some() {
+                let canon_block = pending_blocks.get_canonical_block_number();
+                let fb_count = pending_blocks.get_transaction_count(address);
 
-            let canon_count =
-                EthState::transaction_count(&self.eth_api, address, Some(canon_block.into()))
-                    .await
-                    .map_err(Into::into)?;
+                let canon_count =
+                    EthState::transaction_count(&self.eth_api, address, Some(canon_block.into()))
+                        .await
+                        .map_err(Into::into)?;
 
-            return Ok(canon_count + fb_count);
+                return Ok(canon_count + fb_count);
+            }
         }
 
         EthState::transaction_count(&self.eth_api, address, block_number).await.map_err(Into::into)
@@ -443,8 +445,10 @@ where
         if block_id.is_pending() {
             Metrics::rpc_call().increment(1);
             let pending_blocks = self.flashblocks_state.get_pending_blocks();
-            block_id = pending_blocks.get_canonical_block_number().into();
-            pending_overrides.state = pending_blocks.get_state_overrides();
+            if pending_blocks.is_some() {
+                block_id = pending_blocks.get_canonical_block_number().into();
+                pending_overrides.state = pending_blocks.get_state_overrides();
+            }
         }
 
         // Apply user's overrides on top
@@ -484,8 +488,10 @@ where
         if block_id.is_pending() {
             Metrics::rpc_estimate_gas().increment(1);
             let pending_blocks = self.flashblocks_state.get_pending_blocks();
-            block_id = pending_blocks.get_canonical_block_number().into();
-            pending_overrides.state = pending_blocks.get_state_overrides();
+            if pending_blocks.is_some() {
+                block_id = pending_blocks.get_canonical_block_number().into();
+                pending_overrides.state = pending_blocks.get_state_overrides();
+            }
         }
 
         let mut state_overrides_builder =
@@ -494,11 +500,11 @@ where
         let final_overrides = state_overrides_builder.build();
 
         // EIP-8130 request: estimate via a single read-only simulation against
-        // the (pending-merged) block state, gated on the Zenith fork. The
+        // the (pending-merged) block state, gated on the Everest fork. The
         // deterministic, signature-independent EIP-8130 gas charge means no
         // gas-limit binary search is needed.
         if transaction.as_eip8130().is_some() {
-            Eip8130ZenithGate::check(&self.eth_api, block_id)?;
+            Eip8130EverestGate::check(&self.eth_api, block_id)?;
             return Eip8130GasEstimator::estimate(
                 &self.eth_api,
                 transaction,
@@ -535,8 +541,10 @@ where
         if block_id.is_pending() {
             Metrics::rpc_simulate_v1().increment(1);
             let pending_blocks = self.flashblocks_state.get_pending_blocks();
-            block_id = pending_blocks.get_canonical_block_number().into();
-            pending_overrides.state = pending_blocks.get_state_overrides();
+            if pending_blocks.is_some() {
+                block_id = pending_blocks.get_canonical_block_number().into();
+                pending_overrides.state = pending_blocks.get_state_overrides();
+            }
         }
 
         // Prepend flashblocks pending overrides to the block state calls
@@ -584,6 +592,9 @@ where
         let mut all_logs = Vec::new();
 
         let pending_blocks = self.flashblocks_state.get_pending_blocks();
+        if pending_blocks.is_none() {
+            return self.eth_filter.logs(filter).await;
+        }
 
         let mut fetched_logs = HashSet::new();
         // Get historical logs if fromBlock is not pending
@@ -634,14 +645,6 @@ where
                 let count = block.transactions.len();
                 return Ok(Some(U256::from(count)));
             }
-            // No pending state available — treat `pending` as `latest`
-            return EthBlocks::block_transaction_count(
-                &self.eth_api,
-                BlockNumberOrTag::Latest.into(),
-            )
-            .await
-            .map(|opt| opt.map(U256::from))
-            .map_err(Into::into);
         }
 
         EthBlocks::block_transaction_count(&self.eth_api, number.into())

@@ -44,5 +44,8 @@ the shadow submissions. Do not add permanent production consensus bypass logic
 just to support this rollout.
 
 Shadow deployments use an isolated parity validator to derive their submitted
-data. The batcher compares its derived L2 block hashes with the canonical
-sequencer through `--parity-validator-l2-rpc-url`.
+data. `--rollup-rpc-url` points at the validator's rollup node, because the
+batcher follows the derivation of the inbox it posts to. The batcher refuses to
+start if that node derives another inbox. `--parity-validator-l2-rpc-url` points
+at the validator's L2 RPC, whose derived blocks the batcher compares with the
+canonical sequencer's.

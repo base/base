@@ -22,8 +22,8 @@ use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
     AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
-    IntrinsicGasInput, LockStatus, NonceError, NonceMode, NonceValidator, TransactionAuthorizer,
-    TxAuthError,
+    IntrinsicGasError, IntrinsicGasInput, LockStatus, NonceError, NonceMode, NonceValidator,
+    TransactionAuthorizer, TxAuthError,
 };
 use base_precompile_storage::{
     BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
@@ -884,7 +884,7 @@ where
     /// This behaves the same as [`EthTransactionValidator::validate_one_with_state`], but in
     /// addition applies Base-specific validity checks:
     /// - ensures tx is not eip4844
-    /// - for eip8130 (account abstraction): rejects submissions before the Zenith upgrade is
+    /// - for eip8130 (account abstraction): rejects submissions before the Everest upgrade is
     ///   active, runs structural checks, then runs EIP-8130-specific stateful validation for
     ///   actor authorization, nonce/replay state, intrinsic gas, create/delegation safety, and
     ///   payer funding instead of using the inner Eth validator
@@ -1084,20 +1084,6 @@ where
 
         let (nonce_key_first_use, sender_nonce) =
             self.eip8130_nonce_state(&*state, local_chain_id, now, signed, sender, protocol_nonce)?;
-        // Pin auto-delegation to the body-derivable worst case
-        // ([`IntrinsicGasInput::sender_auto_delegated`]), the *same* classifier the
-        // `eth_estimateGas` estimate uses. It intentionally ignores the sender's
-        // current on-chain code state: a sender already delegated (has code) at
-        // admission time may lose its delegation before inclusion (e.g. a native
-        // EIP-7702 revocation), so always budgeting `DELEGATION_DEPOSIT_COST` in
-        // `gas_limit` prevents a hard intrinsic-gas error at block production. The
-        // overestimate is safe: if execution finds the sender already has code,
-        // `auto_delegate_codeless_sender` is a no-op and the reserved gas flows into
-        // execution gas instead. Sharing the classifier with estimation keeps
-        // admission from exceeding the estimate (which would reject a
-        // `gas_limit == estimate` submission with `GasTooLow`).
-        let sender_auto_delegated =
-            IntrinsicGasInput::sender_auto_delegated(&signed.tx().account_changes);
         let encoded = self.eip8130_encoded(signed);
         // Admission uses the same safe ceiling as `eth_estimateGas`, so a tx whose
         // `gas_limit` was set from the estimate is never rejected here and can
@@ -1108,12 +1094,19 @@ where
             signed,
             encoded.as_ref(),
             &IntrinsicGasInput::worst_case(
+                sender,
                 nonce_key_first_use,
-                sender_auto_delegated,
                 signed.tx().payer.is_some(),
             ),
         )
-        .map_err(|_| Self::eip8130_error("intrinsic gas computation failed"))?;
+        .map_err(|err| {
+            Self::eip8130_error(match err {
+                IntrinsicGasError::PayerAuthGasExceeded(_) => {
+                    "payer authentication gas exceeds MAX_AUTHENTICATION_GAS"
+                }
+                _ => "intrinsic gas computation failed",
+            })
+        })?;
         if intrinsic.execution_gas_available(signed.tx().gas_limit).is_none() {
             return Err(InvalidTransactionError::GasTooLow.into());
         }
@@ -1254,9 +1247,19 @@ where
         } else {
             U256::ZERO
         };
+        // Calls move `call.value` out of the sender, not the payer. A self-paying
+        // sender reserves it alongside gas; a sponsored sender must hold it alone.
+        let call_value = signed.tx().sender_call_value(sender);
         let payer_max_cost = gas_charge
             .saturating_add(additional_fee)
-            .saturating_add(if payer == sender { signed.tx().value() } else { U256::ZERO });
+            .saturating_add(if payer == sender { call_value } else { U256::ZERO });
+        let sender_obligation = if payer == sender { payer_max_cost } else { call_value };
+        if sender_account.balance < sender_obligation {
+            return Err(InvalidTransactionError::InsufficientFunds(
+                GotExpected { got: sender_account.balance, expected: sender_obligation }.into(),
+            )
+            .into());
+        }
         // All three predicates are now inclusive block-timestamp *second* bounds
         // (`now <= bound`): the transaction's millisecond window is folded onto
         // the seconds axis by `tx_valid_before_secs`, which is nonce-mode-aware
@@ -1674,7 +1677,7 @@ where
 
     /// Runs the mempool admission checks that apply to EIP-8130 (account
     /// abstraction) transactions without requiring authenticator dispatch or account
-    /// state lookups. Enforces the Zenith fork gate and the structural
+    /// state lookups. Enforces the Everest fork gate and the structural
     /// invariants listed in EIP-8130 § Validation and § Nonce-Free Mode.
     fn validate_eip8130_structural(
         &self,
@@ -1694,8 +1697,8 @@ where
         // the atomic concurrently.
         let now = self.block_timestamp();
         // Fork gate: EIP-8130 (account abstraction) transactions are only
-        // admissible to the pool once the Zenith upgrade is active.
-        if !self.chain_spec().is_zenith_active_at_timestamp(now) {
+        // admissible to the pool once the Everest upgrade is active.
+        if !self.chain_spec().is_everest_active_at_timestamp(now) {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
         let local_chain_id = self.inner.chain_spec().chain().id();
@@ -1794,28 +1797,19 @@ where
     }
 
     /// Returns `true` when an authenticator selector may be used directly on the
-    /// EIP-8130 transaction validation path.
+    /// EIP-8130 transaction validation path. Only the native k1 authenticator
+    /// is accepted.
     fn authenticator_allowed_for_tx_path(authenticator: &Address) -> bool {
         *authenticator == Eip8130Constants::K1_AUTHENTICATOR
-            || Eip8130Contracts::is_canonical_authenticator(authenticator)
     }
 
-    /// Performs cheap selector-specific wire checks that do not require running
-    /// an authenticator. Native k1 must carry exactly `r || s || v`; delegated
-    /// auth must be depth-1 and name a canonical nested authenticator.
+    /// Performs the cheap k1 wire check that does not require running an
+    /// authenticator. Native k1 must carry exactly `r || s || v`.
+    ///
+    /// Callers reject every other selector in [`Self::authenticator_allowed_for_tx_path`]
+    /// before this runs, so a delegate-authenticator shape is not checked here.
     fn authenticator_payload_well_formed(authenticator: &Address, data: &[u8]) -> bool {
-        if *authenticator == Eip8130Constants::K1_AUTHENTICATOR {
-            return data.len() == 65;
-        }
-        if *authenticator == Eip8130Contracts::DELEGATE_AUTHENTICATOR {
-            if data.len() < 40 {
-                return false;
-            }
-            let nested = Address::from_slice(&data[20..40]);
-            return nested != Eip8130Contracts::DELEGATE_AUTHENTICATOR
-                && Self::authenticator_allowed_for_tx_path(&nested);
-        }
-        true
+        *authenticator == Eip8130Constants::K1_AUTHENTICATOR && data.len() == 65
     }
 
     /// Enforces the interim total-account-changes admission cap
@@ -2164,13 +2158,13 @@ mod tests {
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         AccountChange, AccountChangeChannel, BasePrimitives, BaseTransactionSigned, BaseTxEnvelope,
-        ChangeType, CreateEntry, Delegation, Eip8130Constants, Eip8130Signed, InitialActor,
+        Call, ChangeType, CreateEntry, Delegation, Eip8130Constants, Eip8130Signed, InitialActor,
         SignedAccountChanges, SignedChange, TxDeposit, TxEip8130,
     };
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_eip8130::{AccountChangeApplier, ConfigChangeAuthorizer};
     use base_execution_evm::BaseEvmConfig;
-    use base_test_utils::{Account, build_test_genesis_zenith};
+    use base_test_utils::{Account, build_test_genesis_everest};
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_transaction_pool::{
         TransactionOrigin, TransactionValidationOutcome, blobstore::InMemoryBlobStore,
@@ -2186,8 +2180,8 @@ mod tests {
         BaseEvmConfig,
     >;
 
-    fn zenith_chain_spec() -> Arc<BaseChainSpec> {
-        let mut genesis = build_test_genesis_zenith();
+    fn everest_chain_spec() -> Arc<BaseChainSpec> {
+        let mut genesis = build_test_genesis_everest();
         genesis.config.chain_id = test_chain_id();
         Arc::new(BaseChainSpec::from_genesis(genesis))
     }
@@ -2206,16 +2200,16 @@ mod tests {
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
     }
 
-    /// Builds a [`BaseTransactionValidator`] against a Zenith-activated test chain spec with
-    /// no accounts seeded. EIP-8130 admission is fork-gated on Zenith, so the structural-gate
-    /// tests run with Zenith active (at genesis) to exercise the checks past the fork gate.
+    /// Builds a [`BaseTransactionValidator`] against an Everest-activated test chain spec with
+    /// no accounts seeded. EIP-8130 admission is fork-gated on Everest, so the structural-gate
+    /// tests run with Everest active (at genesis) to exercise the checks past the fork gate.
     fn build_test_validator() -> TestValidator {
-        build_test_validator_with_spec(zenith_chain_spec())
+        build_test_validator_with_spec(everest_chain_spec())
     }
 
-    /// Builds a Zenith-activated validator with a custom encoded transaction-size limit.
+    /// Builds an Everest-activated validator with a custom encoded transaction-size limit.
     fn build_test_validator_with_max_tx_input_bytes(max_tx_input_bytes: usize) -> TestValidator {
-        let chain_spec = zenith_chain_spec();
+        let chain_spec = everest_chain_spec();
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
             .with_genesis_block();
@@ -2228,12 +2222,12 @@ mod tests {
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
     }
 
-    /// Builds a Zenith-activated validator with one canonical account seeded.
+    /// Builds an Everest-activated validator with one canonical account seeded.
     fn build_test_validator_with_account(
         address: Address,
         account: ExtendedAccount,
     ) -> TestValidator {
-        let chain_spec = zenith_chain_spec();
+        let chain_spec = everest_chain_spec();
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
             .with_genesis_block();
@@ -2588,7 +2582,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_eip8130_before_zenith_activation() {
+    fn rejects_eip8130_before_everest_activation() {
         // Cobalt alone does not open the EIP-8130 gate.
         let chain_spec = BaseChainSpecBuilder::base_mainnet().cobalt_activated().build();
         let validator = build_test_validator_with_spec(Arc::new(chain_spec));
@@ -2833,6 +2827,17 @@ mod tests {
             Bytes::from(Address::ZERO.to_vec()),
         );
         assert_unsupported(TestValidator::validate_payer_auth(&signed));
+    }
+
+    /// A configured sender naming a canonical non-k1 authenticator is rejected
+    /// at admission.
+    #[test]
+    fn rejects_eip8130_non_k1_sender_authenticator() {
+        let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
+        let mut auth = Eip8130Contracts::P256_AUTHENTICATOR.as_slice().to_vec();
+        auth.extend_from_slice(&[0u8; 64]);
+        let signed = Eip8130Signed::new(tx, Bytes::from(auth), Bytes::new());
+        assert_unsupported(TestValidator::validate_sender_auth(&signed));
     }
 
     /// Returns an authenticator address comfortably above the `K1_AUTHENTICATOR`
@@ -3522,7 +3527,7 @@ mod tests {
     #[test]
     fn eip8130_payer_max_cost_includes_l1_and_operator_fees() {
         let chain_config = ChainConfig::mainnet();
-        let chain_spec = zenith_chain_spec();
+        let chain_spec = everest_chain_spec();
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
         // Headroom above the worst-case intrinsic: admission pins the sender policy
@@ -3580,9 +3585,80 @@ mod tests {
         assert_eq!(state.manifest.payer_max_cost(), state.payer_max_cost);
     }
 
+    /// A self-paying sender reserves its call value on top of gas, and is
+    /// rejected when its balance cannot cover both.
+    #[test]
+    fn eip8130_self_pay_reserves_call_value() {
+        const BALANCE: u64 = 1_000_000_000_000;
+        let signer = PrivateKeySigner::random();
+        let sender = signer.address();
+        let recipient = Address::repeat_byte(0xee);
+        let signed_with_value = |value: u64| {
+            let tx = TxEip8130 {
+                gas_limit: 100_000,
+                calls: vec![vec![Call {
+                    to: recipient,
+                    value: U256::from(value),
+                    data: Bytes::new(),
+                }]],
+                ..minimal_valid_eoa_tx()
+            };
+            let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new())
+        };
+        let validator =
+            build_test_validator_with_account(sender, ExtendedAccount::new(0, U256::from(BALANCE)));
+
+        let without_value = validator
+            .validate_eip8130_full(&signed_with_value(0))
+            .expect("gas alone is affordable");
+        let with_value = validator
+            .validate_eip8130_full(&signed_with_value(BALANCE / 2))
+            .expect("gas plus half the balance is affordable");
+        assert_eq!(
+            with_value.payer_max_cost - without_value.payer_max_cost,
+            U256::from(BALANCE / 2),
+            "the call value is reserved on top of gas"
+        );
+        assert_eq!(with_value.manifest.payer_max_cost(), with_value.payer_max_cost);
+
+        let err = validator
+            .validate_eip8130_full(&signed_with_value(BALANCE))
+            .expect_err("gas plus the whole balance is not affordable");
+        assert!(
+            matches!(
+                err,
+                InvalidPoolTransactionError::Consensus(InvalidTransactionError::InsufficientFunds(
+                    _
+                ))
+            ),
+            "expected InsufficientFunds, got {err:?}"
+        );
+
+        // Self-calls move nothing, so three of them whose sum exceeds the
+        // balance reserve only one call's value.
+        let self_call = Call { to: sender, value: U256::from(BALANCE / 2), data: Bytes::new() };
+        let tx = TxEip8130 {
+            gas_limit: 100_000,
+            calls: vec![vec![self_call.clone(), self_call.clone(), self_call]],
+            ..minimal_valid_eoa_tx()
+        };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let self_calls =
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let state = validator
+            .validate_eip8130_full(&self_calls)
+            .expect("repeated self-calls only need one call's value on hand");
+        assert_eq!(
+            state.payer_max_cost - without_value.payer_max_cost,
+            U256::from(BALANCE / 2),
+            "self-calls reserve their peak, not their sum"
+        );
+    }
+
     #[test]
     fn nonce_free_manifest_uses_transaction_validity_window() {
-        let chain_spec = zenith_chain_spec();
+        let chain_spec = everest_chain_spec();
         let signer = PrivateKeySigner::random();
         let now = 100;
         // `valid_before` is in milliseconds; at the admission-window edge it is

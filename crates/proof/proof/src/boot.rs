@@ -615,6 +615,7 @@ mod tests {
                 beryl: None,
                 cobalt: None,
                 denim: None,
+                everest: None,
                 zenith: None,
             },
             ..Default::default()
@@ -1022,6 +1023,7 @@ mod tests {
         rollup_config.upgrades = UpgradeConfig {
             base: BaseUpgradeConfig {
                 denim: Some(1_004),
+                everest: None,
                 zenith: Some(1_005),
                 ..Default::default()
             },

@@ -54,6 +54,7 @@ services:
       - L2_BASE_BERYL_BLOCK=${L2_BASE_BERYL_BLOCK-}
       - L2_BASE_COBALT_BLOCK=${L2_BASE_COBALT_BLOCK-}
       - L2_BASE_DENIM_BLOCK=${L2_BASE_DENIM_BLOCK-}
+      - L2_BASE_EVEREST_BLOCK=${L2_BASE_EVEREST_BLOCK-}
       - L2_BASE_ZENITH_BLOCK=${L2_BASE_ZENITH_BLOCK-}
       - CHAIN_ID=${L1_CHAIN_ID}
       - SLOT_DURATION=${L1_SLOT_DURATION_OVERRIDE:-12}
@@ -396,7 +397,8 @@ services:
   # Shadow DA: the Rust base batcher runs in --shadow-mode alongside the
   # op-batcher, posting to SHADOW_BATCH_INBOX_ADDRESS from SHADOW_BATCHER_ADDR
   # (a distinct L1 sender, so its nonces never collide with the op-batcher's).
-  # It anchors recovery on base-shadow-validator via --parity-validator-l2-rpc-url.
+  # It follows the derivation of base-shadow-validator, whose rollup node derives the
+  # shadow inbox, and compares its blocks with the builder's.
   base-batcher:
     image: base:local
     build:
@@ -409,8 +411,10 @@ services:
     depends_on:
       base-builder:
         condition: service_healthy
+      base-shadow-validator:
+        condition: service_healthy
     environment:
-      - BASE_BATCHER_ROLLUP_RPC_URL=http://base-builder:${L2_BUILDER_CL_RPC_PORT}
+      - BASE_BATCHER_ROLLUP_RPC_URL=http://base-shadow-validator:${L2_SHADOW_CL_RPC_PORT}
     command:
       - batcher
       - --l1-rpc-url=http://l1-el:${L1_HTTP_PORT}

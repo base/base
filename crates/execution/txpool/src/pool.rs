@@ -1808,7 +1808,7 @@ mod tests {
     };
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
-    use base_test_utils::build_test_genesis_zenith;
+    use base_test_utils::build_test_genesis_everest;
     use futures::{StreamExt, future::join_all};
     use reth_primitives_traits::SealedBlock;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
@@ -2035,7 +2035,7 @@ mod tests {
 
     fn build_integration_pool()
     -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
-        let mut genesis = build_test_genesis_zenith();
+        let mut genesis = build_test_genesis_everest();
         genesis.config.chain_id = test_chain_id();
         let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
         let client = MockEthProvider::<BasePrimitives>::new()

@@ -143,7 +143,7 @@ impl SendState {
     ///    successfully published, returns
     ///    [`TxManagerError::MempoolDeadlineExpired`]. Once a publish has
     ///    succeeded the tx is in the mempool and the deadline's purpose is
-    ///    served — further waiting is governed by the receipt timeout and
+    ///    served — further waiting is governed by `tx_send_timeout` and the
     ///    bump cycle, not by aborting (which would leak a pre-reserved nonce
     ///    and stall publication on lower nonces still live on L1).
     /// 6. Otherwise, returns `None`.
@@ -189,13 +189,6 @@ impl SendState {
         }
 
         None
-    }
-
-    /// Returns `true` when the given transaction is currently recorded as mined.
-    #[must_use]
-    pub fn is_mined(&self, tx_hash: B256) -> bool {
-        let inner = self.inner.lock().expect("SendState mutex poisoned");
-        inner.mined_txs.contains(&tx_hash)
     }
 
     /// Returns `true` when there are mined transactions awaiting confirmation.

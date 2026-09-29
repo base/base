@@ -231,6 +231,9 @@ impl ActionEngineClient {
         if let Some(ts) = hf.base.denim {
             base.insert("denim".to_string(), serde_json::json!(ts));
         }
+        if let Some(ts) = hf.base.everest {
+            base.insert("everest".to_string(), serde_json::json!(ts));
+        }
         if let Some(ts) = hf.base.zenith {
             base.insert("zenith".to_string(), serde_json::json!(ts));
         }
@@ -982,6 +985,17 @@ impl BaseEngineApi for ActionEngineClient {
 
 #[async_trait]
 impl SequencerEngineClient for ActionEngineClient {
+    async fn prepare_sequencer_start(
+        &self,
+        expected_hash: B256,
+    ) -> Result<(), NodeEngineClientError> {
+        let head = self.inner.lock().expect("action engine inner lock poisoned").canonical_head;
+        if expected_hash == B256::ZERO || expected_hash != head.block_info.hash {
+            return Err(NodeEngineClientError::RequestError("unsafe head mismatch".to_string()));
+        }
+        Ok(())
+    }
+
     async fn reset_engine_forkchoice(
         &self,
         _reason: ResetReason,
@@ -1081,6 +1095,7 @@ mod tests {
                     beryl: Some(42),
                     cobalt: Some(42),
                     denim: Some(42),
+                    everest: Some(42),
                     zenith: Some(42),
                 },
                 ..Default::default()
@@ -1091,6 +1106,7 @@ mod tests {
         let genesis = ActionEngineClient::build_genesis_for_rollup(&config);
 
         assert_eq!(genesis.config.extra_fields["base"]["denim"], serde_json::json!(42));
+        assert_eq!(genesis.config.extra_fields["base"]["everest"], serde_json::json!(42));
         assert_eq!(genesis.config.extra_fields["base"]["zenith"], serde_json::json!(42));
     }
 

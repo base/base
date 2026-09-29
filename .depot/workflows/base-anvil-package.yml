@@ -110,25 +110,15 @@ jobs:
       - name: Resolve base-std ref
         id: base-std
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.BASE_STD_TOKEN }}
         run: |
           set -euo pipefail
 
-          if base_std_sha="$(gh api repos/base/base-std/git/ref/heads/"$BASE_STD_REF" --jq '.object.sha' 2>/dev/null)" \
-            && [[ -n "$base_std_sha" ]]; then
-            :
-          elif base_std_sha="$(gh api repos/base/base-std/git/ref/tags/"$BASE_STD_REF" --jq '.object.sha' 2>/dev/null)" \
-            && [[ -n "$base_std_sha" ]]; then
-            :
-          else
-            base_std_sha="$(gh api "repos/base/base-std/git/ref/$BASE_STD_REF" --jq '.object.sha')"
-          fi
-
-          if [[ -z "$base_std_sha" ]]; then
-            echo "::error::Unable to resolve base-std ref $BASE_STD_REF"
-            exit 1
-          fi
+          resolve_dir="$RUNNER_TEMP/base-std-resolve"
+          rm -rf "$resolve_dir"
+          git init "$resolve_dir"
+          git -C "$resolve_dir" remote add origin https://github.com/base/base-std.git
+          git -C "$resolve_dir" fetch --depth 1 origin "$BASE_STD_REF"
+          base_std_sha="$(git -C "$resolve_dir" rev-parse FETCH_HEAD)"
 
           echo "sha=$base_std_sha" >> "$GITHUB_OUTPUT"
       - name: Build patched base-anvil binaries
@@ -153,7 +143,6 @@ jobs:
         if: matrix.settings.smoke_test
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.BASE_STD_TOKEN }}
           BASE_STD_SHA: ${{ steps.base-std.outputs.sha }}
         run: |
           set -euo pipefail
@@ -162,8 +151,8 @@ jobs:
           base_std_dir="$workdir/base-std"
           mkdir -p "$workdir"
 
-          gh auth setup-git
-          gh repo clone base/base-std "$base_std_dir" -- --filter=blob:none --no-checkout
+          git clone --filter=blob:none --no-checkout \
+            https://github.com/base/base-std.git "$base_std_dir"
           git -C "$base_std_dir" fetch --depth 1 origin "$BASE_STD_SHA"
           git -C "$base_std_dir" checkout --detach FETCH_HEAD
           git -C "$base_std_dir" submodule update --init --recursive --depth 1

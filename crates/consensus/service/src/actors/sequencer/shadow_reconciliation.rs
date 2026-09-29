@@ -99,6 +99,11 @@ impl CanonicalUnsafeCatchup {
         self.faulted
     }
 
+    /// Returns whether any canonical unsafe payload has ever been observed.
+    pub const fn has_observations(&self) -> bool {
+        self.highest_observed.is_some()
+    }
+
     /// Returns whether the engine has reached or safely overtaken the latest observed payload.
     /// Buffered payloads across a gap intentionally prevent completion until every observation is
     /// either applied in order or overtaken by a fully safe-derived head.

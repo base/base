@@ -186,6 +186,12 @@ impl L2BlockInfo {
         Self { block_info, l1_origin, seq_num }
     }
 
+    /// Returns the [`L2BlockInfo`] of the L2 genesis block described by `genesis`, with the
+    /// genesis L1 block as L1 origin and sequence number zero.
+    pub const fn from_l2_genesis(genesis: &ChainGenesis) -> Self {
+        Self::new(BlockInfo::from_l2_genesis(genesis), genesis.l1, 0)
+    }
+
     /// Constructs an [`L2BlockInfo`] from a given Base [`Block`] and [`ChainGenesis`].
     pub fn from_block_and_genesis<T: AsRef<BaseTxEnvelope>>(
         block: &Block<T>,

@@ -13,11 +13,8 @@ use base_execution_txpool::{DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT};
 use base_upgrade_signal::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs};
 use clap::{ArgAction, ValueEnum, builder::ArgPredicate};
 
-/// Default proofs history window: 1 month of blocks at 2s block time.
-pub const DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS: u64 = 1_296_000;
-
-/// Twelve hours of blocks at 2s block time.
-pub const TWELVE_HOURS_IN_BLOCKS: u64 = 21_600;
+/// Default proofs history window: 15 days of blocks at 200ms block time.
+pub const DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS: u64 = 6_480_000;
 
 const MIB: u64 = 1024 * 1024;
 const DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_MIB: u64 = 1024;
@@ -432,16 +429,16 @@ pub struct RollupArgs {
     pub proofs_history_mdbx: ProofsHistoryMdbxArgs,
 
     /// The window to span blocks for proofs history. Value is the number of blocks.
-    /// Default is 1 month of blocks based on 2 seconds block time.
-    /// 30 * 24 * 60 * 60 / 2 = `1_296_000`
+    /// Default is 15 days of blocks based on 200ms block time.
+    /// 15 * 24 * 60 * 60 * 5 = `6_480_000`
     ///
-    /// Must be greater than 12 hours of blocks based on 2 seconds block time.
+    /// Must be at least 1 block.
     #[arg(
         long = "proofs-history.window",
         visible_alias = "proofs.window",
         default_value_t = DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS,
         value_name = "PROOFS_HISTORY_WINDOW",
-        value_parser = clap::value_parser!(u64).range((TWELVE_HOURS_IN_BLOCKS + 1)..)
+        value_parser = clap::value_parser!(u64).range(1..)
     )]
     pub proofs_history_window: u64,
 
@@ -866,18 +863,14 @@ mod tests {
     #[test]
     fn test_parse_proofs_history_window() {
         let args =
-            CommandParser::<RollupArgs>::parse_from(["reth", "--proofs-history.window", "21601"])
-                .args;
-        assert_eq!(args.proofs_history_window, 21_601);
+            CommandParser::<RollupArgs>::parse_from(["reth", "--proofs-history.window", "1"]).args;
+        assert_eq!(args.proofs_history_window, 1);
     }
 
     #[test]
-    fn test_parse_proofs_history_window_rejects_twelve_hours_or_less() {
-        let result = CommandParser::<RollupArgs>::try_parse_from([
-            "reth",
-            "--proofs-history.window",
-            "21600",
-        ]);
+    fn test_parse_proofs_history_window_rejects_zero() {
+        let result =
+            CommandParser::<RollupArgs>::try_parse_from(["reth", "--proofs-history.window", "0"]);
         assert!(result.is_err());
     }
 }

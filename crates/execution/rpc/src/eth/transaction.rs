@@ -27,7 +27,8 @@ use reth_rpc_eth_api::{
 };
 use reth_rpc_eth_types::{EthApiError, TransactionSource, block::convert_transaction_receipt};
 use reth_storage_api::{
-    BlockReaderIdExt, ProviderTx, ReceiptProvider, TransactionsProvider, errors::ProviderError,
+    BlockReader, BlockReaderIdExt, ProviderTx, ReceiptProvider, TransactionsProvider,
+    errors::ProviderError,
 };
 use reth_transaction_pool::{
     AddedTransactionOutcome, PoolTransaction, TransactionOrigin, TransactionPool,
@@ -65,7 +66,7 @@ where
         let (tx, pool_transaction) = tx.split();
 
         if pool_transaction.consensus_ref().ty() == EIP8130_TX_TYPE_ID
-            && !self.is_zenith_active_at_latest()?
+            && !self.is_everest_active_at_latest()?
         {
             return Err(BaseInvalidTransactionError::Eip8130NotAccepted.into());
         }
@@ -242,11 +243,11 @@ where
     N::Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>,
     Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
-    fn is_zenith_active_at_latest(&self) -> Result<bool, BaseEthApiError> {
+    fn is_everest_active_at_latest(&self) -> Result<bool, BaseEthApiError> {
         let Some(header) = self.provider().latest_header()? else {
             return Ok(false);
         };
-        Ok(self.provider().chain_spec().is_zenith_active_at_timestamp(header.timestamp()))
+        Ok(self.provider().chain_spec().is_everest_active_at_timestamp(header.timestamp()))
     }
 }
 
@@ -281,7 +282,7 @@ impl<Provider> BaseTxInfoMapper<Provider> {
 impl<T, Provider> TxInfoMapper<T> for BaseTxInfoMapper<Provider>
 where
     T: BaseTransaction + SignedTransaction,
-    Provider: TransactionsProvider<Transaction = T> + ReceiptProvider<Receipt: DepositReceiptExt>,
+    Provider: BlockReader<Transaction = T> + ReceiptProvider<Receipt: DepositReceiptExt>,
 {
     type Out = BaseTransactionInfo;
     type Err = ProviderError;

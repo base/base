@@ -3,13 +3,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, map::HashMap};
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_consensus_derive::{L2ChainProvider, PipelineError, PipelineErrorKind};
-use base_protocol::{BatchValidationProvider, BlockInfo, L2BlockInfo};
+use base_protocol::{BatchValidationProvider, L2BlockInfo};
 
 /// Error type for [`ActionL2ChainProvider`].
 #[derive(Debug, thiserror::Error)]
@@ -17,6 +16,9 @@ pub enum L2ProviderError {
     /// L2 block not found.
     #[error("L2 block not found: {0}")]
     BlockNotFound(u64),
+    /// L2 block not found by hash.
+    #[error("L2 block not found: {0}")]
+    BlockHashNotFound(B256),
     /// System config not found.
     #[error("system config not found for L2 block {0}")]
     SystemConfigNotFound(B256),
@@ -62,19 +64,7 @@ impl ActionL2ChainProvider {
     pub fn from_genesis(rollup_config: &RollupConfig) -> Self {
         let provider = Self::default();
 
-        let genesis_l2 = L2BlockInfo {
-            block_info: BlockInfo {
-                hash: rollup_config.genesis.l2.hash,
-                number: rollup_config.genesis.l2.number,
-                parent_hash: Default::default(),
-                timestamp: rollup_config.genesis.l2_time,
-            },
-            l1_origin: BlockNumHash {
-                hash: rollup_config.genesis.l1.hash,
-                number: rollup_config.genesis.l1.number,
-            },
-            seq_num: 0,
-        };
+        let genesis_l2 = L2BlockInfo::from_l2_genesis(&rollup_config.genesis);
 
         // Use the rollup config's genesis system config, falling back to a harness
         // default with a non-zero gas_limit. `SystemConfig::default()` has gas_limit=0
@@ -125,6 +115,15 @@ impl BatchValidationProvider for ActionL2ChainProvider {
             .get(&number)
             .copied()
             .ok_or(L2ProviderError::BlockNotFound(number))
+    }
+
+    async fn l2_block_info_by_hash(&mut self, hash: B256) -> Result<L2BlockInfo, L2ProviderError> {
+        self.blocks_by_hash
+            .lock()
+            .expect("L2 blocks by hash lock poisoned")
+            .get(&hash)
+            .copied()
+            .ok_or(L2ProviderError::BlockHashNotFound(hash))
     }
 
     async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, L2ProviderError> {
@@ -178,6 +177,8 @@ impl L2ChainProvider for ActionL2ChainProvider {
 
 #[cfg(test)]
 mod tests {
+    use base_protocol::BlockInfo;
+
     use super::*;
 
     #[tokio::test]

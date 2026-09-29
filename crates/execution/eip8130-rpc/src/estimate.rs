@@ -33,8 +33,8 @@ use revm::context::{Block, BlockEnv, TxEnv, result::ExecutionResult};
 /// the whole gas limit from scratch). The simulation is built from an unsigned
 /// request with a stub authentication blob and never commits state.
 ///
-/// **Fork-agnostic on purpose.** This does not check Zenith activation; callers
-/// must gate via [`crate::Eip8130ZenithGate`] before invoking it.
+/// **Fork-agnostic on purpose.** This does not check Everest activation; callers
+/// must gate via [`crate::Eip8130EverestGate`] before invoking it.
 ///
 /// **Revert semantics match standard `eth_estimateGas`.** If a phased call
 /// reverts (or the simulation halts), this returns an execution error carrying

@@ -378,6 +378,29 @@ impl TxEip8130 {
                 .sum::<usize>()
             + self.metadata.len()
     }
+
+    /// The most wei `sender` must hold at any point while its calls run, in
+    /// call order across every phase.
+    ///
+    /// A call to another account moves `call.value` out of the sender, so those
+    /// values accumulate. A call to `sender` itself is only checked against the
+    /// current balance and moves nothing, so it needs its value on hand at that
+    /// point but does not add to later calls. Two 1 ETH self-calls therefore
+    /// need 1 ETH, not 2. ETH a callee sends back is not known statically and
+    /// is not credited. Saturates at [`U256::MAX`] rather than wrapping.
+    pub fn sender_call_value(&self, sender: Address) -> U256 {
+        let mut spent = U256::ZERO;
+        let mut peak = U256::ZERO;
+        for call in self.calls.iter().flatten() {
+            if call.to == sender {
+                peak = peak.max(spent.saturating_add(call.value));
+            } else {
+                spent = spent.saturating_add(call.value);
+                peak = peak.max(spent);
+            }
+        }
+        peak
+    }
 }
 
 impl Encodable for TxEip8130 {
@@ -628,6 +651,7 @@ mod tests {
             })],
             calls: vec![vec![Call {
                 to: address!("0x00000000000000000000000000000000000000cc"),
+                value: U256::from(0x1234u64),
                 data: bytes!("deadbeef"),
             }]],
             metadata: bytes!("c0ffee"),
@@ -839,11 +863,11 @@ mod tests {
         let tx = TxEip8130 {
             chain_id: 1,
             calls: vec![
-                vec![Call { to: Address::ZERO, data: bytes!("01") }],
+                vec![Call { to: Address::ZERO, value: U256::from(7u64), data: bytes!("01") }],
                 vec![],
                 vec![
-                    Call { to: Address::ZERO, data: bytes!("02") },
-                    Call { to: Address::ZERO, data: bytes!("03") },
+                    Call { to: Address::ZERO, value: U256::ZERO, data: bytes!("02") },
+                    Call { to: Address::ZERO, value: U256::ZERO, data: bytes!("03") },
                 ],
             ],
             ..Default::default()
@@ -852,6 +876,67 @@ mod tests {
         tx.encode(&mut buf);
         let decoded = TxEip8130::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(tx, decoded);
+    }
+
+    #[test]
+    fn call_value_is_covered_by_signature_hash() {
+        let mut tx = TxEip8130 {
+            chain_id: 1,
+            calls: vec![vec![Call { to: Address::ZERO, value: U256::ZERO, data: bytes!("01") }]],
+            ..Default::default()
+        };
+        let zero_value_hash = tx.sender_signature_hash();
+        tx.calls[0][0].value = U256::from(1u64);
+        let nonzero_value_hash = tx.sender_signature_hash();
+        assert_ne!(
+            zero_value_hash, nonzero_value_hash,
+            "call value must be part of the signed preimage",
+        );
+    }
+
+    #[test]
+    fn sender_call_value_sums_transfers_to_other_accounts() {
+        let sender = Address::repeat_byte(0x11);
+        let other = Address::repeat_byte(0x22);
+        let call = |to, value: u64| Call { to, value: U256::from(value), data: Bytes::new() };
+        let tx = TxEip8130 {
+            calls: vec![vec![call(other, 3), call(other, 4)], vec![call(other, 5)]],
+            ..Default::default()
+        };
+        assert_eq!(tx.sender_call_value(sender), U256::from(12u64));
+        assert_eq!(
+            TxEip8130 { calls: vec![], ..Default::default() }.sender_call_value(sender),
+            U256::ZERO
+        );
+    }
+
+    #[test]
+    fn sender_call_value_does_not_sum_self_calls() {
+        let sender = Address::repeat_byte(0x11);
+        let other = Address::repeat_byte(0x22);
+        let call = |to, value: u64| Call { to, value: U256::from(value), data: Bytes::new() };
+
+        // Two self-calls of 10 need 10 on hand, not 20.
+        let self_only = TxEip8130 {
+            calls: vec![vec![call(sender, 10), call(sender, 10)]],
+            ..Default::default()
+        };
+        assert_eq!(self_only.sender_call_value(sender), U256::from(10u64));
+
+        // A self-call after 4 has left needs 4 + 10 on hand at that point.
+        let after_spend = TxEip8130 {
+            calls: vec![vec![call(other, 4)], vec![call(sender, 10)]],
+            ..Default::default()
+        };
+        assert_eq!(after_spend.sender_call_value(sender), U256::from(14u64));
+
+        // A self-call before the spend only needs its own value then; the later
+        // transfers accumulate to 12, which is the peak.
+        let before_spend = TxEip8130 {
+            calls: vec![vec![call(sender, 10), call(other, 5), call(other, 7)]],
+            ..Default::default()
+        };
+        assert_eq!(before_spend.sender_call_value(sender), U256::from(12u64));
     }
 
     #[test]
@@ -981,11 +1066,15 @@ mod tests {
     #[test]
     fn size_counts_call_data_heap() {
         let bare = TxEip8130 {
-            calls: vec![vec![Call { to: Address::ZERO, data: Bytes::new() }]],
+            calls: vec![vec![Call { to: Address::ZERO, value: U256::ZERO, data: Bytes::new() }]],
             ..Default::default()
         };
         let with_data = TxEip8130 {
-            calls: vec![vec![Call { to: Address::ZERO, data: Bytes::from(vec![0xab; 4_096]) }]],
+            calls: vec![vec![Call {
+                to: Address::ZERO,
+                value: U256::ZERO,
+                data: Bytes::from(vec![0xab; 4_096]),
+            }]],
             ..Default::default()
         };
 
