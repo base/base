@@ -202,14 +202,16 @@ impl BaseTransactionRequest {
 
     /// The request's calls: `calls`, or a single call from the top-level `to` /
     /// `value` / `data` of a standard request. Setting both is ambiguous and
-    /// rejected.
+    /// rejected. A zero `value` and empty `data` count as unset, since clients
+    /// commonly send them as defaults on every request.
     fn eip8130_calls(
         &self,
         calls: Option<&Vec<Vec<Call>>>,
     ) -> Result<Vec<Vec<Call>>, Eip8130SimulationRequestError> {
         let req = self.as_ref();
-        let data = req.input.input();
-        let single_call = req.to.is_some() || req.value.is_some() || data.is_some();
+        let value = req.value.filter(|value| !value.is_zero());
+        let data = req.input.input().filter(|data| !data.is_empty());
+        let single_call = req.to.is_some() || value.is_some() || data.is_some();
         if let Some(calls) = calls {
             if single_call {
                 return Err(Eip8130SimulationRequestError::CallsAndSingleCall);
@@ -224,11 +226,8 @@ impl BaseTransactionRequest {
             Some(TxKind::Create) => return Err(Eip8130SimulationRequestError::ContractCreation),
             None => return Err(Eip8130SimulationRequestError::SingleCallMissingTo),
         };
-        let call = Call {
-            to,
-            value: req.value.unwrap_or_default(),
-            data: data.cloned().unwrap_or_default(),
-        };
+        let call =
+            Call { to, value: value.unwrap_or_default(), data: data.cloned().unwrap_or_default() };
         Ok(vec![vec![call]])
     }
 
@@ -365,6 +364,17 @@ mod tests {
             reject(json!({ "sender": SENDER, "data": "0x01" })),
             Some(Eip8130SimulationRequestError::SingleCallMissingTo)
         );
+        // Default `value: "0x0"` / `data: "0x"` are not a single call.
+        let calls = vec![vec![Call { to, value: U256::ZERO, data: Bytes::new() }]];
+        let tx = simulation(json!({
+            "sender": SENDER,
+            "calls": calls,
+            "value": "0x0",
+            "data": "0x",
+        }));
+        assert_eq!(signed(&tx).tx().calls, calls);
+        let tx = simulation(json!({ "sender": SENDER, "value": "0x0", "data": "0x" }));
+        assert!(signed(&tx).tx().calls.is_empty());
         let mut create =
             serde_json::from_value::<BaseTransactionRequest>(json!({ "sender": SENDER })).unwrap();
         create.as_mut().to = Some(TxKind::Create);
