@@ -462,15 +462,17 @@ mod tests {
         assert_eq!(value["blockTimestampMs"], "0x18bcfe568c8");
         assert_eq!(value["transactionIndex"], "0x0");
 
-        let tx_payload = &value["tx"];
-        assert!(tx_payload.is_object(), "EIP-8130 inner tx payload present");
-        assert_eq!(tx_payload["chainId"], 8453);
-        assert_eq!(tx_payload["nonceKey"], "0x0");
-        assert_eq!(tx_payload["nonceSequence"], 7);
-        assert_eq!(tx_payload["gasLimit"], 1_000_000);
-        assert!(tx_payload["accountChanges"].is_array());
-        assert!(tx_payload["calls"].is_array());
-        assert_eq!(tx_payload["sender"], "0x0000000000000000000000000000000000000011");
+        assert!(value.get("tx").is_none(), "EIP-8130 fields are flat, like any transaction");
+        assert_eq!(value["chainId"], "0x2105");
+        assert_eq!(value["nonceKey"], "0x0");
+        assert_eq!(value["nonce"], "0x7");
+        assert_eq!(value["gas"], "0xf4240");
+        assert_eq!(value["to"], serde_json::Value::Null);
+        assert_eq!(value["value"], "0x0");
+        assert_eq!(value["input"], "0x");
+        assert!(value["accountChanges"].is_array());
+        assert!(value["calls"].is_array());
+        assert_eq!(value["sender"], "0x0000000000000000000000000000000000000011");
 
         assert_eq!(value["senderAuth"], format!("0x{}", "ab".repeat(32)));
         assert_eq!(value["payerAuth"], "0x");
