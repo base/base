@@ -1,6 +1,11 @@
 # `audit-archiver`
 
-Reads audit log events via RPC and archives them to S3.
+Accepts transaction observability events over HTTP, stores them in Postgres,
+and serves Postgres-backed transaction event queries over JSON-RPC.
+`TIPS_AUDIT_POSTGRES_URL` is required to serve; startup fails if the Postgres
+schema is not ready. This S3 removal needs no new database migration.
+If still on the pre-partition schema, `migrate up` resets the table and deletes
+its old rows: export them or agree on retention before running that migration.
 
 ## Security Model
 
@@ -8,20 +13,42 @@ The unauthenticated RPC and ingest APIs are internal endpoints. Restrict them to
 trusted producers with private-network controls; never expose them publicly. The
 wildcard bind supports container networking.
 
-When `TIPS_AUDIT_POSTGRES_URL` is set, `audit-archiver` also accepts
-transaction observability event batches over HTTP and stores them in Postgres.
+`audit-archiver` accepts transaction observability event batches over HTTP and
+stores them in Postgres.
 The HTTP ingest endpoint is intended for Vector and accepts newline-delimited
 JSON, with one `transaction-event/v1` object per line:
 
 ```bash
-curl -sS -X POST "http://127.0.0.1:8080/v1/transaction-events/batch" \
-  -H "content-type: application/x-ndjson" \
-  --data-binary '{"schema_version":"transaction-event/v1","event_id":"example-builder-accepted-1","event_time":"2026-06-02T00:00:00Z","producer":"base-builder","event_type":"BUILDER_ACCEPTED","network":"base-mainnet","tx_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","block_hash":null,"block_number":null,"payload_id":null,"request_id":null,"data":{"position":1}}
-'
+printf '{"schema_version":"transaction-event/v1","event_id":"example-builder-accepted-1","event_time":"%s","producer":"base-builder","event_type":"BUILDER_ACCEPTED","network":"base-mainnet","tx_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","block_hash":null,"block_number":null,"payload_id":null,"request_id":null,"data":{"position":1}}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" |
+  curl -sS -X POST "http://127.0.0.1:9100/v1/transaction-events/batch" \
+    -H "content-type: application/x-ndjson" \
+    --data-binary @-
 ```
 
 The endpoint is intended for Vector HTTP output from the dedicated transaction
 event journal. It is not a stdout/stderr log ingestion endpoint.
+
+The legacy S3 archive, bundle-event RPC ingest, and rejected-transaction
+S3 RPC ingest are removed. The old RPC methods return "method not found";
+they never acknowledge events that would be discarded. Existing S3 history is
+not migrated; decide whether to export or retain it before deleting buckets.
+
+The old S3 rejection feed only covered enforced per-transaction execution-time
+rejections. `BUILDER_REJECTED` records that decision, its reason, predicted time,
+and limit in the journal, but not the full S3 `MeterBundleResponse`. Bundle
+lifecycle events have no one-to-one transaction-journal equivalent. The old
+builder forwarder and bundle connector log and drop failed RPC batches; verify
+no legacy bundle sender remains and journal rejections reach Postgres before
+deploying this binary. Chart settings alone are not proof.
+
+Roll out only after the old ingress bundle sender is gone and the builder's
+transaction event journal is enabled. On each network, compare
+`BUILDER_REJECTED` emissions with events queryable from Postgres and monitor
+`transaction_events_persisted`, `transaction_events_rejected`, and Vector
+discard/retry metrics during the soak. `TIPS_AUDIT_NOOP_ARCHIVE` previously
+covered bundle workers only: rejected-transaction RPC calls could still write
+to S3. Confirm S3 writes have stopped before removing S3 IAM or buckets.
 
 To verify the local devnet path end-to-end:
 

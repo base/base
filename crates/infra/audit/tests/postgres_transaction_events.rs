@@ -14,11 +14,12 @@ use std::{
 };
 
 use audit_archiver_lib::{
-    DEFAULT_TRANSACTION_EVENT_BATCH_PATH, DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE,
-    DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES,
-    DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES, MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE,
-    PgTransactionEventSink, RejectedTransactionEventQuery, TransactionEventIngestConfig,
-    TransactionEventRetentionConfig, TransactionEventSchemaReadinessError, TransactionEventSink,
+    AuditArchiverApiServer, AuditArchiverRpc, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
+    DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
+    DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
+    MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE, PgTransactionEventSink, RejectedTransactionEventQuery,
+    TransactionEventIngestConfig, TransactionEventRetentionConfig,
+    TransactionEventSchemaReadinessError, TransactionEventSink,
 };
 use axum::{
     body::{Body, to_bytes},
@@ -266,11 +267,6 @@ async fn count_events_with_prefix(pool: &PgPool, event_prefix: &str) -> anyhow::
             .fetch_one(pool)
             .await?;
     Ok(count.0)
-}
-
-#[tokio::test]
-async fn transaction_events_ready_without_postgres_sink() {
-    PgTransactionEventSink::check_optional_schema_ready(None).await.unwrap();
 }
 
 #[tokio::test]
@@ -639,6 +635,57 @@ async fn postgres_http_ingest_accepts_1000_event_batch() -> anyhow::Result<()> {
     assert_eq!(json["rejected"], 0);
     assert_eq!(count_events_with_prefix(&pool, &event_prefix).await?, 1000);
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn builder_rejection_journal_survives_http_ingest_and_rpc_query() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 2).await?;
+    sink.check_schema_ready().await?;
+
+    let event_id = unique_event_id();
+    let mut rejected = event_with_type(&event_id, "BUILDER_REJECTED");
+    rejected.data = json!({
+        "rejection_reason": "tx_execution_time_exceeded",
+        "tx_execution_time_us": 2000,
+        "tx_execution_time_limit_us": 1000,
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let body = serde_json::to_vec(&rejected)?;
+
+    let (status, first) = post_batch(sink.clone(), body.clone()).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first["accepted"], 1);
+    assert_eq!(first["rejected"], 0);
+    let (status, retry) = post_batch(sink.clone(), body).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(retry["duplicate"], 1);
+
+    let rpc = AuditArchiverRpc::new(sink);
+    let by_hash = rpc
+        .get_transaction_events_by_hash(
+            "0x1111111111111111111111111111111111111111111111111111111111111111".into(),
+            None,
+        )
+        .await
+        .expect("Postgres-backed RPC lookup must work without S3");
+    assert_eq!(by_hash.len(), 1);
+    assert_eq!(by_hash[0].event.event_id, event_id);
+    assert_eq!(by_hash[0].event.data["rejection_reason"], "tx_execution_time_exceeded");
+
+    let rejections = rpc
+        .get_rejected_transaction_events(RejectedTransactionEventQuery {
+            limit: Some(10),
+            ..Default::default()
+        })
+        .await
+        .expect("rejected event RPC must read Postgres without S3");
+    assert_eq!(rejections.len(), 1);
+    assert_eq!(rejections[0].event.event_id, event_id);
     Ok(())
 }
 

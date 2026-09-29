@@ -243,18 +243,6 @@ pub struct Args {
     )]
     pub predicate_bucket_ordered_threshold: usize,
 
-    /// URL of the audit-archiver RPC endpoint for forwarding rejected transactions
-    #[arg(long = "builder.audit-archiver-url", env = "BUILDER_AUDIT_ARCHIVER_URL")]
-    pub audit_archiver_url: Option<String>,
-
-    /// Bounded channel capacity for rejected transaction forwarding (drops on full)
-    #[arg(long = "builder.rejected-tx-channel-size", default_value = "500")]
-    pub rejected_tx_channel_size: usize,
-
-    /// Maximum rejected transactions accumulated per block before dropping
-    #[arg(long = "builder.max-rejected-txs-per-block", default_value = "500")]
-    pub max_rejected_txs_per_block: usize,
-
     /// Buffer size for tx data store (LRU eviction when full)
     #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
     pub tx_data_store_buffer_size: usize,
@@ -354,9 +342,6 @@ impl Default for Args {
             metering_wait_duration_ms: None,
             predicate_eval_hard_cutoff_ms: 10,
             predicate_bucket_ordered_threshold: 32,
-            audit_archiver_url: None,
-            rejected_tx_channel_size: 500,
-            max_rejected_txs_per_block: 500,
             tx_data_store_buffer_size: 10000,
             metering_store_ttl_secs: 30,
             rejection_cache_max_capacity: 100_000,
@@ -435,9 +420,6 @@ impl Args {
                 self.rejection_cache_max_capacity,
                 Duration::from_secs(self.rejection_cache_ttl_secs),
             ),
-            audit_archiver_url: self.audit_archiver_url,
-            rejected_tx_channel_size: self.rejected_tx_channel_size,
-            max_rejected_txs_per_block: self.max_rejected_txs_per_block,
             manifest_precheck_enabled: self.manifest_precheck_enabled,
         })
     }

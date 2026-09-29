@@ -1,7 +1,7 @@
 use core::fmt::Debug;
 use std::{
     sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime},
 };
 
 use alloy_consensus::{Eip658Value, Transaction};
@@ -11,7 +11,6 @@ use alloy_evm::Database;
 use alloy_primitives::B256;
 use alloy_primitives::{Address, BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
-use base_bundles::{MeterBundleResponse, RejectedTransaction, RejectionReason};
 use base_common_chains::Upgrades;
 use base_common_consensus::{
     BaseReceipt, BaseTransactionSigned, CoinbaseTip, DepositReceipt, OpTxType,
@@ -42,7 +41,6 @@ use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
 use serde::Serialize;
-use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, debug, span, trace, warn};
 
@@ -272,8 +270,6 @@ pub struct BasePayloadBuilderCtx {
     pub extra: FlashblocksExtraCtx,
     /// Builder configuration containing limits and metering settings.
     pub builder_config: BuilderConfig,
-    /// Sender for forwarding per-block batches of rejected transactions to the audit-archiver.
-    pub rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
 }
 
 impl BasePayloadBuilderCtx {
@@ -428,54 +424,6 @@ impl BasePayloadBuilderCtx {
     /// Returns the chain id
     pub fn chain_id(&self) -> u64 {
         self.chain_spec.chain_id()
-    }
-
-    fn record_rejected_tx(
-        &self,
-        info: &mut ExecutionInfo,
-        tx_hash: TxHash,
-        reason: RejectionReason,
-        metering: MeterBundleResponse,
-    ) {
-        if self.rejected_tx_sender.is_none() {
-            return;
-        }
-
-        if info.rejected_txs.len() >= self.builder_config.max_rejected_txs_per_block {
-            BuilderMetrics::rejected_tx_per_block_drops().increment(1);
-            return;
-        }
-
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-        info.rejected_txs.push(RejectedTransaction {
-            tx_hash,
-            block_number: self.block_number(),
-            reason,
-            timestamp: now,
-            metering,
-        });
-    }
-
-    /// Flushes all accumulated rejected transactions to the audit-archiver channel
-    /// as a single per-block batch.
-    pub fn flush_rejected_txs(&self, info: &mut ExecutionInfo) {
-        if info.rejected_txs.is_empty() {
-            return;
-        }
-
-        if let Some(sender) = &self.rejected_tx_sender {
-            let batch = std::mem::take(&mut info.rejected_txs);
-            let batch_size = batch.len();
-            if let Err(e) = sender.try_send(batch) {
-                BuilderMetrics::rejected_tx_channel_drops().increment(batch_size as u64);
-                warn!(
-                    target: "payload_builder",
-                    error = %e,
-                    batch_size,
-                    "Rejected tx channel full or closed, dropping batch"
-                );
-            }
-        }
     }
 
     fn builder_transaction_event_context(
@@ -1218,21 +1166,6 @@ impl BasePayloadBuilderCtx {
                             diag.permanently_rejected_txs.push(tx_hash);
                         }
 
-                        let ExecutionMeteringLimitExceeded::TransactionExecutionTime(
-                            tx_time_us,
-                            limit_us,
-                        ) = limit_err;
-                        // Only record per-tx execution time limits for the audit trail for now
-                        self.record_rejected_tx(
-                            info,
-                            tx_hash,
-                            RejectionReason::ExecutionTimeExceeded {
-                                tx_time_us: *tx_time_us,
-                                limit_us: *limit_us,
-                            },
-                            resource_usage.unwrap_or_default(),
-                        );
-
                         self.emit_builder_decision_event(
                             &payload_id,
                             TransactionEventType::BuilderRejected,
@@ -1749,7 +1682,6 @@ impl BasePayloadBuilderCtx {
             cancel: CancellationToken::new(),
             extra: FlashblocksExtraCtx::default(),
             builder_config: crate::BuilderConfig::default(),
-            rejected_tx_sender: None,
         }
     }
 }
