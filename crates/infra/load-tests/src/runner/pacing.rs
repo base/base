@@ -1686,7 +1686,7 @@ impl LoadRunner {
                         last_recorded_canonical_block = canonical_block;
                     }
                 }
-                _ = safety_tick.tick() => {
+                scheduled_tick = safety_tick.tick() => {
                     if last_pulse_at.elapsed() >= fallback_refill_interval {
                         Self::run_refill_cycle(
                             enqueue_state,
@@ -1696,7 +1696,9 @@ impl LoadRunner {
                             drain_state,
                         )
                         .await?;
-                        last_pulse_at = Instant::now();
+                        // Anchor to the scheduled tick, not refill completion, so the next tick
+                        // is never skipped for arriving a few microseconds short of the interval.
+                        last_pulse_at = scheduled_tick.into_std();
                     }
                 }
                 maybe_chunk = enqueue_state.signed_chunk_rx.recv(),
@@ -2603,7 +2605,7 @@ mod tests {
                         Instant::now(),
                     ),
                     fallback_block_gas_limit: 30_000_000,
-                    block_time: Duration::from_secs(2),
+                    block_time: Duration::from_millis(200),
                     presign_target_gas: 0,
                     max_in_flight_per_sender: 1,
                     max_total_in_flight: 1,
