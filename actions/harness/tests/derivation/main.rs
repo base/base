@@ -20,6 +20,8 @@ use base_consensus_derive::{
 };
 use base_protocol::{DERIVATION_VERSION_0, DepositDecodeError, Deposits, L2BlockInfo};
 
+mod channels;
+mod da_switching;
 mod holocene_span_batches;
 mod node;
 mod sequencer_drift;

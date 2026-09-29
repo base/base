@@ -252,12 +252,6 @@ impl Batcher {
         assert!(matches!(reached, Ok(Ok(()))), "the batch driver exited or stalled");
     }
 
-    /// Deliver `head` to the driver as the new L1 head and wait until it is applied.
-    async fn deliver_l1_head(&self, head: u64) {
-        self.l1_head_tx.send(L1HeadItem::Head(head)).expect("the batch driver has exited");
-        self.wait_until_idle().await;
-    }
-
     /// Returns the number of encoded-but-not-yet-staged pending frame submissions.
     pub fn pending_count(&self) -> usize {
         self.tx_manager.pending_count()
@@ -320,7 +314,10 @@ impl Batcher {
         // Fire the receipts first because the driver serves them before L1 heads, so a failed
         // submission is requeued before the head advances.
         self.tx_manager.confirm_block(block);
-        self.deliver_l1_head(block.number()).await;
+        self.l1_head_tx
+            .send(L1HeadItem::Head(block.number()))
+            .expect("the batch driver has exited");
+        self.wait_until_idle().await;
     }
 
     /// Report derivation progress to the driver, as the production `DerivationStatusPoller`

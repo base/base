@@ -1,4 +1,4 @@
-//! Action tests for the batcher across the Denim block cadence.
+//! Action tests for derivation across the Denim block cadence.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,

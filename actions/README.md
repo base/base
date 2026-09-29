@@ -189,7 +189,10 @@ use base_action_harness::{
 #[tokio::test]
 async fn example_action_test() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .all_forks_active()
+        .with_cobalt_at(0)
+        .build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     // Build real L2 blocks and batch them into one L1 block.
