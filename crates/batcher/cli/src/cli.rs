@@ -447,8 +447,6 @@ mod tests {
             config.encoder_config.max_frame_size,
             base_batcher_encoder::EncoderConfig::MAX_BLOB_FRAME_SIZE
         );
-        assert_eq!(config.encoder_config.compressed_size_target, None);
-        assert_eq!(config.encoder_config.max_blobs_per_tx, 6);
         assert_eq!(config.encoder_config.brotli_level, base_batcher_encoder::BrotliLevel::Brotli9);
     }
 

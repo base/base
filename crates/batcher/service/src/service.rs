@@ -834,6 +834,10 @@ mod tests {
 
     /// Setup refuses a config the batcher cannot run before connecting to anything.
     #[rstest]
+    #[case::zero_poll_interval(
+        BatcherConfig { poll_interval: Duration::ZERO, ..BatcherConfig::default() },
+        "poll_interval must be greater than zero"
+    )]
     #[case::zero_max_pending_transactions(
         BatcherConfig { max_pending_transactions: 0, ..BatcherConfig::default() },
         "max_pending_transactions must be greater than zero: the batcher would never submit a \
@@ -843,6 +847,18 @@ mod tests {
         BatcherConfig { stopped: true, ..BatcherConfig::default() },
         "--stopped requires --admin-port: the batcher would start stopped with no way to start \
          it because the admin JSON-RPC server is not enabled"
+    )]
+    #[case::no_l1_rpc_endpoint(
+        BatcherConfig { l1_rpc_url: Vec::new(), ..BatcherConfig::default() },
+        "at least one L1 RPC endpoint is required"
+    )]
+    #[case::no_l2_rpc_endpoint(
+        BatcherConfig { l2_rpc_url: Vec::new(), ..BatcherConfig::default() },
+        "at least one L2 RPC endpoint is required"
+    )]
+    #[case::no_rollup_rpc_endpoint(
+        BatcherConfig { rollup_rpc_url: Vec::new(), ..BatcherConfig::default() },
+        "at least one rollup RPC endpoint is required"
     )]
     #[case::recent_txs_without_node_sync(
         BatcherConfig { check_recent_txs_depth: 1, ..BatcherConfig::default() },
