@@ -445,7 +445,9 @@ impl IntrinsicGas {
 
     /// Payer-authentication gas billed on top of `gas_limit`: authenticator
     /// execution gas, its `authorize` SLOADs (plus the policy-gate read when
-    /// `policy_gated`), and the data cost of the `payer_auth` bytes. `0` for
+    /// `policy_gated`), and the `payer_auth` bytes at the EIP-7623 floor rate.
+    /// The bytes are never executed and sit outside the sender's floor, so the
+    /// floor rate is what keeps a payer from padding them cheaply. `0` for
     /// self-pay.
     ///
     /// Returns [`IntrinsicGasError::PayerAuthGasExceeded`] above
@@ -464,7 +466,7 @@ impl IntrinsicGas {
             AuthWireForm::Prefixed
         };
         let cost = Self::auth_cost(payer_auth, form, policy_gated)?
-            .saturating_add(Self::data_cost(payer_auth));
+            .saturating_add(Self::floor_data_cost(payer_auth));
         if cost > Eip8130GasSchedule::MAX_AUTHENTICATION_GAS {
             return Err(IntrinsicGasError::PayerAuthGasExceeded(cost));
         }
@@ -489,9 +491,9 @@ impl IntrinsicGas {
         }
     }
 
-    /// EIP-2028 data cost of `bytes` (the standard per-byte rate, no floor).
-    fn data_cost(bytes: &[u8]) -> u64 {
-        bytes.iter().fold(0u64, |acc, &byte| acc.saturating_add(Self::byte_payload_costs(byte).0))
+    /// EIP-7623 floor data cost of `bytes`.
+    fn floor_data_cost(bytes: &[u8]) -> u64 {
+        bytes.iter().fold(0u64, |acc, &byte| acc.saturating_add(Self::byte_payload_costs(byte).1))
     }
 
     /// Cost of authenticating one auth blob: authenticator execution gas plus the
@@ -1411,7 +1413,7 @@ mod tests {
             gas.payer_auth,
             Eip8130GasSchedule::AUTH_EXEC_P256
                 + Eip8130GasSchedule::COLD_SLOAD
-                + IntrinsicGas::data_cost(&payer_auth)
+                + IntrinsicGas::floor_data_cost(&payer_auth)
         );
         // payer_auth is metered on top of gas_limit, so it is excluded here.
         assert_eq!(gas.sender_intrinsic(), gas.total() - gas.payer_auth);
@@ -1433,7 +1435,7 @@ mod tests {
             policy_gated.payer_auth,
             Eip8130GasSchedule::AUTH_EXEC_P256
                 + Eip8130GasSchedule::COLD_SLOAD * 2
-                + IntrinsicGas::data_cost(&payer_auth)
+                + IntrinsicGas::floor_data_cost(&payer_auth)
         );
     }
 
@@ -1446,7 +1448,7 @@ mod tests {
             gas.payer_auth,
             Eip8130GasSchedule::AUTH_EXEC_K1
                 + Eip8130GasSchedule::COLD_SLOAD
-                + IntrinsicGas::data_cost(&payer_auth)
+                + IntrinsicGas::floor_data_cost(&payer_auth)
         );
     }
 
@@ -1467,7 +1469,8 @@ mod tests {
         assert_eq!(short.sender_intrinsic(), long.sender_intrinsic());
         assert_eq!(
             long.payer_auth - short.payer_auth,
-            200 * Eip8130GasSchedule::TX_DATA_NONZERO_BYTE
+            200 * 4 * Eip8130GasSchedule::TX_TOTAL_COST_FLOOR_PER_TOKEN,
+            "payer_auth bytes are billed at the calldata floor rate"
         );
     }
 
