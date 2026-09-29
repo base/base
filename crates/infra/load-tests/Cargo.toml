@@ -56,3 +56,4 @@ tokio = { workspace = true, features = ["signal"] }
 tokio-tungstenite = { workspace = true, features = ["native-tls"] }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

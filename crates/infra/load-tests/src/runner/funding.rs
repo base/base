@@ -1082,7 +1082,8 @@ impl LoadRunner {
         unsettled_reason: &str,
         pb: &ProgressBar,
     ) -> Result<()> {
-        let start = Instant::now();
+        // Tokio's clock so tests can drive the timeout with paused time.
+        let start = tokio::time::Instant::now();
 
         while !pending_accounts.is_empty() && start.elapsed() < BALANCE_SETTLE_TIMEOUT {
             tokio::time::sleep(BALANCE_POLL_INTERVAL).await;
@@ -1189,7 +1190,7 @@ mod tests {
         (provider_builder::<Base>().connect_mocked_client(asserter.clone()), asserter)
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn settled_balances_repolls_until_every_account_reaches_target() {
         let (funded_first, funded_later) = (Address::repeat_byte(1), Address::repeat_byte(2));
         let (client, asserter) = mocked_client(&[TARGET, TARGET - U256::ONE, TARGET]);
@@ -1211,25 +1212,49 @@ mod tests {
         assert!(asserter.read_q().is_empty());
     }
 
-    #[tokio::test]
-    async fn settled_balances_repolls_until_every_account_drains_to_threshold() {
-        let (drained_later, drained_first) = (Address::repeat_byte(1), Address::repeat_byte(2));
-        let (client, asserter) = mocked_client(&[TARGET + U256::ONE, U256::ZERO, TARGET]);
-        let mut pending = vec![drained_later, drained_first];
+    #[tokio::test(start_paused = true)]
+    async fn settled_balances_keeps_account_pending_after_rpc_error() {
+        let asserter = Asserter::new();
+        asserter.push_failure_msg("connection reset");
+        asserter.push_success(&TARGET);
+        let client = provider_builder::<Base>().connect_mocked_client(asserter.clone());
+        let mut pending = vec![Address::repeat_byte(1)];
         let pb = ProgressBar::hidden();
 
         LoadRunner::await_settled_balances(
             &client,
             &mut pending,
-            |balance| balance <= TARGET,
-            "did not drain",
+            |balance| balance >= TARGET,
+            "did not reach funding target",
             &pb,
         )
         .await
         .unwrap();
 
         assert!(pending.is_empty());
-        assert_eq!(pb.position(), 2);
+        assert_eq!(pb.position(), 1);
         assert!(asserter.read_q().is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn settled_balances_times_out_with_unsettled_accounts() {
+        // An empty asserter fails every poll, so the account never settles.
+        let (client, _asserter) = mocked_client(&[]);
+        let unsettled = Address::repeat_byte(1);
+        let mut pending = vec![unsettled];
+        let pb = ProgressBar::hidden();
+
+        let err = LoadRunner::await_settled_balances(
+            &client,
+            &mut pending,
+            |balance| balance >= TARGET,
+            "did not reach funding target",
+            &pb,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(pending, vec![unsettled]);
+        assert!(err.to_string().contains("1 accounts did not reach funding target within timeout"));
     }
 }
