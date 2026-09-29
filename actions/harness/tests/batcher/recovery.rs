@@ -1,6 +1,7 @@
 //! Recovery of one persistent [`Batcher`] on every fork scheduled on Base mainnet, after a
-//! channel that timed out in derivation, a confirmed batch that derivation passed over, and a
-//! safe head that went back. Each test ends with derivation reading what the same batcher resent.
+//! channel that timed out in derivation, a confirmed batch that derivation passed over, a safe
+//! head that went back, and an unsafe chain the sequencer replaced. Each test ends with
+//! derivation reading what the same batcher resent.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
@@ -176,5 +177,54 @@ async fn batcher_resends_the_blocks_above_a_safe_head_that_went_back() {
         node.l2_safe().block_info.hash,
         blocks[2].header.hash_slow(),
         "derivation read the three blocks again"
+    );
+}
+
+/// When the sequencer replaces an unsafe block the batcher already took, as a new leader
+/// without it would, the batcher starts again from the safe head and sends the new chain,
+/// which derivation reads.
+#[tokio::test]
+async fn batcher_sends_the_unsafe_chain_that_replaced_the_blocks_it_took() {
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { max_channel_duration: 1, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_config(&batcher_cfg));
+    let mut old_leader = h.create_l2_sequencer(SharedL1Chain::from_blocks(h.l1.chain().to_vec()));
+    let mut new_leader = h.create_l2_sequencer(SharedL1Chain::from_blocks(h.l1.chain().to_vec()));
+    let common = old_leader.build_next_blocks_with_single_transactions(2).await;
+    assert_eq!(new_leader.build_next_blocks_with_single_transactions(2).await, common);
+    let replaced = old_leader.build_next_block_with_single_transaction().await;
+    let fork = [
+        new_leader.build_empty_block().await,
+        new_leader.build_next_block_with_single_transaction().await,
+    ];
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut new_leader,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+
+    // The batcher takes blocks 1 to 3 of the old leader into a channel that stays open.
+    let batcher = Batcher::new(
+        ActionL2Source::from_blocks(common.iter().cloned().chain([replaced])),
+        &h.rollup_config,
+        batcher_cfg,
+    );
+    batcher.observe_l1_block(h.l1.tip()).await;
+    assert_eq!(batcher.pending_count(), 0, "nothing left the open channel");
+
+    // The new leader's blocks replace block 3 on the chain the batcher polls.
+    for block in &fork {
+        batcher.push_block(block.clone());
+    }
+    batcher.advance(&mut h.l1).await;
+    chain.push(h.l1.tip().clone());
+
+    node.initialize().await;
+    assert_eq!(node.run_until_idle().await, 4, "the new chain derives");
+    assert_eq!(
+        node.l2_safe().block_info.hash,
+        fork[1].header.hash_slow(),
+        "derivation read the new leader's blocks"
     );
 }
