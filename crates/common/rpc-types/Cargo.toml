@@ -75,6 +75,7 @@ std = [
 	"revm?/std",
 	"serde/std",
 	"serde_json/std",
+	"thiserror/std",
 ]
 arbitrary = [
 	"alloy-consensus/arbitrary",
