@@ -60,15 +60,34 @@ pub struct Eip8130Signed {
     hash: B256,
 }
 
+/// JSON is flat, like every other transaction type: the [`TxEip8130`] fields
+/// sit at the top level beside `senderAuth` and `payerAuth`. Serialization also
+/// emits the standard single-call fields generic tooling reads, as a
+/// transaction with no single recipient: `to: null`, `value: "0x0"`, and
+/// `input: "0x"`. The calls themselves are in `calls`.
 #[cfg(feature = "serde")]
 mod serde_impl {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+    use alloy_primitives::{Address, U256};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     use super::{Bytes, Eip8130Signed, TxEip8130};
 
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Eip8130SignedJson<'a> {
+        #[serde(flatten)]
+        tx: &'a TxEip8130,
+        sender_auth: &'a Bytes,
+        payer_auth: &'a Bytes,
+        to: Option<Address>,
+        value: U256,
+        input: Bytes,
+    }
+
+    #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Eip8130SignedRepr {
+        #[serde(flatten)]
         tx: TxEip8130,
         sender_auth: Bytes,
         payer_auth: Bytes,
@@ -79,10 +98,13 @@ mod serde_impl {
         where
             S: Serializer,
         {
-            Eip8130SignedRepr {
-                tx: self.tx.clone(),
-                sender_auth: self.sender_auth.clone(),
-                payer_auth: self.payer_auth.clone(),
+            Eip8130SignedJson {
+                tx: &self.tx,
+                sender_auth: &self.sender_auth,
+                payer_auth: &self.payer_auth,
+                to: None,
+                value: U256::ZERO,
+                input: Bytes::new(),
             }
             .serialize(serializer)
         }
@@ -93,7 +115,7 @@ mod serde_impl {
         where
             D: Deserializer<'de>,
         {
-            let repr = Eip8130SignedRepr::deserialize(deserializer).map_err(de::Error::custom)?;
+            let repr = Eip8130SignedRepr::deserialize(deserializer)?;
             Ok(Self::new(repr.tx, repr.sender_auth, repr.payer_auth))
         }
     }

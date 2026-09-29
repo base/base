@@ -19,6 +19,30 @@ pub(crate) const STUB_AUTH_FILL: u8 = 0xff;
 /// Length of the authenticator selector on a prefixed authentication blob.
 const AUTHENTICATOR_SELECTOR_LEN: usize = 20;
 
+/// Why an EIP-8130 `eth_estimateGas` / `eth_call` request cannot be simulated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum Eip8130SimulationRequestError {
+    /// The request carries none of the EIP-8130 fields.
+    #[error("request carries no EIP-8130 fields")]
+    NotEip8130,
+    /// Neither `sender` nor `from` is set.
+    #[error("no sender account: set `sender` or `from`")]
+    MissingSender,
+    /// `sender` and `from` are both set and differ.
+    #[error("`sender` and `from` differ")]
+    SenderFromMismatch,
+    /// The `senderAuth` data is larger than an authentication blob may be.
+    #[error("`senderAuth` data exceeds the maximum authentication size")]
+    SenderAuthTooLarge,
+    /// The `payerAuth` data is larger than an authentication blob may be.
+    #[error("`payerAuth` data exceeds the maximum authentication size")]
+    PayerAuthTooLarge,
+    /// A named payer's `payerAuth` does not start with a recognized
+    /// authenticator selector.
+    #[error("`payerAuth` for a named payer must start with a recognized authenticator")]
+    UnrecognizedPayerAuthenticator,
+}
+
 /// Maximum caller-supplied authentication payload length.
 pub(crate) const MAX_AUTH_SIZE: u32 = 8_192;
 
@@ -66,30 +90,32 @@ impl Eip8130Nonce {
 impl BaseTransactionRequest {
     /// Builds an unsigned EIP-8130 simulation transaction.
     ///
-    /// Returns `None` when the request carries no EIP-8130 fields, does not resolve a sender,
-    /// contains conflicting `sender` and `from` values, or supplies an invalid authentication
-    /// blob. The returned transaction uses [`Eip8130ExecutionMode::Simulate`] so callers can run
+    /// Returns an [`Eip8130SimulationRequestError`] naming why the request cannot be simulated.
+    /// The returned transaction uses [`Eip8130ExecutionMode::Simulate`] so callers can run
     /// `eth_call` and `eth_estimateGas` without signature verification or committed state.
     pub fn to_eip8130_simulation_tx(
         &self,
         chain_id: u64,
         gas_limit_cap: u64,
-    ) -> Option<BaseRevm<TxEnv>> {
-        let aa = self.as_eip8130()?;
+    ) -> Result<BaseRevm<TxEnv>, Eip8130SimulationRequestError> {
+        let aa = self.as_eip8130().ok_or(Eip8130SimulationRequestError::NotEip8130)?;
         let req = self.as_ref();
 
         let account = match (aa.sender, req.from) {
-            (Some(sender), Some(from)) if sender != from => return None,
+            (Some(sender), Some(from)) if sender != from => {
+                return Err(Eip8130SimulationRequestError::SenderFromMismatch);
+            }
             (Some(sender), _) => sender,
             (None, Some(from)) => from,
-            (None, None) => return None,
+            (None, None) => return Err(Eip8130SimulationRequestError::MissingSender),
         };
         let sender_declared = aa.sender.is_some();
 
         let (sender, sender_auth) = match &aa.sender_auth {
             Some(blob) => {
                 let prefixed = Self::is_prefixed_auth(blob);
-                Self::check_auth_len(blob, prefixed)?;
+                Self::check_auth_len(blob, prefixed)
+                    .ok_or(Eip8130SimulationRequestError::SenderAuthTooLarge)?;
                 (prefixed.then_some(account), blob.clone())
             }
             None if sender_declared => (
@@ -111,7 +137,8 @@ impl BaseTransactionRequest {
                 // address or the sender.
                 let blob = match &aa.payer_auth {
                     Some(blob) => {
-                        Self::check_auth_len(blob, false)?;
+                        Self::check_auth_len(blob, false)
+                            .ok_or(Eip8130SimulationRequestError::PayerAuthTooLarge)?;
                         blob.clone()
                     }
                     None => Self::default_bare_auth(),
@@ -122,9 +149,12 @@ impl BaseTransactionRequest {
                 let blob = match &aa.payer_auth {
                     Some(blob) => {
                         if !Self::is_prefixed_auth(blob) {
-                            return None;
+                            return Err(
+                                Eip8130SimulationRequestError::UnrecognizedPayerAuthenticator,
+                            );
                         }
-                        Self::check_auth_len(blob, true)?;
+                        Self::check_auth_len(blob, true)
+                            .ok_or(Eip8130SimulationRequestError::PayerAuthTooLarge)?;
                         blob.clone()
                     }
                     None => Self::stub_prefixed_auth(
@@ -158,7 +188,7 @@ impl BaseTransactionRequest {
             parts.mode = Eip8130ExecutionMode::Simulate;
             parts.simulation_sender_actor_id = aa.sender_actor_id;
         }
-        Some(simulation)
+        Ok(simulation)
     }
 
     fn default_bare_auth() -> Bytes {
@@ -246,14 +276,20 @@ mod tests {
             "calls": []
         }))
         .unwrap();
-        assert!(request.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none());
+        assert_eq!(
+            request.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(Eip8130SimulationRequestError::SenderFromMismatch)
+        );
     }
 
     #[test]
     fn missing_sender_is_rejected() {
         let request =
             serde_json::from_value::<BaseTransactionRequest>(json!({ "calls": [] })).unwrap();
-        assert!(request.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none());
+        assert_eq!(
+            request.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(Eip8130SimulationRequestError::MissingSender)
+        );
     }
 
     #[test]
@@ -274,7 +310,10 @@ mod tests {
             "senderAuth": auth
         }))
         .unwrap();
-        assert!(request.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none());
+        assert_eq!(
+            request.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(Eip8130SimulationRequestError::SenderAuthTooLarge)
+        );
     }
 
     #[test]
