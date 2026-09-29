@@ -9,13 +9,14 @@ use alloy_signer_local::PrivateKeySigner;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryClient,
     AnchorStateRegistryContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
-    GameStatus, encode_nullify_calldata,
+    GameStatus, describe_revert, encode_nullify_calldata,
 };
 use base_proof_rpc::L2HttpProvider;
-use base_proof_submission::AggregateProofSubmitter;
+use base_proof_submission::{AggregateProofSubmitter, ProofSubmissionError};
 use base_prover_service_protocol::ZkBackend;
 use base_tx_manager::{
     NoopTxMetrics, SignerConfig, SimpleTxManager, TxCandidate, TxManager, TxManagerConfig,
+    TxManagerError,
 };
 use base_zk_fork_dispute::{Checkpoint, Config as ForkConfig};
 use clap::Parser;
@@ -404,7 +405,11 @@ impl ChallengerE2e {
         let receipt = AggregateProofSubmitter::new(&tx_manager)
             .verify_proposal_proof(game.address, proof_bytes)
             .await
-            .context("failed to submit verifyProposalProof")?;
+            .map_err(Self::name_revert)
+            .context(
+                "failed to submit verifyProposalProof; the prover-service produced a proof this \
+                 game's ZK verifier rejected",
+            )?;
 
         let zk_prover = verifier.zk_prover(game.address).await?;
         let countered_index = verifier.countered_index(game.address).await?;
@@ -549,6 +554,7 @@ impl ChallengerE2e {
                     ..Default::default()
                 })
                 .await
+                .map_err(Self::name_revert)
                 .context("failed to submit the Path 3 TEE nullify")
         })
         .await?;
@@ -756,6 +762,23 @@ impl ChallengerE2e {
 
         info!(game = %game.address, disputes = submitted, "Path 3: invalid ZK proposal nullified");
         Ok(false)
+    }
+
+    /// Names the Solidity error behind a reverted dispute-game transaction.
+    ///
+    /// The tx manager reports a revert as a bare selector, which is unreadable
+    /// in a log without the ABI to hand: a zeronet run died on `0x09bde339`
+    /// and naming it `InvalidProof()` took a manual keccak sweep over the
+    /// contract's 41 error signatures. Errors carrying no revert data pass
+    /// through unchanged.
+    fn name_revert<E>(error: E) -> eyre::Report
+    where
+        E: RevertData + std::error::Error + Send + Sync + 'static,
+    {
+        error.revert_data().map_or_else(
+            || eyre!("{error}"),
+            |data| eyre!("{error}").wrap_err(format!("reverted with {}", describe_revert(&data))),
+        )
     }
 
     /// Sets a verifier's `nullified` flag directly, reproducing the global side
@@ -1413,6 +1436,34 @@ impl ChallengerE2e {
     }
 }
 
+/// Exposes the raw revert bytes an error carries, if any.
+///
+///
+/// Two unrelated error types reach the same logging path, and only the bytes
+/// matter to [`ChallengerE2e::name_revert`].
+pub trait RevertData {
+    /// Returns the EVM revert data, or `None` if this error is not a revert.
+    fn revert_data(&self) -> Option<Bytes>;
+}
+
+impl RevertData for TxManagerError {
+    fn revert_data(&self) -> Option<Bytes> {
+        match self {
+            Self::ExecutionReverted { data, .. } => data.clone(),
+            _ => None,
+        }
+    }
+}
+
+impl RevertData for ProofSubmissionError {
+    fn revert_data(&self) -> Option<Bytes> {
+        match self {
+            Self::TxManager(error) => error.revert_data(),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1467,6 +1518,34 @@ mod tests {
 
         let after = provider.get_storage_at(verifier, U256::ZERO).await.expect("read slot 0");
         assert_eq!(after, U256::from(1), "`nullified` is slot 0 of the Verifier base");
+    }
+
+    /// The point of the helper: a zeronet run failed on a bare `0x09bde339`,
+    /// which cost a manual keccak sweep to identify.
+    #[test]
+    fn name_revert_names_the_error_instead_of_printing_a_selector() {
+        let reverted = TxManagerError::ExecutionReverted {
+            reason: None,
+            data: Some(Bytes::from_static(&[0x09, 0xbd, 0xe3, 0x39])),
+        };
+        let report = format!("{:#}", ChallengerE2e::name_revert(reverted));
+        assert!(report.contains("InvalidProof"), "{report}");
+
+        // Through the submission wrapper too, which is the path that actually
+        // failed on zeronet.
+        let wrapped = ProofSubmissionError::TxManager(TxManagerError::ExecutionReverted {
+            reason: None,
+            data: Some(Bytes::from_static(&[0x09, 0xbd, 0xe3, 0x39])),
+        });
+        let report = format!("{:#}", ChallengerE2e::name_revert(wrapped));
+        assert!(report.contains("InvalidProof"), "{report}");
+    }
+
+    #[test]
+    fn name_revert_passes_through_errors_that_are_not_reverts() {
+        let report = format!("{:#}", ChallengerE2e::name_revert(TxManagerError::NonceTooLow));
+        assert!(report.contains("nonce too low"), "{report}");
+        assert!(!report.contains("reverted with"), "{report}");
     }
 
     #[test]

@@ -7,9 +7,9 @@
 //! [`encode_nullify_calldata`] or `challenge` via
 //! [`encode_challenge_calldata`].
 
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, hex};
 use alloy_provider::RootProvider;
-use alloy_sol_types::{SolCall, SolError, sol};
+use alloy_sol_types::{SolCall, SolError, SolInterface, sol};
 use async_trait::async_trait;
 
 use crate::{
@@ -87,7 +87,11 @@ sol! {
     /// `AggregateVerifier` (dispute game) contract interface.
     ///
     /// Each game instance is a clone created by `DisputeGameFactory.create()`.
-    #[sol(rpc)]
+    ///
+    /// `all_derives` is load-bearing: it gives the generated error enum a
+    /// `Debug`, which is what lets [`describe_revert`] name a revert instead of
+    /// printing a bare selector.
+    #[sol(rpc, all_derives)]
     interface IAggregateVerifier {
         /// Error returned when the proof's L1 origin is older than the EIP-2935 history window.
         error L1OriginTooOld(uint256 l1OriginNumber, uint256 currentBlock);
@@ -101,6 +105,43 @@ sol! {
 
         /// Error returned when a proof type has already been verified.
         error AlreadyProven(uint8 proofType);
+
+        /// Error bubbled from a verifier when the submitted proof does not
+        /// verify against the journal the game reconstructed.
+        error InvalidProof();
+
+        /// Error returned when the verifier has been nullified and refuses to
+        /// verify any further proof.
+        error Nullified();
+
+        /// Error returned when the proved root equals the one already stored at
+        /// that index, so there is nothing to refute.
+        error IntermediateRootSameAsProposed();
+
+        /// Error returned when the proved root does not match the challenged
+        /// one on a game that has already been countered.
+        error IntermediateRootMismatch(bytes32 intermediateRoot, bytes32 claim);
+
+        /// Error returned when the intermediate root index is out of range, or
+        /// is not the challenged index on a countered game.
+        error InvalidIntermediateRootIndex();
+
+        /// Error returned when the proof type byte is not valid for the call.
+        error InvalidProofType();
+
+        /// Error returned when the game has no proof of the given type to
+        /// refute.
+        error MissingProof(uint8 proofType);
+
+        /// Error bubbled from `TEEVerifier` when the proposer is not registered.
+        error InvalidProposer(address proposer);
+
+        /// Error returned when the game has already resolved.
+        error ClaimAlreadyResolved();
+
+        /// Error returned by a verifier's `nullify` when the caller is not a
+        /// registered, respected, unblacklisted, unretired dispute game.
+        error NotProperGame();
 
         /// Returns the root claim (output root) of this game.
         function rootClaim() external pure returns (bytes32);
@@ -836,6 +877,24 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
     }
 }
 
+/// Renders a revert from an `AggregateVerifier` or its verifiers as a named
+/// Solidity error.
+///
+/// Reverts from these contracts reach the logs as a bare 4-byte selector, which
+/// says nothing without the ABI to hand — `0x09bde339` is `InvalidProof()`, and
+/// working that out after the fact costs a run. Falls back to the hex selector
+/// for anything not in [`IAggregateVerifier`], so an unrecognised revert is
+/// still reported rather than swallowed.
+pub fn describe_revert(data: &[u8]) -> String {
+    if data.is_empty() {
+        return "reverted without data (out of gas, or a require with no reason)".to_string();
+    }
+    IAggregateVerifier::IAggregateVerifierErrors::abi_decode(data).map_or_else(
+        |_| format!("unrecognised revert {}", hex::encode_prefixed(data)),
+        |error| format!("{error:?}"),
+    )
+}
+
 /// Encodes the calldata for `IAggregateVerifier.nullify()`.
 ///
 /// The first byte of `proof_bytes` is the proof type discriminator:
@@ -922,6 +981,28 @@ mod tests {
         assert!(supports_fork_aware_intervals("0.1.x"));
         assert!(supports_fork_aware_intervals("0.1.0.1"));
         assert!(supports_fork_aware_intervals("0.1."));
+    }
+
+    #[test]
+    fn describe_revert_names_the_errors_seen_in_practice() {
+        // 0x09bde339 failed a zeronet Path 3 run on 2026-09-29 as a bare
+        // selector, which is what motivated this helper.
+        assert!(describe_revert(&hex!("09bde339")).contains("InvalidProof"));
+        assert!(describe_revert(&hex!("bcf3e864")).contains("Nullified"));
+        assert!(
+            describe_revert(&hex!("bbcafae6")).contains("IntermediateRootSameAsProposed"),
+            "the guard that forces Path 3's staging order"
+        );
+    }
+
+    #[test]
+    fn describe_revert_falls_back_rather_than_swallowing() {
+        assert!(describe_revert(&[]).contains("without data"));
+        assert_eq!(
+            describe_revert(&hex!("deadbeef")),
+            "unrecognised revert 0xdeadbeef",
+            "an unknown selector must still reach the log"
+        );
     }
 
     #[test]
