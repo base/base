@@ -2374,16 +2374,10 @@ mod tests {
         let signer = signer();
         fund(&client, signer.address());
 
-        let nonce_free = self_paid_eoa_8130(
-            &signer,
-            Eip8130Constants::NONCE_KEY_MAX,
-            0,
-            INTEGRATION_POOL_NOW_MS + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
-            1_000,
-        );
-        let nonce_free_hash = *nonce_free.hash();
-        pool.add_transaction(TransactionOrigin::Local, nonce_free).await.unwrap();
-        let pooled = pool.get(&nonce_free_hash).unwrap();
+        let keyed = self_paid_eoa_8130(&signer, U256::from(2), 0, 0, 1_000);
+        let keyed_hash = *keyed.hash();
+        pool.add_transaction(TransactionOrigin::Local, keyed).await.unwrap();
+        let pooled = pool.get(&keyed_hash).unwrap();
         let (address, slot) = pooled
             .transaction
             .watch_set()
@@ -2393,7 +2387,7 @@ mod tests {
                 InvalidationKey::Slot { address, slot } => Some((*address, *slot)),
                 _ => None,
             })
-            .expect("EOA authorization must expose an exact config-slot dependency");
+            .expect("a 2D nonce channel must expose an exact nonce-slot dependency");
 
         let removed = pool.apply_state_diff(&[AccountStateDiff {
             address,
@@ -2401,8 +2395,8 @@ mod tests {
             ..Default::default()
         }]);
         assert_eq!(removed.len(), 1);
-        assert_eq!(*removed[0].hash(), nonce_free_hash);
-        assert!(pool.get(&nonce_free_hash).is_none());
+        assert_eq!(*removed[0].hash(), keyed_hash);
+        assert!(pool.get(&keyed_hash).is_none());
 
         let channel = self_paid_eoa_8130(&signer, U256::from(1), 0, 0, 1_000);
         let channel_hash = *channel.hash();

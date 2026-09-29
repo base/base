@@ -51,6 +51,21 @@ pub enum TxAuthError {
     #[error("delegation requires an admin actor")]
     DelegationUnauthorized,
 
+    /// The transaction carries an account change type this chain does not
+    /// support.
+    #[error("unsupported account change type")]
+    UnsupportedAccountChange,
+
+    /// A named sender or payer selects an authenticator this chain does not
+    /// support.
+    #[error("unsupported authenticator")]
+    UnsupportedAuthenticator,
+
+    /// A named sender or payer's native secp256k1 signature recovered to a
+    /// different address than the one named.
+    #[error("secp256k1 signature does not recover to the named account")]
+    SignerMismatch,
+
     /// A signed account-change batch's sequence does not match the account's
     /// current sequence for its channel. The contract reads the sequence from
     /// state, so a mismatch means the batch is stale or out of order (and its

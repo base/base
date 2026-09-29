@@ -175,6 +175,7 @@ impl Upgrades for RollupConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::BaseUpgradeExt;
 
     #[test]
     fn rollup_config_upgrade_activation_cascade() {
@@ -250,5 +251,16 @@ mod tests {
         assert_eq!(cfg.fork_condition(BaseUpgrade::Zenith), ForkCondition::Timestamp(ACTIVATION));
         assert!(!cfg.is_zenith_active_at_timestamp(ACTIVATION - 1));
         assert!(cfg.is_zenith_active_at_timestamp(ACTIVATION));
+    }
+
+    #[test]
+    fn active_zenith_is_the_execution_upgrade() {
+        const ACTIVATION: u64 = 42;
+        let mut cfg = RollupConfig::default();
+        cfg.upgrades.base.everest = Some(0);
+        cfg.upgrades.base.zenith = Some(ACTIVATION);
+
+        assert_eq!(BaseUpgrade::from_timestamp(cfg.clone(), ACTIVATION - 1), BaseUpgrade::Everest);
+        assert_eq!(BaseUpgrade::from_timestamp(cfg, ACTIVATION), BaseUpgrade::Zenith);
     }
 }

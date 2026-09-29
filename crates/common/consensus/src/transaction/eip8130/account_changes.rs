@@ -349,9 +349,12 @@ pub struct Delegation {
 ///
 /// On the wire each entry is a single RLP list whose first element is the type
 /// byte, followed by the body fields inline (per [EIP-8130]):
-/// - `rlp([0x00, user_salt, code, initial_actors])` -> [`AccountChange::Create`]
 /// - `rlp([0x01, target])` -> [`AccountChange::Delegation`]
-/// - `rlp([0x02, channel, sequence, changes, signature])` -> [`AccountChange::ConfigChange`]
+/// - `rlp([0x02, user_salt, code, initial_actors])` -> [`AccountChange::Create`]
+/// - `rlp([0x03, channel, sequence, changes, signature])` -> [`AccountChange::ConfigChange`]
+///
+/// `0x00` is reserved and does not decode. `Create` and `ConfigChange` are the
+/// Keystore's entries and are only valid once Zenith is active.
 ///
 /// The type byte is a genuine list element (not an EIP-2718-style `type_byte ||
 /// rlp(...)` prefix), so each entry is one self-contained RLP item and the
@@ -639,6 +642,14 @@ mod tests {
         let mut slice = &buf[..];
         let res = AccountChange::decode(&mut slice);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn reserved_type_byte_zero_does_not_decode() {
+        // `0x00` is reserved by the AA transaction type; Create moved to `0x02`.
+        // `[0x00]` is the RLP list `0xc1 0x80`.
+        let buf = [0xc1u8, 0x80];
+        assert!(AccountChange::decode(&mut &buf[..]).is_err());
     }
 
     #[test]
