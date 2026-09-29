@@ -57,8 +57,8 @@ pub use parking::{
 mod pool;
 pub use pool::{AccountStateDiff, BaseTransactionPool};
 
-mod node_pool;
-pub use node_pool::BaseNodePool;
+mod maybe_pool;
+pub use maybe_pool::MaybeBaseTransactionPool;
 
 mod state_diff_maintain;
 pub use state_diff_maintain::{

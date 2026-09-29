@@ -41,8 +41,8 @@ use tracing::{debug, instrument, warn};
 use super::BaseTimeCache;
 use crate::{BaseEthApi, BaseEthApiError, BaseInvalidTransactionError, SequencerClient};
 
-/// Returns `true` if `err` is the rejection produced by the noop transaction pool.
-fn is_noop_pool_rejection<T: EthPoolTransaction>(err: &EthApiError) -> bool {
+/// Returns `true` if `err` is the rejection produced by a disabled transaction pool.
+fn is_disabled_pool_rejection<T: EthPoolTransaction>(err: &EthApiError) -> bool {
     matches!(
         err,
         EthApiError::PoolError(RpcPoolError::Other(source)) if source.is::<NoopInsertError<T>>()
@@ -103,10 +103,10 @@ where
                     debug!(target: "rpc::eth", error = %err, hash=% *pool_transaction.hash(), "failed to forward raw transaction");
                 })?;
 
-            // Retain tx in local tx pool after forwarding, for local RPC usage. Nodes running the
-            // noop pool reject every insert by design, so that is not worth a warning.
+            // Retain tx in local tx pool after forwarding, for local RPC usage. Nodes running a disabled
+            // pool (reth's noop pool) reject every insert by design, so that is not worth a warning.
             let _ = self.inner.eth_api.add_pool_transaction(origin, pool_transaction).await.inspect_err(|err| {
-                if !is_noop_pool_rejection::<<N::Pool as TransactionPool>::Transaction>(err) {
+                if !is_disabled_pool_rejection::<<N::Pool as TransactionPool>::Transaction>(err) {
                     warn!(target: "rpc::eth", error = %err, %hash, "successfully sent tx to sequencer, but failed to persist in local tx pool");
                 }
             });

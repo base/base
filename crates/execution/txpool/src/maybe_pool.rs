@@ -1,4 +1,4 @@
-//! Node-level transaction pool that is either the full Base pool or a noop pool.
+//! Node-level transaction pool that is either the full Base pool or a disabled pool.
 
 use std::{fmt, sync::Arc};
 
@@ -26,12 +26,12 @@ use crate::{
     StateDiffInvalidation,
 };
 
-/// Forwards a call to whichever pool backs this [`BaseNodePool`].
+/// Forwards a call to whichever pool backs this [`MaybeBaseTransactionPool`].
 macro_rules! dispatch {
     ($self:expr, $pool:ident => $call:expr) => {
         match $self {
-            Self::Real($pool) => $call,
-            Self::Noop { pool: $pool, .. } => $call,
+            Self::Enabled($pool) => $call,
+            Self::Disabled { pool: $pool, .. } => $call,
         }
     };
 }
@@ -39,10 +39,10 @@ macro_rules! dispatch {
 /// The transaction pool a Base node runs with.
 ///
 /// Nodes that never build blocks and never drain the pool (plain RPC and follower nodes) run
-/// [`Self::Noop`], which rejects every insert and holds nothing. Sequencers, builders and
-/// transaction forwarders run [`Self::Real`]. Sharing one type keeps every component and extension
-/// that consumes the pool independent of which mode was chosen at startup.
-pub enum BaseNodePool<Client, S, Evm, T, O>
+/// [`Self::Disabled`], which rejects every insert and holds nothing. Sequencers, builders and
+/// transaction forwarders run [`Self::Enabled`]. Sharing one type keeps every component and
+/// extension that consumes the pool independent of which mode was chosen at startup.
+pub enum MaybeBaseTransactionPool<Client, S, Evm, T, O>
 where
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction,
@@ -50,17 +50,17 @@ where
     S: BlobStore + Clone,
 {
     /// The full Base transaction pool.
-    Real(BaseTransactionPool<Client, S, Evm, T, O>),
+    Enabled(BaseTransactionPool<Client, S, Evm, T, O>),
     /// A pool that rejects all transactions.
-    Noop {
-        /// The noop pool.
+    Disabled {
+        /// Reth's noop pool, which rejects every insert.
         pool: NoopTransactionPool<T>,
         /// Ordering used to build empty parkable iterators.
         ordering: O,
     },
 }
 
-impl<Client, S, Evm, T, O> fmt::Debug for BaseNodePool<Client, S, Evm, T, O>
+impl<Client, S, Evm, T, O> fmt::Debug for MaybeBaseTransactionPool<Client, S, Evm, T, O>
 where
     Client: 'static,
     Evm: 'static,
@@ -70,12 +70,14 @@ where
     S: BlobStore + Clone,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let variant = if self.is_noop() { "Noop" } else { "Real" };
-        f.debug_struct("BaseNodePool").field("variant", &variant).finish_non_exhaustive()
+        let variant = if self.is_enabled() { "Enabled" } else { "Disabled" };
+        f.debug_struct("MaybeBaseTransactionPool")
+            .field("variant", &variant)
+            .finish_non_exhaustive()
     }
 }
 
-impl<Client, S, Evm, T, O> Clone for BaseNodePool<Client, S, Evm, T, O>
+impl<Client, S, Evm, T, O> Clone for MaybeBaseTransactionPool<Client, S, Evm, T, O>
 where
     Client: 'static,
     Evm: 'static,
@@ -86,15 +88,15 @@ where
 {
     fn clone(&self) -> Self {
         match self {
-            Self::Real(pool) => Self::Real(pool.clone()),
-            Self::Noop { pool, ordering } => {
-                Self::Noop { pool: pool.clone(), ordering: ordering.clone() }
+            Self::Enabled(pool) => Self::Enabled(pool.clone()),
+            Self::Disabled { pool, ordering } => {
+                Self::Disabled { pool: pool.clone(), ordering: ordering.clone() }
             }
         }
     }
 }
 
-impl<Client, S, Evm, T, O> Unpin for BaseNodePool<Client, S, Evm, T, O>
+impl<Client, S, Evm, T, O> Unpin for MaybeBaseTransactionPool<Client, S, Evm, T, O>
 where
     Client: 'static,
     Evm: 'static,
@@ -105,7 +107,7 @@ where
 {
 }
 
-impl<Client, S, Evm, T, O> BaseNodePool<Client, S, Evm, T, O>
+impl<Client, S, Evm, T, O> MaybeBaseTransactionPool<Client, S, Evm, T, O>
 where
     Client: 'static,
     Evm: 'static,
@@ -114,18 +116,18 @@ where
     O: TransactionOrdering<Transaction = T> + Clone,
     S: BlobStore + Clone,
 {
-    /// Creates a noop pool that rejects every transaction.
-    pub fn noop(ordering: O) -> Self {
-        Self::Noop { pool: NoopTransactionPool::new(), ordering }
+    /// Creates a disabled pool that rejects every transaction.
+    pub fn disabled(ordering: O) -> Self {
+        Self::Disabled { pool: NoopTransactionPool::new(), ordering }
     }
 
-    /// Returns `true` if this pool rejects every transaction.
-    pub const fn is_noop(&self) -> bool {
-        matches!(self, Self::Noop { .. })
+    /// Returns `true` if this is the full pool rather than one that rejects every transaction.
+    pub const fn is_enabled(&self) -> bool {
+        matches!(self, Self::Enabled(_))
     }
 }
 
-impl<Client, S, Evm, T, O> StateDiffInvalidation for BaseNodePool<Client, S, Evm, T, O>
+impl<Client, S, Evm, T, O> StateDiffInvalidation for MaybeBaseTransactionPool<Client, S, Evm, T, O>
 where
     Client: 'static,
     Evm: 'static,
@@ -136,20 +138,21 @@ where
 {
     fn invalidate_from_state_diff(&self, diffs: &[AccountStateDiff]) -> usize {
         match self {
-            Self::Real(pool) => pool.invalidate_from_state_diff(diffs),
-            Self::Noop { .. } => 0,
+            Self::Enabled(pool) => pool.invalidate_from_state_diff(diffs),
+            Self::Disabled { .. } => 0,
         }
     }
 
     fn invalidate_all_tracked(&self, cause: InvalidationCause) -> usize {
         match self {
-            Self::Real(pool) => pool.invalidate_all_tracked(cause),
-            Self::Noop { .. } => 0,
+            Self::Enabled(pool) => pool.invalidate_all_tracked(cause),
+            Self::Disabled { .. } => 0,
         }
     }
 }
 
-impl<Client, S, Evm, T, O> ParkableTransactionPool for BaseNodePool<Client, S, Evm, T, O>
+impl<Client, S, Evm, T, O> ParkableTransactionPool
+    for MaybeBaseTransactionPool<Client, S, Evm, T, O>
 where
     Client: 'static,
     Evm: 'static,
@@ -163,8 +166,8 @@ where
         attributes: BestTransactionsAttributes,
     ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
         match self {
-            Self::Real(pool) => pool.best_transactions_with_attributes_and_parking(attributes),
-            Self::Noop { ordering, .. } => {
+            Self::Enabled(pool) => pool.best_transactions_with_attributes_and_parking(attributes),
+            Self::Disabled { ordering, .. } => {
                 let empty: Box<
                     dyn BestTransactions<Item = Arc<ValidPoolTransaction<Self::Transaction>>>,
                 > = Box::new(std::iter::empty());
@@ -174,7 +177,7 @@ where
     }
 }
 
-impl<Client, S, Evm, T, O> TransactionPoolExt for BaseNodePool<Client, S, Evm, T, O>
+impl<Client, S, Evm, T, O> TransactionPoolExt for MaybeBaseTransactionPool<Client, S, Evm, T, O>
 where
     Client: 'static,
     Evm: 'static,
@@ -186,43 +189,43 @@ where
     type Block = <BaseTransactionPool<Client, S, Evm, T, O> as TransactionPoolExt>::Block;
 
     fn set_block_info(&self, info: BlockInfo) {
-        if let Self::Real(pool) = self {
+        if let Self::Enabled(pool) = self {
             pool.set_block_info(info);
         }
     }
 
     fn on_canonical_state_change(&self, update: CanonicalStateUpdate<'_, Self::Block>) {
-        if let Self::Real(pool) = self {
+        if let Self::Enabled(pool) = self {
             pool.on_canonical_state_change(update);
         }
     }
 
     fn update_accounts(&self, accounts: Vec<ChangedAccount>) {
-        if let Self::Real(pool) = self {
+        if let Self::Enabled(pool) = self {
             pool.update_accounts(accounts);
         }
     }
 
     fn delete_blob(&self, tx: B256) {
-        if let Self::Real(pool) = self {
+        if let Self::Enabled(pool) = self {
             pool.delete_blob(tx);
         }
     }
 
     fn delete_blobs(&self, txs: Vec<B256>) {
-        if let Self::Real(pool) = self {
+        if let Self::Enabled(pool) = self {
             pool.delete_blobs(txs);
         }
     }
 
     fn cleanup_blobs(&self) {
-        if let Self::Real(pool) = self {
+        if let Self::Enabled(pool) = self {
             pool.cleanup_blobs();
         }
     }
 }
 
-impl<Client, S, Evm, T, O> TransactionPool for BaseNodePool<Client, S, Evm, T, O>
+impl<Client, S, Evm, T, O> TransactionPool for MaybeBaseTransactionPool<Client, S, Evm, T, O>
 where
     Client: 'static,
     Evm: 'static,
@@ -584,7 +587,7 @@ mod tests {
     use super::*;
     use crate::{BaseOrdering, BasePooledTransaction};
 
-    type TestPool = BaseNodePool<
+    type TestPool = MaybeBaseTransactionPool<
         MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
         InMemoryBlobStore,
         BaseEvmConfig,
@@ -593,10 +596,10 @@ mod tests {
     >;
 
     #[test]
-    fn noop_pool_holds_nothing() {
-        let pool = TestPool::noop(BaseOrdering::default());
+    fn disabled_pool_holds_nothing() {
+        let pool = TestPool::disabled(BaseOrdering::default());
 
-        assert!(pool.is_noop());
+        assert!(!pool.is_enabled());
         assert_eq!(pool.pool_size().total, 0);
         assert!(pool.pending_transactions().is_empty());
         assert!(pool.get(&TxHash::ZERO).is_none());

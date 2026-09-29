@@ -29,8 +29,8 @@ use base_execution_rpc::{
     witness::{BaseDebugWitnessApi, DebugExecutionWitnessApiServer},
 };
 use base_execution_txpool::{
-    BaseNodePool, BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
-    BaseTransactionValidator, GuardLimits, TimestampedTransaction,
+    BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
+    BaseTransactionValidator, GuardLimits, MaybeBaseTransactionPool, TimestampedTransaction,
     maintain_state_diff_invalidation,
 };
 use reth_chain_state::CanonStateSubscriptions;
@@ -208,7 +208,7 @@ pub struct BaseNode {
     /// Used to control the gas limit of the blocks produced by the payload builder (configured by the
     /// batcher via the `miner_` api)
     pub gas_limit_config: GasLimitConfig,
-    /// Whether the node runs a real transaction pool instead of a noop pool.
+    /// Whether the node runs an enabled transaction pool instead of a disabled one.
     pub txpool_enabled: bool,
 }
 
@@ -237,7 +237,7 @@ impl BaseNode {
         }
     }
 
-    /// Configure whether the node runs a real transaction pool instead of a noop pool.
+    /// Configure whether the node runs an enabled transaction pool instead of a disabled one.
     pub const fn with_txpool_enabled(mut self, enabled: bool) -> Self {
         self.txpool_enabled = enabled;
         self
@@ -892,7 +892,7 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
     pub guard_limits: GuardLimits,
     /// Additional trusted EIP-7702 delegation targets for locked payers.
     pub additional_trusted_delegation_targets: AddressSet,
-    /// Whether to run a real transaction pool. When `false` the node runs a noop pool that
+    /// Whether to run an enabled transaction pool. When `false` the node runs a disabled pool that
     /// rejects every transaction and spawns no pool tasks.
     pub enabled: bool,
     /// Marker for the pooled transaction type.
@@ -939,7 +939,7 @@ impl<T> BasePoolBuilder<T> {
         self
     }
 
-    /// Sets whether the node runs a real transaction pool instead of a noop pool.
+    /// Sets whether the node runs an enabled transaction pool instead of a disabled one.
     pub const fn with_enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
@@ -979,7 +979,8 @@ where
     T: EthPoolTransaction<Consensus = TxTy<Node::Types>> + BasePooledTx + TimestampedTransaction,
     Evm: ConfigureEvm<Primitives = PrimitivesTy<Node::Types>> + Clone + 'static,
 {
-    type Pool = BaseNodePool<Node::Provider, DiskFileBlobStore, Evm, T, BaseOrdering<T>>;
+    type Pool =
+        MaybeBaseTransactionPool<Node::Provider, DiskFileBlobStore, Evm, T, BaseOrdering<T>>;
 
     async fn build_pool(
         self,
@@ -998,7 +999,7 @@ where
 
         if !enabled {
             info!(target: "reth::cli", "Transaction pool disabled");
-            return Ok(BaseNodePool::noop(ordering));
+            return Ok(MaybeBaseTransactionPool::disabled(ordering));
         }
 
         let blob_store = reth_node_builder::components::create_blob_store(ctx)?;
@@ -1053,7 +1054,7 @@ where
         );
         debug!(target: "reth::cli", "Spawned txpool maintenance tasks");
 
-        Ok(BaseNodePool::Real(transaction_pool))
+        Ok(MaybeBaseTransactionPool::Enabled(transaction_pool))
     }
 }
 

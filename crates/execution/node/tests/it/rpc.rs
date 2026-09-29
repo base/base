@@ -59,15 +59,15 @@ async fn launch_pool_node(txpool_enabled: bool) -> eyre::Result<bool> {
         .launch()
         .await?;
 
-    Ok(node.pool.is_noop())
+    Ok(node.pool.is_enabled())
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_txpool_is_noop_unless_enabled() -> eyre::Result<()> {
+async fn test_txpool_is_disabled_unless_enabled() -> eyre::Result<()> {
     reth_tracing::init_test_tracing();
 
-    assert!(launch_pool_node(false).await?, "default node must run a noop pool");
-    assert!(!launch_pool_node(true).await?, "enabled node must run the real pool");
+    assert!(!launch_pool_node(false).await?, "default node must run a disabled pool");
+    assert!(launch_pool_node(true).await?, "enabled node must run the full pool");
 
     Ok(())
 }

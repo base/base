@@ -50,7 +50,7 @@ pub struct BaseNode {
     pub resource_metering: ResourceMeteringConfig,
     /// Shared, cross-job cache of permanently rejected transaction hashes.
     pub rejection_cache: RejectionCache,
-    /// Whether the node runs a real transaction pool instead of a noop pool.
+    /// Whether the node runs an enabled transaction pool instead of a disabled one.
     pub txpool_enabled: bool,
 }
 
@@ -104,7 +104,7 @@ impl BaseNode {
         self
     }
 
-    /// Configure whether the node runs a real transaction pool instead of a noop pool.
+    /// Configure whether the node runs an enabled transaction pool instead of a disabled one.
     pub const fn with_txpool_enabled(mut self, enabled: bool) -> Self {
         self.txpool_enabled = enabled;
         self

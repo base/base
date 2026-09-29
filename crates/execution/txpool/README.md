@@ -9,13 +9,13 @@ Extends Reth's transaction pool with Base-specific validation and ordering for t
 `BaseOrdering` and `TimestampOrdering` provide customizable transaction prioritization strategies.
 Also includes a `BuilderApiImpl` for builder-specific pool management.
 
-### Noop pool by default
+### Disabled pool by default
 
-`BaseNodePool` is the pool a Base node runs with. Only nodes that build blocks or drain the pool
-(the sequencer, builders and `--enable-tx-forwarding` nodes) run the full `BaseTransactionPool`.
-Every other node forwards submitted transactions to the sequencer and runs a noop pool that rejects
-all inserts, holds nothing and spawns no pool tasks. Transaction gossip over devp2p is disabled on
-all nodes, so incoming transaction messages are ignored either way.
+`MaybeBaseTransactionPool` is the pool a Base node runs with. Only nodes that build blocks or drain
+the pool (the sequencer, builders and `--enable-tx-forwarding` nodes) run the enabled
+`BaseTransactionPool`. Every other node forwards submitted transactions to the sequencer and runs a
+disabled pool that rejects all inserts, holds nothing and spawns no pool tasks. Transaction gossip
+over devp2p is disabled on all nodes, so incoming transaction messages are ignored either way.
 
 ### Pluggable builder wire format
 
