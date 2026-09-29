@@ -17,9 +17,7 @@ impl ActionL2Source {
 
     /// Create a source containing the supplied blocks in iteration order.
     pub fn from_blocks(blocks: impl IntoIterator<Item = BaseBlock>) -> Self {
-        let mut source = Self::new();
-        source.extend(blocks);
-        source
+        Self { blocks: blocks.into_iter().collect() }
     }
 
     /// Append a block.
@@ -34,17 +32,5 @@ impl IntoIterator for ActionL2Source {
 
     fn into_iter(self) -> Self::IntoIter {
         self.blocks.into_iter()
-    }
-}
-
-impl Extend<BaseBlock> for ActionL2Source {
-    fn extend<T: IntoIterator<Item = BaseBlock>>(&mut self, iter: T) {
-        self.blocks.extend(iter);
-    }
-}
-
-impl FromIterator<BaseBlock> for ActionL2Source {
-    fn from_iter<T: IntoIterator<Item = BaseBlock>>(iter: T) -> Self {
-        Self::from_blocks(iter)
     }
 }

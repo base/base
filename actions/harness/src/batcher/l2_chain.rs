@@ -51,7 +51,6 @@ impl SharedL2Chain {
 /// build on the tip, and starts again above the safe head on `reset_catchup`. A reorg is
 /// reported once per state of the chain. A reset that finds the same block again waits for
 /// the next push, as production waits its poll interval, instead of reporting it forever.
-/// Until that push the source is silent, even if the safe head moves meanwhile.
 #[derive(Debug)]
 pub struct HarnessBlockSource {
     /// The chain, shared with the test.

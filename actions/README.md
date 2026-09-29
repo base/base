@@ -162,13 +162,13 @@ manually.
 
 `Batcher` runs a production `BatchDriver` in a background tokio task over the
 L2 chain the test builds, made of the blocks of an `ActionL2Source` and those
-pushed later with `push_block`. The driver polls that chain by block number like the
-production source polls its L2 node, so after a reset it catches up again from
-the safe head. The driver owns a `BatchEncoder`, channel manager behavior,
-calldata/blob frame construction, and submission flow. The harness-owned
-boundary is `L1MinerTxManager`, which turns the driver's transaction candidates
-into signed L1 transactions and lets tests control when those transactions are
-staged, mined, confirmed, failed, or reorged.
+pushed later with `push_block`. The driver polls that chain by block number
+like the production source polls its L2 node, so after a reset it catches up
+again from the safe head. The driver owns a `BatchEncoder`, which builds the
+channels and their calldata or blob frames, and the submission flow. The
+harness-owned boundary is `L1MinerTxManager`, which turns the driver's
+transaction candidates into signed L1 transactions and lets tests control when
+those transactions are staged, mined, confirmed, failed, or reorged.
 
 For the common happy path, call `batcher.advance(&mut h.l1).await`. It waits
 for the driver to encode every block pushed so far, flushes the encoder, mines
