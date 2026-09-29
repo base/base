@@ -4,8 +4,8 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use alloy_primitives::{Address, Bytes, U256};
 use base_batcher_encoder::{
-    BatchPipeline, BatcherMetrics, BlobPayload, DaEgress, DaType, EncoderConfig, FrameEncoder,
-    SubmissionId, SubmissionPayload,
+    BatchPipeline, BatcherMetrics, BlobPayload, DaEgress, DaType, FrameEncoder, SubmissionId,
+    SubmissionPayload,
 };
 use base_blobs::{BlobEncodeError, BlobEncoder};
 use base_protocol::Frame;
@@ -26,14 +26,6 @@ pub struct BatchTxCandidateBuilder;
 /// Failure while building a batch transaction candidate.
 #[derive(Debug, thiserror::Error)]
 pub enum BatchTxCandidateError {
-    /// A blob transaction must contain a protocol-valid number of blobs.
-    #[error("blob transaction contains {count} blobs; expected 1..={maximum}")]
-    InvalidBlobCount {
-        /// Supplied blob count.
-        count: usize,
-        /// Protocol transaction maximum.
-        maximum: usize,
-    },
     /// One packed payload could not be encoded as a blob.
     #[error(transparent)]
     BlobEncoding(#[from] BlobEncodeError),
@@ -42,19 +34,15 @@ pub enum BatchTxCandidateError {
 impl BatchTxCandidateBuilder {
     /// Build a blob transaction candidate from packed frame payloads.
     ///
+    /// `payloads` holds one to `max_blobs_per_tx` payloads, as the encoder leases them, and
+    /// its validated config caps `max_blobs_per_tx` at the protocol maximum.
+    ///
     /// The returned byte count is the total derivation payload submitted across
     /// all blobs, including each blob's derivation-version prefix and frame metadata.
     pub fn blob_tx_candidate(
         inbox: Address,
         payloads: &[BlobPayload],
     ) -> Result<(TxCandidate, u64), BatchTxCandidateError> {
-        if payloads.is_empty() || payloads.len() > EncoderConfig::MAX_BLOBS_PER_TX {
-            return Err(BatchTxCandidateError::InvalidBlobCount {
-                count: payloads.len(),
-                maximum: EncoderConfig::MAX_BLOBS_PER_TX,
-            });
-        }
-
         let mut blobs = Vec::with_capacity(payloads.len());
         let mut payload_size = 0usize;
 
@@ -240,20 +228,5 @@ impl<TM: TxManager> SubmissionQueue<TM> {
     /// Returns the number of currently in-flight submissions.
     pub fn in_flight_count(&self) -> usize {
         self.in_flight.len()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use alloy_primitives::Address;
-
-    use super::*;
-
-    #[test]
-    fn blob_candidate_rejects_empty_transaction() {
-        assert!(matches!(
-            BatchTxCandidateBuilder::blob_tx_candidate(Address::ZERO, &[]),
-            Err(BatchTxCandidateError::InvalidBlobCount { count: 0, .. })
-        ));
     }
 }
