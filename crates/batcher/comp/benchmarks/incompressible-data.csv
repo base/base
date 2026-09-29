@@ -1,0 +1,9 @@
+scenario,input_bytes_per_transaction,estimated_compressed_channel_bytes_per_transaction
+Native ETH transfer,100,94
+ERC-20 transfer (USDC),126,133
+B20 transfer,126,133
+Uniswap V3 / aggregator swap,261,294
+Uniswap V2 swap,288,326
+x402 agentic payment,315,358
+ERC-4337 smart-wallet UserOp,448,516
+Contract deployment,3261,3894

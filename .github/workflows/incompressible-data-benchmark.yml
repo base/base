@@ -1,0 +1,41 @@
+name: Incompressible Data Benchmark
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/incompressible-data-benchmark.yml"
+      - "crates/batcher/comp/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+
+      - name: Set up Rust
+        uses: ./.github/actions/setup
+        with:
+          rust-cache-shared-key: incompressible-data-benchmark
+
+      - name: Validate the benchmark data
+        run: cargo test --locked -p base-comp --features benchmark
+
+      - name: Build the throughput benchmark
+        run: cargo bench --locked -p base-comp --features benchmark --bench incompressible_data --no-run
