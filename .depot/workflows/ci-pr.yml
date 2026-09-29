@@ -1,9 +1,14 @@
 name: CI
 on:
+  # A reviewer can add ci:system, ci:perf, or ci:full to request an
+  # integration/performance rerun without needing an otherwise-empty push.
   pull_request:
+    types: [opened, reopened, synchronize, labeled]
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  # A label is an explicit request for an optional suite. Do not discard useful
+  # build/test work already in flight merely to service that request.
+  cancel-in-progress: ${{ github.event.action != 'labeled' }}
 permissions:
   checks: write
   contents: read
