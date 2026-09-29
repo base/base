@@ -43,7 +43,7 @@ jobs:
     outputs:
       docker: ${{ steps.filter.outputs.docker }}
       proof-mpt-bench: ${{ steps.filter.outputs.proof-mpt-bench }}
-      system-tests: ${{ steps.filter.outputs.system-tests }}
+      system-tests: ${{ steps.system-tests.outputs.system-tests }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -51,7 +51,9 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          fetch-depth: 1
+          # PRs are checked out at their test merge commit. The affected-crate
+          # calculation below compares it to its first parent.
+          fetch-depth: 2
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         id: filter
         with:
@@ -76,10 +78,9 @@ jobs:
               - 'crates/execution/trie/**'
               - 'etc/scripts/ci/**'
               - '.depot/workflows/ci-core.yml'
-            # System tests link most of the workspace directly or transitively.
-            # Keep this broad: a false positive costs a runner, while a false
-            # negative can defer an integration regression until merge queue.
-            system-tests:
+            # Non-crate inputs which can affect the system-test environment.
+            # Crate changes are classified by the dependency-aware step below.
+            system-test-inputs:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - '.cargo/**'
@@ -93,8 +94,27 @@ jobs:
               - '.env.sepolia'
               - '.depot/actions/setup/**'
               - '.depot/workflows/ci-core.yml'
-              - 'bin/**'
-              - 'crates/**'
+      - name: Detect system-test dependency changes
+        id: system-tests
+        shell: bash
+        env:
+          SYSTEM_TEST_INPUTS: ${{ steps.filter.outputs.system-test-inputs }}
+        run: |
+          set -euo pipefail
+
+          # Merge-queue CI is exhaustive. This job still runs there to select
+          # Docker work, but no dependency classification is necessary.
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            echo "system-tests=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$SYSTEM_TEST_INPUTS" = true ] || \
+             python3 etc/scripts/local/affected-crates.py HEAD^1 | grep -Fxq base-system-tests; then
+            echo "system-tests=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "system-tests=false" >> "$GITHUB_OUTPUT"
+          fi
   metadata-checks:
     name: Metadata Checks
     runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
