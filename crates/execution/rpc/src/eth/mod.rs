@@ -95,11 +95,11 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> BaseEthApi<N, Rpc> {
 
     /// Returns a reference to the [`EthApiNodeBackend`].
     pub fn eth_api(&self) -> &EthApiNodeBackend<N, Rpc> {
-        self.inner.eth_api()
+        &self.inner.eth_api
     }
     /// Returns the configured sequencer client, if any.
     pub fn sequencer_client(&self) -> Option<&SequencerClient> {
-        self.inner.sequencer_client()
+        self.inner.sequencer_client.as_ref()
     }
 
     /// Returns the shared cache of validated `BaseTime` timestamps.
@@ -278,7 +278,7 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> fmt::Debug for BaseEthApi<N, Rpc> {
     }
 }
 
-/// Container type `BaseEthApi`
+/// Shared state behind a [`BaseEthApi`] handle.
 pub struct BaseEthApiInner<N: RpcNodeCore, Rpc: RpcConvert> {
     /// Gateway to node's core components.
     eth_api: EthApiNodeBackend<N, Rpc>,
@@ -299,18 +299,6 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> fmt::Debug for BaseEthApiInner<N, Rpc> {
     }
 }
 
-impl<N: RpcNodeCore, Rpc: RpcConvert> BaseEthApiInner<N, Rpc> {
-    /// Returns a reference to the [`EthApiNodeBackend`].
-    const fn eth_api(&self) -> &EthApiNodeBackend<N, Rpc> {
-        &self.eth_api
-    }
-
-    /// Returns the configured sequencer client, if any.
-    const fn sequencer_client(&self) -> Option<&SequencerClient> {
-        self.sequencer_client.as_ref()
-    }
-}
-
 /// Converter for Base RPC types.
 pub type BaseRpcConvert<N, NetworkT> = RpcConverter<
     NetworkT,
@@ -319,6 +307,9 @@ pub type BaseRpcConvert<N, NetworkT> = RpcConverter<
     (),
     BaseTxInfoMapper<<N as FullNodeTypes>::Provider>,
 >;
+
+/// Default minimum suggested priority fee (tip), in wei.
+const DEFAULT_MIN_SUGGESTED_PRIORITY_FEE: u64 = 1_000_000;
 
 /// Builds [`BaseEthApi`] for Base.
 #[derive(Debug)]
@@ -336,12 +327,7 @@ pub struct BaseEthApiBuilder<NetworkT = BaseRpcTypes> {
 
 impl<NetworkT> Default for BaseEthApiBuilder<NetworkT> {
     fn default() -> Self {
-        Self {
-            sequencer_url: None,
-            sequencer_headers: Vec::new(),
-            min_suggested_priority_fee: 1_000_000,
-            _nt: PhantomData,
-        }
+        Self::new()
     }
 }
 
@@ -351,7 +337,7 @@ impl<NetworkT> BaseEthApiBuilder<NetworkT> {
         Self {
             sequencer_url: None,
             sequencer_headers: Vec::new(),
-            min_suggested_priority_fee: 1_000_000,
+            min_suggested_priority_fee: DEFAULT_MIN_SUGGESTED_PRIORITY_FEE,
             _nt: PhantomData,
         }
     }
@@ -389,16 +375,15 @@ where
     type EthApi = BaseEthApi<N, BaseRpcConvert<N, NetworkT>>;
 
     async fn build_eth_api(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<Self::EthApi> {
-        let Self { sequencer_url, sequencer_headers, min_suggested_priority_fee, .. } = self;
         let provider = ctx.components.provider().clone();
         let base_time = BaseTimeCache::default();
         let rpc_converter =
             RpcConverter::new(BaseReceiptConverter::new(provider.clone(), base_time.clone()))
                 .with_mapper(BaseTxInfoMapper::new(provider, base_time.clone()));
 
-        let sequencer_client = if let Some(url) = sequencer_url {
+        let sequencer_client = if let Some(url) = self.sequencer_url {
             Some(
-                SequencerClient::new_with_headers(&url, sequencer_headers)
+                SequencerClient::new_with_headers(&url, self.sequencer_headers)
                     .await
                     .wrap_err_with(|| format!("Failed to init sequencer client with: {url}"))?,
             )
@@ -411,7 +396,7 @@ where
         Ok(BaseEthApi::new(
             eth_api,
             sequencer_client,
-            U256::from(min_suggested_priority_fee),
+            U256::from(self.min_suggested_priority_fee),
             base_time,
         ))
     }
