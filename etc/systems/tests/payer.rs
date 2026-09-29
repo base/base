@@ -140,7 +140,6 @@ async fn start_payer_system(sponsor: PayerSponsor) -> Result<SystemTestStack> {
         .with_base_cobalt_activation_block(0)
         .with_base_denim_activation_block(0)
         .with_base_everest_activation_block(0)
-        .with_experimental_validity_transactions()
         .with_payload_builder_cutover()
         .with_builder_extension(Box::new(PayerExtension::from_config(
             PayerExtensionConfig::Sponsor(Box::new(sponsor)),
@@ -175,7 +174,7 @@ async fn payer_sponsors_eip8130_transaction_paid_in_token() -> Result<()> {
         signer: payer.clone(),
         max_validity_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
         max_validity_expiry_secs: DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
-        experimental_override: true,
+        experimental_override: false,
     };
     let system = start_payer_system(sponsor).await?;
     let l2_url: Url = system.l2_rpc_url()?;
