@@ -134,6 +134,9 @@ default = [ "upgrade-signal" ]
 upgrade-signal = [ "base-test-utils/contracts", "dep:base-test-utils" ]
 
 [dev-dependencies]
+# workspace
+base-test-utils = { workspace = true, features = ["contracts"] }
+
 # consensus
 base-consensus-derive.workspace = true
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
@@ -151,7 +154,9 @@ base-optimism-rpc.workspace = true
 
 # execution
 base-shadow-indexer.workspace = true
+base-execution-payer.workspace = true
 base-shadow-indexer-db.workspace = true
+base-common-price-feed = { workspace = true, features = ["test-utils"] }
 
 # reth
 reth-primitives-traits.workspace = true

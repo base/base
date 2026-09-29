@@ -93,6 +93,40 @@ impl ViewContract {
     }
 }
 
+/// Creation bytecode that writes fixed storage and deploys fixed runtime,
+/// for installing fixtures on a live chain.
+#[derive(Debug, Clone, Copy)]
+pub struct InitCode;
+
+impl InitCode {
+    /// Bytes per write: `PUSH32 value PUSH32 slot SSTORE`.
+    const WRITE_LEN: usize = 67;
+    /// Bytes of `PUSH2 len DUP1 PUSH2 offset PUSH1 0 CODECOPY PUSH1 0 RETURN`.
+    const RETURN_LEN: usize = 13;
+
+    /// Assembles creation code storing each `(slot, value)` then returning
+    /// `runtime`.
+    pub fn deploying(runtime: &[u8], storage: &[(U256, U256)]) -> Bytes {
+        let mut code =
+            Vec::with_capacity(storage.len() * Self::WRITE_LEN + Self::RETURN_LEN + runtime.len());
+        for (slot, value) in storage {
+            code.push(0x7f);
+            code.extend(value.to_be_bytes::<32>());
+            code.push(0x7f);
+            code.extend(slot.to_be_bytes::<32>());
+            code.push(0x55);
+        }
+        let len = ViewContract::u16(runtime.len());
+        code.push(0x61);
+        code.extend(len);
+        code.extend([0x80, 0x61]);
+        code.extend(ViewContract::u16(storage.len() * Self::WRITE_LEN + Self::RETURN_LEN));
+        code.extend([0x60, 0x00, 0x39, 0x60, 0x00, 0xf3]);
+        code.extend_from_slice(runtime);
+        code.into()
+    }
+}
+
 /// A single-round OCR2 Chainlink feed behind its proxy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MockFeed {
