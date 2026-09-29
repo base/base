@@ -51,7 +51,7 @@ pub enum BrotliLevel {
 
 impl BrotliLevel {
     /// Default quality used by the batcher.
-    pub const DEFAULT: Self = Self::Brotli10;
+    pub const DEFAULT: Self = Self::Brotli9;
 
     /// Prepended to Brotli channels so `BatchReader` selects Brotli decompression.
     pub const CHANNEL_VERSION: u8 = 0x01;

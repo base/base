@@ -472,7 +472,7 @@ mod tests {
         );
         assert_eq!(config.encoder_config.compressed_size_target, None);
         assert_eq!(config.encoder_config.max_blobs_per_tx, 6);
-        assert_eq!(config.encoder_config.brotli_level, base_batcher_encoder::BrotliLevel::Brotli10);
+        assert_eq!(config.encoder_config.brotli_level, base_batcher_encoder::BrotliLevel::Brotli9);
     }
 
     #[test]
@@ -486,10 +486,10 @@ mod tests {
 
     #[test]
     fn into_config_accepts_brotli_quality() {
-        let cli = parse_cli(&["--brotli-quality", "9"]);
+        let cli = parse_cli(&["--brotli-quality", "11"]);
         let config = cli.into_config(false).expect("config should build");
 
-        assert_eq!(config.encoder_config.brotli_level, base_batcher_encoder::BrotliLevel::Brotli9);
+        assert_eq!(config.encoder_config.brotli_level, base_batcher_encoder::BrotliLevel::Brotli11);
     }
 
     #[test]

@@ -17,7 +17,7 @@ from the rollup RPC.
 `--compressed-size-target` optionally closes a channel after an accepted batch
 reaches the target. `--max-blobs-per-tx` caps blob packing per L1 transaction,
 while `--max-calldata-size-bytes` caps calldata transactions. `--brotli-quality`
-selects Brotli quality `0..=11` (default 10). `--data-availability-type`
+selects Brotli quality `0..=11` (default 9). `--data-availability-type`
 selects blobs or calldata; `--max-channel-duration` and `--sub-safety-margin`
 control channel lifetime. For calldata configurations,
 `--no-force-blobs-when-throttling` disables the throttle-driven blob override.
