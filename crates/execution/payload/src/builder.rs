@@ -981,6 +981,7 @@ where
             }
 
             let tx_hash = *tx.hash();
+            let replay_independent = tx.eip8130_replay_id().is_some();
             if self.builder_config.rejection_cache.is_rejected(&tx_hash) {
                 RejectionCacheMetrics::hits().increment(1);
                 RejectionCacheMetrics::size()
@@ -990,11 +991,7 @@ where
                     tx_hash = %tx_hash,
                     "skipping previously rejected transaction"
                 );
-                if tx.eip8130_replay_id().is_none() {
-                    best_txs.mark_invalid(tx.sender(), tx.nonce());
-                } else {
-                    best_txs.mark_current_committed();
-                }
+                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
                 continue;
             }
 
@@ -1036,11 +1033,7 @@ where
                     tx_hash = ?tx_hash,
                     "skipping transaction with unsupported flashblock-index predicate"
                 );
-                if tx.eip8130_replay_id().is_none() {
-                    best_txs.mark_invalid(tx.sender(), tx.nonce());
-                } else {
-                    best_txs.mark_current_committed();
-                }
+                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
                 continue;
             }
 
@@ -1111,11 +1104,12 @@ where
                             tx_hash = ?tx_hash,
                             "skipping transaction with expired validity predicate"
                         );
-                        if tx.eip8130_replay_id().is_none() {
-                            best_txs.mark_invalid(tx.sender(), tx.nonce());
-                        } else {
-                            best_txs.mark_current_committed();
-                        }
+                        Self::skip_current(
+                            &mut best_txs,
+                            tx.sender(),
+                            tx.nonce(),
+                            replay_independent,
+                        );
                         continue;
                     }
                     Ok(ValidityPredicateEvaluation::Unsatisfied {
@@ -1166,11 +1160,12 @@ where
                             error = ?error,
                             "failed to read validity predicate state"
                         );
-                        if tx.eip8130_replay_id().is_none() {
-                            best_txs.mark_invalid(tx.sender(), tx.nonce());
-                        } else {
-                            best_txs.mark_current_committed();
-                        }
+                        Self::skip_current(
+                            &mut best_txs,
+                            tx.sender(),
+                            tx.nonce(),
+                            replay_independent,
+                        );
                         continue;
                     }
                 }
@@ -1187,15 +1182,7 @@ where
                     "skipping EIP-8130 transaction with stale authorization manifest"
                 );
                 GuardMetrics::record_builder_precheck_drop(&stale);
-                // Nonce-free replay-ID entries are independent. The upstream
-                // payload adapter invalidates by sender (not by replay ID), so
-                // marking one would suppress unrelated entries from this sender.
-                // This transaction has already been consumed from the iterator.
-                if tx.eip8130_replay_id().is_none() {
-                    best_txs.mark_invalid(tx.sender(), tx.nonce());
-                } else {
-                    best_txs.mark_current_committed();
-                }
+                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
                 continue;
             }
 
@@ -1215,13 +1202,12 @@ where
                             tx_hash = ?tx.hash(),
                             "skipping EIP-8130 transaction with unschedulable payer authenticator"
                         );
-                        // Mirror the manifest pre-check above: a nonce-free replay-ID entry is
-                        // independent, so invalidating by sender would suppress unrelated entries.
-                        if tx.eip8130_replay_id().is_none() {
-                            best_txs.mark_invalid(tx.sender(), tx.nonce());
-                        } else {
-                            best_txs.mark_current_committed();
-                        }
+                        Self::skip_current(
+                            &mut best_txs,
+                            tx.sender(),
+                            tx.nonce(),
+                            replay_independent,
+                        );
                         continue;
                     }
                 },
@@ -1238,15 +1224,10 @@ where
                     tx_hash = ?tx.hash(),
                     "skipping transaction unable to pay gas plus declared coinbase tip"
                 );
-                if tx.eip8130_replay_id().is_none() {
-                    best_txs.mark_invalid(tx.sender(), tx.nonce());
-                } else {
-                    best_txs.mark_current_committed();
-                }
+                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
                 continue;
             }
 
-            let replay_independent = tx.eip8130_replay_id().is_some();
             let (simulated, admission) =
                 resource_metering.check_simulated_usage(&tx_hash, &info.resource_metering_usage);
             if admission.should_exclude() {
