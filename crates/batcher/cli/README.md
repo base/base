@@ -40,8 +40,8 @@ whose rollup config names that inbox. `--shadow-mode` and
 `--dangerously-override-batch-inbox-address` are set together and name the
 shadow inbox, and the batcher refuses to start if the rollup node derives
 another one. The parity validator must accept the shadow inbox and signer,
-since derivation filters batches by both.
-`--parity-validator-l2-rpc-url` points at the validator's L2 RPC, whose derived
-blocks the batcher compares with the canonical sequencer's. Shadow deployments
-can use either the local `--private-key` signer or the production remote-signer
-path with `--signer-endpoint` and `--signer-address`.
+since derivation filters batches by both. `--parity-validator-l2-rpc-url`
+points at the validator's L2 RPC, whose derived blocks the batcher compares with
+the canonical sequencer's. Shadow deployments can use either the local
+`--private-key` signer or the production remote-signer path with
+`--signer-endpoint` and `--signer-address`.
