@@ -16,7 +16,7 @@ use crate::L2BlockParityMetrics;
 type BaseRpcBlock = <Base as Network>::BlockResponse;
 
 /// Default maximum derived L2 blocks compared in one monitor pass.
-pub const DEFAULT_MAX_BLOCKS_PER_TICK: usize = 25;
+pub const DEFAULT_MAX_BLOCKS_PER_TICK: u64 = 25;
 
 /// Provider abstraction for derived L2 block parity checks.
 #[async_trait]
@@ -129,22 +129,14 @@ pub struct L2BlockParityMonitorConfig {
     pub start_block: u64,
     /// Monitor polling interval.
     pub poll_interval: Duration,
-    /// Maximum number of blocks compared in one monitor pass.
-    pub max_blocks_per_tick: usize,
+    /// Maximum number of blocks compared in one monitor pass, greater than zero.
+    pub max_blocks_per_tick: u64,
 }
 
 impl L2BlockParityMonitorConfig {
     /// Creates a new monitor config with the default per-tick block cap.
     pub const fn new(start_block: u64, poll_interval: Duration) -> Self {
         Self { start_block, poll_interval, max_blocks_per_tick: DEFAULT_MAX_BLOCKS_PER_TICK }
-    }
-
-    /// Returns the validated per-tick block cap.
-    pub fn validated_max_blocks_per_tick(&self) -> eyre::Result<u64> {
-        if self.max_blocks_per_tick == 0 {
-            eyre::bail!("max_blocks_per_tick must be greater than 0");
-        }
-        Ok(self.max_blocks_per_tick as u64)
     }
 }
 
@@ -308,8 +300,8 @@ where
             return Ok(L2BlockParityStats::default());
         }
 
-        let max_blocks = self.config.validated_max_blocks_per_tick()?;
-        let last_block = common_unsafe.min(self.next_block.saturating_add(max_blocks - 1));
+        let last_block =
+            common_unsafe.min(self.next_block.saturating_add(self.config.max_blocks_per_tick - 1));
         let mut stats = L2BlockParityStats::default();
 
         for number in self.next_block..=last_block {
@@ -597,23 +589,5 @@ mod tests {
         // A common unsafe head below the cursor is a validator that has not caught up,
         // not backlog.
         assert_eq!(monitor.verification_backlog(2), 0);
-    }
-
-    #[tokio::test]
-    async fn process_once_rejects_zero_max_blocks_per_tick() {
-        let sequencer = Arc::new(Mutex::new(MockL2BlockProvider::new(1, [snapshot(1, 1, &[10])])));
-        let validator = Arc::new(Mutex::new(MockL2BlockProvider::new(1, [snapshot(1, 1, &[10])])));
-        let config = L2BlockParityMonitorConfig {
-            max_blocks_per_tick: 0,
-            ..L2BlockParityMonitorConfig::new(1, Duration::from_secs(1))
-        };
-        let mut monitor = L2BlockParityMonitor::new(sequencer, validator, config);
-
-        let err = monitor
-            .process_once()
-            .await
-            .expect_err("zero max_blocks_per_tick should fail validation");
-
-        assert!(err.to_string().contains("max_blocks_per_tick must be greater than 0"));
     }
 }

@@ -119,26 +119,14 @@ impl ThrottleParams {
 }
 
 /// Strategy for calculating throttle intensity from DA backlog.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    derive_more::FromStr,
-    serde::Serialize,
-    serde::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThrottleStrategy {
     /// No throttling.
-    #[display("off")]
     Off,
     /// Step function: either 0 or `max_intensity` when above threshold.
-    #[display("step")]
     Step,
     /// Linear interpolation between 0 and `max_intensity` based on backlog.
-    #[display("linear")]
     Linear,
 }
 
@@ -430,23 +418,5 @@ mod tests {
             config.validate().map_err(|error| error.to_string()),
             expected.map_err(String::from)
         );
-    }
-
-    #[test]
-    fn strategy_display_parse_roundtrip() {
-        for (input, expected) in [
-            (ThrottleStrategy::Off, "off"),
-            (ThrottleStrategy::Step, "step"),
-            (ThrottleStrategy::Linear, "linear"),
-        ] {
-            assert_eq!(input.to_string(), expected);
-            assert_eq!(expected.parse::<ThrottleStrategy>().unwrap(), input);
-        }
-    }
-
-    #[test]
-    fn strategy_parse_rejects_invalid() {
-        assert!("foo".parse::<ThrottleStrategy>().is_err());
-        assert!("".parse::<ThrottleStrategy>().is_err());
     }
 }
