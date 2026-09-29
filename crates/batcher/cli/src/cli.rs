@@ -12,7 +12,6 @@ use base_cli_utils::RuntimeManager;
 use base_runtime::TokioRuntime;
 use base_tx_manager::{SignerConfig, TxManagerConfig};
 use clap::Parser;
-use tracing::info;
 use url::Url;
 
 base_tx_manager::define_signer_cli!("BASE_BATCHER");
@@ -20,20 +19,13 @@ base_tx_manager::define_signer_cli!("BASE_BATCHER");
 /// CLI arguments for the batcher.
 #[derive(Parser, Clone, Debug)]
 pub struct BatcherArgs {
-    /// L1 RPC endpoint(s).
-    ///
-    /// Accepts a comma-separated list. The service connects to each in order at
-    /// startup and uses the first that responds; later endpoints serve as
-    /// startup-time fallbacks only (no per-call rotation).
-    #[arg(long = "l1-rpc-url", visible_aliases = ["l1", "l1-eth-rpc"], env = "BASE_NODE_L1_ETH_RPC", value_delimiter = ',', num_args = 1..)]
-    pub l1_rpc_url: Vec<Url>,
+    /// L1 HTTP RPC endpoint.
+    #[arg(long = "l1-rpc-url", visible_aliases = ["l1", "l1-eth-rpc"], env = "BASE_NODE_L1_ETH_RPC")]
+    pub l1_rpc_url: Url,
 
-    /// L2 HTTP RPC endpoint(s) (used for all JSON-RPC calls including throttle control).
-    ///
-    /// Accepts a comma-separated list with the same connection-time failover
-    /// semantics as `--l1-rpc-url`.
-    #[arg(long = "l2-rpc-url", env = "BASE_BATCHER_L2_RPC_URL", value_delimiter = ',', num_args = 1..)]
-    pub l2_rpc_url: Vec<Url>,
+    /// L2 HTTP RPC endpoint, used for every L2 call including throttle control.
+    #[arg(long = "l2-rpc-url", env = "BASE_BATCHER_L2_RPC_URL")]
+    pub l2_rpc_url: Url,
 
     /// Optional L1 WebSocket endpoint for new-block subscriptions.
     ///
@@ -51,21 +43,13 @@ pub struct BatcherArgs {
     #[arg(long = "parity-validator-l2-rpc-url", env = "BASE_BATCHER_PARITY_VALIDATOR_L2_RPC_URL")]
     pub parity_validator_l2_rpc_url: Option<Url>,
 
-    /// Rollup node RPC endpoint(s).
+    /// Rollup node RPC endpoint.
     ///
     /// The batcher reads the rollup config of this node and follows its
     /// derivation, so the node must derive the inbox the batcher posts to. In
     /// shadow mode it is the parity validator's rollup node.
-    ///
-    /// Accepts a comma-separated list with the same connection-time failover
-    /// semantics as `--l1-rpc-url`.
-    #[arg(
-        long = "rollup-rpc-url",
-        env = "BASE_BATCHER_ROLLUP_RPC_URL",
-        value_delimiter = ',',
-        num_args = 1..
-    )]
-    pub rollup_rpc_url: Vec<Url>,
+    #[arg(long = "rollup-rpc-url", env = "BASE_BATCHER_ROLLUP_RPC_URL")]
+    pub rollup_rpc_url: Url,
 
     /// Signer configuration.
     #[command(flatten)]
@@ -344,12 +328,6 @@ impl BatcherArgs {
     /// Execute the batcher.
     pub async fn exec(self, metrics_enabled: bool) -> eyre::Result<()> {
         let config = self.into_config(metrics_enabled)?;
-        info!(
-            l1_rpc_count = config.l1_rpc_url.len(),
-            l2_rpc_count = config.l2_rpc_url.len(),
-            rollup_rpc_count = config.rollup_rpc_url.len(),
-            "batcher configured"
-        );
 
         let rt = TokioRuntime::new();
         let _signal_handle = RuntimeManager::install_signal_handler(rt.token().clone());
@@ -555,34 +533,11 @@ mod tests {
     }
 
     #[test]
-    fn rpc_urls_default_to_single_endpoint() {
-        let cli = parse_cli(&[]);
-        let config = cli.into_config(false).expect("config should build");
-        assert_eq!(config.l1_rpc_url.len(), 1);
-        assert_eq!(config.l2_rpc_url.len(), 1);
-        assert_eq!(config.rollup_rpc_url.len(), 1);
-    }
-
-    #[test]
     fn into_config_accepts_parity_validator_l2_rpc_url() {
         let cli = parse_cli(&["--parity-validator-l2-rpc-url", "http://127.0.0.1:9545"]);
         let config = cli.into_config(false).expect("config should build");
 
         assert_eq!(config.parity_validator_l2_rpc_url.unwrap().as_str(), "http://127.0.0.1:9545/");
-    }
-
-    #[test]
-    fn rpc_urls_accept_comma_separated_list() {
-        // base_args() already sets `--l1-rpc-url http://localhost:8545`, so
-        // appending a second `--l1-rpc-url` with three comma-separated values
-        // accumulates: clap appends rather than overrides for `Vec` args.
-        let cli =
-            parse_cli(&["--l1-rpc-url", "http://l1-a:8545,http://l1-b:8545,http://l1-c:8545"]);
-        let config = cli.into_config(false).expect("config should build");
-        assert_eq!(config.l1_rpc_url.len(), 4);
-        assert_eq!(config.l1_rpc_url[0].as_str(), "http://localhost:8545/");
-        assert_eq!(config.l1_rpc_url[1].as_str(), "http://l1-a:8545/");
-        assert_eq!(config.l1_rpc_url[3].as_str(), "http://l1-c:8545/");
     }
 
     #[test]

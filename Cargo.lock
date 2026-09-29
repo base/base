@@ -3051,7 +3051,6 @@ dependencies = [
  "humantime",
  "metrics",
  "metrics-exporter-prometheus",
- "tracing",
  "url",
 ]
 
