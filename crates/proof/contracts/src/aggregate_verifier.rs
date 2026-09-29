@@ -278,6 +278,14 @@ sol! {
 
         /// Returns the TEE verifier used by this game.
         function TEE_VERIFIER() external view returns (address);
+
+        /// Returns the SP1 aggregation program hash this game verifies ZK
+        /// proofs against.
+        ///
+        /// `immutable`, so it is fixed when the implementation is deployed: a
+        /// verification-key rotation registers a *new* implementation, and every
+        /// clone created before it stays pinned to the old hash.
+        function ZK_AGGREGATE_HASH() external view returns (bytes32);
     }
 }
 
@@ -507,6 +515,17 @@ impl AggregateVerifierContractClient {
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
         contract_call!(contract.TEE_VERIFIER().call(), "TEE_VERIFIER failed")
+    }
+
+    /// Returns the SP1 aggregation program hash a game or implementation
+    /// verifies ZK proofs against.
+    ///
+    /// Reads through a CWIA clone as well as an implementation, since the getter
+    /// is `immutable` and therefore lives in the implementation's code.
+    pub async fn zk_aggregate_hash(&self, address: Address) -> Result<B256, ContractError> {
+        let contract = IAggregateVerifier::IAggregateVerifierInstance::new(address, &self.provider);
+
+        contract_call!(contract.ZK_AGGREGATE_HASH().call(), "ZK_AGGREGATE_HASH failed")
     }
 
     /// Returns whether a verifier has been nullified.

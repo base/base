@@ -21,7 +21,7 @@ use base_tx_manager::{
 use base_zk_fork_dispute::{Checkpoint, Config as ForkConfig};
 use clap::Parser;
 use eyre::{Context, Result, bail, ensure, eyre};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use url::Url;
 
 use crate::{
@@ -440,6 +440,32 @@ impl ChallengerE2e {
         // anchor is the whole lower bound.
         let anchor_game = anchor_registry.anchor_snapshot().await?.anchor_game;
 
+        // The aggregation program the prover-service builds proofs for, read
+        // from the implementation the factory currently points at. Every hash on
+        // an `AggregateVerifier` is `immutable`, so a verification-key rotation
+        // deploys a new implementation and leaves existing clones pinned to the
+        // old one. Proving against such a clone spends a full SNARK and then
+        // reverts `InvalidProof()` at submission, which is what happened on
+        // 2026-09-29: the games were created before a rotation, and nothing in
+        // the selection had any reason to notice.
+        let implementation = factory.game_impls(config.game_type).await?;
+        ensure!(
+            implementation != Address::ZERO,
+            "no AggregateVerifier implementation registered for game type {}",
+            config.game_type
+        );
+        let expected_hash =
+            verifier.zk_aggregate_hash(implementation).await.with_context(|| {
+                format!("failed to read ZK_AGGREGATE_HASH from implementation {implementation}")
+            })?;
+        info!(
+            phase = %Phase::Setup,
+            implementation = %implementation,
+            zk_aggregate_hash = %expected_hash,
+            "read the aggregation program the prover must match"
+        );
+
+        let mut stale = 0usize;
         let mut selected = Vec::with_capacity(2);
         for index in (floor..game_count).rev() {
             let game = factory.game_at_index(index).await?;
@@ -466,6 +492,21 @@ impl ChallengerE2e {
             if verifier.countered_index(game.proxy).await? != 0 {
                 continue;
             }
+            // A clone from before a verification-key rotation cannot verify a
+            // proof the current prover produces, so proving against it would
+            // burn a SNARK and revert at submission.
+            let game_hash = verifier.zk_aggregate_hash(game.proxy).await?;
+            if game_hash != expected_hash {
+                stale += 1;
+                debug!(
+                    game = %game.proxy,
+                    factory_index = index,
+                    game_hash = %game_hash,
+                    expected_hash = %expected_hash,
+                    "skipping game pinned to a superseded aggregation program"
+                );
+                continue;
+            }
             let root_count = verifier.intermediate_output_roots(game.proxy).await?.len();
             let Ok(root_count @ 1..) = u64::try_from(root_count) else {
                 continue;
@@ -490,6 +531,16 @@ impl ChallengerE2e {
         if let [game_a, game_b] = selected.as_slice() {
             return Ok((*game_a, *game_b));
         }
+        ensure!(
+            stale == 0,
+            "found {} candidate game(s) pinned to an aggregation program other than the \
+             implementation's {expected_hash}, and only {} usable; a verification-key rotation \
+             has landed and the proposer has not yet created enough games against the new \
+             implementation. Proving against the older clones would spend a SNARK and then \
+             revert InvalidProof(), so this run stops here instead",
+            stale,
+            selected.len()
+        );
         bail!(
             "need two in-progress, uncountered games of type {} above the anchor in the newest \
              {} factory indices, found {}; the fork source may be behind, the proposer may be \
