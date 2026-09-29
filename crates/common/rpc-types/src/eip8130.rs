@@ -1,12 +1,12 @@
 //! Reth-free EIP-8130 RPC request conversion.
 
-use alloc::vec;
+use alloc::{vec, vec::Vec};
 
 use alloy_evm::FromRecoveredTx;
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use alloy_rpc_types_eth::state::StateOverride;
 use base_common_consensus::{
-    BaseTxEnvelope, Eip8130Constants, Eip8130Contracts, Eip8130Signed, TxEip8130,
+    BaseTxEnvelope, Call, Eip8130Constants, Eip8130Contracts, Eip8130Signed, TxEip8130,
 };
 use base_common_evm::{BaseTransaction as BaseRevm, Eip8130ExecutionMode};
 use revm::context::TxEnv;
@@ -41,6 +41,15 @@ pub enum Eip8130SimulationRequestError {
     /// authenticator selector.
     #[error("`payerAuth` for a named payer must start with a recognized authenticator")]
     UnrecognizedPayerAuthenticator,
+    /// The request sets both `calls` and a top-level `to` / `value` / `data`.
+    #[error("set either `calls` or a top-level `to`/`value`/`data`, not both")]
+    CallsAndSingleCall,
+    /// A top-level `value` or `data` is set without a `to`.
+    #[error("a top-level `value` or `data` needs a `to`")]
+    SingleCallMissingTo,
+    /// The top-level `to` is a contract creation, which EIP-8130 calls cannot do.
+    #[error("an EIP-8130 call cannot create a contract")]
+    ContractCreation,
 }
 
 /// Maximum caller-supplied authentication payload length.
@@ -177,7 +186,7 @@ impl BaseTransactionRequest {
             max_fee_per_gas: req.max_fee_per_gas.unwrap_or_default(),
             gas_limit: req.gas.unwrap_or(gas_limit_cap),
             account_changes: aa.account_changes.clone().unwrap_or_default(),
-            calls: aa.calls.clone().unwrap_or_default(),
+            calls: self.eip8130_calls(aa.calls.as_ref())?,
             metadata: aa.metadata.clone().unwrap_or_default(),
             payer,
         };
@@ -189,6 +198,38 @@ impl BaseTransactionRequest {
             parts.simulation_sender_actor_id = aa.sender_actor_id;
         }
         Ok(simulation)
+    }
+
+    /// The request's calls: `calls`, or a single call from the top-level `to` /
+    /// `value` / `data` of a standard request. Setting both is ambiguous and
+    /// rejected.
+    fn eip8130_calls(
+        &self,
+        calls: Option<&Vec<Vec<Call>>>,
+    ) -> Result<Vec<Vec<Call>>, Eip8130SimulationRequestError> {
+        let req = self.as_ref();
+        let data = req.input.input();
+        let single_call = req.to.is_some() || req.value.is_some() || data.is_some();
+        if let Some(calls) = calls {
+            if single_call {
+                return Err(Eip8130SimulationRequestError::CallsAndSingleCall);
+            }
+            return Ok(calls.clone());
+        }
+        if !single_call {
+            return Ok(Vec::new());
+        }
+        let to = match req.to {
+            Some(TxKind::Call(to)) => to,
+            Some(TxKind::Create) => return Err(Eip8130SimulationRequestError::ContractCreation),
+            None => return Err(Eip8130SimulationRequestError::SingleCallMissingTo),
+        };
+        let call = Call {
+            to,
+            value: req.value.unwrap_or_default(),
+            data: data.cloned().unwrap_or_default(),
+        };
+        Ok(vec![vec![call]])
     }
 
     fn default_bare_auth() -> Bytes {
@@ -279,6 +320,57 @@ mod tests {
         assert_eq!(
             request.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
             Some(Eip8130SimulationRequestError::SenderFromMismatch)
+        );
+    }
+
+    /// A standard request's top-level `to` / `value` / `data` is one call.
+    #[test]
+    fn top_level_call_fields_become_one_call() {
+        let to = address!("0x00000000000000000000000000000000000000c1");
+        let tx = simulation(json!({
+            "sender": SENDER,
+            "to": to,
+            "value": "0x5",
+            "data": "0xabcd",
+        }));
+        assert_eq!(
+            signed(&tx).tx().calls,
+            vec![vec![Call { to, value: U256::from(5), data: Bytes::from_static(&[0xab, 0xcd]) }]]
+        );
+        assert!(
+            simulation(json!({ "sender": SENDER })).eip8130.unwrap().signed.tx().calls.is_empty()
+        );
+    }
+
+    /// `calls` and a top-level call are ambiguous together, and a top-level
+    /// call needs a recipient that is not a contract creation.
+    #[test]
+    fn top_level_call_fields_are_validated() {
+        let to = address!("0x00000000000000000000000000000000000000c1");
+        let reject = |request: serde_json::Value| {
+            serde_json::from_value::<BaseTransactionRequest>(request)
+                .unwrap()
+                .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
+                .err()
+        };
+        assert_eq!(
+            reject(json!({ "sender": SENDER, "calls": [], "to": to })),
+            Some(Eip8130SimulationRequestError::CallsAndSingleCall)
+        );
+        assert_eq!(
+            reject(json!({ "sender": SENDER, "calls": [], "data": "0x01" })),
+            Some(Eip8130SimulationRequestError::CallsAndSingleCall)
+        );
+        assert_eq!(
+            reject(json!({ "sender": SENDER, "data": "0x01" })),
+            Some(Eip8130SimulationRequestError::SingleCallMissingTo)
+        );
+        let mut create =
+            serde_json::from_value::<BaseTransactionRequest>(json!({ "sender": SENDER })).unwrap();
+        create.as_mut().to = Some(TxKind::Create);
+        assert_eq!(
+            create.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(Eip8130SimulationRequestError::ContractCreation)
         );
     }
 
