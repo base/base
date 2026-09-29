@@ -1,5 +1,7 @@
 //! JSON form of an EIP-8130 `payer`.
 
+use alloc::string::String;
+
 use alloy_primitives::Address;
 use serde::{Deserialize, Deserializer, de};
 
