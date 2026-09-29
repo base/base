@@ -71,15 +71,14 @@ pub struct BatcherArgs {
     #[command(flatten)]
     pub signer: SignerCli,
 
-    /// Enable explicit shadow-mode guardrails for dangerous overrides.
+    /// Run as a shadow batcher.
     ///
-    /// This flag does nothing by itself. It must be set together with
-    /// `--dangerously-override-batch-inbox-address` so canonical deployments
-    /// cannot accidentally redirect DA submissions.
+    /// Must be set together with `--dangerously-override-batch-inbox-address`, so a
+    /// canonical deployment cannot turn into a shadow one by setting a single flag.
     #[arg(long = "shadow-mode", env = "BASE_BATCHER_SHADOW_MODE")]
     pub shadow_mode: bool,
 
-    /// Dangerous shadow-mode batch inbox override.
+    /// The shadow inbox, which the `--rollup-rpc-url` node must derive.
     ///
     /// Requires `--shadow-mode`. Canonical deployments must not set this flag.
     #[arg(

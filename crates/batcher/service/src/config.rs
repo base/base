@@ -11,9 +11,10 @@ use url::Url;
 /// Full batcher configuration combining RPC endpoints, identity, encoding
 /// parameters, submission limits, and optional throttling.
 ///
-/// By default the batch inbox address is sourced from the rollup config fetched
-/// at startup via `optimism_rollupConfig`. Shadow deployments may set
-/// [`batch_inbox_override`](Self::batch_inbox_override) to submit to a non-canonical inbox.
+/// The batch inbox is the one the [`rollup_rpc_url`](Self::rollup_rpc_url) node derives, read at
+/// startup through `optimism_rollupConfig`. Shadow deployments point that node at a parity
+/// validator deriving a non-canonical inbox and name that inbox in
+/// [`batch_inbox_override`](Self::batch_inbox_override).
 #[derive(Debug, Clone)]
 pub struct BatcherConfig {
     /// L1 RPC endpoint(s).
@@ -60,11 +61,11 @@ pub struct BatcherConfig {
     ///
     /// When enabled, the service starts the signer account balance monitor.
     pub metrics_enabled: bool,
-    /// Dangerous shadow-mode batch inbox override.
+    /// The shadow inbox, set only in shadow mode.
     ///
-    /// When set, the batcher submits L1 transactions to this address instead of the
-    /// canonical inbox. This is only intended for explicit shadow deployments. Canonical
-    /// deployments must leave it unset.
+    /// Setup refuses to start unless the [`rollup_rpc_url`](Self::rollup_rpc_url) node
+    /// derives this inbox, and skips the check that the signer is the `SystemConfig`
+    /// batcher. Canonical deployments must leave it unset.
     pub batch_inbox_override: Option<Address>,
     /// L2 block polling interval.
     pub poll_interval: Duration,
