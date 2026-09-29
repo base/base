@@ -8,6 +8,6 @@ pub enum TxOutcome {
         /// The L1 block number at which the transaction was included.
         l1_block: u64,
     },
-    /// Transaction failed or timed out; frames should be requeued.
+    /// The transaction manager gave up on the transaction, so its frames are requeued.
     Failed,
 }

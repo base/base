@@ -478,7 +478,7 @@ impl BatcherService {
         let rollup_config = Arc::new(rollup_config);
         let batch_inbox = self.config.batch_inbox(rollup_config.batch_inbox_address)?;
         if self.config.batch_inbox_override.is_some() {
-            warn!(inbox = %batch_inbox, "using dangerous shadow batch inbox override");
+            warn!(inbox = %batch_inbox, "shadow mode, posting to the shadow batch inbox");
         } else {
             info!(inbox = %batch_inbox, "rollup config loaded");
         }
