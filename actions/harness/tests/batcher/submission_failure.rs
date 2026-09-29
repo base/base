@@ -14,7 +14,10 @@ async fn failed_submissions_are_retried_until_one_lands() {
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..BatcherConfig::default()
     };
-    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .all_forks_active()
+        .with_cobalt_at(0)
+        .build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());

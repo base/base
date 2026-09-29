@@ -22,6 +22,7 @@ use base_protocol::{DERIVATION_VERSION_0, DepositDecodeError, Deposits, L2BlockI
 
 mod holocene_span_batches;
 mod node;
+mod sequencer_drift;
 
 /// The derivation pipeline reads a single batcher frame from L1 and derives
 /// the corresponding L2 block, advancing the safe head from genesis (0) to 1.

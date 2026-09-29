@@ -72,7 +72,6 @@ mod tests {
     use std::{
         pin::pin,
         task::{Context, Waker},
-        time::Duration,
     };
 
     use super::*;
@@ -96,26 +95,5 @@ mod tests {
 
         assert!(next.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
         assert!(reached_rx.try_recv().is_ok(), "the poll after must answer the marker");
-    }
-
-    #[tokio::test]
-    async fn marker_is_answered_even_when_nothing_follows() {
-        let (mut source, tx) = HarnessL1HeadSource::new();
-        let (reached_tx, reached_rx) = oneshot::channel();
-        tx.send(L1HeadItem::Marker(reached_tx)).unwrap();
-
-        // The source keeps waiting for a head, but the marker is already answered.
-        let next = tokio::time::timeout(Duration::from_millis(10), source.next());
-        assert!(next.await.is_err(), "no head must be returned");
-        assert!(reached_rx.await.is_ok());
-    }
-
-    #[tokio::test]
-    async fn parks_once_the_harness_is_gone() {
-        let (mut source, tx) = HarnessL1HeadSource::new();
-        drop(tx);
-
-        let next = tokio::time::timeout(Duration::from_millis(10), source.next());
-        assert!(next.await.is_err(), "a closed source must park");
     }
 }

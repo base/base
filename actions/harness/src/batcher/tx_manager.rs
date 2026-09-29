@@ -13,7 +13,6 @@ use base_tx_manager::{
     BlobTxBuilder, SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError,
 };
 use tokio::sync::oneshot;
-use tracing::info;
 
 use crate::{L1Block, L1Miner};
 
@@ -78,8 +77,6 @@ pub struct Inner {
 pub struct L1MinerTxManager {
     /// Pending and staged submissions, shared with the driver's clone.
     inner: Arc<Mutex<Inner>>,
-    /// Default `to` for candidates that do not name one.
-    inbox_address: Address,
     /// Signs every submission. Its address is the batcher's sender.
     signer: PrivateKeySigner,
     /// L1 chain id stamped on every signed transaction.
@@ -88,8 +85,8 @@ pub struct L1MinerTxManager {
 
 impl L1MinerTxManager {
     /// Create a new manager.
-    pub fn new(signer: PrivateKeySigner, inbox_address: Address, chain_id: u64) -> Self {
-        Self { inner: Arc::new(Mutex::new(Inner::default())), inbox_address, signer, chain_id }
+    pub fn new(signer: PrivateKeySigner, chain_id: u64) -> Self {
+        Self { inner: Arc::new(Mutex::new(Inner::default())), signer, chain_id }
     }
 
     /// Returns the number of pending (not yet staged) submissions.
@@ -177,35 +174,6 @@ impl L1MinerTxManager {
         }
     }
 
-    /// Simulate an L1 reorg back to `block_number`.
-    ///
-    /// Calls [`L1Miner::reorg_to`] to truncate the canonical chain and fires a
-    /// failure receipt for every pending and staged submission, since their
-    /// inclusion block has been discarded or they are no longer valid.
-    ///
-    /// Both `pending` (not yet staged) and `staged` (submitted to L1 but not
-    /// yet confirmed) items are drained, so every [`SendHandle`] resolves and no
-    /// submission holds an in-flight slot forever.
-    ///
-    /// Submissions already confirmed through [`confirm_block`] are not revisited.
-    ///
-    /// [`SendHandle`]: base_tx_manager::SendHandle
-    /// [`confirm_block`]: L1MinerTxManager::confirm_block
-    pub fn reorg_to(&self, block_number: u64, l1: &mut L1Miner) {
-        l1.reorg_to(block_number).expect("reorg_to should not fail");
-        let (pending, staged) = {
-            let mut inner = self.inner.lock().unwrap();
-            let pending: Vec<Pending> = inner.pending.drain(..).collect();
-            let staged: Vec<Pending> = inner.staged.drain(..).collect();
-            (pending, staged)
-        };
-        let drained = pending.len() + staged.len();
-        for p in pending.into_iter().chain(staged) {
-            let _ = p.responder.send(Err(TxManagerError::Rpc("reorg".to_string())));
-        }
-        info!(block_number = %block_number, drained = %drained, "simulated L1 reorg");
-    }
-
     /// Build the signed transaction envelope of `candidate` and the blob sidecars it
     /// references.
     pub fn sign_candidate(
@@ -214,7 +182,7 @@ impl L1MinerTxManager {
         nonce: u64,
     ) -> Result<L1SignedSubmission, TxManagerError> {
         let gas_limit = candidate.gas_limit.max(21_000);
-        let to = candidate.to.unwrap_or(self.inbox_address);
+        let to = candidate.to.expect("the driver addresses every candidate to the inbox");
 
         if candidate.blobs.is_empty() {
             let tx = TxEip1559 {
@@ -315,10 +283,8 @@ impl TxManager for L1MinerTxManager {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
+    use std::time::Duration;
 
-    use alloy_consensus::{Transaction, transaction::SignerRecoverable};
-    use alloy_eips::eip4844::Blob;
     use alloy_primitives::{Address, B256, Bytes, U256};
     use alloy_signer_local::PrivateKeySigner;
     use base_tx_manager::{TxCandidate, TxManager};
@@ -326,64 +292,22 @@ mod tests {
     use super::L1MinerTxManager;
     use crate::L1Miner;
 
-    struct TxManagerFixture;
-
-    impl TxManagerFixture {
-        fn signer() -> PrivateKeySigner {
-            PrivateKeySigner::from_bytes(&B256::repeat_byte(0x11)).expect("valid test signer")
-        }
-
-        fn candidate(to: Address) -> TxCandidate {
-            TxCandidate {
-                tx_data: Bytes::from_static(b"\x00frame"),
-                to: Some(to),
-                gas_limit: 21_000,
-                value: U256::ZERO,
-                ..Default::default()
-            }
-        }
-    }
-
-    /// Every submission is signed by the batcher key and sent to its candidate's recipient.
-    /// Calldata goes in an EIP-1559 transaction, and blobs in an EIP-4844 transaction whose
-    /// versioned hashes are those of the sidecars handed to the miner.
-    #[tokio::test]
-    async fn signed_submissions_go_to_the_candidate_recipient_from_the_batcher_key() {
-        let inbox = Address::repeat_byte(0x42);
-        let signer = TxManagerFixture::signer();
-        let manager = L1MinerTxManager::new(signer.clone(), Address::repeat_byte(0x43), 1);
-        let mut l1 = L1Miner::default();
-        manager.send_async(TxManagerFixture::candidate(inbox)).await;
-        let blobs = TxCandidate {
-            blobs: Arc::from(vec![Box::new(Blob::ZERO)]),
-            ..TxManagerFixture::candidate(inbox)
-        };
-        manager.send_async(blobs).await;
-        manager.stage_n_to_l1(&mut l1, 2);
-
-        let block = l1.mine_block();
-
-        let [calldata_tx, blob_tx] = block.transactions.as_slice() else {
-            panic!("expected two transactions, got {}", block.transactions.len());
-        };
-        for tx in [calldata_tx, blob_tx] {
-            assert_eq!(tx.recover_signer().expect("signed tx recovers"), signer.address());
-            assert_eq!(tx.to(), Some(inbox));
-        }
-        assert!(calldata_tx.is_eip1559());
-        assert!(blob_tx.is_eip4844());
-        let sidecar_hashes: Vec<_> = block.blob_sidecars.iter().map(|(hash, _)| *hash).collect();
-        assert_eq!(blob_tx.blob_versioned_hashes(), Some(sidecar_hashes.as_slice()));
-    }
-
     /// A staged submission's handle stays unresolved through blocks that do not include it,
     /// and resolves with the receipt of the block that does.
     #[tokio::test]
     async fn confirm_block_keeps_unincluded_staged_submission_polling() {
         let inbox = Address::repeat_byte(0x42);
-        let manager = L1MinerTxManager::new(TxManagerFixture::signer(), inbox, 1);
+        let signer = PrivateKeySigner::from_bytes(&B256::repeat_byte(0x11)).expect("valid signer");
+        let manager = L1MinerTxManager::new(signer, 1);
         let mut l1 = L1Miner::default();
-        let mut handle = manager.send_async(TxManagerFixture::candidate(inbox)).await;
+        let candidate = TxCandidate {
+            tx_data: Bytes::from_static(b"\x00frame"),
+            to: Some(inbox),
+            gas_limit: 21_000,
+            value: U256::ZERO,
+            ..Default::default()
+        };
+        let mut handle = manager.send_async(candidate).await;
         manager.stage_n_to_l1(&mut l1, 1);
 
         let genesis = l1.tip().clone();

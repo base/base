@@ -2,9 +2,7 @@
 
 mod blobs;
 mod channels;
-mod gap_filling;
 mod recovery;
-mod sequencer_drift;
 mod submission;
 mod submission_failure;
 mod upgrade_transitions;

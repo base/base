@@ -113,7 +113,7 @@ pub struct Batcher {
     derivation_status_tx: mpsc::Sender<DerivationStatus>,
     /// Admin channel to the driver, used to flush at the end of a cycle.
     admin: AdminHandle,
-    /// Shared tx manager — used to stage submissions and fire their receipts.
+    /// Shared tx manager, used to stage submissions and fire their receipts.
     tx_manager: L1MinerTxManager,
     /// Background driver task, aborted on drop.
     driver_task: tokio::task::JoinHandle<Result<(), BatchDriverError>>,
@@ -169,8 +169,7 @@ impl Batcher {
         let (l1_head_source, l1_head_tx) = HarnessL1HeadSource::new();
         let (admin, admin_rx) = AdminHandle::channel();
 
-        let tx_manager =
-            L1MinerTxManager::new(config.l1_signer.clone(), config.inbox_address, l1_chain_id);
+        let tx_manager = L1MinerTxManager::new(config.l1_signer.clone(), l1_chain_id);
         assert_eq!(
             config.batcher_address,
             tx_manager.sender_address(),
@@ -296,7 +295,7 @@ impl Batcher {
     /// Stages every pending frame, mines one L1 block, fires all receipts and waits until
     /// the driver has confirmed them. Returns the mined block number.
     ///
-    /// Use this to confirm a requeued batch without encoding new L2 blocks.
+    /// Use this to land what the driver submitted without encoding new L2 blocks.
     pub async fn mine_pending(&self, l1: &mut L1Miner) -> u64 {
         self.tx_manager.stage_n_to_l1(l1, usize::MAX);
         let block = l1.mine_block().clone();
@@ -336,25 +335,6 @@ impl Batcher {
             .try_send(status)
             .unwrap_or_else(|error| panic!("the batch driver did not take the status: {error}"));
         self.wait_until_idle().await;
-    }
-
-    /// Simulate an L1 reorg back to `block_number`.
-    ///
-    /// Truncates the L1 chain via [`L1Miner::reorg_to`], fires failure receipts for every
-    /// item in `pending` and `staged`, delivers the new L1 head to the driver, and waits
-    /// until the driver has requeued and resubmitted the failed frames.
-    ///
-    /// Submissions already confirmed through [`observe_l1_block`] are not revisited.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `block_number` exceeds the current L1 chain tip (`ReorgError::BeyondTip`).
-    ///
-    /// [`observe_l1_block`]: Batcher::observe_l1_block
-    pub async fn reorg(&self, block_number: u64, l1: &mut L1Miner) {
-        // Failure receipts first, for the same reason as in `observe_l1_block`.
-        self.tx_manager.reorg_to(block_number, l1);
-        self.deliver_l1_head(block_number).await;
     }
 
     /// Run one full batch cycle through the production [`BatchDriver`] path.

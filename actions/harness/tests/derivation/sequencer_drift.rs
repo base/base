@@ -25,8 +25,8 @@ async fn over_drift_batches_with_transactions_become_deposit_only_once_the_windo
         .build();
     let mut h = ActionTestHarness::new(l1_cfg, rollup_cfg.clone());
 
-    // Mine L1 block 1 (ts=4) so the sequencer has an epoch to reference,
-    // but we will PIN the sequencer to epoch 0 (ts=0) to force drift.
+    // Mine L1 block 1 (ts=4) so the sequencer has a later epoch to reference, then pin it to
+    // epoch 0 (ts=0) to force drift.
     h.mine_l1_blocks(1);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -78,12 +78,7 @@ async fn over_drift_batches_with_transactions_become_deposit_only_once_the_windo
     h.mine_and_push(&chain);
 
     node.initialize().await;
-
-    // Drive derivation through all L1 blocks.
-    let mut total_derived = 0;
-    for _ in 1..=h.l1.latest_number() {
-        total_derived += node.run_until_idle().await;
-    }
+    let total_derived = node.run_until_idle().await;
 
     // The pipeline should derive blocks for all L2 slots. Blocks 1-6 use the
     // batcher's submitted batches. Blocks 7-8 are generated as deposit-only
@@ -146,11 +141,7 @@ async fn over_drift_empty_batches_are_dropped_when_a_next_origin_exists() {
     chain.push(h.l1.tip().clone());
 
     node.initialize().await;
-
-    let mut total_derived = 0;
-    for _ in 1..=h.l1.latest_number() {
-        total_derived += node.run_until_idle().await;
-    }
+    let total_derived = node.run_until_idle().await;
 
     assert_eq!(total_derived, 6, "the over-drift batches are dropped");
     assert_eq!(node.l2_safe_number(), 6);

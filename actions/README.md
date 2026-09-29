@@ -95,7 +95,7 @@ public methods directly. Simple actors mutate each other through explicit
 references. Production-shaped actors use channels or background tasks when
 that is part of the behavior under test; for example, `Batcher` owns a
 background `BatchDriver` task and exposes methods that let tests stage,
-mine, confirm, fail, or reorg L1 submissions at precise points.
+mine, confirm, or fail L1 submissions at precise points.
 
 
 ## L1Miner
@@ -166,13 +166,13 @@ again from the safe head. The driver owns a `BatchEncoder`, which builds the
 channels and their calldata or blob frames, and the submission flow. The
 harness-owned boundary is `L1MinerTxManager`, which turns the driver's
 transaction candidates into signed L1 transactions and lets tests control when
-those transactions are staged, mined, confirmed, failed, or reorged.
+those transactions are staged, mined, confirmed, or failed.
 
 For the common happy path, call `batcher.advance(&mut h.l1).await`. It waits
 for the driver to encode every block pushed so far, flushes the encoder, mines
 one L1 block, and shows it to the driver. For more exact scenarios, use
-`encode_only`, `stage_n_frames`, `observe_l1_block`, `mine_pending`,
-`fail_next_n_submissions` and `reorg`. Report derivation progress with
+`encode_only`, `stage_n_frames`, `observe_l1_block`, `mine_pending` and
+`fail_next_n_submissions`. Report derivation progress with
 `observe_derivation`.
 Every `async` method of `Batcher` returns once the driver is idle again, so the
 test can read the tx manager's queues right after.
