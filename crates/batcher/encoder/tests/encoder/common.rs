@@ -106,7 +106,7 @@ impl SharedBlob {
 #[derive(Debug)]
 pub struct SharedRetry {
     /// The two blocks, one per channel.
-    pub blocks: [BaseBlock; 2],
+    pub blocks: Vec<BaseBlock>,
     /// The two full blobs of the second channel.
     pub full_blobs: BatchSubmission,
     /// The transaction carrying the first channel's blob and the second channel's tail.
@@ -133,7 +133,7 @@ impl SharedRetry {
         encoder.requeue(tail.id);
         let retry = encoder.next_submission().expect("the retry");
         assert_eq!(retry.blob_count(), 2, "one transaction carries both channels");
-        Self { blocks: [first_block, second_block], full_blobs, retry }
+        Self { blocks: vec![first_block, second_block], full_blobs, retry }
     }
 }
 

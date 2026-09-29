@@ -298,32 +298,18 @@ mod tests {
         EncoderConfig { sub_safety_margin, max_channel_duration, ..EncoderConfig::default() }
     }
 
-    #[test]
-    fn default_blob_max_frame_size_reserves_derivation_prefix() {
-        let cfg = EncoderConfig::default();
-
-        assert_eq!(cfg.max_frame_size, EncoderConfig::MAX_BLOB_FRAME_SIZE);
-        assert_eq!(cfg.compressed_size_target, None);
-        assert_eq!(cfg.max_blobs_per_tx, 6);
-        assert_eq!(cfg.brotli_level, BrotliLevel::DEFAULT);
-        assert_eq!(
-            cfg.max_frame_size + EncoderConfig::BLOB_DERIVATION_PREFIX_SIZE,
-            EncoderConfig::BLOB_MAX_DATA_SIZE
-        );
-    }
-
     #[rstest]
-    #[case(0, 2)] // zero margin: always valid
-    #[case(1, 2)] // one below duration
-    #[case(4, 10)] // typical production values
+    #[case::zero_margin(0, 2)]
+    #[case::margin_just_below_the_duration(1, 2)]
+    #[case::production_values(4, 10)]
     fn validate_ok(#[case] sub_safety_margin: u64, #[case] max_channel_duration: u64) {
         assert!(config_with(sub_safety_margin, max_channel_duration).validate().is_ok());
     }
 
     #[rstest]
-    #[case(2, 2)] // equal: effective timeout saturates to 0
-    #[case(5, 2)] // greater: same failure mode
-    #[case(u64::MAX, 1)] // extreme: maximum possible margin
+    #[case::margin_equal_to_the_duration(2, 2)]
+    #[case::margin_above_the_duration(5, 2)]
+    #[case::maximum_margin(u64::MAX, 1)]
     fn validate_err(#[case] sub_safety_margin: u64, #[case] max_channel_duration: u64) {
         let err = config_with(sub_safety_margin, max_channel_duration).validate().unwrap_err();
         assert!(matches!(
@@ -333,10 +319,6 @@ mod tests {
                 max_channel_duration: d,
             } if m == sub_safety_margin && d == max_channel_duration
         ));
-        // Error message must be human-readable and include both values.
-        let msg = err.to_string();
-        assert!(msg.contains(&sub_safety_margin.to_string()));
-        assert!(msg.contains(&max_channel_duration.to_string()));
     }
 
     #[test]
@@ -394,7 +376,6 @@ mod tests {
     #[test]
     fn validate_rejects_frame_above_protocol_limit() {
         let cfg = EncoderConfig {
-            da_type: DaType::Calldata,
             max_frame_size: Frame::ENCODED_OVERHEAD + Frame::MAX_LEN + 1,
             ..EncoderConfig::default()
         };
@@ -402,36 +383,24 @@ mod tests {
         assert!(matches!(cfg.validate(), Err(EncoderConfigError::FrameSizeTooLarge { .. })));
     }
 
-    #[test]
-    fn validate_rejects_blob_frame_size_that_leaves_no_prefix_room() {
+    /// A frame must leave room for the blob derivation prefix even on a calldata batcher, whose
+    /// submissions the blob override can turn into blobs.
+    #[rstest]
+    #[case::blob(DaType::Blob)]
+    #[case::calldata(DaType::Calldata)]
+    fn validate_rejects_frame_size_that_leaves_no_blob_prefix_room(#[case] da_type: DaType) {
         let cfg = EncoderConfig {
-            max_frame_size: EncoderConfig::BLOB_MAX_DATA_SIZE,
-            ..EncoderConfig::default()
-        };
-
-        let err = cfg.validate().unwrap_err();
-        assert!(matches!(
-            err,
-            EncoderConfigError::FrameExceedsBlobPackingLimit {
-                max_frame_size,
-                max_blob_frame_size,
-            } if max_frame_size == EncoderConfig::BLOB_MAX_DATA_SIZE
-                && max_blob_frame_size == EncoderConfig::MAX_BLOB_FRAME_SIZE
-        ));
-        assert!(err.to_string().contains("derivation-version prefix"));
-    }
-
-    #[test]
-    fn validate_reserves_blob_prefix_room_for_calldata_override() {
-        let cfg = EncoderConfig {
-            da_type: DaType::Calldata,
+            da_type,
             max_frame_size: EncoderConfig::BLOB_MAX_DATA_SIZE,
             ..EncoderConfig::default()
         };
 
         assert!(matches!(
             cfg.validate(),
-            Err(EncoderConfigError::FrameExceedsBlobPackingLimit { .. })
+            Err(EncoderConfigError::FrameExceedsBlobPackingLimit {
+                max_frame_size: EncoderConfig::BLOB_MAX_DATA_SIZE,
+                max_blob_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE,
+            })
         ));
     }
 

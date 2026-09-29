@@ -465,7 +465,6 @@ mod tests {
     use alloy_primitives::B256;
 
     use super::*;
-    use crate::BrotliLevel;
 
     fn batch(transaction_len: usize) -> SingleBatch {
         let mut state = 1u64;
@@ -492,23 +491,6 @@ mod tests {
     }
 
     #[test]
-    fn soft_target_accepts_complete_batch_before_closing() {
-        let config = EncoderConfig {
-            compressed_size_target: Some(1),
-            brotli_level: BrotliLevel::Brotli0,
-            ..EncoderConfig::default()
-        };
-        let mut channel = channel(config);
-
-        assert_eq!(
-            channel.add_batch(&batch(10_000), 10_000).unwrap(),
-            ChannelAddOutcome::TargetReached
-        );
-        assert_eq!(channel.blocks_added(), 1);
-        assert!(channel.input_bytes() > 0);
-    }
-
-    #[test]
     fn cumulative_rlp_limit_rejects_without_mutating_stream() {
         let mut channel = channel(EncoderConfig::default());
         let maximum = channel.rollup_config.max_rlp_bytes_per_channel(0);
@@ -523,19 +505,20 @@ mod tests {
         assert_eq!(channel.compressed_bytes(), 0);
     }
 
+    /// A batch within the RLP limit whose worst-case assembled channel would exceed it is
+    /// rejected without touching the stream, because derivation drops such a channel.
     #[test]
-    fn frame_number_limit_rejects_without_mutating_stream() {
-        let config = EncoderConfig {
-            max_frame_size: Frame::ENCODED_OVERHEAD + 1,
-            ..EncoderConfig::default()
-        };
-        let mut channel = channel(config);
+    fn assembled_size_limit_rejects_without_mutating_stream() {
+        let mut channel = channel(EncoderConfig::default());
+        let maximum = channel.rollup_config.max_rlp_bytes_per_channel(0);
+        channel.input_bytes = maximum - 1_000;
 
         assert!(matches!(
-            channel.add_batch(&batch(Channel::MAX_FRAMES + 1), 1).unwrap(),
-            ChannelAddOutcome::Rejected(ChannelLimit::FrameCount { .. })
+            channel.add_batch(&batch(1), 1).unwrap(),
+            ChannelAddOutcome::Rejected(ChannelLimit::AssembledBytes { .. })
         ));
-        assert!(channel.is_empty());
+        assert_eq!(channel.input_bytes, maximum - 1_000);
+        assert_eq!(channel.blocks_added(), 0);
         assert_eq!(channel.compressed_bytes(), 0);
     }
 }

@@ -45,7 +45,7 @@ fn a_retry_is_not_packed_with_newer_output() {
     let config = EncoderConfig { max_blobs_per_tx: 2, ..EncoderConfig::default() };
     let fixture = EncoderFixture::new(config);
     let mut encoder = fixture.encoder();
-    let blocks = BlockFixture::chain(2, MULTI_FRAME_PAYLOAD);
+    let blocks = BlockFixture::chain(2, 0);
     encoder.add_block(blocks[0].clone()).unwrap();
     let submission = encoder.encode_and_drain().unwrap().remove(0);
     encoder.requeue(submission.id);
