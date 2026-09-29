@@ -27,6 +27,18 @@ One process, one fork, two TEE-only in-progress games (newest-first, lookback
 skip. Game B is Path 4, followed by Path 3 only when the TEE proof is removed
 first. The run bails if fewer than two such games exist.
 
+Games are also filtered on their **aggregation program**. Every hash on an
+`AggregateVerifier` is `immutable`, so a verification-key rotation deploys a new
+implementation and registers it on the factory, while every clone created before
+it stays pinned to the old `ZK_AGGREGATE_HASH`. A proof from the current
+prover-service cannot verify against such a clone. The driver therefore reads the
+hash from `gameImpls(gameType)` and skips candidates that do not match — without
+that, a stale clone costs a full SNARK and then reverts `InvalidProof()` at
+submission, roughly 35 minutes in, with nothing in the error naming the rotation.
+That is exactly how the 2026-09-29 runs failed. When a rotation has landed and the
+proposer has not yet created enough games against the new implementation, the run
+stops during selection and says so.
+
 The anchor bound is not cosmetic: the scanner starts at one past the anchor
 game's factory index, so a game at or before the anchor is one the challenger
 will never look at, however invalid it is made — the dispute waits below would
