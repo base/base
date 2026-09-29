@@ -706,7 +706,7 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use alloy_consensus::transaction::Recovered;
-    use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag, NumHash, eip2718::Encodable2718};
+    use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag, eip2718::Encodable2718};
     use alloy_primitives::{Address, B256, Bloom, Sealed, U256};
     use alloy_rpc_types_engine::{
         ExecutionPayloadV1, ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
@@ -1495,10 +1495,7 @@ mod tests {
             },
             ..Default::default()
         });
-        let genesis_l2_info = L2BlockInfo {
-            block_info: BlockInfo { hash: genesis_hash, ..Default::default() },
-            ..Default::default()
-        };
+        let genesis_l2_info = L2BlockInfo::from_l2_genesis(&cfg.genesis);
         let build_fcu =
             ForkchoiceUpdated { payload_id: Some(PayloadId::new([1; 8])), ..valid_fcu() };
         let client = Arc::new(
@@ -1850,16 +1847,7 @@ mod tests {
             ..Default::default()
         });
 
-        let genesis_l2_info = L2BlockInfo {
-            block_info: BlockInfo {
-                hash: genesis_hash,
-                number: 0,
-                parent_hash: B256::ZERO,
-                timestamp: 0,
-            },
-            l1_origin: NumHash { number: 0, hash: B256::ZERO },
-            seq_num: 0,
-        };
+        let genesis_l2_info = L2BlockInfo::from_l2_genesis(&cfg.genesis);
 
         // On unfixed main, engine.reset() queries: Finalized L2 block, Latest L2 block,
         // the L1 origin of the unsafe head (hash B256::ZERO), FCU v3, then L1 block 0
