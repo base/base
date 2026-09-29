@@ -13,15 +13,17 @@ payer then:
    `base-common-price-feed`), adds the token's spread, and requires the phase-0
    amount to cover `gas_limit × max_fee_per_gas` at that rate. A shortfall is
    rejected with `PAYMENT_INSUFFICIENT` and a `requote`.
-3. Reads the sender's balance through the token's `BalanceLayout` and rejects
-   blacklisted or underfunded senders.
+3. Reads the sender's balance through the token's `BalanceLayout`, rejecting
+   an underfunded sender with `SENDER_BALANCE_INSUFFICIENT`, then simulates the
+   transfer from the sender at the latest state. A transfer that reverts, halts,
+   or returns `false` (a blacklisted sender or paused token, for example) is
+   rejected with `EXECUTION_REVERTED`.
 4. Signs `payer_signature_hash(sender)` with the payer account's own key, and
    sets `payer_auth` to `K1_AUTHENTICATOR || signature`.
 5. Admits the co-signed transaction as a private validity transaction. Its
    predicates keep it includable only while the sender's balance still covers
-   the payment, the sender is not blacklisted, and a `FiatToken` is not paused.
-   A block-number bound at the ingress maximum is also required, and the pool
-   evicts the transaction at `valid_before`.
+   the payment, up to a block-number bound at the ingress maximum, and the pool
+   evicts it at `valid_before`.
 
 The price is checked once at co-sign; it is not a predicate. The spread must
 cover the summed deviation thresholds of a token's feeds, because a feed may
@@ -61,6 +63,6 @@ price = { quote = "usd", legs = [
 `PayerConfig::resolve` verifies every feed and balance layout against an RPC
 provider before the payer starts.
 
-The payer account must qualify for the pool's high-rate payer limits, or the
-pool caps its pending sponsored transactions. That means it must be delegated
-to trusted proxy code and hard-locked.
+The pool caps an ordinary payer's pending sponsored transactions. Run the
+sequencer with `--rollup.mempool-trusted-payers <payer>` so the payer is bounded
+only by its ETH balance.

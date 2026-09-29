@@ -13,21 +13,22 @@ use jsonrpsee::{
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_revm::database::StateProviderDatabase;
 use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
-use revm::Database;
+use revm::{Database, context::BlockEnv};
 use tracing::{info, warn};
 
 use crate::{
     GasDiagnostic, GasEstimate, GetTermsParams, GetTermsResult, OfferConditions, PayerConfigError,
-    PayerErrorCode, PayerRejection, PayerTerms, PayerToken, PaymentOption, Requote,
+    PayerErrorCode, PayerRejection, PayerTerms, PayerToken, PaymentOption, Requote, Revert,
     SendTransactionResult, Shortfall, TokenCharged, TokenChoice, TokenPayment, TokenPaymentOffer,
-    ValidityIngress,
+    TransferOutcome, ValidityIngress,
 };
 
 /// Payer that accepts ERC-20 tokens for gas on EIP-8130 transactions.
 ///
 /// It co-signs a sender-signed transaction once the phase-0 payment covers
-/// the gas at the current rate, then admits it as a validity transaction that
-/// stays includable only while the sender can still make the payment.
+/// the gas at the current rate and the transfer succeeds when simulated, then
+/// admits it as a validity transaction that stays includable only while the
+/// sender still holds the payment.
 #[derive(Debug)]
 pub struct PayerService<Client, Ingress, S> {
     terms: PayerTerms,
@@ -171,11 +172,13 @@ where
         let bound = self.ingress.latest_block_expiry_bound()?.ok_or_else(|| {
             PayerRejection::new(PayerErrorCode::TemporarilyUnavailable, "no canonical head")
         })?;
-        let mut validity = token.balance.predicates(token.address, sender, payment.amount);
-        validity.push(ValidityPredicate::BlockNumber {
-            op: ValidityOperator::LessThanOrEqual,
-            value: U256::from(bound),
-        });
+        let validity = vec![
+            token.balance.predicate(token.address, sender, payment.amount),
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::from(bound),
+            },
+        ];
         let transaction_hash =
             self.ingress.submit(co_signed.encoded_2718().into(), validity).await?;
         info!(tx_hash = %transaction_hash, token = %token.symbol, "co-signed token payment");
@@ -245,13 +248,6 @@ where
         }
         let word =
             db.storage(token.address, token.balance.slot(sender)).map_err(Self::unavailable)?;
-        if token.balance.is_blacklisted(word) {
-            return Err(PayerRejection::new(
-                PayerErrorCode::SenderIneligible,
-                "sender cannot transfer the token",
-            )
-            .into());
-        }
         let available = token.balance.balance(word);
         if available < payment.amount {
             return Err(PayerRejection {
@@ -267,7 +263,28 @@ where
             }
             .into());
         }
-        Ok((token, sender, payment))
+
+        let header = self.client.latest_header().map_err(Self::unavailable)?.ok_or_else(|| {
+            PayerRejection::new(PayerErrorCode::TemporarilyUnavailable, "no canonical head")
+        })?;
+        let block = BlockEnv {
+            number: U256::from(header.number()),
+            timestamp: U256::from(header.timestamp()),
+            ..Default::default()
+        };
+        let data = match payment
+            .simulate(&mut db, sender, block, tx.chain_id)
+            .map_err(Self::unavailable)?
+        {
+            TransferOutcome::Transferred => return Ok((token, sender, payment)),
+            TransferOutcome::Reverted(data) => Some(data),
+            TransferOutcome::Failed => None,
+        };
+        Err(PayerRejection {
+            revert: Some(Box::new(Revert { phase: 0, data })),
+            ..PayerRejection::new(PayerErrorCode::ExecutionReverted, "phase-0 transfer fails")
+        }
+        .into())
     }
 
     /// Rejects a transaction that could stay includable beyond `maxExpiry`.
@@ -322,7 +339,7 @@ where
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use alloy_primitives::{B256, Bytes};
+    use alloy_primitives::{B256, Bytes, hex};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use alloy_sol_types::SolCall;
@@ -344,6 +361,10 @@ mod tests {
     /// 70,000 gas at 1.5 gwei priced at 2,000 USDC per ETH.
     const REQUIRED: u64 = 210_000;
     const EXPIRY_BOUND: u64 = 31;
+    /// Token runtime whose every call returns `true`.
+    const RETURNS_TRUE: &[u8] = &hex!("600160005260206000f3");
+    /// Token runtime whose every call reverts with `0xdead`.
+    const REVERTS: &[u8] = &hex!("61dead6000526002601efd");
 
     type Provider = MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>;
     type Service = PayerService<Provider, MockValidityIngress, PrivateKeySigner>;
@@ -367,8 +388,12 @@ mod tests {
     }
 
     /// Provider after Everest holding ETH at $2,000, USDC at $1, and a USDC
-    /// balance word `balance_word` for `sender`.
-    fn provider(sender: Address, balance_word: U256) -> (Provider, PayerToken) {
+    /// token running `token_code` with balance word `balance_word` for `sender`.
+    fn provider(
+        sender: Address,
+        balance_word: U256,
+        token_code: &'static [u8],
+    ) -> (Provider, PayerToken) {
         let mut genesis = build_test_genesis_everest();
         genesis.config.chain_id = CHAIN_ID;
         let provider = MockEthProvider::<BasePrimitives>::new()
@@ -380,6 +405,7 @@ mod tests {
         provider.add_account(
             TOKEN,
             ExtendedAccount::new(0, U256::ZERO)
+                .with_bytecode(Bytes::from_static(token_code))
                 .extend_storage([(B256::from(balance.slot(sender)), balance_word)]),
         );
         let token = PayerToken {
@@ -413,6 +439,7 @@ mod tests {
         sender: PrivateKeySigner,
         tx: TxEip8130,
         balance_word: U256,
+        token_code: &'static [u8],
     }
 
     impl Fixture {
@@ -445,6 +472,7 @@ mod tests {
                 sender: PrivateKeySigner::random(),
                 tx,
                 balance_word: U256::from(REQUIRED),
+                token_code: RETURNS_TRUE,
             }
         }
 
@@ -469,7 +497,8 @@ mod tests {
         }
 
         fn service(&self, ingress: MockValidityIngress) -> (Service, PayerToken) {
-            let (provider, token) = provider(self.sender.address(), self.balance_word);
+            let (provider, token) =
+                provider(self.sender.address(), self.balance_word, self.token_code);
             let service = PayerService::new(
                 terms(self.payer.address()),
                 vec![token.clone()],
@@ -490,7 +519,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn co_signs_and_admits_with_balance_predicates() {
+    async fn co_signs_and_admits_with_balance_predicate() {
         let fixture = Fixture::new();
         let submitted = Arc::new(Mutex::new(None));
         let mut ingress = MockValidityIngress::new();
@@ -524,13 +553,16 @@ mod tests {
         .unwrap();
         assert_eq!(signer, fixture.payer.address());
 
-        let mut expected =
-            token.balance.predicates(TOKEN, fixture.sender.address(), U256::from(REQUIRED));
-        expected.push(ValidityPredicate::BlockNumber {
-            op: ValidityOperator::LessThanOrEqual,
-            value: U256::from(EXPIRY_BOUND),
-        });
-        assert_eq!(validity, expected);
+        assert_eq!(
+            validity,
+            vec![
+                token.balance.predicate(TOKEN, fixture.sender.address(), U256::from(REQUIRED)),
+                ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(EXPIRY_BOUND),
+                },
+            ]
+        );
     }
 
     #[tokio::test]
@@ -566,11 +598,20 @@ mod tests {
                 available: U256::from(REQUIRED - 1),
             })
         );
+    }
 
-        let mut blacklisted = Fixture::new();
-        blacklisted.balance_word =
-            (U256::from(1) << BalanceLayout::FIAT_TOKEN_BLACKLIST_BIT) | U256::from(REQUIRED);
-        assert_eq!(blacklisted.reject().await.code, PayerErrorCode::SenderIneligible);
+    #[tokio::test]
+    async fn rejects_payment_that_fails_to_transfer() {
+        let mut fixture = Fixture::new();
+        fixture.token_code = REVERTS;
+
+        let rejection = fixture.reject().await;
+
+        assert_eq!(rejection.code, PayerErrorCode::ExecutionReverted);
+        assert_eq!(
+            rejection.revert.as_deref(),
+            Some(&Revert { phase: 0, data: Some(Bytes::from_static(&[0xde, 0xad])) })
+        );
     }
 
     #[tokio::test]
@@ -617,7 +658,7 @@ mod tests {
     #[test]
     fn rejects_signer_for_another_account() {
         let fixture = Fixture::new();
-        let (provider, token) = provider(fixture.sender.address(), U256::ZERO);
+        let (provider, token) = provider(fixture.sender.address(), U256::ZERO, RETURNS_TRUE);
 
         let error = PayerService::new(
             terms(fixture.payer.address()),

@@ -35,7 +35,7 @@ alloy-primitives = { workspace = true, features = ["std", "serde"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 # revm
-revm.workspace = true
+revm = { workspace = true, features = ["std"] }
 
 # rpc
 jsonrpsee = { workspace = true, features = ["server", "macros"] }

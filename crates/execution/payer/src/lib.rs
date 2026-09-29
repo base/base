@@ -17,7 +17,7 @@ pub use config::{
 };
 
 mod error;
-pub use error::{GasDiagnostic, PayerErrorCode, PayerRejection, Requote, Shortfall};
+pub use error::{GasDiagnostic, PayerErrorCode, PayerRejection, Requote, Revert, Shortfall};
 
 mod ingress;
 #[cfg(test)]
@@ -25,7 +25,7 @@ pub use ingress::MockValidityIngress;
 pub use ingress::ValidityIngress;
 
 mod payment;
-pub use payment::{IERC20, TokenPayment};
+pub use payment::{IERC20, TokenPayment, TransferOutcome};
 
 mod rpc;
 pub use rpc::PayerApiServer;

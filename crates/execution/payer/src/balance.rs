@@ -10,8 +10,7 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "layout", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BalanceLayout {
     /// Circle `FiatTokenV2_2`, used by USDC, EURC, and cbBTC: balances at
-    /// slot 9 with a blacklist flag in the top bit, and a `paused` flag in
-    /// slot 1.
+    /// slot 9 sharing their word with a blacklist flag in the top bit.
     FiatToken,
     /// A plain `mapping(address => uint256)` of balances.
     Mapping {
@@ -23,15 +22,6 @@ pub enum BalanceLayout {
 impl BalanceLayout {
     /// Slot of the `FiatToken` `balanceAndBlacklistStates` mapping.
     pub const FIAT_TOKEN_BALANCES_SLOT: U256 = U256::from_limbs([9, 0, 0, 0]);
-
-    /// Bit of a `FiatToken` balance word that flags a blacklisted holder.
-    pub const FIAT_TOKEN_BLACKLIST_BIT: usize = 255;
-
-    /// Slot packing the `FiatToken` `pauser` address with its `paused` flag.
-    pub const FIAT_TOKEN_PAUSED_SLOT: U256 = U256::from_limbs([1, 0, 0, 0]);
-
-    /// Bit offset of the `FiatToken` `paused` flag, directly above `pauser`.
-    pub const FIAT_TOKEN_PAUSED_BIT_OFFSET: usize = 160;
 
     /// Returns the storage slot holding `holder`'s balance word.
     pub fn slot(&self, holder: Address) -> U256 {
@@ -58,44 +48,16 @@ impl BalanceLayout {
         word & self.balance_mask()
     }
 
-    /// Whether `word` marks its holder as barred from transferring.
-    pub const fn is_blacklisted(&self, word: U256) -> bool {
-        matches!(self, Self::FiatToken) && word.bit(Self::FIAT_TOKEN_BLACKLIST_BIT)
-    }
-
-    /// Returns predicates that hold while `holder` can transfer `amount` of
+    /// Returns a predicate that holds while `holder` has at least `amount` of
     /// `token`.
-    pub fn predicates(
-        &self,
-        token: Address,
-        holder: Address,
-        amount: U256,
-    ) -> Vec<ValidityPredicate> {
-        let slot = self.slot(holder);
-        let mut predicates = vec![ValidityPredicate::Storage {
+    pub fn predicate(&self, token: Address, holder: Address, amount: U256) -> ValidityPredicate {
+        ValidityPredicate::Storage {
             address: token,
-            slot,
+            slot: self.slot(holder),
             mask: self.balance_mask(),
             op: ValidityOperator::GreaterThanOrEqual,
             value: amount,
-        }];
-        if matches!(self, Self::FiatToken) {
-            predicates.push(ValidityPredicate::Storage {
-                address: token,
-                slot,
-                mask: U256::from(1) << Self::FIAT_TOKEN_BLACKLIST_BIT,
-                op: ValidityOperator::Equal,
-                value: U256::ZERO,
-            });
-            predicates.push(ValidityPredicate::Storage {
-                address: token,
-                slot: Self::FIAT_TOKEN_PAUSED_SLOT,
-                mask: U256::from(u8::MAX) << Self::FIAT_TOKEN_PAUSED_BIT_OFFSET,
-                op: ValidityOperator::Equal,
-                value: U256::ZERO,
-            });
         }
-        predicates
     }
 }
 
@@ -120,51 +82,23 @@ mod tests {
 
     #[test]
     fn fiat_token_balance_ignores_blacklist_bit() {
-        let layout = BalanceLayout::FiatToken;
-        let word = (U256::from(1) << BalanceLayout::FIAT_TOKEN_BLACKLIST_BIT) | U256::from(5);
-        assert_eq!(layout.balance(word), U256::from(5));
-        assert!(layout.is_blacklisted(word));
-        assert!(!layout.is_blacklisted(U256::from(5)));
+        let word = (U256::from(1) << 255) | U256::from(5);
+        assert_eq!(BalanceLayout::FiatToken.balance(word), U256::from(5));
+        assert_eq!(BalanceLayout::Mapping { slot: U256::from(51) }.balance(word), word);
     }
 
     #[test]
-    fn mapping_balance_uses_full_word() {
-        let layout = BalanceLayout::Mapping { slot: U256::from(51) };
-        assert_eq!(layout.balance(U256::MAX), U256::MAX);
-        assert!(!layout.is_blacklisted(U256::MAX));
-        assert_eq!(layout.predicates(Address::ZERO, HOLDER, U256::from(1)).len(), 1);
-    }
-
-    #[test]
-    fn fiat_token_predicates_gate_balance_blacklist_and_pause() {
+    fn predicate_gates_masked_balance() {
         let token = Address::repeat_byte(0x11);
-        let predicates = BalanceLayout::FiatToken.predicates(token, HOLDER, U256::from(7));
-        let slot = BalanceLayout::FiatToken.slot(HOLDER);
         assert_eq!(
-            predicates,
-            vec![
-                ValidityPredicate::Storage {
-                    address: token,
-                    slot,
-                    mask: U256::MAX >> 1,
-                    op: ValidityOperator::GreaterThanOrEqual,
-                    value: U256::from(7),
-                },
-                ValidityPredicate::Storage {
-                    address: token,
-                    slot,
-                    mask: U256::from(1) << 255,
-                    op: ValidityOperator::Equal,
-                    value: U256::ZERO,
-                },
-                ValidityPredicate::Storage {
-                    address: token,
-                    slot: U256::from(1),
-                    mask: U256::from(0xff) << 160,
-                    op: ValidityOperator::Equal,
-                    value: U256::ZERO,
-                },
-            ]
+            BalanceLayout::FiatToken.predicate(token, HOLDER, U256::from(7)),
+            ValidityPredicate::Storage {
+                address: token,
+                slot: BalanceLayout::FiatToken.slot(HOLDER),
+                mask: U256::MAX >> 1,
+                op: ValidityOperator::GreaterThanOrEqual,
+                value: U256::from(7),
+            }
         );
     }
 

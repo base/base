@@ -1,6 +1,6 @@
 //! ERC-8168 `PAYER_REJECTED` errors.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use jsonrpsee::types::ErrorObjectOwned;
 use serde::{Deserialize, Serialize};
 
@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PayerErrorCode {
-    /// The sender is barred from transferring the payment token.
-    SenderIneligible,
+    /// The phase-0 transfer fails when simulated.
+    ExecutionReverted,
     /// The transaction's gas exceeds the payer's per-transaction ceiling.
     GasExceedsLimit,
     /// The payer cannot evaluate the transaction right now.
@@ -52,6 +52,17 @@ pub struct Shortfall {
     pub available: U256,
 }
 
+/// Failed call for a [`PayerErrorCode::ExecutionReverted`] rejection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Revert {
+    /// Call phase that failed; 0 is the payment.
+    pub phase: u64,
+    /// Raw revert data, when the call reverted rather than halted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<Bytes>,
+}
+
 /// Cost diagnostic for a [`PayerErrorCode::GasExceedsLimit`] rejection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,6 +90,9 @@ pub struct PayerRejection {
     /// Cost diagnostic, for [`PayerErrorCode::GasExceedsLimit`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gas: Option<Box<GasDiagnostic>>,
+    /// Failed call, for [`PayerErrorCode::ExecutionReverted`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revert: Option<Box<Revert>>,
 }
 
 impl PayerRejection {
@@ -90,7 +104,14 @@ impl PayerRejection {
 
     /// Creates a rejection without actionable detail.
     pub fn new(code: PayerErrorCode, reason: impl Into<String>) -> Self {
-        Self { code, reason: reason.into(), requote: None, shortfall: None, gas: None }
+        Self {
+            code,
+            reason: reason.into(),
+            requote: None,
+            shortfall: None,
+            gas: None,
+            revert: None,
+        }
     }
 }
 
