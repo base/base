@@ -100,6 +100,10 @@ pub struct Eip8130RequestFields {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_changes: Option<Vec<AccountChange>>,
     /// The phased call batches dispatched by the sender account.
+    ///
+    /// Alternatively, a single call can be given as the standard top-level
+    /// `to` / `value` / `data`. Setting both `calls` and any of those is
+    /// rejected as ambiguous.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub calls: Option<Vec<Vec<Call>>>,
     /// Optional lower bound of the validity window, in Unix seconds or
