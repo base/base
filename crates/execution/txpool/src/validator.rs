@@ -22,8 +22,8 @@ use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
     AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
-    IntrinsicGasInput, LockStatus, NonceError, NonceMode, NonceValidator, TransactionAuthorizer,
-    TxAuthError,
+    IntrinsicGasError, IntrinsicGasInput, LockStatus, NonceError, NonceMode, NonceValidator,
+    TransactionAuthorizer, TxAuthError,
 };
 use base_precompile_storage::{
     BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
@@ -1093,9 +1093,20 @@ where
         let intrinsic = IntrinsicGas::compute(
             signed,
             encoded.as_ref(),
-            &IntrinsicGasInput::worst_case(nonce_key_first_use, signed.tx().payer.is_some()),
+            &IntrinsicGasInput::worst_case(
+                sender,
+                nonce_key_first_use,
+                signed.tx().payer.is_some(),
+            ),
         )
-        .map_err(|_| Self::eip8130_error("intrinsic gas computation failed"))?;
+        .map_err(|err| {
+            Self::eip8130_error(match err {
+                IntrinsicGasError::PayerAuthGasExceeded(_) => {
+                    "payer authentication gas exceeds MAX_AUTHENTICATION_GAS"
+                }
+                _ => "intrinsic gas computation failed",
+            })
+        })?;
         if intrinsic.execution_gas_available(signed.tx().gas_limit).is_none() {
             return Err(InvalidTransactionError::GasTooLow.into());
         }
@@ -1238,7 +1249,7 @@ where
         };
         // Calls move `call.value` out of the sender, not the payer. A self-paying
         // sender reserves it alongside gas; a sponsored sender must hold it alone.
-        let call_value = signed.tx().total_call_value();
+        let call_value = signed.tx().sender_call_value(sender);
         let payer_max_cost = gas_charge
             .saturating_add(additional_fee)
             .saturating_add(if payer == sender { call_value } else { U256::ZERO });
@@ -3622,6 +3633,26 @@ mod tests {
                 ))
             ),
             "expected InsufficientFunds, got {err:?}"
+        );
+
+        // Self-calls move nothing, so three of them whose sum exceeds the
+        // balance reserve only one call's value.
+        let self_call = Call { to: sender, value: U256::from(BALANCE / 2), data: Bytes::new() };
+        let tx = TxEip8130 {
+            gas_limit: 100_000,
+            calls: vec![vec![self_call.clone(), self_call.clone(), self_call]],
+            ..minimal_valid_eoa_tx()
+        };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let self_calls =
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let state = validator
+            .validate_eip8130_full(&self_calls)
+            .expect("repeated self-calls only need one call's value on hand");
+        assert_eq!(
+            state.payer_max_cost - without_value.payer_max_cost,
+            U256::from(BALANCE / 2),
+            "self-calls reserve their peak, not their sum"
         );
     }
 
