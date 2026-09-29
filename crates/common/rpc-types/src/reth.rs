@@ -436,6 +436,31 @@ mod tests {
         assert_eq!(auth.len(), 20 + 65);
     }
 
+    /// An open payer request is estimated before any payer has signed, so an
+    /// absent `payer_auth` is priced as a 65-byte signature that never recovers
+    /// (the payer stays unknown, never the sender); a supplied one is used
+    /// verbatim.
+    #[test]
+    fn open_payer_without_payer_auth_prices_a_signature() {
+        let tx = sim_tx(json!({
+            "sender": SENDER,
+            "calls": [],
+            "payer": Eip8130Constants::OPEN_PAYER,
+        }));
+        let s = signed(&tx);
+        assert_eq!(s.tx().payer, Some(Eip8130Constants::OPEN_PAYER));
+        assert_eq!(s.payer_auth().len(), 65, "priced as a raw secp256k1 signature");
+        assert!(s.resolved_payer(SENDER).is_err(), "the stub never recovers");
+
+        let tx = sim_tx(json!({
+            "sender": SENDER,
+            "calls": [],
+            "payer": Eip8130Constants::OPEN_PAYER,
+            "payerAuth": blob(None, 65),
+        }));
+        assert_eq!(signed(&tx).payer_auth().len(), 65, "the supplied signature is used verbatim");
+    }
+
     #[test]
     fn prefixed_p256_payer_auth_is_rejected() {
         let payer = address!("0x00000000000000000000000000000000000000b2");

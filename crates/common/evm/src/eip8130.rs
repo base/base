@@ -46,7 +46,7 @@
 use alloc::{boxed::Box, rc::Rc, vec::Vec};
 
 use alloy_evm::{Database as AlloyDatabase, EvmInternals};
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, address};
 use base_common_consensus::{AccountChange, Delegation, Eip8130Constants, Predeploys};
 use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_execution_eip8130::{
@@ -164,6 +164,12 @@ struct CallsResult {
 pub struct Eip8130Executor;
 
 impl Eip8130Executor {
+    /// Payer published to the `TxContext` precompile when simulating an open
+    /// payer transaction before any payer has signed (its `payer_auth` does not
+    /// recover). The real payer is unknown, and the context cannot carry the
+    /// zero address, which would read back as `tx.origin` (the sender).
+    pub const UNSIGNED_OPEN_PAYER: Address = address!("0x0000000000000000000000000000000000008130");
+
     /// Executes the EIP-8130 transaction currently set on `evm`, mutating the
     /// journal in place and returning the [`ExecutionResult`]. A success result
     /// is returned for an included transaction whether or not its `calls`
@@ -777,11 +783,14 @@ impl Eip8130Executor {
         let gas_limit = tx.gas_limit;
         let max_fee = tx.max_fee_per_gas;
         let max_priority = tx.max_priority_fee_per_gas;
-        // Use the declared payer (sponsor) so the published `TxContext` matches a
-        // real execution: a call that reads the payer from the `TxContext`
-        // precompile must see the same address it would on-chain, or it could take
-        // a different path and skew the estimate. No signature is verified here.
-        let payer = tx.payer.unwrap_or(sender);
+        // Use the declared payer (sponsor) so the payer published to the
+        // `TxContext` precompile matches a real execution: a call that reads it
+        // must see the same address it would on-chain, or it could take a
+        // different path and skew the estimate. A named payer's signature is not
+        // verified here. An open payer is the signer its `payer_auth` recovers
+        // to; before a payer has signed (a stub that does not recover) the payer
+        // is unknown and published as `UNSIGNED_OPEN_PAYER`, never the sender.
+        let payer = signed.resolved_payer(sender).unwrap_or(Self::UNSIGNED_OPEN_PAYER);
 
         let internals = EvmInternals::from_context(ctx);
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
@@ -2705,6 +2714,51 @@ mod tests {
                 "hinted session actor should pass the policy gate, got {result:?}"
             );
         }
+    }
+
+    /// In open payer mode the account recovered from `payer_auth` pays gas, so
+    /// an unfunded sender's transaction executes against the payer's balance.
+    #[test]
+    fn open_payer_is_charged_instead_of_the_sender() {
+        let key = signing_key(0x34);
+        let sender = eoa_address(&key);
+        let payer_key = signing_key(0x35);
+        let payer = eoa_address(&payer_key);
+
+        let tx = TxEip8130 { payer: Some(Eip8130Constants::OPEN_PAYER), ..base_tx() };
+        let sender_auth = eoa_sig(&key, tx.sender_signature_hash());
+        let payer_auth = eoa_sig(&payer_key, tx.payer_signature_hash(sender));
+        let signed = Eip8130Signed::new(tx, sender_auth, payer_auth);
+
+        let initial = U256::from(10u64).pow(U256::from(18u64));
+        let mut evm = evm_with(initial, payer);
+        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("open-payer tx executes");
+
+        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+        assert!(outcome.state[&payer].info.balance < initial, "payer must be charged");
+        assert!(outcome.state[&sender].info.balance.is_zero(), "sender must not be charged");
+    }
+
+    /// The sender estimates an open payer transaction before any payer has
+    /// signed: a `payer_auth` that does not recover still simulates, with the
+    /// payer unknown rather than the sender.
+    #[test]
+    fn simulate_prices_an_open_payer_that_has_not_signed() {
+        let key = signing_key(0x36);
+        let sender = eoa_address(&key);
+        let tx = TxEip8130 { payer: Some(Eip8130Constants::OPEN_PAYER), ..base_tx() };
+        let sender_auth = eoa_sig(&key, tx.sender_signature_hash());
+        // `v = 0xff` is never a valid recovery byte.
+        let signed = Eip8130Signed::new(tx, sender_auth, Bytes::from(vec![0xffu8; 65]));
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+        evm.ctx_mut().tx = into_base_tx(&signed);
+        evm.ctx_mut().tx.base.caller = sender;
+        if let Some(parts) = evm.ctx_mut().tx.eip8130.as_mut() {
+            parts.mode = Eip8130ExecutionMode::Simulate;
+        }
+
+        let result = Eip8130Executor::simulate(&mut evm).expect("an unsigned open payer simulates");
+        assert!(result.is_success(), "expected success, got {result:?}");
     }
 
     #[test]

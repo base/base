@@ -423,7 +423,12 @@ impl IntrinsicGas {
             return Ok(0);
         }
         let payer_auth = signed.payer_auth().as_ref();
-        let cost = Self::auth_cost(payer_auth, AuthWireForm::Prefixed, policy_gated)?
+        let form = if signed.tx().is_open_payer() {
+            AuthWireForm::BareSignature
+        } else {
+            AuthWireForm::Prefixed
+        };
+        let cost = Self::auth_cost(payer_auth, form, policy_gated)?
             .saturating_add(Self::data_cost(payer_auth));
         if cost > Eip8130GasSchedule::MAX_AUTHENTICATION_GAS {
             return Err(IntrinsicGasError::PayerAuthGasExceeded(cost));
@@ -1339,6 +1344,19 @@ mod tests {
             policy_gated.payer_auth,
             Eip8130GasSchedule::AUTH_EXEC_P256
                 + Eip8130GasSchedule::COLD_SLOAD * 2
+                + IntrinsicGas::data_cost(&payer_auth)
+        );
+    }
+
+    #[test]
+    fn open_payer_auth_is_priced_as_a_bare_k1_signature() {
+        let tx = TxEip8130 { payer: Some(Eip8130Constants::OPEN_PAYER), ..Default::default() };
+        let payer_auth = vec![0xab; 65];
+        let gas = intrinsic(&signed(tx, vec![0; 65], payer_auth.clone()), &EXISTING_KEY);
+        assert_eq!(
+            gas.payer_auth,
+            Eip8130GasSchedule::AUTH_EXEC_K1
+                + Eip8130GasSchedule::COLD_SLOAD
                 + IntrinsicGas::data_cost(&payer_auth)
         );
     }

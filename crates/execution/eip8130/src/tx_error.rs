@@ -24,6 +24,11 @@ pub enum TxAuthError {
     #[error("EOA sender signature could not be recovered")]
     SenderRecovery,
 
+    /// The open-payer `payer_auth` was malformed or did not recover. Applies
+    /// only in open payer mode.
+    #[error("open payer signature could not be recovered")]
+    PayerRecovery,
+
     /// The resolved actor is valid but its scope does not grant the operation it
     /// was authorized for. Mirrors the contract's scope requirement.
     #[error("{operation:?} actor scope {scope:#04x} does not grant the required context")]

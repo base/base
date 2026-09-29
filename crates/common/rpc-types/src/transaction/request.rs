@@ -146,16 +146,25 @@ pub struct Eip8130RequestFields {
     /// filler-byte stub of the right length); you need not sign first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_auth: Option<Bytes>,
-    /// Sponsoring payer account. When set, the estimate includes payer
-    /// authentication gas (metered on top of the gas limit, as in execution).
+    /// Sponsoring payer account, or the zero address for open payer mode. When
+    /// set, the estimate includes payer authentication gas (metered on top of
+    /// the gas limit, as in execution).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer: Option<Address>,
-    /// Raw payer authentication blob (`authenticator(20) || data`) whose shape
-    /// is priced when a `payer` is declared. Absent defaults to a representative
-    /// secp256k1 payer authorization. Unlike `sender_auth`, a supplied blob is
-    /// always the prefixed form and its leading 20 bytes must be the native k1
-    /// authenticator. Any other selector, including P256, `WebAuthn`, and the
-    /// delegate authenticator, is rejected as `INVALID_PARAMS` rather than priced.
+    /// Raw payer authentication blob whose shape is priced when a `payer` is
+    /// declared.
+    ///
+    /// For a named payer this is `authenticator(20) || data`, and absent
+    /// defaults to a representative secp256k1 payer authorization. A supplied
+    /// blob's leading 20 bytes must be the native k1 authenticator. Any other
+    /// selector, including P256, `WebAuthn`, and the delegate authenticator, is
+    /// rejected as `INVALID_PARAMS` rather than priced.
+    ///
+    /// In open payer mode this is the payer's raw 65-byte signature, from which
+    /// the payer is recovered. It is optional: before any payer has signed, an
+    /// absent (or unrecoverable) signature is priced as 65 bytes and the payer
+    /// is simulated as the placeholder address
+    /// `0x0000000000000000000000000000000000008130`, never as the sender.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer_auth: Option<Bytes>,
     /// Optional acting-actor hint for simulation. Estimation never recovers a

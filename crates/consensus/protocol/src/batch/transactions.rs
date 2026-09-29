@@ -426,7 +426,7 @@ impl SpanBatchTransactions {
                     .1;
                     let payer_proof = SpanBatchEip8130TransactionData::split_auth(
                         signed.payer_auth(),
-                        inner.payer.is_some(),
+                        SpanBatchEip8130TransactionData::named_payer(inner.payer),
                     )?
                     .1;
                     self.eip8130_auth_data.push((sender_proof, payer_proof));
@@ -474,7 +474,8 @@ mod tests {
     use alloy_primitives::{B256, Signature, TxKind, address};
     use base_common_consensus::{
         AccountChange, AccountChangeChannel, Call, ChangeType, CreateEntry, Delegation,
-        Eip8130Signed, InitialActor, SignedAccountChanges, SignedChange, TxEip8130,
+        Eip8130Constants, Eip8130Signed, InitialActor, SignedAccountChanges, SignedChange,
+        TxEip8130,
     };
 
     use super::*;
@@ -725,7 +726,18 @@ mod tests {
         // Minimal body: empty auth, no account changes or calls.
         let minimal = eip8130_raw(eip8130_body(), Bytes::new(), Bytes::new());
 
-        assert_span_batch_roundtrip(vec![eoa, configured, rich, minimal], EIP8130_CHAIN_ID);
+        // Open payer: `payer` is the single byte 0x00 and `payer_auth` is a raw
+        // signature with no authenticator prefix.
+        let open_payer = {
+            let mut tx = eip8130_body();
+            tx.payer = Some(Eip8130Constants::OPEN_PAYER);
+            eip8130_raw(tx, Bytes::from_static(&[0xab; 65]), Bytes::from_static(&[0xcd; 65]))
+        };
+
+        assert_span_batch_roundtrip(
+            vec![eoa, configured, rich, minimal, open_payer],
+            EIP8130_CHAIN_ID,
+        );
     }
 
     #[test]
