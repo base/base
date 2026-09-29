@@ -75,7 +75,10 @@ When `TIPS_AUDIT_POSTGRES_URL` is set, a background worker maintains
 partitions. It uses a dedicated one-connection Postgres pool and
 `pg_try_advisory_lock`, so only one replica changes partitions at a time and
 lock losers do not occupy ingest connections. The first pass runs at startup;
-later passes wait the retention interval, skipping missed ticks.
+later passes wait the retention interval, skipping missed ticks. A pass that
+fails, or whose DDL hits a lock timeout, retries after 60 seconds instead. A
+pod that starts before its network's migration therefore picks up the new
+schema within a minute.
 
 Each pass, for each class:
 
@@ -94,7 +97,16 @@ first (a brief `ACCESS EXCLUSIVE` lock on the class partition, which queues
 inserts for that class) and then drops the detached table in a separate
 transaction. Each statement runs under
 `TIPS_AUDIT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS`; a statement that
-times out is skipped and retried on the next pass.
+times out is skipped and retried by that 60-second retry.
+
+### Shutdown
+
+`audit-archiver` handles SIGTERM and SIGINT with a graceful HTTP shutdown: it
+stops accepting connections, finishes in-flight requests, and closes idle
+keep-alive connections. Without this, the binary runs as PID 1 in the
+container, ignores SIGTERM, and keeps answering kept-alive producer
+connections until SIGKILL, which during a blue-green rollout sends a few
+batches to the old release.
 
 ### Ingest admission
 
