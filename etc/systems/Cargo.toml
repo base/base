@@ -16,6 +16,11 @@ path = "src/bin/base_devnet.rs"
 name = "base-bench"
 path = "src/bin/base_bench.rs"
 
+[[bin]]
+name = "base-payer-demo"
+path = "src/bin/base_payer_demo.rs"
+required-features = ["payer"]
+
 [lints]
 workspace = true
 
@@ -35,10 +40,12 @@ base-upgrade-signal.workspace = true
 base-batcher-encoder.workspace = true
 base-batcher-service.workspace = true
 base-flashblocks-node.workspace = true
+base-execution-payer = { workspace = true, optional = true }
 base-consensus-rpc = { workspace = true, features = ["client"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
 base-builder-core = { workspace = true, features = ["test-utils"] }
+base-common-price-feed = { workspace = true, optional = true, features = ["test-utils"] }
 
 # consensus
 base-consensus-disc.workspace = true
@@ -80,6 +87,7 @@ alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 base-common-network.workspace = true
 base-common-rpc-types.workspace = true
 base-common-precompiles.workspace = true
+base-common-consensus = { workspace = true, optional = true }
 
 # proof
 base-proof-zk-host.workspace = true
@@ -115,6 +123,7 @@ prometheus-scraper = { version = "0.2.0", default-features = false }
 tempfile.workspace = true
 serde_yaml.workspace = true
 async-trait.workspace = true
+toml = { workspace = true, optional = true, features = ["display", "serde"] }
 clap = { workspace = true, features = ["derive", "env"] }
 tracing = { workspace = true, features = ["std"] }
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
@@ -125,7 +134,17 @@ testcontainers = { workspace = true, features = ["blocking", "host-port-exposure
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "macros", "tls-native-tls"] }
 
 [features]
-default = [ "upgrade-signal" ]
+default = [ "payer", "upgrade-signal" ]
+# The token-payer demo deploys a MockERC20 through base-test-utils, so it shares the artifact
+# caveat described for upgrade-signal below.
+payer = [
+  "base-test-utils/contracts",
+  "dep:base-test-utils",
+  "dep:base-execution-payer",
+  "dep:base-common-price-feed",
+  "dep:base-common-consensus",
+  "dep:toml",
+]
 # The upgrade-signal stack deploys a mock ProtocolVersions contract via base-test-utils, whose
 # contract bindings embed Foundry `out/` artifacts through `sol!(..., concat!(...))` at compile
 # time. Those artifacts are gitignored, so base-test-utils cannot compile when pulled over a git
@@ -134,9 +153,6 @@ default = [ "upgrade-signal" ]
 upgrade-signal = [ "base-test-utils/contracts", "dep:base-test-utils" ]
 
 [dev-dependencies]
-# workspace
-base-test-utils = { workspace = true, features = ["contracts"] }
-
 # consensus
 base-consensus-derive.workspace = true
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
@@ -154,9 +170,7 @@ base-optimism-rpc.workspace = true
 
 # execution
 base-shadow-indexer.workspace = true
-base-execution-payer.workspace = true
 base-shadow-indexer-db.workspace = true
-base-common-price-feed = { workspace = true, features = ["test-utils"] }
 
 # reth
 reth-primitives-traits.workspace = true

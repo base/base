@@ -184,6 +184,34 @@ upgrade-signal *args:
 upgrade-signal-future upgrade='azul' offset='120':
     @./etc/scripts/devnet/upgrade-signal.sh move-future {{ quote(upgrade) }} --offset {{ quote(offset) }}
 
+# Deploys mock feeds and a token, then restarts the sequencers with the ERC-8168 token payer
+payer:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo run --quiet -p base-system-tests --bin base-payer-demo -- setup
+    if docker ps --format '{{{{.Names}}' | grep -qx base-sequencer-1; then
+      compose_files=({{ _ha }})
+      sequencers=(base-builder base-sequencer-1 base-sequencer-2)
+    else
+      compose_files=({{ _base }})
+      sequencers=(base-builder)
+    fi
+    docker compose {{ _env }} "${compose_files[@]}" up -d --no-build --no-deps --force-recreate "${sequencers[@]}"
+    echo "Waiting for payer_getTerms on ${L2_BUILDER_RPC_URL}..."
+    for _ in $(seq 1 60); do
+      if cast rpc --rpc-url "${L2_BUILDER_RPC_URL}" payer_getTerms "{\"chainId\":\"$(printf '0x%x' "${L2_CHAIN_ID}")\"}" >/dev/null 2>&1; then
+        echo "Payer is serving. Send a sponsored transfer with: just devnet payer-send"
+        exit 0
+      fi
+      sleep 2
+    done
+    echo "ERROR: payer did not come up; check: just devnet logs base-builder" >&2
+    exit 1
+
+# Sends a token transfer from a wallet with no ETH, paying gas in the token through the payer
+payer-send *args:
+    cargo run --quiet -p base-system-tests --bin base-payer-demo -- send {{ args }}
+
 # Runs full devnet checks (status + smoke tests)
 checks: status smoke
 

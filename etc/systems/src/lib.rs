@@ -78,6 +78,16 @@ pub use l2::{
 mod network;
 pub use network::{ensure_network_exists, ensure_network_exists_with_name, network_name};
 
+#[cfg(feature = "payer")]
+mod payer;
+#[cfg(feature = "payer")]
+pub use payer::{PayerFixtures, SponsoredSubmission, TokenPayerWallet};
+
+#[cfg(feature = "payer")]
+mod payer_cli;
+#[cfg(feature = "payer")]
+pub use payer_cli::{PayerDemoCli, PayerDemoCommand, PayerSendArgs, PayerSetupArgs};
+
 mod prover_service;
 pub use prover_service::InProcessProverService;
 

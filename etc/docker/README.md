@@ -226,6 +226,46 @@ To observe the L1 schedule without dynamically applying it, start devnet in metr
 UPGRADE_SIGNAL_MODE=metrics-only just devnet up
 ```
 
+### Token payer demo
+
+The ERC-8168 token payer lets a wallet with no ETH pay for an EIP-8130
+transaction in a token. The demo runs it on the devnet sequencer against mock
+Chainlink feeds (ETH at $3,000, USDC at $1) and a mock 6-decimal USDC:
+
+```bash
+just devnet up-single everest # the payer needs Everest, active from block 100
+just devnet payer             # deploy fixtures, enable the payer, restart the sequencer
+just devnet payer-send        # send 10 USDC from a fresh wallet, paying gas in USDC
+```
+
+`just devnet payer` deploys the fixtures from `ANVIL_ACCOUNT_4` and writes
+three files to `.devnet/l2/configs/payer/`:
+
+- `payer.toml`: the payer config. See "Configuration" in
+  `crates/execution/payer/README.md` for every field.
+- `payer.key`: the payer's key (`ANVIL_ACCOUNT_3`), readable only by you.
+- `payer.env`: sets `BASE_PAYER_CONFIG` and `BASE_PAYER_KEY_PATH` for the
+  node entrypoint, which sources it on start.
+
+It then recreates the sequencer containers and waits for `payer_getTerms` to
+answer. `just devnet payer-send` mints 100 USDC to a random wallet, asks the
+payer for terms, and sends a two-phase transaction: phase 0 pays the payer its
+quote, and phase 1 transfers 10 USDC to `ANVIL_ACCOUNT_2`. It logs the
+transaction, the fee the payer paid, and the resulting balances; the wallet's
+ETH balance stays zero. Pass `--recipient` or `--amount` (in atomic units) to
+change the transfer.
+
+To try your own config, edit `payer.toml` and restart the sequencer with
+`docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml up -d --no-build --force-recreate base-builder`.
+Delete `.devnet/l2/configs/payer/` and restart it the same way to turn the
+payer off.
+
+The payer admits sponsored transactions to its own node's pool without gossip,
+so only the sequencer that received a transaction can include it. With the
+three-sequencer `just devnet up`, every sequencer runs the payer, but a
+transaction sent to `base-builder` lands only while `base-builder` leads; use
+`up-single` for a predictable demo.
+
 ### Dynamic upgrades dashboard
 
 Open the [Base Devnet Control Room](http://localhost:3000/d/devnet-overview) and

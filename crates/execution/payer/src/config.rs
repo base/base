@@ -357,6 +357,21 @@ mod tests {
     }
 
     #[test]
+    fn readme_example_is_a_valid_config() {
+        let readme = include_str!("../README.md");
+        let example = readme
+            .split("```toml\n")
+            .nth(1)
+            .and_then(|rest| rest.split("```").next())
+            .expect("README has a TOML example");
+
+        let config: PayerConfig = toml::from_str(example).unwrap();
+
+        config.validate().unwrap();
+        assert_eq!(config.tokens[0].balance, BalanceLayout::FiatToken);
+    }
+
+    #[test]
     fn rejects_spread_below_feed_deviation() {
         let mut config = config();
         config.tokens[0].spread_bps = 44;

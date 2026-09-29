@@ -11,4 +11,12 @@ else
   echo "missing /genesis/l2/upgrade-signal.env; starting without runtime upgrade signal" >&2
 fi
 
+# `just devnet payer` writes payer.env to enable the ERC-8168 token payer on sequencers.
+if [ -f /genesis/l2/payer/payer.env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . /genesis/l2/payer/payer.env
+  set +a
+fi
+
 exec /app/base "$@"
