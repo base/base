@@ -51,7 +51,8 @@ pub struct SequencerArgs {
     )]
     pub recover: bool,
 
-    /// Run the sequencer without canonical-chain ingress or payload publication.
+    /// Catch up to the canonical chain on startup, then sequence privately without following or
+    /// publishing to it.
     #[arg(
         long = "sequencer.isolated",
         default_value = "false",
