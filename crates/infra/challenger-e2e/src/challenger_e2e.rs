@@ -94,6 +94,83 @@ struct GameState {
     countered_index: u64,
 }
 
+/// Stage of the run, emitted as the `phase` field on every outcome log.
+///
+/// Datadog sees each log line in isolation, so a run is only as readable as its
+/// fields: `@data.message.fields.phase:path3` finds every Path 3 outcome across
+/// every run, and `@data.message.fields.verdict:fail` finds the failures without
+/// grepping message strings. The names are stable API — dashboards and monitors
+/// filter on them, so renaming one breaks whatever watches it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    /// Fork spawned, games selected, bystanders snapshotted.
+    Setup,
+    /// The positive case: every game on the fork is valid and must stay so.
+    QuietWindow,
+    /// Path 1, an invalid TEE-only proposal.
+    Path1,
+    /// Path 2's first half: a legitimate challenge must be left standing.
+    Path2Skip,
+    /// Path 2's second half: a fraudulent challenge must be nullified.
+    Path2Dispute,
+    /// Path 3, an invalid ZK-only proposal.
+    Path3,
+    /// Path 4, an invalid dual-proof proposal.
+    Path4,
+    /// The collateral-damage check over games never under test.
+    Bystanders,
+}
+
+impl Phase {
+    /// Returns the stable field value for this phase.
+    ///
+    /// Kebab-case and lowercase so a Datadog facet needs no normalisation.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Setup => "setup",
+            Self::QuietWindow => "quiet-window",
+            Self::Path1 => "path1",
+            Self::Path2Skip => "path2-skip",
+            Self::Path2Dispute => "path2-dispute",
+            Self::Path3 => "path3",
+            Self::Path4 => "path4",
+            Self::Bystanders => "bystanders",
+        }
+    }
+}
+
+impl std::fmt::Display for Phase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Outcome of a phase, emitted as the `verdict` field alongside `phase`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    /// The phase asserted its claim and the claim held.
+    Pass,
+    /// The phase could not assert its claim, for a reason that is not the
+    /// challenger's fault. Coverage was lost, not violated.
+    Skip,
+}
+
+impl Verdict {
+    /// Returns the stable field value for this verdict.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Skip => "skip",
+        }
+    }
+}
+
+impl std::fmt::Display for Verdict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Behavioural end-to-end test of the challenger.
 ///
 /// See the crate README for the full argument; the short version is that the
@@ -111,6 +188,21 @@ impl ChallengerE2e {
         // challenger. Both are generated per run and never leave the pod.
         let driver = PrivateKeySigner::random();
         let challenger = PrivateKeySigner::random();
+
+        // Emitted before anything can fail, so even a run that dies in setup
+        // says which scenario it was and which key to attribute disputes to.
+        // Datadog shows each line alone; without this, the scenario has to be
+        // inferred from which later messages happen to appear.
+        info!(
+            phase = %Phase::Setup,
+            scenario = ?config.scenario,
+            challenger_address = %challenger.address(),
+            driver_address = %driver.address(),
+            quiet_window = ?config.quiet_window,
+            dispute_timeout = ?config.dispute_timeout,
+            game_type = config.game_type,
+            "starting scenario"
+        );
 
         // Held until the end of run(); the fork dies with this binding.
         let anvil = Self::spawn_fork(&config)?;
@@ -222,6 +314,15 @@ impl ChallengerE2e {
             // Runs either way: a staging race is no licence to touch games this
             // scenario never corrupted.
             Self::assert_bystanders_untouched(&verifier, &untouched).await?;
+
+            // Path 3 is omitted when raced: the game was disputed, but the claim
+            // was not asserted, and reporting it as covered would overstate what
+            // the run proved.
+            let mut asserted = vec![Phase::QuietWindow, Phase::Bystanders];
+            if !raced {
+                asserted.push(Phase::Path3);
+            }
+            Self::log_scenario_complete(&config, &asserted);
             return Ok(());
         }
 
@@ -246,6 +347,16 @@ impl ChallengerE2e {
             )
             .await?;
             Self::assert_bystanders_untouched(&verifier, &bystanders).await?;
+            Self::log_scenario_complete(
+                &config,
+                &[
+                    Phase::QuietWindow,
+                    Phase::Path1,
+                    Phase::Path2Skip,
+                    Phase::Path2Dispute,
+                    Phase::Bystanders,
+                ],
+            );
             return Ok(());
         }
         Self::run_path4(&config, &fork_url, &verifier, &provider, &driver, &challenger, game_b)
@@ -253,7 +364,25 @@ impl ChallengerE2e {
 
         Self::assert_bystanders_untouched(&verifier, &bystanders).await?;
 
+        Self::log_scenario_complete(
+            &config,
+            &[Phase::QuietWindow, Phase::Path1, Phase::Path4, Phase::Bystanders],
+        );
         Ok(())
+    }
+
+    /// Records which phases a scenario asserted, as one line.
+    ///
+    /// The per-phase logs say what happened; this says what the run *claimed to
+    /// cover*, which is the question a dashboard asks. Without it, absence of a
+    /// Path 3 log is ambiguous between "not part of this scenario" and "skipped".
+    fn log_scenario_complete(config: &Config, asserted: &[Phase]) {
+        let asserted: Vec<&str> = asserted.iter().map(|phase| phase.as_str()).collect();
+        info!(
+            scenario = ?config.scenario,
+            phases_asserted = ?asserted,
+            "scenario complete"
+        );
     }
 
     fn spawn_fork(config: &Config) -> Result<AnvilInstance> {
@@ -343,10 +472,13 @@ impl ChallengerE2e {
             };
 
             info!(
+                phase = %Phase::Setup,
                 game = %game.proxy,
                 factory_index = index,
                 root_count,
-                slot = selected.len(),
+                // A or B, so a log line says which game it is talking about
+                // without cross-referencing the address.
+                slot = if selected.is_empty() { "a" } else { "b" },
                 "selected game"
             );
             selected.push(Candidate { address: game.proxy, root_count });
@@ -425,6 +557,7 @@ impl ChallengerE2e {
         );
 
         info!(
+            phase = %Phase::Path4,
             game = %game.address,
             tx_hash = %receipt.transaction_hash,
             zk_prover = %zk_prover,
@@ -604,6 +737,7 @@ impl ChallengerE2e {
         );
 
         info!(
+            phase = %Phase::Path3,
             game = %game.address,
             tx_hash = %receipt.transaction_hash,
             zk_prover = %state.zk_prover,
@@ -710,6 +844,9 @@ impl ChallengerE2e {
         // game mid-staging has long since finished `validate_game` and counted.
         if Self::dual_proposals_detected(config).await? > dual_before {
             warn!(
+                phase = %Phase::Path3,
+                verdict = %Verdict::Skip,
+                reason = "staging-race",
                 game = %game.address,
                 "abandoning the Path 3 claim: the challenger classified the game as \
                  InvalidDualProposal while staging was in progress, so its ZK proof may have \
@@ -760,7 +897,13 @@ impl ChallengerE2e {
              leaves its game state untouched"
         );
 
-        info!(game = %game.address, disputes = submitted, "Path 3: invalid ZK proposal nullified");
+        info!(
+            phase = %Phase::Path3,
+            verdict = %Verdict::Pass,
+            game = %game.address,
+            disputes = submitted,
+            "Path 3: invalid ZK proposal nullified"
+        );
         Ok(false)
     }
 
@@ -933,6 +1076,8 @@ impl ChallengerE2e {
         }
 
         info!(
+            phase = %Phase::QuietWindow,
+            verdict = %Verdict::Pass,
             games_validated = validated,
             indices_scanned = scanned,
             "the challenger left every valid game alone"
@@ -1042,7 +1187,19 @@ impl ChallengerE2e {
             nonce_after - nonce_before
         );
 
-        info!(game = %game.address, claim, "the settle claim held");
+        // The settle window carries two different claims depending on how Path 1
+        // landed, so the phase follows the claim rather than the call site.
+        let phase = match path1 {
+            Path1Outcome::ZkChallenge => Phase::Path2Skip,
+            Path1Outcome::TeeNullify => Phase::Path1,
+        };
+        info!(
+            phase = %phase,
+            verdict = %Verdict::Pass,
+            game = %game.address,
+            claim,
+            "the settle claim held"
+        );
         Ok(())
     }
 
@@ -1090,7 +1247,12 @@ impl ChallengerE2e {
             "Path 2 fraudulent challenge nullified",
         )
         .await?;
-        info!(game = %game.address, "Path 2: fraudulent ZK challenge nullified");
+        info!(
+            phase = %Phase::Path2Dispute,
+            verdict = %Verdict::Pass,
+            game = %game.address,
+            "Path 2: fraudulent ZK challenge nullified"
+        );
         Ok(())
     }
 
@@ -1133,6 +1295,7 @@ impl ChallengerE2e {
         }
 
         info!(
+            phase = %Phase::Setup,
             bystanders = snapshot.len(),
             lookback = game_count - floor,
             "snapshotted games the challenger must not touch"
@@ -1171,7 +1334,12 @@ impl ChallengerE2e {
             );
         }
 
-        info!(bystanders = snapshot.len(), "the challenger touched no game it was not given");
+        info!(
+            phase = %Phase::Bystanders,
+            verdict = %Verdict::Pass,
+            bystanders = snapshot.len(),
+            "the challenger touched no game it was not given"
+        );
         Ok(())
     }
 
@@ -1226,9 +1394,20 @@ impl ChallengerE2e {
         .await?;
 
         if tee_cleared && zk_cleared {
-            info!(game = %game.address, "Path 4 and its follow-up both landed inside one poll");
+            info!(
+                phase = %Phase::Path4,
+                verdict = %Verdict::Pass,
+                branch = "both-cleared",
+                game = %game.address,
+                "Path 4 and its follow-up both landed inside one poll"
+            );
         } else if tee_cleared {
-            info!(game = %game.address, "Path 4: TEE proof nullified, ZK proof remains");
+            info!(
+                phase = %Phase::Path4,
+                branch = "tee-first",
+                game = %game.address,
+                "Path 4: TEE proof nullified, ZK proof remains"
+            );
             Self::poll_until(
                 config,
                 config.dispute_timeout,
@@ -1238,9 +1417,21 @@ impl ChallengerE2e {
                 },
             )
             .await?;
-            info!(game = %game.address, "Path 3: ZK proof nullified");
+            info!(
+                phase = %Phase::Path3,
+                verdict = %Verdict::Pass,
+                reached = "in-situ",
+                game = %game.address,
+                "Path 3: ZK proof nullified"
+            );
         } else {
-            info!(game = %game.address, "Path 4: ZK fallback nullified, TEE proof remains");
+            info!(
+                phase = %Phase::Path4,
+                verdict = %Verdict::Pass,
+                branch = "zk-fallback",
+                game = %game.address,
+                "Path 4: ZK fallback nullified, TEE proof remains"
+            );
         }
 
         let expected_transactions = if tee_cleared { 2 } else { 1 };
@@ -1253,6 +1444,8 @@ impl ChallengerE2e {
             nonce_after - nonce
         );
         info!(
+            phase = %Phase::Path4,
+            verdict = %Verdict::Pass,
             game = %game.address,
             transactions = nonce_after - nonce,
             "the challenger completed Path 4"
@@ -1325,6 +1518,8 @@ impl ChallengerE2e {
             Self::assert_challenger_acted(provider, challenger, nonce_before, label).await?;
 
         info!(
+            phase = %Phase::Path1,
+            verdict = %Verdict::Pass,
             game = %game,
             outcome = label,
             transactions = nonce_after - nonce_before,
@@ -1546,6 +1741,27 @@ mod tests {
         let report = format!("{:#}", ChallengerE2e::name_revert(TxManagerError::NonceTooLow));
         assert!(report.contains("nonce too low"), "{report}");
         assert!(!report.contains("reverted with"), "{report}");
+    }
+
+    /// These strings are what Datadog facets, dashboards and monitors filter
+    /// on, so a rename is a breaking change to whatever watches them.
+    #[test]
+    fn phase_and_verdict_field_values_are_stable() {
+        assert_eq!(Phase::Setup.as_str(), "setup");
+        assert_eq!(Phase::QuietWindow.as_str(), "quiet-window");
+        assert_eq!(Phase::Path1.as_str(), "path1");
+        assert_eq!(Phase::Path2Skip.as_str(), "path2-skip");
+        assert_eq!(Phase::Path2Dispute.as_str(), "path2-dispute");
+        assert_eq!(Phase::Path3.as_str(), "path3");
+        assert_eq!(Phase::Path4.as_str(), "path4");
+        assert_eq!(Phase::Bystanders.as_str(), "bystanders");
+        assert_eq!(Verdict::Pass.as_str(), "pass");
+        assert_eq!(Verdict::Skip.as_str(), "skip");
+
+        // `Display` is what the `%` sigil uses in the tracing macros, so it has
+        // to agree with `as_str` or the logs and this test diverge.
+        assert_eq!(Phase::Path2Dispute.to_string(), Phase::Path2Dispute.as_str());
+        assert_eq!(Verdict::Skip.to_string(), Verdict::Skip.as_str());
     }
 
     #[test]

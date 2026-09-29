@@ -218,6 +218,39 @@ terminal to the scanner.
 Each destructive scenario ends by nullifying a *global* verifier, so they
 cannot share a fork: run `all`, `path1-path2` and `path3` in separate pods.
 
+## Reading a run in Datadog
+
+Every outcome log carries a `phase` field, and the ones that assert a claim also
+carry `verdict`. Datadog sees each line alone, so these are what make a run
+answerable without reading the whole stream. Note the prefix: the driver's
+`tracing` fields land under `@data.message.fields.*`, not `@*`.
+
+| Want | Query |
+|---|---|
+| Every failed run | `@data.message.fields.verdict:fail` |
+| Every Path 3 outcome, all runs | `@data.message.fields.phase:path3` |
+| Coverage lost to a race or a skip | `@data.message.fields.verdict:skip` |
+| What one run actually asserted | `"scenario complete"` — has `phases_asserted` |
+| Which scenario a run was | `"starting scenario"` — has `scenario`, both keys, the timeouts |
+| A named contract revert | `"reverted with"` |
+
+`phase` values: `setup`, `quiet-window`, `path1`, `path2-skip`, `path2-dispute`,
+`path3`, `path4`, `bystanders`. `verdict` values: `pass`, `skip` on a phase;
+`pass`, `fail` on the run. They are asserted by a unit test because dashboards
+filter on them.
+
+Two fields worth knowing:
+
+- **`phases_asserted`** on `scenario complete` is what the run *claimed to
+  cover*, which is not the same as which logs appeared. Path 3 is omitted when a
+  staging race skipped the claim, so the absence of a `path3` phase is no longer
+  ambiguous between "not in this scenario" and "skipped".
+- **`branch`** on Path 4 says `tee-first`, `zk-fallback` or `both-cleared`.
+  Today it is always `zk-fallback` on zeronet, because the throwaway key is not
+  a registered TEE proposer; a `tee-first` run is the only one that reaches
+  Path 3 in situ, and it is tagged `reached=in-situ` to distinguish it from the
+  staged `path3` scenario.
+
 ## Required environment
 
 `BASE_CHALLENGER_*` is shared with the challenger under test — both read the
