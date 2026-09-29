@@ -35,13 +35,15 @@ permissions:
   contents: read
 jobs:
   changes:
-    name: Detect Docker Changes
+    name: Detect Expensive CI Changes
     runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
     permissions:
       contents: read
       pull-requests: read
     outputs:
       docker: ${{ steps.filter.outputs.docker }}
+      proof-mpt-bench: ${{ steps.filter.outputs.proof-mpt-bench }}
+      system-tests: ${{ steps.filter.outputs.system-tests }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -62,6 +64,55 @@ jobs:
               - '.env.mainnet'
               - '.env.sepolia'
               - '.dockerignore'
+            # This benchmark only exercises the MPT implementation. Keep it in
+            # merge-queue CI, but do not spend a runner on unrelated PRs.
+            proof-mpt-bench:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.cargo/**'
+              - 'rust-toolchain.toml'
+              - 'crates/proof/mpt/**'
+              - 'crates/proof/primitives/**'
+              - 'crates/execution/trie/**'
+              - 'etc/scripts/ci/**'
+              - '.depot/workflows/ci-core.yml'
+            # A deliberately broad integration boundary. Add paths here rather
+            # than relying on an unrelated PR to exercise them; merge-queue CI
+            # remains exhaustive regardless of this PR-only filter.
+            system-tests:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.cargo/**'
+              - 'rust-toolchain.toml'
+              - 'Justfile'
+              - 'etc/just/**'
+              - 'etc/docker/**'
+              - 'etc/systems/**'
+              - 'docker-compose.yml'
+              - '.env.mainnet'
+              - '.env.sepolia'
+              - '.depot/actions/setup/**'
+              - '.depot/workflows/ci-core.yml'
+              - 'bin/base/**'
+              - 'bin/node/**'
+              - 'bin/builder/**'
+              - 'bin/proposer/**'
+              - 'bin/challenger/**'
+              - 'crates/batcher/**'
+              - 'crates/builder/**'
+              - 'crates/consensus/**'
+              - 'crates/execution/node/**'
+              - 'crates/execution/consensus/**'
+              - 'crates/execution/payload/**'
+              - 'crates/execution/runner/**'
+              - 'crates/execution/txpool/**'
+              - 'crates/execution/tx-forwarding/**'
+              - 'crates/execution/flashblocks/**'
+              - 'crates/execution/flashblocks-node/**'
+              - 'crates/execution/chainspec/**'
+              - 'crates/infra/**'
+              - 'crates/proof/**'
+              - 'crates/utilities/test-utils/**'
   metadata-checks:
     name: Metadata Checks
     runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
@@ -180,6 +231,12 @@ jobs:
           report_paths: target/nextest/ci/test-results.xml
   bench:
     name: Benchmarks
+    needs: changes
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.changes.outputs.proof-mpt-bench == 'true' ||
+      contains(github.event.pull_request.labels.*.name, 'ci:perf') ||
+      contains(github.event.pull_request.labels.*.name, 'ci:full')
     runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -243,7 +300,13 @@ jobs:
         run: cargo test --locked -p base-cli-utils --test sigsegv_test --target x86_64-unknown-linux-musl
   system-tests:
     name: System Tests
-    if: inputs.run_system_tests
+    needs: changes
+    if: >-
+      inputs.run_system_tests && (
+      github.event_name != 'pull_request' ||
+      needs.changes.outputs.system-tests == 'true' ||
+      contains(github.event.pull_request.labels.*.name, 'ci:system') ||
+      contains(github.event.pull_request.labels.*.name, 'ci:full'))
     runs-on: depot-ubuntu-24.04-16
     timeout-minutes: 90
     steps:
