@@ -17,7 +17,7 @@ base-bundles.workspace = true
 base-protocol.workspace = true
 base-flashblocks.workspace = true
 base-node-runner.workspace = true
-base-common-chains.workspace = true
+base-common-genesis.workspace = true
 base-common-precompiles.workspace = true
 
 # reth
@@ -54,11 +54,13 @@ tracing = { workspace = true, features = ["std"] }
 [dev-dependencies]
 # workspace
 base-test-utils = { workspace = true, features = ["contracts"] }
+base-common-chains.workspace = true
 base-common-flashblocks.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
 
 # reth
 base-node-core.workspace = true
+reth-chainspec.workspace = true
 reth-db-common.workspace = true
 reth-db = { workspace = true, features = ["test-utils"] }
 base-common-consensus = { workspace = true, features = ["reth"] }

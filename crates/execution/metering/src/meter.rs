@@ -3,15 +3,16 @@
 use std::{sync::Arc, time::Instant};
 
 use alloy_consensus::{BlockHeader, Transaction as _, transaction::Recovered};
+use alloy_eips::eip1898::BlockNumHash;
 use alloy_evm::block::TxResult as _;
 use alloy_primitives::{
     Address, B256, U256,
     map::{HashMap, HashSet},
 };
 use base_bundles::{BundleExtensions, BundleTxs, OpcodeGas, ParsedBundle, TransactionResult};
-use base_common_chains::ChainConfig;
 use base_common_consensus::{BaseTxEnvelope, SystemAddresses};
 use base_common_evm::{BaseSpecId, BaseUpgrade, L1BlockInfo};
+use base_common_genesis::{ChainGenesis, RollupConfig};
 use base_common_precompiles::{
     ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
 };
@@ -35,17 +36,34 @@ use crate::{inspector::MeteringInspector, transaction::validate_tx};
 // we use a static floor to reject transactions that will never make it onchain.
 const MIN_BASEFEE: u64 = 5_000_000;
 const MAX_NONCE_AHEAD: u64 = 10_000; // max nonce distance from on-chain state
-const LEGACY_BLOCK_TIME: u64 = 2;
+const LEGACY_BLOCK_TIME: u64 = 2; // canonical pre-Denim block time in seconds
 
 /// Returns the scheduled timestamp and optional `BaseTime` update for the simulated child block.
+///
+/// The schedule is derived from the running chain's genesis and runtime-aware Denim activation,
+/// so it matches the block builder on built-in, custom, and runtime-scheduled chains alike.
 fn next_block_schedule(
-    header: &SealedHeader,
-    schedule: Option<(u64, u16, bool)>,
+    chain_spec: &BaseChainSpec,
+    block_number: u64,
 ) -> EyreResult<(u64, Option<BaseTimeUpdateTx>)> {
-    let Some((timestamp, timestamp_millis_part, denim_active)) = schedule else {
-        return Ok((header.timestamp().saturating_add(LEGACY_BLOCK_TIME), None));
+    let genesis = chain_spec.genesis_header();
+    let mut rollup_config = RollupConfig {
+        genesis: ChainGenesis {
+            l2: BlockNumHash { number: genesis.number(), hash: B256::ZERO },
+            l2_time: genesis.timestamp(),
+            ..Default::default()
+        },
+        block_time: LEGACY_BLOCK_TIME,
+        l2_chain_id: chain_spec.chain(),
+        ..Default::default()
     };
-    let base_time = denim_active
+    if let Some(denim_timestamp) = chain_spec.fork(BaseUpgrade::Denim).as_timestamp() {
+        rollup_config.set_upgrade_activation_timestamp(BaseUpgrade::Denim, denim_timestamp);
+    }
+
+    let (timestamp, timestamp_millis_part) = rollup_config.l2_block_timestamp_parts(block_number);
+    let base_time = rollup_config
+        .is_denim_active(timestamp)
         .then(|| BaseTimeUpdateTx::new(timestamp_millis_part))
         .transpose()
         .map_err(|error| eyre!("invalid canonical BaseTime update: {error}"))?;
@@ -737,11 +755,7 @@ where
     // Derive the next block from the rollup schedule, rather than from the parent header. Denim
     // advances BaseTime by 200ms while the EVM header retains a whole-second timestamp.
     let next_block_number = header.number().saturating_add(1);
-    let schedule = ChainConfig::rollup_config_by_chain_id(chain_spec.chain().id()).map(|config| {
-        let (timestamp, timestamp_millis_part) = config.l2_block_timestamp_parts(next_block_number);
-        (timestamp, timestamp_millis_part, config.is_denim_active(timestamp))
-    });
-    let (timestamp, base_time) = next_block_schedule(header, schedule)?;
+    let (timestamp, base_time) = next_block_schedule(&chain_spec, next_block_number)?;
     let attributes = BaseNextBlockEnvAttributes {
         timestamp,
         suggested_fee_recipient: header.beneficiary(),
@@ -778,7 +792,17 @@ where
                 BaseTxEnvelope::from(base_time.into_deposit_tx(next_block_number)),
                 SystemAddresses::DEPOSITOR_ACCOUNT,
             );
-            builder.execute_transaction(base_time_tx)?;
+            // Fail the request rather than meter against state that lacks the BaseTime update:
+            // user transactions may read it, so results without it would be misleading.
+            builder
+                .execute_transaction(base_time_tx)
+                .map_err(|e| eyre!("BaseTime update execution failed: {e}"))?;
+
+            // The deposit shares the inspector with the bundle; discard what it recorded so it
+            // is not attributed to the first user transaction.
+            let inspector = builder.evm_mut().inspector_mut();
+            inspector.take_opcode_gas();
+            inspector.take_precompile_gas();
         }
 
         // TX_EFFECT_ETH_* classifies top-level ETH transfers. Within a
@@ -895,12 +919,15 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{Header, transaction::Recovered};
+    use alloy_consensus::transaction::Recovered;
     use alloy_eips::Encodable2718;
+    use alloy_genesis::Genesis;
     use alloy_primitives::{Address, Bytes, keccak256, utils::Unit};
     use alloy_sol_types::{SolCall, SolValue};
     use base_bundles::{Bundle, ParsedBundle};
+    use base_common_chains::ChainConfig;
     use base_common_consensus::BaseTransactionSigned;
+    use base_common_genesis::RuntimeUpgradeRegistry;
     use base_common_precompiles::{
         ActivationFeature, IActivationRegistry, IB20, IB20Factory, IB20Stablecoin, IPolicyRegistry,
     };
@@ -908,8 +935,10 @@ mod tests {
     use base_node_runner::test_utils::TestHarness;
     use base_test_utils::{
         Account, ContractFactory, DEVNET_CHAIN_ID, SimpleStorage, build_test_genesis,
+        build_test_genesis_everest,
     };
     use eyre::Context;
+    use reth_chainspec::ForkCondition;
     use reth_provider::StateProviderFactory;
     use reth_transaction_pool::test_utils::TransactionBuilder;
     use revm::state::{Account as RevmAccount, EvmStorageSlot, TransactionId};
@@ -924,66 +953,105 @@ mod tests {
         ParsedBundle::try_from(bundle).map_err(|e| eyre::eyre!(e))
     }
 
+    fn custom_chain_spec(chain_id: u64, denim: Option<u64>) -> BaseChainSpec {
+        // Callers pass a chain ID with no built-in `ChainConfig`, and the genesis is anchored at a
+        // non-zero block. Each test uses its own chain ID because the runtime upgrade registry is
+        // process-global and keyed by it.
+        let genesis = Genesis { number: Some(50), timestamp: 10, ..Default::default() };
+        let mut builder = BaseChainSpecBuilder::default().chain(chain_id.into()).genesis(genesis);
+        if let Some(timestamp) = denim {
+            builder = builder.with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(timestamp));
+        }
+        builder.build()
+    }
+
     #[test]
-    fn next_block_schedule_uses_denim_base_time_at_the_activation_boundary() {
-        let mut rollup_config = ChainConfig::devnet().rollup_config();
-        rollup_config.set_upgrade_activation_timestamp(BaseUpgrade::Denim, 4);
-        let activation_parent =
-            SealedHeader::seal_slow(Header { number: 1, timestamp: 2, ..Default::default() });
-        let activation_block_number = activation_parent.number().saturating_add(1);
-        let (activation_timestamp, activation_millis_part) =
-            rollup_config.l2_block_timestamp_parts(activation_block_number);
-        let (activation_timestamp, activation_base_time) = next_block_schedule(
-            &activation_parent,
-            Some((
-                activation_timestamp,
-                activation_millis_part,
-                rollup_config.is_denim_active(activation_timestamp),
-            )),
-        )
-        .unwrap();
-        assert_eq!(activation_block_number, 2);
-        assert_eq!(activation_timestamp, 4);
+    fn next_block_schedule_follows_the_chain_spec_denim_schedule() {
+        // Denim at t=15 rounds up to the block at t=16, so 51 and 52 are on the legacy cadence.
+        let chain_spec = custom_chain_spec(0x5373_0001, Some(15));
+
+        let (timestamp, base_time) = next_block_schedule(&chain_spec, 52).unwrap();
+        assert_eq!(timestamp, 14);
+        assert!(base_time.is_none(), "pre-Denim blocks carry no BaseTime update");
+
+        let (timestamp, base_time) = next_block_schedule(&chain_spec, 53).unwrap();
+        assert_eq!(timestamp, 16);
         assert_eq!(
-            activation_base_time.unwrap().timestamp_millis_part(),
+            base_time.unwrap().timestamp_millis_part(),
             0,
             "the first Denim block remains on a whole-second timestamp"
         );
 
-        let post_denim_parent =
-            SealedHeader::seal_slow(Header { number: 2, timestamp: 4, ..Default::default() });
-        let block_number = post_denim_parent.number().saturating_add(1);
-        let (timestamp, timestamp_millis_part) =
-            rollup_config.l2_block_timestamp_parts(block_number);
-        let (timestamp, base_time) = next_block_schedule(
-            &post_denim_parent,
-            Some((timestamp, timestamp_millis_part, rollup_config.is_denim_active(timestamp))),
-        )
-        .unwrap();
+        let (timestamp, base_time) = next_block_schedule(&chain_spec, 54).unwrap();
+        assert_eq!(timestamp, 16, "EVM timestamps retain whole-second precision");
         let base_time = base_time.expect("post-Denim blocks must update BaseTime");
-        let deposit = base_time.into_deposit_tx(block_number);
-
-        assert_eq!(block_number, 3);
-        assert_eq!(timestamp, 4, "EVM timestamps retain whole-second precision");
         assert_eq!(base_time.timestamp_millis_part(), 200);
+        let deposit = base_time.into_deposit_tx(54);
         assert_eq!(
-            BaseTimeUpdateTx::validate_deposit(deposit.inner(), block_number)
+            BaseTimeUpdateTx::validate_deposit(deposit.inner(), 54)
                 .unwrap()
                 .timestamp_millis_part(),
             200,
-            "the simulated system transaction exposes the 200ms BaseTime schedule to user transactions"
+            "the simulated system transaction exposes the 200ms BaseTime schedule"
         );
     }
 
     #[test]
-    fn next_block_schedule_preserves_legacy_timing_for_unknown_chains() {
-        let header =
-            SealedHeader::seal_slow(Header { number: 42, timestamp: 1_000, ..Default::default() });
+    fn next_block_schedule_matches_the_built_in_rollup_config() {
+        // Devnet is excluded: its built-in `ChainConfig` anchors `genesis_l2_time` at 0 while its
+        // genesis file carries a real timestamp, so the two sources do not describe one schedule.
+        for chain in [ChainConfig::mainnet(), ChainConfig::sepolia(), ChainConfig::zeronet()] {
+            let mut rollup_config = chain.rollup_config();
+            let chain_spec = BaseChainSpec::try_from(chain).unwrap();
+            // Schedule Denim shortly after genesis so the comparison covers both cadences.
+            let denim = rollup_config.genesis.l2_time + 20;
+            rollup_config.set_upgrade_activation_timestamp(BaseUpgrade::Denim, denim);
+            let chain_spec = {
+                let mut chain_spec = chain_spec;
+                chain_spec.set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(denim));
+                chain_spec
+            };
 
-        let (timestamp, base_time) = next_block_schedule(&header, None).unwrap();
+            for block_number in
+                rollup_config.genesis.l2.number..rollup_config.genesis.l2.number + 30
+            {
+                let (timestamp, millis_part) = rollup_config.l2_block_timestamp_parts(block_number);
+                let (scheduled, base_time) =
+                    next_block_schedule(&chain_spec, block_number).unwrap();
+                assert_eq!(scheduled, timestamp, "chain {} block {block_number}", chain.chain_id);
+                assert_eq!(
+                    base_time.map(|tx| tx.timestamp_millis_part()),
+                    rollup_config.is_denim_active(timestamp).then_some(millis_part),
+                    "chain {} block {block_number}",
+                    chain.chain_id
+                );
+            }
+        }
+    }
 
-        assert_eq!(timestamp, 1_002);
+    #[test]
+    fn next_block_schedule_keeps_the_legacy_cadence_without_denim() {
+        let chain_spec = custom_chain_spec(0x5373_0002, None);
+
+        let (timestamp, base_time) = next_block_schedule(&chain_spec, 53).unwrap();
+
+        assert_eq!(timestamp, 16);
         assert!(base_time.is_none());
+    }
+
+    #[test]
+    fn next_block_schedule_honors_runtime_denim_activation() {
+        let chain_spec = custom_chain_spec(0x5373_0003, None);
+        let chain_id = chain_spec.chain().id();
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Denim, 15);
+
+        let scheduled = next_block_schedule(&chain_spec, 54);
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+
+        let (timestamp, base_time) = scheduled.unwrap();
+        assert_eq!(timestamp, 16);
+        assert_eq!(base_time.unwrap().timestamp_millis_part(), 200);
     }
 
     fn create_call_tx(
@@ -1176,6 +1244,41 @@ mod tests {
         assert!(output.total_time_us > 0);
         assert_eq!(output.bundle_hash, keccak256([]));
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_bundle_excludes_base_time_update_from_first_transaction() -> eyre::Result<()> {
+        let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_everest()));
+        let harness = TestHarness::builder().with_chain_spec(chain_spec).build().await?;
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+
+        // A plain transfer performs no storage writes, but the BaseTime update that precedes it
+        // does, so any SSTORE reported for the transfer was leaked from the system deposit.
+        let tx = create_call_tx(harness.chain_id(), 0, Address::random(), Bytes::new(), 21_000);
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let output = meter_bundle(MeterBundleInput {
+            state_provider,
+            chain_spec: harness.chain_spec(),
+            bundle: create_parsed_bundle(vec![tx])?,
+            header,
+            l1_block_info: L1BlockInfo::default(),
+            metered_opcodes: Arc::new(
+                MeteredOpcodes::parse(&["SSTORE".to_string(), "SLOAD".to_string()]).unwrap(),
+            ),
+        })?;
+
+        assert_eq!(output.results.len(), 1);
+        let opcodes = &output.results[0].opcode_gas;
+        assert!(
+            opcodes.iter().all(|entry| entry.opcode != "SSTORE" && entry.opcode != "SLOAD"),
+            "BaseTime update opcodes leaked into the first transaction: {opcodes:?}"
+        );
         Ok(())
     }
 
