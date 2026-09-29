@@ -211,8 +211,10 @@ mod tests {
 
     use alloy_eips::BlockNumHash;
     use alloy_primitives::B256;
-    use base_common_genesis::{BaseUpgradeConfig, RollupConfig, SystemConfig, UpgradeConfig};
-    use base_protocol::{Batch, BlockInfo, L2BlockInfo, SingleBatch};
+    use base_common_genesis::{
+        BaseUpgradeConfig, ChainGenesis, RollupConfig, SystemConfig, UpgradeConfig,
+    };
+    use base_protocol::{Batch, BatchValidity, BlockInfo, L2BlockInfo, SingleBatch};
 
     use super::BatchProvider;
     use crate::{
@@ -220,6 +222,120 @@ mod tests {
         test_utils::{TestL2ChainProvider, TestNextBatchProvider},
         traits::OriginProvider,
     };
+
+    #[tokio::test]
+    async fn test_denim_same_second_origin_forced_empty_batches() {
+        for holocene in [false, true] {
+            let cfg = Arc::new(RollupConfig {
+                block_time: 2,
+                max_sequencer_drift: 1800,
+                seq_window_size: 2,
+                genesis: ChainGenesis { l2_time: 1898, ..Default::default() },
+                upgrades: UpgradeConfig {
+                    holocene_time: holocene.then_some(0),
+                    base: BaseUpgradeConfig { denim: Some(1902), ..Default::default() },
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+            let current = BlockInfo {
+                number: 10,
+                hash: B256::repeat_byte(10),
+                timestamp: 88,
+                ..Default::default()
+            };
+            let next = BlockInfo {
+                number: 11,
+                hash: B256::repeat_byte(11),
+                parent_hash: current.hash,
+                timestamp: 100,
+            };
+            let later = BlockInfo {
+                number: 12,
+                hash: B256::repeat_byte(12),
+                parent_hash: next.hash,
+                timestamp: 112,
+            };
+            let inclusion = later;
+            let mut prev = TestNextBatchProvider::new(vec![]);
+            prev.origin = Some(inclusion);
+            let mut provider =
+                BatchProvider::new(Arc::clone(&cfg), prev, TestL2ChainProvider::default());
+            provider.attempt_update().unwrap();
+            // Both batches and L1 data have been drained through the sequencing window.
+            if let Some(stage) = provider.batch_validator.as_mut() {
+                stage.origin = Some(inclusion);
+                stage.l1_blocks = vec![current, next, later];
+            } else {
+                let stage = provider.batch_queue.as_mut().unwrap();
+                stage.origin = Some(inclusion);
+                stage.l1_blocks = vec![current, next, later];
+            }
+            let mut parent = L2BlockInfo {
+                block_info: BlockInfo {
+                    number: 4,
+                    timestamp: 1902,
+                    hash: B256::repeat_byte(42),
+                    ..Default::default()
+                },
+                l1_origin: current.id(),
+                ..Default::default()
+            };
+            // Complete .600 and .800 on the parent's origin, even past maximum drift.
+            for number in [5, 6] {
+                let batch = provider.next_batch(parent).await.unwrap();
+                assert_eq!(batch.epoch(), current.id());
+                assert_eq!(batch.timestamp, 1902);
+                assert!(batch.transactions.is_empty());
+                assert_eq!(
+                    batch.check_batch(&cfg, &[current, next], parent, &inclusion),
+                    BatchValidity::Accept,
+                );
+                parent.block_info.number = number;
+                parent.block_info.hash = B256::repeat_byte(number as u8);
+                if number == 5 {
+                    // Reset at .600, then replay L1 traversal before deriving .800.
+                    if let Some(stage) = provider.batch_validator.as_mut() {
+                        stage.prev.origin = Some(current);
+                    } else {
+                        provider.batch_queue.as_mut().unwrap().prev.origin = Some(current);
+                    }
+                    provider.reset(current.id(), SystemConfig::default()).await.unwrap();
+                    if let Some(stage) = provider.batch_validator.as_mut() {
+                        stage.prev.origin = Some(next);
+                    } else {
+                        provider.batch_queue.as_mut().unwrap().prev.origin = Some(next);
+                    }
+                    assert_eq!(
+                        provider.next_batch(parent).await.unwrap_err(),
+                        PipelineError::Eof.temp(),
+                    );
+                    if let Some(stage) = provider.batch_validator.as_mut() {
+                        stage.prev.origin = Some(inclusion);
+                    } else {
+                        provider.batch_queue.as_mut().unwrap().prev.origin = Some(inclusion);
+                    }
+                }
+            }
+            // Advancing the internal epoch takes one EOF/retry without advancing the L2 head.
+            assert_eq!(provider.next_batch(parent).await.unwrap_err(), PipelineError::Eof.temp());
+            // Expire the next epoch's sequencing window as well.
+            let inclusion = BlockInfo { number: 13, timestamp: 124, ..inclusion };
+            if let Some(stage) = provider.batch_validator.as_mut() {
+                stage.prev.origin = Some(inclusion);
+            } else {
+                provider.batch_queue.as_mut().unwrap().prev.origin = Some(inclusion);
+            }
+            let batch = provider.next_batch(parent).await.unwrap();
+            assert_eq!(batch.epoch(), next.id());
+            assert_eq!(batch.timestamp, 1903);
+            assert!(batch.transactions.is_empty());
+            assert_eq!(
+                batch.check_batch(&cfg, &[current, next], parent, &inclusion),
+                BatchValidity::Accept,
+            );
+        }
+    }
 
     #[test]
     fn test_batch_provider_validator_active() {
@@ -381,8 +497,15 @@ mod tests {
     #[tokio::test]
     async fn test_denim_validator_skips_same_second_stale_batch() {
         let origin = BlockInfo { number: 1, hash: B256::repeat_byte(0x11), ..Default::default() };
+        let inclusion = BlockInfo {
+            number: 2,
+            hash: B256::repeat_byte(0x22),
+            parent_hash: origin.hash,
+            timestamp: 12,
+        };
         let cfg = Arc::new(RollupConfig {
             block_time: 2,
+            seq_window_size: 2,
             upgrades: UpgradeConfig {
                 holocene_time: Some(0),
                 base: BaseUpgradeConfig { denim: Some(46), ..Default::default() },
@@ -397,7 +520,7 @@ mod tests {
                 timestamp: cfg.l2_block_timestamp(300),
                 ..Default::default()
             },
-            l1_origin: BlockNumHash { number: 0, ..Default::default() },
+            l1_origin: origin.id(),
             ..Default::default()
         };
         assert_eq!(cfg.denim_activation_block_number(), Some(23));
@@ -418,7 +541,7 @@ mod tests {
             Ok(Batch::Single(stale_299)),
             Ok(Batch::Single(stale_298)),
         ]);
-        prev.origin = Some(origin);
+        prev.origin = Some(inclusion);
         let l2_provider = TestL2ChainProvider {
             blocks: (295..parent.block_info.number)
                 .map(|number| L2BlockInfo {
@@ -435,8 +558,8 @@ mod tests {
         let mut batch_provider = BatchProvider::new(cfg, prev, l2_provider);
         batch_provider.attempt_update().unwrap();
         let validator = batch_provider.batch_validator.as_mut().unwrap();
-        validator.origin = Some(origin);
-        validator.l1_blocks = vec![origin, origin];
+        validator.origin = Some(inclusion);
+        validator.l1_blocks = vec![origin, inclusion];
 
         assert_eq!(
             batch_provider.next_batch(parent).await.unwrap_err(),
