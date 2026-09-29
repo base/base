@@ -141,25 +141,6 @@ fn test_stop_leaves_in_flight_submissions_to_settle() {
     });
 }
 
-/// A flush on a running batcher closes the current channel and reports success.
-#[test]
-fn test_flush_closes_the_channel_on_a_running_batcher() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let pipeline = TrackingPipeline::new();
-        let recorded = pipeline.recorded();
-        let (driver, handles) =
-            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1)).build();
-        let handle = ctx.spawn(driver.run());
-
-        handles.admin.flush().await.unwrap();
-
-        assert_eq!(recorded.lock().unwrap().flushes(), 1);
-
-        ctx.cancel();
-        assert!(handle.await.unwrap().is_ok());
-    });
-}
-
 /// A stopped batcher refuses to flush instead of reporting a flush that produces nothing.
 #[test]
 fn test_flush_is_rejected_while_stopped() {

@@ -38,9 +38,9 @@ intensity linearly from zero at the threshold to `max_intensity` at twice the th
 `ThrottleParams` carries a fractional `intensity` value and the corresponding
 `max_block_size` and `max_tx_size` byte limits computed by
 interpolating between the upper and lower limits in `ThrottleConfig`. `DaThrottle` wraps a
-`ThrottleController` and a `ThrottleClient` with a last-applied dedup cache so that the
-`miner_setMaxDASize` RPC call is only issued when the computed limits change, and again after a
-push the block builder refused.
+`ThrottleController` and a `ThrottleClient` with a last-applied dedup cache. The
+`miner_setMaxDASize` RPC call is issued at startup, whenever the computed limits change, after an
+admin command replaces or resets the controller, and again after a push the block builder refused.
 
 `ThrottleClient` is the async trait that connects the throttle controller to the block builder.
 Its single method, `set_max_da_size`, forwards the per-transaction and per-block byte limits to

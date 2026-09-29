@@ -18,7 +18,7 @@ use crate::{
     test_utils::{PendingL1HeadSource, PendingSource},
 };
 
-/// Factory for empty L2 block stubs used in driver tests.
+/// Factory for the empty L2 blocks and the block references used in driver tests.
 #[derive(Debug)]
 pub struct BlockStub;
 

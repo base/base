@@ -336,26 +336,40 @@ mod tests {
 
     use super::*;
 
-    /// The intensity each strategy applies to a backlog, `None` meaning no throttling.
+    /// The intensity and DA limits each strategy applies to a backlog, `None` meaning no
+    /// throttling.
     #[rstest]
     #[case::off(ThrottleStrategy::Off, 5000, None)]
     #[case::step_below_threshold(ThrottleStrategy::Step, 999, None)]
-    #[case::step_at_threshold(ThrottleStrategy::Step, 1000, Some(0.8))]
+    #[case::step_at_threshold(ThrottleStrategy::Step, 1000, Some((0.8, 27_600, 4_120)))]
     #[case::linear_below_threshold(ThrottleStrategy::Linear, 500, None)]
     #[case::linear_at_threshold(ThrottleStrategy::Linear, 1000, None)]
-    #[case::linear_midpoint(ThrottleStrategy::Linear, 1500, Some(0.4))]
-    #[case::linear_at_twice_the_threshold(ThrottleStrategy::Linear, 2000, Some(0.8))]
-    #[case::linear_above_twice_the_threshold(ThrottleStrategy::Linear, 5000, Some(0.8))]
+    #[case::linear_midpoint(ThrottleStrategy::Linear, 1500, Some((0.4, 78_800, 12_060)))]
+    #[case::linear_at_twice_the_threshold(
+        ThrottleStrategy::Linear,
+        2000,
+        Some((0.8, 27_600, 4_120))
+    )]
+    #[case::linear_above_twice_the_threshold(
+        ThrottleStrategy::Linear,
+        5000,
+        Some((0.8, 27_600, 4_120))
+    )]
     fn update_throttles_by_strategy_and_backlog(
         #[case] strategy: ThrottleStrategy,
         #[case] da_backlog_bytes: u64,
-        #[case] intensity: Option<f64>,
+        #[case] expected: Option<(f64, u64, u64)>,
     ) {
         let config =
             ThrottleConfig { threshold_bytes: 1000, max_intensity: 0.8, ..Default::default() };
         let controller = ThrottleController::new(config, strategy);
 
-        assert_eq!(controller.update(da_backlog_bytes).map(|params| params.intensity), intensity);
+        let params = controller.update(da_backlog_bytes);
+
+        assert_eq!(
+            params.map(|params| (params.intensity, params.max_block_size, params.max_tx_size)),
+            expected
+        );
     }
 
     #[rstest]

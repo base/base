@@ -42,8 +42,9 @@ fn test_drain_timeout_exits_with_in_flight_submissions() {
             result.is_ok(),
             "driver must exit after drain timeout even with in-flight submissions"
         );
-        assert!(
-            ctx.now().saturating_sub(cancelled_at) >= DRAIN_TIMEOUT,
+        assert_eq!(
+            ctx.now() - cancelled_at,
+            DRAIN_TIMEOUT,
             "the driver must wait the drain timeout for the in-flight submission"
         );
         let recorded = recorded.lock().unwrap();
@@ -77,8 +78,9 @@ fn test_shutdown_drains_in_flight_before_returning_flush_error() {
             matches!(result, Err(BatchDriverError::Step(_))),
             "flush error must be returned after drain"
         );
-        assert!(
-            ctx.now().saturating_sub(cancelled_at) >= DRAIN_TIMEOUT,
+        assert_eq!(
+            ctx.now() - cancelled_at,
+            DRAIN_TIMEOUT,
             "in-flight receipts must be drained before the flush error is returned"
         );
         let recorded = recorded.lock().unwrap();

@@ -1,7 +1,7 @@
 //! Test [`ThrottleClient`] implementation.
 //!
-//! Hand-rolled rather than mocked because the tests read the calls the driver made while it
-//! owns the client, and some make the first calls fail.
+//! Hand-rolled rather than mocked because the integration tests under `tests/` use it, and an
+//! `automock` mock is only built under `cfg(test)`, which they cannot see.
 
 use std::sync::{Arc, Mutex};
 

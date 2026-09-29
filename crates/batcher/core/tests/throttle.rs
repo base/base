@@ -20,40 +20,6 @@ use base_runtime::{
     deterministic::{Config, Runner},
 };
 
-/// Without a backlog, the upper limits are pushed once at startup, lifting any throttle left on
-/// the block builder, and not again on the later iterations that leave them unchanged.
-#[test]
-fn test_upper_limits_are_pushed_once_without_backlog() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let pipeline = TrackingPipeline::new();
-        let recorded = pipeline.recorded();
-        let (l1_head_source, l1_head_tx) = ChannelL1HeadSource::new();
-
-        let config = ThrottleConfig::default();
-        let upper_limits = (config.tx_size_upper_limit, config.block_size_upper_limit);
-        let throttle = ThrottleController::new(config, ThrottleStrategy::Linear);
-        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
-
-        let (driver, _handles) =
-            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
-                .l1_head_source(l1_head_source)
-                .throttle(DaThrottle::new(throttle, Arc::new(throttle_client)))
-                .build();
-        let handle = ctx.spawn(driver.run());
-
-        // Each L1 head wakes the loop for another iteration with the same backlog.
-        for l1_head in 1..=3 {
-            l1_head_tx.send(l1_head).unwrap();
-        }
-        ctx.sleep(Duration::from_millis(10)).await;
-        ctx.cancel();
-        assert!(handle.await.unwrap().is_ok());
-
-        assert_eq!(recorded.lock().unwrap().l1_heads(), [1, 2, 3]);
-        assert_eq!(*throttle_recorded.lock().unwrap(), [upper_limits]);
-    });
-}
-
 /// A backlog above the threshold pushes the lower limits and forces blob submissions. Once the
 /// backlog is gone, the upper limits are pushed back and blobs are no longer forced.
 #[test]
@@ -133,10 +99,11 @@ fn test_admin_set_and_reset_push_the_limits() {
     });
 }
 
-/// Limits the block builder refuses are pushed again on the next iteration, and not after they
-/// are accepted.
+/// Without a backlog, the upper limits are pushed at startup, lifting any throttle left on the
+/// block builder. A push the block builder refuses is made again on the next iteration, and
+/// limits it accepted are not pushed again while they stay the same.
 #[test]
-fn test_refused_limits_are_pushed_again() {
+fn test_upper_limits_are_pushed_at_startup_until_accepted() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let pipeline = TrackingPipeline::new();
         let recorded = pipeline.recorded();

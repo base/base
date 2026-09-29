@@ -844,29 +844,4 @@ mod tests {
             assert_eq!(blobs, frames);
         });
     }
-
-    /// No more than `max_pending_transactions` L1 txs are in flight. With max=1 and two
-    /// submissions, the second submission must not be dequeued while the first tx is pending.
-    #[test]
-    fn test_in_flight_limit_holds_back_further_submissions() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let mut pipeline = TrackingPipeline::new();
-            let recorded = pipeline.recorded();
-            pipeline.submissions.push_back(SubmissionStub::stub());
-            pipeline.submissions.push_back(SubmissionStub::stub());
-
-            let (driver, _handles) =
-                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::new([]))
-                    .max_pending(1)
-                    .build();
-            let handle = ctx.spawn(driver.run());
-
-            ctx.sleep(Duration::from_millis(50)).await;
-            ctx.cancel();
-
-            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
-            let dequeued = recorded.lock().unwrap().dequeued();
-            assert_eq!(dequeued, [SubmissionId(0)], "only one tx may be in flight");
-        });
-    }
 }

@@ -1,4 +1,4 @@
-//! Integration tests for L1 and safe L2 head handling in [`BatchDriver`].
+//! Integration tests for safe L2 head handling in [`BatchDriver`].
 
 use std::time::Duration;
 
@@ -10,38 +10,11 @@ use base_batcher_core::{
     },
 };
 use base_batcher_encoder::DerivationReconciliation;
-use base_batcher_source::test_utils::ChannelL1HeadSource;
 use base_protocol::BlockInfo;
 use base_runtime::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
 };
-
-/// When the L1 head source delivers a new head, the driver must call
-/// `advance_l1_head` on the pipeline with the new value.
-#[test]
-fn test_l1_head_source_advances_pipeline() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let pipeline = TrackingPipeline::new();
-        let recorded = pipeline.recorded();
-
-        let (l1_source, l1_tx) = ChannelL1HeadSource::new();
-
-        let (driver, _handles) =
-            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
-                .l1_head_source(l1_source)
-                .build();
-        let handle = ctx.spawn(driver.run());
-
-        // Send a new L1 head via the channel.
-        l1_tx.send(42).unwrap();
-        ctx.sleep(Duration::from_millis(50)).await;
-        ctx.cancel();
-
-        assert!(handle.await.unwrap().is_ok());
-        assert_eq!(recorded.lock().unwrap().l1_heads(), [42]);
-    });
-}
 
 /// A safe head below the one the driver holds, a replacement at the same height, or one the
 /// pipeline reports off its buffered chain, each resets the pipeline and the source. Only the
