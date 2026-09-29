@@ -3748,6 +3748,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-common-price-feed"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types-eth 2.4.1",
+ "alloy-sol-types",
+ "alloy-transport",
+ "revm",
+ "thiserror 2.0.19",
+ "tokio",
+]
+
+[[package]]
 name = "base-common-rpc-types"
 version = "0.0.0"
 dependencies = [

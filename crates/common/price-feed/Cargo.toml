@@ -1,0 +1,31 @@
+[package]
+name = "base-common-price-feed"
+description = "Onchain Chainlink price feed reads and ERC-8168 token rates"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# alloy
+alloy-provider.workspace = true
+alloy-transport.workspace = true
+alloy-sol-types = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["std"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+
+# revm
+revm.workspace = true
+
+# misc
+thiserror.workspace = true
+
+[dev-dependencies]
+revm = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["macros", "rt"] }
