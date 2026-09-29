@@ -29,6 +29,10 @@ The corresponding environment variables use the `BASE_BATCHER_` prefix.
 `optimism_rollupConfig` response and submits DA transactions to that canonical
 inbox.
 
+Outside shadow mode, `base batcher` refuses to start unless its signer is the
+current `SystemConfig` batcher address, since derivation would ignore every
+batch it posts.
+
 Shadow deployments may set `--shadow-mode` together with
 `--dangerously-override-batch-inbox-address` to submit to a non-canonical inbox.
 The flags must be set together so production deployments cannot redirect DA by
