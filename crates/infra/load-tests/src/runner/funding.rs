@@ -34,6 +34,15 @@ const TXPOOL_CLEAR_CONCURRENCY: usize = 64;
 const TXPOOL_CLEAR_PASSES: usize = 3;
 const PENDING_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(200);
 
+const BALANCE_SETTLE_TIMEOUT: Duration = Duration::from_secs(60);
+const BALANCE_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+const TRANSFER_GAS_LIMIT: u64 = 21_000;
+const TOKEN_MINT_GAS_LIMIT: u64 = 65_000;
+/// Headroom for the L1 data fee of a drain transfer (0.0001 ETH), which is typically about
+/// this much on Base; keeping it modest lets post-load dust still be swept.
+const DRAIN_L1_FEE_BUFFER_WEI: u128 = 100_000_000_000_000;
+
 impl LoadRunner {
     /// Funds all accounts from a funding key up to the specified amount.
     pub async fn fund_accounts(
@@ -217,7 +226,8 @@ impl LoadRunner {
         // funding txs will declare (1 wei tip) so affordability matches broadcast fees.
         let base_fee = client.get_base_fee().await?;
         let fees = pricer.funding_fees_for(base_fee);
-        let mut gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(fees.max_fee));
+        let mut gas_cost_per_tx =
+            U256::from(TRANSFER_GAS_LIMIT).saturating_mul(U256::from(fees.max_fee));
         let total_gas_cost = gas_cost_per_tx.saturating_mul(U256::from(funding_request_count));
         let total_needed = total_deficit.saturating_add(total_gas_cost);
 
@@ -271,7 +281,8 @@ impl LoadRunner {
         while !txs_remaining.is_empty() {
             let base_fee = client.get_base_fee().await?;
             let fees = pricer.funding_fees_for(base_fee);
-            gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(fees.max_fee));
+            gas_cost_per_tx =
+                U256::from(TRANSFER_GAS_LIMIT).saturating_mul(U256::from(fees.max_fee));
             info!(
                 base_fee,
                 max_fee = fees.max_fee,
@@ -299,7 +310,7 @@ impl LoadRunner {
                         .with_value(deficit)
                         .with_nonce(nonce)
                         .with_chain_id(chain_id)
-                        .with_gas_limit(21_000)
+                        .with_gas_limit(TRANSFER_GAS_LIMIT)
                         .with_max_fee_per_gas(fees.max_fee)
                         .with_max_priority_fee_per_gas(fees.priority_fee);
                     let result = provider.send_transaction(tx).await;
@@ -395,7 +406,7 @@ impl LoadRunner {
                                 .with_value(deficit)
                                 .with_nonce(nonce)
                                 .with_chain_id(chain_id)
-                                .with_gas_limit(21_000)
+                                .with_gas_limit(TRANSFER_GAS_LIMIT)
                                 .with_max_fee_per_gas(replacement_fees.max_fee)
                                 .with_max_priority_fee_per_gas(replacement_fees.priority_fee);
 
@@ -583,54 +594,18 @@ impl LoadRunner {
                 next_retry_nonce = next_retry_nonce.checked_add(1).expect("nonce overflow");
             }
 
-            Self::await_balances(&client, &mut batch_pending, amount_per_account, &pb_fund).await?;
+            Self::await_settled_balances(
+                &client,
+                &mut batch_pending,
+                |balance| balance >= amount_per_account,
+                "did not reach funding target",
+                &pb_fund,
+            )
+            .await?;
         }
         pb_fund.finish_and_clear();
 
-        // Phase 5: Parallel post-funding state refresh.
-        let pb_refresh = self.progress_bar(total_accounts as u64, "Refreshing account state");
-        let refresh_futs: Vec<_> = self
-            .accounts
-            .accounts()
-            .iter()
-            .map(|a| {
-                let client = client.clone();
-                let addr = a.address;
-                async move {
-                    let balance = client.get_balance(addr).await.rpc("get balance")?;
-                    let nonce =
-                        client.get_transaction_count(addr).await.rpc("get transaction count")?;
-                    Ok::<_, BaselineError>((addr, balance, nonce))
-                }
-            })
-            .collect();
-
-        let refresh_results: Vec<_> = stream::iter(refresh_futs)
-            .buffer_unordered(FUNDING_CONCURRENCY)
-            .inspect(|_| pb_refresh.inc(1))
-            .collect()
-            .await;
-        pb_refresh.finish_and_clear();
-
-        let addr_to_idx: HashMap<Address, usize> =
-            self.accounts.accounts().iter().enumerate().map(|(i, a)| (a.address, i)).collect();
-
-        let refresh_provider = RootProvider::<Ethereum>::new_http(self.config.query_rpc.clone());
-
-        for result in refresh_results {
-            let (addr, balance, account_nonce) = result?;
-            let idx = addr_to_idx[&addr];
-            let account = &mut self.accounts.accounts_mut()[idx];
-            account.balance = balance;
-            account.nonce = account_nonce;
-
-            let nonce_manager =
-                NonceManager::new(refresh_provider.clone(), addr, NONCE_RPC_TIMEOUT)
-                    .with_pending_tag();
-            Arc::make_mut(&mut self.nonce_managers).insert(addr, nonce_manager);
-
-            trace!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
-        }
+        self.refresh_sender_state().await?;
 
         info!(funded = accounts_to_fund.len(), "funding complete");
         Ok(())
@@ -854,7 +829,8 @@ impl LoadRunner {
 
         // Pre-flight balance check — abort before sending any TXs if the funder
         // cannot cover the total gas cost for needed token transfers.
-        let gas_cost_per_tx = U256::from(65_000u64).saturating_mul(U256::from(fees.max_fee));
+        let gas_cost_per_tx =
+            U256::from(TOKEN_MINT_GAS_LIMIT).saturating_mul(U256::from(fees.max_fee));
         let total_gas_cost = gas_cost_per_tx.saturating_mul(U256::from(transfers_needed.len()));
         let funder_balance = self.client.get_balance(funder_address).await.rpc("get balance")?;
 
@@ -889,7 +865,7 @@ impl LoadRunner {
                     .with_input(mint_data)
                     .with_nonce(nonce)
                     .with_chain_id(chain_id)
-                    .with_gas_limit(65_000)
+                    .with_gas_limit(TOKEN_MINT_GAS_LIMIT)
                     .with_max_fee_per_gas(fees.max_fee)
                     .with_max_priority_fee_per_gas(fees.priority_fee);
                 nonce += 1;
@@ -968,11 +944,8 @@ impl LoadRunner {
 
         let base_fee = client.get_base_fee().await?;
         let fees = GasPricer::new(self.config.max_gas_price).funding_fees_for(base_fee);
-        let drain_gas_limit = 21_000u128;
-        // L1 data fee on Base is typically ~0.0001 ETH for a simple transfer; keep a modest
-        // buffer so post-load dust can still be swept instead of skipping every account.
-        let l1_fee_buffer = 100_000_000_000_000u128; // 0.0001 ETH
-        let drain_gas_cost = U256::from(drain_gas_limit * fees.max_fee + l1_fee_buffer);
+        let drain_gas_cost =
+            U256::from(u128::from(TRANSFER_GAS_LIMIT) * fees.max_fee + DRAIN_L1_FEE_BUFFER_WEI);
 
         let total_accounts = self.accounts.len();
         let pb_drain = self.progress_bar(total_accounts as u64, "Draining accounts");
@@ -1015,7 +988,7 @@ impl LoadRunner {
                         .with_value(send_amount)
                         .with_nonce(nonce)
                         .with_chain_id(chain_id)
-                        .with_gas_limit(drain_gas_limit as u64)
+                        .with_gas_limit(TRANSFER_GAS_LIMIT)
                         .with_max_fee_per_gas(fees.max_fee)
                         .with_max_priority_fee_per_gas(fees.priority_fee);
 
@@ -1063,9 +1036,14 @@ impl LoadRunner {
         let pb_confirm = self.progress_bar(pending_txs.len() as u64, "Waiting for drained funds");
         info!(count = pending_txs.len(), total = %total_drained, "waiting for drained balances");
 
-        if let Err(e) =
-            Self::await_drained_balances(&client, &mut pending_txs, drain_gas_cost, &pb_confirm)
-                .await
+        if let Err(e) = Self::await_settled_balances(
+            &client,
+            &mut pending_txs,
+            |balance| balance <= drain_gas_cost,
+            "did not drain",
+            &pb_confirm,
+        )
+        .await
         {
             warn!(error = %e, "some drain balances did not settle within timeout");
         }
@@ -1092,35 +1070,35 @@ impl LoadRunner {
         pb
     }
 
-    /// Waits for account balances to reach a target after funding transfers.
-    async fn await_balances(
+    /// Polls `pending_accounts` until every balance satisfies `is_settled`, advancing `pb` once
+    /// per settled account and leaving only unsettled accounts in `pending_accounts`.
+    ///
+    /// Fails with `unsettled_reason` in the message if any account is still unsettled after
+    /// [`BALANCE_SETTLE_TIMEOUT`].
+    async fn await_settled_balances(
         client: &QueryProvider,
         pending_accounts: &mut Vec<Address>,
-        target_balance: U256,
+        is_settled: impl Fn(U256) -> bool,
+        unsettled_reason: &str,
         pb: &ProgressBar,
-    ) -> Result<usize> {
-        let timeout = Duration::from_secs(60);
-        let poll_interval = Duration::from_millis(500);
+    ) -> Result<()> {
         let start = Instant::now();
 
-        let mut settled = 0usize;
-
-        while !pending_accounts.is_empty() && start.elapsed() < timeout {
-            tokio::time::sleep(poll_interval).await;
+        while !pending_accounts.is_empty() && start.elapsed() < BALANCE_SETTLE_TIMEOUT {
+            tokio::time::sleep(BALANCE_POLL_INTERVAL).await;
 
             let mut still_pending = Vec::new();
             for address in pending_accounts.drain(..) {
                 match client.get_balance(address).await.rpc("get balance") {
-                    Ok(balance) if balance >= target_balance => {
-                        trace!(address = %address, balance = %balance, "funding balance settled");
-                        settled += 1;
+                    Ok(balance) if is_settled(balance) => {
+                        trace!(address = %address, balance = %balance, "account balance settled");
                         pb.inc(1);
                     }
                     Ok(_) => {
                         still_pending.push(address);
                     }
                     Err(e) => {
-                        debug!(address = %address, error = %e, "failed to check funding balance");
+                        debug!(address = %address, error = %e, "failed to check account balance");
                         still_pending.push(address);
                     }
                 }
@@ -1131,14 +1109,15 @@ impl LoadRunner {
         if !pending_accounts.is_empty() {
             let sample: Vec<_> = pending_accounts.iter().take(3).copied().collect();
             return Err(BaselineError::Transaction(format!(
-                "{} accounts did not reach funding target within timeout; sample: {sample:?}",
+                "{} accounts {unsettled_reason} within timeout; sample: {sample:?}",
                 pending_accounts.len(),
             )));
         }
 
-        Ok(settled)
+        Ok(())
     }
 
+    /// Re-reads every sender's balance and nonce and replaces its pending-tag nonce manager.
     pub(super) async fn refresh_sender_state(&mut self) -> Result<()> {
         let total_accounts = self.accounts.len();
         let client = self.client.clone();
@@ -1189,50 +1168,68 @@ impl LoadRunner {
 
         Ok(())
     }
+}
 
-    /// Waits for source account balances to drop to the post-drain dust threshold.
-    async fn await_drained_balances(
-        client: &QueryProvider,
-        pending_accounts: &mut Vec<Address>,
-        max_remaining: U256,
-        pb: &ProgressBar,
-    ) -> Result<usize> {
-        let timeout = Duration::from_secs(60);
-        let poll_interval = Duration::from_millis(500);
-        let start = Instant::now();
-        let mut settled = 0usize;
+#[cfg(test)]
+mod tests {
+    use alloy_provider::{builder as provider_builder, mock::Asserter};
+    use base_common_network::Base;
 
-        while !pending_accounts.is_empty() && start.elapsed() < timeout {
-            tokio::time::sleep(poll_interval).await;
+    use super::*;
 
-            let mut still_pending = Vec::new();
-            for address in pending_accounts.drain(..) {
-                match client.get_balance(address).await.rpc("get balance") {
-                    Ok(balance) if balance <= max_remaining => {
-                        trace!(address = %address, balance = %balance, "drain balance settled");
-                        settled += 1;
-                        pb.inc(1);
-                    }
-                    Ok(_) => {
-                        still_pending.push(address);
-                    }
-                    Err(e) => {
-                        debug!(address = %address, error = %e, "failed to check drain balance");
-                        still_pending.push(address);
-                    }
-                }
-            }
-            *pending_accounts = still_pending;
+    const TARGET: U256 = U256::from_limbs([1_000, 0, 0, 0]);
+
+    /// Returns a client answering successive `eth_getBalance` calls with `balances`, plus the
+    /// asserter so tests can check that every scripted balance was polled.
+    fn mocked_client(balances: &[U256]) -> (QueryProvider, Asserter) {
+        let asserter = Asserter::new();
+        for balance in balances {
+            asserter.push_success(balance);
         }
+        (provider_builder::<Base>().connect_mocked_client(asserter.clone()), asserter)
+    }
 
-        if !pending_accounts.is_empty() {
-            let sample: Vec<_> = pending_accounts.iter().take(3).copied().collect();
-            return Err(BaselineError::Transaction(format!(
-                "{} accounts did not drain within timeout; sample: {sample:?}",
-                pending_accounts.len(),
-            )));
-        }
+    #[tokio::test]
+    async fn settled_balances_repolls_until_every_account_reaches_target() {
+        let (funded_first, funded_later) = (Address::repeat_byte(1), Address::repeat_byte(2));
+        let (client, asserter) = mocked_client(&[TARGET, TARGET - U256::ONE, TARGET]);
+        let mut pending = vec![funded_first, funded_later];
+        let pb = ProgressBar::hidden();
 
-        Ok(settled)
+        LoadRunner::await_settled_balances(
+            &client,
+            &mut pending,
+            |balance| balance >= TARGET,
+            "did not reach funding target",
+            &pb,
+        )
+        .await
+        .unwrap();
+
+        assert!(pending.is_empty());
+        assert_eq!(pb.position(), 2);
+        assert!(asserter.read_q().is_empty());
+    }
+
+    #[tokio::test]
+    async fn settled_balances_repolls_until_every_account_drains_to_threshold() {
+        let (drained_later, drained_first) = (Address::repeat_byte(1), Address::repeat_byte(2));
+        let (client, asserter) = mocked_client(&[TARGET + U256::ONE, U256::ZERO, TARGET]);
+        let mut pending = vec![drained_later, drained_first];
+        let pb = ProgressBar::hidden();
+
+        LoadRunner::await_settled_balances(
+            &client,
+            &mut pending,
+            |balance| balance <= TARGET,
+            "did not drain",
+            &pb,
+        )
+        .await
+        .unwrap();
+
+        assert!(pending.is_empty());
+        assert_eq!(pb.position(), 2);
+        assert!(asserter.read_q().is_empty());
     }
 }
