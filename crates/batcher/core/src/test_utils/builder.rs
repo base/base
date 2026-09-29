@@ -1,10 +1,10 @@
-//! Builder for test [`BatchDriver`] instances, and block and [`BatchSubmission`] stubs.
+//! Builder for test [`BatchDriver`] instances, and block and [`SubmissionPayload`] stubs.
 
 use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::Header;
 use alloy_primitives::Address;
-use base_batcher_encoder::{BatchPipeline, BatchSubmission, BlobPayload, SubmissionId};
+use base_batcher_encoder::{BatchPipeline, BlobPayload, SubmissionPayload};
 use base_batcher_source::{L1HeadSource, UnsafeBlockSource};
 use base_common_consensus::BaseBlock;
 use base_protocol::{BlockInfo, Frame};
@@ -30,22 +30,14 @@ impl BlockStub {
     }
 }
 
-/// Factory methods for [`BatchSubmission`] stubs used in driver tests.
+/// Factory methods for [`SubmissionPayload`] stubs used in driver tests.
 #[derive(Debug)]
 pub struct SubmissionStub;
 
 impl SubmissionStub {
-    /// Returns a stub submission with id `0`.
-    pub fn stub() -> BatchSubmission {
-        Self::with_id(0)
-    }
-
-    /// Returns a stub submission with the given id.
-    pub fn with_id(id: u64) -> BatchSubmission {
-        BatchSubmission::blobs(
-            SubmissionId(id),
-            vec![BlobPayload::new(vec![Arc::new(Frame::default())])],
-        )
+    /// Returns a one-blob payload holding an empty frame.
+    pub fn stub() -> SubmissionPayload {
+        SubmissionPayload::Blobs(vec![BlobPayload::new(vec![Arc::new(Frame::default())])])
     }
 }
 

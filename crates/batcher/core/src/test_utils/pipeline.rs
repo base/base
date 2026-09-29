@@ -131,22 +131,24 @@ impl Recorded {
 }
 
 /// [`BatchPipeline`] that records its calls into a shared [`Recorded`] and hands out the
-/// submissions queued in [`submissions`](Self::submissions).
+/// payloads queued in [`submissions`](Self::submissions).
 ///
-/// Like the real pipeline, it returns a requeued submission before the queued ones (here
-/// under its original id), and ignores the confirmation or requeue of a submission dequeued
-/// before a reset.
+/// Like the real pipeline, it gives each submission it hands out a fresh id, never reused even
+/// across a reset, returns a requeued payload before the queued ones, and ignores the
+/// confirmation or requeue of a submission dequeued before a reset.
 #[derive(Debug)]
 pub struct TrackingPipeline {
     /// The call log, shared with the test through [`recorded`](Self::recorded).
     recorded: Arc<Mutex<Recorded>>,
-    /// Submissions returned by `next_submission`, in FIFO order.
-    pub submissions: VecDeque<BatchSubmission>,
+    /// Payloads returned by `next_submission`, in FIFO order.
+    pub submissions: VecDeque<SubmissionPayload>,
     /// Value returned by `da_backlog_bytes`, shared so a test can change it while the driver
     /// runs.
     pub da_backlog_bytes: Arc<AtomicU64>,
     /// Submissions handed out and neither confirmed nor requeued since.
-    in_flight: Vec<BatchSubmission>,
+    in_flight: Vec<(SubmissionId, SubmissionPayload)>,
+    /// The id of the next submission handed out.
+    next_id: u64,
     /// The L1 head the pipeline is at. Like the real encoder, a head that does not advance is
     /// ignored.
     l1_head: u64,
@@ -167,6 +169,7 @@ impl Default for TrackingPipeline {
             submissions: VecDeque::new(),
             da_backlog_bytes: Arc::default(),
             in_flight: Vec::new(),
+            next_id: 0,
             l1_head: 0,
             reconciliation: DerivationReconciliation::Consistent,
             add_block_reorgs: false,
@@ -221,16 +224,12 @@ impl TrackingPipeline {
         self.recorded.lock().unwrap().calls.push(call);
     }
 
-    /// A copy of `submission`, which is not `Clone`. The copy shares its frames, held behind
-    /// `Arc`s.
-    fn duplicate(submission: &BatchSubmission) -> BatchSubmission {
-        match submission.payload() {
-            SubmissionPayload::Blobs(payloads) => {
-                BatchSubmission::blobs(submission.id, payloads.clone())
-            }
-            SubmissionPayload::Calldata(frame) => {
-                BatchSubmission::calldata(submission.id, Arc::clone(frame))
-            }
+    /// A submission carrying a copy of `payload`, which is not `Clone`. The copy shares its
+    /// frames, held behind `Arc`s.
+    fn submission(id: SubmissionId, payload: &SubmissionPayload) -> BatchSubmission {
+        match payload {
+            SubmissionPayload::Blobs(payloads) => BatchSubmission::blobs(id, payloads.clone()),
+            SubmissionPayload::Calldata(frame) => BatchSubmission::calldata(id, Arc::clone(frame)),
         }
     }
 }
@@ -256,21 +255,24 @@ impl BatchPipeline for TrackingPipeline {
     }
 
     fn next_submission(&mut self) -> Option<BatchSubmission> {
-        let submission = self.submissions.pop_front()?;
-        self.record(PipelineCall::Dequeue(submission.id));
-        self.in_flight.push(Self::duplicate(&submission));
+        let payload = self.submissions.pop_front()?;
+        let id = SubmissionId(self.next_id);
+        self.next_id += 1;
+        self.record(PipelineCall::Dequeue(id));
+        let submission = Self::submission(id, &payload);
+        self.in_flight.push((id, payload));
         Some(submission)
     }
 
     fn confirm(&mut self, id: SubmissionId, l1_block: u64) {
         self.record(PipelineCall::Confirm(id, l1_block));
-        self.in_flight.retain(|submission| submission.id != id);
+        self.in_flight.retain(|(in_flight, _)| *in_flight != id);
     }
 
     fn requeue(&mut self, id: SubmissionId) {
         self.record(PipelineCall::Requeue(id));
-        if let Some(index) = self.in_flight.iter().position(|submission| submission.id == id) {
-            self.submissions.push_front(self.in_flight.remove(index));
+        if let Some(index) = self.in_flight.iter().position(|(in_flight, _)| *in_flight == id) {
+            self.submissions.push_front(self.in_flight.remove(index).1);
         }
     }
 

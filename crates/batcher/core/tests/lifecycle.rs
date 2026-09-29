@@ -107,8 +107,8 @@ fn test_driver_finishes_pending_work_before_waiting_for_events() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let mut pipeline = TrackingPipeline::new();
         let recorded = pipeline.recorded();
-        pipeline.submissions.push_back(SubmissionStub::with_id(0));
-        pipeline.submissions.push_back(SubmissionStub::with_id(1));
+        pipeline.submissions.push_back(SubmissionStub::stub());
+        pipeline.submissions.push_back(SubmissionStub::stub());
         let tx_manager = ScriptedTxManager::new([]);
         let dequeued_at_poll = Arc::new(Mutex::new(Vec::new()));
         let source = PollRecorder { recorded, dequeued_at_poll: Arc::clone(&dequeued_at_poll) };

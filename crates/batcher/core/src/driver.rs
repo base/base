@@ -424,9 +424,7 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use alloy_primitives::B256;
-    use base_batcher_encoder::{
-        BatchSubmission, BlobPayload, FrameEncoder, SubmissionId, SubmissionPayload,
-    };
+    use base_batcher_encoder::{BlobPayload, FrameEncoder, SubmissionId, SubmissionPayload};
     use base_batcher_source::{
         L2BlockEvent,
         test_utils::{ChannelBlockSource, ChannelL1HeadSource},
@@ -484,18 +482,17 @@ mod tests {
         });
     }
 
-    /// Build a [`BatchSubmission`] whose single frame exactly fills one blob payload,
+    /// Build a [`SubmissionPayload`] whose single frame exactly fills one blob payload,
     /// leaving no room for any additional frame alongside it.
     ///
     /// `payload = 1 (DERIVATION_VERSION_0) + FRAME_OVERHEAD + data.len() = BLOB_MAX_DATA_SIZE`
-    fn blob_filling_submission(id: u64) -> BatchSubmission {
-        blob_filling_submission_with_frames(id, 1)
+    fn blob_filling_payload() -> SubmissionPayload {
+        blob_filling_payload_with_frames(1)
     }
 
-    fn blob_filling_submission_with_frames(id: u64, frame_count: usize) -> BatchSubmission {
+    fn blob_filling_payload_with_frames(frame_count: usize) -> SubmissionPayload {
         let data_len = BlobEncoder::BLOB_MAX_DATA_SIZE - 1 - BlobEncoder::FRAME_OVERHEAD;
-        BatchSubmission::blobs(
-            SubmissionId(id),
+        SubmissionPayload::Blobs(
             (0..frame_count)
                 .map(|number| {
                     BlobPayload::new(vec![Arc::new(Frame {
@@ -804,13 +801,12 @@ mod tests {
         Runner::start(Config::seeded(0), |ctx| async move {
             let mut pipeline = TrackingPipeline::new();
             // A frame as large as a whole blob no longer fits once framed.
-            pipeline.submissions.push_back(BatchSubmission::blobs(
-                SubmissionId(0),
-                vec![BlobPayload::new(vec![Arc::new(Frame {
+            pipeline.submissions.push_back(SubmissionPayload::Blobs(vec![BlobPayload::new(vec![
+                Arc::new(Frame {
                     data: vec![0u8; BlobEncoder::BLOB_MAX_DATA_SIZE],
                     ..Frame::default()
-                })])],
-            ));
+                }),
+            ])]));
 
             let (driver, _handles) =
                 DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
@@ -828,8 +824,8 @@ mod tests {
         Runner::start(Config::seeded(0), |ctx| async move {
             let mut pipeline = TrackingPipeline::new();
             let recorded = pipeline.recorded();
-            pipeline.submissions.push_back(SubmissionStub::with_id(0));
-            pipeline.submissions.push_back(SubmissionStub::with_id(1));
+            pipeline.submissions.push_back(SubmissionStub::stub());
+            pipeline.submissions.push_back(SubmissionStub::stub());
             let tx_manager = ScriptedTxManager::confirming_at(10);
 
             let (driver, _handles) = DriverFixture::new(ctx.clone(), pipeline, tx_manager.clone())
@@ -868,15 +864,15 @@ mod tests {
         Runner::start(Config::seeded(0), |ctx| async move {
             let mut pipeline = TrackingPipeline::new();
             let recorded = pipeline.recorded();
-            let submission = blob_filling_submission_with_frames(0, 3);
-            let SubmissionPayload::Blobs(payloads) = submission.payload() else {
+            let payload = blob_filling_payload_with_frames(3);
+            let SubmissionPayload::Blobs(payloads) = &payload else {
                 panic!("helper must create blob payloads");
             };
             let expected_blob_payloads: Vec<_> = payloads
                 .iter()
                 .map(|payload| FrameEncoder::to_calldata(&payload.frames()[0]))
                 .collect();
-            pipeline.submissions.push_back(submission);
+            pipeline.submissions.push_back(payload);
             let tx_manager = ScriptedTxManager::confirming_at(10);
 
             let (driver, _handles) =
@@ -923,8 +919,8 @@ mod tests {
         Runner::start(Config::seeded(0), |ctx| async move {
             let mut pipeline = TrackingPipeline::new();
             let recorded = pipeline.recorded();
-            pipeline.submissions.push_back(blob_filling_submission(0));
-            pipeline.submissions.push_back(blob_filling_submission(1));
+            pipeline.submissions.push_back(blob_filling_payload());
+            pipeline.submissions.push_back(blob_filling_payload());
 
             let (driver, _handles) =
                 DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::new([]))
@@ -950,9 +946,9 @@ mod tests {
         Runner::start(Config::seeded(0), |ctx| async move {
             let mut pipeline = TrackingPipeline::new();
             let recorded = pipeline.recorded();
-            pipeline.submissions.push_back(blob_filling_submission(0));
-            pipeline.submissions.push_back(blob_filling_submission(1));
-            pipeline.submissions.push_back(blob_filling_submission(2));
+            pipeline.submissions.push_back(blob_filling_payload());
+            pipeline.submissions.push_back(blob_filling_payload());
+            pipeline.submissions.push_back(blob_filling_payload());
 
             let (driver, _handles) =
                 DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(7))
