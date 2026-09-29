@@ -1,12 +1,13 @@
 //! Test [`UnsafeBlockSource`] and [`L1HeadSource`] implementations.
+//!
+//! Hand-rolled rather than mocked because `next` parks forever, which `mockall` expectations
+//! cannot express.
 
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use base_batcher_source::{L1HeadSource, L2BlockEvent, UnsafeBlockSource};
 use base_protocol::BlockInfo;
-
-use crate::test_utils::BlockStub;
 
 /// [`UnsafeBlockSource`] that parks the select arm forever.
 ///
@@ -45,37 +46,6 @@ impl UnsafeBlockSource for TrackingSource {
 
     fn reset_catchup(&mut self, safe_head: BlockInfo) {
         self.catchup_heads.lock().unwrap().push(safe_head);
-    }
-}
-
-/// [`UnsafeBlockSource`] that delivers exactly one block, numbered 1, then parks forever.
-#[derive(Debug)]
-pub struct OneBlockSource {
-    delivered: bool,
-}
-
-impl OneBlockSource {
-    /// Create a new source that has not yet delivered its block.
-    pub const fn new() -> Self {
-        Self { delivered: false }
-    }
-}
-
-impl Default for OneBlockSource {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl UnsafeBlockSource for OneBlockSource {
-    async fn next(&mut self) -> L2BlockEvent {
-        if !self.delivered {
-            self.delivered = true;
-            L2BlockEvent::Block(Box::new(BlockStub::with_number(1)))
-        } else {
-            std::future::pending().await
-        }
     }
 }
 
