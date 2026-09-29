@@ -21,7 +21,7 @@ use reth_provider::CanonStateSubscriptions;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
-use crate::{HealthState, MultiplexRouter, RoutingConfig};
+use crate::{BASIC_BUILDER, FLASHBLOCKS_BUILDER, HealthState, MultiplexRouter, RoutingConfig};
 
 /// Spawns flashblocks + basic payload services and returns one routing handle.
 #[derive(Debug, Clone)]
@@ -159,10 +159,9 @@ where
             "multiplex basic payload builder service",
             Box::pin(async move {
                 basic_payload_service.await;
-                basic_health_for_task.mark_unavailable();
-                MultiplexRouter::set_service_health_metric("basic", false);
+                basic_health_for_task.mark_unavailable(BASIC_BUILDER);
                 error!(
-                    builder = "basic",
+                    builder = BASIC_BUILDER,
                     selected = false,
                     result = "err",
                     "basic payload service exited"
@@ -170,8 +169,8 @@ where
             }),
         );
 
-        MultiplexRouter::set_service_health_metric("flashblocks", true);
-        MultiplexRouter::set_service_health_metric("basic", true);
+        MultiplexRouter::set_service_health_metric(FLASHBLOCKS_BUILDER, true);
+        MultiplexRouter::set_service_health_metric(BASIC_BUILDER, true);
 
         let router = MultiplexRouter::new(
             flashblocks_handle,

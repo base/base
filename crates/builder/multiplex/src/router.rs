@@ -16,12 +16,18 @@ use futures::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnordered}
 use reth_payload_builder::{BuildNewPayload, PayloadBuilderHandle, PayloadServiceCommand};
 use reth_payload_builder_primitives::{Events, PayloadBuilderError};
 use reth_payload_primitives::{PayloadAttributes, PayloadKind, PayloadTypes};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{
+    broadcast::{self, error::RecvError},
+    mpsc, oneshot,
+};
 use tracing::{error, info, warn};
 
-const FLASHBLOCKS_BUILDER: &str = "flashblocks";
-const BASIC_BUILDER: &str = "basic";
+/// Metrics and log label for the flashblocks payload builder.
+pub const FLASHBLOCKS_BUILDER: &str = "flashblocks";
+/// Metrics and log label for the basic payload builder.
+pub const BASIC_BUILDER: &str = "basic";
 const MAX_PAYLOAD_ROUTES: usize = 128;
+const SUBSCRIPTION_CHANNEL_CAPACITY: usize = 64;
 
 /// Shared health state for one inner service.
 #[derive(Debug, Clone)]
@@ -42,9 +48,10 @@ impl HealthState {
         Self { healthy: Arc::new(AtomicBool::new(true)) }
     }
 
-    /// Marks the service as unavailable.
-    pub fn mark_unavailable(&self) {
+    /// Marks the service as unavailable and reports it on the `builder` health gauge.
+    pub fn mark_unavailable(&self, builder: &'static str) {
         self.healthy.store(false, Ordering::Relaxed);
+        MultiplexRouter::set_service_health_metric(builder, false);
     }
 
     /// Returns whether the service is healthy.
@@ -155,36 +162,33 @@ impl MultiplexRouter {
                 biased;
                 Some(()) = responses.next(), if !responses.is_empty() => {}
                 command = rx.recv() => match command {
-                    Some(command) => {
-                        if let Some(response) = self.handle_command(command) {
-                            responses.push(response);
-                        }
-                    }
+                    Some(command) => responses.push(self.handle_command(command)),
                     None => break,
                 }
             }
         }
     }
 
-    /// Handles a single command.
+    /// Dispatches a command to the inner services and returns the work that relays their
+    /// responses back to the caller.
     pub fn handle_command(
         &mut self,
         command: PayloadServiceCommand<BaseEngineTypes>,
-    ) -> Option<BoxFuture<'static, ()>> {
+    ) -> BoxFuture<'static, ()> {
         match command {
             PayloadServiceCommand::BuildNewPayload(input, _span, tx) => {
-                Some(self.handle_build_new_payload(*input, tx))
+                self.handle_build_new_payload(*input, tx)
             }
             PayloadServiceCommand::BestPayload(payload_id, tx) => {
-                Some(self.handle_best_payload(payload_id, tx))
+                self.handle_best_payload(payload_id, tx)
             }
             PayloadServiceCommand::PayloadTimestamp(payload_id, tx) => {
-                Some(self.handle_payload_timestamp(payload_id, tx))
+                self.handle_payload_timestamp(payload_id, tx)
             }
             PayloadServiceCommand::Resolve(payload_id, kind, tx) => {
-                Some(self.handle_resolve(payload_id, kind, tx))
+                self.handle_resolve(payload_id, kind, tx)
             }
-            PayloadServiceCommand::Subscribe(tx) => Some(self.handle_subscribe(tx)),
+            PayloadServiceCommand::Subscribe(tx) => self.handle_subscribe(tx),
         }
     }
 
@@ -192,7 +196,7 @@ impl MultiplexRouter {
     pub fn handle_build_new_payload(
         &mut self,
         input: BuildNewPayload<<BaseEngineTypes as PayloadTypes>::PayloadAttributes>,
-        tx: tokio::sync::oneshot::Sender<Result<PayloadId, PayloadBuilderError>>,
+        tx: oneshot::Sender<Result<PayloadId, PayloadBuilderError>>,
     ) -> BoxFuture<'static, ()> {
         let payload_id = input.payload_id();
         let selected_basic = self.basic_selected_at(input.attributes.timestamp());
@@ -208,8 +212,9 @@ impl MultiplexRouter {
         let (flashblocks_input, basic_input) =
             if selected_basic { (shadow_input, input) } else { (input, shadow_input) };
 
-        Self::inc_dispatch_metric(FLASHBLOCKS_BUILDER);
-        Self::inc_dispatch_metric(BASIC_BUILDER);
+        for builder in [FLASHBLOCKS_BUILDER, BASIC_BUILDER] {
+            metrics::counter!("mux_builds_dispatched_total", "builder" => builder).increment(1);
+        }
 
         let flashblocks_rx = self.flashblocks_handle.send_new_payload(flashblocks_input);
         let basic_rx = self.basic_handle.send_new_payload(basic_input);
@@ -241,12 +246,11 @@ impl MultiplexRouter {
             )
         };
 
-        Self::inc_selected_build_metric(selected_builder);
+        metrics::counter!("mux_selected_builds_total", "builder" => selected_builder).increment(1);
         async move {
             let selected_response = async move {
                 let selected_result = selected_rx.await.unwrap_or_else(|_| {
-                    selected_health.mark_unavailable();
-                    Self::set_service_health_metric(selected_builder, false);
+                    selected_health.mark_unavailable(selected_builder);
                     Err(Self::unavailable_error(selected_builder))
                 });
                 info!(
@@ -260,8 +264,7 @@ impl MultiplexRouter {
             };
             let shadow_response = async move {
                 let shadow_result = shadow_rx.await.unwrap_or_else(|_| {
-                    shadow_health.mark_unavailable();
-                    Self::set_service_health_metric(shadow_builder, false);
+                    shadow_health.mark_unavailable(shadow_builder);
                     Err(Self::unavailable_error(shadow_builder))
                 });
                 Self::inc_shadow_metric(shadow_builder, shadow_result.is_ok());
@@ -278,24 +281,30 @@ impl MultiplexRouter {
         .boxed()
     }
 
+    /// Returns the handle, label, and health of the builder recorded for `payload_id`.
+    pub fn route_for_payload(
+        &self,
+        payload_id: PayloadId,
+    ) -> (PayloadBuilderHandle<BaseEngineTypes>, &'static str, HealthState) {
+        if self.basic_selected_for_payload(payload_id) {
+            (self.basic_handle.clone(), BASIC_BUILDER, self.basic_health.clone())
+        } else {
+            (self.flashblocks_handle.clone(), FLASHBLOCKS_BUILDER, self.flashblocks_health.clone())
+        }
+    }
+
     /// Handles best payload lookup.
     pub fn handle_best_payload(
         &self,
         payload_id: PayloadId,
-        tx: tokio::sync::oneshot::Sender<
+        tx: oneshot::Sender<
             Option<Result<<BaseEngineTypes as PayloadTypes>::BuiltPayload, PayloadBuilderError>>,
         >,
     ) -> BoxFuture<'static, ()> {
-        let selected_basic = self.basic_selected_for_payload(payload_id);
-        let (handle, builder, health) = if selected_basic {
-            (self.basic_handle.clone(), BASIC_BUILDER, self.basic_health.clone())
-        } else {
-            (self.flashblocks_handle.clone(), FLASHBLOCKS_BUILDER, self.flashblocks_health.clone())
-        };
+        let (handle, builder, health) = self.route_for_payload(payload_id);
         async move {
             let result = handle.best_payload(payload_id).await;
-            let mapped = Self::map_read_result(result, builder, &health);
-            let _ = tx.send(mapped);
+            let _ = tx.send(Self::map_read_result(result, builder, &health));
         }
         .boxed()
     }
@@ -304,18 +313,12 @@ impl MultiplexRouter {
     pub fn handle_payload_timestamp(
         &self,
         payload_id: PayloadId,
-        tx: tokio::sync::oneshot::Sender<Option<Result<u64, PayloadBuilderError>>>,
+        tx: oneshot::Sender<Option<Result<u64, PayloadBuilderError>>>,
     ) -> BoxFuture<'static, ()> {
-        let selected_basic = self.basic_selected_for_payload(payload_id);
-        let (handle, builder, health) = if selected_basic {
-            (self.basic_handle.clone(), BASIC_BUILDER, self.basic_health.clone())
-        } else {
-            (self.flashblocks_handle.clone(), FLASHBLOCKS_BUILDER, self.flashblocks_health.clone())
-        };
+        let (handle, builder, health) = self.route_for_payload(payload_id);
         async move {
             let result = handle.payload_timestamp(payload_id).await;
-            let mapped = Self::map_read_result(result, builder, &health);
-            let _ = tx.send(mapped);
+            let _ = tx.send(Self::map_read_result(result, builder, &health));
         }
         .boxed()
     }
@@ -325,14 +328,9 @@ impl MultiplexRouter {
         &self,
         payload_id: PayloadId,
         kind: PayloadKind,
-        mut tx: tokio::sync::oneshot::Sender<Option<ResolveFuture>>,
+        mut tx: oneshot::Sender<Option<ResolveFuture>>,
     ) -> BoxFuture<'static, ()> {
-        let selected_basic = self.basic_selected_for_payload(payload_id);
-        let (handle, health, builder) = if selected_basic {
-            (self.basic_handle.clone(), self.basic_health.clone(), BASIC_BUILDER)
-        } else {
-            (self.flashblocks_handle.clone(), self.flashblocks_health.clone(), FLASHBLOCKS_BUILDER)
-        };
+        let (handle, builder, health) = self.route_for_payload(payload_id);
         async move {
             let started = Instant::now();
             let resolve = handle.resolve_kind(payload_id, kind);
@@ -341,35 +339,66 @@ impl MultiplexRouter {
                 result = &mut resolve => result,
                 _ = tx.closed() => return,
             };
-            let elapsed = started.elapsed();
-            Self::record_selected_getpayload_latency(elapsed.as_secs_f64());
+            metrics::histogram!("mux_selected_getpayload_latency_seconds")
+                .record(started.elapsed().as_secs_f64());
 
-            let result = match result {
-                Some(Ok(payload)) => Some(Ok(payload)),
-                Some(Err(PayloadBuilderError::ChannelClosed)) => {
-                    health.mark_unavailable();
-                    Self::set_service_health_metric(builder, false);
-                    Some(Err(Self::unavailable_error(builder)))
-                }
-                Some(Err(err)) => Some(Err(err)),
-                None if !health.is_healthy() => Some(Err(Self::unavailable_error(builder))),
-                None => None,
-            };
-
-            let response = result.map(|result| Box::pin(async move { result }) as ResolveFuture);
+            let response = Self::map_read_result(result, builder, &health)
+                .map(|result| Box::pin(async move { result }) as ResolveFuture);
             let _ = tx.send(response);
         }
         .boxed()
     }
 
-    /// Handles subscriptions.
+    /// Subscribes to one inner service's events, marking it unavailable on failure.
+    pub async fn subscribe_events(
+        handle: PayloadBuilderHandle<BaseEngineTypes>,
+        builder: &'static str,
+        health: &HealthState,
+    ) -> Option<broadcast::Receiver<Events<BaseEngineTypes>>> {
+        match handle.subscribe().await {
+            Ok(events) => Some(events.receiver),
+            Err(error) => {
+                health.mark_unavailable(builder);
+                error!(builder, error = %error, "failed to subscribe to payload builder events");
+                None
+            }
+        }
+    }
+
+    /// Forwards an inner event to `events_tx` when `builder_owns_event` accepts it.
+    ///
+    /// Returns `false` once the inner event stream has closed.
+    pub fn forward_event(
+        events_tx: &broadcast::Sender<Events<BaseEngineTypes>>,
+        result: Result<Events<BaseEngineTypes>, RecvError>,
+        builder_owns_event: impl FnOnce(&Events<BaseEngineTypes>) -> bool,
+        builder: &'static str,
+        health: &HealthState,
+    ) -> bool {
+        match result {
+            Ok(event) => {
+                if builder_owns_event(&event) {
+                    let _ = events_tx.send(event);
+                }
+            }
+            Err(RecvError::Closed) => {
+                health.mark_unavailable(builder);
+                return false;
+            }
+            Err(RecvError::Lagged(skipped)) => {
+                metrics::counter!("mux_subscription_lagged_events_total", "builder" => builder)
+                    .increment(skipped);
+                warn!(builder, skipped, "payload builder event forwarding lagged");
+            }
+        }
+        true
+    }
+
+    /// Handles subscriptions by merging events from the builder selected at each event's
+    /// timestamp.
     pub fn handle_subscribe(
         &self,
-        tx: tokio::sync::oneshot::Sender<
-            tokio::sync::broadcast::Receiver<
-                reth_payload_builder_primitives::Events<BaseEngineTypes>,
-            >,
-        >,
+        tx: oneshot::Sender<broadcast::Receiver<Events<BaseEngineTypes>>>,
     ) -> BoxFuture<'static, ()> {
         let flashblocks_handle = self.flashblocks_handle.clone();
         let basic_handle = self.basic_handle.clone();
@@ -377,90 +406,51 @@ impl MultiplexRouter {
         let basic_health = self.basic_health.clone();
         let chain_spec = Arc::clone(&self.chain_spec);
         async move {
-            let mut flashblocks_events = match flashblocks_handle.subscribe().await {
-                Ok(events) => events.receiver,
-                Err(error) => {
-                    flashblocks_health.mark_unavailable();
-                    Self::set_service_health_metric(FLASHBLOCKS_BUILDER, false);
-                    error!(
-                        builder = FLASHBLOCKS_BUILDER,
-                        error = %error,
-                        "failed to subscribe to payload builder events"
-                    );
-                    return;
-                }
+            let Some(mut flashblocks_events) = Self::subscribe_events(
+                flashblocks_handle,
+                FLASHBLOCKS_BUILDER,
+                &flashblocks_health,
+            )
+            .await
+            else {
+                return;
             };
-            let mut basic_events = match basic_handle.subscribe().await {
-                Ok(events) => events.receiver,
-                Err(error) => {
-                    basic_health.mark_unavailable();
-                    Self::set_service_health_metric(BASIC_BUILDER, false);
-                    error!(
-                        builder = BASIC_BUILDER,
-                        error = %error,
-                        "failed to subscribe to payload builder events"
-                    );
-                    return;
-                }
+            let Some(mut basic_events) =
+                Self::subscribe_events(basic_handle, BASIC_BUILDER, &basic_health).await
+            else {
+                return;
             };
-            let (events_tx, events_rx) = broadcast::channel(64);
+            let (events_tx, events_rx) = broadcast::channel(SUBSCRIPTION_CHANNEL_CAPACITY);
             if tx.send(events_rx).is_err() {
                 return;
             }
 
-            let mut flashblocks_closed = false;
-            let mut basic_closed = false;
-            while !flashblocks_closed || !basic_closed {
+            let basic_owns = |event: &Events<BaseEngineTypes>| {
+                chain_spec.is_denim_active_at_timestamp(Self::event_timestamp(event))
+            };
+            let mut flashblocks_open = true;
+            let mut basic_open = true;
+            while flashblocks_open || basic_open {
                 tokio::select! {
                     _ = events_tx.closed() => break,
-                    result = flashblocks_events.recv(), if !flashblocks_closed => match result {
-                        Ok(event) => {
-                            if !chain_spec.is_denim_active_at_timestamp(Self::event_timestamp(&event)) {
-                                let _ = events_tx.send(event);
-                            }
-                        }
-                        Err(broadcast::error::RecvError::Closed) => {
-                            flashblocks_closed = true;
-                            flashblocks_health.mark_unavailable();
-                            Self::set_service_health_metric(FLASHBLOCKS_BUILDER, false);
-                        }
-                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                            metrics::counter!(
-                                "mux_subscription_lagged_events_total",
-                                "builder" => FLASHBLOCKS_BUILDER
-                            )
-                            .increment(skipped);
-                            warn!(
-                                builder = FLASHBLOCKS_BUILDER,
-                                skipped,
-                                "payload builder event forwarding lagged"
-                            );
-                        }
-                    },
-                    result = basic_events.recv(), if !basic_closed => match result {
-                        Ok(event) => {
-                            if chain_spec.is_denim_active_at_timestamp(Self::event_timestamp(&event)) {
-                                let _ = events_tx.send(event);
-                            }
-                        }
-                        Err(broadcast::error::RecvError::Closed) => {
-                            basic_closed = true;
-                            basic_health.mark_unavailable();
-                            Self::set_service_health_metric(BASIC_BUILDER, false);
-                        }
-                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                            metrics::counter!(
-                                "mux_subscription_lagged_events_total",
-                                "builder" => BASIC_BUILDER
-                            )
-                            .increment(skipped);
-                            warn!(
-                                builder = BASIC_BUILDER,
-                                skipped,
-                                "payload builder event forwarding lagged"
-                            );
-                        }
-                    },
+                    result = flashblocks_events.recv(), if flashblocks_open => {
+                        flashblocks_open = Self::forward_event(
+                            &events_tx,
+                            result,
+                            |event| !basic_owns(event),
+                            FLASHBLOCKS_BUILDER,
+                            &flashblocks_health,
+                        );
+                    }
+                    result = basic_events.recv(), if basic_open => {
+                        basic_open = Self::forward_event(
+                            &events_tx,
+                            result,
+                            basic_owns,
+                            BASIC_BUILDER,
+                            &basic_health,
+                        );
+                    }
                 }
             }
         }
@@ -475,8 +465,7 @@ impl MultiplexRouter {
     ) -> Option<Result<T, PayloadBuilderError>> {
         match result {
             Some(Err(PayloadBuilderError::ChannelClosed)) => {
-                health.mark_unavailable();
-                Self::set_service_health_metric(builder, false);
+                health.mark_unavailable(builder);
                 Some(Err(Self::unavailable_error(builder)))
             }
             None if !health.is_healthy() => Some(Err(Self::unavailable_error(builder))),
@@ -487,16 +476,6 @@ impl MultiplexRouter {
     /// Creates unavailable error.
     pub fn unavailable_error(builder: &'static str) -> PayloadBuilderError {
         PayloadBuilderError::other(BuilderUnavailableError { builder })
-    }
-
-    /// Increments dispatch metric.
-    pub fn inc_dispatch_metric(builder: &'static str) {
-        metrics::counter!("mux_builds_dispatched_total", "builder" => builder).increment(1);
-    }
-
-    /// Increments selected metric.
-    pub fn inc_selected_build_metric(builder: &'static str) {
-        metrics::counter!("mux_selected_builds_total", "builder" => builder).increment(1);
     }
 
     /// Increments shadow outcome metric.
@@ -517,11 +496,6 @@ impl MultiplexRouter {
         } else {
             0.0
         });
-    }
-
-    /// Records getPayload latency for selected route.
-    pub fn record_selected_getpayload_latency(seconds: f64) {
-        metrics::histogram!("mux_selected_getpayload_latency_seconds").record(seconds);
     }
 }
 

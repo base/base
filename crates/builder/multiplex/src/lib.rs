@@ -7,7 +7,10 @@ mod config;
 pub use config::RoutingConfig;
 
 mod router;
-pub use router::{BuilderUnavailableError, HealthState, MultiplexRouter, ResolveFuture};
+pub use router::{
+    BASIC_BUILDER, BuilderUnavailableError, FLASHBLOCKS_BUILDER, HealthState, MultiplexRouter,
+    ResolveFuture,
+};
 
 mod service_builder;
 pub use service_builder::MultiplexingServiceBuilder;
