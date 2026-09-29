@@ -37,8 +37,8 @@ use reth_primitives_traits::{
     transaction::error::InvalidTransactionError,
 };
 use reth_storage_api::{
-    AccountInfoReader, AccountReader, BlockReaderIdExt, StateProvider, StateProviderBox,
-    StateProviderFactory, errors::ProviderResult,
+    AccountReader, BlockReaderIdExt, StateProvider, StateProviderBox, StateProviderFactory,
+    errors::ProviderResult,
 };
 use reth_transaction_pool::{
     EthPoolTransaction, EthTransactionValidator, TransactionOrigin, TransactionValidationOutcome,
@@ -874,52 +874,37 @@ where
             .map_or_else(|| self.client().latest(), |hash| self.client().state_by_block_hash(hash))
     }
 
-    /// Validates a single transaction.
+    /// Validates a single transaction against the current head snapshot.
     ///
     /// See also [`TransactionValidator::validate_transaction`]
     ///
-    /// This behaves the same as [`BaseTransactionValidator::validate_one_with_state`], but creates
-    /// a new state provider internally.
-    pub async fn validate_one(
-        &self,
-        origin: TransactionOrigin,
-        transaction: Tx,
-    ) -> TransactionValidationOutcome<Tx> {
-        self.validate_one_with_state(origin, transaction, &mut None).await
-    }
-
-    /// Validates a single transaction with a provided state provider.
-    ///
-    /// This allows reusing the same state provider across multiple transaction validations.
-    ///
-    /// See also [`TransactionValidator::validate_transaction`]
-    ///
-    /// This behaves the same as [`EthTransactionValidator::validate_one_with_state`], but in
-    /// addition applies Base-specific validity checks:
+    /// This behaves the same as [`EthTransactionValidator::validate_one`], but in addition applies
+    /// Base-specific validity checks:
     /// - ensures tx is not eip4844
     /// - for eip8130 (account abstraction): rejects submissions before the Everest upgrade is
     ///   active, runs structural checks, then runs EIP-8130-specific stateful validation for
     ///   actor authorization, nonce/replay state, intrinsic gas, create/delegation safety, and
     ///   payer funding instead of using the inner Eth validator
     /// - ensures that the account has enough balance to cover the L1 gas cost
-    pub async fn validate_one_with_state(
+    ///
+    /// Account state is always opened at the snapshot's block, so balances and fees come from the
+    /// same head.
+    pub async fn validate_one(
         &self,
         origin: TransactionOrigin,
         transaction: Tx,
-        state: &mut Option<Box<dyn AccountInfoReader + Send>>,
     ) -> TransactionValidationOutcome<Tx> {
         let kind = if transaction.as_eip8130().is_some() { "eip8130" } else { "standard" };
         let start = Instant::now();
-        let outcome = self.validate_one_with_state_inner(origin, transaction, state);
+        let outcome = self.validate_one_inner(origin, transaction);
         ValidatorMetrics::validate_seconds(kind).record(start.elapsed().as_secs_f64());
         outcome
     }
 
-    fn validate_one_with_state_inner(
+    fn validate_one_inner(
         &self,
         origin: TransactionOrigin,
         transaction: Tx,
-        state: &mut Option<Box<dyn AccountInfoReader + Send>>,
     ) -> TransactionValidationOutcome<Tx> {
         if transaction.is_eip4844() {
             return TransactionValidationOutcome::Invalid(
@@ -963,20 +948,17 @@ where
             };
             return self.apply_base_checks(outcome, state.payer_auth, &head);
         }
-        // Mirrors `EthTransactionValidator::validate_one_with_state`, but opens state at the
-        // snapshot's block instead of latest.
+        // Mirrors `EthTransactionValidator::validate_one`, but opens state at the snapshot's block
+        // instead of latest.
         if let Err(err) = self.inner.validate_stateless(origin, &transaction) {
             return TransactionValidationOutcome::Invalid(transaction, err);
         }
-        if state.is_none() {
-            match self.head_state(&head) {
-                Ok(head_state) => *state = Some(Box::new(head_state)),
-                Err(err) => {
-                    return TransactionValidationOutcome::Error(*transaction.hash(), Box::new(err));
-                }
+        let state = match self.head_state(&head) {
+            Ok(state) => state,
+            Err(err) => {
+                return TransactionValidationOutcome::Error(*transaction.hash(), Box::new(err));
             }
-        }
-        let state = state.as_ref().expect("state is set");
+        };
         let outcome = self.inner.validate_stateful(origin, transaction, state);
         self.apply_base_checks(outcome, 0, &head)
     }
@@ -1019,9 +1001,7 @@ where
     /// EIP-8130 because configured senders may be smart contracts and sponsored
     /// transactions charge a payer instead of the sender.
     ///
-    /// The `validate_one_with_state` snapshot is only an `AccountInfoReader`; EIP-8130 needs
-    /// storage/code reads for account config, nonce channels, and delegation checks, so this path
-    /// takes its own full state snapshot.
+    /// State is read at `head`'s block, the same head that supplies the timestamp and L1 fees.
     fn validate_eip8130_full(
         &self,
         signed: &Eip8130Signed,
