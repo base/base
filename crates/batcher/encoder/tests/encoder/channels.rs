@@ -3,7 +3,6 @@
 
 use alloy_primitives::B256;
 use base_batcher_encoder::{BatchPipeline, DaEgress, EncoderConfig, StepResult, SubmissionPayload};
-use base_protocol::Frame;
 use rstest::rstest;
 
 use crate::common::{BlockFixture, EncoderFixture, OpenChannel};
@@ -110,10 +109,7 @@ fn open_channel_emits_full_blobs_without_closing() {
     };
     for blob in blobs {
         assert!(blob.frames().iter().all(|frame| !frame.is_last), "the channel is still open");
-        assert!(
-            DaEgress::BLOB_CAPACITY - blob.frame_bytes() <= Frame::ENCODED_OVERHEAD,
-            "the blob has room for another frame"
-        );
+        assert_eq!(blob.frame_bytes(), DaEgress::BLOB_CAPACITY, "the blob is full");
     }
 
     open.add_next_block(&mut encoder);

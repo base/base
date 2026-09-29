@@ -110,7 +110,7 @@ fn step_fails_on_a_block_no_channel_can_carry() {
                 error,
                 StepError::BlockExceedsChannelLimit {
                     cursor: 0,
-                    limit: ChannelLimit::FrameCount { .. }
+                    limit: ChannelLimit::FrameCount { maximum: Channel::MAX_FRAMES, .. }
                 }
             ),
             "{error}"
