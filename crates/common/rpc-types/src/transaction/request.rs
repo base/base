@@ -102,13 +102,15 @@ pub struct Eip8130RequestFields {
     /// The phased call batches dispatched by the sender account.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub calls: Option<Vec<Vec<Call>>>,
-    /// Optional lower bound of the validity window (Unix milliseconds; `0` or
-    /// absent means no lower bound). Checked as `block.timestamp * 1000 >=
-    /// valid_after`.
+    /// Optional lower bound of the validity window, in Unix seconds or
+    /// milliseconds (the unit is detected from the magnitude; `0` or absent
+    /// means no lower bound). Checked as `block.timestamp * 1000 >=` the
+    /// bound in milliseconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub valid_after: Option<u64>,
-    /// Optional upper bound of the validity window (Unix milliseconds; `0` or
-    /// absent means no expiry). Required (non-zero) for nonce-free transactions.
+    /// Optional upper bound of the validity window, in Unix seconds or
+    /// milliseconds (the unit is detected from the magnitude; `0` or absent
+    /// means no expiry). Required (non-zero) for nonce-free transactions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub valid_before: Option<u64>,
     /// Opaque, non-executed transaction metadata.
