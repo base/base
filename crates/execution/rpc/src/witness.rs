@@ -26,12 +26,19 @@ use tokio::sync::{Semaphore, oneshot};
 /// Minimum number of concurrent witness/payload executions allowed.
 const MIN_WITNESS_CONCURRENCY: usize = 3;
 
-/// Returns the permit count for witness/payload execution semaphores, sized to the
-/// available parallelism and never below [`MIN_WITNESS_CONCURRENCY`].
+/// Maximum number of concurrent witness/payload executions allowed.
+///
+/// Witness generation is CPU-bound and each request already fans out across several cores, so
+/// throughput plateaus well below one request per core. On a 32-core Base mainnet devbox it
+/// reached ~93% of peak at 16 concurrent requests, while more only added queueing latency.
+const MAX_WITNESS_CONCURRENCY: usize = 16;
+
+/// Returns the permit count for witness/payload execution semaphores: half the available
+/// parallelism, clamped to [`MIN_WITNESS_CONCURRENCY`]..=[`MAX_WITNESS_CONCURRENCY`].
 pub(crate) fn witness_concurrency() -> usize {
     std::thread::available_parallelism()
-        .map_or(MIN_WITNESS_CONCURRENCY, |n| n.get())
-        .max(MIN_WITNESS_CONCURRENCY)
+        .map_or(MIN_WITNESS_CONCURRENCY, |n| n.get() / 2)
+        .clamp(MIN_WITNESS_CONCURRENCY, MAX_WITNESS_CONCURRENCY)
 }
 
 #[cfg_attr(not(test), rpc(server, namespace = "debug"))]
