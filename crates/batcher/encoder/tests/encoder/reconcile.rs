@@ -1,4 +1,4 @@
-//! Reconciliation of `BatchEncoder` with derivation progress, covering the pruning below the
+//! Reconciliation of `BatchEncoder` with derivation progress, covering the pruning up to the
 //! safe L2 head, a safe head off the buffered chain, and a fully confirmed channel derivation
 //! skipped.
 
