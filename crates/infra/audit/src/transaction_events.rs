@@ -909,16 +909,6 @@ impl PgTransactionEventSink {
         outcome
     }
 
-    /// Checks optional transaction event storage readiness.
-    pub async fn check_optional_schema_ready(
-        sink: Option<&Self>,
-    ) -> std::result::Result<(), TransactionEventSchemaReadinessError> {
-        match sink {
-            Some(sink) => sink.check_schema_ready().await,
-            None => Ok(()),
-        }
-    }
-
     async fn insert_event_chunk(
         &self,
         events: &[TransactionEvent],

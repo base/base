@@ -1,4 +1,5 @@
-//! Rejected transaction types shared between builder and audit-archiver.
+//! Legacy rejected transaction types retained for downstream compatibility.
+//! Builder rejection events now use the transaction event journal.
 
 use alloy_primitives::TxHash;
 use serde::{Deserialize, Serialize};
