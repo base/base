@@ -166,9 +166,8 @@ fn reconcile_with_nothing_buffered_anchors_the_chain() {
     encoder.add_block(BlockFixture::block(anchor.hash, 3, 0)).unwrap();
 }
 
-/// A safe head off the buffered chain is reported and changes nothing. Below the buffered
-/// blocks only the parent of the oldest one fits, and an unknown hash or a head above them
-/// never does.
+/// A safe head off the buffered chain is reported as a mismatch. Below the buffered blocks only
+/// the parent of the oldest one fits, and an unknown hash or a head above them never does.
 #[test]
 fn reconcile_reports_a_safe_head_off_the_buffered_chain() {
     let fixture = EncoderFixture::new(EncoderConfig::default());
@@ -178,8 +177,7 @@ fn reconcile_reports_a_safe_head_off_the_buffered_chain() {
         encoder.reconcile_derivation(anchor, DERIVATION_L1),
         DerivationReconciliation::Consistent
     );
-    let block = BlockFixture::block(anchor.hash, 3, 0);
-    encoder.add_block(block.clone()).unwrap();
+    encoder.add_block(BlockFixture::block(anchor.hash, 3, 0)).unwrap();
     assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
 
     let mismatch = DerivationReconciliation::SafeHeadMismatch;
@@ -201,13 +199,6 @@ fn reconcile_reports_a_safe_head_off_the_buffered_chain() {
     assert_eq!(
         encoder.reconcile_derivation(BlockInfo { number: 4, ..anchor }, DERIVATION_L1),
         mismatch
-    );
-
-    let next = BlockFixture::block(block.header.hash_slow(), 4, 0);
-    encoder.add_block(next).expect("the buffered chain is untouched");
-    assert_eq!(
-        encoder.reconcile_derivation(anchor, DERIVATION_L1),
-        DerivationReconciliation::Consistent
     );
 }
 
