@@ -126,7 +126,7 @@ where
         // Extract the builder fields.
         let rollup_config = builder.rollup_config.expect("rollup_config must be set");
         let chain_provider = builder.chain_provider.expect("chain_provider must be set");
-        let l2_chain_provider = builder.l2_chain_provider.expect("chain_provider must be set");
+        let l2_chain_provider = builder.l2_chain_provider.expect("l2_chain_provider must be set");
         let dap_source = builder.dap_source.expect("dap_source must be set");
         let attributes_builder = builder.builder.expect("builder must be set");
 
