@@ -9,6 +9,37 @@ use jsonrpsee::{
 
 use crate::{EngineRpcClient, jsonrpsee::WsServer};
 
+/// Which engine-state head a websocket subscription streams.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeadKind {
+    /// The safe L2 head.
+    Safe,
+    /// The finalized L2 head.
+    Finalized,
+    /// The unsafe L2 head.
+    Unsafe,
+}
+
+impl HeadKind {
+    /// Returns this head from `state`.
+    pub const fn select(self, state: &EngineState) -> L2BlockInfo {
+        match self {
+            Self::Safe => state.sync_state.safe_head(),
+            Self::Finalized => state.sync_state.finalized_head(),
+            Self::Unsafe => state.sync_state.unsafe_head(),
+        }
+    }
+
+    /// Returns the label used in log fields.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Safe => "safe",
+            Self::Finalized => "finalized",
+            Self::Unsafe => "unsafe",
+        }
+    }
+}
+
 /// An RPC server that handles subscriptions to the node's state.
 #[derive(Debug)]
 pub struct WsRPC<EngineRpcClient_> {
@@ -35,12 +66,11 @@ impl<EngineRpcClient_: EngineRpcClient> WsRPC<EngineRpcClient_> {
         })
     }
 
-    /// Streams every change of the head selected by `head` from the engine state to `sink`.
+    /// Streams every change of the `kind` head from the engine state to `sink`.
     async fn stream_head_updates(
         &self,
         sink: PendingSubscriptionSink,
-        head_kind: &'static str,
-        head: fn(&EngineState) -> L2BlockInfo,
+        kind: HeadKind,
     ) -> SubscriptionResult {
         let sink = sink.accept().await?;
 
@@ -51,23 +81,26 @@ impl<EngineRpcClient_: EngineRpcClient> WsRPC<EngineRpcClient_> {
                 )
             })?;
 
-        let mut current_head = head(&subscription.borrow());
+        let mut current_head = kind.select(&subscription.borrow());
 
         while let Ok(new_head) = subscription
-            .wait_for(|state| head(state) != current_head)
+            .wait_for(|state| kind.select(state) != current_head)
             .await
-            .map(|state| head(&state))
+            .map(|state| kind.select(&state))
         {
-            if head_kind == "safe" {
-                info!(target: "rpc::ws", safe_head = ?new_head, "Sending safe head update");
-            } else {
-                debug!(target: "rpc::ws", head_kind, head = ?new_head, "Sending head update");
+            match kind {
+                HeadKind::Safe => {
+                    info!(target: "rpc::ws", safe_head = ?new_head, "Sending safe head update");
+                }
+                HeadKind::Finalized | HeadKind::Unsafe => {
+                    debug!(target: "rpc::ws", head_kind = kind.as_str(), head = ?new_head, "Sending head update");
+                }
             }
             current_head = new_head;
             Self::send_state_update(&sink, current_head).await?;
         }
 
-        warn!(target: "rpc::ws", head_kind, "Head update subscription closed");
+        warn!(target: "rpc::ws", head_kind = kind.as_str(), "Head update subscription closed");
         Ok(())
     }
 }
@@ -75,15 +108,15 @@ impl<EngineRpcClient_: EngineRpcClient> WsRPC<EngineRpcClient_> {
 #[async_trait::async_trait]
 impl<EngineRpcClient_: EngineRpcClient + 'static> WsServer for WsRPC<EngineRpcClient_> {
     async fn ws_safe_head_updates(&self, sink: PendingSubscriptionSink) -> SubscriptionResult {
-        self.stream_head_updates(sink, "safe", |state| state.sync_state.safe_head()).await
+        self.stream_head_updates(sink, HeadKind::Safe).await
     }
 
     async fn ws_finalized_head_updates(&self, sink: PendingSubscriptionSink) -> SubscriptionResult {
-        self.stream_head_updates(sink, "finalized", |state| state.sync_state.finalized_head()).await
+        self.stream_head_updates(sink, HeadKind::Finalized).await
     }
 
     async fn ws_unsafe_head_updates(&self, sink: PendingSubscriptionSink) -> SubscriptionResult {
-        self.stream_head_updates(sink, "unsafe", |state| state.sync_state.unsafe_head()).await
+        self.stream_head_updates(sink, HeadKind::Unsafe).await
     }
 }
 
