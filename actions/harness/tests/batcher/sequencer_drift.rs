@@ -91,7 +91,7 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
         &mut node_sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
@@ -183,7 +183,7 @@ async fn sequencer_drift_forced_empty_blocks_accepted() {
         source.push(sequencer.build_empty_block().await);
     }
 
-    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 

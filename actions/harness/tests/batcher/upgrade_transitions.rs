@@ -348,7 +348,7 @@ async fn granite_channel_timeout_enforced() {
     // Encode block into multiple frames (max_frame_size=80 forces multi-frame).
     let mut source = ActionL2Source::new();
     source.push(block.clone());
-    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.encode_only().await;
 
     let frame_count = batcher.pending_count();
@@ -504,7 +504,7 @@ async fn jovian_single_batch_transition_block_deposit_only() {
 
     // Submit each block as a separate SingleBatch channel, one L1 block each.
     // L1 blocks 1–4 each contain one singular batch.
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for block in [block1, block2, block3_invalid, block4] {
         batcher.push_block(block);
         batcher.advance(&mut h.l1).await;

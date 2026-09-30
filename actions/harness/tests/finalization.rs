@@ -32,7 +32,7 @@ async fn finalization_advances_with_multiple_l2_blocks_per_epoch() {
     assert_eq!(sequencer.head().l1_origin.number, 0, "all blocks should be in epoch 0");
 
     // Submit each block in a separate L1 inclusion block.
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for block in blocks {
         batcher.push_block(block);
         batcher.advance(&mut h.l1).await;
@@ -119,7 +119,7 @@ async fn finalization_advances_incrementally_with_l1_epochs() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for block in blocks {
         batcher.push_block(block);
         batcher.advance(&mut h.l1).await;
@@ -176,7 +176,7 @@ async fn finalization_does_not_exceed_safe_head() {
     let block2 = sequencer.build_next_block_with_single_transaction().await;
 
     // Submit each block via the batcher.
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for block in [block1, block2] {
         batcher.push_block(block);
         batcher.advance(&mut h.l1).await;
@@ -234,7 +234,7 @@ async fn finalization_reorg_clears_state() {
     let block2 = sequencer.build_next_block_with_single_transaction().await;
 
     // Submit and mine.
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for block in [block1, block2] {
         batcher.push_block(block);
         batcher.advance(&mut h.l1).await;
@@ -288,7 +288,7 @@ async fn finalization_reorg_clears_state() {
 
     let mut source = ActionL2Source::new();
     source.push(block1_fresh);
-    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.advance(&mut h.l1).await;
 
     // Push the new block to the shared chain.
@@ -350,7 +350,7 @@ async fn finalization_resumes_after_reset_without_new_l1_signal() {
         &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg);
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg);
     for block in [block1, block2] {
         batcher.push_block(block);
         batcher.advance(&mut h.l1).await;
@@ -409,7 +409,7 @@ async fn finalization_does_not_regress() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for block in blocks {
         batcher.push_block(block);
         batcher.advance(&mut h.l1).await;

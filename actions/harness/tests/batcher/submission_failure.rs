@@ -41,7 +41,7 @@ async fn submission_failure_requeues_and_derivation_recovers() {
 
     let mut source = ActionL2Source::new();
     source.push(block);
-    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg);
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg);
 
     // Fail the first submission so the driver must requeue and retry.
     batcher.fail_next_n_submissions(1);
@@ -83,7 +83,7 @@ async fn consecutive_failures_then_success_derives_correctly() {
 
     let mut source = ActionL2Source::new();
     source.push(block);
-    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg);
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg);
 
     // Fail the next three attempts. The driver retries on each failure until
     // the fourth send_async call succeeds and the frame lands in pending.
