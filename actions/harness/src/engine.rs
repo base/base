@@ -1101,8 +1101,16 @@ mod tests {
 
         let genesis = ActionEngineClient::build_genesis_for_rollup(&config);
 
-        assert_eq!(genesis.config.extra_fields["base"]["denim"], serde_json::json!(42));
-        assert_eq!(genesis.config.extra_fields["base"]["everest"], serde_json::json!(42));
-        assert_eq!(genesis.config.extra_fields["base"]["zenith"], serde_json::json!(42));
+        assert_eq!(
+            genesis.config.extra_fields["base"],
+            serde_json::json!({
+                "azul": 42,
+                "beryl": 42,
+                "cobalt": 42,
+                "denim": 42,
+                "everest": 42,
+                "zenith": 42,
+            })
+        );
     }
 }

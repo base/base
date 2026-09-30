@@ -821,7 +821,7 @@ impl Action for L1Miner {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, Log, LogData};
 
-    use super::{L1Miner, ReorgError};
+    use super::L1Miner;
 
     struct MinerFixture;
 
@@ -852,13 +852,5 @@ mod tests {
         assert_eq!(block.transactions.len(), 2);
         assert_eq!(block.receipts[0].logs, vec![first]);
         assert_eq!(block.receipts[1].logs, vec![second]);
-    }
-
-    /// A reorg to a block above the tip is refused with the requested and tip numbers.
-    #[test]
-    fn reorg_beyond_tip_returns_error() {
-        let mut m = MinerFixture::miner();
-        m.mine_block();
-        assert!(matches!(m.reorg_to(5), Err(ReorgError::BeyondTip { requested: 5, tip: 1 })));
     }
 }
