@@ -447,7 +447,7 @@ mod tests {
             config.encoder_config.max_frame_size,
             base_batcher_encoder::EncoderConfig::MAX_BLOB_FRAME_SIZE
         );
-        assert_eq!(config.encoder_config.brotli_level, base_batcher_encoder::BrotliLevel::Brotli9);
+        assert_eq!(config.encoder_config.brotli_level, base_batcher_encoder::BrotliLevel::DEFAULT);
     }
 
     #[test]
@@ -499,16 +499,9 @@ mod tests {
     }
 
     #[test]
-    fn force_blobs_when_throttling_defaults_to_true() {
-        let cli = parse_cli(&[]);
-        let config = cli.into_config(false).expect("config should build");
-        assert!(config.force_blobs_when_throttling);
-    }
-
-    #[test]
-    fn no_force_blobs_when_throttling_flag_inverts_default() {
+    fn no_force_blobs_when_throttling_turns_blob_forcing_off() {
+        assert!(parse_cli(&[]).into_config(false).unwrap().force_blobs_when_throttling);
         let cli = parse_cli(&["--no-force-blobs-when-throttling"]);
-        let config = cli.into_config(false).expect("config should build");
-        assert!(!config.force_blobs_when_throttling);
+        assert!(!cli.into_config(false).unwrap().force_blobs_when_throttling);
     }
 }

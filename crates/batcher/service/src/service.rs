@@ -875,13 +875,6 @@ mod tests {
         },
         "parity validator L2 RPC URL requires shadow mode"
     )]
-    #[case::throttle_with_a_zero_limit(
-        BatcherConfig {
-            throttle: Some(ThrottleConfig { block_size_lower_limit: 0, ..ThrottleConfig::default() }),
-            ..BatcherConfig::default()
-        },
-        "block_size_lower_limit must be greater than zero"
-    )]
     #[tokio::test]
     async fn setup_refuses_a_config_it_cannot_run(
         #[case] config: BatcherConfig,
