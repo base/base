@@ -28,8 +28,8 @@ fn new_rejects_an_invalid_config() {
     ));
 }
 
-/// A block whose parent is not the last accepted block is handed back with the hash the
-/// encoder expected, and the chain goes on from that block.
+/// A block whose parent is not the last accepted block is handed back with the parent hash the
+/// encoder expected, and the chain still extends from the last accepted block.
 #[test]
 fn add_block_rejects_a_block_off_the_buffered_chain() {
     let fixture = EncoderFixture::new(EncoderConfig::default());

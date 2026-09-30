@@ -14,8 +14,8 @@ use crate::common::{
 };
 
 /// The L1 block derivation is processing, for the reconciliations that only move the safe
-/// head. None of them leaves a fully confirmed channel above the safe head, so none can
-/// report a stall, whatever this block.
+/// head. It is never past the inclusion block of a fully confirmed channel above the safe head,
+/// so none of them reports a stall.
 const DERIVATION_L1: u64 = 1;
 
 /// Blocks at or below the safe head are pruned whether or not they were encoded yet, and a
@@ -41,7 +41,8 @@ fn reconcile_prunes_blocks_up_to_the_safe_head() {
     assert_eq!(encoder.da_backlog_bytes(), 0);
 }
 
-/// A block added after a prune is encoded, so the prune leaves no gap in the batches.
+/// A prune inside a channel shifts the buffered blocks, and the next block added is still
+/// encoded, alone, so the L2 chain on L1 has no gap and no repeat.
 #[test]
 fn a_block_added_after_a_prune_is_encoded() {
     let fixture = EncoderFixture::new(EncoderConfig::default());
@@ -254,8 +255,8 @@ fn reconcile_reports_a_confirmed_channel_derivation_skipped() {
     );
 }
 
-/// A blob shared by a pruned channel and the next one keeps serving the next one. Its retry
-/// carries the same frames, and derivation reads both channels from what landed.
+/// A blob shared by a pruned channel and the next one is still retried for the next one, with
+/// the same frames, pruned tail included, and derivation reads both channels from what landed.
 #[test]
 fn shared_blob_keeps_serving_the_remaining_channel_after_a_prune() {
     let config = EncoderConfig { compressed_size_target: Some(1), ..EncoderConfig::default() };

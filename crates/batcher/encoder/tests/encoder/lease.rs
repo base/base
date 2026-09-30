@@ -7,8 +7,8 @@ use crate::common::{
     BlockFixture, EncoderFixture, MULTI_FRAME_PAYLOAD, SMALL_FRAME_SIZE, SubmissionFixture,
 };
 
-/// Requeued submissions come back with their own frames under new ids, in the order they were
-/// produced, whatever the requeue order.
+/// Two submissions requeued newest first come back oldest first, each with exactly its own
+/// frames, the older one under a new id.
 #[test]
 fn requeued_submissions_resend_their_frames_in_production_order() {
     let config = EncoderConfig {
@@ -38,9 +38,10 @@ fn requeued_submissions_resend_their_frames_in_production_order() {
     assert!(encoder.next_submission().is_none());
 }
 
-/// Requeuing one submission does not resend the frames of another that was confirmed.
+/// Requeuing one submission resends exactly its frames, and none from the other submissions of
+/// its channel still in flight.
 #[test]
-fn requeue_does_not_resend_confirmed_frames() {
+fn requeue_resends_only_that_submission() {
     let config = EncoderConfig {
         da_type: DaType::Calldata,
         max_frame_size: SMALL_FRAME_SIZE,
@@ -53,11 +54,10 @@ fn requeue_does_not_resend_confirmed_frames() {
     assert!(submissions.len() > 1, "{} submissions", submissions.len());
 
     encoder.requeue(submissions[0].id);
-    encoder.confirm(submissions[1].id, 1);
 
     let retry = encoder.next_submission().expect("retry");
     assert_eq!(SubmissionFixture::frames(&retry), SubmissionFixture::frames(&submissions[0]));
-    assert!(encoder.next_submission().is_none(), "the confirmed frame is not resent");
+    assert!(encoder.next_submission().is_none(), "no other submission is resent");
 }
 
 /// A reset does not reuse ids, so a confirmation or requeue for a submission issued before the

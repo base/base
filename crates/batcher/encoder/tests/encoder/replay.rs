@@ -11,8 +11,8 @@ use crate::common::{
     SharedBlob, SubmissionFixture, THREE_BLOB_PAYLOAD,
 };
 
-/// A complete channel whose confirmations are more than the timeout apart, in either order,
-/// is replayed, which re-encodes its block under a fresh channel id.
+/// A complete channel whose confirmations are more than the timeout apart, in either order, is
+/// replayed under a fresh channel id, and confirming the replay clears the backlog.
 #[rstest]
 #[case::ascending(1, 4)]
 #[case::descending(100, 90)]
@@ -130,7 +130,7 @@ fn replay_includes_the_channel_sharing_a_blob() {
 }
 
 /// Replaying a channel also replays the channel whose retried blob shares a transaction with
-/// its retried tail, because a transaction lands whole.
+/// its retried tail, because a transaction lands whole. Confirming the replay clears the backlog.
 #[test]
 fn replay_includes_the_channel_sharing_a_transaction() {
     let fixture = EncoderFixture::one_channel_per_block(2);
