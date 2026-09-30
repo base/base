@@ -91,6 +91,7 @@ fn throttle_config(max_intensity: f64) -> Value {
     })
 }
 
+/// `admin_getBatcherStatus` answers with exactly the fields the admin README documents.
 #[tokio::test]
 async fn status_reports_the_driver_state_with_the_documented_fields() {
     let rpc = AdminRpc::start().await;
@@ -167,6 +168,7 @@ async fn throttle_controller_is_set_read_and_reset() {
     );
 }
 
+/// `admin_setLogLevel` answers method-not-found until log levels can be changed at runtime.
 #[tokio::test]
 async fn set_log_level_is_not_supported() {
     let rpc = AdminRpc::start().await;
