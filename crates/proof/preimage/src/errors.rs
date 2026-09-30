@@ -50,6 +50,14 @@ pub enum ChannelError {
     /// Unexpected EOF.
     #[error("Unexpected EOF in channel read operation.")]
     UnexpectedEOF,
+    /// A message does not fit in the provided read buffer.
+    #[error("Message length {message_len} exceeds buffer length {buffer_len}.")]
+    BufferTooSmall {
+        /// Length of the received message in bytes.
+        message_len: usize,
+        /// Length of the provided buffer in bytes.
+        buffer_len: usize,
+    },
 }
 
 /// A [Result] type for the [`ChannelError`] enum.
