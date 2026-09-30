@@ -1,7 +1,7 @@
-//! Recovery of one persistent [`Batcher`] on every fork scheduled on Base mainnet, after a
-//! channel that timed out in derivation, a confirmed batch that derivation passed over, a safe
-//! head that went back, and an unsafe chain the sequencer replaced. Each test ends with
-//! derivation reading what the same batcher resent.
+//! Recovery of one persistent [`Batcher`], with every fork through Cobalt active, after a channel
+//! that timed out in derivation, a confirmed batch that derivation passed over, a safe head that
+//! went back, and an unsafe chain the sequencer replaced. Each test ends with derivation reading
+//! what the same batcher resent.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
@@ -180,8 +180,8 @@ async fn batcher_resends_the_blocks_above_a_safe_head_that_went_back() {
     );
 }
 
-/// When the sequencer replaces an unsafe block the batcher already took, as a new leader
-/// without it would, the batcher starts again from the safe head and sends the new chain,
+/// When the sequencer replaces an unsafe block the batcher already took, as a new leader that
+/// never had it would, the batcher starts again from the safe head and sends the new chain,
 /// which derivation reads.
 #[tokio::test]
 async fn batcher_sends_the_unsafe_chain_that_replaced_the_blocks_it_took() {
