@@ -6,7 +6,7 @@ use alloy_primitives::B256;
 use alloy_signer_local::PrivateKeySigner;
 use base_batcher_core::{
     AdminHandle, BatchDriver, BatchDriverConfig, BatchDriverError, BatchDriverInputs, DaThrottle,
-    NoopThrottleClient, ThrottleController,
+    DerivationStatus, NoopThrottleClient, ThrottleController,
 };
 use base_batcher_encoder::{BatchEncoder, EncoderConfig};
 use base_common_consensus::BaseBlock;
@@ -75,11 +75,11 @@ impl BatcherConfig {
 ///
 /// On construction, `Batcher` spawns a [`BatchDriver`] as a background tokio task backed by
 /// a [`HarnessBlockSource`] polling the L2 chain the test builds, a [`HarnessL1HeadSource`]
-/// for L1 heads, and an admin channel. As in production, the driver owns its encoding
-/// pipeline and transaction manager, runs its own async loop and catches up from the safe
-/// head again after a reset. The test plays the world around it. It pushes L2 blocks with
-/// [`push_block`], and mines L1 blocks and shows them to the driver with
-/// [`observe_l1_block`].
+/// for L1 heads, a derivation-status channel and an admin channel. As in production, the
+/// driver owns its encoding pipeline and transaction manager, runs its own async loop and
+/// catches up from the safe head again after a reset. The test plays the world around it.
+/// It pushes L2 blocks with [`push_block`], mines L1 blocks and shows them to the driver
+/// with [`observe_l1_block`], and reports derivation progress with [`observe_derivation`].
 ///
 /// Every `async` method returns once the driver is idle again, that is once it has taken
 /// what it was given, encoded it, handed the resulting submissions to the tx manager and
@@ -101,6 +101,7 @@ impl BatcherConfig {
 /// [`advance`]: Batcher::advance
 /// [`push_block`]: Batcher::push_block
 /// [`observe_l1_block`]: Batcher::observe_l1_block
+/// [`observe_derivation`]: Batcher::observe_derivation
 /// [`BatchDriver`]: base_batcher_core::BatchDriver
 #[derive(Debug)]
 pub struct Batcher {
@@ -108,6 +109,8 @@ pub struct Batcher {
     chain: SharedL2Chain,
     /// Feeds the driver's L1 head source with mined heads, and with markers.
     l1_head_tx: mpsc::UnboundedSender<L1HeadItem>,
+    /// Feeds the driver with derivation progress.
+    derivation_status_tx: mpsc::Sender<DerivationStatus>,
     /// Admin channel to the driver, used to flush at the end of a cycle.
     admin: AdminHandle,
     /// Shared tx manager — used to stage submissions and fire their receipts.
@@ -196,14 +199,9 @@ impl Batcher {
             },
         );
 
-        // No action test exercises derivation status: the driver task keeps the sender, so
-        // the channel stays open, and silent, for as long as the driver runs.
-        let driver_task = tokio::spawn(async move {
-            let _derivation_status_tx = derivation_status_tx;
-            driver.run().await
-        });
+        let driver_task = tokio::spawn(driver.run());
 
-        Self { chain, l1_head_tx, admin, tx_manager, driver_task }
+        Self { chain, l1_head_tx, derivation_status_tx, admin, tx_manager, driver_task }
     }
 
     /// Make `block` the head of the L2 chain, dropping the blocks at or above its number, as
@@ -318,6 +316,20 @@ impl Batcher {
         // submission is requeued before the head advances.
         self.tx_manager.confirm_block(block);
         self.deliver_l1_head(block.number()).await;
+    }
+
+    /// Report derivation progress to the driver, as the production `DerivationStatusPoller`
+    /// does on each change, and wait until the driver is idle again. By then it has reconciled
+    /// with `status` and, after a reset, caught up from the new safe head. See
+    /// [`TestRollupNode::derivation_status`](crate::TestRollupNode::derivation_status).
+    pub async fn observe_derivation(&self, status: DerivationStatus) {
+        // The channel holds one status and is empty here, because every async method returns once
+        // the driver answered a marker and the driver takes a waiting status before it answers
+        // one. So the send fails only once the driver has exited.
+        self.derivation_status_tx
+            .try_send(status)
+            .unwrap_or_else(|error| panic!("the batch driver did not take the status: {error}"));
+        self.wait_until_idle().await;
     }
 
     /// Simulate an L1 reorg back to `block_number`.
