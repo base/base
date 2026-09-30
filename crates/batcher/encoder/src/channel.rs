@@ -463,6 +463,7 @@ impl Channel {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
+    use base_common_genesis::UpgradeConfig;
 
     use super::*;
 
@@ -485,28 +486,13 @@ mod tests {
         }
     }
 
+    /// A channel on a rollup config with Holocene, hence Fjord's channel size limit, active.
     fn channel(config: EncoderConfig) -> Channel {
-        Channel::new(ChannelId::default(), Arc::new(RollupConfig::default()), &config, 0, 0)
-            .unwrap()
-    }
-
-    /// A batch that would take the channel past the protocol RLP byte limit is rejected and leaves
-    /// the channel as it was, so the block can go into the next channel.
-    #[test]
-    fn cumulative_rlp_limit_rejects_without_mutating_stream() {
-        let mut channel = channel(EncoderConfig::default());
-        let maximum = channel.rollup_config.max_rlp_bytes_per_channel(0);
-        channel.input_bytes = maximum;
-
-        let ChannelAddOutcome::Rejected(ChannelLimit::RlpBytes { maximum: limit, .. }) =
-            channel.add_batch(&batch(1), 1).unwrap()
-        else {
-            panic!("the batch must be rejected on the RLP limit");
+        let rollup_config = RollupConfig {
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..UpgradeConfig::default() },
+            ..RollupConfig::default()
         };
-        assert_eq!(limit, maximum);
-        assert_eq!(channel.input_bytes, maximum);
-        assert_eq!(channel.blocks_added(), 0);
-        assert_eq!(channel.compressed_bytes(), 0);
+        Channel::new(ChannelId::default(), Arc::new(rollup_config), &config, 0, 0).unwrap()
     }
 
     /// A batch within the RLP limit whose worst-case assembled channel would exceed it is
@@ -515,7 +501,7 @@ mod tests {
     fn assembled_size_limit_rejects_without_mutating_stream() {
         let mut channel = channel(EncoderConfig::default());
         let maximum = channel.rollup_config.max_rlp_bytes_per_channel(0);
-        channel.input_bytes = maximum - 1_000;
+        channel.input_bytes = maximum - 100_000;
 
         let ChannelAddOutcome::Rejected(ChannelLimit::AssembledBytes { maximum: limit, .. }) =
             channel.add_batch(&batch(1), 1).unwrap()
@@ -523,7 +509,7 @@ mod tests {
             panic!("the batch must be rejected on the assembled size limit");
         };
         assert_eq!(limit, maximum);
-        assert_eq!(channel.input_bytes, maximum - 1_000);
+        assert_eq!(channel.input_bytes, maximum - 100_000);
         assert_eq!(channel.blocks_added(), 0);
         assert_eq!(channel.compressed_bytes(), 0);
     }

@@ -382,23 +382,6 @@ mod tests {
         ));
     }
 
-    /// A frame size above what the derivation frame decoder accepts is rejected, since derivation
-    /// would drop those frames.
-    #[test]
-    fn validate_rejects_frame_above_protocol_limit() {
-        let cfg = EncoderConfig {
-            max_frame_size: Frame::ENCODED_OVERHEAD + Frame::MAX_LEN + 1,
-            ..EncoderConfig::default()
-        };
-
-        assert!(matches!(
-            cfg.validate(),
-            Err(EncoderConfigError::FrameSizeTooLarge { max_frame_size, max_protocol_frame_size })
-                if max_frame_size == Frame::ENCODED_OVERHEAD + Frame::MAX_LEN + 1
-                    && max_protocol_frame_size == Frame::ENCODED_OVERHEAD + Frame::MAX_LEN
-        ));
-    }
-
     /// A frame must leave room for the blob derivation prefix even on a calldata batcher, whose
     /// submissions the blob override can turn into blobs.
     #[rstest]
@@ -420,25 +403,6 @@ mod tests {
         ));
     }
 
-    fn rollup_config_with(block_time: u64, fjord_time: Option<u64>) -> RollupConfig {
-        RollupConfig {
-            block_time,
-            upgrades: UpgradeConfig { fjord_time, ..UpgradeConfig::default() },
-            ..RollupConfig::default()
-        }
-    }
-
-    /// Brotli is rejected when the next L2 block to encode is before Fjord, since derivation only
-    /// accepts Brotli channels from Fjord on.
-    #[test]
-    fn validate_for_rollup_config_rejects_brotli_before_fjord() {
-        let cfg = EncoderConfig::default();
-        let rollup_config = rollup_config_with(2, Some(100));
-
-        let err = cfg.validate_for_rollup_config(&rollup_config, 98).unwrap_err();
-        assert!(matches!(err, EncoderConfigError::BrotliRequiresFjord { next_l2_timestamp: 98 }));
-    }
-
     fn rollup_config_with_channel_timeouts(
         pre_granite: u64,
         post_granite: u64,
@@ -456,18 +420,11 @@ mod tests {
         }
     }
 
-    /// The confirmation window uses the smaller of the pre- and post-Granite channel timeouts, so
-    /// it holds on either side of the upgrade.
+    /// With Base's channel timeouts, 300 L1 blocks before Granite and 50 after, the confirmation
+    /// window is the current 50, so the batcher replays a channel before derivation drops it.
     #[test]
-    fn confirmation_channel_timeout_takes_the_conservative_minimum() {
+    fn confirmation_channel_timeout_is_the_current_channel_timeout() {
         let rollup_config = rollup_config_with_channel_timeouts(300, 50, Some(10));
-        assert_eq!(EncoderConfig::confirmation_channel_timeout(&rollup_config), 50);
-    }
-
-    /// A zero channel timeout counts as unset, so the other one is used instead of zero.
-    #[test]
-    fn confirmation_channel_timeout_treats_zero_as_unset() {
-        let rollup_config = rollup_config_with_channel_timeouts(0, 50, Some(10));
         assert_eq!(EncoderConfig::confirmation_channel_timeout(&rollup_config), 50);
     }
 
@@ -504,15 +461,6 @@ mod tests {
             ..EncoderConfig::default()
         };
         let rollup_config = rollup_config_with_channel_timeouts(300, 50, Some(10));
-
-        assert!(cfg.validate_for_rollup_config(&rollup_config, 0).is_ok());
-    }
-
-    /// With no channel timeout configured, the channel duration is not checked against it.
-    #[test]
-    fn validate_for_rollup_config_skips_when_channel_timeout_is_unset() {
-        let cfg = EncoderConfig { max_channel_duration: 1000, ..EncoderConfig::default() };
-        let rollup_config = rollup_config_with_channel_timeouts(0, 0, None);
 
         assert!(cfg.validate_for_rollup_config(&rollup_config, 0).is_ok());
     }

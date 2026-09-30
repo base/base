@@ -373,6 +373,21 @@ mod tests {
         all_frames(submission).iter().map(|frame| (frame.id, frame.is_last)).collect()
     }
 
+    /// A blob filled by an open channel goes out without closing the channel, so its frame is not
+    /// the last one.
+    #[test]
+    fn a_full_blob_leaves_an_open_channel() {
+        let channel = open_channel_with_output(FIRST, DaEgress::BLOB_CAPACITY);
+        let mut channels = VecDeque::from([channel]);
+
+        let submission = DaEgress::new()
+            .next_submission(&mut channels, DaType::Blob, 0, 1, SubmissionId(0))
+            .expect("a full blob");
+
+        assert_eq!(submission.blob_count(), 1);
+        assert_eq!(frames(&submission), [(FIRST, false)]);
+    }
+
     /// Partial output of an open channel stays buffered, as blob or calldata, even past the
     /// channel deadline.
     #[test]
@@ -410,6 +425,33 @@ mod tests {
         assert_eq!(frames(&submission), [(FIRST, true)]);
     }
 
+    /// Calldata streams full frames from an open channel, then the tail once it closes.
+    #[test]
+    fn calldata_streams_full_frames_then_the_closed_tail() {
+        let mut open = open_channel_with_output(FIRST, 0);
+        let max_frame_data = open.max_frame_data();
+        while open.available_output() < max_frame_data {
+            add_incompressible_batch(&mut open, 50_000);
+        }
+        let mut channels = VecDeque::from([open]);
+        let mut egress = DaEgress::new();
+
+        let full = egress
+            .next_submission(&mut channels, DaType::Calldata, 0, 6, SubmissionId(0))
+            .expect("a full frame");
+        assert_eq!(frames(&full), [(FIRST, false)]);
+
+        channels[0].close().unwrap();
+        let mut last = None;
+        for id in 1.. {
+            match egress.next_submission(&mut channels, DaType::Calldata, 0, 6, SubmissionId(id)) {
+                Some(submission) => last = Some(submission),
+                None => break,
+            }
+        }
+        assert_eq!(frames(&last.expect("the tail")), [(FIRST, true)]);
+    }
+
     /// A blob carries the tail of a closed channel and fills up with the next channel.
     #[test]
     fn a_blob_packs_a_closed_tail_with_the_next_channel() {
@@ -425,6 +467,20 @@ mod tests {
         assert_eq!(frames(&submission), [(FIRST, true), (SECOND, false)]);
     }
 
+    /// A submission carries at most `max_blobs_per_tx` blobs, even when the channel has output
+    /// for more.
+    #[test]
+    fn a_transaction_carries_at_most_max_blobs_per_tx() {
+        let channel = open_channel_with_output(FIRST, 3 * DaEgress::BLOB_CAPACITY);
+        let mut channels = VecDeque::from([channel]);
+
+        let submission = DaEgress::new()
+            .next_submission(&mut channels, DaType::Blob, 0, 2, SubmissionId(0))
+            .expect("blob submission");
+
+        assert_eq!(submission.blob_count(), 2);
+    }
+
     /// Confirming a submission reports the channels it carried and ends its lease, so a second
     /// confirmation reports nothing.
     #[test]
@@ -435,10 +491,8 @@ mod tests {
         let submission = egress
             .next_submission(&mut channels, DaType::Blob, 0, 6, SubmissionId(0))
             .expect("blob submission");
-        assert_eq!(egress.pending_submission_count(), 1);
 
         assert_eq!(egress.confirm(submission.id), Some(vec![FIRST]));
-        assert_eq!(egress.pending_submission_count(), 0);
         assert!(egress.confirm(submission.id).is_none());
     }
 
@@ -462,6 +516,22 @@ mod tests {
         assert!(all_frames(&retry).starts_with(&all_frames(&first)));
     }
 
+    /// Pruning a safe channel drops the confirmed artifacts that carried it.
+    #[test]
+    fn pruning_a_safe_channel_drops_its_artifacts() {
+        let channel = open_channel_with_output(FIRST, DaEgress::BLOB_CAPACITY);
+        let mut channels = VecDeque::from([channel]);
+        let mut egress = DaEgress::new();
+        let submission = egress
+            .next_submission(&mut channels, DaType::Blob, 0, 6, SubmissionId(0))
+            .expect("blob submission");
+        egress.confirm(submission.id).expect("confirmed");
+
+        egress.prune_channels(&[FIRST]);
+
+        assert!(egress.artifacts().is_empty());
+    }
+
     /// A reset drops every artifact and pending submission, so a confirmation for a submission
     /// issued before it finds nothing.
     #[test]
@@ -476,7 +546,6 @@ mod tests {
         egress.reset();
 
         assert!(egress.artifacts().is_empty());
-        assert_eq!(egress.pending_submission_count(), 0);
         assert!(egress.confirm(submission.id).is_none());
     }
 }

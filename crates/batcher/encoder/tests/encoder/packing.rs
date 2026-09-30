@@ -19,6 +19,20 @@ fn transactions_carry_up_to_max_blobs_per_tx() {
     assert_eq!(counts, [2, 1]);
 }
 
+/// The blob override only moves a calldata encoder to blobs. A blob encoder, the default,
+/// keeps sending blobs while the driver holds the override on during throttling.
+#[test]
+fn blob_override_keeps_a_blob_encoder_on_blobs() {
+    let fixture = EncoderFixture::new(EncoderConfig::default());
+    let mut encoder = fixture.encoder();
+    encoder.set_blob_override(true);
+    encoder.add_block(BlockFixture::block(B256::ZERO, 1, 0)).unwrap();
+
+    let [submission] = <[_; 1]>::try_from(encoder.encode_and_drain().unwrap()).unwrap();
+
+    assert_eq!(submission.da_type(), DaType::Blob);
+}
+
 /// Retries go out in the order their data was built, across DA types. With the blob override
 /// on, off and on again, the third block's blob is not packed with the first one ahead of the
 /// calldata between them, which would land the third block before the second on L1.
