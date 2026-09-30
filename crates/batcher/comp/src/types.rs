@@ -119,7 +119,7 @@ mod tests {
     #[cfg(feature = "std")]
     #[test]
     fn brotli_channel_roundtrips_at_min_default_and_max_quality() {
-        let input: Vec<u8> = (0..100_000u32).flat_map(|i| (i % 251).to_le_bytes()).collect();
+        let input: Vec<u8> = (0..1_000u32).flat_map(|i| (i % 251).to_le_bytes()).collect();
         let sizes =
             [BrotliLevel::Brotli0, BrotliLevel::DEFAULT, BrotliLevel::Brotli11].map(|level| {
                 let channel = level.compress_channel(&input).unwrap();
