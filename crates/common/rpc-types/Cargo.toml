@@ -102,7 +102,13 @@ serde = [
 	"revm?/serde",
 ]
 network = [ "dep:alloy-network" ]
-eip8130 = [ "dep:alloy-evm", "dep:base-common-evm", "dep:revm", "dep:thiserror", "std" ]
+eip8130 = [
+	"dep:alloy-evm",
+	"dep:base-common-evm",
+	"dep:revm",
+	"dep:thiserror",
+	"std",
+]
 reth = [
 	"dep:alloy-signer",
 	"dep:reth-primitives-traits",
