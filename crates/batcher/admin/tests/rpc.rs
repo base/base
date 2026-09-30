@@ -8,7 +8,7 @@ use std::{
 
 use base_batcher_admin::AdminServer;
 use base_batcher_core::{
-    BatchDriverError, DaThrottle, ThrottleController,
+    BatchDriverError, DaThrottle, ThrottleConfig, ThrottleController,
     test_utils::{
         DriverFixture, DriverHandles, Recorded, ScriptedTxManager, ThrottleCallLog,
         TrackingPipeline, TrackingThrottleClient,
@@ -162,10 +162,9 @@ async fn throttle_controller_is_set_read_and_reset() {
     // The driver serves the next command after the pass that pushes the reset limits.
     let _: Value = rpc.client.request("admin_getBatcherStatus", rpc_params![]).await.unwrap();
     // The upper limits of the disabled controller at startup, then the step limits twice.
-    assert_eq!(
-        *rpc.throttle_pushes.lock().unwrap(),
-        [(20_000, 130_000), (5_100, 51_500), (5_100, 51_500)]
-    );
+    let defaults = ThrottleConfig::default();
+    let upper = (defaults.tx_size_upper_limit, defaults.block_size_upper_limit);
+    assert_eq!(*rpc.throttle_pushes.lock().unwrap(), [upper, (5_100, 51_500), (5_100, 51_500)]);
 }
 
 /// `admin_setLogLevel` answers method-not-found until log levels can be changed at runtime.
