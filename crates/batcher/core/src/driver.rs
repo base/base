@@ -697,6 +697,22 @@ mod tests {
         });
     }
 
+    /// A fatal encoding error halts the driver instead of being skipped.
+    #[test]
+    fn run_halts_on_a_fatal_step_error() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let pipeline =
+                TrackingPipeline::new().with_step_error(StepError::BlockExceedsChannelLimit {
+                    cursor: 0,
+                    limit: ChannelLimit::RlpBytes { required: 1, maximum: 0 },
+                });
+            let (driver, _handles) =
+                DriverFixture::new(ctx, pipeline, ScriptedTxManager::confirming_at(1)).build();
+
+            assert!(matches!(driver.run().await, Err(BatchDriverError::Step(_))));
+        });
+    }
+
     // Encoding runs in slices of `STEP_BUDGET` steps. The tests below check what happens
     // between two slices.
 
@@ -762,22 +778,6 @@ mod tests {
 
             let encoded = recorded.lock().unwrap().encoded_steps();
             assert!(encoded < 3 * STEP_BUDGET, "the stop must not wait for the whole backlog");
-        });
-    }
-
-    /// A fatal encoding error halts the driver instead of being skipped.
-    #[test]
-    fn run_halts_on_a_fatal_step_error() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let pipeline =
-                TrackingPipeline::new().with_step_error(StepError::BlockExceedsChannelLimit {
-                    cursor: 0,
-                    limit: ChannelLimit::RlpBytes { required: 1, maximum: 0 },
-                });
-            let (driver, _handles) =
-                DriverFixture::new(ctx, pipeline, ScriptedTxManager::confirming_at(1)).build();
-
-            assert!(matches!(driver.run().await, Err(BatchDriverError::Step(_))));
         });
     }
 

@@ -20,7 +20,7 @@ use base_runtime::{
     deterministic::{Config, Runner},
 };
 
-/// A backlog above the threshold pushes the lower limits and forces blob submissions. Once the
+/// A backlog at twice the threshold pushes the lower limits and forces blob submissions. Once the
 /// backlog is gone, the upper limits are pushed back and blobs are no longer forced.
 #[test]
 fn test_throttle_transitions_from_active_to_inactive() {
@@ -44,7 +44,7 @@ fn test_throttle_transitions_from_active_to_inactive() {
                 .build();
         let handle = ctx.spawn(driver.run());
 
-        // First iteration fires immediately on startup; give it time to complete.
+        // The first iteration runs at startup, so give it time to complete.
         ctx.sleep(Duration::from_millis(30)).await;
         assert!(blob_override.load(Ordering::SeqCst), "throttling forces blobs");
 
