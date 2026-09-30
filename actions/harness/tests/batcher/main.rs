@@ -4,6 +4,7 @@ mod blobs;
 mod channels;
 mod gap_filling;
 mod production_da;
+mod recovery;
 mod sequencer_drift;
 mod submission;
 mod submission_failure;
