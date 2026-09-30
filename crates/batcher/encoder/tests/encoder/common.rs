@@ -123,7 +123,8 @@ impl OpenChannel {
         let blocks = BlockFixture::chain(Self::MAX_BLOCKS, MULTI_BLOB_PAYLOAD);
         let mut added = 0;
         let first = loop {
-            encoder.add_block(blocks[added].clone()).unwrap();
+            let block = blocks.get(added).expect("the channel releases output within MAX_BLOCKS");
+            encoder.add_block(block.clone()).unwrap();
             assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
             added += 1;
             if let Some(first) = encoder.next_submission() {
