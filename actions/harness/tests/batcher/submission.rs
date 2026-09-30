@@ -93,7 +93,7 @@ async fn batcher_soft_channel_target_derives_exact_blocks() {
 ///
 /// Sequence:
 /// 1. Encode and stage all frames; mine L1 block 1 (original).
-/// 2. Reorg to genesis **before** calling `observe_l1_block` — frames are still
+/// 2. Reorg to genesis **before** calling `observe_l1_block`. The frames are still
 ///    in `staged`, so `reorg_to` fires `Err(TxManagerError::Rpc("reorg"))` on
 ///    each oneshot responder.
 /// 3. The driver handles each failed receipt: `pipeline.requeue(id)` rewinds the
@@ -124,7 +124,7 @@ async fn batcher_reorg_during_submission() {
     );
 
     // Encode and stage all frames; mine L1 block 1 (original).
-    // Do NOT call observe_l1_block — frames remain in `staged` so the reorg
+    // Do NOT call observe_l1_block, so the frames remain in `staged` and the reorg
     // below fires failure receipts for them.
     let mut source = ActionL2Source::new();
     source.push(block);
