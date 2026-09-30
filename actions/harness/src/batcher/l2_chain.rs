@@ -42,7 +42,7 @@ impl SharedL2Chain {
             blocks.retain(|kept| kept.header.number < block.header.number);
             blocks.push(block);
         }
-        // Wake the source only once the lock is released, so it can read the new block.
+        // Wake the source after the guard drops, so it does not block on the lock.
         self.pushes.send_modify(|pushes| *pushes += 1);
     }
 }
@@ -152,34 +152,36 @@ mod tests {
         assert!(matches!(source.next().await, L2BlockEvent::Block(block) if *block == second));
     }
 
-    /// A block pushed at a height the chain already has replaces it and every block above. The
-    /// source reports a reorg, and after a reset to genesis delivers the new chain.
+    /// A block pushed at a height the chain already has replaces it and drops every block above,
+    /// so after a reset the source delivers the new chain and nothing of the old one.
     #[tokio::test]
     async fn a_fork_replaces_the_blocks_above_it_and_is_delivered_after_a_reset() {
         let chain = SharedL2Chain::new();
         let genesis = BlockInfo::default();
         let mut source = HarnessBlockSource::new(&chain, genesis);
         let first = block(1, genesis.hash);
+        let second = block(2, first.header.hash_slow());
         chain.push(first.clone());
-        chain.push(block(2, first.header.hash_slow()));
-        assert!(matches!(source.next().await, L2BlockEvent::Block(_)));
-        assert!(matches!(source.next().await, L2BlockEvent::Block(_)));
+        chain.push(second.clone());
+        chain.push(block(3, second.header.hash_slow()));
+        for _ in 0..3 {
+            assert!(matches!(source.next().await, L2BlockEvent::Block(_)));
+        }
 
         let mut fork = block(2, first.header.hash_slow());
         fork.header.timestamp = 1;
-        let after_fork = block(3, fork.header.hash_slow());
         chain.push(fork.clone());
-        chain.push(after_fork.clone());
 
-        assert!(matches!(source.next().await, L2BlockEvent::Reorg));
         source.reset_catchup(genesis);
         assert!(matches!(source.next().await, L2BlockEvent::Block(block) if *block == first));
         assert!(matches!(source.next().await, L2BlockEvent::Block(block) if *block == fork));
-        assert!(matches!(source.next().await, L2BlockEvent::Block(block) if *block == after_fork));
+        let next = timeout(SETTLE, source.next()).await;
+        assert!(next.is_err(), "the old block 3 must be gone");
     }
 
     /// A chain that does not build on the source's tip is reported as a reorg once. After the
-    /// reset the source waits for the next push instead of reporting the same reorg again.
+    /// reset the source waits for the next push instead of reporting the same reorg again, which
+    /// would reset the driver in a loop.
     #[tokio::test]
     async fn a_reorg_is_reported_once_per_chain_state() {
         let chain = SharedL2Chain::new();
