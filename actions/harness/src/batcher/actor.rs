@@ -326,7 +326,9 @@ impl Batcher {
         // The channel holds one status and is empty here, because every async method returns once
         // the driver answered a marker and the driver takes a waiting status before it answers
         // one. So the send fails only once the driver has exited.
-        self.derivation_status_tx.try_send(status).expect("the batch driver has exited");
+        self.derivation_status_tx
+            .try_send(status)
+            .unwrap_or_else(|error| panic!("the batch driver did not take the status: {error}"));
         self.wait_until_idle().await;
     }
 
