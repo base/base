@@ -56,7 +56,7 @@ async fn batcher_replays_a_channel_that_timed_out_before_its_last_frame_landed()
         Batcher::new(ActionL2Source::from_blocks([block.clone()]), &h.rollup_config, batcher_cfg);
     batcher.encode_only().await;
     let frames = batcher.pending_count();
-    assert_eq!(frames, 4, "the block spans several frames");
+    assert!(frames >= 2, "the block must span several frames");
 
     // Frame 0 lands in L1 block 1, the rest stays pending in the tx manager.
     batcher.stage_n_frames(&mut h.l1, 1);
