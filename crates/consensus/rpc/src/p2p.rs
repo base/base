@@ -146,11 +146,8 @@ impl P2pRpc {
 
     /// Returns whether `peer_id` is among the currently connected peers.
     async fn is_peer_connected(&self, peer_id: &PeerId) -> RpcResult<bool> {
-        let (tx, rx) = oneshot::channel();
-        self.send(P2pRpcRequest::Peers { out: tx, connected: true }).await?;
-        let peers = rx.await.map_err(|_| {
-            ErrorObject::borrowed(ErrorCode::InternalError.code(), "Failed to get peers", None)
-        })?;
+        let peers: PeerDump =
+            self.query(|out| P2pRpcRequest::Peers { out, connected: true }).await?;
         Ok(peers.peers.contains_key(&peer_id.to_string()))
     }
 
