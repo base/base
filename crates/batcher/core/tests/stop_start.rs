@@ -16,8 +16,7 @@ use base_runtime::{
     deterministic::{Config, Runner},
 };
 
-/// `AdminCommand::Stop` must immediately reset the pipeline. Stopping a batcher
-/// that is already stopped succeeds without resetting it again.
+/// A stop resets the pipeline. A second stop succeeds without resetting it again.
 #[test]
 fn test_stop_resets_pipeline() {
     Runner::start(Config::seeded(0), |ctx| async move {
@@ -40,10 +39,9 @@ fn test_stop_resets_pipeline() {
     });
 }
 
-/// `AdminCommand::Start` must reanchor the source at the safe head so it
-/// delivers missed blocks sequentially after that head. Starting a batcher that
-/// is already running must not reanchor it again, which would replay blocks the
-/// pipeline already holds.
+/// A start restarts the source from the safe head, so the blocks missed while stopped arrive in
+/// order. A start on a running batcher does nothing, since restarting the source would replay
+/// blocks the pipeline already holds.
 #[test]
 fn test_start_triggers_catchup_from_safe_head() {
     Runner::start(Config::seeded(0), |ctx| async move {

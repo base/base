@@ -16,9 +16,9 @@ use base_runtime::{
     deterministic::{Config, Runner},
 };
 
-/// A safe head below the one the driver holds, a replacement at the same height, or one the
-/// pipeline reports off its buffered chain, each resets the pipeline and the source. Only the
-/// last one reaches reconciliation.
+/// A lower safe head, a different block at the same height and a safe head missing from the
+/// buffered chain each reset the pipeline and restart the source from the new safe head. The
+/// driver catches the first two itself and sends only the third through reconciliation.
 #[test]
 fn test_safe_head_conflicts_reset_pipeline_and_source() {
     Runner::start(Config::seeded(0), |ctx| async move {
@@ -62,6 +62,9 @@ fn test_safe_head_conflicts_reset_pipeline_and_source() {
     });
 }
 
+/// When derivation moves past a confirmed channel without making its blocks safe, the driver
+/// resets the pipeline and restarts the source from the safe head, so those blocks are batched
+/// again.
 #[test]
 fn test_stalled_channel_resets_pipeline_and_source() {
     Runner::start(Config::seeded(0), |ctx| async move {
@@ -100,6 +103,8 @@ fn test_stalled_channel_resets_pipeline_and_source() {
     });
 }
 
+/// The driver fails when the derivation-status source stops, instead of batching on without
+/// ever learning the safe head again.
 #[test]
 fn test_derivation_status_sender_drop_is_fatal() {
     Runner::start(Config::seeded(0), |ctx| async move {

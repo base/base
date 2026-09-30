@@ -20,8 +20,8 @@ use base_runtime::{
     deterministic::{Config, Runner},
 };
 
-/// When cancellation fires while a submission is in flight and never settles, the drain
-/// timeout must fire and the driver must exit cleanly.
+/// On cancellation, the driver waits exactly the drain timeout for an in-flight submission that
+/// never settles, then exits cleanly.
 #[test]
 fn test_drain_timeout_exits_with_in_flight_submissions() {
     Runner::start(Config::seeded(0), |ctx| async move {
@@ -53,7 +53,7 @@ fn test_drain_timeout_exits_with_in_flight_submissions() {
     });
 }
 
-/// A flush error on shutdown must not skip the in-flight receipt drain.
+/// A flush error on shutdown is returned only after the in-flight submissions are drained.
 #[test]
 fn test_shutdown_drains_in_flight_before_returning_flush_error() {
     Runner::start(Config::seeded(0), |ctx| async move {

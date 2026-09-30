@@ -182,7 +182,7 @@ impl ThrottleController {
     /// Update with current DA backlog bytes.
     ///
     /// Returns [`ThrottleParams`] if throttling should be applied, or `None`
-    /// if the backlog is below the threshold, the computed intensity is zero or the
+    /// if the backlog is below the threshold, the linear intensity is zero or the
     /// strategy is [`ThrottleStrategy::Off`].
     pub fn update(&self, da_backlog_bytes: u64) -> Option<ThrottleParams> {
         match &self.strategy {
@@ -372,6 +372,8 @@ mod tests {
         );
     }
 
+    /// A config is valid when the intensity is within [0, 1], both lower limits are above zero
+    /// and each lower limit is at most its upper limit. Otherwise the error names the broken rule.
     #[rstest]
     #[case::default(ThrottleConfig::default(), Ok(()))]
     #[case::equal_limits(

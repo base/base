@@ -505,7 +505,8 @@ mod tests {
         });
     }
 
-    /// A fatal encoding error halts the driver instead of being skipped.
+    /// A fatal encoding error stops the driver with that error, instead of dropping the block and
+    /// leaving a gap in the L2 chain posted to L1.
     #[test]
     fn run_halts_on_a_fatal_step_error() {
         Runner::start(Config::seeded(0), |ctx| async move {
@@ -528,6 +529,8 @@ mod tests {
     // ready at once and checks which one the driver serves first. Every call log ends with the
     // shutdown flush.
 
+    /// A cancelled driver shuts down without serving the admin flush, block and L1 head already
+    /// waiting, and the flush call fails.
     #[test]
     fn run_prioritizes_cancellation_over_ready_admin() {
         Runner::start(Config::seeded(0), |ctx| async move {
@@ -554,9 +557,9 @@ mod tests {
         });
     }
 
-    /// The derivation-status poller shares the driver's cancellation and drops its sender when
-    /// it exits, so at the first wait after a cancellation the closed channel may already be
-    /// ready too. A graceful shutdown must not end in `DerivationStatusSourceClosed`.
+    /// On cancellation the derivation-status poller exits too and closes its channel, so the
+    /// driver can see both at once. It must shut down cleanly, not fail with
+    /// `DerivationStatusSourceClosed`.
     #[test]
     fn run_prioritizes_cancellation_over_closed_derivation_status() {
         Runner::start(Config::seeded(0), |ctx| async move {
@@ -573,6 +576,8 @@ mod tests {
         });
     }
 
+    /// A ready admin command is served before a ready L2 block, so a steady block stream cannot
+    /// hold back a stop, start or flush.
     #[test]
     fn run_prioritizes_admin_before_source() {
         Runner::start(Config::seeded(0), |ctx| async move {
@@ -603,50 +608,18 @@ mod tests {
         });
     }
 
+    /// A new safe head, a receipt, an L2 block and an L1 head ready at once are served in that
+    /// order. The safe head goes first so pruning and reorg recovery are not held back by a
+    /// stream of blocks to encode.
     #[test]
-    fn run_prioritizes_receipts_before_source_and_heads() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let mut pipeline = TrackingPipeline::new();
-            let recorded = pipeline.recorded();
-            // Submitted by the first CPU phase, so its receipt is ready at the first wait.
-            pipeline.submissions.push_back(SubmissionStub::stub());
-            let (source, l1_head_source) = queued_sources([1], [9]);
-            let (driver, _handles) =
-                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
-                    .source(source)
-                    .l1_head_source(l1_head_source)
-                    .build();
-
-            let handle = ctx.spawn(driver.run());
-            ctx.sleep(Duration::from_millis(10)).await;
-            ctx.cancel();
-            assert!(handle.await.unwrap().is_ok());
-
-            // The receipt confirms at L1 block 1 before the L1 head source's head 9 arrives. The
-            // other way round, head 1 would not advance past 9.
-            assert_eq!(
-                recorded.lock().unwrap().calls,
-                [
-                    PipelineCall::Dequeue(SubmissionId(0)),
-                    PipelineCall::Confirm(SubmissionId(0), 1),
-                    PipelineCall::AdvanceL1Head(1),
-                    PipelineCall::AddBlock(1),
-                    PipelineCall::AdvanceL1Head(9),
-                    PipelineCall::Flush,
-                ]
-            );
-        });
-    }
-
-    #[test]
-    fn run_prioritizes_derivation_status_before_source_and_receipts() {
+    fn run_serves_derivation_status_receipts_blocks_then_heads() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let mut pipeline = TrackingPipeline::new();
             let recorded = pipeline.recorded();
             pipeline.submissions.push_back(SubmissionStub::stub());
-            let (source, l1_head_source) = queued_sources([6], []);
+            let (source, l1_head_source) = queued_sources([6], [9]);
             let (driver, handles) =
-                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(42))
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
                     .source(source)
                     .l1_head_source(l1_head_source)
                     .build();
@@ -669,17 +642,18 @@ mod tests {
                 [
                     PipelineCall::Dequeue(SubmissionId(0)),
                     PipelineCall::ReconcileDerivation { safe_l2: 5, current_l1: 1 },
-                    PipelineCall::Confirm(SubmissionId(0), 42),
-                    PipelineCall::AdvanceL1Head(42),
+                    PipelineCall::Confirm(SubmissionId(0), 1),
+                    PipelineCall::AdvanceL1Head(1),
                     PipelineCall::AddBlock(6),
+                    PipelineCall::AdvanceL1Head(9),
                     PipelineCall::Flush,
                 ]
             );
         });
     }
 
-    /// A failed submission is resent before anything a block releases, even when both are
-    /// ready at the same wait.
+    /// A failed submission is resent before any submission a new block releases, even when the
+    /// failure and the block arrive together.
     #[test]
     fn run_resends_a_failed_submission_before_a_block_releases_newer_ones() {
         Runner::start(Config::seeded(0), |ctx| async move {
