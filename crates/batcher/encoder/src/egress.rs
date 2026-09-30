@@ -302,18 +302,23 @@ impl DaEgress {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{B256, Bytes};
-    use base_common_genesis::RollupConfig;
+    use base_common_genesis::{RollupConfig, UpgradeConfig};
     use base_protocol::SingleBatch;
 
     use super::*;
-    use crate::{ChannelAddOutcome, EncoderConfig, SubmissionPayload};
+    use crate::{ChannelAddOutcome, DaArtifact, EncoderConfig, SubmissionPayload};
 
     const FIRST: ChannelId = [1; 16];
     const SECOND: ChannelId = [2; 16];
 
+    /// A channel opened at L1 head 0 on a rollup config with Holocene active.
     fn channel(id: ChannelId, max_channel_duration: u64) -> Channel {
         let config = EncoderConfig { max_channel_duration, ..EncoderConfig::default() };
-        Channel::new(id, Arc::new(RollupConfig::default()), &config, 0, 0).unwrap()
+        let rollup_config = RollupConfig {
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..UpgradeConfig::default() },
+            ..RollupConfig::default()
+        };
+        Channel::new(id, Arc::new(rollup_config), &config, 0, 0).unwrap()
     }
 
     /// Adds a batch of `transaction_len` random bytes, which Brotli cannot shrink.
@@ -395,6 +400,7 @@ mod tests {
         let mut open = channel(FIRST, 1);
         add_incompressible_batch(&mut open, 50_000);
         let buffered = open.available_output();
+        assert!(buffered > 0 && buffered < open.max_frame_data());
         let mut channels = VecDeque::from([open]);
         let mut egress = DaEgress::new();
 
@@ -428,7 +434,7 @@ mod tests {
     /// Calldata streams full frames from an open channel, then the tail once it closes.
     #[test]
     fn calldata_streams_full_frames_then_the_closed_tail() {
-        let mut open = open_channel_with_output(FIRST, 0);
+        let mut open = channel(FIRST, 10);
         let max_frame_data = open.max_frame_data();
         while open.available_output() < max_frame_data {
             add_incompressible_batch(&mut open, 50_000);
@@ -494,6 +500,82 @@ mod tests {
 
         assert_eq!(egress.confirm(submission.id), Some(vec![FIRST]));
         assert!(egress.confirm(submission.id).is_none());
+    }
+
+    /// A replay that reaches one artifact of an in-flight submission takes every artifact of that
+    /// submission, since its transaction lands or fails whole. A confirmed submission ties
+    /// nothing together.
+    #[test]
+    fn an_in_flight_submission_is_replayed_whole() {
+        let channel = open_channel_with_output(FIRST, 2 * DaEgress::BLOB_CAPACITY);
+        let mut channels = VecDeque::from([channel]);
+        let mut egress = DaEgress::new();
+        let submission = egress
+            .next_submission(&mut channels, DaType::Blob, 0, 2, SubmissionId(0))
+            .expect("two full blobs");
+        let leased: Vec<_> = egress.artifacts().into_iter().map(DaArtifact::id).collect();
+        assert_eq!(leased.len(), 2);
+
+        let mut affected = vec![leased[0]];
+        egress.extend_with_submission_artifacts(&mut affected);
+        assert_eq!(affected, leased);
+
+        egress.confirm(submission.id).expect("confirmed");
+        let mut affected = vec![leased[0]];
+        egress.extend_with_submission_artifacts(&mut affected);
+        assert_eq!(affected, [leased[0]]);
+    }
+
+    /// Invalidated artifacts leave the ledger with their submission, so a late requeue or
+    /// confirmation of it does nothing.
+    #[test]
+    fn invalidated_artifacts_take_their_submission_with_them() {
+        let channel = open_channel_with_output(FIRST, DaEgress::BLOB_CAPACITY);
+        let mut channels = VecDeque::from([channel]);
+        let mut egress = DaEgress::new();
+        let submission = egress
+            .next_submission(&mut channels, DaType::Blob, 0, 6, SubmissionId(0))
+            .expect("a full blob");
+        let leased: Vec<_> = egress.artifacts().into_iter().map(DaArtifact::id).collect();
+
+        egress.invalidate_artifacts(&leased);
+
+        assert!(egress.artifacts().is_empty());
+        assert!(egress.requeue(submission.id).is_none());
+        assert!(egress.confirm(submission.id).is_none());
+    }
+
+    /// A channel is fully confirmed only once its last frame went out and every artifact carrying
+    /// it is confirmed, so confirming the blobs of a channel still open is not enough.
+    #[test]
+    fn a_channel_is_fully_confirmed_once_its_last_frame_is() {
+        let channel = open_channel_with_output(FIRST, DaEgress::BLOB_CAPACITY);
+        let mut channels = VecDeque::from([channel]);
+        let mut egress = DaEgress::new();
+        let full = egress
+            .next_submission(&mut channels, DaType::Blob, 0, 6, SubmissionId(0))
+            .expect("a full blob");
+        egress.confirm(full.id).expect("confirmed");
+        assert!(!egress.channel_fully_confirmed(&channels[0]));
+
+        channels[0].close().unwrap();
+        let mut rest = Vec::new();
+        while let Some(submission) = egress.next_submission(
+            &mut channels,
+            DaType::Blob,
+            10,
+            6,
+            SubmissionId(rest.len() as u64 + 1),
+        ) {
+            rest.push(submission);
+        }
+        let last = rest.pop().expect("the tail at the channel deadline");
+        for submission in rest {
+            egress.confirm(submission.id).expect("confirmed");
+        }
+        assert!(!egress.channel_fully_confirmed(&channels[0]));
+        egress.confirm(last.id).expect("confirmed");
+        assert!(egress.channel_fully_confirmed(&channels[0]));
     }
 
     /// Requeuing a submission returns its frame count once, and its frames go out again ahead of
