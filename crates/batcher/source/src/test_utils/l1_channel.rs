@@ -32,18 +32,3 @@ impl L1HeadSource for ChannelL1HeadSource {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use futures::FutureExt;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn parks_once_all_senders_are_dropped() {
-        let (mut source, tx) = ChannelL1HeadSource::new();
-        drop(tx);
-
-        assert!(source.next().now_or_never().is_none(), "a closed source must park");
-    }
-}

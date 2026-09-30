@@ -806,6 +806,7 @@ mod tests {
             .await
     }
 
+    /// A startup RPC read is retried until it succeeds.
     #[tokio::test]
     async fn rpc_retry_succeeds_after_transient_failure() {
         let attempts = AtomicU8::new(0);
@@ -819,6 +820,7 @@ mod tests {
         assert_eq!(attempts.load(Ordering::SeqCst), 3);
     }
 
+    /// A startup RPC read that keeps failing gives up at its timeout, naming the operation.
     #[tokio::test]
     async fn rpc_retry_times_out_while_failing() {
         let error = BatcherService::rpc_retry(
@@ -859,6 +861,13 @@ mod tests {
     #[case::no_rollup_rpc_endpoint(
         BatcherConfig { rollup_rpc_url: Vec::new(), ..BatcherConfig::default() },
         "at least one rollup RPC endpoint is required"
+    )]
+    #[case::invalid_throttle(
+        BatcherConfig {
+            throttle: Some(ThrottleConfig { block_size_lower_limit: 0, ..ThrottleConfig::default() }),
+            ..BatcherConfig::default()
+        },
+        "block_size_lower_limit must be greater than zero"
     )]
     #[case::recent_txs_without_node_sync(
         BatcherConfig { check_recent_txs_depth: 1, ..BatcherConfig::default() },
@@ -919,6 +928,8 @@ mod tests {
         assert_eq!(result.map_err(|error| error.to_string()), expected.map_err(String::from));
     }
 
+    /// Setup refuses a signer the L1 `SystemConfig` does not authorize, since derivation would
+    /// ignore its batches.
     #[tokio::test]
     async fn setup_rejects_a_signer_the_system_config_does_not_authorize() {
         let server = MockServer::start_async().await;
@@ -939,6 +950,7 @@ mod tests {
         );
     }
 
+    /// Setup goes past the batcher check when the signer is the one the `SystemConfig` authorizes.
     #[tokio::test]
     async fn setup_accepts_the_signer_the_system_config_authorizes() {
         let server = MockServer::start_async().await;
@@ -954,6 +966,8 @@ mod tests {
         assert!(l1_head.calls_async().await > 0, "setup must go past the check");
     }
 
+    /// A shadow batcher posts to its own inbox, so setup does not check its signer against the
+    /// `SystemConfig`.
     #[tokio::test]
     async fn setup_skips_the_batcher_check_in_shadow_mode() {
         let server = MockServer::start_async().await;
@@ -973,6 +987,8 @@ mod tests {
         batcher_hash.assert_calls_async(0).await;
     }
 
+    /// The L1 head stream keeps its WebSocket provider alive after the builder returns, so new L1
+    /// heads keep arriving.
     #[tokio::test]
     async fn l1_head_stream_outlives_its_builder() {
         let anvil = Anvil::new().spawn();

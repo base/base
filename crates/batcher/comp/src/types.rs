@@ -136,6 +136,7 @@ mod tests {
         assert!(sizes[2] < sizes[0], "quality 11 must compress smaller than quality 0: {sizes:?}");
     }
 
+    /// Qualities 0 to 11 each map to their Brotli level and back, and 12 is refused.
     #[test]
     fn brotli_levels_cover_the_full_encoder_range() {
         let levels = [

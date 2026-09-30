@@ -462,6 +462,7 @@ mod tests {
         }
     }
 
+    /// Blocks both nodes agree on count as matches, and the monitor moves past them.
     #[tokio::test]
     async fn process_once_records_matching_blocks() {
         let blocks = [snapshot(1, 1, &[10]), snapshot(2, 2, &[20])];
@@ -475,6 +476,8 @@ mod tests {
         assert_eq!(monitor.next_block, 3);
     }
 
+    /// A fetch error ends the pass but keeps the progress made before it, so the next pass resumes
+    /// at the block that failed.
     #[tokio::test]
     async fn process_once_keeps_progress_before_fetch_error() {
         let blocks = [snapshot(1, 1, &[10]), snapshot(2, 2, &[20]), snapshot(3, 3, &[30])];
@@ -495,6 +498,7 @@ mod tests {
         assert_eq!(monitor.next_block, 3);
     }
 
+    /// A block the two nodes disagree on counts as a mismatch, and the monitor moves past it.
     #[tokio::test]
     async fn process_once_records_mismatching_blocks() {
         let config = L2BlockParityMonitorConfig::new(1, Duration::from_secs(1));
@@ -510,6 +514,8 @@ mod tests {
         assert_eq!(monitor.next_block, 2);
     }
 
+    /// A block above the validator's unsafe head is not compared yet, so the monitor waits for it
+    /// instead of skipping it.
     #[tokio::test]
     async fn process_once_waits_for_validator_to_reach_next_block() {
         let config = L2BlockParityMonitorConfig::new(4, Duration::from_secs(1));
@@ -525,6 +531,8 @@ mod tests {
         assert_eq!(monitor.next_block, 4);
     }
 
+    /// The verification backlog counts the blocks from the cursor up to the common unsafe head, and
+    /// is zero while the validator is behind the cursor.
     #[test]
     fn verification_backlog_counts_blocks_left_below_the_common_unsafe_head() {
         let config = L2BlockParityMonitorConfig::new(7, Duration::from_secs(1));

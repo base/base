@@ -85,6 +85,7 @@ mod tests {
     use super::*;
     use crate::{SourceError, l1_polling::MockL1HeadPolling};
 
+    /// Only heads above the last one reported come out, so a stale or repeated head is skipped.
     #[test]
     fn hybrid_l1_skips_stale_and_duplicate_heads() {
         Runner::start(Config::seeded(0), |ctx| async move {
@@ -103,6 +104,7 @@ mod tests {
         });
     }
 
+    /// Once the subscription ends, the source keeps delivering heads from the poller.
     #[test]
     fn hybrid_l1_polls_after_subscription_ends() {
         Runner::start(Config::seeded(0), |ctx| async move {

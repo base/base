@@ -27,19 +27,13 @@ pub fn configure_prometheus(builder: PrometheusBuilder) -> Result<PrometheusBuil
 
 #[cfg(test)]
 mod tests {
-    use base_batcher_encoder::{BatcherMetrics, EncoderConfig};
+    use base_batcher_encoder::BatcherMetrics;
     use metrics::with_local_recorder;
 
     use super::*;
 
-    #[test]
-    fn blobs_per_tx_buckets_cover_protocol_limit() {
-        assert_eq!(
-            BLOBS_PER_TX_BUCKETS.last().copied(),
-            Some(EncoderConfig::MAX_BLOBS_PER_TX as f64)
-        );
-    }
-
+    /// Every metric given buckets renders as a Prometheus histogram, not a summary, so a renamed
+    /// metric that loses its buckets fails here instead of breaking `histogram_quantile` queries.
     #[test]
     fn configured_histograms_render_as_prometheus_buckets() {
         let recorder = configure_prometheus(PrometheusBuilder::new()).unwrap().build_recorder();

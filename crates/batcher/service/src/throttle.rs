@@ -120,6 +120,7 @@ mod tests {
         format!(r#"{{"jsonrpc":"2.0","id":0,"result":{result}}}"#)
     }
 
+    /// The limits go out as `miner_setMaxDASize` with the tx and block sizes as hex quantities.
     #[tokio::test]
     async fn set_max_da_size_sends_correct_request() {
         let server = MockServer::start_async().await;
@@ -169,6 +170,7 @@ mod tests {
         assert_eq!(fallback_calls.calls_async().await, 0);
     }
 
+    /// An endpoint that cannot be reached falls over to the next one.
     #[tokio::test]
     async fn set_max_da_size_falls_over_to_second_endpoint() {
         // First endpoint refuses connections; second endpoint accepts.
@@ -189,6 +191,7 @@ mod tests {
             .expect("failover from a dead first endpoint must succeed via the second");
     }
 
+    /// The push fails when no endpoint can be reached.
     #[tokio::test]
     async fn set_max_da_size_all_endpoints_fail() {
         let client = RpcThrottleClient::new(&["http://127.0.0.1:1", "http://127.0.0.1:2"]).unwrap();

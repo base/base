@@ -390,6 +390,7 @@ mod tests {
         BatcherArgs::try_parse_from(args).expect("CLI should parse")
     }
 
+    /// A remote signer endpoint and address configure the signer in place of a private key.
     #[test]
     fn into_config_accepts_remote_signer() {
         let mut args = base_args_without_signer();
@@ -425,6 +426,7 @@ mod tests {
         }
     }
 
+    /// `--shadow-mode` with the inbox override sends batches to that inbox.
     #[test]
     fn into_config_accepts_shadow_batch_inbox_override() {
         let cli = parse_cli(&[
@@ -437,10 +439,15 @@ mod tests {
         assert_eq!(config.batch_inbox_override, Some(Address::repeat_byte(0x11)));
     }
 
+    /// Without flags the batcher runs blobs at full blob frames and the default Brotli level,
+    /// starts running and does not wait for the node to sync.
     #[test]
-    fn into_config_applies_encoder_defaults() {
+    fn into_config_applies_the_defaults() {
         let cli = parse_cli(&[]);
         let config = cli.into_config(false).expect("config should build");
+
+        assert!(!config.stopped);
+        assert!(!config.wait_node_sync);
 
         assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Blob);
         assert_eq!(
@@ -450,6 +457,7 @@ mod tests {
         assert_eq!(config.encoder_config.brotli_level, base_batcher_encoder::BrotliLevel::DEFAULT);
     }
 
+    /// A Brotli quality above 11, the encoder's highest level, is refused at parse time.
     #[test]
     fn cli_rejects_brotli_quality_out_of_range() {
         let mut args = base_args();
@@ -458,6 +466,7 @@ mod tests {
         assert!(BatcherArgs::try_parse_from(args).is_err());
     }
 
+    /// A calldata batcher's frame size is its calldata cap minus the derivation version byte.
     #[test]
     fn into_config_reserves_derivation_prefix_from_calldata_size_cap() {
         let cli = parse_cli(&[
@@ -469,6 +478,38 @@ mod tests {
         let config = cli.into_config(false).expect("config should build");
 
         assert_eq!(config.encoder_config.max_frame_size, 129_999);
+    }
+
+    /// Every encoder, publish and startup flag reaches the config, so no operator flag is
+    /// silently ignored.
+    #[test]
+    fn into_config_applies_the_operator_flags() {
+        let cli = parse_cli(&[
+            "--data-availability-type",
+            "calldata",
+            "--compressed-size-target",
+            "1000",
+            "--max-blobs-per-tx",
+            "3",
+            "--brotli-quality",
+            "5",
+            "--publish-max-retries",
+            "7",
+            "--publish-retry-delay",
+            "3s",
+            "--stopped",
+            "--wait-node-sync",
+        ]);
+        let config = cli.into_config(false).expect("config should build");
+
+        assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Calldata);
+        assert_eq!(config.encoder_config.compressed_size_target, Some(1000));
+        assert_eq!(config.encoder_config.max_blobs_per_tx, 3);
+        assert_eq!(config.encoder_config.brotli_level, base_batcher_encoder::BrotliLevel::Brotli5);
+        assert_eq!(config.tx_manager.publish_max_retries, 7);
+        assert_eq!(config.tx_manager.publish_retry_delay, Duration::from_secs(3));
+        assert!(config.stopped);
+        assert!(config.wait_node_sync);
     }
 
     /// An RPC flag takes a comma-separated list of endpoints.
@@ -498,6 +539,7 @@ mod tests {
         assert!(parse_cli(&["--no-throttle"]).into_config(false).unwrap().throttle.is_none());
     }
 
+    /// Throttling forces blobs unless `--no-force-blobs-when-throttling` is set.
     #[test]
     fn no_force_blobs_when_throttling_turns_blob_forcing_off() {
         assert!(parse_cli(&[]).into_config(false).unwrap().force_blobs_when_throttling);

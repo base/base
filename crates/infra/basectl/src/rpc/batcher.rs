@@ -88,6 +88,8 @@ mod tests {
 
     use super::*;
 
+    /// Each admin call decodes the batcher's answer, and a rejection reports the method and the
+    /// server's message against the URL without its credentials.
     #[tokio::test]
     async fn calls_decode_answers_and_report_rejections() {
         let mut module = RpcModule::new(());
@@ -125,6 +127,7 @@ mod tests {
         handle.stop().unwrap();
     }
 
+    /// The URL shown to the operator keeps only the scheme, host and port.
     #[test]
     fn display_url_drops_credentials_path_and_query() {
         let rpc = Url::parse("https://operator:secret@batcher.example:6545/admin?key=abc").unwrap();
