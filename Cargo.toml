@@ -438,7 +438,6 @@ arboard = "3.6.1"
 ratatui = "0.30.0"
 crossterm = "0.29"
 indicatif = "0.18"
-clap_builder = "4.6.5"
 tracing-indicatif = "0.3"
 
 # tracing
@@ -590,7 +589,6 @@ nanoid = "0.4"
 rand_08 = { package = "rand", version = "0.8" }
 
 # time
-time = "0.3.55"
 chrono = "0.4.42"
 humantime = "2.3"
 
