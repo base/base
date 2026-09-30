@@ -3085,6 +3085,7 @@ dependencies = [
  "base-protocol",
  "clap",
  "derive_more 2.1.1",
+ "futures",
  "metrics",
  "rand 0.9.5",
  "rstest",

@@ -30,8 +30,9 @@ clap = { workspace = true, features = ["derive"], optional = true }
 [dev-dependencies]
 rstest.workspace = true
 base-blobs.workspace = true
-base-consensus-derive.workspace = true
+futures = { workspace = true, features = ["executor"] }
 alloy-consensus = { workspace = true, features = ["std"] }
+base-consensus-derive = { workspace = true, features = ["test-utils"] }
 
 [features]
 clap = [ "dep:clap" ]

@@ -12,10 +12,12 @@ use base_batcher_encoder::{
 use base_blobs::BlobEncoder;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
 use base_common_genesis::{RollupConfig, UpgradeConfig};
-use base_consensus_derive::BlobData;
-use base_protocol::{
-    Batch, BatchReader, BlockInfo, Channel, Frame, L1BlockInfoBedrock, L1BlockInfoTx, SingleBatch,
+use base_consensus_derive::{
+    BlobData, ChannelAssembler, ChannelReaderProvider, PipelineError, PipelineErrorKind,
+    test_utils::TestNextFrameProvider,
 };
+use base_protocol::{Batch, BatchReader, Frame, L1BlockInfoBedrock, L1BlockInfoTx, SingleBatch};
+use futures::executor::block_on;
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 
 /// Every fixture block and the rollup config are at time 0, so the forks the encoder relies
@@ -120,21 +122,18 @@ impl EncoderFixture {
     /// channels complete. The submissions are taken as L1 transactions included in this order,
     /// within the channel timeout, at an L1 origin at genesis.
     ///
-    /// Panics where derivation would drop data under the strict frame order of Holocene, on a
-    /// transaction payload that does not parse, a frame out of order or from another channel
-    /// than the open one, a channel replaced or left without its terminal frame, a channel
-    /// above the RLP limit, and channel data that does not decompress or decode. Also enforces
+    /// The frames go through the derivation `ChannelAssembler` and the channel data through
+    /// its `BatchReader`. Panics when derivation drops a channel or leaves one without its
+    /// terminal frame, on a transaction payload that does not parse, and on channel data that
+    /// does not decompress or decode. Also enforces what the encoder promises beyond that,
     /// channel ids used once, Brotli channels, every frame within `max_frame_size`, every blob
-    /// payload fitting a blob, and one to `max_blobs_per_tx` blobs per transaction, which the
-    /// encoder promises beyond that. Batch validity (epoch, timestamp, sequence window) is out
-    /// of scope.
+    /// payload fitting a blob, and one to `max_blobs_per_tx` blobs per transaction. Batch
+    /// validity (epoch, timestamp, sequence window) is out of scope.
     pub fn derive(&self, submissions: &[BatchSubmission]) -> Vec<Vec<SingleBatch>> {
-        let max_rlp_bytes = self.rollup_config.max_rlp_bytes_per_channel(GENESIS_TIMESTAMP);
-        let mut channels = Vec::new();
-        let mut seen_ids = HashSet::new();
-        let mut open: Option<Channel> = None;
-
-        for frame in submissions.iter().flat_map(|submission| self.frames(submission)) {
+        let frames: Vec<Frame> =
+            submissions.iter().flat_map(|submission| self.frames(submission)).collect();
+        let mut channel_ids = HashSet::new();
+        for frame in &frames {
             assert!(
                 frame.encoded_len() <= self.config.max_frame_size,
                 "frame {} of channel {:?} is {} bytes, above max_frame_size {}",
@@ -143,51 +142,26 @@ impl EncoderFixture {
                 frame.encoded_len(),
                 self.config.max_frame_size
             );
-
             if frame.number == 0 {
-                if let Some(open) = &open {
-                    panic!("channel {:?} replaced before its terminal frame", open.id);
-                }
-                assert!(seen_ids.insert(frame.id), "channel id {:?} used twice", frame.id);
-                open = Some(Channel::new(frame.id, BlockInfo::default()));
+                assert!(channel_ids.insert(frame.id), "channel id {:?} used twice", frame.id);
             }
-            let Some(channel) = open.as_mut() else {
-                panic!(
-                    "frame {} of channel {:?} arrives with no channel open",
-                    frame.number, frame.id
-                )
-            };
-            assert_eq!(
-                frame.id, channel.id,
-                "frame {} of channel {:?} interleaved in channel {:?}",
-                frame.number, frame.id, channel.id
-            );
-            assert_eq!(
-                usize::from(frame.number),
-                channel.len(),
-                "frame {} of channel {:?} out of order",
-                frame.number,
-                frame.id
-            );
-            channel
-                .add_frame(frame, BlockInfo::default())
-                .expect("an in-order frame should be accepted");
-            assert!(
-                channel.size() as u64 <= max_rlp_bytes,
-                "channel {:?} is above the RLP limit {max_rlp_bytes}",
-                channel.id
-            );
-
-            let Some(channel) = open.take_if(|channel| channel.is_ready()) else {
-                continue;
-            };
-            let data = channel.frame_data().expect("a ready channel should have its data");
-            channels.push(self.read_batches(&data, max_rlp_bytes));
         }
 
-        if let Some(open) = open {
-            panic!("channel {:?} has no terminal frame", open.id);
+        // The test provider hands out its frames from the back of the list.
+        let provider = TestNextFrameProvider::new(frames.into_iter().rev().map(Ok).collect());
+        let mut assembler = ChannelAssembler::new(Arc::clone(&self.rollup_config), provider);
+        let max_rlp_bytes = self.rollup_config.max_rlp_bytes_per_channel(GENESIS_TIMESTAMP);
+        let mut channels = Vec::new();
+        loop {
+            match block_on(assembler.next_data()) {
+                Ok(Some(data)) => channels.push(self.read_batches(&data, max_rlp_bytes)),
+                Err(PipelineErrorKind::Temporary(PipelineError::Eof)) => break,
+                Ok(None) | Err(PipelineErrorKind::Temporary(PipelineError::NotEnoughData)) => {}
+                Err(error) => panic!("derivation failed on the frames: {error}"),
+            }
         }
+        assert!(assembler.channel.is_none(), "a channel has no terminal frame");
+        assert_eq!(channels.len(), channel_ids.len(), "derivation dropped a channel");
         channels
     }
 
