@@ -869,6 +869,11 @@ mod tests {
         },
         "block_size_lower_limit must be greater than zero"
     )]
+    #[case::recent_txs_depth_above_the_cap(
+        BatcherConfig { check_recent_txs_depth: 129, wait_node_sync: true, ..BatcherConfig::default() },
+        "check_recent_txs_depth 129 exceeds maximum of 128"
+    )]
+    #[case::no_signer(BatcherConfig::default(), "signer must be set before starting")]
     #[case::recent_txs_without_node_sync(
         BatcherConfig { check_recent_txs_depth: 1, ..BatcherConfig::default() },
         "check_recent_txs_depth requires wait_node_sync"

@@ -426,21 +426,28 @@ mod tests {
         }
     }
 
-    /// `--shadow-mode` with the inbox override sends batches to that inbox.
+    /// `--shadow-mode` with the inbox override sends batches to that inbox and takes the parity
+    /// validator's L2 RPC.
     #[test]
     fn into_config_accepts_shadow_batch_inbox_override() {
         let cli = parse_cli(&[
             "--shadow-mode",
             "--dangerously-override-batch-inbox-address",
             "0x1111111111111111111111111111111111111111",
+            "--parity-validator-l2-rpc-url",
+            "http://validator:9545",
         ]);
         let config = cli.into_config(false).expect("config should build");
 
         assert_eq!(config.batch_inbox_override, Some(Address::repeat_byte(0x11)));
+        assert_eq!(
+            config.parity_validator_l2_rpc_url.expect("a parity validator").as_str(),
+            "http://validator:9545/"
+        );
     }
 
-    /// Without flags the batcher runs blobs at full blob frames and the default Brotli level,
-    /// starts running and does not wait for the node to sync.
+    /// Without flags the batcher runs blobs at full blob frames and Brotli quality 9, starts
+    /// running and does not wait for the node to sync.
     #[test]
     fn into_config_applies_the_defaults() {
         let cli = parse_cli(&[]);
@@ -454,7 +461,7 @@ mod tests {
             config.encoder_config.max_frame_size,
             base_batcher_encoder::EncoderConfig::MAX_BLOB_FRAME_SIZE
         );
-        assert_eq!(config.encoder_config.brotli_level, base_batcher_encoder::BrotliLevel::DEFAULT);
+        assert_eq!(config.encoder_config.brotli_level, base_batcher_encoder::BrotliLevel::Brotli9);
     }
 
     /// A Brotli quality above 11, the encoder's highest level, is refused at parse time.
@@ -480,8 +487,8 @@ mod tests {
         assert_eq!(config.encoder_config.max_frame_size, 129_999);
     }
 
-    /// Every encoder, publish and startup flag reaches the config, so no operator flag is
-    /// silently ignored.
+    /// Every encoder, submission, throttle, startup and admin flag reaches the config, so no
+    /// operator flag is silently ignored.
     #[test]
     fn into_config_applies_the_operator_flags() {
         let cli = parse_cli(&[
@@ -497,6 +504,30 @@ mod tests {
             "7",
             "--publish-retry-delay",
             "3s",
+            "--max-channel-duration",
+            "10",
+            "--sub-safety-margin",
+            "4",
+            "--max-pending-transactions",
+            "4",
+            "--num-confirmations",
+            "3",
+            "--resubmission-timeout",
+            "30",
+            "--poll-interval",
+            "2",
+            "--throttle-threshold",
+            "500000",
+            "--check-recent-txs-depth",
+            "16",
+            "--wait-node-sync-timeout",
+            "60",
+            "--admin-addr",
+            "0.0.0.0",
+            "--admin-port",
+            "7000",
+            "--l1-ws-url",
+            "ws://localhost:8546",
             "--stopped",
             "--wait-node-sync",
         ]);
@@ -508,6 +539,17 @@ mod tests {
         assert_eq!(config.encoder_config.brotli_level, base_batcher_encoder::BrotliLevel::Brotli5);
         assert_eq!(config.tx_manager.publish_max_retries, 7);
         assert_eq!(config.tx_manager.publish_retry_delay, Duration::from_secs(3));
+        assert_eq!(config.encoder_config.max_channel_duration, 10);
+        assert_eq!(config.encoder_config.sub_safety_margin, 4);
+        assert_eq!(config.max_pending_transactions, 4);
+        assert_eq!(config.tx_manager.num_confirmations, 3);
+        assert_eq!(config.tx_manager.resubmission_timeout, Duration::from_secs(30));
+        assert_eq!(config.poll_interval, Duration::from_secs(2));
+        assert_eq!(config.throttle.expect("the throttle is on").threshold_bytes, 500_000);
+        assert_eq!(config.check_recent_txs_depth, 16);
+        assert_eq!(config.wait_node_sync_timeout, Duration::from_secs(60));
+        assert_eq!(config.admin_addr, Some(SocketAddr::new(IpAddr::from([0, 0, 0, 0]), 7000)));
+        assert_eq!(config.l1_ws_url.expect("a WebSocket URL").as_str(), "ws://localhost:8546/");
         assert!(config.stopped);
         assert!(config.wait_node_sync);
     }
