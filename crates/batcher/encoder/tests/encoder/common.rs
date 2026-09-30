@@ -20,8 +20,9 @@ use base_protocol::{Batch, BatchReader, Frame, L1BlockInfoBedrock, L1BlockInfoTx
 use futures::executor::block_on;
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 
-/// Every fixture block and the rollup config are at time 0, so the forks the encoder relies
-/// on are active from genesis, on L2 for the encoder and on L1 for derivation.
+/// Time of every fixture block and of the Holocene activation. The L1 origin derivation reads at
+/// is the default block, also at time 0, so the same forks are active on L2 for the encoder and
+/// on L1 for derivation.
 pub const GENESIS_TIMESTAMP: u64 = 0;
 
 /// L2 block fixtures the encoder accepts.
@@ -96,8 +97,9 @@ pub struct EncoderFixture {
 }
 
 impl EncoderFixture {
-    /// `config` over the default rollup config with Holocene, hence Granite and Fjord, active
-    /// from genesis. Panics if production would reject the pair.
+    /// A fixture for `config` on the default rollup config, with Holocene active from genesis
+    /// because `derive` runs its channel stage. Holocene implies Granite and Fjord. Panics if
+    /// production would reject the pair.
     pub fn new(config: EncoderConfig) -> Self {
         let rollup_config = RollupConfig {
             upgrades: UpgradeConfig {
@@ -120,19 +122,21 @@ impl EncoderFixture {
 
     /// The batches derivation reads from `submissions`, one list per channel, in the order the
     /// channels complete. The submissions are taken as L1 transactions included in this order,
-    /// within the channel timeout, at an L1 origin at genesis.
+    /// all at the genesis L1 origin, so no channel times out.
     ///
-    /// The frames go through the derivation `ChannelAssembler` and the channel data through
-    /// its `BatchReader`. Panics when derivation drops a channel or leaves one without its
-    /// terminal frame, on a transaction payload that does not parse, and on channel data that
-    /// does not decompress or decode. Also enforces what the encoder promises beyond that,
-    /// channel ids used once, Brotli channels, every frame within `max_frame_size`, every blob
-    /// payload fitting a blob, and one to `max_blobs_per_tx` blobs per transaction. Batch
-    /// validity (epoch, timestamp, sequence window) is out of scope.
+    /// The frames go through the derivation `ChannelAssembler` and the channel data through the
+    /// `BatchReader` derivation uses. Panics when a payload does not parse, when derivation drops
+    /// a channel or leaves one without its terminal frame, and when channel data does not
+    /// decompress or decode. Also panics on output derivation would accept but the encoder never
+    /// emits, such as a channel id used twice, a channel not compressed with Brotli, a span batch,
+    /// a frame above `max_frame_size`, a blob payload that does not fit a blob, or a transaction
+    /// with zero or more than `max_blobs_per_tx` blobs. Batch validity (epoch, timestamp,
+    /// sequence window) is out of scope.
     pub fn derive(&self, submissions: &[BatchSubmission]) -> Vec<Vec<SingleBatch>> {
         let frames: Vec<Frame> =
             submissions.iter().flat_map(|submission| self.frames(submission)).collect();
         let mut channel_ids = HashSet::new();
+        let mut first_frames = HashSet::new();
         for frame in &frames {
             assert!(
                 frame.encoded_len() <= self.config.max_frame_size,
@@ -142,8 +146,9 @@ impl EncoderFixture {
                 frame.encoded_len(),
                 self.config.max_frame_size
             );
+            channel_ids.insert(frame.id);
             if frame.number == 0 {
-                assert!(channel_ids.insert(frame.id), "channel id {:?} used twice", frame.id);
+                assert!(first_frames.insert(frame.id), "channel id {:?} used twice", frame.id);
             }
         }
 

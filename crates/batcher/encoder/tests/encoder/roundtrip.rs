@@ -9,8 +9,8 @@ use crate::common::{BlockFixture, EncoderFixture};
 /// The number of blocks every case encodes.
 const BLOCK_COUNT: u64 = 4;
 
-/// Every encoded block comes back as its batch, in order, from `blob_count` blobs in total
-/// and `channel_count` channels.
+/// Derivation reads back one batch per encoded block, in order, whatever the DA type, frame
+/// size and channel split. `blob_count` and `channel_count` pin the wire shape each case targets.
 #[rstest]
 #[case::blobs(EncoderConfig::default(), 1_000, 1, 1)]
 #[case::calldata(
