@@ -1,7 +1,7 @@
-//! Recovery of one persistent [`Batcher`], with every fork through Cobalt active, after a channel
+//! How the [`Batcher`] recovers on its own, with every fork through Cobalt active, from a channel
 //! that timed out in derivation, a confirmed batch that derivation passed over, a safe head that
-//! went back, and an unsafe chain the sequencer replaced. Each test ends with derivation reading
-//! what the same batcher resent.
+//! went back, and an unsafe chain the sequencer replaced. No test builds a second batcher, and each
+//! ends with derivation reading what the batcher resent by itself.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
