@@ -2951,7 +2951,6 @@ dependencies = [
  "base-batcher-core",
  "base-batcher-encoder",
  "base-batcher-source",
- "base-blobs",
  "base-builder-core",
  "base-common-chains",
  "base-common-consensus",
@@ -2995,7 +2994,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

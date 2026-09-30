@@ -31,7 +31,7 @@ pub struct BatcherConfig {
     pub inbox_address: alloy_primitives::Address,
     /// Encoder configuration forwarded to [`BatchEncoder`].
     pub encoder: EncoderConfig,
-    /// L1 signer used to produce signed `TxEnvelope`s for production-mode DA tests.
+    /// L1 signer of the batcher's submissions.
     ///
     /// When changed via [`with_l1_signer`](BatcherConfig::with_l1_signer), the
     /// signer address becomes [`batcher_address`](BatcherConfig::batcher_address)
@@ -63,7 +63,7 @@ impl BatcherConfig {
         PrivateKeySigner::from_bytes(&B256::repeat_byte(0xBA)).expect("valid default L1 signer")
     }
 
-    /// Configure a signer for production-mode L1 transaction construction.
+    /// Sign the batcher's submissions with `signer`, and make its address the batcher address.
     pub fn with_l1_signer(mut self, signer: PrivateKeySigner) -> Self {
         self.batcher_address = signer.address();
         self.l1_signer = signer;
@@ -113,7 +113,7 @@ pub struct Batcher {
     derivation_status_tx: mpsc::Sender<DerivationStatus>,
     /// Admin channel to the driver, used to flush at the end of a cycle.
     admin: AdminHandle,
-    /// Shared tx manager — used to stage submissions and fire their receipts.
+    /// Shared tx manager, used to stage submissions and fire their receipts.
     tx_manager: L1MinerTxManager,
     /// Background driver task, aborted on drop.
     driver_task: tokio::task::JoinHandle<Result<(), BatchDriverError>>,
@@ -131,30 +131,36 @@ impl Batcher {
     ///
     /// # Panics
     ///
-    /// Panics if `config.encoder` is invalid, if `config.batcher_address` is not the address
-    /// of `config.l1_signer`, or if `config.initial_safe_head` is `None` and the first block is
-    /// the genesis block, which no batcher posts.
+    /// Panics if `config.encoder` is one production would refuse for `rollup_config` at the
+    /// timestamp of the block after the safe head, if `config.batcher_address` is not the
+    /// address of `config.l1_signer`, or if `config.initial_safe_head` is `None` and the first
+    /// block is the genesis block, which no batcher posts.
     pub fn new(
         l2_source: ActionL2Source,
         rollup_config: &RollupConfig,
         config: BatcherConfig,
     ) -> Self {
         let l1_chain_id = rollup_config.l1_chain_id;
-        let pipeline = BatchEncoder::new(Arc::new(rollup_config.clone()), config.encoder.clone())
-            .expect("valid encoder config");
-
         let blocks: Vec<BaseBlock> = l2_source.into_iter().collect();
-        // Only the number and hash of the safe head are ever read.
         let initial_safe_head = config.initial_safe_head.unwrap_or_else(|| {
             blocks.first().map_or_else(
                 || BlockInfo::from_l2_genesis(&rollup_config.genesis),
                 |block| BlockInfo {
                     hash: block.header.parent_hash,
                     number: block.header.number.checked_sub(1).expect("a block above genesis"),
+                    timestamp: block.header.timestamp - rollup_config.block_time,
                     ..Default::default()
                 },
             )
         });
+        let next_l2_timestamp = initial_safe_head.timestamp + rollup_config.block_time;
+        config
+            .encoder
+            .validate_for_rollup_config(rollup_config, next_l2_timestamp)
+            .expect("an encoder config production accepts");
+        let pipeline = BatchEncoder::new(Arc::new(rollup_config.clone()), config.encoder.clone())
+            .expect("the config was validated");
+
         let chain = SharedL2Chain::new();
         for block in blocks {
             chain.push(block);
@@ -163,8 +169,7 @@ impl Batcher {
         let (l1_head_source, l1_head_tx) = HarnessL1HeadSource::new();
         let (admin, admin_rx) = AdminHandle::channel();
 
-        let tx_manager =
-            L1MinerTxManager::new(config.l1_signer.clone(), config.inbox_address, l1_chain_id);
+        let tx_manager = L1MinerTxManager::new(config.l1_signer.clone(), l1_chain_id);
         assert_eq!(
             config.batcher_address,
             tx_manager.sender_address(),
@@ -247,12 +252,6 @@ impl Batcher {
         assert!(matches!(reached, Ok(Ok(()))), "the batch driver exited or stalled");
     }
 
-    /// Deliver `head` to the driver as the new L1 head and wait until it is applied.
-    async fn deliver_l1_head(&self, head: u64) {
-        self.l1_head_tx.send(L1HeadItem::Head(head)).expect("the batch driver has exited");
-        self.wait_until_idle().await;
-    }
-
     /// Returns the number of encoded-but-not-yet-staged pending frame submissions.
     pub fn pending_count(&self) -> usize {
         self.tx_manager.pending_count()
@@ -290,7 +289,7 @@ impl Batcher {
     /// Stages every pending frame, mines one L1 block, fires all receipts and waits until
     /// the driver has confirmed them. Returns the mined block number.
     ///
-    /// Use this to confirm a requeued batch without encoding new L2 blocks.
+    /// Use this to land what the driver submitted without encoding new L2 blocks.
     pub async fn mine_pending(&self, l1: &mut L1Miner) -> u64 {
         self.tx_manager.stage_n_to_l1(l1, usize::MAX);
         let block = l1.mine_block().clone();
@@ -315,7 +314,10 @@ impl Batcher {
         // Fire the receipts first because the driver serves them before L1 heads, so a failed
         // submission is requeued before the head advances.
         self.tx_manager.confirm_block(block);
-        self.deliver_l1_head(block.number()).await;
+        self.l1_head_tx
+            .send(L1HeadItem::Head(block.number()))
+            .expect("the batch driver has exited");
+        self.wait_until_idle().await;
     }
 
     /// Report derivation progress to the driver, as the production `DerivationStatusPoller`
@@ -330,25 +332,6 @@ impl Batcher {
             .try_send(status)
             .unwrap_or_else(|error| panic!("the batch driver did not take the status: {error}"));
         self.wait_until_idle().await;
-    }
-
-    /// Simulate an L1 reorg back to `block_number`.
-    ///
-    /// Truncates the L1 chain via [`L1Miner::reorg_to`], fires failure receipts for every
-    /// item in `pending` and `staged`, delivers the new L1 head to the driver, and waits
-    /// until the driver has requeued and resubmitted the failed frames.
-    ///
-    /// Submissions already confirmed through [`observe_l1_block`] are not revisited.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `block_number` exceeds the current L1 chain tip (`ReorgError::BeyondTip`).
-    ///
-    /// [`observe_l1_block`]: Batcher::observe_l1_block
-    pub async fn reorg(&self, block_number: u64, l1: &mut L1Miner) {
-        // Failure receipts first, for the same reason as in `observe_l1_block`.
-        self.tx_manager.reorg_to(block_number, l1);
-        self.deliver_l1_head(block_number).await;
     }
 
     /// Run one full batch cycle through the production [`BatchDriver`] path.

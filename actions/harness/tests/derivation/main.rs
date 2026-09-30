@@ -20,8 +20,11 @@ use base_consensus_derive::{
 };
 use base_protocol::{DERIVATION_VERSION_0, DepositDecodeError, Deposits, L2BlockInfo};
 
+mod channels;
+mod da_switching;
 mod holocene_span_batches;
 mod node;
+mod sequencer_drift;
 
 /// The derivation pipeline reads a single batcher frame from L1 and derives
 /// the corresponding L2 block, advancing the safe head from genesis (0) to 1.
@@ -1300,64 +1303,6 @@ async fn garbage_frame_data_ignored() {
 
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 1, "real frame after garbage must still be derived");
-    assert_eq!(node.l2_safe_number(), 1);
-}
-
-/// A channel whose compressed data exceeds `max_frame_size` is split across
-/// multiple frames. All frames are submitted in the same L1 block (as separate
-/// transactions) and the `ChannelBank` reassembles them into the original
-/// channel data, deriving the L2 block.
-///
-/// This exercises the `ChannelDriver` multi-frame output path and verifies
-/// that a small `max_frame_size` causes the encoder to produce multiple frame
-/// transactions that the derivation pipeline reassembles correctly.
-///
-/// NOTE: All frames must land in the same L1 block.
-#[tokio::test]
-async fn multi_frame_channel_reassembled() {
-    let batcher_cfg = BatcherConfig {
-        // Small max_frame_size forces the channel to spill across multiple frames.
-        encoder: EncoderConfig {
-            max_frame_size: 80,
-            da_type: DaType::Calldata,
-            ..EncoderConfig::default()
-        },
-        ..BatcherConfig::default()
-    };
-    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
-    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
-
-    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-    let mut builder = h.create_l2_sequencer(l1_chain);
-    let block = builder.build_next_block_with_single_transaction().await;
-
-    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
-        &mut builder,
-        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
-    );
-
-    // Encode the L2 block. With max_frame_size=80, the compressed channel data
-    // should spill across multiple frames — verified via pending_count before mining.
-    let mut source = ActionL2Source::new();
-    source.push(block);
-    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-    batcher.encode_only().await;
-    assert!(
-        batcher.pending_count() >= 2,
-        "expected at least 2 frame submissions with max_frame_size=80, got {}",
-        batcher.pending_count()
-    );
-
-    // Stage all frames, mine one L1 block and show it to the batcher.
-    let n = batcher.pending_count();
-    batcher.stage_n_frames(&mut h.l1, n);
-    h.l1.mine_block();
-    batcher.observe_l1_block(h.l1.tip()).await;
-    chain.push(h.l1.tip().clone());
-
-    node.initialize().await;
-    let derived = node.run_until_idle().await;
-    assert_eq!(derived, 1, "multi-frame channel should be reassembled and derived");
     assert_eq!(node.l2_safe_number(), 1);
 }
 

@@ -146,8 +146,6 @@ pub struct TestRollupNode<P: Pipeline + SignalReceiver + Debug + Send = Verifier
     finalized_head: L2BlockInfo,
     /// Most recently signalled finalized L1 block number.
     finalized_l1_number: Option<u64>,
-    /// Most recently signalled L1 safe block number.
-    safe_l1_number: u64,
     /// History of safe head updates paired with their L1 origin number.
     ///
     /// Each entry is `(l2_block_info, l1_origin_number)`. Used by
@@ -204,7 +202,6 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
             unsafe_head: safe_head,
             finalized_head: safe_head,
             finalized_l1_number: None,
-            safe_l1_number: 0,
             safe_head_history: Vec::new(),
             derived_tx_counts: Vec::new(),
             derived_user_tx_counts: Vec::new(),
@@ -238,11 +235,6 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         self.safe_head.block_info.number
     }
 
-    /// Return the executed hash for a derived L2 block.
-    pub fn derived_block_hash(&self, block_number: u64) -> Option<B256> {
-        self.engine.block_hash_at(block_number)
-    }
-
     /// Return the current L2 unsafe head.
     ///
     /// Advances ahead of the safe head as P2P gossip blocks are received.
@@ -264,11 +256,6 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
     /// Return the block number of the current L2 finalized head.
     pub const fn l2_finalized_number(&self) -> u64 {
         self.finalized_head.block_info.number
-    }
-
-    /// Return the most recently signalled L1 safe block number.
-    pub const fn safe_l1_number(&self) -> u64 {
-        self.safe_l1_number
     }
 
     /// Returns the derivation progress this node reports to the batcher, which is its safe L2
@@ -293,13 +280,6 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         l1_block_num: u64,
     ) -> Result<SafeHeadResponse, SafeDBError> {
         self.safe_db.safe_head_at_l1(l1_block_num).await
-    }
-
-    /// Return the total transaction counts for each derived L2 block.
-    ///
-    /// Each entry is `(l2_block_number, tx_count)`.
-    pub fn derived_tx_counts(&self) -> &[(u64, usize)] {
-        &self.derived_tx_counts
     }
 
     /// Return the user transaction counts for each derived L2 block.
@@ -346,12 +326,6 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         self.engine.block_hash_registry().insert(number, hash, None);
     }
 
-    /// Record the L1 safe head number. Does not drive additional pipeline steps.
-    pub async fn act_l1_safe_signal(&mut self, head: BlockInfo) -> Result<(), VerifierError> {
-        self.safe_l1_number = head.number;
-        Ok(())
-    }
-
     /// Update the retained finalized L1 signal and retry finalization.
     pub async fn act_l1_finalized_signal(&mut self, head: BlockInfo) {
         if self.finalized_l1_number.is_some_and(|previous| head.number < previous) {
@@ -393,7 +367,6 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         self.safe_head = l2_safe_head;
         self.unsafe_head = l2_safe_head;
         self.finalized_head = l2_safe_head;
-        self.safe_l1_number = 0;
         self.safe_head_history.clear();
         self.derived_tx_counts.clear();
         self.derived_user_tx_counts.clear();

@@ -90,12 +90,8 @@ libp2p = { workspace = true, features = ["gossipsub"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 
 # base
-base-blobs.workspace = true
 base-common-precompiles.workspace = true
 base-precompile-storage.workspace = true
 
 # tokio
 tokio = { workspace = true, features = ["rt", "macros"] }
-
-# tracing
-tracing-subscriber = { workspace = true, features = ["env-filter"] }

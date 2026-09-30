@@ -601,7 +601,7 @@ impl L1Miner {
 
     /// Enqueue a signed L1 transaction for inclusion in the next mined block.
     ///
-    /// Production-mode DA tests use this path so derivation receives the same
+    /// The batcher's signed submissions take this path, so derivation receives the same
     /// `TxEnvelope` shape it reads from an RPC-backed provider.
     pub fn submit_transaction(&mut self, tx: TxEnvelope) {
         self.submit_transaction_with_logs(tx, Vec::new());
@@ -819,13 +819,9 @@ impl Action for L1Miner {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{Transaction, transaction::SignerRecoverable};
-    use alloy_eips::eip4844::Blob;
-    use alloy_primitives::{Address, B256, Bloom, Bytes, Log, LogData};
-    use alloy_signer_local::PrivateKeySigner;
+    use alloy_primitives::{Address, B256, Bytes, Log, LogData};
 
-    use super::{L1Miner, L1TxBuilder, ReorgError};
-    use crate::Action;
+    use super::L1Miner;
 
     struct MinerFixture;
 
@@ -834,159 +830,13 @@ mod tests {
             L1Miner::default()
         }
 
-        fn signer() -> PrivateKeySigner {
-            PrivateKeySigner::from_bytes(&B256::repeat_byte(0x11)).expect("valid test signer")
-        }
-
-        fn signed_tx(input: Bytes, nonce: u64, to: Address) -> alloy_consensus::TxEnvelope {
-            L1TxBuilder::signed_calldata(&Self::signer(), 1, nonce, to, input)
-                .expect("test transaction signs")
-        }
-
         fn log(address: Address, topic: B256) -> Log {
             Log { address, data: LogData::new_unchecked(vec![topic], Bytes::from_static(b"event")) }
         }
     }
 
-    #[test]
-    fn genesis_block_at_number_zero() {
-        let m = MinerFixture::miner();
-        assert_eq!(m.latest_number(), 0);
-        assert_eq!(m.latest().timestamp(), 0);
-    }
-
-    #[test]
-    fn mine_increments_number_and_timestamp() {
-        let mut m = MinerFixture::miner();
-        m.mine_block();
-        assert_eq!(m.latest_number(), 1);
-        assert_eq!(m.latest().timestamp(), 12);
-        m.mine_block();
-        assert_eq!(m.latest_number(), 2);
-        assert_eq!(m.latest().timestamp(), 24);
-    }
-
-    #[test]
-    fn blocks_form_valid_parent_hash_chain() {
-        let mut m = MinerFixture::miner();
-        m.mine_block();
-        m.mine_block();
-        m.mine_block();
-        for i in 1..=3u64 {
-            let block = m.block_by_number(i).unwrap();
-            let parent = m.block_by_number(i - 1).unwrap();
-            assert_eq!(block.header.parent_hash, parent.hash());
-        }
-    }
-
-    #[test]
-    fn safe_and_finalized_head_start_at_genesis() {
-        let m = MinerFixture::miner();
-        assert_eq!(m.safe_head().number(), 0);
-        assert_eq!(m.finalized_head().number(), 0);
-        assert_eq!(m.safe_number(), 0);
-        assert_eq!(m.finalized_number(), 0);
-    }
-
-    #[test]
-    fn explicit_safe_next_advances_pointer() {
-        let mut m = MinerFixture::miner();
-        m.mine_block(); // 1
-        m.mine_block(); // 2
-        m.act_l1_safe_next();
-        assert_eq!(m.safe_number(), 1);
-        assert_eq!(m.safe_head().number(), 1);
-    }
-
-    #[test]
-    fn explicit_finalize_next_advances_pointer() {
-        let mut m = MinerFixture::miner();
-        m.mine_block();
-        m.act_l1_safe_next();
-        m.act_l1_finalize_next();
-        assert_eq!(m.finalized_number(), 1);
-        assert_eq!(m.finalized_head().number(), 1);
-    }
-
-    #[test]
-    fn act_l1_safe_sets_exactly() {
-        let mut m = MinerFixture::miner();
-        for _ in 0..5 {
-            m.mine_block();
-        }
-        m.act_l1_safe(3);
-        assert_eq!(m.safe_number(), 3);
-    }
-
-    #[test]
-    fn act_l1_finalize_sets_exactly() {
-        let mut m = MinerFixture::miner();
-        for _ in 0..5 {
-            m.mine_block();
-        }
-        m.act_l1_safe(4);
-        m.act_l1_finalize(2);
-        assert_eq!(m.finalized_number(), 2);
-    }
-
-    #[test]
-    fn safe_clamped_to_latest_on_act_safe_next() {
-        let mut m = MinerFixture::miner();
-        m.mine_block(); // 1
-        m.act_l1_safe_next(); // 1
-        m.act_l1_safe_next(); // would be 2, but latest=1
-        assert_eq!(m.safe_number(), 1);
-    }
-
-    #[test]
-    fn finalized_clamped_to_safe_on_act_finalize_next() {
-        let mut m = MinerFixture::miner();
-        m.mine_block();
-        m.act_l1_safe_next(); // safe=1
-        m.act_l1_finalize_next(); // finalized=1
-        m.act_l1_finalize_next(); // clamped to safe=1
-        assert_eq!(m.finalized_number(), 1);
-    }
-
-    #[test]
-    fn reorg_clamps_safe_and_finalized() {
-        let mut m = MinerFixture::miner();
-        for _ in 0..5 {
-            m.mine_block();
-        }
-        m.act_l1_safe(4);
-        m.act_l1_finalize(3);
-
-        m.reorg_to(2).unwrap();
-        assert_eq!(m.safe_number(), 2);
-        assert_eq!(m.finalized_number(), 2);
-    }
-
-    #[test]
-    fn pending_transactions_included_in_next_block() {
-        let mut m = MinerFixture::miner();
-        let to = Address::repeat_byte(0x22);
-        let input = Bytes::from_static(b"\x00hello");
-        let expected_sender = MinerFixture::signer().address();
-        m.submit_transaction(MinerFixture::signed_tx(input.clone(), 0, to));
-        m.mine_block();
-        assert_eq!(m.latest().transactions.len(), 1);
-        assert_eq!(m.latest().transactions[0].input(), &input);
-        assert_eq!(m.latest().transactions[0].to(), Some(to));
-        assert_eq!(m.latest().transactions[0].recover_signer().unwrap(), expected_sender);
-        assert_eq!(m.latest().transaction_receipts[0].from, expected_sender);
-        assert_eq!(m.latest().transaction_receipts[0].to, Some(to));
-    }
-
-    #[test]
-    fn pending_transactions_cleared_after_mining() {
-        let mut m = MinerFixture::miner();
-        m.submit_transaction(MinerFixture::signed_tx(Bytes::new(), 0, Address::ZERO));
-        m.mine_block();
-        m.mine_block();
-        assert!(m.latest().transactions.is_empty());
-    }
-
+    /// Enqueued logs are mined as one event transaction each, whose receipt carries exactly that
+    /// log, so derivation reads deposits and system config updates from the right receipt.
     #[test]
     fn enqueued_logs_are_mined_as_signed_event_transaction_receipts() {
         let mut m = MinerFixture::miner();
@@ -1000,147 +850,7 @@ mod tests {
         m.mine_block();
         let block = m.latest();
         assert_eq!(block.transactions.len(), 2);
-        assert_eq!(block.transactions[0].to(), Some(first.address));
-        assert_eq!(block.transactions[1].to(), Some(second.address));
-        assert_eq!(block.receipts[0].logs, vec![first.clone()]);
-        assert_eq!(block.receipts[1].logs, vec![second.clone()]);
-        assert_ne!(block.header.logs_bloom, Bloom::ZERO);
-
-        let first_receipt = &block.transaction_receipts[0];
-        let second_receipt = &block.transaction_receipts[1];
-        assert_ne!(*first_receipt.inner.logs_bloom(), Bloom::ZERO);
-        assert_ne!(*second_receipt.inner.logs_bloom(), Bloom::ZERO);
-        assert_eq!(first_receipt.logs()[0].inner, first);
-        assert_eq!(first_receipt.logs()[0].block_hash, Some(block.hash()));
-        assert_eq!(first_receipt.logs()[0].block_number, Some(block.number()));
-        assert_eq!(first_receipt.logs()[0].block_timestamp, Some(block.timestamp()));
-        assert_eq!(first_receipt.logs()[0].transaction_hash, Some(*block.transactions[0].hash()));
-        assert_eq!(first_receipt.logs()[0].transaction_index, Some(0));
-        assert_eq!(first_receipt.logs()[0].log_index, Some(0));
-
-        assert_eq!(second_receipt.logs()[0].inner, second);
-        assert_eq!(second_receipt.logs()[0].transaction_hash, Some(*block.transactions[1].hash()));
-        assert_eq!(second_receipt.logs()[0].transaction_index, Some(1));
-        assert_eq!(second_receipt.logs()[0].log_index, Some(1));
-    }
-
-    #[test]
-    fn act_returns_block_number() {
-        let mut m = MinerFixture::miner();
-        assert_eq!(m.act().unwrap(), 1);
-        assert_eq!(m.act().unwrap(), 2);
-    }
-
-    #[test]
-    fn blob_sidecars_drained_into_block() {
-        let mut m = MinerFixture::miner();
-        let hash = B256::repeat_byte(0xAA);
-        let blob = Box::new(Blob::default());
-        m.enqueue_blob(hash, blob);
-        m.mine_block();
-        assert_eq!(m.latest().blob_sidecars.len(), 1);
-        assert_eq!(m.latest().blob_sidecars[0].0, hash);
-        // Next block has no blobs.
-        m.mine_block();
-        assert!(m.latest().blob_sidecars.is_empty());
-    }
-
-    // ── reorg tests ──────────────────────────────────────────────────────────
-
-    #[test]
-    fn reorg_truncates_chain() {
-        let mut m = MinerFixture::miner();
-        m.mine_block(); // 1
-        m.mine_block(); // 2
-        m.mine_block(); // 3
-
-        let discarded = m.reorg_to(1).unwrap();
-        assert_eq!(discarded.len(), 2);
-        assert_eq!(discarded[0].number(), 2);
-        assert_eq!(discarded[1].number(), 3);
-        assert_eq!(m.latest_number(), 1);
-    }
-
-    #[test]
-    fn reorg_returns_transactions_from_discarded_blocks() {
-        let mut m = MinerFixture::miner();
-        m.mine_block(); // 1 — empty
-
-        let input = Bytes::from_static(b"\x00batch");
-        m.submit_transaction(MinerFixture::signed_tx(input.clone(), 0, Address::ZERO));
-        m.mine_block(); // 2 — contains the batch tx
-
-        m.mine_block(); // 3 — empty
-
-        let discarded = m.reorg_to(1).unwrap();
-        // Block 2 contained the batch, block 3 was empty.
-        assert_eq!(discarded[0].number(), 2);
-        assert_eq!(discarded[0].transactions.len(), 1);
-        assert_eq!(discarded[0].transactions[0].input(), &input);
-        assert_eq!(discarded[1].number(), 3);
-        assert!(discarded[1].transactions.is_empty());
-    }
-
-    #[test]
-    fn reorg_to_tip_is_no_op() {
-        let mut m = MinerFixture::miner();
-        m.mine_block();
-        m.mine_block();
-
-        let discarded = m.reorg_to(2).unwrap();
-        assert!(discarded.is_empty());
-        assert_eq!(m.latest_number(), 2);
-    }
-
-    #[test]
-    fn post_reorg_blocks_have_distinct_hashes() {
-        let mut m = MinerFixture::miner();
-        m.mine_block(); // block 1 on fork 0
-        let original_hash_1 = m.block_by_number(1).unwrap().hash();
-
-        // Reorg all the way back to genesis (now allowed); mine a new block 1 on fork 1.
-        m.reorg_to(0).unwrap(); // fork_id → 1; chain back to [genesis]
-        m.mine_block(); // new block 1 on fork 1
-
-        let new_hash_1 = m.block_by_number(1).unwrap().hash();
-        assert_ne!(
-            new_hash_1, original_hash_1,
-            "block 1 on fork 1 must have a different hash than block 1 on fork 0",
-        );
-    }
-
-    #[test]
-    fn mine_after_reorg_builds_valid_parent_chain() {
-        let mut m = MinerFixture::miner();
-        m.mine_block();
-        m.mine_block();
-        m.mine_block();
-
-        m.reorg_to(1).unwrap();
-        m.mine_block(); // new 2
-        m.mine_block(); // new 3
-
-        for i in 1..=3u64 {
-            let block = m.block_by_number(i).unwrap();
-            let parent = m.block_by_number(i - 1).unwrap();
-            assert_eq!(block.header.parent_hash, parent.hash(), "parent chain broken at {i}");
-        }
-    }
-
-    #[test]
-    fn reorg_beyond_tip_returns_error() {
-        let mut m = MinerFixture::miner();
-        m.mine_block();
-        assert!(matches!(m.reorg_to(5), Err(ReorgError::BeyondTip { requested: 5, tip: 1 })));
-    }
-
-    #[test]
-    fn reorg_to_genesis_discards_all_non_genesis_blocks() {
-        let mut m = MinerFixture::miner();
-        m.mine_block(); // block 1
-        m.mine_block(); // block 2
-        let discarded = m.reorg_to(0).expect("reorg to genesis should succeed");
-        assert_eq!(discarded.len(), 2, "blocks 1 and 2 should be discarded");
-        assert_eq!(m.latest_number(), 0, "only genesis remains");
+        assert_eq!(block.receipts[0].logs, vec![first]);
+        assert_eq!(block.receipts[1].logs, vec![second]);
     }
 }

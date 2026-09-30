@@ -1,4 +1,4 @@
-//! TDD action test skeletons for sequencer drift scenarios.
+//! Action tests for batches past `max_sequencer_drift`.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
@@ -6,35 +6,10 @@ use base_action_harness::{
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 
-// ---------------------------------------------------------------------------
-// A. Sequencer drift — L2 timestamp exceeds L1 origin time + max_sequencer_drift
-// ---------------------------------------------------------------------------
-
-/// When the L2 sequencer is pinned to a stale L1 origin and builds enough
-/// blocks that `L2_timestamp > L1_origin_time + max_sequencer_drift`, the
-/// derivation pipeline should still derive those blocks — but any non-empty
-/// batch (one containing user transactions) whose timestamp is past the drift
-/// boundary is dropped. Only deposit-only (default) blocks are produced for
-/// the over-drift slots.
-///
-/// ## Setup
-///
-/// - Fjord active → `max_sequencer_drift = 1800 s`, `block_time = 300 s`, L1
-///   `block_time = 4 s`
-/// - L1 genesis at ts=0 → L1 block 1 at ts=4
-/// - Pin the sequencer to L1 genesis (epoch 0, ts=0)
-/// - Build L2 blocks: ts=300, 600, …, 1800, 2100, 2400
-/// - After L2 block 6 (ts=1800), `1800 ≤ 0 + 1800 = 1800` → still within
-/// - L2 block 7 (ts=2100): `2100 > 1800` → drift exceeded
-///
-/// ## Expected behaviour
-///
-/// The derivation pipeline:
-/// 1. Accepts L2 blocks 1-6 (timestamps 300-1800, within drift) as submitted
-/// 2. For L2 blocks 7-8 (timestamps 2100-2400, over drift), drops the
-///    batcher's non-empty batch and generates deposit-only default blocks
+/// Past `max_sequencer_drift`, derivation drops the batches with user transactions and,
+/// once epoch 0's sequencing window closes, fills their slots with deposit-only blocks.
 #[tokio::test]
-async fn sequencer_drift_produces_deposit_only_blocks() {
+async fn over_drift_batches_with_transactions_become_deposit_only_once_the_window_closes() {
     let l1_cfg = L1MinerConfig { block_time: 4, ..Default::default() };
     let batcher_cfg = BatcherConfig {
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
@@ -50,8 +25,8 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
         .build();
     let mut h = ActionTestHarness::new(l1_cfg, rollup_cfg.clone());
 
-    // Mine L1 block 1 (ts=4) so the sequencer has an epoch to reference,
-    // but we will PIN the sequencer to epoch 0 (ts=0) to force drift.
+    // Mine L1 block 1 (ts=4) so the sequencer has a later epoch to reference, then pin it to
+    // epoch 0 (ts=0) to force drift.
     h.mine_l1_blocks(1);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -91,7 +66,7 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
         &mut node_sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg);
     batcher.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
@@ -103,12 +78,7 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
     h.mine_and_push(&chain);
 
     node.initialize().await;
-
-    // Drive derivation through all L1 blocks.
-    let mut total_derived = 0;
-    for _ in 1..=h.l1.latest_number() {
-        total_derived += node.run_until_idle().await;
-    }
+    let total_derived = node.run_until_idle().await;
 
     // The pipeline should derive blocks for all L2 slots. Blocks 1-6 use the
     // batcher's submitted batches. Blocks 7-8 are generated as deposit-only
@@ -121,33 +91,18 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
     );
     assert_eq!(total_derived, 8, "all 8 blocks derived");
 
-    // Verify deposit-only behaviour: blocks 1-6 carry 2 txs each (deposit +
-    // user tx), blocks 7-8 must carry exactly 1 tx (L1 info deposit only).
-    let tx_counts = node.derived_tx_counts();
-    for &(number, count) in tx_counts {
-        if number <= 6 {
-            assert_eq!(count, 2, "block {number} should have deposit + user tx");
-        } else {
-            assert_eq!(count, 1, "block {number} past drift boundary should be deposit-only");
-        }
+    // Blocks 1-6 keep their user transaction, blocks 7-8 are deposit-only.
+    for number in 1..=8 {
+        let block = node.derived_block(number).expect("derived block");
+        assert_eq!(block.is_deposit_only(), number > 6, "block {number}");
     }
 }
 
-// ---------------------------------------------------------------------------
-// B. Sequencer drift with forced-empty blocks
-// ---------------------------------------------------------------------------
-
-/// When `max_sequencer_drift` is exceeded, the sequencer should produce
-/// deposit-only (empty) blocks. This test verifies that the pipeline correctly
-/// handles the over-drift region by deriving blocks for all L2 slots, even
-/// when the submitted batches are dropped.
-///
-/// This test uses `L2Sequencer::build_empty_block()` for the over-drift
-/// blocks (7-8). The pipeline drops those batches (they still reference the
-/// stale epoch 0, triggering `SequencerDriftNotAdoptedNextOrigin`), and then
-/// generates deposit-only default blocks for those slots.
+/// Past `max_sequencer_drift`, an empty batch that keeps the stale L1 origin is dropped too
+/// once the next origin is due. Derivation stops at the last block within drift, and fills no
+/// deposit-only block while epoch 0's sequencing window is open.
 #[tokio::test]
-async fn sequencer_drift_forced_empty_blocks_accepted() {
+async fn over_drift_empty_batches_are_dropped_when_a_next_origin_exists() {
     let l1_cfg = L1MinerConfig { block_time: 4, ..Default::default() };
     let batcher_cfg = BatcherConfig {
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
@@ -176,30 +131,18 @@ async fn sequencer_drift_forced_empty_blocks_accepted() {
     for _ in 1u64..=6 {
         source.push(sequencer.build_next_block_with_single_transaction().await);
     }
-    // Build empty blocks past the drift boundary. The empty block has only
-    // the deposit tx — the batcher encodes it but the pipeline drops it
-    // (stale epoch) and produces a default block.
+    // Empty blocks past the drift boundary, still on epoch 0 although L1 block 1 exists.
     for _ in 7u64..=8 {
         source.push(sequencer.build_empty_block().await);
     }
 
-    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg);
     batcher.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
     node.initialize().await;
+    let total_derived = node.run_until_idle().await;
 
-    let mut total_derived = 0;
-    for _ in 1..=h.l1.latest_number() {
-        total_derived += node.run_until_idle().await;
-    }
-
-    // All 8 blocks should be derived: 6 normal + 2 empty (pipeline-generated
-    // deposit-only blocks for the over-drift slots).
-    assert!(total_derived >= 6, "at least the 6 within-drift blocks should be derived");
-    assert_eq!(
-        node.l2_safe_number(),
-        total_derived as u64,
-        "safe head should match number of derived blocks"
-    );
+    assert_eq!(total_derived, 6, "the over-drift batches are dropped");
+    assert_eq!(node.l2_safe_number(), 6);
 }
