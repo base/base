@@ -10,6 +10,7 @@ use base_batcher_encoder::{DaType, EncoderConfig};
 // Batcher: persistent pipeline end-to-end path
 // ---------------------------------------------------------------------------
 
+/// `advance` on three L2 blocks mines an L1 block that holds the batcher's submissions.
 #[tokio::test]
 async fn batcher_mines_block_with_submissions() {
     let mut h = ActionTestHarness::default();
@@ -27,6 +28,7 @@ async fn batcher_mines_block_with_submissions() {
     );
 }
 
+/// `try_advance` fails with `NoBlocks` when the source has no L2 block to batch.
 #[tokio::test]
 async fn batcher_errors_when_no_l2_blocks_async() {
     let mut h = ActionTestHarness::default();
@@ -38,6 +40,8 @@ async fn batcher_errors_when_no_l2_blocks_async() {
     assert!(matches!(err, BatcherError::NoBlocks));
 }
 
+/// A one-byte compressed size target makes every block close its own calldata channel, and
+/// derivation still makes the four blocks safe one by one, in order.
 #[tokio::test]
 async fn batcher_soft_channel_target_derives_exact_blocks() {
     const BLOCK_COUNT: u64 = 4;
@@ -93,7 +97,7 @@ async fn batcher_soft_channel_target_derives_exact_blocks() {
 ///
 /// Sequence:
 /// 1. Encode and stage all frames; mine L1 block 1 (original).
-/// 2. Reorg to genesis **before** calling `confirm_staged` — frames are still
+/// 2. Reorg to genesis **before** calling `observe_l1_block`. The frames are still
 ///    in `staged`, so `reorg_to` fires `Err(TxManagerError::Rpc("reorg"))` on
 ///    each oneshot responder.
 /// 3. The driver handles each failed receipt: `pipeline.requeue(id)` rewinds the
@@ -124,7 +128,7 @@ async fn batcher_reorg_during_submission() {
     );
 
     // Encode and stage all frames; mine L1 block 1 (original).
-    // Do NOT call confirm_staged — frames remain in `staged` so the reorg
+    // Do NOT call observe_l1_block, so the frames remain in `staged` and the reorg
     // below fires failure receipts for them.
     let mut source = ActionL2Source::new();
     source.push(block);
@@ -150,7 +154,7 @@ async fn batcher_reorg_during_submission() {
     batcher.stage_n_frames(&mut h.l1, usize::MAX);
     h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(h.l1.tip()).await;
+    batcher.observe_l1_block(h.l1.tip()).await;
 
     // Verify the node re-derives L2 block 1 from the new-fork submission.
     node.initialize().await;

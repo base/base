@@ -198,7 +198,7 @@ The production-shaped synthetic L1/DA implementation is now the default:
    signer recovery and inbox filtering.
 4. Use the L1 event helpers for system-config, operator-fee, and deposit tests
    so derivation reads logs from signed transaction receipts.
-5. Use `Batcher::stage_n_frames`, `Batcher::confirm_staged`, and
+5. Use `Batcher::stage_n_frames`, `Batcher::observe_l1_block`, and
    `Batcher::staged_count` when a test needs to distinguish submission from L1
    inclusion.
 

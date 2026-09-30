@@ -361,7 +361,7 @@ async fn granite_channel_timeout_enforced() {
     batcher.stage_n_frames(&mut h.l1, 1);
     h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(h.l1.tip()).await;
+    batcher.observe_l1_block(h.l1.tip()).await;
 
     node.initialize().await;
     node.run_until_idle().await;
@@ -395,7 +395,7 @@ async fn granite_channel_timeout_enforced() {
     batcher.stage_n_frames(&mut h.l1, frame_count - 1);
     h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(h.l1.tip()).await;
+    batcher.observe_l1_block(h.l1.tip()).await;
 
     let derived = node.run_until_idle().await;
     assert_eq!(
