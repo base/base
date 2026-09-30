@@ -10,6 +10,7 @@ use base_batcher_encoder::{DaType, EncoderConfig};
 // Batcher: persistent pipeline end-to-end path
 // ---------------------------------------------------------------------------
 
+/// `advance` on three L2 blocks mines an L1 block that holds the batcher's submissions.
 #[tokio::test]
 async fn batcher_mines_block_with_submissions() {
     let mut h = ActionTestHarness::default();
@@ -27,6 +28,7 @@ async fn batcher_mines_block_with_submissions() {
     );
 }
 
+/// `try_advance` fails with `NoBlocks` when the source has no L2 block to batch.
 #[tokio::test]
 async fn batcher_errors_when_no_l2_blocks_async() {
     let mut h = ActionTestHarness::default();
@@ -38,6 +40,8 @@ async fn batcher_errors_when_no_l2_blocks_async() {
     assert!(matches!(err, BatcherError::NoBlocks));
 }
 
+/// A one-byte compressed size target makes every block close its own calldata channel, and
+/// derivation still makes the four blocks safe one by one, in order.
 #[tokio::test]
 async fn batcher_soft_channel_target_derives_exact_blocks() {
     const BLOCK_COUNT: u64 = 4;

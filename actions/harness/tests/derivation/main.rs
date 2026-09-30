@@ -1348,7 +1348,7 @@ async fn multi_frame_channel_reassembled() {
         batcher.pending_count()
     );
 
-    // Stage all frames, mine one L1 block, and confirm.
+    // Stage all frames, mine one L1 block and show it to the batcher.
     let n = batcher.pending_count();
     batcher.stage_n_frames(&mut h.l1, n);
     h.l1.mine_block();
@@ -1921,6 +1921,7 @@ async fn derive_chain_from_near_l1_genesis() {
 // Blob DA derivation tests
 // ---------------------------------------------------------------------------
 
+/// One L2 block batched in a blob is derived and becomes the safe head.
 #[tokio::test]
 async fn single_l2_block_derived_from_blob() {
     let batcher_cfg = BatcherConfig::default(); // DaType::Blob by default
@@ -1946,6 +1947,7 @@ async fn single_l2_block_derived_from_blob() {
     assert_eq!(node.l2_safe_number(), 1, "safe head should be L2 block 1");
 }
 
+/// Three L2 blocks batched in a blob are all derived, and the last one becomes the safe head.
 #[tokio::test]
 async fn multiple_l2_blocks_derived_from_blob() {
     const L2_BLOCK_COUNT: u64 = 3;
