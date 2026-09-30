@@ -122,14 +122,14 @@ impl SharedRetry {
         let second_block =
             BlockFixture::block(first_block.header.hash_slow(), 2, THREE_BLOB_PAYLOAD);
         encoder.add_block(first_block.clone()).unwrap();
-        let first = encoder.encode_and_drain().unwrap();
+        let [first] = <[_; 1]>::try_from(encoder.encode_and_drain().unwrap()).unwrap();
         encoder.add_block(second_block.clone()).unwrap();
         let mut second = encoder.encode_and_drain().unwrap();
         assert_eq!(second.len(), 2, "two full blobs, then the tail");
         let tail = second.pop().expect("the tail");
         let full_blobs = second.pop().expect("the full blobs");
 
-        encoder.requeue(first[0].id);
+        encoder.requeue(first.id);
         encoder.requeue(tail.id);
         let retry = encoder.next_submission().expect("the retry");
         assert_eq!(retry.blob_count(), 2, "one transaction carries both channels");

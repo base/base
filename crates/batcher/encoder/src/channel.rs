@@ -496,10 +496,12 @@ mod tests {
         let maximum = channel.rollup_config.max_rlp_bytes_per_channel(0);
         channel.input_bytes = maximum;
 
-        assert!(matches!(
-            channel.add_batch(&batch(1), 1).unwrap(),
-            ChannelAddOutcome::Rejected(ChannelLimit::RlpBytes { .. })
-        ));
+        let ChannelAddOutcome::Rejected(ChannelLimit::RlpBytes { maximum: limit, .. }) =
+            channel.add_batch(&batch(1), 1).unwrap()
+        else {
+            panic!("the batch must be rejected on the RLP limit");
+        };
+        assert_eq!(limit, maximum);
         assert_eq!(channel.input_bytes, maximum);
         assert_eq!(channel.blocks_added(), 0);
         assert_eq!(channel.compressed_bytes(), 0);
@@ -513,10 +515,12 @@ mod tests {
         let maximum = channel.rollup_config.max_rlp_bytes_per_channel(0);
         channel.input_bytes = maximum - 1_000;
 
-        assert!(matches!(
-            channel.add_batch(&batch(1), 1).unwrap(),
-            ChannelAddOutcome::Rejected(ChannelLimit::AssembledBytes { maximum: m, .. }) if m == maximum
-        ));
+        let ChannelAddOutcome::Rejected(ChannelLimit::AssembledBytes { maximum: limit, .. }) =
+            channel.add_batch(&batch(1), 1).unwrap()
+        else {
+            panic!("the batch must be rejected on the assembled size limit");
+        };
+        assert_eq!(limit, maximum);
         assert_eq!(channel.input_bytes, maximum - 1_000);
         assert_eq!(channel.blocks_added(), 0);
         assert_eq!(channel.compressed_bytes(), 0);

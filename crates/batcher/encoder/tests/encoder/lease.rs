@@ -47,7 +47,7 @@ fn a_retry_is_not_packed_with_newer_output() {
     let mut encoder = fixture.encoder();
     let blocks = BlockFixture::chain(2, 0);
     encoder.add_block(blocks[0].clone()).unwrap();
-    let submission = encoder.encode_and_drain().unwrap().remove(0);
+    let [submission] = <[_; 1]>::try_from(encoder.encode_and_drain().unwrap()).unwrap();
     encoder.requeue(submission.id);
     encoder.add_block(blocks[1].clone()).unwrap();
     assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
