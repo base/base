@@ -448,7 +448,7 @@ impl ValidityPredicate {
     /// any block (drop as soon as the chain advances), and `None` when no
     /// `block_number` upper bound applies or the bound exceeds [`u64::MAX`]. This
     /// is the pool-side, block-granular projection of [`Self::is_batch_expired`];
-    /// the finer flashblock deadline is enforced only by the builder.
+    /// [`Self::flashblock_expiry_bound`] supplies the optional finer deadline.
     #[must_use]
     pub fn block_expiry_bound(predicates: &[Self]) -> Option<u64> {
         let mut upper: Option<U256> = None;
@@ -468,6 +468,28 @@ impl ValidityPredicate {
             upper = Some(upper.map_or(candidate, |current| current.min(candidate)));
         }
         upper.and_then(|bound| u64::try_from(bound).ok())
+    }
+
+    /// Returns the inclusive last flashblock index allowed by a predicate batch.
+    /// The bound is meaningful for eviction only together with a finite block bound.
+    #[must_use]
+    pub fn flashblock_expiry_bound(predicates: &[Self]) -> Option<u64> {
+        predicates
+            .iter()
+            .filter_map(|predicate| {
+                let Self::FlashblockIndex { op, value } = predicate else { return None };
+                match op {
+                    ValidityOperator::LessThan => {
+                        Some(value.checked_sub(U256::from(1)).unwrap_or_default())
+                    }
+                    ValidityOperator::LessThanOrEqual | ValidityOperator::Equal => Some(*value),
+                    ValidityOperator::NotEqual
+                    | ValidityOperator::GreaterThan
+                    | ValidityOperator::GreaterThanOrEqual => None,
+                }
+            })
+            .min()
+            .and_then(|bound| u64::try_from(bound).ok())
     }
 
     /// Stable-sorts a predicate batch into canonical evaluation order: timing
@@ -1573,6 +1595,28 @@ mod tests {
             None
         );
         assert_eq!(ValidityPredicate::block_expiry_bound(&[]), None);
+    }
+    #[test]
+    fn flashblock_expiry_bound_uses_tightest_inclusive_index() {
+        let predicates = [
+            flashblock_index(ValidityOperator::LessThan, 4),
+            flashblock_index(ValidityOperator::LessThanOrEqual, 2),
+        ];
+        assert_eq!(ValidityPredicate::flashblock_expiry_bound(&predicates), Some(2));
+        assert_eq!(
+            ValidityPredicate::flashblock_expiry_bound(&[flashblock_index(
+                ValidityOperator::LessThan,
+                3
+            )]),
+            Some(2)
+        );
+        assert_eq!(
+            ValidityPredicate::flashblock_expiry_bound(&[flashblock_index(
+                ValidityOperator::GreaterThan,
+                3
+            )]),
+            None
+        );
     }
 
     #[test]
