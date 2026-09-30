@@ -46,6 +46,20 @@ impl BaseExecutionPayloadEnvelope {
         let ssz_bytes = self.as_ssz_bytes();
         crate::PayloadHash::from(ssz_bytes.as_slice())
     }
+
+    /// Returns the parent beacon block root as it prefixes the payload in the SSZ block encoding.
+    ///
+    /// V1 and V2 payloads omit the root; V3+ payloads always carry it, zeroed when unset.
+    ///
+    /// <https://specs.base.org/protocol/consensus/p2p#block-encoding>
+    pub fn ssz_parent_beacon_block_root(&self) -> Option<B256> {
+        match self.execution_payload {
+            BaseExecutionPayload::V1(_) | BaseExecutionPayload::V2(_) => None,
+            BaseExecutionPayload::V3(_) | BaseExecutionPayload::V4(_) => {
+                Some(self.parent_beacon_block_root.unwrap_or_default())
+            }
+        }
+    }
 }
 
 #[cfg(feature = "std")]
@@ -55,56 +69,15 @@ impl ssz::Encode for BaseExecutionPayloadEnvelope {
     }
 
     fn ssz_append(&self, buf: &mut Vec<u8>) {
-        // Write parent beacon block root only if the payload is not a v1 or v2 payload.
-        // <https://specs.base.org/protocol/consensus/p2p#block-encoding>
-        if !matches!(
-            self.execution_payload,
-            BaseExecutionPayload::V1(_) | BaseExecutionPayload::V2(_)
-        ) {
-            buf.extend_from_slice(self.parent_beacon_block_root.unwrap_or_default().as_slice());
+        if let Some(root) = self.ssz_parent_beacon_block_root() {
+            buf.extend_from_slice(root.as_slice());
         }
-
-        // Write payload
         self.execution_payload.ssz_append(buf);
     }
 
     fn ssz_bytes_len(&self) -> usize {
-        let mut len = 0;
-        len += B256::ssz_fixed_len(); // parent_beacon_block_root is always 32 bytes
-        len += self.execution_payload.ssz_bytes_len();
-        len
-    }
-}
-
-#[cfg(feature = "std")]
-impl ssz::Decode for BaseExecutionPayloadEnvelope {
-    fn is_ssz_fixed_len() -> bool {
-        false
-    }
-
-    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, ssz::DecodeError> {
-        if bytes.len() < B256::ssz_fixed_len() {
-            return Err(ssz::DecodeError::InvalidByteLength {
-                len: bytes.len(),
-                expected: B256::ssz_fixed_len(),
-            });
-        }
-
-        // Decode parent_beacon_block_root
-        let parent_beacon_block_root = {
-            let root_bytes = &bytes[..B256::ssz_fixed_len()];
-            if root_bytes.iter().all(|&b| b == 0) {
-                None
-            } else {
-                Some(B256::from_slice(root_bytes))
-            }
-        };
-
-        // Decode payload
-        let execution_payload =
-            BaseExecutionPayload::from_ssz_bytes(&bytes[B256::ssz_fixed_len()..])?;
-
-        Ok(Self { parent_beacon_block_root, execution_payload })
+        let root_len = self.ssz_parent_beacon_block_root().map_or(0, |_| B256::ssz_fixed_len());
+        root_len + self.execution_payload.ssz_bytes_len()
     }
 }
 
@@ -582,21 +555,9 @@ mod tests {
     #[cfg(feature = "std")]
     use alloy_primitives::hex;
     #[cfg(feature = "std")]
-    use ssz::{Decode, Encode};
+    use ssz::Encode;
 
     use super::*;
-
-    #[test]
-    #[cfg(feature = "std")]
-    fn test_roundtrip_encode_rpc_execution_payload_envelope() {
-        let data = hex!(
-            "00000000000000000000000000000000000000000000000000000000000001230000000000000000000000000000000000000000000000000000000000000123000000000000000000000000000000000000045600000000000000000000000000000000000000000000000000000000000007890000000000000000000000000000000000000000000000000000000000000abc0d0e0f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000111de000000000000004d01000000000000bc010000000000002b02000000000000300200000903000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000088832020000380200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001236666040000009999"
-        );
-
-        let payload = BaseExecutionPayloadEnvelope::from_ssz_bytes(&data).unwrap();
-        let serialized = payload.as_ssz_bytes();
-        assert_eq!(data, &serialized[..]);
-    }
 
     #[test]
     #[cfg(feature = "serde")]
@@ -687,6 +648,44 @@ mod tests {
         assert_eq!(1741842007, payload_envelop.payload.timestamp());
         let encoded = payload_envelop.encode_v4().unwrap();
         assert_eq!(data, encoded);
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_ssz_encoding_matches_gossip_block_encoding() {
+        type Decoder = fn(&[u8]) -> Result<NetworkPayloadEnvelope, PayloadEnvelopeError>;
+        let fixtures: [(&str, Decoder); 4] = [
+            (
+                "0xbd04f043128457c6ccf35128497167442bcc0f8cce78cda8b366e6a12e526d938d1e4c1046acffffbfc542a7e212bb7d80d3a4b2f84f7b196d935398a24eb84c519789b401000000fe0300fe0300fe0300fe0300fe0300fe0300a203000c4a8fd56621ad04fc0101067601008ce60be0005b220117c32c0f3b394b346c2aa42cfa8157cd41f891aa0bec485a62fc010000",
+                NetworkPayloadEnvelope::decode_v1,
+            ),
+            (
+                "0xc104f0433805080eb36c0b130a7cc1dc74c3f721af4e249aa6f61bb89d1557143e971bb738a3f3b98df7c457e74048e9d2d7e5cd82bb45e3760467e2270e9db86d1271a700000000fe0300fe0300fe0300fe0300fe0300fe0300a203000c6b89d46525ad000205067201009cda69cb5b9b73fc4eb2458b37d37f04ff507fe6c9cd2ab704a05ea9dae3cd61760002000000020000",
+                NetworkPayloadEnvelope::decode_v2,
+            ),
+            (
+                "0xf104f0434442b9eb38b259f5b23826e6b623e829d2fb878dac70187a1aecf42a3f9bedfd29793d1fcb5822324be0d3e12340a95855553a65d64b83e5579dffb31470df5d010000006a03000412346a1d00fe0100fe0100fe0100fe0100fe0100fe01004201000cc588d465219504100201067601007cfece77b89685f60e3663b6e0faf2de0734674eb91339700c4858c773a8ff921e014401043e0100",
+                NetworkPayloadEnvelope::decode_v3,
+            ),
+            (
+                "0x9105f043cee25401b6853202950d1d8a082f31a80c4fef5782c049a731f5d104b1b9b9aa7618605b420438ae98b44c8aaaebd482854473c2ae57c079286bb634bece5210000000006a03000412346a1d00fe0100fe0100fe0100fe0100fe0100fe01004201000c5766d26721950430020106f6010001440104b60100049876",
+                NetworkPayloadEnvelope::decode_v4,
+            ),
+        ];
+
+        for (gossip_hex, decode) in fixtures {
+            let gossip_data = hex::decode(gossip_hex).unwrap();
+            let signed_block = snap::raw::Decoder::new().decompress_vec(&gossip_data).unwrap();
+            let block_encoding = &signed_block[65..];
+
+            let network_envelope = decode(&gossip_data).unwrap();
+            let expected_hash = network_envelope.payload_hash;
+            let envelope = BaseExecutionPayloadEnvelope::from(network_envelope);
+
+            assert_eq!(envelope.as_ssz_bytes(), block_encoding);
+            assert_eq!(envelope.ssz_bytes_len(), block_encoding.len());
+            assert_eq!(envelope.payload_hash(), expected_hash);
+        }
     }
 
     #[test]
