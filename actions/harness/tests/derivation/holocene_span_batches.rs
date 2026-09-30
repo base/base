@@ -366,7 +366,7 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
 
     // Build 4 L2 blocks. build_next_block_with_single_transaction() includes a user transaction in
     // every block. Block 3 (ts=6) is the first Jovian block, which must be
-    // deposit-only — including a user tx here is the deliberate error.
+    // deposit-only. Including a user tx here is the deliberate error.
     let block1 = builder.build_next_block_with_single_transaction().await; // ts=2
     let block2 = builder.build_next_block_with_single_transaction().await; // ts=4
     let block3_invalid = builder.build_next_block_with_single_transaction().await; // ts=6
@@ -387,7 +387,7 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
     chain.push(h.l1.tip().clone()); // L1 block 1: span batch with invalid block 3
 
     // The sequencer registered state roots for blocks 3 and 4 that will not match
-    // what derivation produces (block 3 becomes deposit-only; block 4 has a different
+    // what derivation produces (block 3 becomes deposit-only and block 4 has a different
     // parent). Clear the state root entries so the engine skips validation for these.
     node.register_block_hash(3, B256::ZERO);
     node.register_block_hash(4, B256::ZERO);
@@ -407,7 +407,7 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
 
     // --- Phase 2: resubmit blocks 3–4 with block 3 correctly empty ---
     //
-    // The primary builder is now at block 4; build_empty_block() on it would
+    // The primary builder is now at block 4, so build_empty_block() on it would
     // produce block 5 (wrong timestamp). Instead, create a fresh sequencer
     // starting from genesis, advance it to block 2's state, then build the
     // correct recovery blocks 3 (empty, ts=6) and 4 (user tx, ts=8).
