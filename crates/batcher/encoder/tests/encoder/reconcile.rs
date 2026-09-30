@@ -41,6 +41,28 @@ fn reconcile_prunes_blocks_up_to_the_safe_head() {
     assert_eq!(encoder.da_backlog_bytes(), 0);
 }
 
+/// A block added after a prune is encoded, so the prune leaves no gap in the batches.
+#[test]
+fn a_block_added_after_a_prune_is_encoded() {
+    let fixture = EncoderFixture::new(EncoderConfig::default());
+    let mut encoder = fixture.encoder();
+    let blocks = BlockFixture::chain(3, 0);
+    for block in &blocks[..2] {
+        encoder.add_block(block.clone()).unwrap();
+    }
+    for submission in encoder.encode_and_drain().unwrap() {
+        encoder.confirm(submission.id, DERIVATION_L1);
+    }
+    assert_eq!(
+        encoder.reconcile_derivation(BlockInfo::from(&blocks[0]), DERIVATION_L1),
+        DerivationReconciliation::Consistent
+    );
+
+    encoder.add_block(blocks[2].clone()).unwrap();
+    let submissions = encoder.encode_and_drain().unwrap();
+    assert_eq!(fixture.derive(&submissions).concat(), BlockFixture::batches(&blocks[2..]));
+}
+
 /// A replay re-encodes only the blocks still above the safe head, so the pruned start of the
 /// channel is never sent again.
 #[test]
