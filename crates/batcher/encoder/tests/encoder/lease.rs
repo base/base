@@ -20,10 +20,10 @@ fn requeued_submissions_resend_their_frames_in_production_order() {
     let mut encoder = fixture.encoder();
     let blocks = BlockFixture::chain(2, MULTI_FRAME_PAYLOAD);
     encoder.add_block(blocks[0].clone()).unwrap();
-    let older = encoder.encode_and_drain().unwrap().remove(0);
+    let [older] = <[_; 1]>::try_from(encoder.encode_and_drain().unwrap()).unwrap();
     assert!(older.frame_count() > 1, "{} frames", older.frame_count());
     encoder.add_block(blocks[1].clone()).unwrap();
-    let newer = encoder.encode_and_drain().unwrap().remove(0);
+    let [newer] = <[_; 1]>::try_from(encoder.encode_and_drain().unwrap()).unwrap();
 
     encoder.requeue(newer.id);
     encoder.requeue(older.id);

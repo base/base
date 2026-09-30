@@ -38,13 +38,9 @@ fn l1_head_never_moves_backwards() {
     let fixture =
         EncoderFixture::new(EncoderConfig { max_channel_duration: 2, ..EncoderConfig::default() });
     let mut encoder = fixture.encoder();
-    let blocks = BlockFixture::chain(2, 0);
     encoder.advance_l1_head(10);
-    encoder.add_block(blocks[0].clone()).unwrap();
-    encoder.encode_and_drain().unwrap();
-
     encoder.advance_l1_head(3);
-    encoder.add_block(blocks[1].clone()).unwrap();
+    encoder.add_block(BlockFixture::block(B256::ZERO, 1, 0)).unwrap();
     assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
 
     encoder.advance_l1_head(11);
