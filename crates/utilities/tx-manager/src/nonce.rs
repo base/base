@@ -2,6 +2,7 @@
 
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
+use alloy_eips::BlockId;
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use base_runtime::{Runtime, RuntimeTimeout, TokioRuntime};
@@ -35,13 +36,28 @@ pub struct NonceState {
     /// concurrent `send_async()` task. The effective starting nonce after
     /// reset is `max(chain_nonce, reserved_high_water)`.
     pub reserved_high_water: u64,
-    /// Nonces that were reserved via [`NonceManager::reserve_nonce`] but
-    /// never published. These are recycled on subsequent nonce requests,
-    /// filling gaps left by failed `send_async` tasks.
+    /// Nonces of failed sends that were never successfully published. These
+    /// are recycled on subsequent nonce requests, filling the gaps the failed
+    /// sends left.
     ///
-    /// Not cleared by [`NonceManager::reset`] — the nonces were never
-    /// published and must persist for reuse.
+    /// Not cleared by [`NonceManager::reset`]. Nonces the chain has consumed
+    /// since they were returned are pruned before any is reissued.
     pub returned_nonces: BTreeSet<u64>,
+}
+
+impl NonceState {
+    /// Drops the returned nonces below `chain_nonce`, which the chain has
+    /// already consumed.
+    fn prune_returned_nonces(&mut self, chain_nonce: u64) {
+        let kept = self.returned_nonces.split_off(&chain_nonce);
+        if !self.returned_nonces.is_empty() {
+            debug!(
+                pruned = self.returned_nonces.len(),
+                chain_nonce, "pruned stale returned nonces"
+            );
+        }
+        self.returned_nonces = kept;
+    }
 }
 
 /// Manages nonce allocation and tracking.
@@ -113,7 +129,11 @@ where
     ///
     /// On the first call (or after [`reset`](Self::reset)), fetches the
     /// current transaction count from the provider. Subsequent calls
-    /// increment the cached value locally without making RPC calls.
+    /// increment the cached value locally without making RPC calls, unless
+    /// a returned nonce is available. A returned nonce can be mined after its
+    /// send failed, e.g. when the node never answered the publish, so the
+    /// mined transaction count is fetched first and consumed nonces are
+    /// dropped rather than reissued in a transaction that can never be mined.
     ///
     /// The RPC fetch (when needed) is performed without holding the
     /// lock, so concurrent callers are not blocked by the network
@@ -138,10 +158,23 @@ where
             // Acquire the owned lock once upfront.
             let guard = Arc::clone(&self.inner).lock_owned().await;
 
-            // Fast path: cache is populated — read-and-increment in a
-            // single lock round-trip.
+            // Fast path: cache is populated and no returned nonce needs a
+            // chain check — read-and-increment in a single lock round-trip.
             if let Some(n) = guard.nonce {
-                return Self::advance_nonce(guard, n);
+                if guard.returned_nonces.is_empty() {
+                    return Self::advance_nonce(guard, n);
+                }
+
+                drop(guard);
+                let mined = self.fetch_transaction_count(BlockId::latest()).await?;
+                let mut guard = Arc::clone(&self.inner).lock_owned().await;
+                guard.prune_returned_nonces(mined);
+                if let Some(n) = guard.nonce {
+                    return Self::advance_nonce(guard, n);
+                }
+                drop(guard);
+                debug!(attempt, "nonce cache reset during RPC fetch, retrying");
+                continue;
             }
 
             // Cache miss: snapshot the generation, then drop the lock so
@@ -153,27 +186,8 @@ where
             // concurrent callers are not blocked by the RPC round-trip.
             // Multiple concurrent callers may fetch redundantly; only
             // the first writer's value is used.
-            let count_fut = if self.use_pending_tag {
-                self.provider.get_transaction_count(self.address).pending()
-            } else {
-                self.provider.get_transaction_count(self.address)
-            };
-            let fetched = RuntimeTimeout::run(&self.runtime, self.rpc_timeout, count_fut)
-                .await
-                .map_err(|_| {
-                    warn!(
-                        address = %self.address,
-                        timeout = ?self.rpc_timeout,
-                        "nonce fetch timed out",
-                    );
-                    TxManagerError::Rpc("nonce fetch timed out".into())
-                })?
-                .map_err(|_| {
-                    // The raw transport error may embed credential-bearing
-                    // RPC URLs, so neither log nor propagate it.
-                    warn!(address = %self.address, "failed to fetch nonce from chain");
-                    TxManagerError::Rpc("nonce fetch failed".into())
-                })?;
+            let block = if self.use_pending_tag { BlockId::pending() } else { BlockId::latest() };
+            let fetched = self.fetch_transaction_count(block).await?;
 
             // Phase 3: re-acquire the lock and populate only if still
             // unset AND the generation has not changed. If reset()
@@ -192,24 +206,30 @@ where
                 fetched
             });
 
-            // Prune returned nonces that the chain has already confirmed.
-            // `split_off(fetched)` moves elements >= fetched into `kept`;
-            // the original set retains elements < fetched (stale).
-            let kept = guard.returned_nonces.split_off(&fetched);
-            if !guard.returned_nonces.is_empty() {
-                debug!(
-                    pruned = guard.returned_nonces.len(),
-                    chain_nonce = fetched,
-                    "pruned stale returned nonces"
-                );
-            }
-            guard.returned_nonces = kept;
+            guard.prune_returned_nonces(fetched);
 
             return Self::advance_nonce(guard, nonce);
         }
 
         warn!(attempts = Self::MAX_RETRY_ATTEMPTS, "nonce acquisition failed after max retries",);
         Err(TxManagerError::NonceAcquisitionFailed)
+    }
+
+    /// Fetches the account's transaction count at `block`.
+    async fn fetch_transaction_count(&self, block: BlockId) -> Result<u64, TxManagerError> {
+        let count = self.provider.get_transaction_count(self.address).block_id(block);
+        RuntimeTimeout::run(&self.runtime, self.rpc_timeout, count)
+            .await
+            .map_err(|_| {
+                warn!(address = %self.address, timeout = ?self.rpc_timeout, "nonce fetch timed out");
+                TxManagerError::Rpc("nonce fetch timed out".into())
+            })?
+            .map_err(|_| {
+                // The raw transport error may embed credential-bearing
+                // RPC URLs, so neither log nor propagate it.
+                warn!(address = %self.address, "failed to fetch nonce from chain");
+                TxManagerError::Rpc("nonce fetch failed".into())
+            })
     }
 
     /// Advances the cached nonce by one and returns a [`NonceGuard`]
@@ -296,20 +316,19 @@ where
         // is infeasible, and wrapping avoids a panic on overflow.
         guard.generation = guard.generation.wrapping_add(1);
         // `returned_nonces` is intentionally NOT cleared — these nonces
-        // were never published and must persist for reuse.
+        // belong to failed sends and must persist for reuse.
         trace!(address = %self.address, "nonce cache reset");
     }
 
     /// Returns a previously reserved nonce for reuse.
     ///
-    /// Called when a `send_async` task fails before publishing, making the
-    /// pre-reserved nonce available for reissue by the next
+    /// Called when a send fails without a successful publish, making its
+    /// nonce available for reissue by the next
     /// [`next_nonce`](Self::next_nonce) or [`reserve_nonce`](Self::reserve_nonce)
-    /// call.
+    /// call, unless the chain consumes it first.
     ///
     /// The returned nonce is stored in [`NonceState::returned_nonces`] and
-    /// is not cleared by [`reset`](Self::reset), since it was never
-    /// published to the network.
+    /// is not cleared by [`reset`](Self::reset).
     pub async fn return_reserved_nonce(&self, nonce: u64) {
         let mut guard = self.inner.lock().await;
         guard.returned_nonces.insert(nonce);

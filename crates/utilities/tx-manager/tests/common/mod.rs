@@ -4,15 +4,25 @@
 //! binary uses every item.
 #![allow(dead_code, unreachable_pub)]
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    task::{Context, Poll},
+    time::Duration,
+};
 
 use alloy_consensus::SignableTransaction;
 use alloy_eips::BlockNumberOrTag;
+use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_network::{EthereumWallet, TxSigner};
 use alloy_node_bindings::Anvil;
 use alloy_primitives::{Address, B256, Bytes, Signature, U256};
 use alloy_provider::{Provider, RootProvider};
+use alloy_rpc_client::RpcClient;
 use alloy_signer_local::PrivateKeySigner;
+use alloy_transport::{BoxTransport, TransportError, TransportErrorKind, TransportFut};
 use async_trait::async_trait;
 use base_tx_manager::{NoopTxMetrics, SendState, SimpleTxManager, TxCandidate, TxManagerConfig};
 
@@ -68,6 +78,59 @@ async fn setup_manager(
     .await
     .expect("should create manager");
     (manager, anvil)
+}
+
+/// Creates a [`SimpleTxManager`] backed by a fresh Anvil instance that never receives the
+/// answer to its first publish, see [`LoseFirstPublishAnswer`]. Also returns the number of
+/// publishes seen.
+pub async fn setup_losing_first_publish_answer(
+    config: TxManagerConfig,
+) -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance, Arc<AtomicUsize>) {
+    let (provider, wallet, anvil) = setup_anvil();
+    let publishes = Arc::new(AtomicUsize::new(0));
+    let transport = LoseFirstPublishAnswer {
+        inner: provider.client().transport().clone(),
+        publishes: Arc::clone(&publishes),
+    };
+    let provider = RootProvider::new(RpcClient::new(transport, true));
+    let (manager, anvil) = setup_manager(provider, wallet, anvil, config).await;
+    (manager, anvil, publishes)
+}
+
+/// Transport that forwards every request to the node but replaces the answer to the first
+/// `eth_sendRawTransaction` with a transport error, as when the connection breaks after the
+/// node received the transaction.
+///
+/// Hand-rolled because the transaction must reach a real node while its answer is lost, which
+/// a mocked transport cannot express.
+#[derive(Debug, Clone)]
+pub struct LoseFirstPublishAnswer {
+    inner: BoxTransport,
+    publishes: Arc<AtomicUsize>,
+}
+
+impl tower::Service<RequestPacket> for LoseFirstPublishAnswer {
+    type Response = ResponsePacket;
+    type Error = TransportError;
+    type Future = TransportFut<'static>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, request: RequestPacket) -> Self::Future {
+        let lose_answer = request.method_names().any(|method| method == "eth_sendRawTransaction")
+            && self.publishes.fetch_add(1, Ordering::SeqCst) == 0;
+        let answer = self.inner.call(request);
+        Box::pin(async move {
+            let answer = answer.await;
+            if lose_answer {
+                Err(TransportErrorKind::custom_str("connection reset"))
+            } else {
+                answer
+            }
+        })
+    }
 }
 
 /// Waits until the first transaction of `sender` is in the mempool, since `send_async`

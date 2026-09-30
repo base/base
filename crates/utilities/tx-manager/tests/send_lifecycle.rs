@@ -7,7 +7,10 @@
 mod common;
 
 use std::{
-    sync::{Arc, atomic::AtomicBool},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -19,8 +22,8 @@ use alloy_rpc_types_eth::TransactionRequest;
 use base_tx_manager::{SendState, SimpleTxManager, TxManager, TxManagerConfig, TxManagerError};
 use common::{
     SAFE_ABORT_DEPTH, TEST_RECIPIENT, mine_block, pending_transaction, publish_simple_tx,
-    setup_with_config, setup_with_failing_signer, setup_without_automine, simple_tx_candidate,
-    wait_for_publication,
+    setup_losing_first_publish_answer, setup_with_config, setup_with_failing_signer,
+    setup_without_automine, simple_tx_candidate, wait_for_publication,
 };
 use rstest::rstest;
 use tokio::sync::mpsc;
@@ -116,6 +119,22 @@ async fn send_async_confirms_simple_value_transfer() {
         .expect("send_async should succeed");
 
     assert!(receipt.block_number.is_some(), "receipt should have a block number");
+}
+
+/// A send whose publish reaches the node but whose answer is lost delivers the receipt
+/// without a fee bump.
+#[tokio::test]
+async fn send_confirms_when_the_publish_answer_is_lost() {
+    let (manager, _anvil, publishes) = setup_losing_first_publish_answer(fast_send_config()).await;
+
+    let receipt =
+        tokio::time::timeout(Duration::from_secs(10), manager.send(simple_tx_candidate()))
+            .await
+            .expect("send should complete within 10 s")
+            .expect("a lost publish answer must not fail the send");
+
+    assert!(receipt.block_number.is_some(), "receipt should have a block number");
+    assert_eq!(publishes.load(Ordering::SeqCst), 1, "a lost answer must not trigger a fee bump");
 }
 
 #[rstest]

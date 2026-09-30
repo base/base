@@ -4,7 +4,7 @@ mod common;
 
 use std::sync::Arc;
 
-use alloy_consensus::{TxEip1559, TxEip4844Variant, TxEnvelope};
+use alloy_consensus::{SignableTransaction, TxEip1559, TxEip4844Variant, TxEnvelope};
 use alloy_eips::{eip4844::Blob, eip7594::CELLS_PER_EXT_BLOB};
 use alloy_node_bindings::Anvil;
 use alloy_primitives::{Bytes, TxKind, U256};
@@ -145,6 +145,11 @@ async fn craft_tx_produces_valid_signed_blob_transaction() {
     assert!(
         matches!(variant, TxEip4844Variant::TxEip4844WithSidecar(_)),
         "expected TxEip4844WithSidecar variant, got standalone TxEip4844",
+    );
+    assert_eq!(
+        prepared.tx_hash,
+        *inner.clone().into_signed(*signed.signature()).hash(),
+        "PreparedTx tx_hash should be the hash of the transaction without its sidecar",
     );
     assert!(
         prepared.blob_fee_cap.is_some_and(|v| v > 0),

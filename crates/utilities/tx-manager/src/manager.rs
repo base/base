@@ -85,6 +85,8 @@ const WEI_PER_GWEI: f64 = 1_000_000_000.0;
 pub struct PreparedTx {
     /// RLP-encoded signed transaction bytes.
     pub raw_tx: Bytes,
+    /// Hash of the signed transaction.
+    pub tx_hash: B256,
     /// Maximum priority fee per gas (tip) used in the signed transaction.
     pub gas_tip_cap: u128,
     /// Maximum total fee per gas used in the signed transaction.
@@ -913,6 +915,7 @@ where
 
                 Ok(PreparedTx {
                     raw_tx: Bytes::from(Encodable2718::encoded_2718(&envelope)),
+                    tx_hash: *envelope.tx_hash(),
                     gas_tip_cap: tip_cap,
                     gas_fee_cap: fee_cap,
                     blob_fee_cap,
@@ -936,7 +939,9 @@ where
     ///
     /// Orchestrates the send lifecycle:
     /// 1. Prepare and sign the initial transaction via [`prepare`](Self::prepare).
-    /// 2. Publish the raw transaction via [`publish_tx`](Self::publish_tx).
+    /// 2. Publish the raw transaction via [`publish_tx`](Self::publish_tx). A
+    ///    publish that gets no answer does not fail the send: the transaction
+    ///    may have reached the network, so it is polled like a published one.
     /// 3. Spawn a background [`wait_for_tx`](Self::wait_for_tx) task to poll
     ///    for the receipt.
     /// 4. Enter a `tokio::select!` loop that monitors the resubmission timer
@@ -1030,9 +1035,9 @@ where
             self.nonce_manager.reset().await;
         }
 
-        // Return nonces that never reached the mempool so they can be
-        // reissued. `send_async` reserves its nonce up front, `send` records
-        // the one it signed with.
+        // Return the nonces of sends that failed without a successful publish
+        // so they can be reissued. `send_async` reserves its nonce up front,
+        // `send` records the one it signed with.
         if let Some(n) = nonce_override.or_else(|| send_state.assigned_nonce())
             && Self::should_return_reserved_nonce(&result, &send_state)
         {
@@ -1065,14 +1070,15 @@ where
         }
     }
 
-    /// Returns `true` when an unpublished nonce should be returned to the
-    /// nonce manager's reuse pool.
+    /// Returns `true` when the nonce of a failed send should be returned to
+    /// the nonce manager's reuse pool.
     ///
     /// A nonce is eligible for return when BOTH of these hold:
     /// 1. The send failed (`result.is_err()`).
     /// 2. No transaction was ever successfully published — if a tx was
     ///    published, the nonce may be in the mempool and must not be
-    ///    reused.
+    ///    reused. A nonce whose publishes got no answer is returned too:
+    ///    the nonce manager drops it before reissue if it was mined.
     fn should_return_reserved_nonce<T>(
         result: &TxManagerResult<T>,
         send_state: &SendState,
@@ -1104,7 +1110,15 @@ where
         let prepared =
             self.prepare_with_initial_caps(candidate, None, None, nonce_override, None).await?;
         send_state.record_assigned_nonce(prepared.nonce);
-        let tx_hash = self.publish_tx_with_nonce_retry(send_state, &prepared.raw_tx).await?;
+        let tx_hash = match self.publish_tx_with_nonce_retry(send_state, &prepared.raw_tx).await {
+            Ok(tx_hash) => tx_hash,
+            // Failing here would release a nonce the transaction may still consume.
+            Err(TxManagerError::Rpc(_)) if send_state.has_unanswered_publish() => {
+                warn!(tx_hash = %prepared.tx_hash, "initial publish got no answer, polling for the transaction");
+                prepared.tx_hash
+            }
+            Err(error) => return Err(error),
+        };
         let mut bump = BumpState::from_prepared(prepared, tx_hash);
 
         // Receipt delivery channel — mpsc because fee bumps may spawn
@@ -1334,8 +1348,11 @@ where
     /// returns the transaction hash. On [`TxManagerError::AlreadyKnown`]
     /// after a prior successful publish, treats it as success — records
     /// another successful publish and returns `Ok(last_tx_hash)` so
-    /// callers do not need to special-case this variant. All other errors
+    /// callers do not need to special-case this variant. Other JSON-RPC errors
     /// are forwarded to [`SendState::process_send_error`] for state tracking.
+    /// A timeout or any other failure, where the node gives no answer, is
+    /// recorded via [`SendState::record_unanswered_publish`] instead: it says
+    /// nothing about fees, so it requests no fee bump.
     ///
     /// The `last_tx_hash` parameter is the hash from the most recent
     /// successful publish. When the network returns `AlreadyKnown` on
@@ -1380,7 +1397,11 @@ where
                     return Ok(hash);
                 }
 
-                send_state.process_send_error(&classified);
+                if e.as_error_resp().is_none() {
+                    send_state.record_unanswered_publish();
+                } else {
+                    send_state.process_send_error(&classified);
+                }
                 if classified.is_rpc_error() {
                     self.metrics.record_publish_error();
                 }
@@ -1401,7 +1422,7 @@ where
             }
             Err(_) => {
                 let err = self.rpc_error("send_raw_transaction timed out");
-                send_state.process_send_error(&err);
+                send_state.record_unanswered_publish();
                 self.metrics.record_publish_error();
                 warn!(error = %err, "publish timed out");
                 Err(err)

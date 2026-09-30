@@ -29,6 +29,7 @@ pub struct SendState {
 struct SendStateInner {
     mined_txs: Vec<B256>,
     has_published: bool,
+    has_unanswered_publish: bool,
     nonce_too_low_count: u64,
     bump_fees: bool,
     bump_count: u64,
@@ -59,6 +60,7 @@ impl SendState {
             inner: Mutex::new(SendStateInner {
                 mined_txs: Vec::new(),
                 has_published: false,
+                has_unanswered_publish: false,
                 nonce_too_low_count: 0,
                 bump_fees: false,
                 bump_count: 0,
@@ -127,8 +129,10 @@ impl SendState {
     ///
     /// Conditions are checked in priority order:
     /// 1. If any transaction is mined, returns `None` (wait for confirmation).
-    /// 2. If no successful publish has occurred and a nonce-too-low error was
-    ///    seen, returns [`TxManagerError::NonceTooLow`] (immediate abort).
+    /// 2. If no publish was successful or unanswered and a nonce-too-low error
+    ///    was seen, returns [`TxManagerError::NonceTooLow`] (immediate abort).
+    ///    After an unanswered publish, the nonce may have been consumed by
+    ///    this send's own transaction, so the threshold below applies instead.
     /// 3. If nonce-too-low errors have reached the threshold, returns
     ///    [`TxManagerError::NonceTooLow`].
     /// 4. If the mempool deadline has expired *and* no transaction has been
@@ -156,7 +160,7 @@ impl SendState {
         if !inner.mined_txs.is_empty() {
             return None;
         }
-        if !inner.has_published && inner.nonce_too_low_count > 0 {
+        if !inner.has_published && !inner.has_unanswered_publish && inner.nonce_too_low_count > 0 {
             return Some(TxManagerError::NonceTooLow);
         }
         if inner.nonce_too_low_count >= self.safe_abort_nonce_too_low_count {
@@ -191,6 +195,25 @@ impl SendState {
     pub fn record_successful_publish(&self) {
         let mut inner = self.inner.lock().expect("SendState mutex poisoned");
         inner.has_published = true;
+    }
+
+    /// Records a publish that got no answer from the node, such as a transport
+    /// failure or a timeout.
+    ///
+    /// The transaction may still have reached the network. Unlike
+    /// [`record_successful_publish`](Self::record_successful_publish), this
+    /// keeps the mempool deadline armed, so a send whose publishes are never
+    /// answered still ends.
+    pub fn record_unanswered_publish(&self) {
+        let mut inner = self.inner.lock().expect("SendState mutex poisoned");
+        inner.has_unanswered_publish = true;
+    }
+
+    /// Returns `true` if a publish got no answer from the node.
+    #[must_use]
+    pub fn has_unanswered_publish(&self) -> bool {
+        let inner = self.inner.lock().expect("SendState mutex poisoned");
+        inner.has_unanswered_publish
     }
 
     /// Records that a fee bump was performed, incrementing the bump counter
@@ -519,6 +542,27 @@ mod tests {
         // No successful publish recorded.
         state.process_send_error(&TxManagerError::NonceTooLow);
         assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooLow));
+    }
+
+    #[test]
+    fn nonce_too_low_after_an_unanswered_publish_requires_threshold() {
+        let state = SendState::new(3).unwrap();
+        state.record_unanswered_publish();
+
+        state.process_send_error(&TxManagerError::NonceTooLow);
+        state.process_send_error(&TxManagerError::NonceTooLow);
+        assert!(state.critical_error().is_none());
+
+        state.process_send_error(&TxManagerError::NonceTooLow);
+        assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooLow));
+    }
+
+    #[test]
+    fn expired_mempool_deadline_aborts_after_an_unanswered_publish() {
+        let state = SendState::new(3).unwrap();
+        state.set_wall_clock_mempool_deadline(Instant::now() - Duration::from_secs(1));
+        state.record_unanswered_publish();
+        assert_eq!(state.critical_error(), Some(TxManagerError::MempoolDeadlineExpired));
     }
 
     // ── Post-publish gradual abort ──────────────────────────────────────

@@ -38,6 +38,7 @@ tracing = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "time"] }
 
 [dev-dependencies]
+tower.workspace = true
 rayon.workspace = true
 rstest.workspace = true
 proptest.workspace = true
@@ -46,6 +47,7 @@ serde_json.workspace = true
 async-trait.workspace = true
 alloy-signer.workspace = true
 alloy-json-rpc.workspace = true
+alloy-rpc-client.workspace = true
 alloy-node-bindings.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 base-runtime = { workspace = true, features = ["test-utils"] }

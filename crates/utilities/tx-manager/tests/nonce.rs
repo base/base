@@ -528,3 +528,22 @@ async fn returned_nonces_below_chain_count_are_pruned_after_reset() {
     let guard = manager.next_nonce().await.unwrap();
     assert_eq!(guard.nonce(), 5, "next fresh nonce should be 5");
 }
+
+#[tokio::test]
+async fn returned_nonce_mined_on_chain_is_not_reissued() {
+    let anvil = Anvil::new().spawn();
+    let url = anvil.endpoint_url();
+    let address = anvil.addresses()[0];
+    let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
+    let sender =
+        ProviderBuilder::new().wallet(EthereumWallet::from(signer)).connect_http(url.clone());
+    let manager = NonceManager::new(RootProvider::new_http(url), address, Duration::from_secs(10));
+
+    let nonce = manager.reserve_nonce().await.unwrap();
+    manager.return_reserved_nonce(nonce).await;
+    let tx = TransactionRequest::default().to(address).value(U256::from(1)).nonce(nonce);
+    sender.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+
+    let guard = manager.next_nonce().await.unwrap();
+    assert_eq!(guard.nonce(), nonce + 1, "a mined nonce must not be reissued");
+}
