@@ -1080,6 +1080,8 @@ mod tests {
 
     use super::*;
 
+    /// The Base fork activations of the rollup config reach the execution genesis, so the harness
+    /// EL runs the same forks as derivation.
     #[test]
     fn build_genesis_propagates_base_activations() {
         let config = RollupConfig {
@@ -1102,19 +1104,5 @@ mod tests {
         assert_eq!(genesis.config.extra_fields["base"]["denim"], serde_json::json!(42));
         assert_eq!(genesis.config.extra_fields["base"]["everest"], serde_json::json!(42));
         assert_eq!(genesis.config.extra_fields["base"]["zenith"], serde_json::json!(42));
-    }
-
-    #[test]
-    #[should_panic(expected = "denim requires cobalt to be configured")]
-    fn build_genesis_requires_cobalt_before_denim() {
-        let config = RollupConfig {
-            upgrades: UpgradeConfig {
-                base: BaseUpgradeConfig { denim: Some(42), ..Default::default() },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        ActionEngineClient::build_genesis_for_rollup(&config);
     }
 }

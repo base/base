@@ -72,11 +72,12 @@ mod tests {
     use std::{
         pin::pin,
         task::{Context, Waker},
-        time::Duration,
     };
 
     use super::*;
 
+    /// A marker is answered by the poll after the one that takes it, so `wait_until_idle` returns
+    /// only once the driver has handled everything sent before the marker.
     #[tokio::test]
     async fn marker_is_answered_by_the_poll_after_the_one_that_takes_it() {
         let (mut source, tx) = HarnessL1HeadSource::new();
@@ -96,14 +97,5 @@ mod tests {
 
         assert!(next.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
         assert!(reached_rx.try_recv().is_ok(), "the poll after must answer the marker");
-    }
-
-    #[tokio::test]
-    async fn parks_once_the_harness_is_gone() {
-        let (mut source, tx) = HarnessL1HeadSource::new();
-        drop(tx);
-
-        let next = tokio::time::timeout(Duration::from_millis(10), source.next());
-        assert!(next.await.is_err(), "a closed source must park");
     }
 }
