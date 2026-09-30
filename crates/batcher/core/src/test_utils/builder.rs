@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::Header;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use base_batcher_encoder::{BatchPipeline, BlobPayload, SubmissionPayload};
 use base_batcher_source::{L1HeadSource, UnsafeBlockSource};
 use base_common_consensus::BaseBlock;
@@ -18,7 +18,7 @@ use crate::{
     test_utils::{PendingL1HeadSource, PendingSource},
 };
 
-/// Factory for empty L2 block stubs used in driver tests.
+/// Factory for the empty L2 blocks and the block references used in driver tests.
 #[derive(Debug)]
 pub struct BlockStub;
 
@@ -27,6 +27,11 @@ impl BlockStub {
     /// or the driver drops it as already safe.
     pub fn with_number(number: u64) -> BaseBlock {
         BaseBlock { header: Header { number, ..Default::default() }, body: Default::default() }
+    }
+
+    /// Returns a [`BlockInfo`] numbered `number`, with a hash derived from that number.
+    pub fn info(number: u64) -> BlockInfo {
+        BlockInfo { hash: B256::with_last_byte(number as u8), number, ..Default::default() }
     }
 }
 
@@ -71,7 +76,11 @@ pub struct DriverFixture<
     max_pending: usize,
     initial_l1_head: u64,
     safe_head: BlockInfo,
+    force_blobs_when_throttling: bool,
 }
+
+/// How long a fixture-built driver waits for its in-flight submissions on cancellation.
+pub const DRAIN_TIMEOUT: Duration = Duration::from_millis(10);
 
 /// The sending sides of a fixture-built driver's channels.
 #[derive(Debug)]
@@ -95,6 +104,7 @@ impl<R: Runtime, P: BatchPipeline, TM: TxManager> DriverFixture<R, P, TM> {
             max_pending: 1,
             initial_l1_head: 0,
             safe_head: BlockInfo::default(),
+            force_blobs_when_throttling: true,
         }
     }
 }
@@ -120,6 +130,7 @@ where
             max_pending: self.max_pending,
             initial_l1_head: self.initial_l1_head,
             safe_head: self.safe_head,
+            force_blobs_when_throttling: self.force_blobs_when_throttling,
         }
     }
 
@@ -138,6 +149,7 @@ where
             max_pending: self.max_pending,
             initial_l1_head: self.initial_l1_head,
             safe_head: self.safe_head,
+            force_blobs_when_throttling: self.force_blobs_when_throttling,
         }
     }
 
@@ -156,6 +168,7 @@ where
             max_pending: self.max_pending,
             initial_l1_head: self.initial_l1_head,
             safe_head: self.safe_head,
+            force_blobs_when_throttling: self.force_blobs_when_throttling,
         }
     }
 
@@ -177,6 +190,12 @@ where
         self
     }
 
+    /// Set whether throttling forces blob submissions.
+    pub const fn force_blobs_when_throttling(mut self, force_blobs_when_throttling: bool) -> Self {
+        self.force_blobs_when_throttling = force_blobs_when_throttling;
+        self
+    }
+
     /// Build the driver and the handles that feed it.
     pub fn build(self) -> (BatchDriver<R, P, S, TM, TC, L>, DriverHandles) {
         let (admin, admin_rx) = AdminHandle::channel();
@@ -188,8 +207,8 @@ where
             BatchDriverConfig {
                 inbox: Address::ZERO,
                 max_pending_transactions: self.max_pending,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
+                drain_timeout: DRAIN_TIMEOUT,
+                force_blobs_when_throttling: self.force_blobs_when_throttling,
                 stopped: false,
             },
             self.throttle,

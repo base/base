@@ -124,7 +124,7 @@ impl ThrottleParams {
 pub enum ThrottleStrategy {
     /// No throttling.
     Off,
-    /// Step function: either 0 or `max_intensity` when above threshold.
+    /// Step function: 0 below the threshold, `max_intensity` from the threshold on.
     Step,
     /// Linear interpolation between 0 and `max_intensity` based on backlog.
     Linear,
@@ -182,8 +182,8 @@ impl ThrottleController {
     /// Update with current DA backlog bytes.
     ///
     /// Returns [`ThrottleParams`] if throttling should be applied, or `None`
-    /// if the backlog is below the threshold or the strategy is
-    /// [`ThrottleStrategy::Off`].
+    /// if the backlog is below the threshold, the linear intensity is zero or the
+    /// strategy is [`ThrottleStrategy::Off`].
     pub fn update(&self, da_backlog_bytes: u64) -> Option<ThrottleParams> {
         match &self.strategy {
             ThrottleStrategy::Off => None,
@@ -200,15 +200,14 @@ impl ThrottleController {
                 if da_backlog_bytes < self.config.threshold_bytes {
                     return None;
                 }
-                // Linear interpolation: intensity grows linearly from 0 at threshold
-                // to max_intensity at 2x threshold (capped at max_intensity).
+                // Intensity grows linearly from 0 at the threshold to max_intensity at twice
+                // the threshold, and stays there above it.
                 let excess = da_backlog_bytes - self.config.threshold_bytes;
                 let range = self.config.threshold_bytes.max(1);
                 let ratio = (excess as f64 / range as f64).min(1.0);
                 let intensity = ratio * self.config.max_intensity;
-                // At exactly the threshold excess is zero, so intensity is 0.0 and
-                // limits would be the same as unthrottled — return None to avoid a
-                // spurious "DA throttle deactivated" log entry on startup.
+                // A zero intensity, at exactly the threshold or with a zero `max_intensity`, is no
+                // throttling, as below the threshold.
                 if intensity == 0.0 {
                     return None;
                 }
@@ -337,45 +336,44 @@ mod tests {
 
     use super::*;
 
-    fn test_config() -> ThrottleConfig {
-        ThrottleConfig { threshold_bytes: 1000, max_intensity: 0.8, ..Default::default() }
-    }
-
-    /// Verifies `ThrottleController::update` returns the correct result for each
-    /// strategy and backlog combination.
-    ///
-    /// `expected_intensity` is `None` when no throttling should be applied, or
-    /// `Some(intensity)` when throttling must be active with that intensity value.
+    /// The intensity and DA limits each strategy applies to a backlog, `None` meaning no
+    /// throttling.
     #[rstest]
-    #[case::off_always_none(ThrottleStrategy::Off, 5000, None)]
+    #[case::off(ThrottleStrategy::Off, 5000, None)]
     #[case::step_below_threshold(ThrottleStrategy::Step, 999, None)]
-    #[case::step_at_threshold(ThrottleStrategy::Step, 1000, Some(0.8))]
+    #[case::step_at_threshold(ThrottleStrategy::Step, 1000, Some((0.8, 27_600, 4_120)))]
     #[case::linear_below_threshold(ThrottleStrategy::Linear, 500, None)]
-    // At exactly the threshold, excess = 0 → intensity = 0.0 → must return None,
-    // not Some with zero intensity (which would trigger a spurious log on startup).
     #[case::linear_at_threshold(ThrottleStrategy::Linear, 1000, None)]
-    #[case::linear_at_max(ThrottleStrategy::Linear, 2000, Some(0.8))]
-    #[case::linear_midpoint(ThrottleStrategy::Linear, 1500, Some(0.4))]
-    fn test_update(
+    #[case::linear_midpoint(ThrottleStrategy::Linear, 1500, Some((0.4, 78_800, 12_060)))]
+    #[case::linear_at_twice_the_threshold(
+        ThrottleStrategy::Linear,
+        2000,
+        Some((0.8, 27_600, 4_120))
+    )]
+    #[case::linear_above_twice_the_threshold(
+        ThrottleStrategy::Linear,
+        5000,
+        Some((0.8, 27_600, 4_120))
+    )]
+    fn update_throttles_by_strategy_and_backlog(
         #[case] strategy: ThrottleStrategy,
         #[case] da_backlog_bytes: u64,
-        #[case] expected_intensity: Option<f64>,
+        #[case] expected: Option<(f64, u64, u64)>,
     ) {
-        let ctrl = ThrottleController::new(test_config(), strategy);
-        let result = ctrl.update(da_backlog_bytes);
-        match expected_intensity {
-            None => assert!(result.is_none()),
-            Some(expected) => {
-                let params = result.expect("expected Some result");
-                assert!(
-                    (params.intensity - expected).abs() < 0.01,
-                    "expected intensity {expected}, got {}",
-                    params.intensity
-                );
-            }
-        }
+        let config =
+            ThrottleConfig { threshold_bytes: 1000, max_intensity: 0.8, ..Default::default() };
+        let controller = ThrottleController::new(config, strategy);
+
+        let params = controller.update(da_backlog_bytes);
+
+        assert_eq!(
+            params.map(|params| (params.intensity, params.max_block_size, params.max_tx_size)),
+            expected
+        );
     }
 
+    /// A config is valid when the intensity is within [0, 1], both lower limits are above zero
+    /// and each lower limit is at most its upper limit. Otherwise the error names the broken rule.
     #[rstest]
     #[case::default(ThrottleConfig::default(), Ok(()))]
     #[case::equal_limits(
