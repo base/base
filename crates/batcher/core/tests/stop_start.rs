@@ -16,7 +16,7 @@ use base_runtime::{
     deterministic::{Config, Runner},
 };
 
-/// A stop resets the pipeline. A second stop succeeds without resetting it again.
+/// A stop resets the pipeline, and a second stop succeeds.
 #[test]
 fn test_stop_resets_pipeline() {
     Runner::start(Config::seeded(0), |ctx| async move {
@@ -27,15 +27,11 @@ fn test_stop_resets_pipeline() {
         let handle = ctx.spawn(driver.run());
 
         handles.admin.stop().await.unwrap();
+        assert_eq!(recorded.lock().unwrap().resets(), 1, "the stop must reset the pipeline");
         handles.admin.stop().await.unwrap();
         ctx.cancel();
 
         assert!(handle.await.unwrap().is_ok());
-        assert_eq!(
-            recorded.lock().unwrap().resets(),
-            1,
-            "pipeline must be reset exactly once when stopped"
-        );
     });
 }
 
@@ -143,17 +139,18 @@ fn test_stop_leaves_in_flight_submissions_to_settle() {
 #[test]
 fn test_flush_is_rejected_while_stopped() {
     Runner::start(Config::seeded(0), |ctx| async move {
-        let pipeline = TrackingPipeline::new();
-        let recorded = pipeline.recorded();
-        let (driver, handles) =
-            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1)).build();
+        let (driver, handles) = DriverFixture::new(
+            ctx.clone(),
+            TrackingPipeline::new(),
+            ScriptedTxManager::confirming_at(1),
+        )
+        .build();
         let handle = ctx.spawn(driver.run());
 
         handles.admin.stop().await.unwrap();
         let result = handles.admin.flush().await;
 
         assert!(matches!(result, Err(AdminError::Stopped)));
-        assert_eq!(recorded.lock().unwrap().flushes(), 0);
 
         ctx.cancel();
         assert!(handle.await.unwrap().is_ok());

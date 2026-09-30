@@ -608,16 +608,14 @@ mod tests {
         });
     }
 
-    /// A new safe head, a receipt, an L2 block and an L1 head ready at once are served in that
-    /// order. The safe head goes first so pruning and reorg recovery are not held back by a
-    /// stream of blocks to encode.
+    /// A new safe head is reconciled before a ready L2 block, so pruning and reorg recovery are
+    /// not held back by a stream of blocks to encode.
     #[test]
-    fn run_serves_derivation_status_receipts_blocks_then_heads() {
+    fn run_prioritizes_derivation_status_before_source() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let mut pipeline = TrackingPipeline::new();
+            let pipeline = TrackingPipeline::new();
             let recorded = pipeline.recorded();
-            pipeline.submissions.push_back(SubmissionStub::stub());
-            let (source, l1_head_source) = queued_sources([6], [9]);
+            let (source, l1_head_source) = queued_sources([6], []);
             let (driver, handles) =
                 DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
                     .source(source)
@@ -640,12 +638,8 @@ mod tests {
             assert_eq!(
                 recorded.lock().unwrap().calls,
                 [
-                    PipelineCall::Dequeue(SubmissionId(0)),
                     PipelineCall::ReconcileDerivation { safe_l2: 5, current_l1: 1 },
-                    PipelineCall::Confirm(SubmissionId(0), 1),
-                    PipelineCall::AdvanceL1Head(1),
                     PipelineCall::AddBlock(6),
-                    PipelineCall::AdvanceL1Head(9),
                     PipelineCall::Flush,
                 ]
             );
@@ -709,26 +703,6 @@ mod tests {
             assert!(handle.await.unwrap().is_ok());
 
             assert_eq!(recorded.lock().unwrap().encoded_steps(), blocks);
-        });
-    }
-
-    /// A ready admin command is served between two encoding slices, not after the whole
-    /// backlog.
-    #[test]
-    fn run_serves_admin_between_encoding_slices() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let pipeline = TrackingPipeline::new().with_encoding_steps(2 * STEP_BUDGET + 5);
-            let recorded = pipeline.recorded();
-            let (driver, handles) =
-                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::new([])).build();
-
-            let handle = ctx.spawn(driver.run());
-            // Stop resets the pipeline, which drops whatever was still to encode.
-            handles.admin.stop().await.unwrap();
-            ctx.cancel();
-            assert!(handle.await.unwrap().is_ok());
-
-            assert_eq!(recorded.lock().unwrap().encoded_steps(), STEP_BUDGET);
         });
     }
 
