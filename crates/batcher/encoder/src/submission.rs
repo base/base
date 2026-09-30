@@ -118,15 +118,6 @@ impl BatchSubmission {
             SubmissionPayload::Calldata(frame) => frame.data.len(),
         }
     }
-
-    /// Returns the first frame in this submission, if it contains one.
-    #[cfg(test)]
-    pub fn first_frame(&self) -> Option<&Arc<Frame>> {
-        match &self.payload {
-            SubmissionPayload::Blobs(blobs) => blobs.first()?.frames.first(),
-            SubmissionPayload::Calldata(frame) => Some(frame),
-        }
-    }
 }
 
 /// Encodes batch frames for L1 submission.
