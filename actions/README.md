@@ -51,7 +51,8 @@ actions/
     │   ├── provider.rs         SharedL1Chain, ActionL1ChainProvider
     │   ├── block_fetcher.rs    ActionL1BlockFetcher
     │   └── blob.rs             ActionBlobProvider
-    ├── l2.rs                   L2Sequencer, ActionL2Source, TestAccount
+    ├── sequencer/              L2Sequencer and its engine, origin and gossip actors
+    ├── common/                 ActionL2Source, TestAccount, SharedBlockHashRegistry
     ├── p2p.rs                  SupervisedP2P, TestGossipTransport
     ├── node.rs                 TestRollupNode, derivation / verifier pipelines
     ├── batcher/
