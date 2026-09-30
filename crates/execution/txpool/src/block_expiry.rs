@@ -1,26 +1,31 @@
-//! Block-height expiry index for validity-predicate transactions.
+//! Block and flashblock expiry index for validity-predicate transactions.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use alloy_primitives::TxHash;
 
-/// Tracks validity-predicate transactions by the last block at which they can
-/// still be included, so the pool can evict them once the chain advances past
-/// that block.
-///
-/// This is the pool-side, block-granular counterpart to the builder's
-/// [`ValidityPredicate::is_batch_expired`](crate::ValidityPredicate::is_batch_expired)
-/// check. Unlike the EIP-8130 invalidation guard it is not gated on transaction
-/// type, so it works for the EIP-1559 transactions used by the beta advanced
-/// submission path.
+/// Coordinates successful flashblock publication with deadline eviction and admission.
+pub trait FlashblockExpiry: Clone + Send + Sync + 'static {
+    /// Publishes while holding the admission lock, then evicts expired transactions.
+    /// A failed publication must leave the pool unchanged.
+    fn publish_and_expire<R, E>(
+        &self,
+        block_number: u64,
+        flashblock_index: u64,
+        publish: impl FnOnce() -> Result<R, E>,
+    ) -> Result<(R, usize), E>;
+}
+
+/// Tracks validity transactions by their last eligible block and, when bounded,
+/// flashblock. Flashblock indices reset in each block; the key is therefore
+/// ordered by block first, then index. Block-only deadlines use `u64::MAX`
+/// so they remain eligible until the chain advances to the next block.
 #[derive(Debug, Default)]
 pub struct BlockExpiryIndex {
-    /// Maps a transaction's inclusive last-valid block number to the set of
-    /// transactions that expire after it.
-    by_block: BTreeMap<u64, HashSet<TxHash>>,
-    /// Reverse map for removal when a transaction leaves the pool by another
-    /// path (inclusion, replacement, guard eviction).
-    by_hash: HashMap<TxHash, u64>,
+    /// Inclusive last eligible position for each transaction.
+    by_position: BTreeMap<(u64, u64), HashSet<TxHash>>,
+    /// Reverse map for replacement, inclusion and explicit removal.
+    by_hash: HashMap<TxHash, (u64, u64)>,
 }
 
 impl BlockExpiryIndex {
@@ -30,31 +35,50 @@ impl BlockExpiryIndex {
         Self::default()
     }
 
-    /// Registers `hash` as valid only through (and including) `last_valid_block`.
-    ///
-    /// Re-registering a hash replaces its previous bound.
+    /// Registers `hash` through the inclusive `last_valid_block`.
     pub fn insert(&mut self, hash: TxHash, last_valid_block: u64) {
-        if let Some(previous) = self.by_hash.insert(hash, last_valid_block) {
-            self.remove_from_block(previous, &hash);
-        }
-        self.by_block.entry(last_valid_block).or_default().insert(hash);
+        self.insert_with_flashblock(hash, last_valid_block, None);
+    }
+
+    /// Registers an inclusive block and optional flashblock deadline.
+    pub fn insert_with_flashblock(
+        &mut self,
+        hash: TxHash,
+        last_valid_block: u64,
+        last_valid_flashblock: Option<u64>,
+    ) {
+        let position = (last_valid_block, last_valid_flashblock.unwrap_or(u64::MAX));
+        self.remove(&hash);
+        self.by_hash.insert(hash, position);
+        self.by_position.entry(position).or_default().insert(hash);
     }
 
     /// Removes `hash` from the index if present.
     pub fn remove(&mut self, hash: &TxHash) {
-        if let Some(block) = self.by_hash.remove(hash) {
-            self.remove_from_block(block, hash);
+        if let Some(position) = self.by_hash.remove(hash) {
+            self.remove_from_position(position, hash);
         }
     }
 
-    /// Removes and returns every transaction that can no longer be included at
-    /// `current_block` — that is, whose last-valid block is strictly before it.
+    /// Removes deadlines strictly before `current_block`.
     pub fn drain_expired(&mut self, current_block: u64) -> Vec<TxHash> {
-        // Keys `>= current_block` are still valid at `current_block`; keep them.
-        let live = self.by_block.split_off(&current_block);
-        let expired_blocks = std::mem::replace(&mut self.by_block, live);
+        self.drain_before((current_block, 0))
+    }
+
+    /// Removes deadlines through the flashblock that was just published.
+    /// Block-only deadlines are retained until the next block.
+    pub fn drain_published(&mut self, block: u64, flashblock: u64) -> Vec<TxHash> {
+        let cutoff = flashblock
+            .checked_add(1)
+            .map_or_else(|| (block.saturating_add(1), 0), |next| (block, next));
+        self.drain_before(cutoff)
+    }
+
+    fn drain_before(&mut self, cutoff: (u64, u64)) -> Vec<TxHash> {
+        let live = self.by_position.split_off(&cutoff);
+        let expired_positions = std::mem::replace(&mut self.by_position, live);
         let mut expired = Vec::new();
-        for (_, hashes) in expired_blocks {
+        for (_, hashes) in expired_positions {
             for hash in hashes {
                 self.by_hash.remove(&hash);
                 expired.push(hash);
@@ -75,11 +99,11 @@ impl BlockExpiryIndex {
         self.by_hash.is_empty()
     }
 
-    fn remove_from_block(&mut self, block: u64, hash: &TxHash) {
-        if let Some(hashes) = self.by_block.get_mut(&block) {
+    fn remove_from_position(&mut self, position: (u64, u64), hash: &TxHash) {
+        if let Some(hashes) = self.by_position.get_mut(&position) {
             hashes.remove(hash);
             if hashes.is_empty() {
-                self.by_block.remove(&block);
+                self.by_position.remove(&position);
             }
         }
     }
@@ -149,5 +173,28 @@ mod tests {
         index.insert(hash(1), 100);
         index.remove(&hash(9));
         assert_eq!(index.len(), 1);
+    }
+    #[test]
+    fn flashblock_deadline_respects_block_reset_and_inclusive_index() {
+        let mut index = BlockExpiryIndex::new();
+        index.insert_with_flashblock(hash(1), 101, Some(2));
+        index.insert_with_flashblock(hash(2), 100, Some(2));
+        index.insert(hash(3), 100);
+        assert!(index.drain_published(100, 1).is_empty());
+        assert_eq!(index.drain_published(100, 2), vec![hash(2)]);
+        assert!(index.drain_published(100, 9).is_empty());
+        assert!(index.drain_expired(101).contains(&hash(3)));
+        assert!(index.drain_published(101, 1).is_empty());
+        assert_eq!(index.drain_published(101, 2), vec![hash(1)]);
+    }
+
+    #[test]
+    fn replaced_flashblock_deadline_cannot_evict_new_hash() {
+        let mut index = BlockExpiryIndex::new();
+        index.insert_with_flashblock(hash(1), 100, Some(1));
+        index.remove(&hash(1));
+        index.insert_with_flashblock(hash(2), 100, Some(3));
+        assert!(index.drain_published(100, 1).is_empty());
+        assert_eq!(index.drain_published(100, 3), vec![hash(2)]);
     }
 }

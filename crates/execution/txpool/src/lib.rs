@@ -35,7 +35,7 @@ pub use validity::{
 };
 
 mod block_expiry;
-pub use block_expiry::BlockExpiryIndex;
+pub use block_expiry::{BlockExpiryIndex, FlashblockExpiry};
 
 mod transaction;
 pub use transaction::{
