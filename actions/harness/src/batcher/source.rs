@@ -72,6 +72,7 @@ mod tests {
     use std::{
         pin::pin,
         task::{Context, Waker},
+        time::Duration,
     };
 
     use super::*;
@@ -95,5 +96,14 @@ mod tests {
 
         assert!(next.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
         assert!(reached_rx.try_recv().is_ok(), "the poll after must answer the marker");
+    }
+
+    #[tokio::test]
+    async fn parks_once_the_harness_is_gone() {
+        let (mut source, tx) = HarnessL1HeadSource::new();
+        drop(tx);
+
+        let next = tokio::time::timeout(Duration::from_millis(10), source.next());
+        assert!(next.await.is_err(), "a closed source must park");
     }
 }

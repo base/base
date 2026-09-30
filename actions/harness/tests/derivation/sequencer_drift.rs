@@ -66,7 +66,7 @@ async fn over_drift_batches_with_transactions_become_deposit_only_once_the_windo
         &mut node_sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg);
     batcher.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
@@ -136,7 +136,7 @@ async fn over_drift_empty_batches_are_dropped_when_a_next_origin_exists() {
         source.push(sequencer.build_empty_block().await);
     }
 
-    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(source, &h.rollup_config, batcher_cfg);
     batcher.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 

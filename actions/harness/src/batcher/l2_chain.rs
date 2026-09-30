@@ -201,4 +201,14 @@ mod tests {
         chain.push(first.clone());
         assert!(matches!(source.next().await, L2BlockEvent::Block(block) if *block == first));
     }
+
+    #[tokio::test]
+    async fn the_source_parks_once_the_chain_is_dropped() {
+        let chain = SharedL2Chain::new();
+        let mut source = HarnessBlockSource::new(&chain, BlockInfo::default());
+        drop(chain);
+
+        let next = timeout(SETTLE, source.next()).await;
+        assert!(next.is_err(), "a source without a chain must park");
+    }
 }

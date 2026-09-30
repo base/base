@@ -54,8 +54,7 @@ store, P2P transport, conductor behavior, and finality/reset orchestration.
 Action tests are currently strongest for deterministic protocol-level
 scenarios where the important behavior lives inside the Rust components:
 
-- Batcher channel construction, frame ordering, requeueing, and upgrade
-  behavior.
+- Batcher channel construction, requeueing, and recovery after a reset.
 - Sequencer/verifier agreement on derived payloads and state roots.
 - Derivation behavior across upgrade transitions, origin changes, drift,
   deposits, system-config updates, and L1 reorgs.

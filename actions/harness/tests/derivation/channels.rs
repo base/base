@@ -35,7 +35,7 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
     let batcher = Batcher::new(ActionL2Source::from_blocks([block]), &h.rollup_config, batcher_cfg);
     batcher.encode_only().await;
     let frame_count = batcher.pending_count();
-    assert!(frame_count >= 2, "the block must span several frames");
+    assert_eq!(frame_count, 4, "the block spans several frames");
 
     // L1 block 1 carries frame 0 only.
     batcher.stage_n_frames(&mut h.l1, 1);

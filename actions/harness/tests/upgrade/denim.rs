@@ -68,10 +68,7 @@ async fn span_batch_stops_at_denim_and_recovers_with_single_batches() {
         "only blocks before Denim activation at block 3 may derive from the span"
     );
 
-    let mut source = ActionL2Source::new();
-    for block in blocks.into_iter().skip(2) {
-        source.push(block);
-    }
+    let source = ActionL2Source::from_blocks(blocks.into_iter().skip(2));
     Batcher::new(source, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
