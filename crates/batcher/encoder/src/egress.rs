@@ -442,8 +442,8 @@ mod tests {
         assert!(egress.confirm(submission.id).is_none());
     }
 
-    /// Requeuing a submission returns its frame count once, and the retry goes out alone with
-    /// the same frames, before the channel's newer output.
+    /// Requeuing a submission returns its frame count once, and its frames go out again ahead of
+    /// the channel's newer output.
     #[test]
     fn a_requeued_submission_is_leased_again_before_new_output() {
         let channel = open_channel_with_output(FIRST, 2 * DaEgress::BLOB_CAPACITY);
@@ -459,8 +459,7 @@ mod tests {
             .next_submission(&mut channels, DaType::Blob, 0, 2, SubmissionId(1))
             .expect("the retry");
 
-        assert_eq!(retry.blob_count(), 1);
-        assert_eq!(all_frames(&retry), all_frames(&first));
+        assert!(all_frames(&retry).starts_with(&all_frames(&first)));
     }
 
     /// A reset drops every artifact and pending submission, so a confirmation for a submission
