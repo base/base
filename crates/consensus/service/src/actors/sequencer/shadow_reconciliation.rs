@@ -24,6 +24,9 @@ pub enum SequencerEngineState {
     },
     /// Private block production is active and canonical inputs are buffered for reconciliation.
     ShadowActive(Box<ShadowReconciliationGate>),
+    /// An isolated sequencer finished startup catch-up and now drops all canonical inputs so
+    /// they cannot reorg its private chain.
+    IsolatedActive,
 }
 
 /// Rolling canonical unsafe payloads retained while safe derivation catches up.

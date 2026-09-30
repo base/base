@@ -48,6 +48,8 @@ where
     sequencer_state: SequencerEngineState,
     conductor: Option<Arc<dyn Conductor>>,
     sequencer_stopped: bool,
+    /// Whether the sequencer stops following the canonical chain once catch-up completes.
+    isolated: bool,
     unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
 }
 
@@ -73,7 +75,33 @@ where
         } else {
             SequencerEngineState::Regular
         };
-        Self { processor, sequencer_state, conductor, sequencer_stopped, unsafe_head_tx }
+        Self {
+            processor,
+            sequencer_state,
+            conductor,
+            sequencer_stopped,
+            isolated: false,
+            unsafe_head_tx,
+        }
+    }
+
+    /// Configures the coordinator as an isolated sequencer.
+    pub const fn with_isolated(mut self, isolated: bool) -> Self {
+        self.isolated = isolated;
+        self
+    }
+
+    /// Returns the state entered once a non-shadow sequencer has caught up to the canonical tip.
+    const fn caught_up_state(&self) -> SequencerEngineState {
+        if self.isolated {
+            SequencerEngineState::IsolatedActive
+        } else {
+            SequencerEngineState::Regular
+        }
+    }
+
+    const fn is_isolated_active(&self) -> bool {
+        matches!(self.sequencer_state, SequencerEngineState::IsolatedActive)
     }
 
     /// Returns the coordinator's sequencer routing state.
@@ -129,7 +157,12 @@ where
             }
         }
 
-        self.sequencer_state = SequencerEngineState::Regular;
+        if matches!(
+            self.sequencer_state,
+            SequencerEngineState::Regular | SequencerEngineState::CatchingUp { .. }
+        ) {
+            self.sequencer_state = self.caught_up_state();
+        }
         Ok(())
     }
 
@@ -154,7 +187,7 @@ where
     }
 
     async fn resolve_bootstrap_role(&self) -> BootstrapRole {
-        if self.sequencer_stopped || self.is_shadow_sequencer() {
+        if self.sequencer_stopped || self.isolated || self.is_shadow_sequencer() {
             return BootstrapRole::ConductorFollower;
         }
         match &self.conductor {
@@ -268,6 +301,10 @@ where
                     shadow: false,
                     catchup: CanonicalUnsafeCatchup::default(),
                 };
+            }
+            // At genesis there is no canonical chain to catch up to.
+            if self.isolated && matches!(self.sequencer_state, SequencerEngineState::Regular) {
+                self.sequencer_state = SequencerEngineState::IsolatedActive;
             }
             match bootstrap_role {
                 BootstrapRole::ConductorFollower => {
@@ -416,6 +453,12 @@ where
                             }
                         }
                     }
+                    EngineActorRequest::ProcessSafeL2SignalRequest(_)
+                    | EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(_)
+                        if self.is_isolated_active() =>
+                    {
+                        debug!(target: "engine", "Isolated sequencer dropping canonical safety signal");
+                    }
                     EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal) => {
                         // Canonical ancestors of the cycle anchor cannot reorg the private unsafe
                         // branch, so confirm them immediately and let derivation keep advancing.
@@ -470,6 +513,9 @@ where
                             SequencerEngineState::ShadowActive(gate) => {
                                 gate.buffer_payload(*envelope);
                             }
+                            SequencerEngineState::IsolatedActive => {
+                                debug!(target: "engine", "Isolated sequencer dropping canonical unsafe payload");
+                            }
                             SequencerEngineState::Regular => {
                                 let block_number = envelope.execution_payload.block_number();
                                 let unsafe_head =
@@ -514,6 +560,9 @@ where
                             SequencerEngineState::ShadowActive(_) => {
                                 warn!(target: "engine", "Ignoring admin unsafe payload on shadow sequencer");
                             }
+                            SequencerEngineState::IsolatedActive => {
+                                warn!(target: "engine", "Ignoring admin unsafe payload on isolated sequencer");
+                            }
                             SequencerEngineState::Regular
                             | SequencerEngineState::CatchingUp { shadow: false, .. } => {
                                 self.processor.handle_admin_unsafe_l2_block(*envelope);
@@ -542,7 +591,8 @@ where
                                 }
                             }
                             SequencerEngineState::Regular
-                            | SequencerEngineState::CatchingUp { .. } => {
+                            | SequencerEngineState::CatchingUp { .. }
+                            | SequencerEngineState::IsolatedActive => {
                                 Err(EngineClientError::ShadowReconciliationDisabled)
                             }
                         };
@@ -563,6 +613,15 @@ where
                         let sync_state = self.processor.engine_state().sync_state;
                         let head = sync_state.unsafe_head();
                         let unsafe_before = head;
+                        // Derivation follows the canonical chain, so its resets would rewind the
+                        // private chain. Acknowledge them without touching forkchoice.
+                        if origin == ResetOrigin::Derivation && self.is_isolated_active() {
+                            debug!(target: "engine", "Isolated sequencer ignoring derivation reset");
+                            if result_tx.send(Ok(())).await.is_err() {
+                                warn!(target: "engine", "Sending reset response failed");
+                            }
+                            continue;
+                        }
                         if origin != ResetOrigin::Derivation
                             && let SequencerEngineState::CatchingUp { shadow, catchup } =
                                 &self.sequencer_state
@@ -654,7 +713,7 @@ where
                                 canonical_hash = %head.block_info.hash,
                                 "Sequencer canonical catch-up completed"
                             );
-                            self.sequencer_state = SequencerEngineState::Regular;
+                            self.sequencer_state = self.caught_up_state();
                         }
                         // Do not reset the engine while the EL is still syncing. A Reset sends a
                         // forkchoice_updated to reth pointing at the sync-start block, which will
@@ -686,7 +745,8 @@ where
                                 SequencerEngineState::CatchingUp { catchup, .. } => {
                                     *catchup = CanonicalUnsafeCatchup::default();
                                 }
-                                SequencerEngineState::Regular => {}
+                                SequencerEngineState::Regular
+                                | SequencerEngineState::IsolatedActive => {}
                             }
                             self.unsafe_head_tx.send_replace(anchor);
                             if let Err(error) =
@@ -952,6 +1012,82 @@ mod tests {
             requested_hash == 100
         );
         assert!(matches!(coordinator.sequencer_state(), SequencerEngineState::ShadowActive(_)));
+    }
+
+    #[tokio::test]
+    async fn isolated_sequencer_bootstraps_as_follower() {
+        let coordinator = coordinator(false, false, None).with_isolated(true);
+        assert_eq!(coordinator.resolve_bootstrap_role().await, BootstrapRole::ConductorFollower);
+    }
+
+    #[rstest]
+    #[case::caught_up(&[(100, 100)], true)]
+    #[case::gap(&[(102, 102)], false)]
+    fn isolated_start_stops_following_canonical_chain(
+        #[case] observations: &[(u64, u8)],
+        #[case] accepted: bool,
+    ) {
+        let head = L2BlockInfo {
+            block_info: BlockInfo {
+                number: 100,
+                hash: B256::with_last_byte(100),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let state = TestEngineStateBuilder::new()
+            .with_unsafe_head(head)
+            .with_safe_head(L2BlockInfo::default())
+            .with_el_sync_finished(true)
+            .build();
+        let (state_tx, _) = watch::channel(state);
+        let (queue_tx, _) = watch::channel(0usize);
+        let processor = EngineProcessor::new(
+            Arc::new(test_engine_client_builder().build()),
+            Arc::new(RollupConfig::default()),
+            MockEngineDerivationClient::new(),
+            Engine::new(state, state_tx, queue_tx),
+        );
+        let (head_tx, _) = watch::channel(head);
+        let mut coordinator =
+            SequencerEngineRequestCoordinator::new(processor, false, None, true, head_tx)
+                .with_isolated(true);
+        let mut catchup = CanonicalUnsafeCatchup::default();
+        for &(number, hash) in observations {
+            catchup.buffer_payload(BaseExecutionPayloadEnvelope {
+                execution_payload: BaseExecutionPayload::V1(ExecutionPayloadV1 {
+                    block_number: number,
+                    block_hash: B256::with_last_byte(hash),
+                    parent_hash: B256::ZERO,
+                    fee_recipient: Default::default(),
+                    state_root: B256::ZERO,
+                    receipts_root: B256::ZERO,
+                    logs_bloom: Default::default(),
+                    prev_randao: B256::ZERO,
+                    gas_limit: 30_000_000,
+                    gas_used: 0,
+                    timestamp: number,
+                    extra_data: Default::default(),
+                    base_fee_per_gas: Default::default(),
+                    transactions: vec![],
+                }),
+                parent_beacon_block_root: None,
+            });
+        }
+        catchup.commit(head);
+        *coordinator.sequencer_state_mut() =
+            SequencerEngineState::CatchingUp { shadow: false, catchup };
+
+        assert_eq!(coordinator.prepare_sequencer_start(head.block_info.hash).is_ok(), accepted);
+        assert_eq!(
+            matches!(coordinator.sequencer_state(), SequencerEngineState::IsolatedActive),
+            accepted
+        );
+        // Once active, an isolated sequencer never resumes following the canonical chain.
+        if accepted {
+            assert!(coordinator.prepare_sequencer_start(head.block_info.hash).is_ok());
+            assert!(matches!(coordinator.sequencer_state(), SequencerEngineState::IsolatedActive));
+        }
     }
 
     #[rstest]
