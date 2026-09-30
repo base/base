@@ -53,7 +53,7 @@ fn next_block_schedule(
             l2_time: genesis.timestamp(),
             ..Default::default()
         },
-        block_time: LEGACY_BLOCK_TIME,
+        block_time: chain_spec.block_time.unwrap_or(LEGACY_BLOCK_TIME),
         l2_chain_id: chain_spec.chain(),
         ..Default::default()
     };
