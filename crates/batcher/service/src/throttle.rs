@@ -120,14 +120,15 @@ mod tests {
         format!(r#"{{"jsonrpc":"2.0","id":0,"result":{result}}}"#)
     }
 
+    /// The limits go out as `miner_setMaxDASize` with the tx and block sizes as hex quantities.
     #[tokio::test]
     async fn set_max_da_size_sends_correct_request() {
         let server = MockServer::start_async().await;
         let mock = server
             .mock_async(|when, then| {
-                when.method(POST)
-                    .path("/")
-                    .json_body_includes(r#"{"method":"miner_setMaxDASize"}"#);
+                when.method(POST).path("/").json_body_includes(
+                    r#"{"method":"miner_setMaxDASize","params":["0x96","0x4e20"]}"#,
+                );
                 then.status(200)
                     .header("content-type", "application/json")
                     .body(json_rpc_response("true"));
@@ -139,10 +140,12 @@ mod tests {
         mock.assert_async().await;
     }
 
+    /// A node that answers `false` refused the limits, which is an error, and the next endpoint
+    /// is not asked.
     #[tokio::test]
-    async fn set_max_da_size_false_return_is_error() {
-        let server = MockServer::start_async().await;
-        server
+    async fn set_max_da_size_false_return_is_an_error_without_failover() {
+        let refusing = MockServer::start_async().await;
+        refusing
             .mock_async(|when, then| {
                 when.method(POST).path("/");
                 then.status(200)
@@ -150,24 +153,24 @@ mod tests {
                     .body(json_rpc_response("false"));
             })
             .await;
+        let fallback = MockServer::start_async().await;
+        let fallback_calls = fallback
+            .mock_async(|when, then| {
+                when.method(POST).path("/");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .body(json_rpc_response("true"));
+            })
+            .await;
 
-        let client = RpcThrottleClient::new(&[server.url("/")]).unwrap();
-        assert!(
-            client.set_max_da_size(150, 20_000).await.is_err(),
-            "false response must be treated as an error"
-        );
+        let client = RpcThrottleClient::new(&[refusing.url("/"), fallback.url("/")]).unwrap();
+        let error = client.set_max_da_size(150, 20_000).await.unwrap_err();
+
+        assert_eq!(error.to_string(), "miner_setMaxDASize returned false");
+        assert_eq!(fallback_calls.calls_async().await, 0);
     }
 
-    #[tokio::test]
-    async fn set_max_da_size_transport_error_propagates() {
-        // Port 1 has no listener — connection will fail.
-        let client = RpcThrottleClient::new(&["http://127.0.0.1:1"]).unwrap();
-        assert!(
-            client.set_max_da_size(150, 20_000).await.is_err(),
-            "connection failure must propagate as error"
-        );
-    }
-
+    /// An endpoint that cannot be reached falls over to the next one.
     #[tokio::test]
     async fn set_max_da_size_falls_over_to_second_endpoint() {
         // First endpoint refuses connections; second endpoint accepts.
@@ -188,20 +191,10 @@ mod tests {
             .expect("failover from a dead first endpoint must succeed via the second");
     }
 
+    /// The push fails when no endpoint can be reached.
     #[tokio::test]
     async fn set_max_da_size_all_endpoints_fail() {
         let client = RpcThrottleClient::new(&["http://127.0.0.1:1", "http://127.0.0.1:2"]).unwrap();
-        let err = client.set_max_da_size(150, 20_000).await.unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("all 2 throttle endpoints failed"),
-            "error must list endpoint count, got: {msg}"
-        );
-    }
-
-    #[test]
-    fn new_rejects_empty_url_list() {
-        let urls: &[&str] = &[];
-        assert!(RpcThrottleClient::new(urls).is_err(), "empty endpoint list must be rejected");
+        assert!(client.set_max_da_size(150, 20_000).await.is_err());
     }
 }

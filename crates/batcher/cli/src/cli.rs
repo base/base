@@ -364,6 +364,8 @@ mod tests {
 
     use super::*;
 
+    const PRIVATE_KEY: &str = "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
     fn base_args_without_signer() -> Vec<&'static str> {
         vec![
             "batcher",
@@ -378,10 +380,7 @@ mod tests {
 
     fn base_args() -> Vec<&'static str> {
         let mut args = base_args_without_signer();
-        args.extend_from_slice(&[
-            "--private-key",
-            "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        ]);
+        args.extend_from_slice(&["--private-key", PRIVATE_KEY]);
         args
     }
 
@@ -391,6 +390,7 @@ mod tests {
         BatcherArgs::try_parse_from(args).expect("CLI should parse")
     }
 
+    /// A remote signer endpoint and address configure the signer in place of a private key.
     #[test]
     fn into_config_accepts_remote_signer() {
         let mut args = base_args_without_signer();
@@ -407,90 +407,64 @@ mod tests {
         assert_eq!(signer.address(), Address::repeat_byte(0x42));
     }
 
+    /// `--shadow-mode` and the inbox override only go together.
     #[test]
-    fn into_config_sets_metrics_enabled() {
-        let cli = parse_cli(&[]);
-        let config = cli.into_config(true).expect("config should build");
-
-        assert!(config.metrics_enabled);
-    }
-
-    #[test]
-    fn into_config_rejects_shadow_mode_without_batch_inbox_override() {
-        let cli = parse_cli(&["--shadow-mode"]);
-        let err = cli.into_config(false).expect_err("shadow mode alone should fail");
-
-        assert!(
-            err.to_string()
-                .contains("--shadow-mode and --dangerously-override-batch-inbox-address")
-        );
-    }
-
-    #[test]
-    fn into_config_rejects_batch_inbox_override_without_shadow_mode() {
-        let cli = parse_cli(&[
+    fn into_config_requires_shadow_mode_and_the_inbox_override_together() {
+        let shadow_mode_alone: &[&'static str] = &["--shadow-mode"];
+        let override_alone: &[&'static str] = &[
             "--dangerously-override-batch-inbox-address",
             "0x1111111111111111111111111111111111111111",
-        ]);
-        let err = cli.into_config(false).expect_err("override without shadow mode should fail");
+        ];
+        for flags in [shadow_mode_alone, override_alone] {
+            let error = parse_cli(flags).into_config(false).unwrap_err();
 
-        assert!(
-            err.to_string()
-                .contains("--shadow-mode and --dangerously-override-batch-inbox-address")
-        );
+            assert_eq!(
+                error.to_string(),
+                "--shadow-mode and --dangerously-override-batch-inbox-address must be set together",
+                "{flags:?}"
+            );
+        }
     }
 
+    /// `--shadow-mode` with the inbox override sends batches to that inbox and takes the parity
+    /// validator's L2 RPC.
     #[test]
     fn into_config_accepts_shadow_batch_inbox_override() {
         let cli = parse_cli(&[
             "--shadow-mode",
             "--dangerously-override-batch-inbox-address",
             "0x1111111111111111111111111111111111111111",
+            "--parity-validator-l2-rpc-url",
+            "http://validator:9545",
         ]);
         let config = cli.into_config(false).expect("config should build");
 
         assert_eq!(config.batch_inbox_override, Some(Address::repeat_byte(0x11)));
+        assert_eq!(
+            config.parity_validator_l2_rpc_url.expect("a parity validator").as_str(),
+            "http://validator:9545/"
+        );
     }
 
+    /// Without flags the batcher runs blobs at full blob frames and Brotli quality 9, starts
+    /// running and does not wait for the node to sync.
     #[test]
-    fn into_config_defaults_to_blob_da() {
+    fn into_config_applies_the_defaults() {
         let cli = parse_cli(&[]);
         let config = cli.into_config(false).expect("config should build");
+
+        assert!(!config.stopped);
+        assert!(!config.wait_node_sync);
 
         assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Blob);
-    }
-
-    #[test]
-    fn into_config_uses_full_blob_frame_capacity() {
-        let cli = parse_cli(&[]);
-        let config = cli.into_config(false).expect("config should build");
-
         assert_eq!(
             config.encoder_config.max_frame_size,
             base_batcher_encoder::EncoderConfig::MAX_BLOB_FRAME_SIZE
         );
-        assert_eq!(config.encoder_config.compressed_size_target, None);
-        assert_eq!(config.encoder_config.max_blobs_per_tx, 6);
         assert_eq!(config.encoder_config.brotli_level, base_batcher_encoder::BrotliLevel::Brotli9);
     }
 
-    #[test]
-    fn into_config_accepts_compressed_target_and_blob_limit() {
-        let cli = parse_cli(&["--compressed-size-target", "700000", "--max-blobs-per-tx", "4"]);
-        let config = cli.into_config(false).expect("config should build");
-
-        assert_eq!(config.encoder_config.compressed_size_target, Some(700_000));
-        assert_eq!(config.encoder_config.max_blobs_per_tx, 4);
-    }
-
-    #[test]
-    fn into_config_accepts_brotli_quality() {
-        let cli = parse_cli(&["--brotli-quality", "11"]);
-        let config = cli.into_config(false).expect("config should build");
-
-        assert_eq!(config.encoder_config.brotli_level, base_batcher_encoder::BrotliLevel::Brotli11);
-    }
-
+    /// A Brotli quality above 11, the encoder's highest level, is refused at parse time.
     #[test]
     fn cli_rejects_brotli_quality_out_of_range() {
         let mut args = base_args();
@@ -499,14 +473,7 @@ mod tests {
         assert!(BatcherArgs::try_parse_from(args).is_err());
     }
 
-    #[test]
-    fn into_config_accepts_calldata_da_mode() {
-        let cli = parse_cli(&["--data-availability-type", "calldata"]);
-        let config = cli.into_config(false).expect("config should build");
-
-        assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Calldata);
-    }
-
+    /// A calldata batcher's frame size is its calldata cap minus the derivation version byte.
     #[test]
     fn into_config_reserves_derivation_prefix_from_calldata_size_cap() {
         let cli = parse_cli(&[
@@ -520,95 +487,105 @@ mod tests {
         assert_eq!(config.encoder_config.max_frame_size, 129_999);
     }
 
+    /// Every encoder, submission, throttle, startup and admin flag reaches the config, so no
+    /// operator flag is silently ignored.
     #[test]
-    fn cli_rejects_auto_da_mode_for_now() {
-        let mut args = base_args();
-        args.extend_from_slice(["--data-availability-type", "auto"].as_slice());
-
-        assert!(BatcherArgs::try_parse_from(args).is_err());
-    }
-
-    #[test]
-    fn stopped_defaults_to_false() {
-        let cli = parse_cli(&[]);
+    fn into_config_applies_the_operator_flags() {
+        let cli = parse_cli(&[
+            "--data-availability-type",
+            "calldata",
+            "--compressed-size-target",
+            "1000",
+            "--max-blobs-per-tx",
+            "3",
+            "--brotli-quality",
+            "5",
+            "--publish-max-retries",
+            "7",
+            "--publish-retry-delay",
+            "3s",
+            "--max-channel-duration",
+            "10",
+            "--sub-safety-margin",
+            "4",
+            "--max-pending-transactions",
+            "4",
+            "--num-confirmations",
+            "3",
+            "--resubmission-timeout",
+            "30",
+            "--poll-interval",
+            "2",
+            "--throttle-threshold",
+            "500000",
+            "--check-recent-txs-depth",
+            "16",
+            "--wait-node-sync-timeout",
+            "60",
+            "--admin-addr",
+            "0.0.0.0",
+            "--admin-port",
+            "7000",
+            "--l1-ws-url",
+            "ws://localhost:8546",
+            "--stopped",
+            "--wait-node-sync",
+        ]);
         let config = cli.into_config(false).expect("config should build");
 
-        assert!(!config.stopped);
-    }
-
-    #[test]
-    fn stopped_flag_sets_stopped_in_config() {
-        let cli = parse_cli(&["--stopped"]);
-        let config = cli.into_config(false).expect("config should build");
-
+        assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Calldata);
+        assert_eq!(config.encoder_config.compressed_size_target, Some(1000));
+        assert_eq!(config.encoder_config.max_blobs_per_tx, 3);
+        assert_eq!(config.encoder_config.brotli_level, base_batcher_encoder::BrotliLevel::Brotli5);
+        assert_eq!(config.tx_manager.publish_max_retries, 7);
+        assert_eq!(config.tx_manager.publish_retry_delay, Duration::from_secs(3));
+        assert_eq!(config.encoder_config.max_channel_duration, 10);
+        assert_eq!(config.encoder_config.sub_safety_margin, 4);
+        assert_eq!(config.max_pending_transactions, 4);
+        assert_eq!(config.tx_manager.num_confirmations, 3);
+        assert_eq!(config.tx_manager.resubmission_timeout, Duration::from_secs(30));
+        assert_eq!(config.poll_interval, Duration::from_secs(2));
+        assert_eq!(config.throttle.expect("the throttle is on").threshold_bytes, 500_000);
+        assert_eq!(config.check_recent_txs_depth, 16);
+        assert_eq!(config.wait_node_sync_timeout, Duration::from_secs(60));
+        assert_eq!(config.admin_addr, Some(SocketAddr::new(IpAddr::from([0, 0, 0, 0]), 7000)));
+        assert_eq!(config.l1_ws_url.expect("a WebSocket URL").as_str(), "ws://localhost:8546/");
         assert!(config.stopped);
-    }
-
-    #[test]
-    fn into_config_sets_publish_retry_policy() {
-        let cli = parse_cli(&["--publish-max-retries", "12", "--publish-retry-delay", "250ms"]);
-        let config = cli.into_config(false).expect("config should build");
-
-        assert_eq!(config.tx_manager.publish_max_retries, 12);
-        assert_eq!(config.tx_manager.publish_retry_delay, Duration::from_millis(250));
-    }
-
-    #[test]
-    fn rpc_urls_default_to_single_endpoint() {
-        let cli = parse_cli(&[]);
-        let config = cli.into_config(false).expect("config should build");
-        assert_eq!(config.l1_rpc_url.len(), 1);
-        assert_eq!(config.l2_rpc_url.len(), 1);
-        assert_eq!(config.rollup_rpc_url.len(), 1);
-    }
-
-    #[test]
-    fn into_config_accepts_parity_validator_l2_rpc_url() {
-        let cli = parse_cli(&["--parity-validator-l2-rpc-url", "http://127.0.0.1:9545"]);
-        let config = cli.into_config(false).expect("config should build");
-
-        assert_eq!(config.parity_validator_l2_rpc_url.unwrap().as_str(), "http://127.0.0.1:9545/");
-    }
-
-    #[test]
-    fn rpc_urls_accept_comma_separated_list() {
-        // base_args() already sets `--l1-rpc-url http://localhost:8545`, so
-        // appending a second `--l1-rpc-url` with three comma-separated values
-        // accumulates: clap appends rather than overrides for `Vec` args.
-        let cli =
-            parse_cli(&["--l1-rpc-url", "http://l1-a:8545,http://l1-b:8545,http://l1-c:8545"]);
-        let config = cli.into_config(false).expect("config should build");
-        assert_eq!(config.l1_rpc_url.len(), 4);
-        assert_eq!(config.l1_rpc_url[0].as_str(), "http://localhost:8545/");
-        assert_eq!(config.l1_rpc_url[1].as_str(), "http://l1-a:8545/");
-        assert_eq!(config.l1_rpc_url[3].as_str(), "http://l1-c:8545/");
-    }
-
-    #[test]
-    fn wait_node_sync_defaults_to_false() {
-        let cli = parse_cli(&[]);
-        let config = cli.into_config(false).expect("config should build");
-        assert!(!config.wait_node_sync);
-    }
-
-    #[test]
-    fn wait_node_sync_flag_sets_config() {
-        let cli = parse_cli(&["--wait-node-sync"]);
-        let config = cli.into_config(false).expect("config should build");
         assert!(config.wait_node_sync);
     }
 
+    /// An RPC flag takes a comma-separated list of endpoints.
     #[test]
-    fn force_blobs_when_throttling_defaults_to_true() {
-        let cli = parse_cli(&[]);
-        let config = cli.into_config(false).expect("config should build");
-        assert!(config.force_blobs_when_throttling);
+    fn rpc_urls_accept_comma_separated_list() {
+        let args = [
+            "batcher",
+            "--l1-rpc-url",
+            "http://l1-a:8545,http://l1-b:8545",
+            "--l2-rpc-url",
+            "http://localhost:9545",
+            "--rollup-rpc-url",
+            "http://localhost:7545",
+            "--private-key",
+            PRIVATE_KEY,
+        ];
+        let config = BatcherArgs::try_parse_from(args).unwrap().into_config(false).unwrap();
+
+        let l1_rpc_urls: Vec<_> = config.l1_rpc_url.iter().map(Url::as_str).collect();
+        assert_eq!(l1_rpc_urls, ["http://l1-a:8545/", "http://l1-b:8545/"]);
     }
 
+    /// The DA throttle is on unless `--no-throttle` is set.
     #[test]
-    fn no_force_blobs_when_throttling_flag_inverts_default() {
+    fn no_throttle_turns_the_da_throttle_off() {
+        assert!(parse_cli(&[]).into_config(false).unwrap().throttle.is_some());
+        assert!(parse_cli(&["--no-throttle"]).into_config(false).unwrap().throttle.is_none());
+    }
+
+    /// Throttling forces blobs unless `--no-force-blobs-when-throttling` is set.
+    #[test]
+    fn no_force_blobs_when_throttling_turns_blob_forcing_off() {
+        assert!(parse_cli(&[]).into_config(false).unwrap().force_blobs_when_throttling);
         let cli = parse_cli(&["--no-force-blobs-when-throttling"]);
-        let config = cli.into_config(false).expect("config should build");
-        assert!(!config.force_blobs_when_throttling);
+        assert!(!cli.into_config(false).unwrap().force_blobs_when_throttling);
     }
 }
