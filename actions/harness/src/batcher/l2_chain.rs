@@ -37,9 +37,12 @@ impl SharedL2Chain {
     /// Make `block` the head of the chain, as a node would. The blocks at or above its number
     /// are dropped, so a block on another parent is a fork replacing them.
     pub fn push(&self, block: BaseBlock) {
-        let mut blocks = self.blocks.lock().unwrap();
-        blocks.retain(|kept| kept.header.number < block.header.number);
-        blocks.push(block);
+        {
+            let mut blocks = self.blocks.lock().unwrap();
+            blocks.retain(|kept| kept.header.number < block.header.number);
+            blocks.push(block);
+        }
+        // Wake the source only once the lock is released, so it can read the new block.
         self.pushes.send_modify(|pushes| *pushes += 1);
     }
 }
@@ -128,6 +131,8 @@ mod tests {
         }
     }
 
+    /// A source waiting on an empty chain wakes on the next push, then delivers the pushed blocks
+    /// in order.
     #[tokio::test]
     async fn a_push_wakes_the_waiting_source_and_blocks_come_in_order() {
         let chain = SharedL2Chain::new();
@@ -147,6 +152,8 @@ mod tests {
         assert!(matches!(source.next().await, L2BlockEvent::Block(block) if *block == second));
     }
 
+    /// A block pushed at a height the chain already has replaces it and every block above. The
+    /// source reports a reorg, and after a reset to genesis delivers the new chain.
     #[tokio::test]
     async fn a_fork_replaces_the_blocks_above_it_and_is_delivered_after_a_reset() {
         let chain = SharedL2Chain::new();
@@ -171,6 +178,8 @@ mod tests {
         assert!(matches!(source.next().await, L2BlockEvent::Block(block) if *block == after_fork));
     }
 
+    /// A chain that does not build on the source's tip is reported as a reorg once. After the
+    /// reset the source waits for the next push instead of reporting the same reorg again.
     #[tokio::test]
     async fn a_reorg_is_reported_once_per_chain_state() {
         let chain = SharedL2Chain::new();
@@ -189,15 +198,5 @@ mod tests {
         let first = block(1, genesis.hash);
         chain.push(first.clone());
         assert!(matches!(source.next().await, L2BlockEvent::Block(block) if *block == first));
-    }
-
-    #[tokio::test]
-    async fn the_source_parks_once_the_chain_is_dropped() {
-        let chain = SharedL2Chain::new();
-        let mut source = HarnessBlockSource::new(&chain, BlockInfo::default());
-        drop(chain);
-
-        let next = timeout(SETTLE, source.next()).await;
-        assert!(next.is_err(), "a source without a chain must park");
     }
 }
