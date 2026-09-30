@@ -71,7 +71,7 @@ impl Frame {
         reader: &mut (impl AsyncReadExt + Unpin),
     ) -> TransportResult<T> {
         let len = usize::try_from(reader.read_u64().await?)
-            .map_err(|_| TransportError::Codec("frame length exceeds u64::MAX".into()))?;
+            .map_err(|_| TransportError::Codec("frame length exceeds usize::MAX".into()))?;
 
         debug!(payload_bytes = len, "frame read start");
 
