@@ -505,6 +505,25 @@ mod tests {
         });
     }
 
+    /// A fatal encoding error halts the driver instead of being skipped.
+    #[test]
+    fn run_halts_on_a_fatal_step_error() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let pipeline =
+                TrackingPipeline::new().with_step_error(StepError::BlockExceedsChannelLimit {
+                    cursor: 0,
+                    limit: ChannelLimit::RlpBytes { required: 1, maximum: 0 },
+                });
+            let (driver, _handles) =
+                DriverFixture::new(ctx, pipeline, ScriptedTxManager::confirming_at(1)).build();
+
+            assert!(matches!(
+                driver.run().await,
+                Err(BatchDriverError::Step(StepError::BlockExceedsChannelLimit { .. }))
+            ));
+        });
+    }
+
     // The loop polls its arms in priority order. Each test in this group makes several arms
     // ready at once and checks which one the driver serves first. Every call log ends with the
     // shutdown flush.
@@ -697,22 +716,6 @@ mod tests {
         });
     }
 
-    /// A fatal encoding error halts the driver instead of being skipped.
-    #[test]
-    fn run_halts_on_a_fatal_step_error() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let pipeline =
-                TrackingPipeline::new().with_step_error(StepError::BlockExceedsChannelLimit {
-                    cursor: 0,
-                    limit: ChannelLimit::RlpBytes { required: 1, maximum: 0 },
-                });
-            let (driver, _handles) =
-                DriverFixture::new(ctx, pipeline, ScriptedTxManager::confirming_at(1)).build();
-
-            assert!(matches!(driver.run().await, Err(BatchDriverError::Step(_))));
-        });
-    }
-
     // Encoding runs in slices of `STEP_BUDGET` steps. The tests below check what happens
     // between two slices.
 
@@ -814,7 +817,7 @@ mod tests {
     /// Each blob payload of a submission becomes its own blob of one L1 transaction, in order,
     /// even when all their frames would fit in one blob.
     #[test]
-    fn test_blob_submission_keeps_each_blob_payload_as_its_own_blob() {
+    fn run_sends_each_blob_payload_as_its_own_blob() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let mut pipeline = TrackingPipeline::new();
             let frames: Vec<_> =

@@ -64,12 +64,13 @@ fn test_throttle_transitions_from_active_to_inactive() {
     });
 }
 
-/// Setting the throttle controller over the admin API pushes its limits at once, and resetting
-/// it pushes them again even though they did not change.
+/// Setting or resetting the throttle controller over the admin API pushes its limits again,
+/// even when they did not change.
 #[test]
-fn test_admin_set_and_reset_push_the_limits() {
+fn test_admin_set_and_reset_push_the_limits_again() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let config = ThrottleConfig::default();
+        let upper_limits = (config.tx_size_upper_limit, config.block_size_upper_limit);
         let throttle = ThrottleController::new(config.clone(), ThrottleStrategy::Linear);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
         let (driver, handles) = DriverFixture::new(
@@ -81,21 +82,40 @@ fn test_admin_set_and_reset_push_the_limits() {
         .build();
         let handle = ctx.spawn(driver.run());
 
-        let raised = ThrottleConfig {
-            tx_size_upper_limit: 30_000,
-            block_size_upper_limit: 150_000,
-            ..config
-        };
-        handles.admin.set_throttle(ThrottleStrategy::Linear, raised).await.unwrap();
+        handles.admin.set_throttle(ThrottleStrategy::Linear, config).await.unwrap();
         handles.admin.reset_throttle().await.unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
         ctx.cancel();
         assert!(handle.await.unwrap().is_ok());
 
-        assert_eq!(
-            *throttle_recorded.lock().unwrap(),
-            [(20_000, 130_000), (30_000, 150_000), (30_000, 150_000)]
-        );
+        assert_eq!(*throttle_recorded.lock().unwrap(), [upper_limits, upper_limits, upper_limits]);
+    });
+}
+
+/// With blob forcing off, throttling pushes the lower limits but leaves the DA type alone.
+#[test]
+fn test_throttling_without_blob_forcing_keeps_the_da_type() {
+    Runner::start(Config::seeded(0), |ctx| async move {
+        let config = ThrottleConfig::default();
+        let pipeline = TrackingPipeline::new().with_da_backlog(2 * config.threshold_bytes);
+        let blob_override = Arc::clone(&pipeline.blob_override);
+        let lower_limits = (config.tx_size_lower_limit, config.block_size_lower_limit);
+        let throttle = ThrottleController::new(config, ThrottleStrategy::Linear);
+        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
+
+        let (driver, _handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                .throttle(DaThrottle::new(throttle, Arc::new(throttle_client)))
+                .force_blobs_when_throttling(false)
+                .build();
+        let handle = ctx.spawn(driver.run());
+
+        ctx.sleep(Duration::from_millis(10)).await;
+        ctx.cancel();
+        assert!(handle.await.unwrap().is_ok());
+
+        assert_eq!(*throttle_recorded.lock().unwrap(), [lower_limits]);
+        assert!(!blob_override.load(Ordering::SeqCst), "the DA type is left alone");
     });
 }
 

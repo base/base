@@ -124,7 +124,7 @@ impl ThrottleParams {
 pub enum ThrottleStrategy {
     /// No throttling.
     Off,
-    /// Step function: either 0 or `max_intensity` when above threshold.
+    /// Step function: 0 below the threshold, `max_intensity` from the threshold on.
     Step,
     /// Linear interpolation between 0 and `max_intensity` based on backlog.
     Linear,
@@ -182,8 +182,8 @@ impl ThrottleController {
     /// Update with current DA backlog bytes.
     ///
     /// Returns [`ThrottleParams`] if throttling should be applied, or `None`
-    /// if the backlog is below the threshold or the strategy is
-    /// [`ThrottleStrategy::Off`].
+    /// if the backlog is below the threshold, the computed intensity is zero or the
+    /// strategy is [`ThrottleStrategy::Off`].
     pub fn update(&self, da_backlog_bytes: u64) -> Option<ThrottleParams> {
         match &self.strategy {
             ThrottleStrategy::Off => None,
