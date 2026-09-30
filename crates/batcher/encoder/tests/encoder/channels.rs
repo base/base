@@ -95,7 +95,7 @@ fn size_closed_tail_keeps_its_original_deadline() {
     assert!(encoder.next_submission().is_some(), "the first tail is due");
 }
 
-/// An open channel emits every blob it fills without closing. It takes more blocks after the
+/// An open channel emits the blobs it fills without closing. It takes more blocks after the
 /// blob went out, and the frames emitted early and the rest decode as one channel.
 #[test]
 fn open_channel_emits_full_blobs_without_closing() {
@@ -120,8 +120,7 @@ fn open_channel_emits_full_blobs_without_closing() {
     assert_eq!(derived.concat(), batches);
 }
 
-/// An open calldata channel emits every full frame without closing, and nothing shorter. The
-/// frames emitted early and the rest of the channel decode as one channel.
+/// An open calldata channel emits only full frames without closing. The frames emitted early and the rest of the channel decode as one channel.
 #[test]
 fn open_channel_emits_full_calldata_frames_without_closing() {
     let max_frame_size = 1_000;

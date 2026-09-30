@@ -5,7 +5,7 @@ use base_batcher_encoder::{BatchPipeline, BatchSubmission, DaType, EncoderConfig
 
 use crate::common::{BlockFixture, EncoderFixture, SubmissionFixture, THREE_BLOB_PAYLOAD};
 
-/// A transaction carries `max_blobs_per_tx` blobs while blobs are ready.
+/// Blobs go out in transactions of `max_blobs_per_tx`, the remainder in a shorter last one.
 #[test]
 fn transactions_carry_up_to_max_blobs_per_tx() {
     let config = EncoderConfig { max_blobs_per_tx: 2, ..EncoderConfig::default() };
@@ -20,8 +20,8 @@ fn transactions_carry_up_to_max_blobs_per_tx() {
 }
 
 /// Retries go out in the order their data was built, across DA types. With the blob override
-/// on, off and on again, the second blob is not packed with the first ahead of the calldata
-/// built between them, which would land the channel frames out of order.
+/// on, off and on again, the third block's blob is not packed with the first one ahead of the
+/// calldata between them, which would land the third block before the second on L1.
 #[test]
 fn retries_keep_their_order_across_da_types() {
     let config = EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() };

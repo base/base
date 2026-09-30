@@ -490,6 +490,8 @@ mod tests {
             .unwrap()
     }
 
+    /// A batch that would take the channel past the protocol RLP byte limit is rejected and leaves
+    /// the channel as it was, so the block can go into the next channel.
     #[test]
     fn cumulative_rlp_limit_rejects_without_mutating_stream() {
         let mut channel = channel(EncoderConfig::default());

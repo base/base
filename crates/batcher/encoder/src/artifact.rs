@@ -306,8 +306,9 @@ mod tests {
         DaArtifactPayload::Blob(BlobPayload::new(vec![Arc::new(frame)]))
     }
 
-    /// Pruning a channel drops the artifacts left with no channel, so the ledger does not grow
-    /// with every channel ever confirmed, and keeps the ones another channel still shares.
+    /// Pruning a channel removes it from every artifact and drops the artifacts left with no
+    /// channel, so the ledger does not grow forever. An artifact another channel still shares
+    /// stays, listing only that channel.
     #[test]
     fn prune_channels_drops_artifacts_left_without_a_channel() {
         let mut artifacts = DaArtifacts::new();

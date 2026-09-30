@@ -92,6 +92,8 @@ mod tests {
         BaseTxEnvelope::Legacy(signed)
     }
 
+    /// A block with no transaction, a first transaction that is not a deposit, or an L1-info
+    /// deposit whose calldata does not decode cannot become a batch, each with its own error.
     #[rstest]
     #[case::empty_block(make_block(vec![]), BatchComposeError::EmptyBlock)]
     #[case::not_deposit(make_block(vec![non_deposit_tx()]), BatchComposeError::NotDepositTx)]
@@ -100,6 +102,7 @@ mod tests {
         assert_eq!(BatchComposer::block_to_single_batch(&block).unwrap_err(), expected);
     }
 
+    /// Deposits are left out of the batch, since derivation rebuilds them from L1.
     #[test]
     fn test_deposits_filtered() {
         let block = make_block(vec![valid_deposit_tx(), deposit_tx(Bytes::new())]);
@@ -107,6 +110,7 @@ mod tests {
         assert!(batch.transactions.is_empty());
     }
 
+    /// User transactions go into the batch in their EIP-2718 encoding.
     #[test]
     fn test_user_txs_encoded() {
         let user_tx = non_deposit_tx();
