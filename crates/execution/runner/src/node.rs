@@ -11,7 +11,7 @@ use base_execution_txpool::GuardLimits;
 use base_node_core::{
     BaseConsensusBuilder, BaseEngineApiBuilder, BaseEngineTypes, BaseExecutorBuilder,
     BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes, BasePayloadValidatorBuilder,
-    BaseStorage,
+    BaseStorage, BaseTreeEngineValidatorBuilder,
     args::RollupArgs,
     node::{BasePayloadBuilder, BasePayloadServiceBuilder, BasePoolBuilder},
 };
@@ -19,7 +19,6 @@ use reth_node_builder::{
     Node, NodeAdapter, NodeComponentsBuilder,
     components::ComponentsBuilder,
     node::{FullNodeTypes, NodeTypes},
-    rpc::BasicEngineValidatorBuilder,
 };
 use reth_provider::providers::ProviderFactoryBuilder;
 use reth_rpc_api::eth::RpcTypes;
@@ -218,7 +217,7 @@ where
         BaseEthApiBuilder,
         BasePayloadValidatorBuilder,
         BaseEngineApiBuilder<BasePayloadValidatorBuilder>,
-        BasicEngineValidatorBuilder<BasePayloadValidatorBuilder>,
+        BaseTreeEngineValidatorBuilder<BasePayloadValidatorBuilder>,
     >;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
