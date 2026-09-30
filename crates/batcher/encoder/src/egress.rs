@@ -298,3 +298,249 @@ impl DaEgress {
         self.pending.len()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{B256, Bytes};
+    use base_common_genesis::RollupConfig;
+    use base_protocol::SingleBatch;
+
+    use super::*;
+    use crate::{ChannelAddOutcome, EncoderConfig, SubmissionPayload};
+
+    const FIRST: ChannelId = [1; 16];
+    const SECOND: ChannelId = [2; 16];
+
+    fn channel(id: ChannelId, max_channel_duration: u64) -> Channel {
+        let config = EncoderConfig { max_channel_duration, ..EncoderConfig::default() };
+        Channel::new(id, Arc::new(RollupConfig::default()), &config, 0, 0).unwrap()
+    }
+
+    /// Adds a batch of `transaction_len` random bytes, which Brotli cannot shrink.
+    fn add_incompressible_batch(channel: &mut Channel, transaction_len: usize) {
+        let mut state = channel.blocks_added() as u64 + 1;
+        let transaction = (0..transaction_len)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state as u8
+            })
+            .collect::<Vec<_>>();
+        let batch = SingleBatch {
+            parent_hash: B256::ZERO,
+            epoch_num: 0,
+            epoch_hash: B256::ZERO,
+            timestamp: 0,
+            transactions: vec![Bytes::from(transaction)],
+        };
+        let outcome = channel.add_batch(&batch, transaction_len as u64).unwrap();
+        assert_eq!(outcome, ChannelAddOutcome::Accepted);
+    }
+
+    /// An open channel holding at least `min_output` bytes of stable output.
+    fn open_channel_with_output(id: ChannelId, min_output: usize) -> Channel {
+        let mut channel = channel(id, 10);
+        let mut transaction_len = 4_096;
+        while channel.available_output() < min_output {
+            add_incompressible_batch(&mut channel, transaction_len);
+            transaction_len = (transaction_len * 2).min(200_000);
+        }
+        channel
+    }
+
+    /// A closed channel whose tail is shorter than a blob and than a calldata frame.
+    fn closed_channel_with_a_short_tail(id: ChannelId, max_channel_duration: u64) -> Channel {
+        let mut channel = channel(id, max_channel_duration);
+        add_incompressible_batch(&mut channel, 50_000);
+        channel.close().unwrap();
+        assert!(channel.available_output() < channel.max_frame_data());
+        channel
+    }
+
+    /// Every frame `submission` carries, in order.
+    fn all_frames(submission: &BatchSubmission) -> Vec<Arc<Frame>> {
+        match submission.payload() {
+            SubmissionPayload::Blobs(blobs) => {
+                blobs.iter().flat_map(BlobPayload::frames).cloned().collect()
+            }
+            SubmissionPayload::Calldata(frame) => vec![Arc::clone(frame)],
+        }
+    }
+
+    /// The channel and last-frame flag of every frame `submission` carries.
+    fn frames(submission: &BatchSubmission) -> Vec<(ChannelId, bool)> {
+        all_frames(submission).iter().map(|frame| (frame.id, frame.is_last)).collect()
+    }
+
+    #[test]
+    fn a_full_blob_leaves_an_open_channel() {
+        let channel = open_channel_with_output(FIRST, DaEgress::BLOB_CAPACITY);
+        let mut channels = VecDeque::from([channel]);
+
+        let submission = DaEgress::new()
+            .next_submission(&mut channels, DaType::Blob, 0, 1, SubmissionId(0))
+            .expect("a full blob");
+
+        assert_eq!(submission.blob_count(), 1);
+        assert_eq!(frames(&submission), [(FIRST, false)]);
+    }
+
+    /// Partial output of an open channel waits for more, whatever the DA type or the L1 head.
+    #[test]
+    fn partial_output_of_an_open_channel_stays_buffered() {
+        let mut open = channel(FIRST, 1);
+        add_incompressible_batch(&mut open, 50_000);
+        let buffered = open.available_output();
+        let mut channels = VecDeque::from([open]);
+        let mut egress = DaEgress::new();
+
+        assert!(
+            egress.next_submission(&mut channels, DaType::Blob, 5, 6, SubmissionId(0)).is_none()
+        );
+        assert!(
+            egress
+                .next_submission(&mut channels, DaType::Calldata, 5, 6, SubmissionId(1))
+                .is_none()
+        );
+        assert_eq!(channels[0].available_output(), buffered);
+    }
+
+    /// A closed tail too short to fill a blob goes out once its channel deadline is due.
+    #[test]
+    fn a_short_blob_tail_waits_for_its_channel_deadline() {
+        let mut channels = VecDeque::from([closed_channel_with_a_short_tail(FIRST, 2)]);
+        let mut egress = DaEgress::new();
+
+        assert!(
+            egress.next_submission(&mut channels, DaType::Blob, 1, 6, SubmissionId(0)).is_none()
+        );
+        let submission = egress
+            .next_submission(&mut channels, DaType::Blob, 2, 6, SubmissionId(1))
+            .expect("the tail at the deadline");
+
+        assert_eq!(frames(&submission), [(FIRST, true)]);
+    }
+
+    /// Calldata streams a full frame from an open channel, then the tail once it closes.
+    #[test]
+    fn calldata_streams_full_frames_then_the_closed_tail() {
+        let mut open = open_channel_with_output(FIRST, 0);
+        let max_frame_data = open.max_frame_data();
+        while open.available_output() < max_frame_data {
+            add_incompressible_batch(&mut open, 50_000);
+        }
+        let mut channels = VecDeque::from([open]);
+        let mut egress = DaEgress::new();
+
+        let full = egress
+            .next_submission(&mut channels, DaType::Calldata, 0, 6, SubmissionId(0))
+            .expect("a full frame");
+        assert_eq!(frames(&full), [(FIRST, false)]);
+
+        channels[0].close().unwrap();
+        let mut last = None;
+        for id in 1.. {
+            match egress.next_submission(&mut channels, DaType::Calldata, 0, 6, SubmissionId(id)) {
+                Some(submission) => last = Some(submission),
+                None => break,
+            }
+        }
+        assert_eq!(frames(&last.expect("the tail")), [(FIRST, true)]);
+    }
+
+    /// A blob carries the tail of a closed channel and fills up with the next channel.
+    #[test]
+    fn a_blob_packs_a_closed_tail_with_the_next_channel() {
+        let first = closed_channel_with_a_short_tail(FIRST, 10);
+        let second = open_channel_with_output(SECOND, DaEgress::BLOB_CAPACITY);
+        let mut channels = VecDeque::from([first, second]);
+
+        let submission = DaEgress::new()
+            .next_submission(&mut channels, DaType::Blob, 0, 1, SubmissionId(0))
+            .expect("a shared blob");
+
+        assert_eq!(submission.blob_count(), 1);
+        assert_eq!(frames(&submission), [(FIRST, true), (SECOND, false)]);
+    }
+
+    #[test]
+    fn a_transaction_carries_at_most_max_blobs_per_tx() {
+        let channel = open_channel_with_output(FIRST, 3 * DaEgress::BLOB_CAPACITY);
+        let mut channels = VecDeque::from([channel]);
+
+        let submission = DaEgress::new()
+            .next_submission(&mut channels, DaType::Blob, 0, 2, SubmissionId(0))
+            .expect("blob submission");
+
+        assert_eq!(submission.blob_count(), 2);
+    }
+
+    /// A confirmation reports the channels the submission carried, once.
+    #[test]
+    fn confirm_reports_the_submitted_channels_once() {
+        let channel = open_channel_with_output(FIRST, DaEgress::BLOB_CAPACITY);
+        let mut channels = VecDeque::from([channel]);
+        let mut egress = DaEgress::new();
+        let submission = egress
+            .next_submission(&mut channels, DaType::Blob, 0, 6, SubmissionId(0))
+            .expect("blob submission");
+        assert_eq!(egress.pending_submission_count(), 1);
+
+        assert_eq!(egress.confirm(submission.id), Some(vec![FIRST]));
+        assert_eq!(egress.pending_submission_count(), 0);
+        assert!(egress.confirm(submission.id).is_none());
+    }
+
+    /// A requeued submission goes out again with the same frames, before any new output.
+    #[test]
+    fn a_requeued_submission_is_leased_again_before_new_output() {
+        let channel = open_channel_with_output(FIRST, 2 * DaEgress::BLOB_CAPACITY);
+        let mut channels = VecDeque::from([channel]);
+        let mut egress = DaEgress::new();
+        let first = egress
+            .next_submission(&mut channels, DaType::Blob, 0, 1, SubmissionId(0))
+            .expect("blob submission");
+
+        assert_eq!(egress.requeue(first.id), Some(first.frame_count()));
+        assert!(egress.requeue(first.id).is_none());
+        let retry = egress
+            .next_submission(&mut channels, DaType::Blob, 0, 2, SubmissionId(1))
+            .expect("the retry");
+
+        assert_eq!(retry.blob_count(), 1);
+        assert_eq!(all_frames(&retry), all_frames(&first));
+    }
+
+    /// Pruning a safe channel drops the confirmed artifacts that carried it.
+    #[test]
+    fn pruning_a_safe_channel_drops_its_artifacts() {
+        let channel = open_channel_with_output(FIRST, DaEgress::BLOB_CAPACITY);
+        let mut channels = VecDeque::from([channel]);
+        let mut egress = DaEgress::new();
+        let submission = egress
+            .next_submission(&mut channels, DaType::Blob, 0, 6, SubmissionId(0))
+            .expect("blob submission");
+        egress.confirm(submission.id).expect("confirmed");
+
+        egress.prune_channels(&[FIRST]);
+
+        assert!(egress.artifacts().is_empty());
+    }
+
+    #[test]
+    fn reset_drops_every_artifact_and_submission() {
+        let channel = open_channel_with_output(FIRST, DaEgress::BLOB_CAPACITY);
+        let mut channels = VecDeque::from([channel]);
+        let mut egress = DaEgress::new();
+        let submission = egress
+            .next_submission(&mut channels, DaType::Blob, 0, 6, SubmissionId(0))
+            .expect("blob submission");
+
+        egress.reset();
+
+        assert!(egress.artifacts().is_empty());
+        assert_eq!(egress.pending_submission_count(), 0);
+        assert!(egress.confirm(submission.id).is_none());
+    }
+}
