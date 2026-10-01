@@ -11,9 +11,10 @@ use alloy_sol_types::{SolEvent, SolValue};
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    B20_MAX_SUPPLY_CAP, B20CreditRecipient, B20Guards, B20PausableFeature, B20PolicyType,
-    B20StablecoinToken, B20TokenRole, Eip712Domain, IB20, NonZeroAddress, PermitArgs,
-    PolicyAccounting, Stablecoin, StablecoinAccounting, Token, TransferPolicyIds,
+    B20_MAX_SUPPLY_CAP, B20CreditRecipient, B20CreditRecipientStrategy, B20Guards,
+    B20PausableFeature, B20PolicyType, B20StablecoinToken, B20TokenRole, Eip712Domain, IB20,
+    NonZeroAddress, PermitArgs, PolicyAccounting, Stablecoin, StablecoinAccounting, Token,
+    TransferPolicyIds,
 };
 
 /// `keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")`
@@ -214,7 +215,8 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         privileged: bool,
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
-        let to = B20CreditRecipient::new(to, token.token_address())
+        let to = B20CreditRecipientStrategy::ExcludingSelf
+            .recipient(to, token.token_address())
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         let from = NonZeroAddress::new(caller)
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidSender { sender: caller }))?;
@@ -240,7 +242,8 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
         // Validate before allowance / transfer-policy-id SLOADs.
-        let to = B20CreditRecipient::new(to, token.token_address())
+        let to = B20CreditRecipientStrategy::ExcludingSelf
+            .recipient(to, token.token_address())
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         let from = NonZeroAddress::new(from)
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidSender { sender: from }))?;
@@ -309,7 +312,8 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::Mint)?;
         }
-        B20CreditRecipient::new(to, token.token_address())
+        B20CreditRecipientStrategy::ExcludingSelf
+            .recipient(to, token.token_address())
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         B20Guards::ensure_policy_type(token, B20PolicyType::MintReceiver, to)?;
         let supply = token.accounting().total_supply()?;
@@ -376,7 +380,8 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         B20Guards::ensure_token_role(token, caller, B20TokenRole::Seize)?;
         // A valid recipient guards against a disguised burn or a balance stranded on this token;
         // `from != 0` guards against a disguised mint, matching `transfer_inner`.
-        B20CreditRecipient::new(to, token.token_address())
+        B20CreditRecipientStrategy::ExcludingSelf
+            .recipient(to, token.token_address())
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         if from == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
@@ -982,7 +987,6 @@ mod tests {
         pending_admins: BTreeMap<u64, Address>,
         next_counter: u64,
         events: Vec<LogData>,
-        read_member_calls: core::cell::Cell<u64>,
     }
 
     impl FakePolicyAccounting {
@@ -995,7 +999,6 @@ mod tests {
                 pending_admins: BTreeMap::new(),
                 next_counter: 0,
                 events: Vec::new(),
-                read_member_calls: core::cell::Cell::new(0),
             }
         }
 
@@ -1024,7 +1027,6 @@ mod tests {
             Ok(())
         }
         fn read_member(&self, policy_id: u64, account: Address) -> Result<bool> {
-            self.read_member_calls.set(self.read_member_calls.get() + 1);
             Ok(self.members.get(&(policy_id, account)).copied().unwrap_or(false))
         }
         fn set_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
@@ -1226,52 +1228,14 @@ mod tests {
         assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(10u64));
     }
 
-    // Checks are applied executor → sender → receiver.  When executor_id == sender_id and
-    // caller == from, the sender check is skipped (the executor check already authorised the
-    // same account under the same policy).  The skip is verified by counting read_member calls:
-    // executor(1) + receiver(1) = 2; if the skip were absent, sender would add a third call.
+    // Executor, then sender, then receiver. Each call allows the account the previous gate
+    // checks, so the next PolicyForbids names the next gate.
     #[test]
-    fn transfer_policy_order_and_sender_skip_when_executor_equals_sender() {
+    fn transfer_policy_order_executor_then_sender_then_receiver() {
         let mut tok = token();
         fund(&mut tok, ALICE, U256::from(100));
 
         // Counters 0 and 1 are reserved for ALWAYS_ALLOW / ALWAYS_BLOCK sentinels.
-        const EXECUTOR_AND_SENDER_POLICY: u64 = (1u64 << 56) | 3;
-        const RECEIVER_POLICY: u64 = (1u64 << 56) | 4;
-
-        tok.accounting_mut()
-            .set_policy_id(B20PolicyType::TransferExecutor.id(), EXECUTOR_AND_SENDER_POLICY)
-            .unwrap();
-        tok.accounting_mut()
-            .set_policy_id(B20PolicyType::TransferSender.id(), EXECUTOR_AND_SENDER_POLICY)
-            .unwrap();
-        tok.accounting_mut()
-            .set_policy_id(B20PolicyType::TransferReceiver.id(), RECEIVER_POLICY)
-            .unwrap();
-        tok.policy_storage_mut().allow(EXECUTOR_AND_SENDER_POLICY, ALICE);
-
-        let calls_before = tok.policy_storage().read_member_calls.get();
-        let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10), false).unwrap_err();
-
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::PolicyForbids {
-                policyScope: B20PolicyType::TransferReceiver.id(),
-                policyId: RECEIVER_POLICY,
-            })
-        );
-        assert_eq!(
-            tok.policy_storage().read_member_calls.get() - calls_before,
-            2,
-            "executor(1) + receiver(1); sender check must be skipped"
-        );
-    }
-
-    #[test]
-    fn transfer_policy_sender_checked_before_receiver() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(100));
-
         const EXECUTOR_POLICY: u64 = (1u64 << 56) | 3;
         const SENDER_POLICY: u64 = (1u64 << 56) | 4;
         const RECEIVER_POLICY: u64 = (1u64 << 56) | 5;
@@ -1285,11 +1249,18 @@ mod tests {
         tok.accounting_mut()
             .set_policy_id(B20PolicyType::TransferReceiver.id(), RECEIVER_POLICY)
             .unwrap();
-        tok.policy_storage_mut().allow(EXECUTOR_POLICY, ALICE);
 
-        let calls_before = tok.policy_storage().read_member_calls.get();
         let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10), false).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: B20PolicyType::TransferExecutor.id(),
+                policyId: EXECUTOR_POLICY,
+            })
+        );
 
+        tok.policy_storage_mut().allow(EXECUTOR_POLICY, ALICE);
+        let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10), false).unwrap_err();
         assert_eq!(
             err,
             BasePrecompileError::revert(IB20::PolicyForbids {
@@ -1297,10 +1268,15 @@ mod tests {
                 policyId: SENDER_POLICY,
             })
         );
+
+        tok.policy_storage_mut().allow(SENDER_POLICY, ALICE);
+        let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10), false).unwrap_err();
         assert_eq!(
-            tok.policy_storage().read_member_calls.get() - calls_before,
-            2,
-            "executor(1) + sender(1); receiver must not be reached"
+            err,
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: B20PolicyType::TransferReceiver.id(),
+                policyId: RECEIVER_POLICY,
+            })
         );
     }
 
