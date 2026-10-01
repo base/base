@@ -218,7 +218,7 @@ impl Batcher {
 
     /// Wait for the driver to encode every block pushed so far, then flush.
     ///
-    /// Performs steps 1–3 of [`advance`] without mining. Once it returns, every frame the
+    /// Performs steps 1–3 of [`advance`] without mining. Once it returns, every submission the
     /// flush released has been handed to the tx manager, so [`pending_count`] counts them all.
     ///
     /// # Panics
@@ -230,7 +230,7 @@ impl Batcher {
     pub async fn encode_only(&self) {
         assert!(
             self.pending_count() == 0 && self.staged_count() == 0,
-            "cannot start a batch cycle with outstanding frame submissions"
+            "cannot start a batch cycle with outstanding submissions"
         );
 
         // Admin commands outrank the block source in the driver's select, so wait until every
@@ -239,7 +239,7 @@ impl Batcher {
         self.admin.flush().await.unwrap_or_else(|e| panic!("flush failed: {e}"));
 
         // The flush is answered before the driver's next encode-and-submit pass. Wait for that
-        // pass so every frame the flush released has been handed to the tx manager.
+        // pass so every submission the flush released has been handed to the tx manager.
         self.wait_until_idle().await;
     }
 
@@ -252,30 +252,30 @@ impl Batcher {
         assert!(matches!(reached, Ok(Ok(()))), "the batch driver exited or stalled");
     }
 
-    /// Returns the number of encoded-but-not-yet-staged pending frame submissions.
+    /// Returns the number of submissions the driver sent that are not staged to L1 yet.
     pub fn pending_count(&self) -> usize {
         self.tx_manager.pending_count()
     }
 
-    /// Returns the number of submitted frame transactions waiting for inclusion receipts.
+    /// Returns the number of staged submissions waiting for inclusion receipts.
     pub fn staged_count(&self) -> usize {
         self.tx_manager.staged_count()
     }
 
-    /// Submit the first `n` pending frame txs/blobs to the L1 miner's queue
-    /// without mining. Returns the actual count staged.
-    pub fn stage_n_frames(&self, l1: &mut L1Miner, n: usize) -> usize {
+    /// Stage the first `n` pending submissions to the L1 miner's queue without mining.
+    /// Returns the actual count staged.
+    pub fn stage_n_submissions(&self, l1: &mut L1Miner, n: usize) -> usize {
         self.tx_manager.stage_n_to_l1(l1, n)
     }
 
-    /// Schedule the next `n` frame submissions to fail immediately.
+    /// Schedule the next `n` submissions to fail immediately.
     ///
     /// Each of the next `n` calls the background [`BatchDriver`] makes to
     /// [`TxManager::send_async`] will resolve with
     /// [`TxManagerError::Rpc`] instead of queuing to the L1 miner. The driver
-    /// requeues the frame and retries, so calling this before [`encode_only`]
+    /// requeues the submission and retries, so calling this before [`encode_only`]
     /// simulates transient L1 submission failures without losing data. Once
-    /// [`encode_only`] returns, the retried frames are back in the pending queue.
+    /// [`encode_only`] returns, the retried submissions are back in the pending queue.
     ///
     /// [`TxManager::send_async`]: base_tx_manager::TxManager::send_async
     /// [`TxManagerError::Rpc`]: base_tx_manager::TxManagerError::Rpc
@@ -284,9 +284,9 @@ impl Batcher {
         self.tx_manager.fail_next_n(n);
     }
 
-    /// Mine all pending frame submissions in one L1 block.
+    /// Mine all pending submissions in one L1 block.
     ///
-    /// Stages every pending frame, mines one L1 block, fires all receipts and waits until
+    /// Stages every pending submission, mines one L1 block, fires all receipts and waits until
     /// the driver has confirmed them. Returns the mined block number.
     ///
     /// Use this to land what the driver submitted without encoding new L2 blocks.
@@ -297,12 +297,12 @@ impl Batcher {
         block.number()
     }
 
-    /// Drop the first `n` pending frame submissions without staging them to L1.
+    /// Drop the first `n` pending submissions without staging them to L1.
     ///
-    /// Returns the actual number dropped. Use this to skip specific frame
-    /// positions when testing non-sequential frame submission scenarios. The driver sees
-    /// each dropped submission fail and resubmits it on its next `async` call.
-    pub fn drop_n_frames(&self, n: usize) -> usize {
+    /// Returns the actual number dropped. Use this to skip specific submissions when testing
+    /// frames that land out of order. The driver sees each dropped submission fail and
+    /// resubmits it on its next `async` call.
+    pub fn drop_n_submissions(&self, n: usize) -> usize {
         self.tx_manager.drop_n(n)
     }
 
