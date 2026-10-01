@@ -1342,6 +1342,7 @@ mod tests {
         pending_admins: BTreeMap<u64, Address>,
         next_counter: u64,
         events: Vec<LogData>,
+        read_member_calls: core::cell::Cell<u64>,
     }
 
     impl FakePolicyAccounting {
@@ -1354,6 +1355,7 @@ mod tests {
                 pending_admins: BTreeMap::new(),
                 next_counter: 0,
                 events: Vec::new(),
+                read_member_calls: core::cell::Cell::new(0),
             }
         }
 
@@ -1382,6 +1384,7 @@ mod tests {
             Ok(())
         }
         fn read_member(&self, policy_id: u64, account: Address) -> Result<bool> {
+            self.read_member_calls.set(self.read_member_calls.get() + 1);
             Ok(self.members.get(&(policy_id, account)).copied().unwrap_or(false))
         }
         fn set_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
@@ -1572,8 +1575,8 @@ mod tests {
 
     // Checks are applied executor → sender → receiver.  When executor_id == sender_id and
     // caller == from, the sender check is skipped (the executor check already authorised the
-    // same account under the same policy).  If the skip were absent, the test would receive
-    // PolicyForbids(TransferSender) before ever reaching the receiver.
+    // same account under the same policy).  The skip is verified by counting read_member calls:
+    // executor(1) + receiver(1) = 2; if the skip were absent, sender would add a third call.
     #[test]
     fn transfer_policy_order_and_sender_skip_when_executor_equals_sender() {
         let mut tok = token();
@@ -1594,6 +1597,7 @@ mod tests {
             .unwrap();
         tok.policy_storage_mut().allow(EXECUTOR_AND_SENDER_POLICY, ALICE);
 
+        let calls_before = tok.policy_storage().read_member_calls.get();
         let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10), false).unwrap_err();
 
         assert_eq!(
@@ -1602,6 +1606,11 @@ mod tests {
                 policyScope: B20PolicyType::TransferReceiver.id(),
                 policyId: RECEIVER_POLICY,
             })
+        );
+        assert_eq!(
+            tok.policy_storage().read_member_calls.get() - calls_before,
+            2,
+            "executor(1) + receiver(1); sender check must be skipped"
         );
     }
 
