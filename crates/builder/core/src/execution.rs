@@ -11,7 +11,7 @@ use base_common_evm::BaseTransactionError;
 use derive_more::Display;
 use thiserror::Error;
 
-use crate::{InclusionTracker, PredicateLoadTracker};
+use crate::{InclusionTracker, PredicateLoadTracker, RestingPredicateView};
 
 /// Resource limits configuration for transaction and block constraints.
 ///
@@ -228,6 +228,8 @@ pub struct ExecutionInfo {
     pub predicate_loads: PredicateLoadTracker,
     /// Validity inclusion and EIP-1559 fee revenue accumulated across the block.
     pub inclusion: InclusionTracker,
+    /// Resting validity transactions at the parent block, once a matching snapshot is found.
+    pub resting: Option<RestingPredicateView>,
 }
 
 impl ExecutionInfo {
@@ -245,6 +247,7 @@ impl ExecutionInfo {
             da_footprint_scalar: None,
             predicate_loads: PredicateLoadTracker::default(),
             inclusion: InclusionTracker::default(),
+            resting: None,
         }
     }
 

@@ -189,6 +189,14 @@ base_metrics::define_metrics! {
     tx_accounts_modified: histogram,
     #[describe("Number of storage slots modified by a transaction (from EVM post-state)")]
     tx_storage_slots_modified: histogram,
+    #[describe("Validity transactions resting at the latest classified canonical head")]
+    resting_predicate_transactions: gauge,
+    #[describe("Time to classify resting validity transactions at a canonical head")]
+    resting_predicate_classification_duration: histogram,
+    #[describe("Flashblocks built without a resting snapshot for the payload parent")]
+    resting_predicate_view_unavailable_total: counter,
+    #[describe("Resting validity transactions whose predicates matched when evaluated in shadow mode")]
+    resting_predicate_shadow_mismatches_total: counter,
     #[describe("Builder transaction events successfully enqueued")]
     #[label(event_type)]
     builder_transaction_events_emitted: counter,

@@ -29,7 +29,7 @@ pub use context::{
 mod payload;
 
 mod resting;
-pub use resting::{RestingPredicateView, RestingPredicates};
+pub use resting::{RestingPredicateStore, RestingPredicateView, RestingPredicates};
 
 mod service;
 pub use service::FlashblocksServiceBuilder;

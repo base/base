@@ -7,17 +7,31 @@
 //! evaluation for a resting transaction until the job's own execution changes the state its
 //! blocking predicate reads, tracked by [`RestingPredicateView`].
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
+use alloy_eips::BlockNumHash;
 use alloy_primitives::{
     B256, TxHash,
     map::{B256Map, HashSet},
 };
-use base_execution_txpool::{FIRST_POOL_FLASHBLOCK_INDEX, PredicateContext, ValidityPredicate};
-use revm::{Database, database::TransitionState, state::EvmState};
-use tracing::debug;
+use base_common_consensus::BasePrimitives;
+use base_execution_txpool::{
+    BasePooledTx, FIRST_POOL_FLASHBLOCK_INDEX, PredicateContext, ValidityPredicate,
+};
+use futures::{Stream, StreamExt};
+use parking_lot::RwLock;
+use reth_chain_state::CanonStateNotification;
+use reth_provider::{ProviderResult, StateProviderFactory};
+use reth_revm::database::StateProviderDatabase;
+use reth_transaction_pool::TransactionPool;
+use revm::{
+    Database,
+    database::{CacheDB, TransitionState},
+    state::EvmState,
+};
+use tracing::{debug, warn};
 
-use crate::ValidityPredicateKey;
+use crate::{BuilderMetrics, ValidityPredicateKey};
 
 /// Validity transactions whose predicates were unsatisfied at one canonical head.
 ///
@@ -83,6 +97,84 @@ impl RestingPredicates {
     /// Returns whether no transaction is resting.
     pub fn is_empty(&self) -> bool {
         self.blockers.is_empty()
+    }
+}
+
+/// Shared handle to the latest [`RestingPredicates`] snapshot.
+///
+/// The builder service replaces the snapshot on every canonical block, and payload jobs read it
+/// once per flashblock until they find one classified at their parent.
+#[derive(Debug, Clone, Default)]
+pub struct RestingPredicateStore {
+    latest: Arc<RwLock<Option<Arc<RestingPredicates>>>>,
+}
+
+impl RestingPredicateStore {
+    /// Replaces the latest snapshot.
+    pub fn publish(&self, snapshot: RestingPredicates) {
+        BuilderMetrics::resting_predicate_transactions().set(snapshot.len() as f64);
+        *self.latest.write() = Some(Arc::new(snapshot));
+    }
+
+    /// Returns a view of the latest snapshot when it was classified at `parent`.
+    pub fn view_for_parent(&self, parent: B256) -> Option<RestingPredicateView> {
+        let snapshot = self.latest.read().clone()?;
+        RestingPredicateView::for_parent(snapshot, parent)
+    }
+
+    /// Classifies pending pool transactions at every new canonical tip until `notifications`
+    /// ends.
+    ///
+    /// Each tip is classified from scratch, so a reorg needs no special handling: the next
+    /// snapshot reflects the new head, and jobs building on any other parent ignore it.
+    pub async fn maintain<Client, Pool, Notifications>(
+        self,
+        client: Client,
+        pool: Pool,
+        mut notifications: Notifications,
+    ) where
+        Client: StateProviderFactory + Clone + 'static,
+        Pool: TransactionPool<Transaction: BasePooledTx> + 'static,
+        Notifications: Stream<Item = CanonStateNotification<BasePrimitives>> + Unpin,
+    {
+        while let Some(notification) = notifications.next().await {
+            let tip = notification.tip().num_hash();
+            let client = client.clone();
+            let pool = pool.clone();
+            match tokio::task::spawn_blocking(move || Self::classify_tip(&client, &pool, tip)).await
+            {
+                Ok(Ok(snapshot)) => self.publish(snapshot),
+                Ok(Err(error)) => {
+                    warn!(block = %tip.number, error = %error, "failed to classify resting validity transactions");
+                }
+                Err(error) => {
+                    warn!(block = %tip.number, error = %error, "resting validity classification task failed");
+                }
+            }
+        }
+    }
+
+    fn classify_tip<Client, Pool>(
+        client: &Client,
+        pool: &Pool,
+        tip: BlockNumHash,
+    ) -> ProviderResult<RestingPredicates>
+    where
+        Client: StateProviderFactory,
+        Pool: TransactionPool<Transaction: BasePooledTx>,
+    {
+        let started = Instant::now();
+        let mut db =
+            CacheDB::new(StateProviderDatabase::new(client.state_by_block_hash(tip.hash)?));
+        let pending = pool.pending_transactions();
+        let snapshot = RestingPredicates::classify(
+            tip.hash,
+            tip.number,
+            pending.iter().map(|tx| (*tx.hash(), tx.transaction.validity_predicates())),
+            &mut db,
+        );
+        BuilderMetrics::resting_predicate_classification_duration().record(started.elapsed());
+        Ok(snapshot)
     }
 }
 

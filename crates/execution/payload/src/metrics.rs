@@ -16,6 +16,10 @@ base_metrics::define_metrics! {
     )]
     validity_predicate_eval_duration_per_block: histogram,
     #[describe(
+        "Total validity predicate evaluation time in the first pool flashblock of a block, inclusive of state loads, in seconds"
+    )]
+    validity_predicate_eval_duration_first_flashblock: histogram,
+    #[describe(
         "Supported validity transaction candidates evaluated during the primary scan per build"
     )]
     validity_predicate_candidates_evaluated_per_build: histogram,
@@ -90,6 +94,14 @@ impl ValidityMetrics {
     /// Records the total validity predicate evaluation time accumulated across one build.
     pub fn record_predicate_eval_duration(duration: Duration) {
         Self::validity_predicate_eval_duration_per_block().record(duration.as_secs_f64());
+    }
+
+    /// Records the evaluation time of the first pool flashblock of a block separately.
+    ///
+    /// The first pool flashblock loads predicate state into the block's state cache, while later
+    /// flashblocks mostly hit that cache, so its cost is hidden in the per-build aggregate.
+    pub fn record_first_flashblock_predicate_eval_duration(duration: Duration) {
+        Self::validity_predicate_eval_duration_first_flashblock().record(duration.as_secs_f64());
     }
 
     /// Records primary-scan predicate evaluation coverage and whether the build exhausted its
@@ -196,6 +208,9 @@ mod tests {
 
         metrics::with_local_recorder(&recorder, || {
             ValidityMetrics::record_predicate_eval_duration(Duration::from_millis(500));
+            ValidityMetrics::record_first_flashblock_predicate_eval_duration(
+                Duration::from_millis(250),
+            );
             ValidityMetrics::record_predicate_evaluation_coverage(4, 1, true);
             ValidityMetrics::record_predicate_loads(&tracker);
             ValidityMetrics::record_predicate_index_diagnostics(3, &index);
@@ -204,6 +219,11 @@ mod tests {
         let rendered = handle.render();
         assert!(
             rendered.contains("base_builder_validity_predicate_eval_duration_per_block_sum 0.5")
+        );
+        assert!(
+            rendered.contains(
+                "base_builder_validity_predicate_eval_duration_first_flashblock_sum 0.25"
+            )
         );
         assert!(
             rendered

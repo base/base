@@ -24,8 +24,8 @@ use base_execution_payload_builder::{
     ValidityMetrics, error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
-    BasePooledTx, GuardMetrics, PredicateContext, TimestampedTransaction,
-    estimated_da_size::DataAvailabilitySized,
+    BasePooledTx, FIRST_POOL_FLASHBLOCK_INDEX, GuardMetrics, PredicateContext,
+    TimestampedTransaction, estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::TransactionEventType;
 use reth_basic_payload_builder::PayloadConfig;
@@ -780,6 +780,18 @@ impl BasePayloadBuilderCtx {
         let mut predicate_bucket_wakeups: u64 = 0;
 
         let min_tx_index = info.executed_transactions.len() as u64;
+        let resting_mode = self.builder_config.resting_predicate_mode;
+        if resting_mode.is_enabled() {
+            if info.resting.is_none() {
+                info.resting =
+                    self.builder_config.resting_predicates.view_for_parent(self.parent_hash());
+            }
+            match info.resting.as_mut() {
+                Some(view) => view.sync_transitions(db.transition_state.as_ref()),
+                None => BuilderMetrics::resting_predicate_view_unavailable_total().increment(1),
+            }
+        }
+
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
         debug!(
@@ -824,6 +836,33 @@ impl BasePayloadBuilderCtx {
             let has_validity_predicates = !tx.validity_predicates().is_empty();
             let coinbase_tip = tx.as_eip8130().and_then(|signed| CoinbaseTip::decode(signed.tx()));
             let has_coinbase_tip = coinbase_tip.is_some();
+
+            let resting_blocker = info
+                .resting
+                .as_ref()
+                .filter(|_| has_validity_predicates)
+                .and_then(|view| view.blocker(tx_hash, tx.validity_predicates()))
+                .cloned();
+            let resting = resting_blocker.is_some();
+            // A transaction resting at the parent is still unsatisfied unless this block changed
+            // its blocking key, so it is parked under that predicate without being evaluated.
+            if resting_mode.is_enforced()
+                && let Some(predicate) = resting_blocker
+            {
+                let cx = DecisionContext {
+                    payload_id: &payload_id,
+                    info,
+                    limits,
+                    reason: "validity_predicate_not_satisfied",
+                    detail: "a validity predicate was unsatisfied at the parent block and its state is unchanged",
+                };
+                self.emit_considered(&cx, tx_hash, ordering_position);
+                ValidityMetrics::validity_predicate_evaluations_total("resting").increment(1);
+                if self.defer_or_reject_current(best_txs, &mut diag, &cx, &tx, ordering_position) {
+                    predicate_index.park(tx_hash, tx, predicate);
+                }
+                continue;
+            }
 
             // Defer without evaluating once this flashblock's predicate-eval time budget is
             // exhausted, rather than spending more IO on the naive per-transaction loop. The
@@ -899,6 +938,14 @@ impl BasePayloadBuilderCtx {
                     "matched"
                 };
                 ValidityMetrics::validity_predicate_evaluations_total(outcome).increment(1);
+                if resting && outcome == "matched" {
+                    BuilderMetrics::resting_predicate_shadow_mismatches_total().increment(1);
+                    warn!(
+                        target: "payload_builder",
+                        tx_hash = ?tx_hash,
+                        "resting validity transaction matched when evaluated"
+                    );
+                }
             }
             if predicate_read_failed || blocking_predicate.is_some() {
                 let (reason, detail) = if predicate_read_failed {
@@ -1430,6 +1477,9 @@ impl BasePayloadBuilderCtx {
                 predicate_index.affected_by_state(&state)
             };
             predicate_bucket_wakeups += state_change_effects.woken_buckets as u64;
+            if let Some(view) = info.resting.as_mut() {
+                view.record_state(&state);
+            }
 
             // commit changes
             evm.db_mut().commit(state);
@@ -1565,6 +1615,11 @@ impl BasePayloadBuilderCtx {
         // the histogram is not flooded with zero observations.
         if let Some(predicate_eval_total) = predicate_eval_total {
             ValidityMetrics::record_predicate_eval_duration(predicate_eval_total);
+            if self.flashblock_index() == FIRST_POOL_FLASHBLOCK_INDEX {
+                ValidityMetrics::record_first_flashblock_predicate_eval_duration(
+                    predicate_eval_total,
+                );
+            }
         }
         ValidityMetrics::record_predicate_evaluation_coverage(
             validity_candidates_evaluated,
