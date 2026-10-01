@@ -534,8 +534,8 @@ impl L1Miner {
     ///
     /// Returns the discarded blocks in order (lowest number first) so tests
     /// can inspect which batcher transactions were reorged out. The pending
-    /// transaction queue is left untouched — the batcher can choose to
-    /// resubmit or discard pending frames as appropriate for the scenario.
+    /// transaction queue is left untouched, so the batcher can choose to
+    /// resubmit or discard pending submissions as appropriate for the scenario.
     ///
     /// After a reorg, `mine_block` builds on top of block `number`. Because
     /// the `fork_id` is incremented, new blocks will have different hashes

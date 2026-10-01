@@ -118,3 +118,47 @@ well before it reaches zero), `transaction_event_partitions_created`,
 - `TIPS_AUDIT_TRANSACTION_EVENT_COLD_RETENTION_DAYS` (default `30`, at most `90`)
 - `TIPS_AUDIT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS` (default `5000`): Postgres `lock_timeout` per partition create, detach, or drop
 
+## Incremental warehouse extraction index
+
+Migration `002_transaction_events_ingested_at_index.sql` registers a BRIN index
+on the partitioned `transaction_events` table and its hot/warm/cold parents.
+It uses `ON ONLY`: `migrate up` creates metadata quickly but does **not** build
+indexes on existing day partitions. The root index remains invalid until the
+day indexes are built and attached. Future day partitions automatically get
+their index on attach, even while the parent index is being completed.
+
+After deploying the migrator, arrange a separate, monitored one-off run using
+the `audit_archiver_migration` database credential:
+
+```bash
+# TIPS_AUDIT_POSTGRES_URL must point at the target network database.
+audit-archiver index
+```
+
+The `index` command builds one BRIN index at a time with `CREATE INDEX
+CONCURRENTLY` and attaches it to the class index. It is intentionally separate
+from the chart's `migrate up` init container: production has many populated
+day partitions, and building them can take hours. Re-running the command is
+safe; it skips attached indexes and drops/rebuilds invalid indexes left by a
+canceled concurrent build. Monitor Postgres storage, read I/O, and ingest
+latency during the build. Do not run two index jobs against the same database;
+the command also holds the migration lock to serialize them.
+
+Check completion in each network database:
+
+```sql
+SELECT c.relname, i.indisvalid
+FROM pg_index i
+JOIN pg_class c ON c.oid = i.indexrelid
+WHERE c.relname IN (
+    'transaction_events_ingested_at_idx',
+    'transaction_events_hot_ingested_at_idx',
+    'transaction_events_warm_ingested_at_idx',
+    'transaction_events_cold_ingested_at_idx'
+);
+```
+
+All four should report `indisvalid = true`. The `ingested_at` BRIN index
+serves DataPilot's timestamp cutoff; it does not by itself index an epoch
+expression used for parallel slicing. Evaluate that expression's query plan
+separately before enabling `NUM_SLICES` on the production primary.

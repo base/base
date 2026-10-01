@@ -12,6 +12,7 @@ use audit_archiver_lib::{
     DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS,
     DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, Metrics, PgTransactionEventSink,
     TransactionEventIngestConfig, TransactionEventRetentionConfig,
+    index_transaction_event_partitions,
 };
 use axum::{
     BoxError,
@@ -38,6 +39,7 @@ base_cli_utils::define_metrics_args!("TIPS_AUDIT", 9002);
 enum Command {
     Serve,
     Migrate,
+    Index,
 }
 
 /// Postgres migration action for the `migrate` command.
@@ -188,6 +190,17 @@ async fn main() -> Result<()> {
 
     if matches!(args.command, Command::Migrate) {
         run_migrations(&args).await?;
+        return Ok(());
+    }
+
+    if matches!(args.command, Command::Index) {
+        let postgres_url = args
+            .postgres_url
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("TIPS_AUDIT_POSTGRES_URL must be set for index"))?;
+        info!("Building transaction event ingested_at indexes on day partitions");
+        let created = index_transaction_event_partitions(postgres_url).await?;
+        info!(created, "transaction event ingested_at indexes are ready");
         return Ok(());
     }
 
