@@ -10,8 +10,8 @@ use serde_json::json;
 use tokio::time::Instant;
 
 use crate::{
-    AcceptanceCheck, Aggregate, CheckResult, EndpointMap, ObservationState, Provisioner,
-    RpcObserver, ScenarioConfig, ScenarioResult, StageResult, Status,
+    AcceptanceCheck, Aggregate, CheckResult, CheckStart, EndpointMap, ObservationState,
+    Provisioner, RpcObserver, ScenarioConfig, ScenarioResult, StageResult, Status,
 };
 
 /// Invocation-owned paths, attach endpoints, and image build policy.
@@ -235,71 +235,160 @@ impl AcceptanceRunner {
             if Instant::now() >= deadline {
                 break;
             }
-            if let Some(window) = check.start() {
-                let name = window
-                    .before_fork
-                    .as_ref()
-                    .or(window.after_fork.as_ref())
-                    .ok_or_else(|| eyre::eyre!("missing fork window"))?;
-                let boundary = result
-                    .forks
-                    .iter()
-                    .find(|fork| &fork.name == name)
-                    .ok_or_else(|| eyre::eyre!("fork {name} not present in verified schedule"))?
-                    .activation_timestamp;
-                let builder = RpcObserver::endpoint(&endpoints, "builder")?;
-                loop {
-                    let block = observer.block(builder, "latest", deadline).await?;
-                    let active = block.timestamp >= boundary;
-                    ObservationState::new(json!({}), &mut result.samples, origin)
-                        .sample("builder", Some(&block));
-                    if active {
-                        let fork = result
-                            .forks
-                            .iter_mut()
-                            .find(|fork| &fork.name == name)
-                            .expect("resolved fork");
-                        if fork.observed_block.is_none() {
-                            fork.observed_block = Some(block.number);
-                            fork.observed_elapsed_ms = Some(origin.elapsed().as_millis() as u64);
-                        }
-                    }
-                    if window.before_fork.is_some() || active {
-                        break;
-                    }
-                    tokio::time::sleep_until(
-                        (Instant::now() + config.readiness.poll_interval.0).min(deadline),
-                    )
-                    .await;
-                }
-                if window.before_fork.is_some()
-                    && observer.block(builder, "latest", deadline).await?.timestamp >= boundary
-                {
-                    result.checks[index].status = Status::Error;
-                    result.checks[index].message =
-                        format!("missed pre-activation window for {name}");
-                    continue;
-                }
+            if let Some(window) = check.start()
+                && let Some((status, message)) = Self::open_window(
+                    &observer, config, &endpoints, window, result, origin, deadline,
+                )
+                .await?
+            {
+                result.checks[index].status = status;
+                result.checks[index].message = message;
+                continue;
             }
             result.checks[index] =
                 observer.run(check, &endpoints, &mut result.samples, origin, deadline).await;
-            if let Some(name) = check.start().and_then(|window| window.before_fork.as_ref()) {
-                let boundary = result
-                    .forks
-                    .iter()
-                    .find(|fork| &fork.name == name)
-                    .expect("resolved fork")
-                    .activation_timestamp;
-                let builder = RpcObserver::endpoint(&endpoints, "builder")?;
-                if observer.block(builder, "latest", deadline).await?.timestamp >= boundary {
-                    result.checks[index].status = Status::Error;
-                    result.checks[index].message = format!(
-                        "check window crossed {name} activation; pre-fork coverage is incomplete"
-                    );
-                }
+            if result.checks[index].status == Status::Passed
+                && let Some(name) = check.start().and_then(|window| window.before_fork.as_ref())
+                && let Some(message) = Self::confirm_pre_fork(
+                    &observer, config, &endpoints, name, result, origin, deadline,
+                )
+                .await?
+            {
+                result.checks[index].status = Status::Error;
+                result.checks[index].message = message;
             }
         }
         Ok(())
+    }
+
+    /// Waits until a check's fork window opens.
+    ///
+    /// Returns `None` when the check may run, otherwise the status and message to record.
+    /// Builder RPC failures are retried at the poll interval until `deadline`. An unreached
+    /// `after_fork` activation is `Failed` when the builder answered after its last failure
+    /// and `Error` when it was unavailable; a missed `before_fork` window is `Error`.
+    pub async fn open_window(
+        observer: &RpcObserver,
+        config: &ScenarioConfig,
+        endpoints: &EndpointMap,
+        window: &CheckStart,
+        result: &mut ScenarioResult,
+        origin: Instant,
+        deadline: Instant,
+    ) -> Result<Option<(Status, String)>> {
+        let name = window
+            .before_fork
+            .as_ref()
+            .or(window.after_fork.as_ref())
+            .ok_or_else(|| eyre::eyre!("missing fork window"))?;
+        let fork = result
+            .forks
+            .iter()
+            .position(|fork| &fork.name == name)
+            .ok_or_else(|| eyre::eyre!("fork {name} not present in verified schedule"))?;
+        let boundary = result.forks[fork].activation_timestamp;
+        let builder = RpcObserver::endpoint(endpoints, "builder")?;
+        let mut last_head = None;
+        let mut last_error = None;
+        loop {
+            match observer.block(builder, "latest", deadline).await {
+                Ok(block) => {
+                    ObservationState::new(json!({}), &mut result.samples, origin)
+                        .sample("builder", Some(&block));
+                    let active = block.timestamp >= boundary;
+                    if active && result.forks[fork].observed_block.is_none() {
+                        result.forks[fork].observed_block = Some(block.number);
+                        result.forks[fork].observed_elapsed_ms =
+                            Some(origin.elapsed().as_millis() as u64);
+                    }
+                    if window.before_fork.is_some() {
+                        return Ok(active.then(|| {
+                            (Status::Error, format!("missed pre-activation window for {name}"))
+                        }));
+                    }
+                    if active {
+                        return Ok(None);
+                    }
+                    last_head = Some(block.number);
+                }
+                Err(error) => {
+                    ObservationState::new(json!({}), &mut result.samples, origin)
+                        .sample("builder", None);
+                    // A request cut short by the deadline does not erase the last observed head.
+                    if Instant::now() < deadline {
+                        last_head = None;
+                    }
+                    last_error = Some(error);
+                }
+            }
+            if Instant::now() >= deadline {
+                return Ok(Some(match (last_head, last_error) {
+                    (Some(head), _) => (
+                        Status::Failed,
+                        format!(
+                            "builder head {head} did not reach {name} activation before the deadline"
+                        ),
+                    ),
+                    (None, error) => (
+                        Status::Error,
+                        format!(
+                            "builder unavailable while waiting for {name}: {}",
+                            error.map_or_else(|| "no response".into(), |error| error.to_string())
+                        ),
+                    ),
+                }));
+            }
+            tokio::time::sleep_until(
+                (Instant::now() + config.readiness.poll_interval.0).min(deadline),
+            )
+            .await;
+        }
+    }
+
+    /// Confirms that a passed `before_fork` check finished before its activation.
+    ///
+    /// Returns the error message to record when coverage crossed the activation or could not
+    /// be confirmed before `deadline`. Builder RPC failures are retried at the poll interval.
+    pub async fn confirm_pre_fork(
+        observer: &RpcObserver,
+        config: &ScenarioConfig,
+        endpoints: &EndpointMap,
+        name: &str,
+        result: &mut ScenarioResult,
+        origin: Instant,
+        deadline: Instant,
+    ) -> Result<Option<String>> {
+        let boundary = result
+            .forks
+            .iter()
+            .find(|fork| fork.name == name)
+            .ok_or_else(|| eyre::eyre!("fork {name} not present in verified schedule"))?
+            .activation_timestamp;
+        let builder = RpcObserver::endpoint(endpoints, "builder")?;
+        loop {
+            match observer.block(builder, "latest", deadline).await {
+                Ok(block) => {
+                    ObservationState::new(json!({}), &mut result.samples, origin)
+                        .sample("builder", Some(&block));
+                    return Ok((block.timestamp >= boundary).then(|| {
+                        format!("check window crossed {name} activation; pre-fork coverage is incomplete")
+                    }));
+                }
+                Err(error) => {
+                    ObservationState::new(json!({}), &mut result.samples, origin)
+                        .sample("builder", None);
+                    if Instant::now() >= deadline {
+                        return Ok(Some(format!(
+                            "could not confirm pre-fork coverage for {name}: {error}"
+                        )));
+                    }
+                }
+            }
+            tokio::time::sleep_until(
+                (Instant::now() + config.readiness.poll_interval.0).min(deadline),
+            )
+            .await;
+        }
     }
 
     /// Waits for correct chain identity and a new head on every referenced endpoint.
@@ -450,12 +539,137 @@ impl AcceptanceRunner {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
 
     use super::*;
+    use crate::{CliRun, ForkBoundary, Span};
+
+    const DENIM_ACTIVATION: u64 = 100;
+
+    /// Serves scripted HTTP replies in order, repeating the last reply indefinitely.
+    async fn scripted(replies: Vec<(u16, String)>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut replies = VecDeque::from(replies);
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else { break };
+                let (status, body) = if replies.len() > 1 {
+                    replies.pop_front().unwrap()
+                } else {
+                    replies[0].clone()
+                };
+                let mut request = [0; 8192];
+                let _ = stream.read(&mut request).await;
+                let response = format!(
+                    "HTTP/1.1 {status} Scripted\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+        format!("http://{address}")
+    }
+
+    fn head(number: u64, timestamp: u64) -> (u16, String) {
+        let result = json!({
+            "number": format!("0x{number:x}"),
+            "timestamp": format!("0x{timestamp:x}"),
+            "hash": format!("0x{}", "a".repeat(64)),
+        });
+        (200, json!({ "jsonrpc": "2.0", "id": 1, "result": result }).to_string())
+    }
+
+    fn unavailable() -> (u16, String) {
+        (503, String::new())
+    }
+
+    /// Runs one fork-window wait against a scripted builder with a short poll interval.
+    async fn window(
+        replies: Vec<(u16, String)>,
+        before: bool,
+        budget: Duration,
+    ) -> (Option<(Status, String)>, ScenarioResult) {
+        let mut config = ScenarioConfig::load("scenarios/smoke.toml").unwrap();
+        config.readiness.poll_interval = Span(Duration::from_millis(10));
+        let endpoints = BTreeMap::from([("builder".into(), scripted(replies).await)]);
+        let mut result = CliRun::fatal(&config, String::new());
+        result.forks.push(ForkBoundary {
+            name: "denim".into(),
+            chain: "l2".into(),
+            activation_timestamp: DENIM_ACTIVATION,
+            observed_block: None,
+            observed_elapsed_ms: None,
+        });
+        let start = CheckStart {
+            chain: "l2".into(),
+            before_fork: before.then(|| "denim".into()),
+            after_fork: (!before).then(|| "denim".into()),
+        };
+        let observer = RpcObserver::new(Duration::from_secs(1), Duration::from_millis(10)).unwrap();
+        let outcome = AcceptanceRunner::open_window(
+            &observer,
+            &config,
+            &endpoints,
+            &start,
+            &mut result,
+            Instant::now(),
+            Instant::now() + budget,
+        )
+        .await
+        .unwrap();
+        (outcome, result)
+    }
+
+    #[tokio::test]
+    async fn fork_wait_retries_transient_builder_failures() {
+        let (outcome, result) = window(
+            vec![head(10, DENIM_ACTIVATION - 1), unavailable(), head(11, DENIM_ACTIVATION)],
+            false,
+            Duration::from_secs(5),
+        )
+        .await;
+        assert!(outcome.is_none());
+        assert_eq!(result.forks[0].observed_block, Some(11));
+        assert!(result.samples.iter().any(|sample| sample.number.is_none()));
+    }
+
+    #[tokio::test]
+    async fn unreached_fork_fails_when_builder_stalls_and_errors_when_unavailable() {
+        let (outcome, _) =
+            window(vec![head(10, DENIM_ACTIVATION - 1)], false, Duration::from_millis(100)).await;
+        let (status, message) = outcome.unwrap();
+        assert_eq!(status, Status::Failed);
+        assert!(message.contains("builder head 10 did not reach denim"));
+
+        let (outcome, _) = window(vec![unavailable()], false, Duration::from_millis(100)).await;
+        let (status, message) = outcome.unwrap();
+        assert_eq!(status, Status::Error);
+        assert!(message.contains("builder unavailable while waiting for denim"));
+    }
+
+    #[tokio::test]
+    async fn before_fork_window_retries_and_reports_missed_activation() {
+        let (outcome, _) = window(
+            vec![unavailable(), head(10, DENIM_ACTIVATION - 1)],
+            true,
+            Duration::from_secs(5),
+        )
+        .await;
+        assert!(outcome.is_none());
+
+        let (outcome, _) =
+            window(vec![head(30, DENIM_ACTIVATION + 1)], true, Duration::from_secs(5)).await;
+        assert_eq!(
+            outcome.unwrap(),
+            (Status::Error, "missed pre-activation window for denim".to_owned())
+        );
+    }
 
     #[tokio::test]
     async fn wrong_chain_blocks_every_check_without_owning_attached_resources() {

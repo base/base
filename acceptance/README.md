@@ -95,10 +95,15 @@ are `l1`, `builder`, `validator`, `rpc`, and `shadow`. Supported check kinds are
 - `head_progress` and `safe_head_progress`: `endpoint`, `minimum_blocks`, and `timeout`.
 - `heads_converge`: at least two `endpoints`, optional `head` (`latest`, `safe`, or
   `finalized`), `max_lag_blocks`, and `timeout`.
-- `head_fresh`: `endpoint`, `maximum_age`, `duration`, and `timeout`; `duration` must be shorter than `timeout`.
+- `head_fresh`: `endpoint`, `maximum_age` (whole seconds), `duration`, and `timeout`; `duration` must be
+  shorter than `timeout`.
 
 Every check may have one L2 `start` condition with exactly one of `before_fork` or
-`after_fork`. Checks run in file order. See `scenarios/` for complete examples.
+`after_fork`. Checks run in file order. A `before_fork` check cannot target a fork active at genesis or
+follow an `after_fork` check whose fork activates at or after its own. Builder RPC failures while
+waiting for a fork are retried until the scenario deadline; a reachable builder that never reaches
+an `after_fork` activation fails that check. `heads_converge` never accepts a common height of zero,
+so `safe` and `finalized` comparisons wait for derivation to progress. See `scenarios/` for complete examples.
 
 ## CLI workflows
 

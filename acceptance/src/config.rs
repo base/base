@@ -114,12 +114,32 @@ impl ScenarioConfig {
             bail!("no more than {MAX_CHECKS} checks are allowed");
         }
         let mut ids = BTreeSet::new();
+        let mut latest_after_fork = None;
         for check in &self.checks {
             Self::validate_id(check.id(), "check")?;
             if !ids.insert(check.id().to_ascii_lowercase()) {
                 bail!("duplicate check id {}", check.id());
             }
             check.validate(self)?;
+            if let Some(start) = check.start() {
+                let fork = start.before_fork.as_ref().or(start.after_fork.as_ref());
+                let block = fork
+                    .and_then(|fork| self.devnet.l2.forks.get(fork))
+                    .and_then(ForkActivation::block);
+                if start.after_fork.is_some() {
+                    latest_after_fork = latest_after_fork.max(block);
+                } else if let Some(block) = block {
+                    if block == 0 {
+                        bail!("check {}: before_fork cannot target a genesis fork", check.id());
+                    }
+                    if latest_after_fork.is_some_and(|after| after >= block) {
+                        bail!(
+                            "check {}: before_fork window closes before an earlier after_fork check",
+                            check.id()
+                        );
+                    }
+                }
+            }
         }
         let mut previous = None;
         let mut prerequisite_disabled = false;
@@ -641,7 +661,16 @@ impl AcceptanceCheck {
                 bail!("check references absent or disabled fork {fork}");
             }
         }
-        if let Self::HeadFresh { duration, timeout, .. } = self {
+        if let Self::HeadFresh { maximum_age, duration, timeout, .. } = self {
+            ScenarioConfig::validate_duration_against(
+                maximum_age.0,
+                "freshness maximum age",
+                Duration::from_secs(1),
+                scenario.timeout.0,
+            )?;
+            if maximum_age.0.subsec_nanos() != 0 {
+                bail!("freshness maximum age must use whole seconds");
+            }
             ScenarioConfig::validate_duration_against(
                 duration.0,
                 "freshness duration",
@@ -809,6 +838,57 @@ timeout = "5s"
         let forks = config.verified_forks(temp.path()).unwrap();
         assert_eq!(forks[0].name, "azul");
         assert_eq!(forks[0].activation_timestamp, 100);
+    }
+
+    #[test]
+    fn before_fork_windows_must_be_reachable() {
+        let check = |id: &str, window: &str| {
+            format!(
+                "\n[[checks]]\nid = \"{id}\"\nkind = \"chain_id\"\nendpoint = \"builder\"\nexpected = 84538453\ntimeout = \"5s\"\nstart = {{ {window} = \"denim\", chain = \"l2\" }}\n"
+            )
+        };
+        let genesis: ScenarioConfig = toml::from_str(&format!(
+            "{MINIMAL_SCENARIO}{}\n[devnet.l2.forks]\nazul = {{ at_block = 0 }}\nberyl = {{ at_block = 0 }}\ncobalt = {{ at_block = 0 }}\ndenim = {{ at_block = 0 }}\n",
+            check("before", "before_fork")
+        ))
+        .unwrap();
+        assert_eq!(
+            genesis.validate().unwrap_err().to_string(),
+            "check before: before_fork cannot target a genesis fork"
+        );
+
+        let reordered: ScenarioConfig = toml::from_str(&format!(
+            "{MINIMAL_SCENARIO}{}{}",
+            check("after", "after_fork"),
+            check("before", "before_fork")
+        ))
+        .unwrap();
+        assert_eq!(
+            reordered.validate().unwrap_err().to_string(),
+            "check before: before_fork window closes before an earlier after_fork check"
+        );
+
+        let ordered: ScenarioConfig = toml::from_str(&format!(
+            "{MINIMAL_SCENARIO}{}{}",
+            check("before", "before_fork"),
+            check("after", "after_fork")
+        ))
+        .unwrap();
+        ordered.validate().unwrap();
+    }
+
+    #[test]
+    fn freshness_maximum_age_uses_positive_whole_seconds() {
+        for (maximum_age, error) in [
+            ("0s", "freshness maximum age must be between 1s and 600s"),
+            ("1500ms", "freshness maximum age must use whole seconds"),
+        ] {
+            let config: ScenarioConfig = toml::from_str(&format!(
+                "{MINIMAL_SCENARIO}\n[[checks]]\nid = \"fresh\"\nkind = \"head_fresh\"\nendpoint = \"builder\"\nmaximum_age = \"{maximum_age}\"\nduration = \"5s\"\ntimeout = \"10s\"\n"
+            ))
+            .unwrap();
+            assert_eq!(config.validate().unwrap_err().to_string(), error);
+        }
     }
 
     #[test]

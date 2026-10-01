@@ -224,11 +224,7 @@ impl AcceptanceCli {
                 .await
             }
             AcceptanceCommand::Report { result, output } => {
-                if fs::metadata(&result)?.len() > 20 * 1024 * 1024 {
-                    bail!("result exceeds 20 MiB");
-                }
-
-                let run: RunResult = serde_json::from_slice(&fs::read(&result)?)?;
+                let run: RunResult = serde_json::from_slice(&Aggregate::bounded_read(&result)?)?;
                 Report::validate(&run)?;
                 CliRun::copy_report_evidence(&result, &output, &run)?;
                 Report::write(&run, &output)?;
@@ -453,5 +449,65 @@ impl CliRun {
             fs::copy(from, destination)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scenario(stage: Status, checks: &[Status]) -> ScenarioResult {
+        let config = ScenarioConfig::load("scenarios/smoke.toml").unwrap();
+        let mut result = CliRun::fatal(&config, String::new());
+        result.stages[0].status = stage;
+        result.checks.truncate(checks.len());
+        for (check, status) in result.checks.iter_mut().zip(checks) {
+            check.status = *status;
+        }
+        result
+    }
+
+    fn run(scenarios: Vec<ScenarioResult>) -> RunResult {
+        RunResult {
+            schema_version: 1,
+            run_id: "run".into(),
+            tested_sha: "sha".into(),
+            started_at_unix_ms: 0,
+            scenarios,
+        }
+    }
+
+    #[test]
+    fn verdict_reports_infrastructure_before_assertions() {
+        let passed = || scenario(Status::Passed, &[Status::Passed, Status::Passed]);
+        let failed = || scenario(Status::Passed, &[Status::Passed, Status::Failed]);
+        let errored = || scenario(Status::Error, &[Status::Blocked]);
+        for (scenarios, expected) in [
+            (vec![passed()], ExitCode::Passed),
+            (vec![passed(), failed()], ExitCode::Assertion),
+            (
+                vec![scenario(Status::Passed, &[Status::Failed, Status::Blocked])],
+                ExitCode::Assertion,
+            ),
+            (vec![failed(), errored()], ExitCode::Infrastructure),
+            (vec![scenario(Status::Passed, &[Status::Error])], ExitCode::Infrastructure),
+            (vec![scenario(Status::Cancelled, &[Status::Passed])], ExitCode::Infrastructure),
+            (vec![scenario(Status::Passed, &[])], ExitCode::Infrastructure),
+            (Vec::new(), ExitCode::Infrastructure),
+        ] {
+            assert_eq!(CliRun::verdict(&run(scenarios)), expected);
+        }
+    }
+
+    #[test]
+    fn shell_quote_round_trips_through_a_posix_shell() {
+        for path in ["/tmp/plain", "/tmp/it's here", "/tmp/$(touch x) `y` \"z\""] {
+            let output = Command::new("/bin/sh")
+                .arg("-c")
+                .arg(format!("printf %s {}", CliRun::shell_quote(Path::new(path))))
+                .output()
+                .unwrap();
+            assert_eq!(String::from_utf8(output.stdout).unwrap(), path);
+        }
     }
 }

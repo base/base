@@ -313,6 +313,9 @@ impl RpcObserver {
     }
 
     /// Observes endpoint heads and verifies lag and common-height canonicality.
+    ///
+    /// A common height of zero is not comparable: `safe` and `finalized` heads remain at genesis
+    /// until derivation progresses, so the check keeps polling until a non-genesis block matches.
     pub async fn converge(
         &self,
         map: &BTreeMap<String, String>,
@@ -348,7 +351,7 @@ impl RpcObserver {
                     "lag": high.saturating_sub(low),
                     "maximum_lag": max_lag,
                 });
-                if high.saturating_sub(low) <= max_lag {
+                if low > 0 && high.saturating_sub(low) <= max_lag {
                     let mut common: Option<String> = None;
                     let mut compared = Vec::new();
                     for (role, sampled) in &heads {
@@ -786,6 +789,44 @@ mod tests {
             samples.iter().filter_map(|sample| sample.number).collect::<Vec<_>>(),
             vec![10, 12]
         );
+    }
+
+    #[tokio::test]
+    async fn convergence_waits_past_genesis_for_safe_heads() {
+        let roles = vec!["a".into(), "b".into()];
+        let left = server(replies(&[block(0, 'e'), block(5, 'a'), block(5, 'a')])).await;
+        let right = server(replies(&[block(0, 'e'), block(5, 'a'), block(5, 'a')])).await;
+        let mut samples = Vec::new();
+        let mut state = ObservationState::new(json!({}), &mut samples, Instant::now());
+        observer()
+            .converge(
+                &BTreeMap::from([("a".into(), left), ("b".into(), right)]),
+                &roles,
+                "safe",
+                0,
+                Instant::now() + RPC_BUDGET,
+                &mut state,
+            )
+            .await
+            .unwrap();
+        assert_eq!(state.observed["common_height"], json!(5));
+
+        let left = server(replies(&[block(0, 'e')])).await;
+        let right = server(replies(&[block(0, 'e')])).await;
+        let mut samples = Vec::new();
+        let mut state = ObservationState::new(json!({}), &mut samples, Instant::now());
+        let result = observer()
+            .converge(
+                &BTreeMap::from([("a".into(), left), ("b".into(), right)]),
+                &roles,
+                "safe",
+                0,
+                Instant::now() + Duration::from_millis(100),
+                &mut state,
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(state.observed.get("common_height").is_none());
     }
 
     #[tokio::test]
