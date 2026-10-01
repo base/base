@@ -5,7 +5,7 @@ use std::{
     marker::PhantomData,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -399,6 +399,14 @@ where
         Ok(Some((earliest, latest)))
     }
 
+    /// Returns whether proofs storage holds `block_number` and its tip is canonical, so its state
+    /// at `block_number` belongs to the canonical chain rather than a chain being reorged out.
+    fn proofs_snapshot_is_canonical(&self, block_number: u64) -> bool {
+        self.canonical_proofs_range().is_ok_and(|range| {
+            range.is_some_and(|(earliest, latest)| (earliest..=latest).contains(&block_number))
+        })
+    }
+
     /// Returns the hash, parent hash and rebuilding payload attributes of canonical block
     /// `block_number`.
     fn canonical_block_attributes(
@@ -461,12 +469,13 @@ where
         parent_hash: B256,
         attributes_digest: B256,
     ) -> bool {
-        self.canonical_block_attributes(block_number).is_ok_and(
-            |(_, canonical_parent_hash, attributes)| {
-                canonical_parent_hash == parent_hash
-                    && WitnessCache::attributes_digest(&attributes) == attributes_digest
-            },
-        )
+        self.proofs_snapshot_is_canonical(block_number - 1)
+            && self.canonical_block_attributes(block_number).is_ok_and(
+                |(_, canonical_parent_hash, attributes)| {
+                    canonical_parent_hash == parent_hash
+                        && WitnessCache::attributes_digest(&attributes) == attributes_digest
+                },
+            )
     }
 }
 
@@ -512,8 +521,17 @@ where
             let attributes = Attrs::try_new(parent_hash, attributes, EXECUTE_PAYLOAD_VERSION)
                 .map_err(|err| internal_rpc_err(PayloadBuilderError::other(err).to_string()))?;
 
+            // Checked right before building and again before caching, so a witness built from
+            // proofs state that a lagging reorg is still replacing is never cached.
+            let canonical_before_build = AtomicBool::new(false);
             let build = async {
                 let _permit = self.inner.semaphore.acquire().await;
+                if self.inner.witness_cache.is_some() {
+                    canonical_before_build.store(
+                        self.proofs_snapshot_is_canonical(block_number - 1),
+                        Ordering::Relaxed,
+                    );
+                }
                 self.build_witness(parent_header, attributes)
                     .await
                     .map_err(|err| internal_rpc_err(err.to_string()))
@@ -522,7 +540,12 @@ where
                 (Some(cache), Some(attributes_digest)) => {
                     cache
                         .get_or_build(block_number, parent_hash, attributes_digest, build, || {
-                            self.is_canonical_request(block_number, parent_hash, attributes_digest)
+                            canonical_before_build.load(Ordering::Relaxed)
+                                && self.is_canonical_request(
+                                    block_number,
+                                    parent_hash,
+                                    attributes_digest,
+                                )
                         })
                         .await
                 }

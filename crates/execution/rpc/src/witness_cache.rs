@@ -284,15 +284,38 @@ impl WitnessCache {
         // concurrent insert for this block could replace this file name in the index and delete
         // it right after this rename.
         let mut entries = self.entries.lock().expect("witness cache lock poisoned");
-        fs::rename(&temp_path, &path)?;
-        if let Some(previous) = entries.insert(block_number, entry)
-            && previous.file_name(block_number) != file_name
-        {
-            // A failed deletion leaves an unindexed file that `open` discards on restart, as it
-            // keeps only the most recently modified file per block number.
-            Self::remove_file(&self.dir.join(previous.file_name(block_number)));
+        let result = self.commit(&mut entries, block_number, entry, &temp_path, &path);
+        if result.is_err() {
+            Self::remove_file(&temp_path);
         }
         Self::record_size_metrics(&entries);
+        result
+    }
+
+    /// Moves `temp_path` to `path` and indexes it, first deleting the file of a replaced entry.
+    /// The replaced entry stays indexed if its file can't be deleted, so it is never orphaned
+    /// outside eviction and disk-usage accounting.
+    fn commit(
+        &self,
+        entries: &mut HashMap<u64, WitnessCacheEntry>,
+        block_number: u64,
+        entry: WitnessCacheEntry,
+        temp_path: &Path,
+        path: &Path,
+    ) -> io::Result<()> {
+        if let Some(previous) = entries.get(&block_number) {
+            let previous_path = self.dir.join(previous.file_name(block_number));
+            if previous_path != path {
+                match fs::remove_file(&previous_path) {
+                    Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+                    _ => {
+                        entries.remove(&block_number);
+                    }
+                }
+            }
+        }
+        fs::rename(temp_path, path)?;
+        entries.insert(block_number, entry);
         Ok(())
     }
 
@@ -450,6 +473,24 @@ mod tests {
         assert_eq!(cache.get(10, parent(1), B256::ZERO), None);
         assert_eq!(cache.get(10, parent(2), B256::repeat_byte(9)), Some(witness(2)));
         assert_eq!(files(dir.path()), vec![file_name(10, parent(2), B256::repeat_byte(9))]);
+    }
+
+    #[test]
+    fn insert_keeps_the_replaced_entry_when_its_file_cannot_be_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = WitnessCache::open(dir.path()).unwrap();
+        cache.insert(10, parent(1), B256::ZERO, &witness(1)).unwrap();
+        // A non-empty directory in place of the entry's file makes its deletion fail.
+        let previous = dir.path().join(file_name(10, parent(1), B256::ZERO));
+        fs::remove_file(&previous).unwrap();
+        fs::create_dir(&previous).unwrap();
+        fs::write(previous.join("keep"), b"").unwrap();
+
+        assert!(cache.insert(10, parent(2), B256::repeat_byte(9), &witness(2)).is_err());
+
+        assert_eq!(cache.block_range(), Some(10..=10));
+        assert_eq!(cache.get(10, parent(2), B256::repeat_byte(9)), None);
+        assert_eq!(files(dir.path()), vec![file_name(10, parent(1), B256::ZERO)]);
     }
 
     #[test]

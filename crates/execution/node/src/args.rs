@@ -4,7 +4,7 @@
 
 use std::{
     num::NonZeroUsize,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     time::Duration,
 };
 
@@ -433,8 +433,8 @@ impl ProofsHistoryWitnessCacheArgs {
             name.push(DEFAULT_WITNESS_CACHE_SUFFIX);
             storage_path.with_file_name(name)
         });
-        let cache_dir = std::path::absolute(&path)?;
-        let storage_dir = std::path::absolute(storage_path)?;
+        let cache_dir = Self::normalize(&path)?;
+        let storage_dir = Self::normalize(storage_path)?;
         if cache_dir.starts_with(&storage_dir) || storage_dir.starts_with(&cache_dir) {
             return Err(eyre::eyre!(
                 "--proofs-history.witness-cache.path ({}) must not overlap \
@@ -450,6 +450,21 @@ impl ProofsHistoryWitnessCacheArgs {
             build_lag: self.build_lag,
             builder_concurrency: self.builder_concurrency,
         }))
+    }
+
+    /// Returns `path` as an absolute path with `.` and `..` components resolved lexically.
+    fn normalize(path: &Path) -> std::io::Result<PathBuf> {
+        let mut normalized = PathBuf::new();
+        for component in std::path::absolute(path)?.components() {
+            match component {
+                Component::ParentDir => {
+                    normalized.pop();
+                }
+                Component::CurDir => {}
+                component => normalized.push(component),
+            }
+        }
+        Ok(normalized)
     }
 }
 
@@ -1081,7 +1096,7 @@ mod tests {
             path: Some(PathBuf::from(path)),
             ..Default::default()
         };
-        for path in ["/data/proofs", "/data/proofs/cache", "/data"] {
+        for path in ["/data/proofs", "/data/proofs/cache", "/data", "/data/other/../proofs"] {
             assert!(cache(path).config(Path::new("/data/proofs")).is_err(), "{path}");
         }
         assert!(cache("/data/proofs-cache").config(Path::new("/data/proofs")).is_ok());
