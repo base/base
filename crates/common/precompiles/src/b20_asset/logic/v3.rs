@@ -1360,6 +1360,11 @@ mod tests {
         fn create_existing_policy(&mut self, policy_id: u64) {
             self.policies.insert(policy_id, PackedPolicy::new(Address::ZERO).into_u256());
         }
+
+        fn allow(&mut self, policy_id: u64, account: Address) {
+            self.create_existing_policy(policy_id);
+            self.members.insert((policy_id, account), true);
+        }
     }
 
     impl PolicyAccounting for FakePolicyAccounting {
@@ -1561,6 +1566,41 @@ mod tests {
             err,
             BasePrecompileError::revert(IB20::ContractPaused {
                 feature: IB20::PausableFeature::TRANSFER,
+            })
+        );
+    }
+
+    // Checks are applied executor → sender → receiver.  When executor_id == sender_id and
+    // caller == from, the sender check is skipped (the executor check already authorised the
+    // same account under the same policy).  If the skip were absent, the test would receive
+    // PolicyForbids(TransferSender) before ever reaching the receiver.
+    #[test]
+    fn transfer_policy_order_and_sender_skip_when_executor_equals_sender() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(100));
+
+        // Counters 0 and 1 are reserved for ALWAYS_ALLOW / ALWAYS_BLOCK sentinels.
+        const EXECUTOR_AND_SENDER_POLICY: u64 = (1u64 << 56) | 3;
+        const RECEIVER_POLICY: u64 = (1u64 << 56) | 4;
+
+        tok.accounting_mut()
+            .set_policy_id(B20PolicyType::TransferExecutor.id(), EXECUTOR_AND_SENDER_POLICY)
+            .unwrap();
+        tok.accounting_mut()
+            .set_policy_id(B20PolicyType::TransferSender.id(), EXECUTOR_AND_SENDER_POLICY)
+            .unwrap();
+        tok.accounting_mut()
+            .set_policy_id(B20PolicyType::TransferReceiver.id(), RECEIVER_POLICY)
+            .unwrap();
+        tok.policy_storage_mut().allow(EXECUTOR_AND_SENDER_POLICY, ALICE);
+
+        let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10), false).unwrap_err();
+
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: B20PolicyType::TransferReceiver.id(),
+                policyId: RECEIVER_POLICY,
             })
         );
     }
