@@ -979,7 +979,7 @@ mod tests {
             unsafe_head_tx,
         );
         *coordinator.sequencer_state_mut() =
-            SequencerEngineState::CatchingUp { shadow, catchup: Default::default() };
+            SequencerEngineState::CatchingUp { catchup: Default::default() };
         let handle = coordinator.start(request_rx);
 
         tokio::time::timeout(
