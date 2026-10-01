@@ -1,5 +1,7 @@
 #![allow(missing_docs)]
 
+use std::time::Duration;
+
 use alloy_consensus::Transaction;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::TransactionResponse;
@@ -7,7 +9,7 @@ use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use base_builder_core::{
     BuilderApiExtension, BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
-    MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS, ShadowValidityConfig,
+    MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS, RestingPredicateMode, ShadowValidityConfig,
     test_utils::{ChainDriverExt, LocalInstanceBuilder, ONE_ETH, setup_test_instance},
 };
 use base_execution_txpool::{
@@ -330,6 +332,86 @@ async fn shadow_validity_injection_preserves_forwarded_transaction() -> eyre::Re
         recipient_balance_before + U256::from(value),
         "the original state transition must execute"
     );
+
+    Ok(())
+}
+
+/// A transaction resting at the parent block is skipped without evaluation, yet is still
+/// included in the block whose execution first satisfies its predicate.
+#[tokio::test]
+async fn resting_transaction_is_included_once_its_blocking_state_changes() -> eyre::Result<()> {
+    let instance = LocalInstanceBuilder::new(
+        BuilderConfig::for_tests().with_resting_predicate_mode(RestingPredicateMode::Enforce),
+    )
+    .install_ext::<BuilderApiExtension>(
+        BuilderApiExtensionConfig::new(true, DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
+    )
+    .build()
+    .await?;
+    let driver = instance.driver().await?;
+    let accounts = driver.fund_accounts(2, ONE_ETH).await?;
+    let watched = Address::random();
+
+    let resting = driver
+        .create_transaction()
+        .with_signer(&accounts[0])
+        .with_nonce(0)
+        .with_to(Address::random())
+        .with_max_priority_fee_per_gas(100)
+        .build()
+        .await;
+    let resting_hash = resting.tx_hash();
+    driver
+        .provider()
+        .raw_request::<_, ()>(
+            "base_insertValidatedTransaction".into(),
+            (ValidatedTransaction {
+                sender: accounts[0].address(),
+                raw: resting.encoded_2718().into(),
+                metering: None,
+                extensions: TransactionValidity {
+                    validity: vec![ValidityPredicate::Balance {
+                        address: watched,
+                        op: ValidityOperator::Equal,
+                        value: U256::from(1),
+                    }],
+                },
+            },),
+        )
+        .await?;
+
+    let unsatisfied = driver.build_new_block().await?;
+    assert!(!unsatisfied.transactions.hashes().any(|hash| hash == resting_hash));
+
+    let head = unsatisfied.header.hash;
+    let store = &instance.builder_config().resting_predicates;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while store.view_for_parent(head).is_none() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await?;
+
+    let trigger_hash = *driver
+        .create_transaction()
+        .with_signer(&accounts[1])
+        .with_to(watched)
+        .with_value(1)
+        .with_max_priority_fee_per_gas(50)
+        .send()
+        .await?
+        .tx_hash();
+
+    let block = driver.build_new_block().await?;
+    let tracked = [trigger_hash, resting_hash];
+    let actual = block
+        .transactions
+        .into_transactions()
+        .filter_map(|transaction| {
+            tracked.contains(&transaction.tx_hash()).then(|| transaction.tx_hash())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(actual, tracked);
 
     Ok(())
 }

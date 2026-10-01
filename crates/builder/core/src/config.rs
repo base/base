@@ -11,7 +11,10 @@ use base_execution_payload_builder::{
     config::{BaseDAConfig, GasLimitConfig},
 };
 
-use crate::{ExecutionMeteringMode, NoopMeteringProvider, RejectionCache, SharedMeteringProvider};
+use crate::{
+    ExecutionMeteringMode, NoopMeteringProvider, RejectionCache, RestingPredicateMode,
+    RestingPredicateStore, SharedMeteringProvider,
+};
 
 /// Configuration values for the flashblocks builder.
 #[derive(Clone)]
@@ -69,6 +72,13 @@ pub struct BuilderConfig {
 
     /// Number of parked predicates that converts one state bucket to ordered wakeups.
     pub predicate_bucket_ordered_threshold: usize,
+
+    /// Whether validity transactions resting at the canonical head skip evaluation.
+    pub resting_predicate_mode: RestingPredicateMode,
+
+    /// Latest resting snapshot, published by the builder service on each canonical block.
+    pub resting_predicates: RestingPredicateStore,
+
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
 
@@ -117,6 +127,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("metering_wait_duration", &self.metering_wait_duration)
             .field("predicate_eval_hard_cutoff", &self.predicate_eval_hard_cutoff)
             .field("predicate_bucket_ordered_threshold", &self.predicate_bucket_ordered_threshold)
+            .field("resting_predicate_mode", &self.resting_predicate_mode)
             .field("metering_provider", &self.metering_provider)
             .field("rejection_cache_size", &self.rejection_cache.entry_count())
             .field("manifest_precheck_enabled", &self.manifest_precheck_enabled)
@@ -143,6 +154,8 @@ impl Default for BuilderConfig {
             metering_wait_duration: None,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
+            resting_predicate_mode: RestingPredicateMode::Off,
+            resting_predicates: RestingPredicateStore::default(),
             metering_provider: Arc::new(NoopMeteringProvider),
             rejection_cache: RejectionCache::default(),
             manifest_precheck_enabled: true,
@@ -230,6 +243,13 @@ impl BuilderConfig {
     #[must_use]
     pub const fn with_predicate_eval_hard_cutoff_ms(mut self, ms: u64) -> Self {
         self.predicate_eval_hard_cutoff = Duration::from_millis(ms);
+        self
+    }
+
+    /// Sets the resting predicate mode.
+    #[must_use]
+    pub const fn with_resting_predicate_mode(mut self, mode: RestingPredicateMode) -> Self {
+        self.resting_predicate_mode = mode;
         self
     }
 }

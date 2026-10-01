@@ -54,6 +54,15 @@ impl FlashblocksServiceBuilder {
     {
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
 
+        if self.config.resting_predicate_mode.is_enabled() {
+            let maintain = self.config.resting_predicates.clone().maintain(
+                ctx.provider().clone(),
+                pool.clone(),
+                ctx.provider().canonical_state_stream(),
+            );
+            ctx.task_executor().spawn_task(Box::pin(maintain));
+        }
+
         let ws_pub: Arc<WebSocketPublisher> =
             WebSocketPublisher::new(self.config.flashblocks_ws_addr)?.into();
         let payload_builder = BasePayloadBuilder::new(
