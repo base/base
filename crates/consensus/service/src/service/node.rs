@@ -19,7 +19,7 @@ use base_consensus_providers::{
     AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider,
     OnlinePipeline,
 };
-use base_consensus_rpc::{BaseRpc, RpcBuilder};
+use base_consensus_rpc::{AdminNetworkAccess, BaseRpc, RpcBuilder};
 use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListener};
 use base_protocol::L2BlockInfo;
 use base_upgrade_signal::{UpgradeSignalMetricLayer, UpgradeSignalMetrics};
@@ -677,8 +677,11 @@ impl RollupNode {
                     RpcContext {
                         cancellation: cancellation.clone(),
                         p2p_network: Some(network_rpc),
-                        network_admin: Some(net_admin_rpc),
-                        isolated_sequencer: self.sequencer_config.isolated,
+                        admin_network_access: if self.sequencer_config.isolated {
+                            AdminNetworkAccess::Disabled
+                        } else {
+                            AdminNetworkAccess::Enabled(net_admin_rpc)
+                        },
                         l1_watcher_queries: l1_query_tx,
                     }
                 )),
