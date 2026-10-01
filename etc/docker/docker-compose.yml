@@ -306,7 +306,6 @@ services:
       - --builder.enable-resource-metering
       - --builder.enable-experimental-validity-transactions
       - --builder.payload-builder-cutover
-      - --builder.max-rejected-txs-per-block=${BUILDER_MAX_REJECTED_TXS_PER_BLOCK}
       - --txpool.nolocals
       - --rollup.txpool-max-inflight-delegated-slots=32768
       - --txpool.pending-max-count=200000
