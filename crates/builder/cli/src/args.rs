@@ -10,6 +10,7 @@ use base_builder_core::{
 };
 use base_builder_metering::MeteringStore;
 use base_execution_cli::ShadowIndexerArgs;
+use base_execution_payload_builder::PrewarmConfig;
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
@@ -263,6 +264,15 @@ pub struct Args {
     )]
     pub manifest_precheck_enabled: bool,
 
+    /// Enable opt-in concurrent predicate-state prewarming during payload builds.
+    ///
+    /// Warms the declared validity-predicate state (balances and storage slots) of
+    /// lookahead transactions into the shared execution cache on bounded IO workers.
+    /// Requires the engine to share the execution cache with the payload builder;
+    /// that sharing is enabled automatically at startup when this flag is set.
+    #[arg(long = "builder.enable-prewarming", default_value = "false")]
+    pub enable_prewarming: bool,
+
     /// Flashblocks configuration
     #[command(flatten)]
     pub flashblocks: FlashblocksArgs,
@@ -336,6 +346,7 @@ impl Default for Args {
             rejection_cache_ttl_secs: 1800,
             sampling_ratio: 100,
             manifest_precheck_enabled: true,
+            enable_prewarming: false,
             flashblocks: FlashblocksArgs::default(),
             payload_builder_cutover: false,
             basic_payload_builder: false,
@@ -398,6 +409,7 @@ impl Args {
                 Duration::from_secs(self.rejection_cache_ttl_secs),
             ),
             manifest_precheck_enabled: self.manifest_precheck_enabled,
+            prewarm: PrewarmConfig { enabled: self.enable_prewarming, ..Default::default() },
         })
     }
 }
@@ -439,6 +451,12 @@ mod tests {
         assert_eq!(config.block_time, Duration::from_millis(1000));
         assert!(config.max_gas_per_txn.is_none());
         assert!(config.manifest_precheck_enabled);
+    }
+
+    #[test]
+    fn enable_prewarming_flag_enables_prewarming() {
+        let parsed = CommandParser::parse_from(["builder", "--builder.enable-prewarming"]);
+        assert!(convert(parsed.args).prewarm.enabled);
     }
 
     #[test]
