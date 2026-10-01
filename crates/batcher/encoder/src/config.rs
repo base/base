@@ -414,6 +414,26 @@ mod tests {
     /// Brotli is rejected when the next L2 block to encode is before Fjord, since derivation only
     /// accepts Brotli channels from Fjord on.
     #[test]
+    fn denim_schedule_uses_whole_second_evm_timestamps_for_startup_validation() {
+        let mut rollup_config = RollupConfig::default();
+        rollup_config.genesis.l2_time = 10;
+        rollup_config.block_time = 2;
+        rollup_config.upgrades.fjord_time = Some(0);
+        rollup_config.upgrades.base.denim = Some(15);
+
+        let next_l2_timestamp = rollup_config.l2_block_timestamp(4);
+
+        assert_eq!(rollup_config.l2_block_timestamp_millis(4), 16_200);
+        assert_eq!(next_l2_timestamp, 16);
+        assert_ne!(next_l2_timestamp, 16_u64.saturating_add(rollup_config.block_time));
+        assert!(
+            EncoderConfig::default()
+                .validate_for_rollup_config(&rollup_config, next_l2_timestamp)
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn validate_for_rollup_config_rejects_brotli_before_fjord() {
         let cfg = EncoderConfig::default();
         let rollup_config = rollup_config_with(2, Some(100));
