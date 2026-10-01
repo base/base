@@ -74,8 +74,11 @@ pub enum ValidityPredicateError {
     /// block-expiry eviction and is rejected at ingress instead. `index` is the
     /// position of the offending predicate within the batch, `bound` the
     /// greatest block number at which the predicate can still hold.
+    ///
+    /// The message omits `current_block`: it is the validating node's view of
+    /// the chain head, and returning it to callers exposes per-node lag.
     #[error(
-        "block-number predicate at index {index} already expired: last satisfiable block {bound} is before the block currently being built ({current_block})"
+        "block-number predicate at index {index} already expired: last satisfiable block {bound} has already been built"
     )]
     ExpiredBlockBound {
         /// Position of the offending predicate within the batch.
@@ -89,8 +92,11 @@ pub enum ValidityPredicateError {
     #[error("validity transactions require a block-number predicate with an upper bound")]
     MissingBlockExpiry,
     /// A block-number predicate's tightest upper bound exceeds the configured lifetime window.
+    ///
+    /// The message omits `maximum_block` because it is derived from the
+    /// validating node's chain head; see [`Self::ExpiredBlockBound`].
     #[error(
-        "block-number predicate at index {index} expires too far in the future: last satisfiable block {bound} exceeds the maximum permitted block {maximum_block}"
+        "block-number predicate at index {index} expires too far in the future: last satisfiable block {bound} exceeds the maximum validity window"
     )]
     BlockExpiryWindowExceeded {
         /// Position of the predicate that establishes the tightest upper bound.

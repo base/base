@@ -336,6 +336,9 @@ where
             None => ValidityPredicate::validate_has_block_expiry(&options.validity),
         };
         expiry_validation.map_err(|error| {
+            // The returned message omits the local head; keep it in the log for diagnosing
+            // ingress latency.
+            debug!(error = ?error, "rejected validity transaction block expiry");
             ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), error.to_string(), None::<()>)
         })?;
 
@@ -1027,6 +1030,10 @@ mod tests {
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
         assert!(error.message().contains("expires too far in the future"));
+        assert!(
+            !error.message().contains("131"),
+            "message must not expose the head-derived maximum: {error}"
+        );
     }
 
     #[tokio::test]
@@ -1178,6 +1185,10 @@ mod tests {
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
         assert!(error.message().contains("already expired"), "unexpected message: {error}");
+        assert!(
+            !error.message().contains("101"),
+            "message must not expose the local head: {error}"
+        );
     }
 
     #[tokio::test]
