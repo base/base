@@ -104,6 +104,7 @@ impl SequencerCommand {
             let task_executor = ctx.task_executor.clone();
             let builder = execution.into_default_node_builder(ctx)?;
             let mut runner = BaseNodeRunner::new(rollup_args.clone())
+                .with_txpool_enabled(true)
                 .with_da_config(da_config)
                 .with_gas_limit_config(gas_limit_config)
                 .with_manifest_precheck_enabled(manifest_precheck_enabled)

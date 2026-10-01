@@ -43,3 +43,31 @@ async fn test_admin_external_ip() -> eyre::Result<()> {
 
     Ok(())
 }
+
+async fn launch_pool_node(txpool_enabled: bool) -> eyre::Result<bool> {
+    let mut network_args = NetworkArgs::default().with_unused_ports();
+    network_args.discovery.discv5_port = Some(0);
+    network_args.discovery.discv5_port_ipv6 = Some(0);
+    let node_config = NodeConfig::test()
+        .map_chain(Arc::new(BaseChainSpec::mainnet()))
+        .with_network(network_args)
+        .with_rpc(RpcServerArgs::default().with_unused_ports().with_http());
+
+    let NodeHandle { node, node_exit_future: _ } = NodeBuilder::new(node_config)
+        .testing_node(Runtime::test())
+        .node(BaseNode::default().with_txpool_enabled(txpool_enabled))
+        .launch()
+        .await?;
+
+    Ok(node.pool.is_enabled())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_txpool_is_disabled_unless_enabled() -> eyre::Result<()> {
+    reth_tracing::init_test_tracing();
+
+    assert!(!launch_pool_node(false).await?, "default node must run a disabled pool");
+    assert!(launch_pool_node(true).await?, "enabled node must run the full pool");
+
+    Ok(())
+}

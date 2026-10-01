@@ -339,7 +339,9 @@ pub struct RpcStandardNodeArgs {
     )]
     pub transaction_event_journal_path: Option<PathBuf>,
 
-    /// Enable transaction forwarding for mempool nodes to builder RPC endpoints
+    /// Enable transaction forwarding for mempool nodes to builder RPC endpoints.
+    ///
+    /// Also enables the local transaction pool, which is otherwise a noop pool.
     #[arg(
         long = "enable-tx-forwarding",
         value_name = "ENABLE_TX_FORWARDING",
@@ -671,7 +673,10 @@ impl StandardBaseRethNode {
         let rollup_args = args.rpc.rollup_args.clone();
         // Fail fast on an incomplete upgrade-signal configuration before installing extensions.
         Self::validate_upgrade_signal_args(&rollup_args)?;
-        let mut runner = BaseNodeRunner::new(rollup_args.clone());
+        // Forwarders drain the pool; every other standard node forwards to the sequencer and
+        // keeps the noop pool.
+        let mut runner = BaseNodeRunner::new(rollup_args.clone())
+            .with_txpool_enabled(args.rpc.enable_tx_forwarding);
         let resource_metering_enabled = args.metering.enable_metering;
         let provider: SharedMeteringProvider = if resource_metering_enabled
             && args.metering.resource_metering.resource_metering_schedule.is_some()

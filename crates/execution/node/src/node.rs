@@ -30,7 +30,7 @@ use base_execution_rpc::{
 };
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
-    BaseTransactionValidator, GuardLimits, TimestampedTransaction,
+    BaseTransactionValidator, GuardLimits, MaybeBaseTransactionPool, TimestampedTransaction,
     maintain_state_diff_invalidation,
 };
 use reth_chain_state::CanonStateSubscriptions;
@@ -208,6 +208,8 @@ pub struct BaseNode {
     /// Used to control the gas limit of the blocks produced by the payload builder (configured by the
     /// batcher via the `miner_` api)
     pub gas_limit_config: GasLimitConfig,
+    /// Whether the node runs an enabled transaction pool instead of a disabled one.
+    pub txpool_enabled: bool,
 }
 
 /// A [`ComponentsBuilder`] with its generic arguments set to a stack of Base-specific builders.
@@ -231,7 +233,14 @@ impl BaseNode {
             args,
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
+            txpool_enabled: false,
         }
+    }
+
+    /// Configure whether the node runs an enabled transaction pool instead of a disabled one.
+    pub const fn with_txpool_enabled(mut self, enabled: bool) -> Self {
+        self.txpool_enabled = enabled;
+        self
     }
 
     /// Configure the data availability configuration for the payload builder.
@@ -268,6 +277,7 @@ impl BaseNode {
             .executor(BaseExecutorBuilder::default())
             .pool(
                 BasePoolBuilder::default()
+                    .with_enabled(self.txpool_enabled)
                     .with_ordering(ordering)
                     .with_max_inflight_delegated_slots(max_inflight_delegated_slots)
                     .with_guard_limits(GuardLimits {
@@ -882,6 +892,9 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
     pub guard_limits: GuardLimits,
     /// Additional trusted EIP-7702 delegation targets for locked payers.
     pub additional_trusted_delegation_targets: AddressSet,
+    /// Whether to run an enabled transaction pool. When `false` the node runs a disabled pool that
+    /// rejects every transaction and spawns no pool tasks.
+    pub enabled: bool,
     /// Marker for the pooled transaction type.
     _pd: core::marker::PhantomData<T>,
 }
@@ -894,6 +907,7 @@ impl<T> Default for BasePoolBuilder<T> {
             max_inflight_delegated_slots: 4,
             guard_limits: GuardLimits::default(),
             additional_trusted_delegation_targets: AddressSet::default(),
+            enabled: false,
             _pd: Default::default(),
         }
     }
@@ -909,6 +923,7 @@ impl<T> Clone for BasePoolBuilder<T> {
             additional_trusted_delegation_targets: self
                 .additional_trusted_delegation_targets
                 .clone(),
+            enabled: self.enabled,
             _pd: core::marker::PhantomData,
         }
     }
@@ -921,6 +936,12 @@ impl<T> BasePoolBuilder<T> {
         pool_config_overrides: PoolBuilderConfigOverrides,
     ) -> Self {
         self.pool_config_overrides = pool_config_overrides;
+        self
+    }
+
+    /// Sets whether the node runs an enabled transaction pool instead of a disabled one.
+    pub const fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
         self
     }
 
@@ -958,7 +979,8 @@ where
     T: EthPoolTransaction<Consensus = TxTy<Node::Types>> + BasePooledTx + TimestampedTransaction,
     Evm: ConfigureEvm<Primitives = PrimitivesTy<Node::Types>> + Clone + 'static,
 {
-    type Pool = BaseTransactionPool<Node::Provider, DiskFileBlobStore, Evm, T, BaseOrdering<T>>;
+    type Pool =
+        MaybeBaseTransactionPool<Node::Provider, DiskFileBlobStore, Evm, T, BaseOrdering<T>>;
 
     async fn build_pool(
         self,
@@ -971,8 +993,14 @@ where
             max_inflight_delegated_slots,
             guard_limits,
             additional_trusted_delegation_targets,
+            enabled,
             ..
         } = self;
+
+        if !enabled {
+            info!(target: "reth::cli", "Transaction pool disabled");
+            return Ok(MaybeBaseTransactionPool::disabled(ordering));
+        }
 
         let blob_store = reth_node_builder::components::create_blob_store(ctx)?;
         let validator =
@@ -1026,7 +1054,7 @@ where
         );
         debug!(target: "reth::cli", "Spawned txpool maintenance tasks");
 
-        Ok(transaction_pool)
+        Ok(MaybeBaseTransactionPool::Enabled(transaction_pool))
     }
 }
 

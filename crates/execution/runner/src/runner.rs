@@ -46,6 +46,8 @@ pub struct BaseNodeRunner<SB: PayloadServiceBuilder = DefaultPayloadServiceBuild
     resource_metering: Option<ResourceMeteringConfig>,
     /// Shared rejection cache for permanently rejected transaction hashes.
     rejection_cache: Option<RejectionCache>,
+    /// Whether the node runs an enabled transaction pool instead of a disabled one.
+    txpool_enabled: bool,
     /// Binary-owned callbacks to run after the node has started.
     started_callbacks: Vec<StartedCallback>,
 }
@@ -62,6 +64,7 @@ impl BaseNodeRunner<DefaultPayloadServiceBuilder> {
             manifest_precheck_enabled: true,
             resource_metering: None,
             rejection_cache: None,
+            txpool_enabled: false,
             started_callbacks: Vec::new(),
         }
     }
@@ -77,6 +80,7 @@ impl<SB: PayloadServiceBuilder> fmt::Debug for BaseNodeRunner<SB> {
             .field("manifest_precheck_enabled", &self.manifest_precheck_enabled)
             .field("resource_metering", &self.resource_metering)
             .field("rejection_cache", &self.rejection_cache)
+            .field("txpool_enabled", &self.txpool_enabled)
             .field("started_callbacks", &self.started_callbacks.len())
             .finish()
     }
@@ -113,6 +117,15 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         self
     }
 
+    /// Enables the transaction pool, which is disabled by default.
+    ///
+    /// Sequencers, builders and transaction forwarders need a pool; other nodes forward
+    /// transactions to the sequencer and keep the disabled pool.
+    pub const fn with_txpool_enabled(mut self, enabled: bool) -> Self {
+        self.txpool_enabled = enabled;
+        self
+    }
+
     /// Swap the payload service builder.
     pub fn with_service_builder<SB2: PayloadServiceBuilder>(self, sb: SB2) -> BaseNodeRunner<SB2> {
         BaseNodeRunner {
@@ -124,6 +137,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             manifest_precheck_enabled: self.manifest_precheck_enabled,
             resource_metering: self.resource_metering,
             rejection_cache: self.rejection_cache,
+            txpool_enabled: self.txpool_enabled,
             started_callbacks: self.started_callbacks,
         }
     }
@@ -169,9 +183,10 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             manifest_precheck_enabled,
             resource_metering,
             rejection_cache,
+            txpool_enabled,
             started_callbacks,
         } = self;
-        let mut base_node = BaseNode::new(rollup_args);
+        let mut base_node = BaseNode::new(rollup_args).with_txpool_enabled(txpool_enabled);
         if let Some(da_config) = da_config {
             base_node = base_node.with_da_config(da_config);
         }

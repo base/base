@@ -213,7 +213,8 @@ impl InProcessClient {
         let rollup_args =
             RollupArgs { sequencer: Some(config.builder_rpc_url.clone()), ..Default::default() };
 
-        let base_node = BaseNode::new(rollup_args.clone());
+        let base_node = BaseNode::new(rollup_args.clone())
+            .with_txpool_enabled(config.tx_forwarding_config.is_some());
 
         let mut node_config = NodeConfig::new(Arc::clone(&chain_spec))
             .with_network(network_config)

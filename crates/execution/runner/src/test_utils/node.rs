@@ -82,7 +82,8 @@ impl LocalNode {
             RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc().with_ws();
         rpc_args.auth_ipc_path = unique_ipc_path;
 
-        let base_node = BaseNode::new(RollupArgs::default());
+        // Tests submit transactions and read them back from the pool, so run the real pool.
+        let base_node = BaseNode::new(RollupArgs::default()).with_txpool_enabled(true);
 
         let (db, db_path) = Self::create_test_database()?;
 

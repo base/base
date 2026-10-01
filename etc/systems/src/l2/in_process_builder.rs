@@ -167,7 +167,7 @@ impl InProcessBuilder {
         let gas_limit_config = builder_config.gas_limit_config.clone();
 
         let rollup_args = RollupArgs::default();
-        let base_node = BaseNode::new(rollup_args.clone());
+        let base_node = BaseNode::new(rollup_args.clone()).with_txpool_enabled(true);
 
         let addons: base_node_runner::BaseAddOns<
             _,
@@ -509,7 +509,7 @@ fn create_test_db(db_path: &std::path::Path) -> Result<DatabaseEnv> {
 }
 
 fn pool_component(_rollup_args: &RollupArgs) -> BasePoolBuilder<BasePooledTransaction> {
-    BasePoolBuilder::<BasePooledTransaction>::default()
+    BasePoolBuilder::<BasePooledTransaction>::default().with_enabled(true)
 }
 
 #[cfg(test)]
