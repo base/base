@@ -19,6 +19,8 @@ base-l1-head = { workspace = true }
 alloy-provider = { workspace = true }
 alloy-rpc-types = { workspace = true }
 alloy-primitives = { workspace = true }
+alloy-sol-types = { workspace = true }
+base-proof-zk-utils = { workspace = true }
 base-common-network = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 base-prover-service-client = { workspace = true }
