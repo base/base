@@ -100,6 +100,24 @@ mod tests {
     }
 
     #[test]
+    fn zero_proof_addresses_leaves_other_fields_untouched() {
+        let mut addresses = AddressList {
+            address_manager: Some(Address::ZERO),
+            proxy_admin: Some(Address::ZERO),
+            anchor_state_registry_proxy: None,
+            mips: Some(Address::repeat_byte(1)),
+            ..Default::default()
+        };
+
+        addresses.zero_proof_addresses();
+
+        assert_eq!(addresses.address_manager, Some(Address::ZERO));
+        assert_eq!(addresses.proxy_admin, Some(Address::ZERO));
+        assert_eq!(addresses.anchor_state_registry_proxy, None);
+        assert_eq!(addresses.mips, Some(Address::repeat_byte(1)));
+    }
+
+    #[test]
     #[cfg(feature = "serde")]
     fn test_addresses_deserialize() {
         let raw: &str = r#"
