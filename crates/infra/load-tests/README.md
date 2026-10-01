@@ -348,8 +348,8 @@ port 8545. Both nodes still require the experimental validity flags described be
 
 A configurable fraction of *senders* can route their entire traffic through the
 `base_sendRawTransactionValidity` endpoint, attaching validity predicates to
-every transaction they submit. All four server predicate types are supported:
-the state-based `balance` and `storage` conditions, and the build-position
+every transaction they submit. Every predicate type accepted at ingress is
+supported: the state-based `storage` condition, and the build-position
 `block_number` and `flashblock_index` conditions (compared against the block and
 flashblock currently being built). This exercises the sequencer and builder
 under congestion when validity predicates are in play. Set `validity.ratio` to
@@ -370,10 +370,6 @@ validity:
   priority_lead_multiplier: 2 # multiply the priority-lead cohort's tip
   priority_fee_divisor: 2     # lower the remaining validity senders' tips
   predicates:
-    - type: balance
-      address: sender          # sender | recipient | 0x-literal
-      op: ">="
-      value: "0"
     - type: storage
       address: "0x1234567890123456789012345678901234567890"
       slot:

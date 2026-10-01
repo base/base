@@ -1378,10 +1378,9 @@ flashblocks_ws: ws://localhost:7111
 validity:
   ratio: 0.25
   predicates:
-    - type: balance
-      address: sender
+    - type: flashblock_index
       op: ">="
-      value: "0"
+      value: "1"
     - type: storage
       address: "0x1234567890123456789012345678901234567890"
       slot:
@@ -1426,9 +1425,9 @@ flashblocks_ws: ws://localhost:7111
 validity:
   ratio: 1.5
   predicates:
-    - type: balance
+    - type: flashblock_index
       op: ">="
-      value: "0"
+      value: "1"
 "#;
         let err = TestConfig::from_yaml(yaml).unwrap_err();
         assert!(err.to_string().contains("validity.ratio"));

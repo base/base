@@ -61,16 +61,6 @@ impl Default for ValidityConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ValidityPredicateConfig {
-    /// Compares an account balance with a value.
-    Balance {
-        /// Account whose balance is read, resolved per transaction.
-        #[serde(default)]
-        address: PredicateAddressConfig,
-        /// Comparison operator (`<`, `<=`, `=`, `!=`, `>`, `>=`).
-        op: String,
-        /// Right-hand comparison value.
-        value: U256,
-    },
     /// Compares a masked storage value with a value.
     Storage {
         /// Contract whose storage is read, resolved per transaction.
@@ -247,11 +237,6 @@ impl ValidityPredicateConfig {
     /// literal values and pre-resolving fixed addresses.
     pub fn to_template(&self) -> Result<ValidityPredicateTemplate> {
         match self {
-            Self::Balance { address, op, value } => Ok(ValidityPredicateTemplate::Balance {
-                address: address.to_template()?,
-                op: parse_operator(op)?,
-                value: *value,
-            }),
             Self::Storage { address, slot, mask, op, value } => {
                 Ok(ValidityPredicateTemplate::Storage {
                     address: address.to_template()?,
@@ -339,23 +324,6 @@ mod tests {
     #[test]
     fn parse_operator_rejects_unknown() {
         assert!(parse_operator("==").is_err());
-    }
-
-    #[test]
-    fn balance_predicate_to_template() {
-        let config = ValidityPredicateConfig::Balance {
-            address: PredicateAddressConfig::Sender,
-            op: ">=".into(),
-            value: U256::ZERO,
-        };
-        match config.to_template().unwrap() {
-            ValidityPredicateTemplate::Balance { address, op, value } => {
-                assert!(matches!(address, PredicateAddress::Sender));
-                assert_eq!(op, ValidityOperator::GreaterThanOrEqual);
-                assert_eq!(value, U256::ZERO);
-            }
-            other => panic!("expected balance template, got {other:?}"),
-        }
     }
 
     #[test]
@@ -558,11 +526,8 @@ mod tests {
 
     #[test]
     fn validate_rejects_too_many_predicates() {
-        let predicate = ValidityPredicateConfig::Balance {
-            address: PredicateAddressConfig::Sender,
-            op: ">=".into(),
-            value: U256::ZERO,
-        };
+        let predicate =
+            ValidityPredicateConfig::FlashblockIndex { op: ">=".into(), value: U256::from(1) };
         let config = ValidityConfig {
             ratio: 1.0,
             priority_lead_ratio: 0.0,
@@ -581,10 +546,9 @@ mod tests {
             priority_lead_ratio: 0.0,
             priority_lead_multiplier: 1,
             priority_fee_divisor: 1,
-            predicates: vec![ValidityPredicateConfig::Balance {
-                address: PredicateAddressConfig::Sender,
+            predicates: vec![ValidityPredicateConfig::FlashblockIndex {
                 op: "==".into(),
-                value: U256::ZERO,
+                value: U256::from(1),
             }],
         };
         assert!(config.validate().is_err());
