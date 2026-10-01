@@ -152,17 +152,6 @@ fn is_authorized(storage: &mut HashMapStorageProvider, policy_id: u64, account: 
     IPolicyRegistry::isAuthorizedCall::abi_decode_returns(&bytes).unwrap()
 }
 
-/// Reads `policyExists(policy_id)`.
-fn policy_exists(storage: &mut HashMapStorageProvider, policy_id: u64) -> bool {
-    let (rev, bytes) = call_policy(
-        storage,
-        OUTSIDER,
-        IPolicyRegistry::policyExistsCall { policyId: policy_id }.abi_encode(),
-    );
-    assert!(!rev);
-    IPolicyRegistry::policyExistsCall::abi_decode_returns(&bytes).unwrap()
-}
-
 /// Deterministic keccak hash of the per-case snapshot, scoped to the registry address: its emitted
 /// events (topics + data) followed by its sorted `(slot, value)` storage entries. Scoping excludes
 /// activation-registry scaffolding, so the pin captures only the registry's own effect.
@@ -244,7 +233,6 @@ const FIRST_MALFORMED_TYPE_BYTE: u8 = PolicyType::INTERSECT as u8 + 1;
 const fn uncreated_policy_id(type_byte: u8) -> u64 {
     ((type_byte as u64) << POLICY_TYPE_SHIFT) | UNCREATED_COUNTER
 }
-
 
 /// Pins today's behavior, including the fail-open `true` for an uncreated BLOCKLIST and
 /// INTERSECT: an uncreated simple or composite policy evaluates as an empty set (BOP-827). Callers
@@ -1271,7 +1259,6 @@ fn v3_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
         }
         C::isAuthorized(_) => covered(&[
             golden_is_authorized_builtins_and_malformed,
-            golden_uncreated_policy_ids_do_not_exist_for_any_type_byte,
             golden_is_authorized_uncreated_simple_and_composite_ids_evaluate_as_empty_sets,
             golden_is_authorized_denies_malformed_and_inverted_uncreated_ids,
             golden_is_authorized_empty_policies,
