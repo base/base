@@ -1,6 +1,6 @@
 //! Per-block accounting of payload validity-predicate state loads.
 //!
-//! Evaluating a transaction's validity predicates reads account balances and
+//! Evaluating a transaction's validity predicates reads account balances, nonces, and
 //! contract storage slots from the state the builder is building on. This module
 //! measures the *footprint* of those reads per block — how many accounts and
 //! storage slots predicate evaluation touches, both in total (every read) and
@@ -37,7 +37,7 @@ use revm::{
 /// across the block, i.e. the predicate state footprint.
 #[derive(Debug, Default)]
 pub struct PredicateLoadTracker {
-    /// Total account (balance) reads.
+    /// Total account (balance or nonce) reads.
     account_reads: u64,
     /// Total storage-slot reads.
     slot_reads: u64,
@@ -48,7 +48,7 @@ pub struct PredicateLoadTracker {
 }
 
 impl PredicateLoadTracker {
-    /// Records a single account (balance) read.
+    /// Records a single account (balance or nonce) read.
     pub fn record_account(&mut self, address: Address) {
         self.account_reads += 1;
         self.unique_accounts.insert(address);
@@ -178,7 +178,9 @@ mod tests {
             op: ValidityOperator::Equal,
             value: U256::from(3),
         };
-        let predicates = [balance, storage];
+        let nonce =
+            ValidityPredicate::Nonce { address, op: ValidityOperator::Equal, value: U256::ZERO };
+        let predicates = [balance, nonce, storage];
 
         // Evaluate the same batch twice: totals double, unique counts do not.
         for _ in 0..2 {
@@ -190,7 +192,7 @@ mod tests {
             );
         }
 
-        assert_eq!(tracker.account_reads(), 2);
+        assert_eq!(tracker.account_reads(), 4);
         assert_eq!(tracker.slot_reads(), 2);
         assert_eq!(tracker.unique_accounts(), 1);
         assert_eq!(tracker.unique_slots(), 1);

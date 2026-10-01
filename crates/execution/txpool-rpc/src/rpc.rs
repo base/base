@@ -512,6 +512,11 @@ mod tests {
 
     fn all_predicate_variants() -> Vec<ValidityPredicate> {
         vec![
+            ValidityPredicate::Nonce {
+                address: Address::repeat_byte(0x11),
+                op: base_execution_txpool::ValidityOperator::GreaterThan,
+                value: U256::ZERO,
+            },
             ValidityPredicate::Balance {
                 address: Address::repeat_byte(0x11),
                 op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
@@ -661,6 +666,14 @@ mod tests {
         assert_eq!(
             serde_json::to_value(all_predicate_variants()).unwrap(),
             json!([
+                {
+                    "type": "nonce",
+                    "params": {
+                        "address": "0x1111111111111111111111111111111111111111",
+                        "op": ">",
+                        "value": "0x0",
+                    },
+                },
                 {
                     "type": "balance",
                     "params": {
