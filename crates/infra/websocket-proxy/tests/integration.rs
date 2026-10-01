@@ -361,6 +361,32 @@ async fn test_authentication_allows_known_api_keys() {
 }
 
 #[tokio::test]
+async fn test_authentication_rejects_unknown_api_keys_with_401() {
+    let addr = TestHarness::alloc_port().await;
+    let auth = Authentication::new(HashMap::from([("key1".to_string(), "app1".to_string())]));
+
+    let harness = TestHarness::new_with_auth(addr, Some(auth));
+    harness.start_server().await;
+
+    // Send a well-formed WebSocket upgrade request so the request reaches the handler's
+    // authentication check instead of being rejected by the upgrade extractor.
+    for path in ["ws/invalid-key", "ws/invalid-key/filter"] {
+        let response = reqwest::Client::new()
+            .get(format!("http://{}/{path}", harness.server_addr))
+            .header(reqwest::header::CONNECTION, "upgrade")
+            .header(reqwest::header::UPGRADE, "websocket")
+            .header(reqwest::header::SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ==")
+            .header(reqwest::header::SEC_WEBSOCKET_VERSION, "13")
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+        assert_eq!(response.text().await.unwrap(), "{\"message\":\"Invalid API key\"}");
+    }
+}
+
+#[tokio::test]
 async fn test_ping_timeout_disconnects_client() {
     let addr = TestHarness::alloc_port().await;
 
