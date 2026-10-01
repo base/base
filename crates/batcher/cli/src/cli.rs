@@ -12,7 +12,6 @@ use base_cli_utils::RuntimeManager;
 use base_runtime::TokioRuntime;
 use base_tx_manager::{SignerConfig, TxManagerConfig};
 use clap::Parser;
-use tracing::info;
 use url::Url;
 
 base_tx_manager::define_signer_cli!("BASE_BATCHER");
@@ -20,20 +19,15 @@ base_tx_manager::define_signer_cli!("BASE_BATCHER");
 /// CLI arguments for the batcher.
 #[derive(Parser, Clone, Debug)]
 pub struct BatcherArgs {
-    /// L1 RPC endpoint(s).
-    ///
-    /// Accepts a comma-separated list. The service connects to each in order at
-    /// startup and uses the first that responds; later endpoints serve as
-    /// startup-time fallbacks only (no per-call rotation).
-    #[arg(long = "l1-rpc-url", visible_aliases = ["l1", "l1-eth-rpc"], env = "BASE_NODE_L1_ETH_RPC", value_delimiter = ',', num_args = 1..)]
-    pub l1_rpc_url: Vec<Url>,
+    /// L1 RPC endpoint.
+    #[arg(long = "l1-rpc-url", visible_aliases = ["l1", "l1-eth-rpc"], env = "BASE_NODE_L1_ETH_RPC")]
+    pub l1_rpc_url: Url,
 
-    /// L2 HTTP RPC endpoint(s) (used for all JSON-RPC calls including throttle control).
+    /// L2 HTTP RPC endpoint, the source of the unsafe blocks the batcher submits.
     ///
-    /// Accepts a comma-separated list with the same connection-time failover
-    /// semantics as `--l1-rpc-url`.
-    #[arg(long = "l2-rpc-url", env = "BASE_BATCHER_L2_RPC_URL", value_delimiter = ',', num_args = 1..)]
-    pub l2_rpc_url: Vec<Url>,
+    /// The DA throttle is also sent to this endpoint.
+    #[arg(long = "l2-rpc-url", env = "BASE_BATCHER_L2_RPC_URL")]
+    pub l2_rpc_url: Url,
 
     /// Optional L1 WebSocket endpoint for new-block subscriptions.
     ///
@@ -51,21 +45,13 @@ pub struct BatcherArgs {
     #[arg(long = "parity-validator-l2-rpc-url", env = "BASE_BATCHER_PARITY_VALIDATOR_L2_RPC_URL")]
     pub parity_validator_l2_rpc_url: Option<Url>,
 
-    /// Rollup node RPC endpoint(s).
+    /// Rollup node RPC endpoint.
     ///
     /// The batcher reads the rollup config of this node and follows its
     /// derivation, so the node must derive the inbox the batcher posts to. In
     /// shadow mode it is the parity validator's rollup node.
-    ///
-    /// Accepts a comma-separated list with the same connection-time failover
-    /// semantics as `--l1-rpc-url`.
-    #[arg(
-        long = "rollup-rpc-url",
-        env = "BASE_BATCHER_ROLLUP_RPC_URL",
-        value_delimiter = ',',
-        num_args = 1..
-    )]
-    pub rollup_rpc_url: Vec<Url>,
+    #[arg(long = "rollup-rpc-url", env = "BASE_BATCHER_ROLLUP_RPC_URL")]
+    pub rollup_rpc_url: Url,
 
     /// Signer configuration.
     #[command(flatten)]
@@ -343,13 +329,6 @@ impl BatcherArgs {
     /// Execute the batcher.
     pub async fn exec(self, metrics_enabled: bool) -> eyre::Result<()> {
         let config = self.into_config(metrics_enabled)?;
-        info!(
-            l1_rpc_count = config.l1_rpc_url.len(),
-            l2_rpc_count = config.l2_rpc_url.len(),
-            rollup_rpc_count = config.rollup_rpc_url.len(),
-            "batcher configured"
-        );
-
         let rt = TokioRuntime::new();
         let _signal_handle = RuntimeManager::install_signal_handler(rt.token().clone());
 
@@ -554,24 +533,20 @@ mod tests {
         assert!(config.wait_node_sync);
     }
 
-    /// An RPC flag takes a comma-separated list of endpoints.
+    /// The L1, L2 and rollup RPC flags are each required, so the batcher cannot start without
+    /// an endpoint to read from.
     #[test]
-    fn rpc_urls_accept_comma_separated_list() {
-        let args = [
-            "batcher",
-            "--l1-rpc-url",
-            "http://l1-a:8545,http://l1-b:8545",
-            "--l2-rpc-url",
-            "http://localhost:9545",
-            "--rollup-rpc-url",
-            "http://localhost:7545",
-            "--private-key",
-            PRIVATE_KEY,
-        ];
-        let config = BatcherArgs::try_parse_from(args).unwrap().into_config(false).unwrap();
+    fn cli_requires_each_rpc_url() {
+        let args = base_args();
+        for flag in ["--l1-rpc-url", "--l2-rpc-url", "--rollup-rpc-url"] {
+            let position = args.iter().position(|arg| *arg == flag).unwrap();
+            let mut without = args.clone();
+            without.drain(position..position + 2);
 
-        let l1_rpc_urls: Vec<_> = config.l1_rpc_url.iter().map(Url::as_str).collect();
-        assert_eq!(l1_rpc_urls, ["http://l1-a:8545/", "http://l1-b:8545/"]);
+            let error = BatcherArgs::try_parse_from(without).unwrap_err();
+
+            assert_eq!(error.kind(), clap::error::ErrorKind::MissingRequiredArgument, "{flag}");
+        }
     }
 
     /// The DA throttle is on unless `--no-throttle` is set.
