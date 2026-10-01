@@ -117,7 +117,9 @@ where
         parent_block_hash: B256,
         attributes: Attrs::RpcPayloadAttributes,
     ) -> RpcResult<ExecutionWitness> {
-        let _permit = self.inner.semaphore.acquire().await;
+        // Owned so the permit moves into the blocking task: a disconnect must not free capacity
+        // while execution is still running.
+        let permit = Arc::clone(&self.inner.semaphore).acquire_owned().await;
 
         let parent_header = self.parent_header(parent_block_hash).to_rpc_result()?;
 
@@ -127,6 +129,7 @@ where
         let (tx, rx) = oneshot::channel();
         let this = self.clone();
         self.inner.task_spawner.spawn_blocking_task(async move {
+            let _permit = permit;
             let res = this.inner.builder.payload_witness(parent_header, attributes, task_cancel);
             let _ = tx.send(res);
         });
