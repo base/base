@@ -30,6 +30,25 @@ base_metrics::define_metrics! {
     get_proof_failures: counter,
 }
 
+base_metrics::define_metrics! {
+    base_rpc.witness_cache,
+    struct = WitnessCacheMetrics,
+    #[describe("Total number of debug_executePayload requests served from the witness cache")]
+    hits: counter,
+    #[describe("Total number of debug_executePayload requests not found in the witness cache")]
+    misses: counter,
+    #[describe("Time to build a witness in the background witness cache builder")]
+    build_duration: histogram,
+    #[describe("Total number of failed background witness builds")]
+    build_failures: counter,
+    #[describe("Blocks between the proofs storage tip and the last background-built witness")]
+    builder_lag_blocks: gauge,
+    #[describe("Number of witnesses in the witness cache")]
+    entries: gauge,
+    #[describe("Total compressed size of the witness cache in bytes")]
+    bytes: gauge,
+}
+
 /// Types of debug apis
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum DebugApis {

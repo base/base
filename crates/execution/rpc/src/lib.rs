@@ -22,14 +22,19 @@ pub use trace_middleware::{
     OtelRpcMiddlewareLayer,
 };
 pub mod witness;
-
+mod witness_cache;
+pub use witness_cache::{WitnessCache, WitnessCacheConfig, WitnessCacheEntry};
+mod canonical_attributes;
+pub use canonical_attributes::CanonicalPayloadAttributes;
 pub use config::{BaseEthConfigApiServer, BaseEthConfigHandler};
 #[cfg(feature = "client")]
 pub use engine::BaseEngineApiClient;
 pub use engine::{BaseEngineApi, BaseEngineApiServer, ENGINE_CAPABILITIES};
 pub use error::{BaseEthApiError, BaseInvalidTransactionError, SequencerClientError};
 pub use eth::{BaseEthApi, BaseEthApiBuilder, BaseReceiptBuilder, BaseTimeCache};
-pub use metrics::{DebugApiExtMetrics, DebugApis, EthApiExtMetrics, SequencerMetrics};
+pub use metrics::{
+    DebugApiExtMetrics, DebugApis, EthApiExtMetrics, SequencerMetrics, WitnessCacheMetrics,
+};
 #[cfg(feature = "client")]
 pub use miner::MinerApiExtClient;
 pub use miner::MinerApiExtServer;

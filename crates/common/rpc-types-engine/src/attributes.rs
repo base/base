@@ -2,9 +2,11 @@
 
 use alloc::vec::Vec;
 
+use alloy_consensus::BlockHeader;
 use alloy_eips::{
     eip1559::BaseFeeParams,
     eip2718::{Eip2718Result, WithEncoded},
+    eip4895::Withdrawal,
 };
 use alloy_primitives::{B64, B256, Bytes, keccak256};
 use alloy_rlp::{Encodable, Result};
@@ -52,6 +54,51 @@ pub struct BasePayloadAttributes {
 }
 
 impl BasePayloadAttributes {
+    /// Returns the attributes that rebuild a canonical block on top of its parent.
+    ///
+    /// This is the single derivation shared by every component that re-derives attributes from
+    /// a sealed block (the proof host and the execution node's witness cache): their payload IDs
+    /// must agree for prebuilt witnesses to be served. `transactions` are the EIP-2718 encoded
+    /// block transactions; `is_holocene` and `is_jovian` are the fork activations at the header
+    /// timestamp.
+    pub fn from_block_parts(
+        header: &impl BlockHeader,
+        withdrawals: Option<Vec<Withdrawal>>,
+        transactions: Vec<Bytes>,
+        is_holocene: bool,
+        is_jovian: bool,
+    ) -> Result<Self, EIP1559ParamError> {
+        let extra_data = header.extra_data();
+        let min_base_fee = if is_jovian {
+            Some(JovianExtraData::decode(extra_data)?.2)
+        } else if is_holocene {
+            HoloceneExtraData::decode(extra_data)?;
+            None
+        } else {
+            None
+        };
+        // Holocene and Jovian extra data both start with a version byte followed by the
+        // `denominator || elasticity` pair, which is exactly the `eip1559Params` encoding.
+        let eip_1559_params =
+            (is_holocene || is_jovian).then(|| B64::from_slice(&extra_data[1..9]));
+
+        Ok(Self {
+            payload_attributes: PayloadAttributes {
+                timestamp: header.timestamp(),
+                prev_randao: header.mix_hash().unwrap_or_default(),
+                suggested_fee_recipient: header.beneficiary(),
+                withdrawals,
+                parent_beacon_block_root: header.parent_beacon_block_root(),
+                ..Default::default()
+            },
+            transactions: Some(transactions),
+            no_tx_pool: Some(true),
+            gas_limit: Some(header.gas_limit()),
+            eip_1559_params,
+            min_base_fee,
+        })
+    }
+
     /// Generates the payload id for the configured payload from the [`BasePayloadAttributes`].
     ///
     /// Returns an 8-byte identifier by hashing the payload components with sha256 hash.
@@ -513,5 +560,76 @@ mod test {
         let val = serde_json::to_value(&attributes).unwrap();
         let round_trip: BasePayloadAttributes = serde_json::from_value(val).unwrap();
         assert_eq!(attributes, round_trip);
+    }
+
+    fn block_header(extra_data: Bytes) -> alloy_consensus::Header {
+        alloy_consensus::Header {
+            timestamp: 7,
+            mix_hash: B256::repeat_byte(5),
+            beneficiary: address!("4200000000000000000000000000000000000011"),
+            parent_beacon_block_root: Some(B256::repeat_byte(3)),
+            gas_limit: 30_000_000,
+            extra_data,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn from_block_parts_copies_header_and_body() {
+        let header = block_header(Bytes::new());
+        let withdrawals = Some(vec![Withdrawal::default()]);
+        let transactions = vec![bytes!("7e01")];
+
+        let attributes = BasePayloadAttributes::from_block_parts(
+            &header,
+            withdrawals.clone(),
+            transactions.clone(),
+            false,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            attributes,
+            BasePayloadAttributes {
+                payload_attributes: PayloadAttributes {
+                    timestamp: 7,
+                    prev_randao: header.mix_hash,
+                    suggested_fee_recipient: header.beneficiary,
+                    withdrawals,
+                    parent_beacon_block_root: header.parent_beacon_block_root,
+                    ..Default::default()
+                },
+                transactions: Some(transactions),
+                no_tx_pool: Some(true),
+                gas_limit: Some(30_000_000),
+                eip_1559_params: None,
+                min_base_fee: None,
+            }
+        );
+    }
+
+    #[test]
+    fn from_block_parts_decodes_fork_extra_data() {
+        let holocene = block_header(bytes!("00000000fa00000006"));
+        let attributes =
+            BasePayloadAttributes::from_block_parts(&holocene, None, vec![], true, false).unwrap();
+        assert_eq!(attributes.eip_1559_params, Some(b64!("000000fa00000006")));
+        assert_eq!(attributes.min_base_fee, None);
+
+        let jovian = block_header(bytes!("01000000fa0000000600000000000f4240"));
+        let attributes =
+            BasePayloadAttributes::from_block_parts(&jovian, None, vec![], true, true).unwrap();
+        assert_eq!(attributes.eip_1559_params, Some(b64!("000000fa00000006")));
+        assert_eq!(attributes.min_base_fee, Some(1_000_000));
+
+        assert_eq!(
+            BasePayloadAttributes::from_block_parts(&holocene, None, vec![], true, true),
+            Err(EIP1559ParamError::InvalidExtraDataLength)
+        );
+        assert_eq!(
+            BasePayloadAttributes::from_block_parts(&jovian, None, vec![], true, false),
+            Err(EIP1559ParamError::InvalidExtraDataLength)
+        );
     }
 }

@@ -5,6 +5,7 @@ use std::{sync::Arc, time::Duration};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_exex::BaseProofsExEx;
 use base_execution_rpc::{
+    WitnessCache, WitnessCacheConfig,
     debug::{DebugApiExt, DebugApiOverrideServer},
     eth::proofs::{EthApiExt, EthApiOverrideServer},
 };
@@ -62,6 +63,7 @@ pub async fn launch_node_with_proof_history(
         proofs_history_window,
         proofs_history_prune_interval,
         proofs_history_verification_interval,
+        proofs_history_witness_cache,
         upgrade_signal,
         upgrade_signal_l1_rpc,
     } = args;
@@ -85,6 +87,7 @@ pub async fn launch_node_with_proof_history(
         proofs_history_window: DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS,
         proofs_history_prune_interval: Duration::from_secs(15),
         proofs_history_verification_interval: 0,
+        proofs_history_witness_cache: Default::default(),
         upgrade_signal,
         upgrade_signal_l1_rpc,
     }));
@@ -95,6 +98,7 @@ pub async fn launch_node_with_proof_history(
         })?;
         info!(target: "reth::cli", "Using on-disk storage for proofs history");
         proofs_history_db.ensure_storage_path_matches(&path)?;
+        let witness_cache = proofs_history_witness_cache.config(&path)?;
 
         match proofs_history_db {
             ProofsHistoryDbBackend::Rocksdb => {
@@ -111,6 +115,7 @@ pub async fn launch_node_with_proof_history(
                     proofs_history_window,
                     proofs_history_prune_interval,
                     proofs_history_verification_interval,
+                    witness_cache,
                 );
             }
             ProofsHistoryDbBackend::Mdbx => {
@@ -127,6 +132,7 @@ pub async fn launch_node_with_proof_history(
                     proofs_history_window,
                     proofs_history_prune_interval,
                     proofs_history_verification_interval,
+                    witness_cache,
                 );
             }
         }
@@ -143,6 +149,7 @@ fn install_proofs_history<S>(
     proofs_history_window: u64,
     proofs_history_prune_interval: Duration,
     proofs_history_verification_interval: u64,
+    witness_cache: Option<WitnessCacheConfig>,
 ) -> ProofHistoryNodeBuilder
 where
     S: BaseProofsBatchStore + DatabaseMetrics + Send + Sync + 'static,
@@ -170,13 +177,21 @@ where
         })
         .extend_rpc_modules(move |ctx| {
             let api_ext = EthApiExt::new(ctx.registry.eth_api().clone(), storage.clone());
+            let cache = witness_cache
+                .as_ref()
+                .map(|config| WitnessCache::open(&config.path).map(Arc::new))
+                .transpose()?;
             let debug_ext = DebugApiExt::new(
                 ctx.node().provider().clone(),
                 ctx.registry.eth_api().clone(),
                 storage,
                 ctx.node().task_executor().clone(),
                 ctx.node().evm_config().clone(),
+                cache,
             );
+            if let Some(config) = &witness_cache {
+                debug_ext.spawn_witness_cache_builder(config);
+            }
             ctx.modules.replace_configured(api_ext.into_rpc())?;
             ctx.modules.replace_configured(debug_ext.into_rpc())?;
             Ok(())

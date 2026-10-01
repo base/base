@@ -4583,6 +4583,7 @@ dependencies = [
  "alloy-evm",
  "alloy-json-rpc 2.4.1",
  "alloy-primitives",
+ "alloy-rlp",
  "alloy-rpc-client",
  "alloy-rpc-types-debug",
  "alloy-rpc-types-engine",
@@ -4645,10 +4646,13 @@ dependencies = [
  "revm",
  "revm-inspectors",
  "serde",
+ "serde_json",
+ "tempfile",
  "thiserror 2.0.19",
  "tokio",
  "tower 0.5.3",
  "tracing",
+ "zstd",
 ]
 
 [[package]]
@@ -5383,6 +5387,7 @@ dependencies = [
  "base-common-evm",
  "base-common-genesis",
  "base-common-network",
+ "base-common-rpc-types",
  "base-common-rpc-types-engine",
  "base-consensus-providers",
  "base-metrics",

@@ -65,6 +65,7 @@ rocksdb = { workspace = true, optional = true, features = ["snappy", "bindgen-ru
 
 [dev-dependencies]
 proptest.workspace = true
+base-common-rpc-types.workspace = true
 
 [features]
 disk = [ "dep:rocksdb" ]

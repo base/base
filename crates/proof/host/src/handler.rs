@@ -12,13 +12,13 @@ use alloy_eips::{
     BlockId, BlockNumberOrTag, eip2718::Encodable2718, eip4844::FIELD_ELEMENTS_PER_BLOB,
 };
 use alloy_network::Network;
-use alloy_primitives::{Address, B64, B256, Bytes, keccak256};
+use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_provider::Provider;
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{Block, debug::ExecutionWitness};
 use alloy_transport::TransportError;
 use ark_ff::{BigInteger, PrimeField};
-use base_common_consensus::{HoloceneExtraData, JovianExtraData, Predeploys};
+use base_common_consensus::Predeploys;
 use base_common_network::Base;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_providers::BlobWithCommitmentAndProof;
@@ -913,46 +913,18 @@ fn payload_attributes_from_l2_block(
     block: Block<<Base as Network>::TransactionResponse, <Base as Network>::HeaderResponse>,
 ) -> Result<BasePayloadAttributes> {
     let timestamp = block.header.inner.timestamp;
-    let mut payload_attributes = BasePayloadAttributes::default();
-    payload_attributes.payload_attributes.timestamp = timestamp;
-    payload_attributes.payload_attributes.prev_randao = block.header.inner.mix_hash;
-    payload_attributes.payload_attributes.suggested_fee_recipient = block.header.inner.beneficiary;
-    payload_attributes.payload_attributes.parent_beacon_block_root =
-        block.header.inner.parent_beacon_block_root;
-    payload_attributes.payload_attributes.withdrawals =
-        block.withdrawals.as_ref().map(|withdrawals| withdrawals.0.clone());
-    payload_attributes.transactions = Some(
+    BasePayloadAttributes::from_block_parts(
+        &block.header.inner,
+        block.withdrawals.map(|withdrawals| withdrawals.0),
         block
             .transactions
             .into_transactions()
             .map(|tx| tx.as_ref().encoded_2718().into())
             .collect(),
-    );
-    payload_attributes.no_tx_pool = Some(true);
-    payload_attributes.gas_limit = Some(block.header.inner.gas_limit);
-
-    if cfg.prover.rollup_config.is_jovian_active(timestamp) {
-        let (elasticity, denominator, min_base_fee) =
-            JovianExtraData::decode(&block.header.inner.extra_data)
-                .map_err(|err| HostError::Custom(err.to_string()))?;
-        payload_attributes.eip_1559_params =
-            Some(encode_payload_eip_1559_params(elasticity, denominator));
-        payload_attributes.min_base_fee = Some(min_base_fee);
-    } else if cfg.prover.rollup_config.is_holocene_active(timestamp) {
-        let (elasticity, denominator) = HoloceneExtraData::decode(&block.header.inner.extra_data)
-            .map_err(|err| HostError::Custom(err.to_string()))?;
-        payload_attributes.eip_1559_params =
-            Some(encode_payload_eip_1559_params(elasticity, denominator));
-    }
-
-    Ok(payload_attributes)
-}
-
-fn encode_payload_eip_1559_params(elasticity: u32, denominator: u32) -> B64 {
-    let mut encoded = [0u8; 8];
-    encoded[..4].copy_from_slice(&denominator.to_be_bytes());
-    encoded[4..].copy_from_slice(&elasticity.to_be_bytes());
-    B64::from(encoded)
+        cfg.prover.rollup_config.is_holocene_active(timestamp),
+        cfg.prover.rollup_config.is_jovian_active(timestamp),
+    )
+    .map_err(|err| HostError::Custom(err.to_string()))
 }
 
 async fn insert_l1_header_preimage(
@@ -1429,11 +1401,19 @@ async fn handle_hint_inner(
 mod tests {
     use std::sync::Arc;
 
+    use alloy_consensus::{Sealable, transaction::Recovered};
+    use alloy_eips::eip4895::{Withdrawal, Withdrawals};
     use alloy_genesis::ChainConfig;
+    use alloy_primitives::B64;
     use alloy_provider::{RootProvider, builder as provider_builder, mock::Asserter};
     use alloy_rlp::Encodable;
-    use base_common_genesis::RollupConfig;
+    use alloy_rpc_types::BlockTransactions;
+    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+    use base_common_genesis::{RollupConfig, UpgradeConfig};
     use base_common_network::Base;
+    use base_common_rpc_types::{
+        BaseBlockResponse, BaseHeaderResponse, Transaction as RpcTransaction,
+    };
     use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
     use base_proof_primitives::ProofRequest;
     use tokio::sync::RwLock;
@@ -1855,5 +1835,90 @@ mod tests {
         let error = payload_witness_request(request, timeout).await.unwrap_err();
 
         assert!(matches!(error, HostError::PayloadWitnessTimeout(actual) if actual == timeout));
+    }
+
+    fn rpc_block_and_consensus_parts(
+        extra_data: Bytes,
+    ) -> (BaseBlockResponse, Header, Vec<Withdrawal>, Vec<Bytes>) {
+        let deposit = BaseTxEnvelope::Deposit(
+            TxDeposit {
+                source_hash: B256::repeat_byte(1),
+                from: Address::repeat_byte(2),
+                gas_limit: 1_000_000,
+                ..Default::default()
+            }
+            .seal_slow(),
+        );
+        let header = Header {
+            parent_hash: B256::repeat_byte(4),
+            timestamp: TEST_TIMESTAMP,
+            mix_hash: B256::repeat_byte(5),
+            beneficiary: Address::repeat_byte(6),
+            parent_beacon_block_root: Some(B256::repeat_byte(3)),
+            gas_limit: 30_000_000,
+            extra_data,
+            ..Default::default()
+        };
+        let withdrawals = vec![Withdrawal { index: 1, amount: 2, ..Default::default() }];
+        let transactions = vec![deposit.encoded_2718().into()];
+        let rpc_tx = RpcTransaction {
+            inner: alloy_rpc_types::Transaction {
+                inner: Recovered::new_unchecked(deposit, Address::repeat_byte(2)),
+                block_hash: None,
+                block_number: None,
+                transaction_index: None,
+                effective_gas_price: None,
+                block_timestamp: None,
+            },
+            block_timestamp_ms: None,
+            deposit_nonce: None,
+            deposit_receipt_version: None,
+        };
+        let mut block = Block::new(
+            BaseHeaderResponse::new(alloy_rpc_types::Header::new(header.clone())),
+            BlockTransactions::Full(vec![rpc_tx]),
+        );
+        block.withdrawals = Some(Withdrawals::new(withdrawals.clone()));
+        (block, header, withdrawals, transactions)
+    }
+
+    #[test]
+    fn test_payload_attributes_match_the_shared_node_derivation() {
+        // The execution node's witness cache feeds the same header, withdrawals and encoded
+        // transactions of its canonical block into `from_block_parts`; both paths must agree.
+        let cases = [
+            (Bytes::from_static(&[0, 0, 0, 0, 250, 0, 0, 0, 6]), false, None),
+            (
+                Bytes::from_static(&[1, 0, 0, 0, 250, 0, 0, 0, 6, 0, 0, 0, 0, 0, 15, 66, 64]),
+                true,
+                Some(1_000_000),
+            ),
+        ];
+        for (extra_data, is_jovian, min_base_fee) in cases {
+            let mut cfg = test_cfg();
+            cfg.prover.rollup_config.upgrades = UpgradeConfig {
+                holocene_time: Some(0),
+                jovian_time: is_jovian.then_some(0),
+                ..Default::default()
+            };
+            let (block, header, withdrawals, transactions) =
+                rpc_block_and_consensus_parts(extra_data);
+
+            let attributes = payload_attributes_from_l2_block(&cfg, block).unwrap();
+
+            assert_eq!(
+                attributes,
+                BasePayloadAttributes::from_block_parts(
+                    &header,
+                    Some(withdrawals),
+                    transactions,
+                    true,
+                    is_jovian,
+                )
+                .unwrap()
+            );
+            assert_eq!(attributes.eip_1559_params, Some(B64::from([0, 0, 0, 250, 0, 0, 0, 6])));
+            assert_eq!(attributes.min_base_fee, min_base_fee);
+        }
     }
 }

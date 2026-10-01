@@ -49,6 +49,7 @@ base-execution-payload-builder.workspace = true
 revm.workspace = true
 alloy-evm.workspace = true
 alloy-eips.workspace = true
+alloy-rlp.workspace = true
 alloy-serde.workspace = true
 alloy-json-rpc.workspace = true
 base-common-flz.workspace = true
@@ -84,8 +85,10 @@ opentelemetry-http.workspace = true
 # misc
 lru.workspace = true
 eyre.workspace = true
+zstd.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
+serde_json.workspace = true
 derive_more = { workspace = true, features = ["constructor"] }
 
 # metrics
@@ -94,6 +97,7 @@ metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion.workspace = true
+tempfile.workspace = true
 alloy-signer.workspace = true
 reth-network-api.workspace = true
 alloy-signer-local.workspace = true
