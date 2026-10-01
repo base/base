@@ -10,6 +10,9 @@
 mod metrics;
 pub use metrics::Metrics;
 
+mod ingested_at_index;
+pub use ingested_at_index::index_transaction_event_partitions;
+
 mod rpc;
 pub use rpc::{AuditArchiverApiServer, AuditArchiverRpc};
 
