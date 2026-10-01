@@ -42,16 +42,19 @@ impl FlashblocksServiceBuilder {
     pub const fn new(config: BuilderConfig) -> Self {
         Self { config }
     }
+}
 
-    fn spawn_payload_builder_service<Node, Pool>(
+impl<Node, Pool> PayloadServiceBuilder<Node, Pool, BaseEvmConfig> for FlashblocksServiceBuilder
+where
+    Node: NodeBounds,
+    Pool: PoolBounds,
+{
+    async fn spawn_payload_builder_service(
         self,
         ctx: &BuilderContext<Node>,
         pool: Pool,
-    ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>>
-    where
-        Node: NodeBounds,
-        Pool: PoolBounds,
-    {
+        _: BaseEvmConfig,
+    ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
 
         let ws_pub: Arc<WebSocketPublisher> =
@@ -84,21 +87,6 @@ impl FlashblocksServiceBuilder {
 
         info!("Flashblocks payload builder service started");
         Ok(payload_builder_handle)
-    }
-}
-
-impl<Node, Pool> PayloadServiceBuilder<Node, Pool, BaseEvmConfig> for FlashblocksServiceBuilder
-where
-    Node: NodeBounds,
-    Pool: PoolBounds,
-{
-    async fn spawn_payload_builder_service(
-        self,
-        ctx: &BuilderContext<Node>,
-        pool: Pool,
-        _: BaseEvmConfig,
-    ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
-        self.spawn_payload_builder_service(ctx, pool)
     }
 }
 
