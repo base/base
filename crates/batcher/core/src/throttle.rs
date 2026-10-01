@@ -185,16 +185,13 @@ impl ThrottleController {
     /// if the backlog is below the threshold, the linear intensity is zero or the
     /// strategy is [`ThrottleStrategy::Off`].
     pub fn update(&self, da_backlog_bytes: u64) -> Option<ThrottleParams> {
-        match &self.strategy {
-            ThrottleStrategy::Off => None,
+        let intensity: f64 = match &self.strategy {
+            ThrottleStrategy::Off => return None,
             ThrottleStrategy::Step => {
-                if da_backlog_bytes >= self.config.threshold_bytes {
-                    let intensity = self.config.max_intensity;
-                    let (max_block_size, max_tx_size) = self.compute_limits(intensity);
-                    Some(ThrottleParams { intensity, max_block_size, max_tx_size })
-                } else {
-                    None
+                if da_backlog_bytes < self.config.threshold_bytes {
+                    return None;
                 }
+                self.config.max_intensity
             }
             ThrottleStrategy::Linear => {
                 if da_backlog_bytes < self.config.threshold_bytes {
@@ -211,10 +208,11 @@ impl ThrottleController {
                 if intensity == 0.0 {
                     return None;
                 }
-                let (max_block_size, max_tx_size) = self.compute_limits(intensity);
-                Some(ThrottleParams { intensity, max_block_size, max_tx_size })
+                intensity
             }
-        }
+        };
+        let (max_block_size, max_tx_size) = self.compute_limits(intensity);
+        Some(ThrottleParams { intensity, max_block_size, max_tx_size })
     }
 }
 
@@ -365,6 +363,27 @@ mod tests {
         let controller = ThrottleController::new(config, strategy);
 
         let params = controller.update(da_backlog_bytes);
+
+        assert_eq!(
+            params.map(|params| (params.intensity, params.max_block_size, params.max_tx_size)),
+            expected
+        );
+    }
+
+    /// A zero `max_intensity` still throttles at zero intensity for [`ThrottleStrategy::Step`],
+    /// while [`ThrottleStrategy::Linear`] treats a zero intensity as no throttling at all.
+    #[rstest]
+    #[case::step_zero_max_intensity(ThrottleStrategy::Step, Some((0.0, 130_000, 20_000)))]
+    #[case::linear_zero_max_intensity(ThrottleStrategy::Linear, None)]
+    fn update_zero_max_intensity_by_strategy(
+        #[case] strategy: ThrottleStrategy,
+        #[case] expected: Option<(f64, u64, u64)>,
+    ) {
+        let config =
+            ThrottleConfig { threshold_bytes: 1000, max_intensity: 0.0, ..Default::default() };
+        let controller = ThrottleController::new(config, strategy);
+
+        let params = controller.update(1500);
 
         assert_eq!(
             params.map(|params| (params.intensity, params.max_block_size, params.max_tx_size)),
