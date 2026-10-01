@@ -440,14 +440,14 @@ impl ChallengerE2e {
         // anchor is the whole lower bound.
         let anchor_game = anchor_registry.anchor_snapshot().await?.anchor_game;
 
-        // The aggregation program the prover-service builds proofs for, read
-        // from the implementation the factory currently points at. Every hash on
-        // an `AggregateVerifier` is `immutable`, so a verification-key rotation
-        // deploys a new implementation and leaves existing clones pinned to the
-        // old one. Proving against such a clone spends a full SNARK and then
-        // reverts `InvalidProof()` at submission, which is what happened on
-        // 2026-09-29: the games were created before a rotation, and nothing in
-        // the selection had any reason to notice.
+        // The aggregation program the implementation the factory currently points
+        // at verifies against. Every hash on an `AggregateVerifier` is
+        // `immutable`, so a verification-key rotation deploys a new implementation
+        // and leaves existing clones pinned to the old one. Proving against such a
+        // clone spends a full SNARK and then reverts `InvalidProof()` at
+        // submission. This only keeps selection consistent with the factory: it
+        // says nothing about whether the prover-service builds the same program,
+        // which is a separate failure with the same symptom.
         let implementation = factory.game_impls(config.game_type).await?;
         ensure!(
             implementation != Address::ZERO,
@@ -534,10 +534,10 @@ impl ChallengerE2e {
         ensure!(
             stale == 0,
             "found {} candidate game(s) pinned to an aggregation program other than the \
-             implementation's {expected_hash}, and only {} usable; a verification-key rotation \
-             has landed and the proposer has not yet created enough games against the new \
-             implementation. Proving against the older clones would spend a SNARK and then \
-             revert InvalidProof(), so this run stops here instead",
+             implementation's {expected_hash}, and only {} usable; the factory's implementation \
+             has changed and the proposer has not yet created enough games against it. Proving \
+             against the older clones would spend a SNARK and then revert InvalidProof(), so this \
+             run stops here instead",
             stale,
             selected.len()
         );

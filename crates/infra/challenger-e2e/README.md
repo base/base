@@ -35,9 +35,15 @@ prover-service cannot verify against such a clone. The driver therefore reads th
 hash from `gameImpls(gameType)` and skips candidates that do not match — without
 that, a stale clone costs a full SNARK and then reverts `InvalidProof()` at
 submission, roughly 35 minutes in, with nothing in the error naming the rotation.
-That is exactly how the 2026-09-29 runs failed. When a rotation has landed and the
-proposer has not yet created enough games against the new implementation, the run
-stops during selection and says so.
+When the implementation has changed and the proposer has not yet created enough
+games against it, the run stops during selection and says so.
+
+This filter keeps selection consistent with the factory and nothing more. It
+cannot tell whether the prover-service builds the program the implementation
+expects: a prover upgraded ahead of the on-chain hashes fails at the same
+`verifyProposalProof` with the same `InvalidProof()`, and this check passes.
+That is what the 2026-09-29 zeronet failures were — every selected game
+carried the implementation's current hashes.
 
 The anchor bound is not cosmetic: the scanner starts at one past the anchor
 game's factory index, so a game at or before the anchor is one the challenger
