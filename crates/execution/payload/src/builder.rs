@@ -2061,6 +2061,43 @@ mod tests {
     }
 
     #[test]
+    fn native_builder_waits_for_watched_nonce_before_including_transaction() {
+        for include_trigger in [false, true] {
+            let trigger = pool_transaction(0);
+            let gated = pool_transaction_to(0, Address::repeat_byte(0x55), U256::ZERO)
+                .with_validity_predicates(vec![ValidityPredicate::Nonce {
+                    address: trigger.sender(),
+                    op: ValidityOperator::GreaterThan,
+                    value: U256::ZERO,
+                }]);
+            let funded_senders = [gated.sender(), trigger.sender()];
+            let expected =
+                if include_trigger { vec![*trigger.hash(), *gated.hash()] } else { vec![] };
+            let mut transactions = vec![gated];
+            if include_trigger {
+                transactions.push(trigger);
+            }
+
+            let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
+                pool_payload_context(DENIM_TIMESTAMP),
+                TestParkableTransactions::new(transactions),
+                &funded_senders,
+            ) else {
+                panic!("Denim payload must freeze")
+            };
+
+            let included_hashes = payload
+                .block()
+                .body()
+                .transactions
+                .iter()
+                .map(|transaction| *transaction.tx_hash())
+                .collect::<Vec<_>>();
+            assert_eq!(included_hashes, expected);
+        }
+    }
+
+    #[test]
     fn native_builder_bounds_initial_and_rescan_predicate_evaluation() {
         let watched_address = Address::repeat_byte(0x44);
         let gated = pool_transaction_to(0, Address::repeat_byte(0x55), U256::ZERO)

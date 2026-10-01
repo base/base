@@ -156,9 +156,9 @@ pub struct PredicateContext {
 /// A declared condition for a transaction.
 ///
 /// The JSON representation uses a `type` tag and a `params` object, accepting
-/// `balance`, `storage`, `block_number`, or `flashblock_index`. A `storage`
+/// `balance`, `nonce`, `storage`, `block_number`, or `flashblock_index`. A `storage`
 /// predicate compares `storage(address, slot) & mask` with `value`; omitted
-/// masks default to [`U256::MAX`]. A `balance` predicate has the same
+/// masks default to [`U256::MAX`]. A `balance` or `nonce` predicate has the same
 /// comparison fields but does not accept `slot` or `mask`. The `block_number`
 /// and `flashblock_index` predicates compare the block or flashblock currently
 /// being built against `value` and accept only `op` and `value`.
@@ -170,6 +170,15 @@ pub enum ValidityPredicate {
         /// Account whose balance is read.
         address: Address,
         /// Comparison to apply to the account balance.
+        op: ValidityOperator,
+        /// Right-hand comparison value.
+        value: U256,
+    },
+    /// Compares an account nonce with a value.
+    Nonce {
+        /// Account whose nonce is read.
+        address: Address,
+        /// Comparison to apply to the account nonce.
         op: ValidityOperator,
         /// Right-hand comparison value.
         value: U256,
@@ -304,7 +313,7 @@ impl ValidityPredicate {
     /// permits has already been sealed. It must also be no later than
     /// `current_block + max_expiry_blocks`, so the transaction has a bounded
     /// lifetime. Lower bounds (`>`, `>=`) and `!=` do not establish expiry.
-    /// State predicates ([`Self::Balance`], [`Self::Storage`]) are recoverable
+    /// State predicates ([`Self::Balance`], [`Self::Nonce`], [`Self::Storage`]) are recoverable
     /// and flashblock indices reset each block, so neither establishes expiry.
     ///
     /// A bound equal to `current_block` is deliberately accepted: the
@@ -353,10 +362,10 @@ impl ValidityPredicate {
 
     /// Returns whether this predicate holds against the current build.
     ///
-    /// State-reading variants ([`Self::Balance`], [`Self::Storage`]) query
+    /// State-reading variants ([`Self::Balance`], [`Self::Nonce`], [`Self::Storage`]) query
     /// `db`; block-level variants ([`Self::BlockNumber`],
     /// [`Self::FlashblockIndex`]) read `context` instead. An absent account has
-    /// a zero balance. Storage values are masked before comparison. Callers must
+    /// a zero balance and nonce. Storage values are masked before comparison. Callers must
     /// treat database errors as an inability to verify the predicate rather than
     /// as a successful match.
     pub fn matches<DB: Database>(
@@ -368,6 +377,10 @@ impl ValidityPredicate {
             Self::Balance { address, op, value } => {
                 let balance = db.basic(*address)?.map_or(U256::ZERO, |account| account.balance);
                 Ok(op.matches(balance, *value))
+            }
+            Self::Nonce { address, op, value } => {
+                let nonce = db.basic(*address)?.map_or(0, |account| account.nonce);
+                Ok(op.matches(U256::from(nonce), *value))
             }
             Self::Storage { address, slot, mask, op, value } => {
                 let storage = db.storage(*address, *slot)? & *mask;
@@ -391,7 +404,7 @@ impl ValidityPredicate {
     /// bound the build has already passed can therefore never hold again, so the
     /// transaction is permanently ineligible and should be evicted rather than
     /// parked for a later rescan. State predicates ([`Self::Balance`],
-    /// [`Self::Storage`]) are recoverable and never make a batch expired.
+    /// [`Self::Nonce`], [`Self::Storage`]) are recoverable and never make a batch expired.
     ///
     /// The check is conservative — it reports `true` only when expiry is
     /// provable from upper-bound comparisons (`<`, `<=`, `=`), so any shape it
@@ -412,7 +425,7 @@ impl ValidityPredicate {
                 Self::BlockNumber { op, value } => (op, value, &mut block_upper),
                 Self::FlashblockIndex { op, value } => (op, value, &mut flashblock_upper),
                 // State predicates are recoverable and never expire a batch.
-                Self::Balance { .. } | Self::Storage { .. } => continue,
+                Self::Balance { .. } | Self::Nonce { .. } | Self::Storage { .. } => continue,
             };
             // Only `<`, `<=`, `=` cap a value from above; `!=`, `>`, `>=` do not.
             let candidate = match op {
@@ -472,7 +485,7 @@ impl ValidityPredicate {
 
     /// Stable-sorts a predicate batch into canonical evaluation order: timing
     /// predicates ([`Self::BlockNumber`], [`Self::FlashblockIndex`]) before state
-    /// predicates ([`Self::Balance`], [`Self::Storage`]). The batch is a pure
+    /// predicates ([`Self::Balance`], [`Self::Nonce`], [`Self::Storage`]). The batch is a pure
     /// conjunction, so reordering only affects cost: a timing mismatch
     /// short-circuits before any state read and parks under a context key that
     /// per-transaction state changes never wake.
@@ -486,7 +499,7 @@ impl ValidityPredicate {
         match self {
             Self::BlockNumber { .. } => 0,
             Self::FlashblockIndex { .. } => 1,
-            Self::Balance { .. } | Self::Storage { .. } => 2,
+            Self::Balance { .. } | Self::Nonce { .. } | Self::Storage { .. } => 2,
         }
     }
 }
@@ -667,6 +680,84 @@ mod tests {
                 },
             })
         );
+    }
+
+    #[test]
+    fn nonce_predicate_json_round_trip() {
+        let json = json!({
+            "type": "nonce",
+            "params": {
+                "address": "0x1111111111111111111111111111111111111111",
+                "op": ">",
+                "value": "0x2a",
+            },
+        });
+        let predicate: ValidityPredicate = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(
+            predicate,
+            ValidityPredicate::Nonce {
+                address: Address::repeat_byte(0x11),
+                op: ValidityOperator::GreaterThan,
+                value: U256::from(42),
+            }
+        );
+        assert_eq!(serde_json::to_value(&predicate).unwrap(), json);
+
+        for field in ["slot", "mask"] {
+            let mut invalid = json.clone();
+            invalid["params"][field] = json!("0x0");
+            assert!(serde_json::from_value::<ValidityPredicate>(invalid).is_err());
+        }
+        let mut invalid = json;
+        invalid["params"].as_object_mut().unwrap().remove("address");
+        assert!(serde_json::from_value::<ValidityPredicate>(invalid).is_err());
+    }
+
+    #[test]
+    fn nonce_predicates_compare_current_account_nonce() {
+        let address = Address::repeat_byte(0x11);
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(address, AccountInfo { nonce: 10, ..Default::default() });
+
+        for (op, expected) in [
+            (ValidityOperator::LessThan, [false, false, true]),
+            (ValidityOperator::LessThanOrEqual, [false, true, true]),
+            (ValidityOperator::Equal, [false, true, false]),
+            (ValidityOperator::NotEqual, [true, false, true]),
+            (ValidityOperator::GreaterThan, [true, false, false]),
+            (ValidityOperator::GreaterThanOrEqual, [true, true, false]),
+        ] {
+            for (value, expected) in [9, 10, 11].into_iter().zip(expected) {
+                let predicate = ValidityPredicate::Nonce { address, op, value: U256::from(value) };
+                assert_eq!(predicate.matches(&mut db, &test_context()).unwrap(), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn absent_accounts_have_zero_nonce() {
+        let predicate = ValidityPredicate::Nonce {
+            address: Address::repeat_byte(0x11),
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        assert!(predicate.matches(&mut InMemoryDB::default(), &test_context()).unwrap());
+    }
+
+    #[test]
+    fn nonce_predicate_preserves_full_width_comparison_values() {
+        let address = Address::repeat_byte(0x11);
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(address, AccountInfo { nonce: u64::MAX, ..Default::default() });
+        for (op, value, expected) in [
+            (ValidityOperator::Equal, U256::from(u64::MAX), true),
+            (ValidityOperator::Equal, U256::from(u64::MAX) + U256::ONE, false),
+            (ValidityOperator::LessThan, U256::from(u64::MAX) + U256::ONE, true),
+            (ValidityOperator::GreaterThanOrEqual, U256::MAX, false),
+        ] {
+            let predicate = ValidityPredicate::Nonce { address, op, value };
+            assert_eq!(predicate.matches(&mut db, &test_context()).unwrap(), expected);
+        }
     }
 
     #[test]
@@ -896,9 +987,15 @@ mod tests {
             op: ValidityOperator::Equal,
             value: U256::ZERO,
         };
+        let nonce = ValidityPredicate::Nonce {
+            address: Address::ZERO,
+            op: ValidityOperator::GreaterThan,
+            value: U256::ZERO,
+        };
         // Scrambled submission order.
         let mut predicates = vec![
             balance(1),
+            nonce.clone(),
             storage.clone(),
             flashblock_index.clone(),
             balance(2),
@@ -909,7 +1006,10 @@ mod tests {
 
         // Timing predicates (block number, then flashblock index) lead; state
         // predicates follow in stable submission order.
-        assert_eq!(predicates, [block_number, flashblock_index, balance(1), storage, balance(2)]);
+        assert_eq!(
+            predicates,
+            [block_number, flashblock_index, balance(1), nonce, storage, balance(2)]
+        );
     }
 
     #[test]
@@ -1518,6 +1618,11 @@ mod tests {
     #[test]
     fn state_only_and_empty_batches_never_expire() {
         let state_only = [
+            ValidityPredicate::Nonce {
+                address: Address::repeat_byte(0x11),
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::ZERO,
+            },
             ValidityPredicate::Balance {
                 address: Address::repeat_byte(0x11),
                 op: ValidityOperator::Equal,

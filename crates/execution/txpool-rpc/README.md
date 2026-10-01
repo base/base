@@ -19,6 +19,38 @@ block construction; an unsatisfied transaction is deferred and an expired one is
 Regular RPC nodes with a configured sequencer URL proxy this method, including predicates and
 the upstream error response, rather than admitting the transaction into their local pool.
 
+## Nonce predicates
+
+The `nonce` predicate compares an account's nonce in the builder's current execution state.
+It accepts `address`, `op`, and `value`, with the same operators as `balance`:
+`<`, `<=`, `=`, `!=`, `>`, and `>=`. Values use hexadecimal quantity encoding.
+An account that does not exist has nonce zero.
+
+For example, add this predicate to the request's `validity` array to wait until the watched
+account's nonce exceeds `42`:
+
+```json
+{
+  "type": "nonce",
+  "params": {
+    "address": "0x1111111111111111111111111111111111111111",
+    "op": ">",
+    "value": "0x2a"
+  }
+}
+```
+
+Include the required `block_number` upper-bound predicate (`<`, `<=`, or `=`) in the same
+array, within the configured expiry window. All predicates must hold before execution.
+If the nonce condition is false, the transaction waits; a change to the watched nonce can
+make it eligible later in the same block build. The comparison uses executed state, not
+pending transactions in the pool.
+
+A nonce condition establishes that the account nonce has advanced, rather than proving a
+particular transaction hash succeeded: a replacement or reverted transaction also consumes
+its sender's nonce, and account nonces can change through contract creation or EIP-7702
+authorizations. Inclusion in the current build does not imply finality.
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:

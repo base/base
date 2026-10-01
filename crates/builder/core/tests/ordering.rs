@@ -3,7 +3,7 @@
 use alloy_consensus::Transaction;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::TransactionResponse;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, TxHash, U256};
 use alloy_provider::Provider;
 use base_builder_core::{
     BuilderApiExtension, BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
@@ -12,6 +12,10 @@ use base_builder_core::{
 };
 use base_execution_txpool::{
     TransactionValidity, ValidatedTransaction, ValidityOperator, ValidityPredicate,
+};
+use base_txpool_rpc::{
+    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension,
+    SendRawTransactionValidityOptions,
 };
 use futures::{StreamExt, future::join_all, stream};
 
@@ -174,6 +178,86 @@ async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre:
         "predicate-delayed order must intentionally violate descending priority fee order"
     );
 
+    Ok(())
+}
+
+/// A nonce-gated transaction stays pending until the watched transaction executes, then regains
+/// priority over lower-fee work in the same block.
+#[tokio::test]
+async fn nonce_predicate_waits_for_watched_transaction() -> eyre::Result<()> {
+    let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
+        .install_ext::<BuilderApiExtension>(
+            BuilderApiExtensionConfig::new(true, DEFAULT_MAX_VALIDITY_PREDICATES)
+                .with_noop_metering(),
+        )
+        .install_ext::<SendRawTransactionValidityExtension>(SendRawTransactionValidityConfig {
+            experimental_override: true,
+            ..Default::default()
+        })
+        .build()
+        .await?;
+    let driver = instance.driver().await?;
+    let accounts = driver.fund_accounts(3, ONE_ETH).await?;
+
+    let watched_nonce = driver.provider().get_transaction_count(accounts[1].address()).await?;
+    let dependent = driver
+        .create_transaction()
+        .with_signer(&accounts[0])
+        .with_to(Address::random())
+        .with_max_priority_fee_per_gas(100)
+        .build()
+        .await;
+    let dependent_hash = dependent.tx_hash();
+    let submitted_hash = driver
+        .provider()
+        .raw_request::<_, TxHash>(
+            "base_sendRawTransactionValidity".into(),
+            (
+                Bytes::from(dependent.encoded_2718()),
+                SendRawTransactionValidityOptions {
+                    validity: vec![
+                        ValidityPredicate::Nonce {
+                            address: accounts[1].address(),
+                            op: ValidityOperator::GreaterThan,
+                            value: U256::from(watched_nonce),
+                        },
+                        ValidityPredicate::BlockNumber {
+                            op: ValidityOperator::LessThanOrEqual,
+                            value: U256::from(driver.latest().await?.header.number + 3),
+                        },
+                    ],
+                },
+            ),
+        )
+        .await?;
+    assert_eq!(submitted_hash, dependent_hash);
+
+    let block = driver.build_new_block().await?;
+    assert!(!block.transactions.hashes().any(|hash| hash == dependent_hash));
+
+    let trigger_hash = *driver
+        .create_transaction()
+        .with_signer(&accounts[1])
+        .with_nonce(watched_nonce)
+        .with_to(Address::random())
+        .with_max_priority_fee_per_gas(50)
+        .send()
+        .await?
+        .tx_hash();
+    let low_hash = *driver
+        .create_transaction()
+        .with_signer(&accounts[2])
+        .with_to(Address::random())
+        .with_max_priority_fee_per_gas(1)
+        .send()
+        .await?
+        .tx_hash();
+
+    let block = driver.build_new_block().await?;
+    let tracked = [trigger_hash, dependent_hash, low_hash];
+    let actual =
+        block.transactions.hashes().filter(|hash| tracked.contains(hash)).collect::<Vec<_>>();
+    assert_eq!(actual, tracked);
     Ok(())
 }
 
