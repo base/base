@@ -152,6 +152,17 @@ fn is_authorized(storage: &mut HashMapStorageProvider, policy_id: u64, account: 
     IPolicyRegistry::isAuthorizedCall::abi_decode_returns(&bytes).unwrap()
 }
 
+/// Reads `policyExists(policy_id)`.
+fn policy_exists(storage: &mut HashMapStorageProvider, policy_id: u64) -> bool {
+    let (rev, bytes) = call_policy(
+        storage,
+        OUTSIDER,
+        IPolicyRegistry::policyExistsCall { policyId: policy_id }.abi_encode(),
+    );
+    assert!(!rev);
+    IPolicyRegistry::policyExistsCall::abi_decode_returns(&bytes).unwrap()
+}
+
 /// Deterministic keccak hash of the per-case snapshot, scoped to the registry address: its emitted
 /// events (topics + data) followed by its sorted `(slot, value)` storage entries. Scoping excludes
 /// activation-registry scaffolding, so the pin captures only the registry's own effect.
@@ -219,6 +230,56 @@ fn golden_is_authorized_builtins_and_malformed() {
     // Malformed id (type byte > INTERSECT) is unauthorized, never reverts. Type byte 2 is now
     // UNION, so use 4 to stay above the composite range.
     assert!(!is_authorized(&mut s, 4u64 << 56, ALICE));
+}
+
+/// Bit position of the policy type byte within a policy ID.
+const POLICY_TYPE_SHIFT: u32 = 56;
+/// A counter no test creates a policy under, so every ID built from it is missing.
+const UNCREATED_COUNTER: u64 = 999;
+/// The lowest type byte above `INTERSECT`, i.e. the first malformed policy type.
+const FIRST_MALFORMED_TYPE_BYTE: u8 = PolicyType::INTERSECT as u8 + 1;
+
+/// Builds an ID of the given type byte that was never created. Type bytes with the top bit set
+/// are inverted IDs whose base is also uncreated.
+const fn uncreated_policy_id(type_byte: u8) -> u64 {
+    ((type_byte as u64) << POLICY_TYPE_SHIFT) | UNCREATED_COUNTER
+}
+
+#[test]
+fn golden_uncreated_policy_ids_do_not_exist_for_any_type_byte() {
+    let mut s = fresh();
+    for type_byte in 0..=u8::MAX {
+        let policy_id = uncreated_policy_id(type_byte);
+        assert!(!policy_exists(&mut s, policy_id), "type byte {type_byte:#04x} exists");
+    }
+}
+
+/// Pins today's behavior, including the fail-open `true` for an uncreated BLOCKLIST and
+/// INTERSECT: an uncreated simple or composite policy evaluates as an empty set (BOP-827). Callers
+/// must therefore check `policyExists` when they store a policy ID.
+#[test]
+fn golden_is_authorized_uncreated_simple_and_composite_ids_evaluate_as_empty_sets() {
+    let mut s = fresh();
+    let expected_authorization = [
+        (PolicyType::BLOCKLIST, true),
+        (PolicyType::ALLOWLIST, false),
+        (PolicyType::UNION, false),
+        (PolicyType::INTERSECT, true),
+    ];
+    for (policy_type, expected_authorized) in expected_authorization {
+        let policy_id = uncreated_policy_id(policy_type as u8);
+        let authorized = is_authorized(&mut s, policy_id, ALICE);
+        assert_eq!(authorized, expected_authorized, "uncreated {policy_type:?}");
+    }
+}
+
+#[test]
+fn golden_is_authorized_denies_malformed_and_inverted_uncreated_ids() {
+    let mut s = fresh();
+    for type_byte in FIRST_MALFORMED_TYPE_BYTE..=u8::MAX {
+        let policy_id = uncreated_policy_id(type_byte);
+        assert!(!is_authorized(&mut s, policy_id, ALICE), "type byte {type_byte:#04x} authorized");
+    }
 }
 
 #[test]
@@ -1218,6 +1279,9 @@ fn v3_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
         }
         C::isAuthorized(_) => covered(&[
             golden_is_authorized_builtins_and_malformed,
+            golden_uncreated_policy_ids_do_not_exist_for_any_type_byte,
+            golden_is_authorized_uncreated_simple_and_composite_ids_evaluate_as_empty_sets,
+            golden_is_authorized_denies_malformed_and_inverted_uncreated_ids,
             golden_is_authorized_empty_policies,
         ]),
         C::policyExists(_) => {
