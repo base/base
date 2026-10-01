@@ -42,13 +42,6 @@ pub enum ValidityPredicateError {
         max: usize,
     },
     /// The submission carried a [`ValidityPredicate::Balance`] predicate.
-    ///
-    /// Balance predicates are not accepted at public ingress. Predicates are
-    /// not signed, so a relayer can predicate on a user's balance before and
-    /// after that user's gas payment and place transactions directly around
-    /// theirs. The variant remains evaluable for internally generated
-    /// predicates. `index` is the position of the offending predicate within
-    /// the batch.
     #[error("balance predicate at index {index} is not supported")]
     BalanceUnsupported {
         /// Position of the offending predicate within the batch.
@@ -268,10 +261,6 @@ impl ValidityPredicate {
     /// Rejects an empty batch, a batch larger than `max`, any
     /// [`Self::Balance`] predicate, and any predicate whose parameters are
     /// internally inconsistent.
-    ///
-    /// The balance check lives here rather than in [`Self::validate_params`]
-    /// because the builder ingress re-runs `validate_params` on predicates it
-    /// generates itself, including balance predicates.
     pub fn validate_batch(predicates: &[Self], max: usize) -> Result<(), ValidityPredicateError> {
         if predicates.is_empty() {
             return Err(ValidityPredicateError::Empty);
@@ -1394,8 +1383,6 @@ mod tests {
         }];
         let extension = TransactionValidity { validity: expected.clone() };
 
-        // Builder shadow-validity injection attaches balance predicates, so the
-        // builder ingress must keep accepting them.
         let transaction = extension.apply(transaction).unwrap();
 
         assert_eq!(transaction.validity_predicates(), expected);
