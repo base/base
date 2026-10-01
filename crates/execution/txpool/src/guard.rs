@@ -978,6 +978,56 @@ mod tests {
         assert!(guard.is_empty());
     }
 
+    /// An allowlisted payer's forced replacement that overshoots its book falls
+    /// back to the per-transaction threshold path, still charged to its count,
+    /// and stays evictable by a balance drop.
+    #[test]
+    fn insert_forced_allowlisted_replacement_overshooting_balance_falls_back_to_count_path() {
+        let payer = addr(9);
+        let limits = GuardLimits { allowlisted_payment_limit: 2, ..GuardLimits::default() };
+        let mut guard = MempoolGuard::new(limits).with_allowlisted_payers([payer]);
+        let make = |h: u8, cost: u64| Admission {
+            payer,
+            payer_locked: true,
+            payer_balance: U256::from(100u64),
+            max_cost: U256::from(cost),
+            watch_set: WatchSet::new().watch(InvalidationKey::Balance(payer)),
+            ..self_pay(h, addr(h + 1), cost)
+        };
+
+        guard.try_admit(make(1, 60)).unwrap();
+        assert!(guard.release(&hash(1)));
+        guard.insert_forced(make(2, 150));
+        assert!(guard.contains(&hash(2)));
+        assert!(guard.payer_books.is_empty(), "the overshooting reservation never entered a book");
+
+        // Still counted: one more fits under the cap of two, a third does not.
+        guard.try_admit(make(3, 10)).unwrap();
+        assert_eq!(guard.try_admit(make(4, 10)), Err(LimitRejection::PaymentLimit));
+
+        // The fallback record is evictable by the per-transaction threshold.
+        let dropped = guard.on_balance_changed(payer, U256::from(100u64));
+        assert_eq!(dropped, vec![hash(2)]);
+        guard.try_admit(make(5, 10)).unwrap();
+    }
+
+    /// A signer exempt from the signature limit (locked, or before Zenith) that
+    /// pays for itself is still bounded by its own payment limit.
+    #[test]
+    fn exempt_self_paying_sender_is_bounded_by_payment_limit() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let sender = addr(1);
+        let exempt = |h: u8| Admission {
+            sender_locked: true,
+            payer_locked: true,
+            ..self_pay(h, sender, 10)
+        };
+        for i in 0..DEFAULT_PAYMENT_LIMIT as u8 {
+            guard.try_admit(exempt(i)).unwrap();
+        }
+        assert_eq!(guard.try_admit(exempt(200)), Err(LimitRejection::PaymentLimit));
+    }
+
     #[test]
     fn balance_drop_evicts_lowest_priority_for_trusted_payer() {
         let mut guard = MempoolGuard::new(GuardLimits::default());
