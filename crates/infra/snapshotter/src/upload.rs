@@ -1056,7 +1056,7 @@ impl SnapshotUploader {
         }
         .await;
 
-        progress_logger.stop();
+        drop(progress_logger);
         if let Err(error) = upload_result {
             error!(
                 error = %error,
