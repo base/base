@@ -257,6 +257,7 @@ impl BaseNode {
             max_inflight_delegated_slots,
             mempool_sender_limit,
             mempool_payer_limit,
+            mempool_allowlisted_payer_limit,
             ..
         } = self.args;
         let ordering = match txpool_ordering {
@@ -273,10 +274,12 @@ impl BaseNode {
                     .with_guard_limits(GuardLimits {
                         signature_limit: mempool_sender_limit,
                         payment_limit: mempool_payer_limit,
+                        allowlisted_payment_limit: mempool_allowlisted_payer_limit,
                     })
                     .with_additional_trusted_delegation_targets(
                         self.args.mempool_trusted_delegation_targets.iter().copied(),
-                    ),
+                    )
+                    .with_allowlisted_payers(self.args.mempool_allowlisted_payers.iter().copied()),
             )
             .payload(BasePayloadServiceBuilder::new(
                 BasePayloadBuilder::new()
@@ -882,6 +885,8 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
     pub guard_limits: GuardLimits,
     /// Additional trusted EIP-7702 delegation targets for locked payers.
     pub additional_trusted_delegation_targets: AddressSet,
+    /// Operator-allowlisted EIP-8130 payers.
+    pub allowlisted_payers: AddressSet,
     /// Marker for the pooled transaction type.
     _pd: core::marker::PhantomData<T>,
 }
@@ -894,6 +899,7 @@ impl<T> Default for BasePoolBuilder<T> {
             max_inflight_delegated_slots: 4,
             guard_limits: GuardLimits::default(),
             additional_trusted_delegation_targets: AddressSet::default(),
+            allowlisted_payers: AddressSet::default(),
             _pd: Default::default(),
         }
     }
@@ -909,6 +915,7 @@ impl<T> Clone for BasePoolBuilder<T> {
             additional_trusted_delegation_targets: self
                 .additional_trusted_delegation_targets
                 .clone(),
+            allowlisted_payers: self.allowlisted_payers.clone(),
             _pd: core::marker::PhantomData,
         }
     }
@@ -950,6 +957,14 @@ impl<T> BasePoolBuilder<T> {
         self.additional_trusted_delegation_targets = targets.into_iter().collect();
         self
     }
+
+    /// Sets the operator-allowlisted EIP-8130 payers, limited to
+    /// [`GuardLimits::allowlisted_payment_limit`] inflight payments and bounded
+    /// by their balance.
+    pub fn with_allowlisted_payers(mut self, payers: impl IntoIterator<Item = Address>) -> Self {
+        self.allowlisted_payers = payers.into_iter().collect();
+        self
+    }
 }
 
 impl<Node, T, Evm> PoolBuilder<Node, Evm> for BasePoolBuilder<T>
@@ -971,6 +986,7 @@ where
             max_inflight_delegated_slots,
             guard_limits,
             additional_trusted_delegation_targets,
+            allowlisted_payers,
             ..
         } = self;
 
@@ -1008,8 +1024,10 @@ where
             blob_store,
             final_pool_config.clone(),
         );
-        let transaction_pool =
-            BaseTransactionPool::new(transaction_pool, ordering).with_guard_limits(guard_limits);
+        let allowlisted_payer_count = allowlisted_payers.len();
+        let transaction_pool = BaseTransactionPool::new(transaction_pool, ordering)
+            .with_guard_limits(guard_limits)
+            .with_allowlisted_payers(allowlisted_payers);
         spawn_maintenance_tasks(ctx, transaction_pool.clone(), &final_pool_config)?;
         let state_diff_events = BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
         ctx.task_executor().spawn_critical_task(
@@ -1022,6 +1040,8 @@ where
             max_inflight_delegated_slots = max_inflight_delegated_slots,
             sender_limit = guard_limits.signature_limit,
             payer_limit = guard_limits.payment_limit,
+            allowlisted_payer_limit = guard_limits.allowlisted_payment_limit,
+            allowlisted_payers = allowlisted_payer_count,
             "Transaction pool initialized"
         );
         debug!(target: "reth::cli", "Spawned txpool maintenance tasks");
