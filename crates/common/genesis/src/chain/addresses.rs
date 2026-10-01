@@ -52,26 +52,18 @@ pub struct AddressList {
 impl AddressList {
     /// Sets zeroed addresses to [`Option::None`].
     pub fn zero_proof_addresses(&mut self) {
-        if self.anchor_state_registry_proxy == Some(Address::ZERO) {
-            self.anchor_state_registry_proxy = None;
-        }
-        if self.delayed_weth_proxy == Some(Address::ZERO) {
-            self.delayed_weth_proxy = None;
-        }
-        if self.dispute_game_factory_proxy == Some(Address::ZERO) {
-            self.dispute_game_factory_proxy = None;
-        }
-        if self.fault_dispute_game == Some(Address::ZERO) {
-            self.fault_dispute_game = None;
-        }
-        if self.mips == Some(Address::ZERO) {
-            self.mips = None;
-        }
-        if self.permissioned_dispute_game == Some(Address::ZERO) {
-            self.permissioned_dispute_game = None;
-        }
-        if self.preimage_oracle == Some(Address::ZERO) {
-            self.preimage_oracle = None;
+        for address in [
+            &mut self.anchor_state_registry_proxy,
+            &mut self.delayed_weth_proxy,
+            &mut self.dispute_game_factory_proxy,
+            &mut self.fault_dispute_game,
+            &mut self.mips,
+            &mut self.permissioned_dispute_game,
+            &mut self.preimage_oracle,
+        ] {
+            if *address == Some(Address::ZERO) {
+                *address = None;
+            }
         }
     }
 }
