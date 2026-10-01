@@ -535,6 +535,14 @@ mod tests {
         ]
     }
 
+    /// Every predicate variant accepted at public ingress.
+    fn ingress_predicate_variants() -> Vec<ValidityPredicate> {
+        all_predicate_variants()
+            .into_iter()
+            .filter(|predicate| !matches!(predicate, ValidityPredicate::Balance { .. }))
+            .collect()
+    }
+
     #[test]
     fn max_validity_expiry_blocks_uses_the_active_full_block_cadence() {
         let legacy = SendRawTransactionValidityApiImpl::new(
@@ -721,7 +729,7 @@ mod tests {
         let signer = PrivateKeySigner::random();
         let raw = signed_eip1559(&signer, 0, 1);
         let rpc = validity_rpc(everest_provider());
-        let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
+        let options = SendRawTransactionValidityOptions { validity: ingress_predicate_variants() };
 
         let tx_hash = rpc.send_raw_transaction_validity(raw, options).await.unwrap_or_else(|_| {
             capture.events().first().and_then(|event| event.tx_hash).expect(
@@ -741,7 +749,7 @@ mod tests {
         assert_eq!(events[0].data["rpc_method"], "base_sendRawTransactionValidity");
         assert_eq!(
             events[0].data["validity_predicates"],
-            serde_json::to_value(all_predicate_variants()).unwrap()
+            serde_json::to_value(ingress_predicate_variants()).unwrap()
         );
     }
 
@@ -822,7 +830,7 @@ mod tests {
     async fn proxies_validity_with_predicates_without_local_submission() {
         let sequencer = MockServer::start();
         let raw = Bytes::from_static(&[0x02]);
-        let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
+        let options = SendRawTransactionValidityOptions { validity: ingress_predicate_variants() };
         let expected_hash = TxHash::repeat_byte(0x42);
         let mock = sequencer.mock(|when, then| {
             when.method(POST).path("/").header("x-demo", "forwarded").json_body(json!({
@@ -893,7 +901,7 @@ mod tests {
             pre_everest_provider(),
             test_transaction_sender(),
         );
-        let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
+        let options = SendRawTransactionValidityOptions { validity: ingress_predicate_variants() };
 
         let error = rpc
             .send_raw_transaction_validity(raw, options)
@@ -913,7 +921,7 @@ mod tests {
         let signer = PrivateKeySigner::random();
         let raw = signed_eip1559(&signer, 0, 1);
         let rpc = validity_rpc(pre_everest_provider());
-        let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
+        let options = SendRawTransactionValidityOptions { validity: ingress_predicate_variants() };
 
         let error = rpc
             .send_raw_transaction_validity(raw, options)
@@ -1049,6 +1057,26 @@ mod tests {
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
         assert!(error.message().contains("outside its mask"));
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_validity_rejects_balance_predicate() {
+        let rpc =
+            SendRawTransactionValidityApiImpl::new(everest_provider(), test_transaction_sender());
+        let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
+        options.validity.push(ValidityPredicate::Balance {
+            address: Address::repeat_byte(0x11),
+            op: base_execution_txpool::ValidityOperator::GreaterThan,
+            value: U256::ZERO,
+        });
+
+        let error = rpc
+            .send_raw_transaction_validity(raw, options)
+            .await
+            .expect_err("balance predicates should be rejected at ingress");
+
+        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+        assert_eq!(error.message(), "balance predicate at index 2 is not supported");
     }
 
     #[tokio::test]
