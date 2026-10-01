@@ -487,7 +487,7 @@ mod tests {
             (vec![passed(), failed()], ExitCode::Assertion),
             (
                 vec![scenario(Status::Passed, &[Status::Failed, Status::Blocked])],
-                ExitCode::Assertion,
+                ExitCode::Infrastructure,
             ),
             (vec![failed(), errored()], ExitCode::Infrastructure),
             (vec![scenario(Status::Passed, &[Status::Error])], ExitCode::Infrastructure),
