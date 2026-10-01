@@ -108,6 +108,8 @@ base_metrics::define_metrics! {
     provider_open_errors_total: counter,
     #[describe("Failed prewarm worker thread spawns")]
     worker_spawn_errors_total: counter,
+    #[describe("Prewarm worker jobs that panicked; the worker survives")]
+    worker_panics_total: counter,
     #[describe("Prewarm jobs skipped entirely because no worker was available")]
     jobs_skipped_busy_total: counter,
 }
