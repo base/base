@@ -3014,9 +3014,12 @@ name = "base-batcher-admin"
 version = "0.0.0"
 dependencies = [
  "base-batcher-core",
+ "base-runtime",
  "derive_more 2.1.1",
  "eyre",
  "jsonrpsee",
+ "serde_json",
+ "tokio",
  "tracing",
 ]
 
