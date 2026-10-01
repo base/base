@@ -219,7 +219,7 @@ impl Provisioner {
     /// Writes a private Compose environment with explicit scenario overrides.
     pub fn write_environment(&self, config: &ScenarioConfig) -> Result<()> {
         let root = self.output.join("private/devnet").canonicalize()?;
-        if root.to_string_lossy().contains(['\n', '\r', '$', '#', '"', '\'']) {
+        if root.to_string_lossy().contains(['\n', '\r', '$', '#', '"', '\'', ',']) {
             bail!("unsupported characters in output directory");
         }
         let mut env = fs::read_to_string(self.repo.join("etc/docker/devnet-env"))?;
@@ -296,11 +296,11 @@ impl Provisioner {
         {
             bail!("L1 genesis chain ID differs from scenario");
         }
-        for (name, activation) in &config.devnet.l2.forks {
+        for name in config.devnet.l2.forks.keys() {
             let actual = genesis.pointer(&format!("/config/base/{name}")).and_then(Value::as_u64);
             let expected =
                 forks.iter().find(|fork| &fork.name == name).map(|fork| fork.activation_timestamp);
-            if actual != expected && !(activation.block() == Some(0) && actual == Some(0)) {
+            if actual != expected {
                 bail!("L2 genesis {name} schedule differs from verified rollup");
             }
         }

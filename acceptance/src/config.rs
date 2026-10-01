@@ -195,9 +195,6 @@ impl ScenarioConfig {
             let block = self.devnet.l2.forks.get(name).and_then(ForkActivation::block);
             let expected = block
                 .map(|block| {
-                    if block == 0 {
-                        return Ok(0);
-                    }
                     if let Some(denim) = denim_block.filter(|denim| block > *denim) {
                         genesis
                             .checked_add(
@@ -650,7 +647,10 @@ impl AcceptanceCheck {
                 "freshness duration",
                 Duration::from_secs(1),
                 timeout.0,
-            )?
+            )?;
+            if duration.0 >= timeout.0 {
+                bail!("freshness duration must be shorter than check timeout");
+            }
         }
         match self {
             Self::HeadProgress { minimum_blocks: 0, .. }
@@ -789,5 +789,37 @@ timeout = "5s"
         .unwrap();
         let forks = config.verified_forks(temp.path()).unwrap();
         assert_eq!(forks.last().unwrap().activation_timestamp, 151);
+    }
+
+    #[test]
+    fn genesis_activation_uses_genesis_timestamp() {
+        let mut config: ScenarioConfig = toml::from_str(MINIMAL_SCENARIO).unwrap();
+        config.devnet.l2.forks.insert("azul".into(), ForkActivation::AtBlock { at_block: 0 });
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        fs::write(
+            temp.path(),
+            r#"{
+                "l1_chain_id": 1337,
+                "l2_chain_id": 84538453,
+                "genesis": { "l2_time": 100 },
+                "base": { "azul": 100, "beryl": 142, "cobalt": 144, "denim": 150 }
+            }"#,
+        )
+        .unwrap();
+        let forks = config.verified_forks(temp.path()).unwrap();
+        assert_eq!(forks[0].name, "azul");
+        assert_eq!(forks[0].activation_timestamp, 100);
+    }
+
+    #[test]
+    fn freshness_duration_must_be_shorter_than_timeout() {
+        let config: ScenarioConfig = toml::from_str(&format!(
+            "{MINIMAL_SCENARIO}\n[[checks]]\nid = \"fresh\"\nkind = \"head_fresh\"\nendpoint = \"builder\"\nmaximum_age = \"10s\"\nduration = \"5s\"\ntimeout = \"5s\"\n"
+        ))
+        .unwrap();
+        assert_eq!(
+            config.validate().unwrap_err().to_string(),
+            "freshness duration must be shorter than check timeout"
+        );
     }
 }

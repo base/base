@@ -95,7 +95,7 @@ are `l1`, `builder`, `validator`, `rpc`, and `shadow`. Supported check kinds are
 - `head_progress` and `safe_head_progress`: `endpoint`, `minimum_blocks`, and `timeout`.
 - `heads_converge`: at least two `endpoints`, optional `head` (`latest`, `safe`, or
   `finalized`), `max_lag_blocks`, and `timeout`.
-- `head_fresh`: `endpoint`, `maximum_age`, `duration`, and `timeout`.
+- `head_fresh`: `endpoint`, `maximum_age`, `duration`, and `timeout`; `duration` must be shorter than `timeout`.
 
 Every check may have one L2 `start` condition with exactly one of `before_fork` or
 `after_fork`. Checks run in file order. See `scenarios/` for complete examples.
