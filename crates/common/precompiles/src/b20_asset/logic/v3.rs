@@ -1614,6 +1614,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn transfer_policy_sender_checked_before_receiver() {
+        let mut tok = token();
+        fund(&mut tok, ALICE, U256::from(100));
+
+        const EXECUTOR_POLICY: u64 = (1u64 << 56) | 3;
+        const SENDER_POLICY: u64 = (1u64 << 56) | 4;
+        const RECEIVER_POLICY: u64 = (1u64 << 56) | 5;
+
+        tok.accounting_mut()
+            .set_policy_id(B20PolicyType::TransferExecutor.id(), EXECUTOR_POLICY)
+            .unwrap();
+        tok.accounting_mut()
+            .set_policy_id(B20PolicyType::TransferSender.id(), SENDER_POLICY)
+            .unwrap();
+        tok.accounting_mut()
+            .set_policy_id(B20PolicyType::TransferReceiver.id(), RECEIVER_POLICY)
+            .unwrap();
+        tok.policy_storage_mut().allow(EXECUTOR_POLICY, ALICE);
+
+        let calls_before = tok.policy_storage().read_member_calls.get();
+        let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10), false).unwrap_err();
+
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: B20PolicyType::TransferSender.id(),
+                policyId: SENDER_POLICY,
+            })
+        );
+        assert_eq!(
+            tok.policy_storage().read_member_calls.get() - calls_before,
+            2,
+            "executor(1) + sender(1); receiver must not be reached"
+        );
+    }
+
     // --- transfer_from ---
 
     #[test]
