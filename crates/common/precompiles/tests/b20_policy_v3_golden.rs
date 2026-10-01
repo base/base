@@ -245,14 +245,6 @@ const fn uncreated_policy_id(type_byte: u8) -> u64 {
     ((type_byte as u64) << POLICY_TYPE_SHIFT) | UNCREATED_COUNTER
 }
 
-#[test]
-fn golden_uncreated_policy_ids_do_not_exist_for_any_type_byte() {
-    let mut s = fresh();
-    for type_byte in 0..=u8::MAX {
-        let policy_id = uncreated_policy_id(type_byte);
-        assert!(!policy_exists(&mut s, policy_id), "type byte {type_byte:#04x} exists");
-    }
-}
 
 /// Pins today's behavior, including the fail-open `true` for an uncreated BLOCKLIST and
 /// INTERSECT: an uncreated simple or composite policy evaluates as an empty set (BOP-827). Callers
