@@ -126,7 +126,7 @@ async fn holocene_activation_flushes_buffered_pre_holocene_channel_data() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    batcher.stage_n_frames(&mut h.l1, 1);
+    batcher.stage_n_submissions(&mut h.l1, 1);
     h.l1.mine_block();
     batcher.observe_l1_block(h.l1.tip()).await;
     chain.push(h.l1.tip().clone());
@@ -143,7 +143,7 @@ async fn holocene_activation_flushes_buffered_pre_holocene_channel_data() {
 
     let remaining = batcher.pending_count();
     assert!(remaining > 0, "test requires post-Holocene remainder frames");
-    batcher.stage_n_frames(&mut h.l1, remaining);
+    batcher.stage_n_submissions(&mut h.l1, remaining);
     h.l1.mine_block();
     batcher.observe_l1_block(h.l1.tip()).await;
     chain.push(h.l1.tip().clone());
@@ -300,9 +300,9 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
     // Submit frame 0 and frame 2 in the same L1 block — skipping frame 1.
     // Under Holocene, FrameQueue::prune removes frame 2 because
     // frame 0.number + 1 != frame 2.number (0 + 1 = 1 ≠ 2).
-    batcher.stage_n_frames(&mut h.l1, 1); // frame 0
-    batcher.drop_n_frames(1); // drop frame 1
-    batcher.stage_n_frames(&mut h.l1, 1); // frame 2 (non-sequential)
+    batcher.stage_n_submissions(&mut h.l1, 1); // frame 0
+    batcher.drop_n_submissions(1); // drop frame 1
+    batcher.stage_n_submissions(&mut h.l1, 1); // frame 2 (non-sequential)
     h.l1.mine_block();
     batcher.observe_l1_block(h.l1.tip()).await;
     chain.push(h.l1.tip().clone()); // L1 block 1: frames 0 and 2
@@ -409,7 +409,7 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
     );
 
     // L1 block 1: only frame 0 of channel A (channel is incomplete).
-    batcher_a.stage_n_frames(&mut h.l1, 1); // frame 0 of channel A
+    batcher_a.stage_n_submissions(&mut h.l1, 1); // frame 0 of channel A
     h.l1.mine_block();
     batcher_a.observe_l1_block(h.l1.tip()).await;
     chain.push(h.l1.tip().clone()); // L1 block 1: frame 0 of channel A
@@ -429,7 +429,7 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
     // channel B's frame 0 arrives (different ID, B is not last), the queue
     // drains all of channel A's frames. Channel B assembles and derives.
     for _ in 0..n_b {
-        batcher_b.stage_n_frames(&mut h.l1, 1);
+        batcher_b.stage_n_submissions(&mut h.l1, 1);
     }
     h.l1.mine_block();
     batcher_b.observe_l1_block(h.l1.tip()).await;
@@ -510,9 +510,9 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
     );
 
     // Submit frame 0 and frame 2 in the same L1 block — skipping frame 1.
-    batcher.stage_n_frames(&mut h.l1, 1); // frame 0
-    batcher.drop_n_frames(1); // drop frame 1
-    batcher.stage_n_frames(&mut h.l1, 1); // frame 2 (non-sequential)
+    batcher.stage_n_submissions(&mut h.l1, 1); // frame 0
+    batcher.drop_n_submissions(1); // drop frame 1
+    batcher.stage_n_submissions(&mut h.l1, 1); // frame 2 (non-sequential)
     h.l1.mine_block();
     batcher.observe_l1_block(h.l1.tip()).await;
     chain.push(h.l1.tip().clone());

@@ -391,7 +391,7 @@ async fn orphaned_partial_channel_does_not_combine_with_canonical_remainder() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    batcher.stage_n_frames(&mut h.l1, 1);
+    batcher.stage_n_submissions(&mut h.l1, 1);
     h.l1.mine_block();
     batcher.observe_l1_block(h.l1.tip()).await;
     chain.push(h.l1.tip().clone());
@@ -406,7 +406,7 @@ async fn orphaned_partial_channel_does_not_combine_with_canonical_remainder() {
 
     let remaining = batcher.pending_count();
     assert!(remaining > 0, "test requires canonical remainder frames");
-    batcher.stage_n_frames(&mut h.l1, remaining);
+    batcher.stage_n_submissions(&mut h.l1, remaining);
     h.l1.mine_block();
     batcher.observe_l1_block(h.l1.tip()).await;
     chain.push(h.l1.tip().clone());

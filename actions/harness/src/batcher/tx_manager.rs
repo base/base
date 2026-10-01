@@ -115,8 +115,7 @@ impl L1MinerTxManager {
 
     /// Drop the first `n` pending submissions without staging them to L1.
     ///
-    /// Returns the actual number dropped (≤ `n`). Use this to skip specific
-    /// frame positions when testing non-sequential frame submission.
+    /// Returns the actual number dropped (≤ `n`).
     pub fn drop_n(&self, n: usize) -> usize {
         let mut inner = self.inner.lock().unwrap();
         let count = n.min(inner.pending.len());
