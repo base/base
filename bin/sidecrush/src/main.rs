@@ -71,14 +71,11 @@ async fn main() {
     let sink =
         UdpMetricSink::from(statsd_addr.as_str(), socket).expect("failed to create StatsD sink");
 
-    let config_name =
-        std::env::var("CODEFLOW_CONFIG_NAME").unwrap_or_else(|_| "unknown".to_string());
-    let environment =
-        std::env::var("CODEFLOW_ENVIRONMENT").unwrap_or_else(|_| "unknown".to_string());
-    let project_name =
-        std::env::var("CODEFLOW_PROJECT_NAME").unwrap_or_else(|_| "unknown".to_string());
-    let service_name =
-        std::env::var("CODEFLOW_SERVICE_NAME").unwrap_or_else(|_| "unknown".to_string());
+    let env_or_unknown = |k: &str| std::env::var(k).unwrap_or_else(|_| "unknown".into());
+    let config_name = env_or_unknown("CODEFLOW_CONFIG_NAME");
+    let environment = env_or_unknown("CODEFLOW_ENVIRONMENT");
+    let project_name = env_or_unknown("CODEFLOW_PROJECT_NAME");
+    let service_name = env_or_unknown("CODEFLOW_SERVICE_NAME");
 
     let statsd_client = StatsdClient::builder("base.blocks", sink)
         .with_tag("configname", &config_name)
@@ -97,16 +94,15 @@ async fn main() {
 
     let metrics = HealthcheckMetrics::new(statsd_client);
 
-    let node = Node::new(args.node_url.clone(), args.new_instance);
     let client = AlloyEthClient::new_http(&args.node_url).expect("failed to create client");
+    let node = Node::new(args.node_url, args.new_instance);
     let config = HealthcheckConfig::new(
         args.poll_interval_ms,
         args.grace_period_ms,
         args.unhealthy_node_threshold_ms,
     );
 
-    let mut checker: BlockProductionHealthChecker<_> =
-        BlockProductionHealthChecker::new(node, client, config, metrics);
+    let mut checker = BlockProductionHealthChecker::new(node, client, config, metrics);
 
     let _status_handle = checker.spawn_status_emitter(2000);
 
