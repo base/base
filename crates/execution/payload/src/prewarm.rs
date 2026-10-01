@@ -45,6 +45,7 @@
 
 use std::{
     collections::VecDeque,
+    panic::{AssertUnwindSafe, catch_unwind},
     sync::{
         Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -62,7 +63,7 @@ use reth_transaction_pool::{
     BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
     ValidPoolTransaction,
 };
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::{ParkablePayloadTransactions, metrics::PrewarmMetrics};
 
@@ -124,7 +125,7 @@ impl WarmKey {
                 PrewarmMetrics::reads_total("balance").increment(1);
                 if let Err(error) = provider.basic_account(address) {
                     PrewarmMetrics::warm_errors_total().increment(1);
-                    warn!(target: TARGET, error = %error, address = %address, "prewarm account read failed");
+                    debug!(target: TARGET, error = %error, address = %address, "prewarm account read failed");
                 }
             }
             Self::Storage(address, slot) => {
@@ -132,7 +133,7 @@ impl WarmKey {
                 let storage_key = StorageKey::new(slot.to_be_bytes());
                 if let Err(error) = provider.storage(*address, storage_key) {
                     PrewarmMetrics::warm_errors_total().increment(1);
-                    warn!(target: TARGET, error = %error, address = %address, slot = ?slot, "prewarm storage read failed");
+                    debug!(target: TARGET, error = %error, address = %address, slot = ?slot, "prewarm storage read failed");
                 }
             }
         }
@@ -254,7 +255,7 @@ impl PrewarmScheduler {
 /// One build's work for one pool worker.
 pub struct WorkerJob {
     /// Opens the state provider for the job's exact parent state.
-    pub provider_factory: Box<dyn Fn() -> ProviderResult<StateProviderBox> + Send>,
+    pub provider_factory: Box<dyn FnOnce() -> ProviderResult<StateProviderBox> + Send>,
     /// The build's shared execution cache handle for this worker.
     pub cache: ExecutionCache,
     /// The build's key queue.
@@ -354,10 +355,14 @@ impl PrewarmWorkerPool {
     }
 
     /// Worker body: runs jobs handed over through its mailbox and exits when the pool is
-    /// dropped.
+    /// dropped. A panicking job is contained so the pool keeps its fixed worker count;
+    /// unwinding drops that job's provider and cache handle.
     pub fn worker_loop(jobs: Receiver<WorkerJob>) {
         while let Ok(job) = jobs.recv() {
-            job.run();
+            if catch_unwind(AssertUnwindSafe(|| job.run())).is_err() {
+                PrewarmMetrics::worker_panics_total().increment(1);
+                warn!(target: TARGET, "prewarm worker job panicked");
+            }
         }
     }
 }
@@ -913,6 +918,21 @@ mod tests {
         // Once the first build ends, the worker serves new builds again.
         release.wait();
         drop(first);
+        drop(start_job(
+            &pool,
+            || Ok(Box::new(MockEthProvider::default()) as StateProviderBox),
+            &ExecutionCache::new(1000),
+        ));
+    }
+
+    #[test]
+    fn panicking_job_does_not_shrink_the_pool() {
+        let pool = PrewarmWorkerPool::new(&enabled_config(1, 8, 64));
+        let cache = ExecutionCache::new(1000);
+        drop(start_job(&pool, || panic!("provider open panicked"), &cache));
+        assert!(released(cache), "unwinding must release the panicked job's cache");
+
+        // The only worker survived the panic and serves the next build.
         drop(start_job(
             &pool,
             || Ok(Box::new(MockEthProvider::default()) as StateProviderBox),
