@@ -59,7 +59,7 @@ async fn batcher_replays_a_channel_that_timed_out_before_its_last_frame_landed()
     assert!(frames >= 2, "the block must span several frames");
 
     // Frame 0 lands in L1 block 1, the rest stays pending in the tx manager.
-    batcher.stage_n_frames(&mut h.l1, 1);
+    batcher.stage_n_submissions(&mut h.l1, 1);
     h.mine_and_push(&chain);
     batcher.observe_l1_block(h.l1.tip()).await;
 

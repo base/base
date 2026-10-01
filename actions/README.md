@@ -171,7 +171,7 @@ those transactions are staged, mined, confirmed, or failed.
 For the common happy path, call `batcher.advance(&mut h.l1).await`. It waits
 for the driver to encode every block pushed so far, flushes the encoder, mines
 one L1 block, and shows it to the driver. For more exact scenarios, use
-`encode_only`, `stage_n_frames`, `observe_l1_block`, `mine_pending` and
+`encode_only`, `stage_n_submissions`, `observe_l1_block`, `mine_pending` and
 `fail_next_n_submissions`. Report derivation progress with
 `observe_derivation`.
 Every `async` method of `Batcher` returns once the driver is idle again, so the

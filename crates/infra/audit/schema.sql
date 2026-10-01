@@ -217,6 +217,10 @@ CREATE INDEX transaction_events_cold_expr_event_time_idx ON ONLY public.transact
 
 CREATE INDEX transaction_events_cold_expr_event_time_idx1 ON ONLY public.transaction_events_cold USING btree (((data ->> 'bundle_id'::text)), event_time) WHERE (data ? 'bundle_id'::text);
 
+CREATE INDEX transaction_events_ingested_at_idx ON ONLY public.transaction_events USING brin (ingested_at);
+
+CREATE INDEX transaction_events_cold_ingested_at_idx ON ONLY public.transaction_events_cold USING brin (ingested_at);
+
 CREATE INDEX transaction_events_tx_hash_event_time_idx ON ONLY public.transaction_events USING btree (tx_hash, event_time) WHERE (tx_hash IS NOT NULL);
 
 CREATE INDEX transaction_events_cold_tx_hash_event_time_idx ON ONLY public.transaction_events_cold USING btree (tx_hash, event_time) WHERE (tx_hash IS NOT NULL);
@@ -231,6 +235,8 @@ CREATE INDEX transaction_events_hot_expr_event_time_idx ON ONLY public.transacti
 
 CREATE INDEX transaction_events_hot_expr_event_time_idx1 ON ONLY public.transaction_events_hot USING btree (((data ->> 'bundle_id'::text)), event_time) WHERE (data ? 'bundle_id'::text);
 
+CREATE INDEX transaction_events_hot_ingested_at_idx ON ONLY public.transaction_events_hot USING brin (ingested_at);
+
 CREATE INDEX transaction_events_hot_tx_hash_event_time_idx ON ONLY public.transaction_events_hot USING btree (tx_hash, event_time) WHERE (tx_hash IS NOT NULL);
 
 CREATE INDEX transaction_events_warm_block_hash_event_time_idx ON ONLY public.transaction_events_warm USING btree (block_hash, event_time) WHERE (block_hash IS NOT NULL);
@@ -243,6 +249,8 @@ CREATE INDEX transaction_events_warm_expr_event_time_idx ON ONLY public.transact
 
 CREATE INDEX transaction_events_warm_expr_event_time_idx1 ON ONLY public.transaction_events_warm USING btree (((data ->> 'bundle_id'::text)), event_time) WHERE (data ? 'bundle_id'::text);
 
+CREATE INDEX transaction_events_warm_ingested_at_idx ON ONLY public.transaction_events_warm USING brin (ingested_at);
+
 CREATE INDEX transaction_events_warm_tx_hash_event_time_idx ON ONLY public.transaction_events_warm USING btree (tx_hash, event_time) WHERE (tx_hash IS NOT NULL);
 
 ALTER INDEX public.transaction_events_block_hash_event_time_idx ATTACH PARTITION public.transaction_events_cold_block_hash_event_time_idx;
@@ -254,6 +262,8 @@ ALTER INDEX public.transaction_events_rejected_event_time_idx ATTACH PARTITION p
 ALTER INDEX public.transaction_events_bundle_hash_event_time_idx ATTACH PARTITION public.transaction_events_cold_expr_event_time_idx;
 
 ALTER INDEX public.transaction_events_bundle_id_event_time_idx ATTACH PARTITION public.transaction_events_cold_expr_event_time_idx1;
+
+ALTER INDEX public.transaction_events_ingested_at_idx ATTACH PARTITION public.transaction_events_cold_ingested_at_idx;
 
 ALTER INDEX public.transaction_events_pkey ATTACH PARTITION public.transaction_events_cold_pkey;
 
@@ -269,6 +279,8 @@ ALTER INDEX public.transaction_events_bundle_hash_event_time_idx ATTACH PARTITIO
 
 ALTER INDEX public.transaction_events_bundle_id_event_time_idx ATTACH PARTITION public.transaction_events_hot_expr_event_time_idx1;
 
+ALTER INDEX public.transaction_events_ingested_at_idx ATTACH PARTITION public.transaction_events_hot_ingested_at_idx;
+
 ALTER INDEX public.transaction_events_pkey ATTACH PARTITION public.transaction_events_hot_pkey;
 
 ALTER INDEX public.transaction_events_tx_hash_event_time_idx ATTACH PARTITION public.transaction_events_hot_tx_hash_event_time_idx;
@@ -282,6 +294,8 @@ ALTER INDEX public.transaction_events_rejected_event_time_idx ATTACH PARTITION p
 ALTER INDEX public.transaction_events_bundle_hash_event_time_idx ATTACH PARTITION public.transaction_events_warm_expr_event_time_idx;
 
 ALTER INDEX public.transaction_events_bundle_id_event_time_idx ATTACH PARTITION public.transaction_events_warm_expr_event_time_idx1;
+
+ALTER INDEX public.transaction_events_ingested_at_idx ATTACH PARTITION public.transaction_events_warm_ingested_at_idx;
 
 ALTER INDEX public.transaction_events_pkey ATTACH PARTITION public.transaction_events_warm_pkey;
 

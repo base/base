@@ -38,7 +38,7 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
     assert!(frame_count >= 2, "the block must span several frames");
 
     // L1 block 1 carries frame 0 only.
-    batcher.stage_n_frames(&mut h.l1, 1);
+    batcher.stage_n_submissions(&mut h.l1, 1);
     h.l1.mine_block();
     chain.push(h.l1.tip().clone());
     batcher.observe_l1_block(h.l1.tip()).await;
@@ -48,7 +48,7 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
     assert_eq!(node.l2_safe_number(), 0, "the channel is incomplete");
 
     // L1 block 2 carries the rest, well within the channel timeout.
-    batcher.stage_n_frames(&mut h.l1, frame_count - 1);
+    batcher.stage_n_submissions(&mut h.l1, frame_count - 1);
     h.l1.mine_block();
     chain.push(h.l1.tip().clone());
     batcher.observe_l1_block(h.l1.tip()).await;

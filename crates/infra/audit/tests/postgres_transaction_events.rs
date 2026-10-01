@@ -19,7 +19,7 @@ use audit_archiver_lib::{
     DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
     MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE, PgTransactionEventSink, RejectedTransactionEventQuery,
     TransactionEventIngestConfig, TransactionEventRetentionConfig,
-    TransactionEventSchemaReadinessError, TransactionEventSink,
+    TransactionEventSchemaReadinessError, TransactionEventSink, index_transaction_event_partitions,
 };
 use axum::{
     body::{Body, to_bytes},
@@ -376,7 +376,7 @@ async fn postgres_partition_migration_discards_pre_partition_rows() -> anyhow::R
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1], "legacy history is replaced by the baseline");
+    assert_eq!(versions, vec![1, 2], "legacy history is replaced by the new migrations");
     PgTransactionEventSink::connect(&harness.database_url, 1).await?.check_schema_ready().await?;
     harness.assert_schema_matches_snapshot().await?;
 
@@ -384,7 +384,7 @@ async fn postgres_partition_migration_discards_pre_partition_rows() -> anyhow::R
 }
 
 #[tokio::test]
-async fn postgres_fresh_database_only_runs_the_partitioned_baseline() -> anyhow::Result<()> {
+async fn postgres_fresh_database_runs_partitioned_migrations() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
     PgTransactionEventSink::migrate(&harness.database_url).await?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
@@ -393,7 +393,7 @@ async fn postgres_fresh_database_only_runs_the_partitioned_baseline() -> anyhow:
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1]);
+    assert_eq!(versions, vec![1, 2]);
 
     Ok(())
 }
@@ -440,7 +440,7 @@ async fn postgres_migrates_past_an_unrecorded_004_with_an_invalid_index() -> any
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1], "004 is never run, and legacy history is replaced");
+    assert_eq!(versions, vec![1, 2], "004 is never run, and legacy history is replaced");
     let (valid, partitioned): (bool, bool) = sqlx::query_as(
         "SELECT i.indisvalid, c.relkind = 'I' FROM pg_index i \
          JOIN pg_class c ON c.oid = i.indexrelid \
@@ -516,6 +516,105 @@ async fn postgres_schema_matches_committed_snapshot() -> anyhow::Result<()> {
     PgTransactionEventSink::migrate(&harness.database_url).await?;
 
     harness.assert_schema_matches_snapshot().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_ingested_at_index_recovers_and_covers_future_days() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+
+    let parent_valid: bool = sqlx::query_scalar(
+        "SELECT indisvalid FROM pg_index \
+         WHERE indexrelid = 'transaction_events_ingested_at_idx'::regclass",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert!(!parent_valid, "parent-only migration does not block on existing days");
+
+    let today = Utc::now().date_naive();
+    let during_build = today + chrono::Duration::days(4);
+    let created: bool = sqlx::query_scalar("SELECT transaction_events_create_partition('hot', $1)")
+        .bind(during_build)
+        .fetch_one(&pool)
+        .await?;
+    assert!(created);
+    let during_build_name =
+        format!("transaction_events_hot_{}_ingested_at_idx", during_build.format("%Y%m%d"));
+    let inherited: bool = sqlx::query_scalar(
+        "SELECT i.indisvalid FROM pg_index i WHERE i.indexrelid = to_regclass($1)",
+    )
+    .bind(format!("public.{during_build_name}"))
+    .fetch_one(&pool)
+    .await?;
+    assert!(inherited, "new days inherit the index even while the parent is invalid");
+
+    let leaf = format!("transaction_events_hot_{}", today.format("%Y%m%d"));
+    sqlx::query(&format!(
+        "INSERT INTO public.{leaf} \
+         (event_id, schema_version, event_time, event_date, retention_class, producer, event_type, data) \
+         VALUES ('index-a', 'transaction-event/v1', now(), $1, 'hot', 'base-builder', 'BUILDER_ACCEPTED', '{{}}'), \
+                ('index-b', 'transaction-event/v1', now(), $1, 'hot', 'base-builder', 'BUILDER_ACCEPTED', '{{}}')"
+    ))
+    .bind(today)
+    .execute(&pool)
+    .await?;
+
+    // A failed concurrent build leaves an INVALID index with the intended
+    // name. The index command must not silently skip it with IF NOT EXISTS.
+    let index_name = format!("{leaf}_ingested_at_idx");
+    let failed = sqlx::query(&format!(
+        "CREATE UNIQUE INDEX CONCURRENTLY {index_name} ON public.{leaf} (event_type)"
+    ))
+    .execute(&pool)
+    .await;
+    let err = failed.expect_err("duplicate event types must fail the unique build");
+    assert_eq!(err.as_database_error().and_then(|error| error.code()).as_deref(), Some("23505"));
+    let invalid: bool = sqlx::query_scalar(
+        "SELECT NOT indisvalid FROM pg_index WHERE indexrelid = to_regclass($1)",
+    )
+    .bind(format!("public.{index_name}"))
+    .fetch_one(&pool)
+    .await?;
+    assert!(invalid, "failed concurrent build left an invalid index");
+
+    let built = index_transaction_event_partitions(&harness.database_url).await?;
+    assert!(built > 0, "existing day partitions were indexed");
+    assert_eq!(index_transaction_event_partitions(&harness.database_url).await?, 0);
+
+    let index_valid: bool = sqlx::query_scalar(
+        "SELECT i.indisvalid AND a.amname = 'brin' \
+         FROM pg_index i \
+         JOIN pg_class c ON c.oid = i.indexrelid \
+         JOIN pg_am a ON a.oid = c.relam \
+         WHERE c.oid = 'transaction_events_ingested_at_idx'::regclass",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert!(index_valid, "all class and leaf indexes are attached and valid");
+
+    // Daily partition maintenance creates a table and ATTACHes it. The valid
+    // parent partitioned index must automatically install the new leaf index.
+    let future = today + chrono::Duration::days(5);
+    let created: bool = sqlx::query_scalar("SELECT transaction_events_create_partition('hot', $1)")
+        .bind(future)
+        .fetch_one(&pool)
+        .await?;
+    assert!(created);
+    let future_name = format!("transaction_events_hot_{}_ingested_at_idx", future.format("%Y%m%d"));
+    let future_valid: bool = sqlx::query_scalar(
+        "SELECT i.indisvalid AND a.amname = 'brin' \
+         FROM pg_index i \
+         JOIN pg_class c ON c.oid = i.indexrelid \
+         JOIN pg_am a ON a.oid = c.relam \
+         WHERE c.oid = to_regclass($1)",
+    )
+    .bind(format!("public.{future_name}"))
+    .fetch_one(&pool)
+    .await?;
+    assert!(future_valid, "new day automatically inherits the usable ingested_at index");
 
     Ok(())
 }
