@@ -26,7 +26,7 @@ use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics,
-    ValidityMetrics,
+    PrewarmWorkerPool, PrewarmingBestTransactions, ValidityMetrics,
 };
 use base_execution_txpool::AccountStateDiff;
 use base_observability_events::{GlobalTransactionEventWriter, TransactionEventType};
@@ -70,7 +70,10 @@ use crate::{
 
 type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
     <Pool as TransactionPool>::Transaction,
-    ParkableBestPayloadTransactions<<Pool as TransactionPool>::Transaction>,
+    PrewarmingBestTransactions<
+        ParkableBestPayloadTransactions<<Pool as TransactionPool>::Transaction>,
+        <Pool as TransactionPool>::Transaction,
+    >,
 >;
 
 #[derive(Debug, Default)]
@@ -118,6 +121,9 @@ pub(super) struct BasePayloadBuilder<Pool, Client> {
     pub client: Client,
     /// System configuration for the builder
     pub config: BuilderConfig,
+    /// Shared, bounded prewarm IO worker pool. Threads are spawned once per builder and
+    /// reused across builds; no worker holds a cache handle between jobs.
+    pub prewarm_pool: Arc<PrewarmWorkerPool>,
     /// The outbound channels for built payloads and flashblocks.
     pub outputs: BuilderOutputs,
     /// Last flashblock emitted by this builder instance.
@@ -137,6 +143,7 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
             evm_config,
             pool,
             client,
+            prewarm_pool: Arc::new(PrewarmWorkerPool::new(&config.prewarm)),
             config,
             outputs,
             last_emitted_flashblock_id: Arc::default(),
@@ -282,6 +289,24 @@ where
             )
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
+        // Opt-in predicate-state prewarming: warms the declared validity-predicate state of
+        // lookahead transactions into this build's shared execution cache while the
+        // flashblock loop executes. The job spans the whole block build and releases its
+        // workers' cache handles when dropped. No shared cache means no prewarming.
+        let prewarm = if ctx.attributes().no_tx_pool {
+            None
+        } else {
+            execution_cache.as_ref().and_then(|cache| {
+                self.prewarm_pool.try_start_job(
+                    {
+                        let client = self.client.clone();
+                        let parent = ctx.parent().hash();
+                        move || client.state_by_block_hash(parent)
+                    },
+                    cache.cache().clone(),
+                )
+            })
+        };
         let state_provider = base_execution_payload_builder::BuilderStateProvider::new(
             self.client.state_by_block_hash(ctx.parent().hash())?,
             execution_cache.map(|cache| cache.cache().clone()),
@@ -419,8 +444,13 @@ where
         // Create best_transaction iterator
         let best_txs_attributes = ctx.best_transaction_attributes();
         let mut best_txs = BestFlashblocksTxs::new(
-            ParkableBestPayloadTransactions::new(
-                self.pool.best_transactions_with_attributes_and_parking(best_txs_attributes),
+            PrewarmingBestTransactions::new(
+                ParkableBestPayloadTransactions::new(
+                    self.pool.best_transactions_with_attributes_and_parking(best_txs_attributes),
+                ),
+                self.pool.clone(),
+                best_txs_attributes,
+                prewarm.as_ref().map(|job| Arc::clone(&job.scheduler)),
             ),
             self.config.rejection_cache.clone(),
         );
@@ -620,9 +650,13 @@ where
 
         let best_txs_start_time = Instant::now();
         let best_txs_attributes = ctx.best_transaction_attributes();
-        best_txs.refresh_iterator(ParkableBestPayloadTransactions::new(
-            self.pool.best_transactions_with_attributes_and_parking(best_txs_attributes),
-        ));
+        // Keep the block-wide prewarm lookahead cursor: it already scanned ahead, and later
+        // flashblocks only need to warm newly arrived transactions.
+        best_txs.refresh_with(|txs| {
+            txs.refresh(ParkableBestPayloadTransactions::new(
+                self.pool.best_transactions_with_attributes_and_parking(best_txs_attributes),
+            ))
+        });
         let transaction_pool_fetch_time = best_txs_start_time.elapsed();
         BuilderMetrics::transaction_pool_fetch_duration().record(transaction_pool_fetch_time);
         BuilderMetrics::transaction_pool_fetch_gauge().set(transaction_pool_fetch_time);

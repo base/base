@@ -67,6 +67,7 @@ pub trait ClientBounds:
     + ChainSpecProvider<ChainSpec = BaseChainSpec>
     + BlockReaderIdExt<Header = Header>
     + Clone
+    + 'static
 {
 }
 
@@ -75,6 +76,7 @@ impl<T> ClientBounds for T where
         + ChainSpecProvider<ChainSpec = BaseChainSpec>
         + BlockReaderIdExt<Header = Header>
         + Clone
+        + 'static
 {
 }
 
