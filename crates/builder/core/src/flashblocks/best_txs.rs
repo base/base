@@ -58,7 +58,13 @@ where
     /// Replaces current iterator with new one. We use it on new flashblock building, to refresh
     /// priority boundaries
     pub fn refresh_iterator(&mut self, inner: I) {
-        self.inner = inner;
+        self.refresh_with(|current| *current = inner);
+    }
+
+    /// Refreshes the current iterator in place, letting adapters keep state across
+    /// flashblocks.
+    pub fn refresh_with(&mut self, refresh: impl FnOnce(&mut I)) {
+        refresh(&mut self.inner);
         self.current_transaction = None;
     }
 

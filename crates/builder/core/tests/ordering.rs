@@ -8,7 +8,9 @@ use alloy_provider::Provider;
 use base_builder_core::{
     BuilderApiExtension, BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
     MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS, ShadowValidityConfig,
-    test_utils::{ChainDriverExt, LocalInstanceBuilder, ONE_ETH, setup_test_instance},
+    test_utils::{
+        ChainDriverExt, LocalInstanceBuilder, ONE_ETH, default_node_config, setup_test_instance,
+    },
 };
 use base_execution_txpool::{
     TransactionValidity, ValidatedTransaction, ValidityOperator, ValidityPredicate,
@@ -94,7 +96,25 @@ async fn fee_priority_ordering() -> eyre::Result<()> {
 /// predicate, while retaining priority over lower-priority work once it becomes valid.
 #[tokio::test]
 async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre::Result<()> {
-    let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
+    assert_predicate_delayed_ordering(LocalInstanceBuilder::new(BuilderConfig::for_tests())).await
+}
+
+/// Predicate-state prewarming is read-only: it must not change which transactions are
+/// included or their order.
+#[tokio::test]
+async fn prewarming_preserves_predicate_ordering() -> eyre::Result<()> {
+    let mut builder_config = BuilderConfig::for_tests();
+    builder_config.prewarm.enabled = true;
+    let mut node_config = default_node_config();
+    node_config.engine.share_execution_cache_with_payload_builder = true;
+    assert_predicate_delayed_ordering(
+        LocalInstanceBuilder::new(builder_config).with_node_config(node_config),
+    )
+    .await
+}
+
+async fn assert_predicate_delayed_ordering(builder: LocalInstanceBuilder) -> eyre::Result<()> {
+    let instance = builder
         .install_ext::<BuilderApiExtension>(
             BuilderApiExtensionConfig::new(true, DEFAULT_MAX_VALIDITY_PREDICATES)
                 .with_noop_metering(),

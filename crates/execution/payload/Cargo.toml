@@ -63,11 +63,11 @@ moka = { workspace = true, features = ["sync"] }
 metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
-reth-provider.workspace = true
 reth-ethereum-forks.workspace = true
 metrics-exporter-prometheus.workspace = true
 base-execution-chainspec.workspace = true
 reth-revm = { workspace = true, features = ["test-utils"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
 base-observability-events = { workspace = true, features = ["test-utils"] }
 
 [features]

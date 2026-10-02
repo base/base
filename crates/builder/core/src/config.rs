@@ -7,7 +7,7 @@ use core::{
 use std::sync::Arc;
 
 use base_execution_payload_builder::{
-    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
+    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, PrewarmConfig,
     config::{BaseDAConfig, GasLimitConfig},
 };
 
@@ -87,6 +87,8 @@ pub struct BuilderConfig {
     /// IO from the engine's validation-path IO. Adds overhead to every state read, so this is
     /// driven by reth's `--engine.state-provider-metrics` and stays off by default.
     pub state_provider_metrics: bool,
+    /// Opt-in concurrent predicate-state prewarming during builds. Disabled by default.
+    pub prewarm: PrewarmConfig,
 }
 
 impl BuilderConfig {
@@ -121,6 +123,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("rejection_cache_size", &self.rejection_cache.entry_count())
             .field("manifest_precheck_enabled", &self.manifest_precheck_enabled)
             .field("state_provider_metrics", &self.state_provider_metrics)
+            .field("prewarm", &self.prewarm)
             .finish()
     }
 }
@@ -147,6 +150,7 @@ impl Default for BuilderConfig {
             rejection_cache: RejectionCache::default(),
             manifest_precheck_enabled: true,
             state_provider_metrics: false,
+            prewarm: PrewarmConfig::default(),
         }
     }
 }
