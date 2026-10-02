@@ -111,6 +111,7 @@ impl BaseTransactionBuilder {
         BaseTransaction {
             base,
             enveloped_tx: self.enveloped_tx,
+            enveloped_tx_fastlz_size: None,
             deposit: self.deposit,
             eip8130: None,
         }
@@ -143,6 +144,7 @@ impl BaseTransactionBuilder {
         Ok(BaseTransaction {
             base,
             enveloped_tx: self.enveloped_tx,
+            enveloped_tx_fastlz_size: None,
             deposit: self.deposit,
             eip8130: None,
         })

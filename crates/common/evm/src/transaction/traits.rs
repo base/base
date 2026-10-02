@@ -14,6 +14,12 @@ pub trait BaseTxTr: Transaction {
     /// Enveloped transaction bytes.
     fn enveloped_tx(&self) -> Option<&Bytes>;
 
+    /// `FastLZ` compressed size of [`Self::enveloped_tx`], if already computed, so the L1 cost
+    /// does not recompute it.
+    fn enveloped_tx_fastlz_size(&self) -> Option<u32> {
+        None
+    }
+
     /// Source hash of the deposit transaction.
     fn source_hash(&self) -> Option<B256>;
 

@@ -1,7 +1,10 @@
 //! Engine-neutral OP-stack L1 fee parameters and cost math.
 
 use alloy_primitives::U256;
-use base_common_flz::{NON_ZERO_BYTE_COST, tx_estimated_size_fjord};
+use base_common_flz::{
+    NON_ZERO_BYTE_COST, flz_compress_len, tx_estimated_size_fjord,
+    tx_estimated_size_fjord_from_fastlz_size,
+};
 use base_common_genesis::BaseUpgrade;
 
 /// Gas per calldata token (EIP-2028 standard token cost).
@@ -146,6 +149,22 @@ impl L1FeeParams {
     /// Post-Fjord L1 cost:
     /// `estimatedSize * (baseFeeScalar*l1BaseFee*16 + blobFeeScalar*l1BlobBaseFee) / 1e12`.
     pub fn calculate_tx_l1_cost_fjord(&self, input: &[u8]) -> U256 {
+        self.fjord_l1_cost(input, || flz_compress_len(input))
+    }
+
+    /// [`Self::calculate_tx_l1_cost_fjord`] for an `input` whose `FastLZ` compressed size
+    /// ([`flz_compress_len`]) is already known, so it is not recomputed.
+    pub fn calculate_tx_l1_cost_fjord_with_fastlz_size(
+        &self,
+        input: &[u8],
+        fastlz_size: u32,
+    ) -> U256 {
+        debug_assert_eq!(fastlz_size, flz_compress_len(input), "stale FastLZ size");
+        self.fjord_l1_cost(input, || fastlz_size)
+    }
+
+    /// Post-Fjord L1 cost; `fastlz_size` is only evaluated when the cost is non-zero.
+    fn fjord_l1_cost(&self, input: &[u8], fastlz_size: impl FnOnce() -> u32) -> U256 {
         if Self::is_fee_exempt(input) {
             return U256::ZERO;
         }
@@ -153,7 +172,7 @@ impl L1FeeParams {
         if l1_fee_scaled.is_zero() {
             return U256::ZERO;
         }
-        U256::from(tx_estimated_size_fjord(input))
+        U256::from(tx_estimated_size_fjord_from_fastlz_size(fastlz_size()))
             .saturating_mul(l1_fee_scaled)
             .wrapping_div(U256::from(1_000_000_000_000u64))
     }

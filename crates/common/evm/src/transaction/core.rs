@@ -18,7 +18,7 @@ use crate::{
 };
 
 /// Base transaction.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BaseTransaction<T: Transaction> {
     /// Base transaction fields.
@@ -29,6 +29,13 @@ pub struct BaseTransaction<T: Transaction> {
     /// opposed to requiring downstream apps to compute the cost
     /// externally.
     pub enveloped_tx: Option<Bytes>,
+    /// `FastLZ` compressed size of `enveloped_tx`, when already computed.
+    ///
+    /// Lets the L1 cost reuse a size computed earlier (for example for the Jovian DA
+    /// footprint) instead of recompressing. Must equal `flz_compress_len(enveloped_tx)`; `None`
+    /// means it is computed on demand.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub enveloped_tx_fastlz_size: Option<u32>,
     /// Deposit transaction parts.
     pub deposit: DepositTransactionParts,
     /// EIP-8130 account-abstraction transaction parts.
@@ -38,6 +45,18 @@ pub struct BaseTransaction<T: Transaction> {
     /// `base` `TxEnv` is only a placeholder projection for such transactions).
     pub eip8130: Option<Eip8130TransactionParts>,
 }
+
+/// Ignores `enveloped_tx_fastlz_size`, a cache derived from `enveloped_tx`.
+impl<T: Transaction + PartialEq> PartialEq for BaseTransaction<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.base == other.base
+            && self.enveloped_tx == other.enveloped_tx
+            && self.deposit == other.deposit
+            && self.eip8130 == other.eip8130
+    }
+}
+
+impl<T: Transaction + Eq> Eq for BaseTransaction<T> {}
 
 impl<T: Transaction> AsRef<T> for BaseTransaction<T> {
     fn as_ref(&self) -> &T {
@@ -51,6 +70,7 @@ impl<T: Transaction> BaseTransaction<T> {
         Self {
             base,
             enveloped_tx: None,
+            enveloped_tx_fastlz_size: None,
             deposit: DepositTransactionParts::default(),
             eip8130: None,
         }
@@ -69,6 +89,7 @@ impl Default for BaseTransaction<TxEnv> {
         Self {
             base: TxEnv::default(),
             enveloped_tx: Some(vec![0x00].into()),
+            enveloped_tx_fastlz_size: None,
             deposit: DepositTransactionParts::default(),
             eip8130: None,
         }
@@ -208,6 +229,10 @@ impl<T: Transaction> BaseTxTr for BaseTransaction<T> {
         self.enveloped_tx.as_ref()
     }
 
+    fn enveloped_tx_fastlz_size(&self) -> Option<u32> {
+        self.enveloped_tx_fastlz_size
+    }
+
     fn source_hash(&self) -> Option<B256> {
         if self.tx_type() != DEPOSIT_TRANSACTION_TYPE {
             return None;
@@ -265,24 +290,28 @@ impl FromTxWithEncoded<BaseTxEnvelope> for BaseTransaction<TxEnv> {
             BaseTxEnvelope::Legacy(tx) => Self {
                 base: TxEnv::from_recovered_tx(tx.tx(), caller),
                 enveloped_tx: Some(encoded),
+                enveloped_tx_fastlz_size: None,
                 deposit: Default::default(),
                 eip8130: None,
             },
             BaseTxEnvelope::Eip1559(tx) => Self {
                 base: TxEnv::from_recovered_tx(tx.tx(), caller),
                 enveloped_tx: Some(encoded),
+                enveloped_tx_fastlz_size: None,
                 deposit: Default::default(),
                 eip8130: None,
             },
             BaseTxEnvelope::Eip2930(tx) => Self {
                 base: TxEnv::from_recovered_tx(tx.tx(), caller),
                 enveloped_tx: Some(encoded),
+                enveloped_tx_fastlz_size: None,
                 deposit: Default::default(),
                 eip8130: None,
             },
             BaseTxEnvelope::Eip7702(tx) => Self {
                 base: TxEnv::from_recovered_tx(tx.tx(), caller),
                 enveloped_tx: Some(encoded),
+                enveloped_tx_fastlz_size: None,
                 deposit: Default::default(),
                 eip8130: None,
             },
@@ -319,6 +348,7 @@ impl FromTxWithEncoded<BaseTxEnvelope> for BaseTransaction<TxEnv> {
                 Self {
                     base,
                     enveloped_tx: Some(encoded),
+                    enveloped_tx_fastlz_size: None,
                     deposit: Default::default(),
                     eip8130: Some(Eip8130TransactionParts::new(signed.clone())),
                 }
@@ -343,7 +373,13 @@ impl FromTxWithEncoded<TxDeposit> for BaseTransaction<TxEnv> {
             mint: Some(tx.mint),
             is_system_transaction: tx.is_system_transaction,
         };
-        Self { base, enveloped_tx: Some(encoded), deposit, eip8130: None }
+        Self {
+            base,
+            enveloped_tx: Some(encoded),
+            enveloped_tx_fastlz_size: None,
+            deposit,
+            eip8130: None,
+        }
     }
 }
 
