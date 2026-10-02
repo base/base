@@ -18,9 +18,6 @@ use tracing::{debug, error, info, trace};
 
 use super::{config::ForwarderConfig, metrics::ForwarderMetrics, request::ForwardRequest};
 
-/// Internal buffer cap used when RPC batch size is configured as unlimited.
-const UNLIMITED_BATCH_BUFFER_LIMIT: usize = 1024;
-
 /// Sliding window rate limiter that tracks request timestamps.
 ///
 /// Maintains a bounded deque of send timestamps within a 1-second window.
@@ -103,11 +100,7 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         config: Arc<ForwarderConfig>,
     ) -> Self {
         let limiter = RateLimiter::new(config.max_rps);
-        let buffer_limit = if config.max_batch_size == 0 {
-            UNLIMITED_BATCH_BUFFER_LIMIT
-        } else {
-            config.max_batch_size
-        };
+        let buffer_limit = config.batch_limit();
         let buffer = Vec::with_capacity(buffer_limit);
         let url_label: Arc<str> = builder_url.to_string().into();
         Self { builder_url, url_label, client, receiver, config, limiter, buffer, buffer_limit }
@@ -431,7 +424,10 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
 
-    use super::{super::request::InsertValidatedTransaction, *};
+    use super::{
+        super::{config::UNLIMITED_BATCH_BUFFER_LIMIT, request::InsertValidatedTransaction},
+        *,
+    };
 
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     struct TestExtensions {
