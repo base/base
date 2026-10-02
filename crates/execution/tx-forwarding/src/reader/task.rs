@@ -1,26 +1,51 @@
-use std::{fmt, sync::Arc};
+use std::{
+    fmt,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Bytes, TxHash};
 use base_execution_txpool::{
-    BasePooledTx, NoExtensions, ValidatedTransaction, ValidatedTransactionExtensions,
+    BasePooledTx, BestTransactionLane, NoExtensions, UnifiedTipOrdering, UnifiedTipPriority,
+    ValidatedTransaction, ValidatedTransactionExtensions,
 };
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
-use reth_transaction_pool::{PoolTransaction, TransactionPool, ValidPoolTransaction};
+use reth_transaction_pool::{
+    PoolTransaction, Priority, TransactionOrdering, TransactionPool, ValidPoolTransaction,
+};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, trace};
 use url::Url;
 
-use super::{config::ReaderConfig, metrics::Metrics, validator::RecentlySent};
+use super::{
+    LaneMix, LaneScheduler, config::ReaderConfig, metrics::Metrics, validator::RecentlySent,
+};
 use crate::forwarder::InsertValidatedTransaction;
+
+/// Pool transactions from one snapshot, tagged with their position in the pool iterator for
+/// transaction events, ranked by the builder's tip ordering and sequenced by nonce lane.
+type Snapshot<T> = LaneScheduler<
+    (Arc<ValidPoolTransaction<T>>, u64),
+    Priority<UnifiedTipPriority>,
+    BestTransactionLane,
+>;
 
 /// Background reader that drains the pool for one destination.
 ///
-/// Each iteration creates a fresh `best_transactions()` snapshot and queues
-/// transactions not recently accepted by this destination's queue.
+/// Each pass waits until at least half of the destination queue is free, takes a
+/// `best_transactions()` snapshot (reusing the previous one for up to
+/// [`Self::SNAPSHOT_MAX_AGE`]), and fills the free slots from two lanes: a configured percentage
+/// of picks goes to the oldest pending transaction and the rest to the highest tip-per-gas bid (see
+/// [`LaneMix`] and [`LaneScheduler`]). Transactions recently accepted by this destination's queue
+/// are skipped.
+///
+/// The order is decided here, when a transaction is queued, and is fixed from then on. Keeping the
+/// queue shallow is what lets a high bid that arrives during a burst overtake transactions that
+/// are still in the pool.
 ///
 /// Conversion to the builder-RPC wire form happens here rather than in the
 /// forwarder: this is the component that holds a [`ValidPoolTransaction`], and
@@ -30,6 +55,7 @@ pub(crate) struct DestinationReader<P: TransactionPool, E = NoExtensions> {
     pool: P,
     config: ReaderConfig,
     recently_sent: RecentlySent,
+    lane_mix: LaneMix,
     sender: mpsc::Sender<InsertValidatedTransaction<E>>,
     cancel: CancellationToken,
     builder_url: Url,
@@ -43,6 +69,16 @@ where
     <P::Transaction as PoolTransaction>::Consensus: Encodable2718,
     E: ValidatedTransactionExtensions<P::Transaction>,
 {
+    /// Wait between checks for free queue capacity.
+    const CAPACITY_POLL_INTERVAL: Duration = Duration::from_millis(1);
+
+    /// Longest a snapshot is reused before the pool is read again.
+    ///
+    /// Reading the pool costs a pass over every pending transaction, so under a deep backlog the
+    /// reader refills the queue from the previous snapshot instead of re-reading for every free
+    /// chunk. A transaction that arrives in the meantime waits at most this long to be considered.
+    const SNAPSHOT_MAX_AGE: Duration = Duration::from_millis(10);
+
     /// Creates a reader for one destination.
     pub(crate) fn new(
         pool: P,
@@ -52,8 +88,9 @@ where
         builder_url: Url,
     ) -> Self {
         let recently_sent = RecentlySent::new(config.resend_after);
+        let lane_mix = LaneMix::new(config.fifo_percent);
         let url_label = builder_url.to_string().into();
-        Self { pool, config, recently_sent, sender, cancel, builder_url, url_label }
+        Self { pool, config, recently_sent, lane_mix, sender, cancel, builder_url, url_label }
     }
 
     /// Blocking loop — runs until the [`CancellationToken`] is cancelled.
@@ -63,71 +100,114 @@ where
             resend_after_ms = self.config.resend_after.as_millis() as u64,
             channel_capacity = self.config.channel_capacity,
             poll_interval_ms = self.config.poll_interval.as_millis() as u64,
+            fifo_percent = self.config.fifo_percent,
             "starting transaction reader",
         );
 
-        while !self.cancel.is_cancelled() {
-            let mut txs_read: u64 = 0;
-            let mut txs_sent: u64 = 0;
-            let mut txs_ignored: u64 = 0;
-
-            let best_txs = self.pool.best_transactions();
-
-            let mut queue_full = false;
-            for tx in best_txs {
-                if self.cancel.is_cancelled() {
-                    info!("reader cancelled during iteration");
-                    return;
-                }
-
-                let iterator_index = txs_read;
-                txs_read += 1;
-                let hash = *tx.hash();
-
-                if self.recently_sent.was_recently_sent(&hash) {
-                    txs_ignored += 1;
-                    continue;
-                }
-
-                match self.try_enqueue(&tx) {
-                    Ok(()) => {
-                        self.recently_sent.mark_sent(hash);
-                        txs_sent += 1;
-                        self.emit_builder_consumed_event(hash, iterator_index);
-                    }
-                    Err(mpsc::error::TrySendError::Full(())) => {
-                        queue_full = true;
-                        break;
-                    }
-                    Err(mpsc::error::TrySendError::Closed(())) => return,
-                }
+        let mut snapshot: Option<(Instant, Snapshot<P::Transaction>)> = None;
+        while self.wait_for_capacity() {
+            let stale = snapshot.as_ref().is_none_or(|(taken_at, lanes)| {
+                lanes.is_empty() || taken_at.elapsed() >= Self::SNAPSHOT_MAX_AGE
+            });
+            if stale {
+                let Some(lanes) = self.take_snapshot() else { break };
+                snapshot = Some((Instant::now(), lanes));
             }
+            let Some((_, lanes)) = snapshot.as_mut() else { break };
 
             Metrics::iterations(Arc::clone(&self.url_label)).increment(1);
-
-            if txs_read > 0 {
-                Metrics::txs_read(Arc::clone(&self.url_label)).increment(txs_read);
-                Metrics::txs_sent(Arc::clone(&self.url_label)).increment(txs_sent);
-                Metrics::txs_ignored(Arc::clone(&self.url_label)).increment(txs_ignored);
-                Metrics::dedup_cache_size(Arc::clone(&self.url_label))
-                    .set(self.recently_sent.len() as f64);
-
-                trace!(
-                    builder_url = %self.builder_url,
-                    txs_read = txs_read,
-                    txs_sent = txs_sent,
-                    txs_ignored = txs_ignored,
-                    dedup_cache = self.recently_sent.len(),
-                    "reader iteration complete",
-                );
-            }
-
-            if queue_full || txs_sent == 0 {
-                std::thread::sleep(self.config.poll_interval);
+            match self.fill_queue(lanes) {
+                None => return,
+                Some(0) => std::thread::sleep(self.config.poll_interval),
+                Some(_) => {}
             }
         }
 
         info!("reader cancelled, shutting down");
+    }
+
+    /// Reads the pool into a fresh [`Snapshot`], skipping transactions this destination's queue
+    /// accepted recently. Returns `None` if the reader was cancelled while reading.
+    fn take_snapshot(&mut self) -> Option<Snapshot<P::Transaction>> {
+        let mut txs_read: u64 = 0;
+        let mut txs_ignored: u64 = 0;
+
+        let base_fee = self.pool.block_info().pending_basefee;
+        let ordering = UnifiedTipOrdering::<P::Transaction>::default();
+        let mut lanes = LaneScheduler::new();
+        for tx in self.pool.best_transactions() {
+            if self.cancel.is_cancelled() {
+                info!("reader cancelled during iteration");
+                return None;
+            }
+
+            let iterator_index = txs_read;
+            txs_read += 1;
+            if self.recently_sent.was_recently_sent(tx.hash()) {
+                txs_ignored += 1;
+                continue;
+            }
+
+            let sequence = BestTransactionLane::for_transaction(&tx);
+            let arrived = tx.timestamp;
+            let priority = ordering.priority(&tx.transaction, base_fee);
+            lanes.push((tx, iterator_index), sequence, arrived, priority);
+        }
+
+        if txs_read > 0 {
+            Metrics::txs_read(Arc::clone(&self.url_label)).increment(txs_read);
+            Metrics::txs_ignored(Arc::clone(&self.url_label)).increment(txs_ignored);
+            Metrics::dedup_cache_size(Arc::clone(&self.url_label))
+                .set(self.recently_sent.len() as f64);
+            trace!(
+                builder_url = %self.builder_url,
+                txs_read = txs_read,
+                txs_ignored = txs_ignored,
+                dedup_cache = self.recently_sent.len(),
+                "reader snapshot taken",
+            );
+        }
+        Some(lanes)
+    }
+
+    /// Moves transactions from `lanes` into the destination queue until it is full or `lanes` is
+    /// empty, alternating lanes per [`LaneMix`]. Returns how many were queued, or `None` if the
+    /// forwarder is gone.
+    fn fill_queue(&mut self, lanes: &mut Snapshot<P::Transaction>) -> Option<u64> {
+        let mut txs_sent: u64 = 0;
+        while self.sender.capacity() > 0 {
+            let Some((tx, iterator_index)) = lanes.pop(self.lane_mix.next_lane()) else { break };
+            let hash = *tx.hash();
+            match self.try_enqueue(&tx) {
+                Ok(()) => {
+                    self.recently_sent.mark_sent(hash);
+                    txs_sent += 1;
+                    self.emit_builder_consumed_event(hash, iterator_index);
+                }
+                // Only this reader produces into the queue, so capacity cannot shrink between the
+                // check above and the send.
+                Err(mpsc::error::TrySendError::Full(())) => break,
+                Err(mpsc::error::TrySendError::Closed(())) => return None,
+            }
+        }
+        Metrics::txs_sent(Arc::clone(&self.url_label)).increment(txs_sent);
+        Some(txs_sent)
+    }
+
+    /// Blocks until at least half of the destination queue is free.
+    ///
+    /// Waiting for half rather than one slot means each snapshot fills a meaningful chunk of the
+    /// queue instead of rebuilding the lanes for every request the forwarder takes. Returns
+    /// `false` if the reader was cancelled or the forwarder is gone.
+    fn wait_for_capacity(&self) -> bool {
+        let wanted = self.sender.max_capacity().div_ceil(2);
+        while self.sender.capacity() < wanted {
+            if self.cancel.is_cancelled() || self.sender.is_closed() {
+                return false;
+            }
+            std::thread::sleep(Self::CAPACITY_POLL_INTERVAL);
+        }
+        !self.sender.is_closed()
     }
 
     /// Attempts to queue the transaction without waiting on a stale pool snapshot.
@@ -191,8 +271,6 @@ impl<P: TransactionPool, E> fmt::Debug for DestinationReader<P, E> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
-
     use alloy_consensus::transaction::Recovered;
     use alloy_primitives::{Address, B256, TxKind, U256};
     use base_common_consensus::{BaseTransactionSigned, TxDeposit};
@@ -244,6 +322,7 @@ mod tests {
                 resend_after: Duration::from_secs(4),
                 channel_capacity: 1,
                 poll_interval: Duration::from_millis(1),
+                fifo_percent: 20,
             },
             sender,
             cancel,
