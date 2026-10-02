@@ -593,7 +593,8 @@ where
     /// Returns an iterator that yields the transaction in the order they should get included in the
     /// new payload.
     ///
-    /// Custom iterators without lane-aware parking can use [`NonParkablePayloadTransactions`].
+    /// Custom iterators without lane-aware parking can use [`NonParkablePayloadTransactions`],
+    /// which treats parking as a lane skip for the current scan.
     fn best_transactions(
         &self,
         pool: Pool,
@@ -1057,35 +1058,17 @@ where
                     tx_hash = ?tx_hash,
                     "deferring validity-gated transaction: predicate evaluation budget exhausted"
                 );
-                if best_txs.park_current() {
-                    emit_native_validity_event!(
-                        self,
-                        TransactionEventType::BuilderDeferred,
-                        tx_hash,
-                        validity_consideration_index,
-                        {
-                            "defer_reason" => "predicate_eval_budget_exhausted",
-                            "defer_detail" => "validity-predicate evaluation time budget exhausted for this payload build",
-                        }
-                    );
-                } else {
-                    emit_native_validity_event!(
-                        self,
-                        TransactionEventType::BuilderRejected,
-                        tx_hash,
-                        validity_consideration_index,
-                        {
-                            "rejection_reason" => "predicate_eval_budget_exhausted",
-                            "rejection_detail" => "validity-predicate evaluation time budget exhausted and the configured transaction selector cannot park the transaction",
-                            "permanent" => false,
-                        }
-                    );
-                    if tx.eip8130_replay_id().is_none() {
-                        best_txs.mark_invalid(tx.sender(), tx.nonce());
-                    } else {
-                        best_txs.mark_current_committed();
+                best_txs.park_current();
+                emit_native_validity_event!(
+                    self,
+                    TransactionEventType::BuilderDeferred,
+                    tx_hash,
+                    validity_consideration_index,
+                    {
+                        "defer_reason" => "predicate_eval_budget_exhausted",
+                        "defer_detail" => "validity-predicate evaluation time budget exhausted for this payload build",
                     }
-                }
+                );
                 continue;
             }
 
@@ -1148,37 +1131,19 @@ where
                             ?blocker,
                             "parking transaction with unsatisfied validity predicate"
                         );
-                        if best_txs.park_current() {
-                            emit_native_validity_event!(
-                                self,
-                                TransactionEventType::BuilderDeferred,
-                                tx_hash,
-                                validity_consideration_index,
-                                {
-                                    "defer_reason" => "validity_predicate_not_satisfied",
-                                    "defer_detail" => "a validity predicate is not satisfied by the current build state",
-                                }
-                            );
-                            let predicate = tx.validity_predicates()[blocker_index].clone();
-                            predicate_index.park(tx_hash, tx, predicate);
-                        } else {
-                            emit_native_validity_event!(
-                                self,
-                                TransactionEventType::BuilderRejected,
-                                tx_hash,
-                                validity_consideration_index,
-                                {
-                                    "rejection_reason" => "validity_predicate_parking_unsupported",
-                                    "rejection_detail" => "the configured transaction selector cannot park validity transactions",
-                                    "permanent" => false,
-                                }
-                            );
-                            if tx.eip8130_replay_id().is_none() {
-                                best_txs.mark_invalid(tx.sender(), tx.nonce());
-                            } else {
-                                best_txs.mark_current_committed();
+                        best_txs.park_current();
+                        emit_native_validity_event!(
+                            self,
+                            TransactionEventType::BuilderDeferred,
+                            tx_hash,
+                            validity_consideration_index,
+                            {
+                                "defer_reason" => "validity_predicate_not_satisfied",
+                                "defer_detail" => "a validity predicate is not satisfied by the current build state",
                             }
-                        }
+                        );
+                        let predicate = tx.validity_predicates()[blocker_index].clone();
+                        predicate_index.park(tx_hash, tx, predicate);
                         continue;
                     }
                     Err(error) => {
@@ -1875,12 +1840,10 @@ mod tests {
     }
 
     impl ParkablePayloadTransactions for TestParkableTransactions {
-        fn park_current(&mut self) -> bool {
-            let Some(transaction) = self.current.take() else {
-                return false;
-            };
-            self.parked.insert(*transaction.hash(), transaction);
-            true
+        fn park_current(&mut self) {
+            if let Some(transaction) = self.current.take() {
+                self.parked.insert(*transaction.hash(), transaction);
+            }
         }
 
         fn mark_current_committed(&mut self) {

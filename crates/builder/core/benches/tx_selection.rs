@@ -247,7 +247,7 @@ fn run_predicate_selection(pool: &Pool, db: &mut InMemoryDB) -> usize {
         if let Some((blocking_predicate_index, _)) = blocking_predicate {
             let transaction_hash = *transaction.hash();
             let predicate = transaction.validity_predicates()[blocking_predicate_index].clone();
-            assert!(best.park_current());
+            best.park_current();
             predicate_index.park(transaction_hash, transaction, predicate);
             continue;
         }
