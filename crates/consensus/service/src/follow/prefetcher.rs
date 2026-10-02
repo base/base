@@ -44,24 +44,40 @@ where
         let mut source_latest = start_from_local_head;
         let mut consecutive_payload_failures = 0;
 
+        // The source client has no request timeout, so a hung RPC call parks
+        // an await indefinitely. Select every wait against shutdown so the
+        // loop always observes cancellation.
         loop {
             if self.cancellation.is_cancelled() {
                 return Ok(());
             }
 
             if next_fetch > source_latest {
-                source_latest = self.refresh_source_latest(source_latest).await;
+                source_latest = tokio::select! {
+                    latest = self.refresh_source_latest(source_latest) => latest,
+                    _ = self.cancellation.cancelled() => return Ok(()),
+                };
                 if next_fetch > source_latest {
-                    self.backoff_at_source_head().await;
+                    tokio::select! {
+                        _ = self.backoff_at_source_head() => {}
+                        _ = self.cancellation.cancelled() => return Ok(()),
+                    }
                     continue;
                 }
             }
 
-            let payload = self.source.get_payload_by_number(next_fetch).await;
+            let payload = tokio::select! {
+                payload = self.source.get_payload_by_number(next_fetch) => payload,
+                _ = self.cancellation.cancelled() => return Ok(()),
+            };
 
             match payload {
                 Ok(payload) => {
-                    if self.blocks_to_insert_tx.send(payload).await.is_err() {
+                    let sent = tokio::select! {
+                        sent = self.blocks_to_insert_tx.send(payload) => sent.is_err(),
+                        _ = self.cancellation.cancelled() => return Ok(()),
+                    };
+                    if sent {
                         return Ok(());
                     }
                     consecutive_payload_failures = 0;

@@ -65,14 +65,31 @@ where
     ) -> Result<(), FollowError> {
         let mut current_block = start_block;
 
+        // The follow clients have no request timeout, so a hung RPC call parks
+        // an await indefinitely. Select every wait against shutdown so the
+        // loop always observes cancellation.
         loop {
             if cancellation.is_cancelled() {
                 return Ok(());
             }
 
-            proof_gate.wait_til_ready(current_block).await?;
+            tokio::select! {
+                result = proof_gate.wait_til_ready(current_block) => result?,
+                _ = cancellation.cancelled() => return Ok(()),
+            }
 
-            let Some(payload) = blocks_to_insert_rx.recv().await else {
+            let payload = tokio::select! {
+                payload = blocks_to_insert_rx.recv() => payload,
+                _ = cancellation.cancelled() => return Ok(()),
+            };
+            let Some(payload) = payload else {
+                // The prefetcher drops the sender when it exits on
+                // cancellation, so a closed channel during shutdown is the
+                // normal exit path; without cancellation it means the
+                // prefetcher died unexpectedly.
+                if cancellation.is_cancelled() {
+                    return Ok(());
+                }
                 return Err(FollowError::BlocksToInsertChannelClosed);
             };
             let block_number = payload.execution_payload.block_number();
@@ -85,7 +102,10 @@ where
 
             info!(target: "follow", block = current_block, "Inserting source payload");
             let validation_started_at = Instant::now();
-            engine.insert_payload(payload).await?;
+            tokio::select! {
+                result = engine.insert_payload(payload) => result?,
+                _ = cancellation.cancelled() => return Ok(()),
+            }
             info!(
                 target: "follow",
                 block = current_block,
@@ -99,7 +119,10 @@ where
                     delay = ?insert_delay,
                     "Sleeping after source payload insert"
                 );
-                time::sleep(insert_delay).await;
+                tokio::select! {
+                    _ = time::sleep(insert_delay) => {}
+                    _ = cancellation.cancelled() => return Ok(()),
+                }
             }
             current_block = current_block.saturating_add(1);
         }
@@ -120,14 +143,19 @@ where
             }
 
             ticker.tick().await;
-            if let Err(e) = Self::update_safe_and_finalized(
-                Arc::clone(&local),
-                Arc::clone(&source),
-                Arc::clone(&engine),
-            )
-            .await
-            {
-                warn!(target: "follow", error = %e, "Failed to update safe/finalized labels");
+            tokio::select! {
+                result = Self::update_safe_and_finalized(
+                    Arc::clone(&local),
+                    Arc::clone(&source),
+                    Arc::clone(&engine),
+                ) => {
+                    if let Err(e) = result {
+                        warn!(target: "follow", error = %e, "Failed to update safe/finalized labels");
+                    }
+                }
+                // The local and source clients have no request timeout; a hung
+                // RPC call must not park the loop past shutdown.
+                _ = cancellation.cancelled() => return Ok(()),
             }
         }
     }
@@ -383,6 +411,58 @@ mod tests {
         ) -> Result<BaseExecutionPayloadEnvelope, crate::RemoteL2ClientError> {
             time::sleep(self.fetch_delay).await;
             Ok(payload(number))
+        }
+    }
+
+    /// A source whose RPC calls never resolve, mirroring a hung HTTP request:
+    /// the real follow clients have no request timeout, so a silently-stalled
+    /// connection parks the caller indefinitely.
+    #[derive(Debug)]
+    struct HangingSource;
+
+    #[async_trait]
+    impl RemoteClient for HangingSource {
+        async fn get_block_number(
+            &self,
+            _tag: BlockNumberOrTag,
+        ) -> Result<u64, crate::RemoteL2ClientError> {
+            std::future::pending().await
+        }
+
+        async fn get_block_info(
+            &self,
+            _tag: BlockNumberOrTag,
+        ) -> Result<BlockInfo, crate::RemoteL2ClientError> {
+            std::future::pending().await
+        }
+
+        async fn get_payload_by_number(
+            &self,
+            _number: u64,
+        ) -> Result<BaseExecutionPayloadEnvelope, crate::RemoteL2ClientError> {
+            std::future::pending().await
+        }
+    }
+
+    /// A local client whose RPC calls never resolve.
+    #[derive(Debug)]
+    struct HangingLocal;
+
+    #[async_trait]
+    impl FollowLocalClient for HangingLocal {
+        async fn block_info(
+            &self,
+            _tag: BlockNumberOrTag,
+        ) -> Result<Option<L2BlockInfo>, FollowError> {
+            std::future::pending().await
+        }
+
+        async fn l1_block_hash(&self, _number: u64) -> Result<Option<B256>, FollowError> {
+            std::future::pending().await
+        }
+
+        async fn proofs_latest(&self) -> Result<Option<u64>, FollowError> {
+            std::future::pending().await
         }
     }
 
@@ -960,5 +1040,83 @@ mod tests {
             elapsed_per_block < Duration::from_millis(75),
             "fetch latency appears serialized into insertion: {elapsed_per_block:?}"
         );
+    }
+
+    /// A hung RPC call must not prevent the runtime from exiting on
+    /// cancellation: the follow clients have no request timeout, so a
+    /// silently-stalled connection parks a loop's await indefinitely, and none
+    /// of the runtime's loops observed shutdown while parked. The operator's
+    /// shutdown then never completes.
+    #[tokio::test]
+    async fn runtime_exits_on_cancellation_while_source_and_local_calls_hang() {
+        let engine = Arc::new(RecordingEngine {
+            inserted: Mutex::new(Vec::new()),
+            labels: Mutex::new(Vec::new()),
+            delay: Duration::ZERO,
+        });
+        let cancellation = CancellationToken::new();
+        let engine_for_runtime: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
+        let runtime = FollowRuntime::new(
+            Arc::new(HangingLocal),
+            Arc::new(HangingSource),
+            engine_for_runtime,
+            cancellation.clone(),
+            block_info(0),
+            NoopProofGate,
+            Duration::ZERO,
+        );
+        let handle = tokio::spawn(async move { runtime.start().await });
+
+        // Let every loop reach its parked await.
+        time::sleep(Duration::from_millis(100)).await;
+        cancellation.cancel();
+
+        tokio::time::timeout(Duration::from_secs(3), handle)
+            .await
+            .expect("runtime must exit on cancellation despite hung RPC calls")
+            .expect("join")
+            .expect("cancellation exit must not be an error");
+    }
+
+    /// A closed channel while the runtime is shutting down is the normal exit
+    /// path (the prefetcher drops the sender when it exits on cancellation),
+    /// not an error.
+    #[tokio::test]
+    async fn closed_channel_during_cancellation_exits_cleanly() {
+        let engine = Arc::new(RecordingEngine {
+            inserted: Mutex::new(Vec::new()),
+            labels: Mutex::new(Vec::new()),
+            delay: Duration::ZERO,
+        });
+        let mut proof_gate = NoopProofGate;
+        let (blocks_to_insert_tx, blocks_to_insert_rx) = mpsc::channel(PREFETCH_WINDOW);
+        let cancellation = CancellationToken::new();
+
+        let engine_for_loop: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
+        let canceller = tokio::spawn({
+            let cancellation = cancellation.clone();
+            async move {
+                // Let the loop park on the empty channel, then shut it down
+                // the way the prefetcher does: cancel, then drop the sender.
+                time::sleep(Duration::from_millis(50)).await;
+                cancellation.cancel();
+                drop(blocks_to_insert_tx);
+            }
+        });
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::run_ordered_insert_loop(
+                engine_for_loop,
+                cancellation,
+                blocks_to_insert_rx,
+                1,
+                &mut proof_gate,
+                Duration::ZERO,
+            ),
+        )
+        .await
+        .expect("insert loop must exit on cancellation");
+        result.expect("cancelled exit must not be a channel-closed error");
+        canceller.await.expect("canceller");
     }
 }
