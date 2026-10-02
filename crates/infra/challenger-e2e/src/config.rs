@@ -162,6 +162,11 @@ pub struct Config {
     /// fork, so it bounds the scan for the challenger's own transactions.
     #[arg(skip)]
     pub fork_block: u64,
+
+    /// Requests the mock prover accepted, in `mock` mode. Set by the driver
+    /// when it starts the mock; checked against each disputed checkpoint.
+    #[arg(skip)]
+    pub mock_requests: Option<crate::mock_prover::MockProofRequests>,
 }
 
 #[cfg(test)]

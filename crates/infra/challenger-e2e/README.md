@@ -10,8 +10,10 @@ disputes the classifier paths that can run serially on the same fork.
 Patching an existing game rather than creating one is what keeps the test
 honest. The games were created and verified on the real chain before the fork
 point, so the `TEEVerifier`, the `TEEProverRegistry` and the game bytecode are
-all real; the challenger's dispute proof is genuinely verified onchain rather
-than waved through by a stub. The corruption itself reuses
+all real. In `real` prover mode the challenger's dispute proof is genuinely
+verified onchain rather than waved through by a stub; the default `mock` mode
+trades that for not touching the shared prover, as described under
+[Prover modes](#prover-modes). The corruption itself reuses
 [`base_zk_fork_dispute::Checkpoint::patch`], which rewrites the CWIA root in the
 game bytecode and repairs the factory's `_disputeGames` registration so lookups
 still resolve.
@@ -46,9 +48,20 @@ instead. After every dispute phase it decodes each successful `challenge` and
 its canonical root. The game itself only compares that root with its own stored
 one, so without this a challenger proving the wrong root would still pass.
 
+A right root is not a right proof, though: a real proof also commits to the
+range, L1 head, interval, schedule and prover it was requested for, and a
+journal that does not match the game is rejected. So the mock records every
+SNARK request, and after each dispute the driver requires the challenger to
+have requested exactly the proof that checkpoint needs — one checkpoint's
+blocks, the game's `l1Head`, its interval, a schedule pinned to the game's final
+L2 block, and the challenger as prover.
+
 What `mock` cannot catch, by construction: real proof generation, a prover
 built for a different program than the on-chain hashes (the 2026-09-29 zeronet
-failures), SP1 gateway routing, and prover-service queueing. snark-e2e is the
+failures), SP1 gateway routing, prover-service queueing, and the TEE submission
+path — the challenger never holds a TEE receipt, so the onchain TEE revert and
+the ZK fallback that follows it are not exercised; it falls back on the RPC
+refusal instead. snark-e2e is the
 place for the program check; `real` mode remains for an end-to-end proof.
 
 **`real`.** The live prover-service at `BASE_CHALLENGER_ZK_RPC_URL` and the
@@ -152,8 +165,9 @@ disputes games it was never given would pass the run.
    must detect **Path 2 dispute**, clear `zkProver` and `counteredIndex`, and
    move B's nonce again.
 5. **Path 4 `InvalidDualProposal`.** Game B was staged *before* the challenger
-   was released: A requested a real SNARK of B's canonical roots from
-   `BASE_CHALLENGER_ZK_RPC_URL` (not the fork) and submitted
+   was released: A requested a SNARK of B's canonical roots from
+   `BASE_CHALLENGER_ZK_RPC_URL` (not the fork; the mock prover in `mock` mode)
+   and submitted
    `verifyProposalProof`. `zkProver != 0` and `counteredIndex == 0`. After the
    quiet window, B is patched. The challenger must drop one of B's two proofs.
    B's nonce must advance.
@@ -195,7 +209,8 @@ first, which current deployments do not: B is not a registered TEE proposer, so
 Path 4 takes the ZK-fallback branch and the run ends there. This scenario stages
 the Path 3 shape directly instead of waiting for it.
 
-Game B is given a real SNARK of its canonical roots as in step 5. A then drops
+Game B is given a SNARK of its canonical roots as in step 5 (real in `real`
+mode, from the mock otherwise). A then drops
 B's TEE proof through the game's own `nullify(TEE, ...)` **while every root is
 still canonical**, waits out every challenger scan that could have seen both
 proofs, and only then patches a root as in step 6. `nullify` only requires the
