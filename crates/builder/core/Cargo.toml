@@ -138,7 +138,6 @@ tar = { workspace = true, optional = true }
 ctor = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }
 rlimit = { workspace = true, optional = true }
-nanoid = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["debug"] }
 serde = { workspace = true, features = ["std"] }
 hyper-util = { workspace = true, optional = true }
@@ -181,7 +180,6 @@ ctor.workspace = true
 hyper.workspace = true
 rlimit.workspace = true
 rstest.workspace = true
-nanoid.workspace = true
 tempfile.workspace = true
 hyper-util.workspace = true
 http-body-util.workspace = true
@@ -220,7 +218,6 @@ test-utils = [
 	"http-body-util",
 	"hyper",
 	"hyper-util",
-	"nanoid",
 	"reth-chain-state/test-utils",
 	"reth-chainspec/test-utils",
 	"reth-db/test-utils",

@@ -585,7 +585,6 @@ bytes = "1.12.1"
 # identifiers and randomness
 rand = "0.9"
 uuid = "1.24"
-nanoid = "0.4"
 rand_08 = { package = "rand", version = "0.8" }
 
 # time
