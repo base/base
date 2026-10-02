@@ -1,5 +1,8 @@
 //! Throttle controller for DA backlog management.
 
+use tokio::sync::watch;
+use tracing::info;
+
 /// Configuration for the throttle controller.
 ///
 /// Must pass [`validate`](Self::validate) before use because the block builder reads a DA
@@ -179,6 +182,20 @@ impl ThrottleController {
         (max_block_size, max_tx_size)
     }
 
+    /// Returns the DA limits to apply for `params`, which are the upper limits while not
+    /// throttling.
+    pub const fn limits(&self, params: Option<&ThrottleParams>) -> DaLimits {
+        match params {
+            Some(params) => {
+                DaLimits { max_tx_size: params.max_tx_size, max_block_size: params.max_block_size }
+            }
+            None => DaLimits {
+                max_tx_size: self.config.tx_size_upper_limit,
+                max_block_size: self.config.block_size_upper_limit,
+            },
+        }
+    }
+
     /// Update with current DA backlog bytes.
     ///
     /// Returns [`ThrottleParams`] if throttling should be applied, or `None`
@@ -238,65 +255,62 @@ pub struct ThrottleInfo {
     pub max_tx_size: u64,
 }
 
-/// Wraps a [`ThrottleController`] and a [`ThrottleClient`] with a dedup cache
-/// to avoid redundant RPC calls when DA limits have not changed.
-#[derive(Debug)]
-pub struct DaThrottle<TC: crate::ThrottleClient> {
-    controller: ThrottleController,
-    client: TC,
-    last_applied: Option<(u64, u64)>,
+/// DA size limits for the block builders, pushed through `miner_setMaxDASize`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DaLimits {
+    /// Maximum DA bytes allowed per transaction.
+    pub max_tx_size: u64,
+    /// Maximum DA bytes allowed per block.
+    pub max_block_size: u64,
 }
 
-impl<TC: crate::ThrottleClient> DaThrottle<TC> {
-    /// Create a new [`DaThrottle`].
-    pub const fn new(controller: ThrottleController, client: TC) -> Self {
-        Self { controller, client, last_applied: None }
+/// Turns the DA backlog into the limits the block builders should apply, and publishes them.
+///
+/// The limits are published on a [`watch`] channel that keeps only the latest value, so a
+/// subscriber that falls behind pushes the current limits and never a stale one. Pushing them to
+/// the block builders is up to the subscribers, see [`subscribe`](Self::subscribe).
+#[derive(Debug)]
+pub struct DaThrottle {
+    controller: ThrottleController,
+    limits: watch::Sender<DaLimits>,
+}
+
+impl DaThrottle {
+    /// Creates a throttle publishing the limits of `controller`, starting from its limits for an
+    /// empty backlog.
+    pub fn new(controller: ThrottleController) -> Self {
+        let limits = watch::Sender::new(controller.limits(controller.update(0).as_ref()));
+        Self { controller, limits }
     }
 
-    /// Compute new DA limits from `backlog_bytes` and push them to the client
-    /// only when they differ from the last applied limits.
+    /// Returns a receiver of the published limits. It starts with the current limits marked as
+    /// seen, and is notified of every later publication.
+    pub fn subscribe(&self) -> watch::Receiver<DaLimits> {
+        self.limits.subscribe()
+    }
+
+    /// Computes the limits for `backlog_bytes` and publishes them when they change.
     ///
     /// Returns `true` if throttling is currently active (intensity > 0).
-    /// Logs throttle on/off transitions.
-    pub async fn apply(&mut self, backlog_bytes: u64) -> bool {
-        let throttle_params = self.controller.update(backlog_bytes);
-        let is_throttling = throttle_params.as_ref().is_some_and(ThrottleParams::is_throttling);
+    pub fn apply(&mut self, backlog_bytes: u64) -> bool {
+        let params = self.controller.update(backlog_bytes);
+        let limits = self.controller.limits(params.as_ref());
 
-        let (max_tx_size, max_block_size) = throttle_params.as_ref().map_or_else(
-            || {
-                (
-                    self.controller.config().tx_size_upper_limit,
-                    self.controller.config().block_size_upper_limit,
-                )
-            },
-            |p| (p.max_tx_size, p.max_block_size),
-        );
-
-        let new_limits = (max_tx_size, max_block_size);
-        if self.last_applied == Some(new_limits) {
-            return is_throttling;
+        let published = self.limits.send_if_modified(|current| {
+            let changed = *current != limits;
+            *current = limits;
+            changed
+        });
+        if published {
+            info!(
+                intensity = params.map_or(0.0, |p| p.intensity),
+                max_block_size = limits.max_block_size,
+                max_tx_size = limits.max_tx_size,
+                "DA limits published"
+            );
         }
 
-        if let Err(e) = self.client.set_max_da_size(max_tx_size, max_block_size).await {
-            tracing::warn!(error = %e, "failed to apply DA size limits to block builder");
-        } else {
-            if is_throttling {
-                tracing::info!(
-                    intensity = throttle_params.as_ref().unwrap().intensity,
-                    max_block_size,
-                    max_tx_size,
-                    "DA throttle activated"
-                );
-            } else {
-                tracing::info!(
-                    max_block_size,
-                    max_tx_size,
-                    "DA throttle deactivated, limits reset"
-                );
-            }
-            self.last_applied = Some(new_limits);
-        }
-        is_throttling
+        params.as_ref().is_some_and(ThrottleParams::is_throttling)
     }
 
     /// Compute a point-in-time snapshot of the current throttle state.
@@ -306,27 +320,20 @@ impl<TC: crate::ThrottleClient> DaThrottle<TC> {
     pub fn snapshot(&self, backlog_bytes: u64) -> ThrottleInfo {
         let params = self.controller.update(backlog_bytes);
         let config = self.controller.config();
+        let limits = self.controller.limits(params.as_ref());
         ThrottleInfo {
             strategy: self.controller.strategy().clone(),
             threshold_bytes: config.threshold_bytes,
             max_intensity: config.max_intensity,
             current_intensity: params.map_or(0.0, |p| p.intensity),
-            max_block_size: params.map_or(config.block_size_upper_limit, |p| p.max_block_size),
-            max_tx_size: params.map_or(config.tx_size_upper_limit, |p| p.max_tx_size),
+            max_block_size: limits.max_block_size,
+            max_tx_size: limits.max_tx_size,
         }
     }
 
-    /// Replace the controller and clear the dedup cache so new limits are
-    /// applied unconditionally on the next driver iteration.
+    /// Replaces the controller. Its limits are published on the next driver iteration.
     pub const fn set_controller(&mut self, controller: ThrottleController) {
         self.controller = controller;
-        self.last_applied = None;
-    }
-
-    /// Clear the dedup cache so the current limits are re-sent to the client
-    /// on the next driver iteration even if they have not changed.
-    pub const fn reset(&mut self) {
-        self.last_applied = None;
     }
 }
 

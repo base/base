@@ -20,7 +20,7 @@ jsonrpsee = { workspace = true, features = ["server", "macros"] }
 
 [dev-dependencies]
 serde_json.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
 base-runtime = { workspace = true, features = ["tokio"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 base-batcher-core = { workspace = true, features = ["test-utils"] }

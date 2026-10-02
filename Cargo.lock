@@ -3077,7 +3077,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-eth 2.4.1",
  "async-trait",
- "auto_impl",
  "base-batcher-encoder",
  "base-batcher-source",
  "base-blobs",

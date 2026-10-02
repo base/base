@@ -13,7 +13,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     AdminCommand, AdminError, BatchDriverConfig, BatchDriverError, BatcherStatus, DaThrottle,
-    DerivationStatus, SubmissionQueue, ThrottleClient, ThrottleController,
+    DerivationStatus, SubmissionQueue, ThrottleController,
 };
 
 /// Encoding steps per CPU phase.
@@ -45,13 +45,12 @@ pub struct BatchDriverInputs<S, L> {
 /// Uses [`SubmissionQueue`] to send submissions and track their receipts, and
 /// [`DaThrottle`] for DA backlog throttle management.
 #[derive(Debug)]
-pub struct BatchDriver<R, P, S, TM, TC, L>
+pub struct BatchDriver<R, P, S, TM, L>
 where
     R: Runtime,
     P: BatchPipeline,
     S: UnsafeBlockSource,
     TM: TxManager,
-    TC: ThrottleClient,
     L: L1HeadSource,
 {
     /// Runtime providing cancellation and the shutdown drain timer.
@@ -62,8 +61,8 @@ where
     source: S,
     /// Submission lifecycle manager (tx manager, in-flight tracking).
     submissions: SubmissionQueue<TM>,
-    /// DA backlog throttle (controller, client, dedup cache).
-    throttle: DaThrottle<TC>,
+    /// DA backlog throttle, which publishes the limits the block builders apply.
+    throttle: DaThrottle,
     /// L1 head source for chain head advancement.
     l1_head_source: L,
     /// Last trusted L2 safe head.
@@ -84,13 +83,12 @@ where
     force_blobs_when_throttling: bool,
 }
 
-impl<R, P, S, TM, TC, L> BatchDriver<R, P, S, TM, TC, L>
+impl<R, P, S, TM, L> BatchDriver<R, P, S, TM, L>
 where
     R: Runtime,
     P: BatchPipeline,
     S: UnsafeBlockSource,
     TM: TxManager,
-    TC: ThrottleClient,
     L: L1HeadSource,
 {
     /// Create a [`BatchDriver`].
@@ -102,7 +100,7 @@ where
         mut pipeline: P,
         tx_manager: TM,
         config: BatchDriverConfig,
-        throttle: DaThrottle<TC>,
+        throttle: DaThrottle,
         inputs: BatchDriverInputs<S, L>,
     ) -> Self {
         pipeline.advance_l1_head(inputs.initial_l1_head);
@@ -209,7 +207,7 @@ where
     async fn work(&mut self) -> Result<bool, BatchDriverError> {
         let encoding_left = self.drain_encoding()?;
 
-        let is_throttling = self.throttle.apply(self.pipeline.da_backlog_bytes()).await;
+        let is_throttling = self.throttle.apply(self.pipeline.da_backlog_bytes());
         if self.force_blobs_when_throttling {
             self.pipeline.set_blob_override(is_throttling);
         }
@@ -398,11 +396,6 @@ where
                 self.throttle.set_controller(ThrottleController::new(config, strategy));
                 let _ = reply.send(());
                 info!("throttle controller replaced via admin");
-            }
-            AdminCommand::ResetThrottle { reply } => {
-                self.throttle.reset();
-                let _ = reply.send(());
-                info!("throttle controller reset via admin");
             }
             AdminCommand::GetThrottleInfo { reply } => {
                 let _ = reply.send(self.throttle.snapshot(self.pipeline.da_backlog_bytes()));
