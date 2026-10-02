@@ -153,6 +153,10 @@ jobs:
   rust:
     name: Rust
     needs: changes
+    # `changes` is only needed for the RUN_BENCH decision. Clippy and the tests
+    # must not depend on change detection succeeding, so run even if `changes`
+    # fails; the benchmark step then skips because its output is unavailable.
+    if: ${{ !cancelled() }}
     # One sandbox so that Clippy, the tests and the benchmark share a single
     # `target/` and toolchain/tool setup instead of each compiling the workspace
     # from scratch. System tests are wall-clock bound by Docker rather than CPU,
