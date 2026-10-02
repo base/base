@@ -30,12 +30,22 @@ pub struct FollowNodeOverrides {
     /// The unified binary sets this to the co-located execution node's IPC socket so the follow
     /// node inserts payloads over IPC instead of a network engine endpoint.
     pub l2_engine_rpc: Option<Url>,
+    /// Upstream JSON-RPC endpoint that receives every method the follow RPC server does not
+    /// serve itself.
+    pub rpc_forward_upstream: Option<Url>,
 }
 
 impl FollowNodeOverrides {
     /// Creates overrides for a follow node embedded alongside an execution node.
     pub const fn embedded_execution(l2_engine_rpc: Url) -> Self {
-        Self { l2_engine_rpc: Some(l2_engine_rpc) }
+        Self { l2_engine_rpc: Some(l2_engine_rpc), rpc_forward_upstream: None }
+    }
+
+    /// Forwards RPC methods the follow server does not serve to the embedded execution node's
+    /// HTTP endpoint, so one endpoint serves both layers.
+    pub fn with_rpc_forward_upstream(mut self, upstream: Option<Url>) -> Self {
+        self.rpc_forward_upstream = upstream;
+        self
     }
 }
 
@@ -319,7 +329,10 @@ impl ConsensusFollowNodeArgs {
             self.config.l1_rpc_args.l1_rpc_timeout,
         );
         let l2_source = RemoteL2Client::new(self.config.source_l2_rpc.clone());
-        let rpc_builder = Option::<RpcBuilder>::from(self.config.rpc_flags.clone());
+        let mut rpc_builder = Option::<RpcBuilder>::from(self.config.rpc_flags.clone());
+        if let Some(rpc_builder) = rpc_builder.as_mut() {
+            rpc_builder.forward_unmatched_to = overrides.rpc_forward_upstream.clone();
+        }
 
         Ok(FollowNode::new(FollowNodeConfig {
             rollup_config,

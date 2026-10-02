@@ -1,6 +1,10 @@
 //! Integrated RPC node command.
 
-use std::{path::Path, sync::Arc};
+use std::{
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    path::Path,
+    sync::Arc,
+};
 
 use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
@@ -102,14 +106,19 @@ impl RpcCommand {
             // Keep the execution node handle alive until both services have coordinated shutdown.
             let execution_node = handle.node;
             let execution_exit = handle.node_exit_future;
+            let execution_rpc =
+                execution_rpc_url(execution_node.rpc_server_handle().http_local_addr());
 
             let consensus_cancellation = CancellationToken::new();
             let consensus_exit = consensus_args.start_with_options(
                 ConsensusNodeStartOptions::new(rollup_config)
-                    .with_overrides(ConsensusNodeOverrides::embedded_execution(
-                        l2_engine_rpc,
-                        upgrade_signal_l1_rpc,
-                    ))
+                    .with_overrides(
+                        ConsensusNodeOverrides::embedded_execution(
+                            l2_engine_rpc,
+                            upgrade_signal_l1_rpc,
+                        )
+                        .with_rpc_forward_upstream(execution_rpc),
+                    )
                     .with_cancellation(consensus_cancellation.clone())
                     .with_upgrade_signal_startup_mode(UpgradeSignalStartupMode::AlreadyApplied),
             );
@@ -151,6 +160,21 @@ pub(super) fn engine_ipc_url(path: &str) -> eyre::Result<Url> {
     })
 }
 
+/// Returns the URL the consensus RPC server should forward unmatched methods to, given the bound
+/// address of the embedded execution node's HTTP server.
+///
+/// Returns `None` when the execution node serves no HTTP RPC, in which case the consensus server
+/// only answers its own namespaces. Wildcard bind addresses are mapped to loopback.
+pub(super) fn execution_rpc_url(http_addr: Option<SocketAddr>) -> Option<Url> {
+    let addr = http_addr?;
+    let ip = match addr.ip() {
+        IpAddr::V4(ip) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
+        IpAddr::V6(ip) if ip.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
+        ip => ip,
+    };
+    Url::parse(&format!("http://{}", SocketAddr::new(ip, addr.port()))).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use std::process::Command;
@@ -171,6 +195,25 @@ mod tests {
         let mut full_args = Vec::from(args);
         full_args.extend_from_slice(REQUIRED_CONSENSUS_ARGS);
         full_args
+    }
+
+    #[test]
+    fn execution_rpc_url_maps_wildcard_to_loopback() {
+        use super::execution_rpc_url;
+
+        assert_eq!(execution_rpc_url(None), None);
+        assert_eq!(
+            execution_rpc_url(Some("0.0.0.0:8545".parse().unwrap())).unwrap().as_str(),
+            "http://127.0.0.1:8545/"
+        );
+        assert_eq!(
+            execution_rpc_url(Some("[::]:8545".parse().unwrap())).unwrap().as_str(),
+            "http://[::1]:8545/"
+        );
+        assert_eq!(
+            execution_rpc_url(Some("10.0.0.2:9000".parse().unwrap())).unwrap().as_str(),
+            "http://10.0.0.2:9000/"
+        );
     }
 
     #[test]

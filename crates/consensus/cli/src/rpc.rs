@@ -141,6 +141,7 @@ impl From<RpcArgs> for Option<RpcBuilder> {
             dev_enabled: args.dev_enabled,
             http_timeout: Duration::from_secs(args.http_timeout_secs),
             max_concurrent_requests: args.max_concurrent_requests,
+            forward_unmatched_to: None,
         })
     }
 }

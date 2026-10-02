@@ -38,6 +38,9 @@ pub struct ConsensusNodeOverrides {
     pub l2_engine_jwt_secret: Option<JwtSecret>,
     /// Override for the L1 RPC endpoint used by consensus upgrade-signal reads.
     pub upgrade_signal_l1_rpc: Option<Url>,
+    /// Upstream JSON-RPC endpoint that receives every method the consensus RPC server does not
+    /// serve itself.
+    pub rpc_forward_upstream: Option<Url>,
 }
 
 impl ConsensusNodeOverrides {
@@ -52,7 +55,15 @@ impl ConsensusNodeOverrides {
             l2_engine_rpc: Some(l2_engine_rpc),
             l2_engine_jwt_secret: None,
             upgrade_signal_l1_rpc,
+            rpc_forward_upstream: None,
         }
+    }
+
+    /// Forwards RPC methods the consensus server does not serve to the embedded execution node's
+    /// HTTP endpoint, so one endpoint serves both layers.
+    pub fn with_rpc_forward_upstream(mut self, upstream: Option<Url>) -> Self {
+        self.rpc_forward_upstream = upstream;
+        self
     }
 }
 
@@ -535,7 +546,11 @@ impl ConsensusNodeArgs {
                 genesis_signer,
             )
             .await?;
-        let rpc_config = self.config.rpc_flags.clone().into();
+        let mut rpc_config: Option<base_consensus_rpc::RpcBuilder> =
+            self.config.rpc_flags.clone().into();
+        if let Some(rpc_config) = rpc_config.as_mut() {
+            rpc_config.forward_unmatched_to = overrides.rpc_forward_upstream.clone();
+        }
 
         let engine_config = EngineConfig {
             config: Arc::new(cfg.clone()),

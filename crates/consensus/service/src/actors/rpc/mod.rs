@@ -2,7 +2,10 @@
 
 mod actor;
 pub(crate) use actor::launch_rpc_server;
+
+mod forward;
 pub use actor::{RpcActor, RpcContext};
+pub use forward::{ForwardUnmatched, ForwardUnmatchedLayer};
 
 mod engine_rpc_client;
 pub use engine_rpc_client::QueuedEngineRpcClient;

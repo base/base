@@ -2,6 +2,8 @@
 
 use std::{net::SocketAddr, num::NonZeroUsize, path::PathBuf, time::Duration};
 
+use url::Url;
+
 /// The RPC configuration.
 #[derive(Debug, Clone)]
 pub struct RpcBuilder {
@@ -22,6 +24,11 @@ pub struct RpcBuilder {
     pub http_timeout: Duration,
     /// Maximum number of concurrent in-flight RPC requests.
     pub max_concurrent_requests: NonZeroUsize,
+    /// Upstream JSON-RPC endpoint that receives every method this server does not serve itself.
+    ///
+    /// Set by the unified binary to the embedded execution node's HTTP server so a single
+    /// endpoint answers both consensus and execution namespaces.
+    pub forward_unmatched_to: Option<Url>,
 }
 
 impl RpcBuilder {

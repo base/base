@@ -38,6 +38,20 @@ base batcher --l1-rpc-url <url> --l2-rpc-url <url> --rollup-rpc-url <url> --priv
 The former standalone binary's `BATCHER_*` environment variables are replaced by
 these shared or `BASE_BATCHER_*` names.
 
+## Single RPC endpoint
+
+In `rpc`, `follow`, and `sequencer`, the consensus RPC server (`--rpc.addr` / `--rpc.port`,
+default `0.0.0.0:9545`) also answers execution-layer methods. It serves its own namespaces
+(`optimism_*`, `opp2p_*`, `admin_*`, `base_*`, `healthz`) and forwards every method it does not
+register, including batch entries, to the embedded execution node's HTTP server. Point consensus
+clients, operators, and execution clients at one address. Forwarded calls return the execution
+node's results and errors unchanged.
+
+The execution node keeps its own `--http.*` listener, so existing deployments are unaffected.
+Forwarding is unavailable when the execution node runs without `--http`, and consensus-only
+methods are then the only ones served. Forwarding covers request/response calls over HTTP; use the
+execution node's own `--ws` endpoint for `eth_subscribe`.
+
 ## `base rpc`
 
 `base rpc` starts a validator-oriented node by launching an embedded execution node and an embedded

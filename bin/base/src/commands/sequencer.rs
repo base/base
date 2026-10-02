@@ -25,7 +25,10 @@ use clap::Args;
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
 
-use crate::{commands::rpc::engine_ipc_url, config::ResolvedChainConfig};
+use crate::{
+    commands::rpc::{engine_ipc_url, execution_rpc_url},
+    config::ResolvedChainConfig,
+};
 
 /// Arguments for `base sequencer`.
 #[derive(Args, Clone, Debug)]
@@ -142,14 +145,19 @@ impl SequencerCommand {
             // Keep the execution node handle alive until both services have coordinated shutdown.
             let execution_node = handle.node;
             let execution_exit = handle.node_exit_future;
+            let execution_rpc =
+                execution_rpc_url(execution_node.rpc_server_handle().http_local_addr());
 
             let consensus_cancellation = CancellationToken::new();
             let consensus_exit = consensus_args.start_with_options(
                 ConsensusNodeStartOptions::new(rollup_config)
-                    .with_overrides(ConsensusNodeOverrides::embedded_execution(
-                        l2_engine_rpc,
-                        upgrade_signal_l1_rpc,
-                    ))
+                    .with_overrides(
+                        ConsensusNodeOverrides::embedded_execution(
+                            l2_engine_rpc,
+                            upgrade_signal_l1_rpc,
+                        )
+                        .with_rpc_forward_upstream(execution_rpc),
+                    )
                     .with_cancellation(consensus_cancellation.clone())
                     .with_upgrade_signal_startup_mode(UpgradeSignalStartupMode::AlreadyApplied),
             );

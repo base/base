@@ -29,6 +29,7 @@ alloy-primitives = { workspace = true, features = ["map", "rlp", "serde", "std"]
 
 # Misc
 ipnet.workspace = true
+url.workspace = true
 backon.workspace = true
 libp2p.workspace = true
 async-trait.workspace = true
