@@ -135,8 +135,6 @@ jobs:
         run: cargo deny check bans --hide-inclusion-graph
       - name: Check crate dependencies
         run: ./etc/scripts/ci/check-crate-deps.sh
-      - name: Check docs index
-        run: python3 etc/scripts/local/docs-index.py check
       - name: Validate operator compose
         run: docker compose config -q
   format:

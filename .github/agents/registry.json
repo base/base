@@ -1,0 +1,17 @@
+{
+  "target": {
+    "repository": "base/base",
+    "base_branch": "main"
+  },
+  "agents": {
+    "docs-index": {
+      "label": "agent:docs-index",
+      "instructions": ".github/agents/docs-index.md",
+      "branch_prefix": "agent/docs-index-",
+      "model": "claude-sonnet-5-5",
+      "trigger": "push",
+      "min_open_prs": 0,
+      "max_open_prs": 1
+    }
+  }
+}

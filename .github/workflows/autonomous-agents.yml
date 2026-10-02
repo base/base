@@ -1,0 +1,184 @@
+name: Autonomous Agents
+
+# Agents are defined in .github/agents/registry.json: label, branch prefix, model,
+# trigger, and the minimum and maximum number of pull requests each may keep open.
+# `on:` cannot read the registry, so both triggers are listed here and the
+# controller ignores events that do not match an agent's `trigger`.
+# Runbook: .github/agents/README.md
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/*.md"
+      - etc/docs-index.toml
+      - llms.txt
+      - llms-full.txt
+      - etc/scripts/local/docs-index.py
+      - etc/scripts/ci/autonomous_agents.py
+      - .github/agents/**
+      - .github/workflows/autonomous-agents.yml
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Print the plan without invoking the model or changing any pull request
+        type: boolean
+        default: true
+  pull_request:
+    paths:
+      - etc/scripts/ci/autonomous_agents.py
+      - etc/scripts/ci/test_autonomous_agents.py
+      - etc/scripts/local/docs-index.py
+      - .github/agents/**
+      - .github/workflows/autonomous-agents.yml
+
+# One run at a time so the agent never races itself over the same branch.
+concurrency:
+  group: autonomous-agents-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test controller
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+      - name: Test the controller and the docs index tooling
+        run: |
+          set -euo pipefail
+          python3 etc/scripts/ci/test_autonomous_agents.py
+          python3 etc/scripts/local/docs-index.py test
+
+  plan:
+    name: Plan docs-index agent
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
+      close: ${{ steps.plan.outputs.close }}
+      close_count: ${{ steps.plan.outputs.close_count }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          fetch-depth: 1
+      - name: Reconcile open pull requests against the docs index
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: python3 etc/scripts/ci/autonomous_agents.py plan --event-name "$EVENT_NAME" --github-output "$GITHUB_OUTPUT"
+
+  close:
+    name: Close surplus pull requests
+    needs: plan
+    if: >-
+      needs.plan.outputs.close_count != '0' &&
+      (github.event_name != 'workflow_dispatch' || !inputs.dry_run)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          fetch-depth: 1
+      - name: Close pull requests the plan no longer wants
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOSING: ${{ needs.plan.outputs.close }}
+        run: python3 etc/scripts/ci/autonomous_agents.py close --pull-requests "$CLOSING"
+
+  docs-index:
+    name: Docs index agent
+    needs: plan
+    if: >-
+      needs.plan.outputs.count != '0' &&
+      (github.event_name != 'workflow_dispatch' || !inputs.dry_run)
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    # The LLM gateway is reachable only from this runner group.
+    runs-on:
+      group: BaseRunnerGroup
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # The controller and prompts always come from main, never from the
+          # agent branch. The branch is rebuilt from main on every refresh.
+          ref: main
+          fetch-depth: 0
+
+      - name: Load the previous summaries from the open pull request
+        if: matrix.mode == 'refresh'
+        env:
+          BRANCH: ${{ matrix.branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$BRANCH"
+          git show "FETCH_HEAD:etc/docs-index.toml" > "$RUNNER_TEMP/previous-docs-index.toml"
+
+      - name: Sync the manifest with the docs on main
+        env:
+          PREVIOUS: ${{ matrix.mode == 'refresh' && format('{0}/previous-docs-index.toml', runner.temp) || '' }}
+        run: |
+          set -euo pipefail
+          args=(--work "$RUNNER_TEMP/work.json" --baseline "$RUNNER_TEMP/baseline.toml")
+          if [[ -n "$PREVIOUS" ]]; then
+            args+=(--previous "$PREVIOUS")
+          fi
+          python3 etc/scripts/ci/autonomous_agents.py prepare "${args[@]}"
+
+      - name: Install pinned Claude Code CLI
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location https://claude.ai/install.sh |
+            bash -s -- 2.1.270
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/claude" --version
+
+      - name: Write summaries with the registry's model
+        env:
+          ANTHROPIC_BASE_URL: https://${{ vars.LLM_GATEWAY_HOSTNAME }}
+          ANTHROPIC_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+        run: |
+          python3 etc/scripts/ci/autonomous_agents.py run-agent \
+            --claude "$HOME/.local/bin/claude" \
+            --work "$RUNNER_TEMP/work.json" --baseline "$RUNNER_TEMP/baseline.toml"
+
+      - name: Stamp reviewed docs and regenerate llms.txt
+        run: |
+          python3 etc/scripts/ci/autonomous_agents.py finalize \
+            --work "$RUNNER_TEMP/work.json" --baseline "$RUNNER_TEMP/baseline.toml" \
+            --report "$RUNNER_TEMP/report.json"
+          python3 etc/scripts/local/docs-index.py check
+
+      - name: Publish the GitHub-signed commit and pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ matrix.mode }}
+          BRANCH: ${{ matrix.branch }}
+          PULL_REQUEST: ${{ matrix.pull_request }}
+        run: |
+          python3 etc/scripts/ci/autonomous_agents.py publish \
+            --mode "$MODE" --branch "$BRANCH" --pull-request "$PULL_REQUEST" \
+            --report "$RUNNER_TEMP/report.json"
