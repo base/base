@@ -555,6 +555,7 @@ brotli = { version = "8.0.2", default-features = false }
 
 # database
 redb = "2"
+crc = "3.4"
 sqlx = { version = "0.8", default-features = false }
 rocksdb = { version = "0.24", default-features = false }
 

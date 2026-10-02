@@ -39,13 +39,6 @@ impl RequiredAuditWork {
         conn: &mut PgConnection,
         progress: &MigrationReporter,
     ) -> Result<usize> {
-        let applied: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=$1 AND success)",
-        )
-        .bind(self.prerequisite())
-        .fetch_one(&mut *conn)
-        .await?;
-        ensure!(applied, "required online work schema prerequisite missing");
         match self {
             Self::IngestedAt => TransactionEventIngestedAtIndex::reconcile(conn, progress).await,
         }
@@ -82,8 +75,8 @@ impl AuditMigration {
     /// The caller must close this dedicated session on every outcome. No nested
     /// URL-taking API is called while its migration lock is held.
     pub async fn run_on(conn: &mut PgConnection, progress: &MigrationReporter) -> Result<()> {
-        progress.phase(MigrationPhase::WaitingForLock)?;
-        conn.lock().await?;
+        progress.phase(MigrationPhase::WaitingForLock).await?;
+        MigrationSession::lock(conn).await?;
         let expected = progress.backend.lock().map_err(|_| MigrationError::Worker)?.clone();
         if let Some(expected) = expected {
             ensure!(
@@ -91,23 +84,24 @@ impl AuditMigration {
                 "operation connection is not session-affine"
             );
         }
-        progress.phase(MigrationPhase::Schema)?;
+        progress.phase(MigrationPhase::Schema).await?;
         PgTransactionEventSink::migrate_on(conn).await?;
         Self::verify_schema(conn).await?;
-        progress.update(|s| s.schema_ready = true)?;
+        progress.update(|s| s.schema_ready = true).await?;
         for work in RequiredAuditWork::ALL {
-            progress.phase(MigrationPhase::Reconciling)?;
-            progress.update(|s| s.operation = Some(work.id().into()))?;
+            progress.phase(MigrationPhase::Reconciling).await?;
+            progress.update(|s| s.operation = Some(work.id().into())).await?;
             work.reconcile(conn, progress).await?;
-            progress.phase(MigrationPhase::Validating)?;
+            progress.phase(MigrationPhase::Validating).await?;
             work.validate(conn).await?;
         }
         progress.check_running()?;
         Ok(())
     }
 
-    /// Read-only check of every embedded migration, including immutable checksums.
-    pub async fn verify_schema(conn: &mut PgConnection) -> Result<()> {
+    /// Checks an immutable contiguous history prefix and the required prerequisite.
+    /// Compatibility indexing accepts a valid v2 database without applying v3 schema.
+    pub async fn verify_history(conn: &mut PgConnection, prerequisite: i64) -> Result<()> {
         let exists: bool =
             sqlx::query_scalar("SELECT to_regclass('public._sqlx_migrations') IS NOT NULL")
                 .fetch_one(&mut *conn)
@@ -119,15 +113,32 @@ impl AuditMigration {
         .fetch_all(&mut *conn)
         .await?;
         let migrator = sqlx::migrate!("./migrations");
-        ensure!(rows.len() == migrator.iter().count(), "audit migration history incomplete");
-        for migration in migrator.iter() {
+        ensure!(rows.len() <= migrator.iter().count(), "unrecognized audit migration history");
+        ensure!(
+            rows.last().is_some_and(|row| row.0 >= prerequisite),
+            "audit migration history incomplete"
+        );
+        for ((version, success, checksum), migration) in rows.iter().zip(migrator.iter()) {
             ensure!(
-                rows.iter().any(|(version, success, checksum)| *version == migration.version
+                *version == migration.version
                     && *success
-                    && checksum.as_slice() == migration.checksum.as_ref()),
+                    && checksum.as_slice() == migration.checksum.as_ref(),
                 "audit migration history mismatch"
             );
         }
+        Ok(())
+    }
+
+    /// Verifies immutable schema history and the actual runtime root structure/access.
+    /// Online index completeness is deliberately not part of schema readiness.
+    pub async fn verify_schema(conn: &mut PgConnection) -> Result<()> {
+        let migrator = sqlx::migrate!("./migrations");
+        let latest =
+            migrator.iter().last().ok_or_else(|| anyhow::anyhow!("audit migrations missing"))?;
+        Self::verify_history(conn, latest.version).await?;
+        let root: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_class WHERE oid=to_regclass('public.transaction_events') AND relkind='p')").fetch_one(&mut *conn).await?;
+        ensure!(root, "runtime audit root relation unavailable");
+        PgTransactionEventSink::verify_runtime_schema(&mut *conn).await?;
         Ok(())
     }
 
@@ -147,7 +158,7 @@ impl AuditMigration {
 
     /// State restoration identity includes all schema checksums and online contracts.
     pub fn fingerprint() -> String {
-        let mut fingerprint = String::from("audit-v2:validator:2;");
+        let mut fingerprint = String::from("audit-v2:validator:3;");
         for migration in sqlx::migrate!("./migrations").iter() {
             fingerprint.push_str(&format!("schema:{}:", migration.version));
             for byte in migration.checksum.iter() {

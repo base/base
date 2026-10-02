@@ -16,9 +16,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::{
-    AuditMigration, Metrics, MigrationDurable, MigrationDurableKey, MigrationError, MigrationHttp,
-    MigrationPhase, MigrationRecord, MigrationReporter, MigrationSession, MigrationState,
-    MigrationStatus, MigrationStore,
+    AuditMigration, Metrics, MigrationCacheWriter, MigrationDurable, MigrationDurableKey,
+    MigrationError, MigrationHttp, MigrationPhase, MigrationRecord, MigrationReporter,
+    MigrationSession, MigrationState, MigrationStatus, MigrationStore,
 };
 
 /// Native managed mode configuration. Intentionally has no secret-bearing Debug implementation.
@@ -84,7 +84,11 @@ impl ManagedMigration {
     ) -> Result<(), MigrationError> {
         config.validate()?;
         let store = MigrationStore { path: config.state_path.clone() };
-        let restored = store.load(&config.run_id)?;
+        let restored = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(MigrationError::CancellationUnconfirmed),
+            restored = MigrationCacheWriter::load(store.clone(), config.run_id.clone()) => restored?,
+        };
         let mut progress = MigrationReporter::new(config.run_id.clone());
         progress.cancel = cancel.clone();
         progress.store = Some(store);
@@ -105,13 +109,15 @@ impl ManagedMigration {
                     });
             }
         }
-        progress.update(|s| {
-            s.worker_available = false;
-            s.ready = false;
-            s.complete = false;
-            s.cleanup_confirmed = false;
-            s.schema_ready = false;
-        })?;
+        progress
+            .io(progress.update(|s| {
+                s.worker_available = false;
+                s.ready = false;
+                s.complete = false;
+                s.cleanup_confirmed = false;
+                s.schema_ready = false;
+            }))
+            .await?;
         let listener = TcpListener::bind(config.address).await.map_err(|_| MigrationError::Http)?;
         let handle = if config.metrics_enabled {
             let handle = PrometheusBuilder::new()
@@ -122,7 +128,7 @@ impl ManagedMigration {
         } else {
             None
         };
-        progress.update(|_| {})?;
+        progress.io(progress.update(|_| {})).await?;
         let http_stop = CancellationToken::new();
         let router = MigrationHttp { progress: progress.clone(), metrics: handle.clone() }.router();
         let server_stop = http_stop.clone();
@@ -149,23 +155,52 @@ impl ManagedMigration {
         // HTTP failures interrupt active work; cancellation still goes through database verification.
         let operation = Self::supervise(&config, &progress, restored.map(|r| r.status.state));
         tokio::pin!(operation);
+        let mut stop_deadline = None;
         let result = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                let deadline = Instant::now() + config.shutdown_timeout;
+                stop_deadline = Some(deadline);
+                Self::drain_until(&mut operation, &progress, deadline, config.shutdown_timeout / 15).await
+            },
             result = &mut operation => result,
             _ = &mut server => {
                 cancel.cancel();
-                let _ = (&mut operation).await;
+                let deadline = Instant::now() + config.shutdown_timeout;
+                stop_deadline = Some(deadline);
+                let _ = Self::drain_until(&mut operation, &progress, deadline, config.shutdown_timeout / 15).await;
                 Err(MigrationError::Http)
             }
         };
         http_stop.cancel();
-        // HTTP shutdown never consumes the database cancellation budget.
-        if !server.is_finished()
-            && timeout(config.shutdown_timeout / 15, &mut server).await.is_err()
-        {
+        // All exit work shares the single stop-origin deadline, including HTTP.
+        let exit_deadline =
+            stop_deadline.unwrap_or_else(|| Instant::now() + config.shutdown_timeout / 15);
+        if !server.is_finished() && timeout_at(exit_deadline, &mut server).await.is_err() {
             server.abort();
         }
-        let _ = upkeep.await;
+        upkeep.abort();
         result
+    }
+
+    /// Drains cancellation with reserved cache/HTTP time on one absolute deadline.
+    pub async fn drain_until(
+        operation: impl std::future::Future<Output = Result<(), MigrationError>>,
+        progress: &MigrationReporter,
+        deadline: Instant,
+        reserve: Duration,
+    ) -> Result<(), MigrationError> {
+        match timeout_at(deadline - reserve * 2, operation).await {
+            Ok(result) => result,
+            Err(_) => {
+                let _ = timeout_at(
+                    deadline - reserve,
+                    progress.finish(Err(MigrationError::CancellationUnconfirmed)),
+                )
+                .await;
+                Err(MigrationError::CancellationUnconfirmed)
+            }
+        }
     }
 
     /// Opens independent control and hosts one durable configured retry generation.
@@ -174,19 +209,13 @@ impl ManagedMigration {
         progress: &MigrationReporter,
         _restored: Option<MigrationState>,
     ) -> Result<(), MigrationError> {
-        let mut control = match timeout(
-            Duration::from_secs(5),
-            MigrationSession::connect(&config.database_url, "audit-migrate-control"),
-        )
-        .await
+        let mut control = match progress
+            .io(MigrationSession::connect(&config.database_url, "audit-migrate-control"))
+            .await
         {
-            Ok(Ok(conn)) => conn,
-            result => {
-                let error = result
-                    .ok()
-                    .and_then(Result::err)
-                    .unwrap_or(MigrationError::Database { sqlstate: None });
-                let published = progress.finish(Err(error));
+            Ok(conn) => conn,
+            Err(error) => {
+                let published = progress.finish(Err(error)).await;
                 progress.cancel.cancelled().await;
                 return published;
             }
@@ -194,19 +223,16 @@ impl ManagedMigration {
         let result = Self::durable_attempt(config, progress, &mut control).await;
         if matches!(result, Err(MigrationError::StopRequested)) {
             let _ = timeout(config.shutdown_timeout / 15, control.close()).await;
-            return progress.update(|s| {
-                s.state = MigrationState::Stopped;
-                s.phase = MigrationPhase::Stopping;
-                s.cleanup_confirmed = true;
-                s.cancellation_confirmed = true;
-                s.complete = false;
-            });
+            let _ = progress.finish(Err(MigrationError::CancellationUnconfirmed)).await;
+            return Err(MigrationError::CancellationUnconfirmed);
         }
         if let Err(error) = &result {
-            let _ = progress.finish(Err(error.clone()));
             let key = progress.durable.lock().map_err(|_| MigrationError::Worker)?.clone();
             if let Some(key) = key.filter(|_| !progress.cancel.is_cancelled()) {
-                let _ = MigrationDurable::save(&mut control, &key, progress).await;
+                let _ =
+                    Self::terminal(&mut control, &key, progress, Err(error.clone()), false).await;
+            } else {
+                let _ = progress.finish(Err(error.clone())).await;
             }
             // A failed generation is hosted without retry, even for store/observer failure.
             progress.cancel.cancelled().await;
@@ -221,13 +247,17 @@ impl ManagedMigration {
         progress: &MigrationReporter,
         control: &mut PgConnection,
     ) -> Result<(), MigrationError> {
-        sqlx::query("SET statement_timeout='2s'")
-            .execute(&mut *control)
-            .await
-            .map_err(|_| MigrationError::StateIo)?;
+        progress
+            .io(async {
+                sqlx::query("SET statement_timeout='2s'")
+                    .execute(&mut *control)
+                    .await
+                    .map_err(|_| MigrationError::StateIo)
+            })
+            .await?;
         MigrationDurable::lock(control, progress).await?;
         progress.check_running()?;
-        let key = MigrationDurable::bootstrap(control, &config.run_id).await?;
+        let key = progress.io(MigrationDurable::bootstrap(control, &config.run_id)).await?;
         let local = progress.durable.lock().map_err(|_| MigrationError::Worker)?.clone();
         *progress.durable.lock().map_err(|_| MigrationError::Worker)? = Some(key.clone());
         if local.as_ref().is_some_and(|old| old.target != key.target) {
@@ -235,22 +265,25 @@ impl ManagedMigration {
             *progress.backend.lock().map_err(|_| MigrationError::Worker)? = None;
             return Err(MigrationError::StateCorrupt);
         }
-        let restored = MigrationDurable::load(control, &key).await?;
+        let restored = progress.io(MigrationDurable::load(control, &key)).await?;
         if let Some(record) = &restored {
             *progress.backend.lock().map_err(|_| MigrationError::Worker)? = record.backend.clone();
         }
         let started = Instant::now();
         // Even a new generation must not hide an unconfirmed prior owner.
-        for owner in MigrationDurable::owners(control, &key).await? {
+        for owner in progress.io(MigrationDurable::owners(control, &key)).await? {
             let remaining = (config.shutdown_timeout * 2 / 3).saturating_sub(started.elapsed());
             if remaining.is_zero() {
                 return Err(MigrationError::CancellationUnconfirmed);
             }
             *progress.backend.lock().map_err(|_| MigrationError::Worker)? = Some(owner.clone());
             MigrationSession::stop(control, &owner, Instant::now(), remaining).await?;
+            progress.io(MigrationDurable::confirm_owner(control, &key, &owner)).await?;
         }
         if let Some(record) = &restored {
             let mut restored_status = record.status.clone();
+            restored_status.state = MigrationState::Running;
+            restored_status.phase = MigrationPhase::Starting;
             restored_status.ready = false;
             restored_status.complete = false;
             restored_status.worker_available = false;
@@ -258,32 +291,60 @@ impl ManagedMigration {
             *progress.status.lock().map_err(|_| MigrationError::Worker)? = restored_status;
             *progress.backend.lock().map_err(|_| MigrationError::Worker)? = record.backend.clone();
             if matches!(record.status.state, MigrationState::Succeeded | MigrationState::Failed) {
-                let schema = AuditMigration::verify_schema(control).await.is_ok();
-                progress.update(|s| {
-                    s.complete = false;
-                    s.schema_ready = schema;
-                    s.worker_available = true;
-                    s.cleanup_confirmed = true;
-                    s.phase = MigrationPhase::Idle;
-                })?;
+                let schema = progress
+                    .io(async {
+                        AuditMigration::verify_schema(control)
+                            .await
+                            .map_err(|error| MigrationError::database(&error))
+                    })
+                    .await;
+                if matches!(schema, Err(MigrationError::StopRequested)) {
+                    return Err(MigrationError::StopRequested);
+                }
+                let schema = schema.is_ok();
+                progress
+                    .update(|s| {
+                        s.complete = false;
+                        s.schema_ready = schema;
+                        s.worker_available = true;
+                        s.cleanup_confirmed = true;
+                        s.phase = MigrationPhase::Idle;
+                    })
+                    .await?;
                 if record.status.state == MigrationState::Succeeded {
-                    let verified = AuditMigration::verify_complete(control)
-                        .await
-                        .map_err(|error| MigrationError::database(&error));
+                    let verified = progress
+                        .io(async {
+                            AuditMigration::verify_complete(control)
+                                .await
+                                .map_err(|error| MigrationError::database(&error))
+                        })
+                        .await;
+                    if matches!(verified, Err(MigrationError::StopRequested)) {
+                        return Err(MigrationError::StopRequested);
+                    }
                     Self::terminal(control, &key, progress, verified, false).await?;
                 } else {
-                    MigrationDurable::save(control, &key, progress).await?;
+                    let mut restored = record.clone();
+                    restored.status.schema_ready = schema;
+                    restored.status.worker_available = true;
+                    restored.status.cleanup_confirmed = true;
+                    restored.status.complete = false;
+                    restored.status.phase = MigrationPhase::Idle;
+                    MigrationDurable::save_record(control, &key, restored.clone()).await?;
+                    progress.update(|s| *s = restored.status).await?;
                 }
                 MigrationDurable::unlock(control).await?;
                 progress.cancel.cancelled().await;
-                return progress.update(|s| s.phase = MigrationPhase::Stopping);
+                return progress.update(|s| s.phase = MigrationPhase::Stopping).await;
             }
         }
         let attempt = restored.as_ref().map_or(1, |record| record.status.attempt + 1);
-        progress.update(|s| {
-            *s = MigrationStatus::new(config.run_id.clone());
-            s.attempt = attempt;
-        })?;
+        progress
+            .update(|s| {
+                *s = MigrationStatus::new(config.run_id.clone());
+                s.attempt = attempt;
+            })
+            .await?;
         *progress.backend.lock().map_err(|_| MigrationError::Worker)? = None;
         MigrationDurable::save(control, &key, progress).await?;
         Metrics::migration_attempts_total().increment(1);
@@ -312,13 +373,13 @@ impl ManagedMigration {
                 let deadline = Instant::now() + config.shutdown_timeout * 13 / 15;
                 let cleanup = if let Some(owner) = owner {
                     if observed.is_ok() { MigrationSession::stop(control, &owner, Instant::now(), config.shutdown_timeout * 2 / 3).await } else { Err(MigrationError::CancellationUnconfirmed) }
-                } else { Ok(()) };
+                } else { Err(MigrationError::CancellationUnconfirmed) };
                 if cleanup.is_err() { result = Err(MigrationError::CancellationUnconfirmed); }
-                if progress.update(|s| s.cleanup_confirmed = cleanup.is_ok()).is_err() { result = Err(MigrationError::StateIo); }
+                if progress.update(|s| s.cleanup_confirmed = cleanup.is_ok()).await.is_err() { result = Err(MigrationError::StateIo); }
                 let terminal = timeout_at(deadline, Self::terminal(control, &key, progress, result, false)).await.unwrap_or(Err(MigrationError::StateIo));
                 timeout_at(deadline, MigrationDurable::unlock(control)).await.unwrap_or(Err(MigrationError::StateIo))?;
                 progress.cancel.cancelled().await;
-                let stopping = progress.update(|s| s.phase = MigrationPhase::Stopping);
+                let stopping = progress.update(|s| s.phase = MigrationPhase::Stopping).await;
                 terminal?;
                 stopping
             }
@@ -359,15 +420,15 @@ impl ManagedMigration {
             backend: progress.backend.lock().map_err(|_| MigrationError::Worker)?.clone(),
         };
         if MigrationDurable::save_record(control, key, record).await.is_err() {
-            let _ = progress.finish(Err(MigrationError::StateIo));
+            let _ = progress.finish(Err(MigrationError::StateIo)).await;
             return Err(MigrationError::StateIo);
         }
         let published = if stopped {
-            progress.update(|s| *s = status)
+            progress.update(|s| *s = status).await
         } else {
-            progress
-                .finish_at(result, status.finished_at.ok_or(MigrationError::Worker)?)
-                .and_then(|()| progress.update(|s| *s = status))
+            let finished =
+                progress.finish_at(result, status.finished_at.ok_or(MigrationError::Worker)?).await;
+            if finished.is_ok() { progress.update(|s| *s = status).await } else { finished }
         };
         if published.is_err() {
             // Preserve an observable cache/storage failure durably too, when possible.
@@ -419,7 +480,7 @@ impl ManagedMigration {
             timeout(Duration::from_secs(5), MigrationSession::connect(url, &application))
                 .await
                 .map_err(|_| MigrationError::Database { sqlstate: None })??;
-        let owner = MigrationSession::identity(&mut conn).await?;
+        let owner = progress.io(MigrationSession::identity(&mut conn)).await?;
         if owner.application != application {
             return Err(MigrationError::CancellationUnconfirmed);
         }
@@ -437,16 +498,20 @@ impl ManagedMigration {
         )
         .await
         .map_err(|_| MigrationError::CancellationUnconfirmed)??;
-        sqlx::query("SET statement_timeout='2s'")
-            .execute(&mut observer)
-            .await
-            .map_err(|_| MigrationError::CancellationUnconfirmed)?;
-        if !MigrationSession::exists(&mut observer, &owner).await? {
+        progress
+            .io(async {
+                sqlx::query("SET statement_timeout='2s'")
+                    .execute(&mut observer)
+                    .await
+                    .map_err(|_| MigrationError::CancellationUnconfirmed)
+            })
+            .await?;
+        if !progress.io(MigrationSession::exists(&mut observer, &owner)).await? {
             return Err(MigrationError::CancellationUnconfirmed);
         }
         let key = progress.durable.lock().map_err(|_| MigrationError::Worker)?.clone();
         if let Some(key) = key {
-            MigrationDurable::save(&mut observer, &key, progress).await?;
+            progress.io(MigrationDurable::save(&mut observer, &key, progress)).await?;
         }
         let _ = timeout(Duration::from_secs(2), observer.close()).await;
         if let Some(approval) = approval {
@@ -459,7 +524,7 @@ impl ManagedMigration {
                 return Err(MigrationError::CancellationUnconfirmed);
             }
         }
-        let result = match progress.update(|s| s.worker_available = true) {
+        let result = match progress.update(|s| s.worker_available = true).await {
             Ok(()) => AuditMigration::run_cancellable(&mut conn, progress).await,
             Err(error) => Err(error),
         };
@@ -479,40 +544,44 @@ impl ManagedMigration {
         let deadline = started + budget;
         progress.cancel.cancel();
         // Observability/storage failure must never bypass owned database cancellation.
-        let persistence = progress.update(|s| s.phase = MigrationPhase::Stopping);
         Metrics::migration_cancellation_total("requested").increment(1);
-        let result = timeout_at(deadline, async {
-            loop {
-                let owner = progress.backend.lock().map_err(|_| MigrationError::Worker)?.clone();
-                if let Some(owner) = owner {
-                    MigrationSession::stop(control, &owner, started, budget).await?;
-                    break;
+        let (result, persistence) = tokio::join!(
+            timeout_at(deadline, async {
+                loop {
+                    let owner =
+                        progress.backend.lock().map_err(|_| MigrationError::Worker)?.clone();
+                    if let Some(owner) = owner {
+                        MigrationSession::stop(control, &owner, started, budget).await?;
+                        break;
+                    }
+                    if worker.is_finished() {
+                        return Err(MigrationError::CancellationUnconfirmed);
+                    }
+                    sleep(Duration::from_millis(20)).await;
                 }
-                if worker.is_finished() {
-                    break;
-                }
-                sleep(Duration::from_millis(20)).await;
-            }
-            let _ = (&mut *worker).await;
-            Ok(())
-        })
-        .await
-        .unwrap_or(Err(MigrationError::CancellationUnconfirmed));
+                let _ = (&mut *worker).await;
+                Ok(())
+            }),
+            progress.update(|s| s.phase = MigrationPhase::Stopping)
+        );
+        let result = result.unwrap_or(Err(MigrationError::CancellationUnconfirmed));
         if result.is_err() {
             worker.abort();
             Metrics::migration_cancellation_total("unconfirmed").increment(1);
-            let _ = progress.finish(Err(MigrationError::CancellationUnconfirmed));
+            let _ = progress.finish(Err(MigrationError::CancellationUnconfirmed)).await;
             return Err(MigrationError::CancellationUnconfirmed);
         }
         Metrics::migration_cancellation_total("confirmed").increment(1);
         let durable = progress.durable.lock().map_err(|_| MigrationError::Worker)?.is_some();
-        progress.update(|s| {
-            s.state = if durable { MigrationState::Running } else { MigrationState::Stopped };
-            s.complete = false;
-            s.cancellation_confirmed = true;
-            s.cleanup_confirmed = true;
-            s.finished_at = Some(Utc::now());
-        })?;
+        progress
+            .update(|s| {
+                s.state = if durable { MigrationState::Running } else { MigrationState::Stopped };
+                s.complete = false;
+                s.cancellation_confirmed = true;
+                s.cleanup_confirmed = true;
+                s.finished_at = Some(Utc::now());
+            })
+            .await?;
         info!("owned migration backend stop verified");
         persistence
     }

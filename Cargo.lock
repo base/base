@@ -2073,6 +2073,7 @@ dependencies = [
  "base-metrics",
  "base-observability-events",
  "chrono",
+ "crc",
  "jsonrpsee",
  "jsonrpsee-types",
  "log",

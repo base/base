@@ -121,6 +121,22 @@ impl MigrationStore {
         backend: Option<&MigrationBackend>,
         target: Option<&str>,
     ) -> Result<(), MigrationError> {
+        let record = MigrationRecord {
+            fingerprint: AuditMigration::fingerprint(),
+            target: target.map(str::to_owned),
+            status: status.clone(),
+            backend: backend.cloned(),
+        };
+        self.save_record(&record, || true)
+    }
+
+    /// Atomically writes a record only while its waiting caller still authorizes publication.
+    /// Ordered cache writers prevent an older rename after a newer committed record.
+    pub fn save_record(
+        &self,
+        record: &MigrationRecord,
+        current: impl Fn() -> bool,
+    ) -> Result<(), MigrationError> {
         let parent = self
             .path
             .parent()
@@ -138,13 +154,7 @@ impl MigrationStore {
                 .as_nanos(),
             TEMPORARY.fetch_add(1, Ordering::Relaxed)
         ));
-        let record = MigrationRecord {
-            fingerprint: AuditMigration::fingerprint(),
-            target: target.map(str::to_owned),
-            status: status.clone(),
-            backend: backend.cloned(),
-        };
-        let bytes = serde_json::to_vec(&record).map_err(|_| MigrationError::StateIo)?;
+        let bytes = serde_json::to_vec(record).map_err(|_| MigrationError::StateIo)?;
         let result = (|| {
             let mut options = OpenOptions::new();
             options.write(true).create_new(true);
@@ -156,6 +166,9 @@ impl MigrationStore {
             let mut file = options.open(&temporary)?;
             file.write_all(&bytes)?;
             file.sync_all()?;
+            if !current() {
+                return Err(std::io::Error::from(std::io::ErrorKind::Interrupted));
+            }
             fs::rename(&temporary, &self.path)?;
             File::open(parent)?.sync_all()
         })();

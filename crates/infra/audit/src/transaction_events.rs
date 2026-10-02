@@ -34,7 +34,7 @@ use sqlx::{
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing::{error, info, warn};
 
-use crate::Metrics;
+use crate::{Metrics, MigrationSession};
 
 /// Default HTTP path used by Vector's HTTP output.
 pub const DEFAULT_TRANSACTION_EVENT_BATCH_PATH: &str = "/v1/transaction-events/batch";
@@ -651,7 +651,7 @@ impl PgTransactionEventSink {
     /// checks.
     pub async fn migrate(database_url: &str) -> Result<()> {
         let mut conn = PgConnection::connect(database_url).await?;
-        conn.lock().await?;
+        MigrationSession::lock(&mut conn).await?;
         let result = Self::migrate_on(&mut conn).await;
         let unlock = conn.unlock().await;
         let close = conn.close().await;
@@ -760,12 +760,21 @@ impl PgTransactionEventSink {
             return Err(TransactionEventSchemaReadinessError::TransactionEventsRelationMissing);
         }
 
-        sqlx::query("SELECT 1 FROM transaction_events LIMIT 0").execute(&self.pool).await.map_err(
-            |source| TransactionEventSchemaReadinessError::TransactionEventsRelationUnavailable {
-                source,
-            },
-        )?;
+        Self::verify_runtime_schema(&self.pool).await.map_err(|source| {
+            TransactionEventSchemaReadinessError::TransactionEventsRelationUnavailable { source }
+        })?;
 
+        Ok(())
+    }
+
+    /// Read-only runtime column/access probe shared with native migration readiness.
+    /// This accepts an existing connection or pool without creating an ingest pool.
+    pub async fn verify_runtime_schema<'e, E>(executor: E) -> Result<(), sqlx::Error>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
+        sqlx::query("SELECT event_id, schema_version, event_time, event_date, retention_class, producer, event_type, data, ingested_at FROM public.transaction_events LIMIT 0")
+            .execute(executor).await?;
         Ok(())
     }
 

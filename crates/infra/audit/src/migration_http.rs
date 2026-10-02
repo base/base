@@ -93,8 +93,9 @@ mod tests {
                 s.worker_available = true;
                 s.phase = MigrationPhase::Reconciling;
             })
+            .await
             .unwrap();
-        progress.finish(Err(MigrationError::Database { sqlstate: None })).unwrap();
+        progress.finish(Err(MigrationError::Database { sqlstate: None })).await.unwrap();
         for path in ["/healthz", "/readyz", "/status", "/metrics"] {
             let response = router
                 .clone()

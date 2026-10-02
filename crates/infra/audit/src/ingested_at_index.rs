@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail, ensure};
 use sqlx::{Connection, PgConnection, migrate::Migrate};
 use tracing::info;
 
-use crate::{Metrics, MigrationReporter, MigrationSession};
+use crate::{AuditMigration, Metrics, MigrationReporter, MigrationSession, RequiredAuditWork};
 
 /// Builds BRIN indexes on populated day partitions without blocking inserts.
 ///
@@ -13,7 +13,7 @@ use crate::{Metrics, MigrationReporter, MigrationSession};
 /// serialize on the same migration lock and repair interrupted unattached leaves.
 pub async fn index_transaction_event_partitions(database_url: &str) -> Result<usize> {
     let mut conn = MigrationSession::connect(database_url, "audit-index").await?;
-    conn.lock().await?;
+    MigrationSession::lock(&mut conn).await?;
     let progress = MigrationReporter::new("index".into());
     let result = TransactionEventIngestedAtIndex::reconcile(&mut conn, &progress).await;
     let result = match result {
@@ -35,9 +35,9 @@ pub struct TransactionEventIngestedAtIndex;
 impl TransactionEventIngestedAtIndex {
     /// Reconciles one leaf at a time outside transactions, retaining catalog-based resume.
     pub async fn reconcile(conn: &mut PgConnection, progress: &MigrationReporter) -> Result<usize> {
+        AuditMigration::verify_history(conn, RequiredAuditWork::IngestedAt.prerequisite()).await?;
         let ready: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM _sqlx_migrations WHERE version = 2 AND success) \
-         AND to_regclass('public.transaction_events_ingested_at_idx') IS NOT NULL",
+            "SELECT to_regclass('public.transaction_events_ingested_at_idx') IS NOT NULL",
         )
         .fetch_one(&mut *conn)
         .await?;
@@ -72,10 +72,12 @@ impl TransactionEventIngestedAtIndex {
         .fetch_all(&mut *conn)
         .await?;
 
-            progress.update(|s| {
-                s.leaves_total = leaves.len() as u64;
-                s.leaves_completed = 0;
-            })?;
+            progress
+                .update(|s| {
+                    s.leaves_total = leaves.len() as u64;
+                    s.leaves_completed = 0;
+                })
+                .await?;
             for (class, leaf) in leaves {
                 let day = leaf.strip_prefix(&format!("{class}_")).unwrap_or_default();
                 ensure!(
@@ -83,7 +85,7 @@ impl TransactionEventIngestedAtIndex {
                     "unexpected transaction event day partition name: {leaf}"
                 );
                 progress.check_running()?;
-                progress.update(|s| s.partition = Some(leaf.clone()))?;
+                progress.update(|s| s.partition = Some(leaf.clone())).await?;
                 let name = format!("{leaf}_ingested_at_idx");
                 let class_index = format!("{class}_ingested_at_idx");
                 let status: Option<(bool, Option<String>, bool, bool)> = sqlx::query_as(
@@ -115,16 +117,18 @@ impl TransactionEventIngestedAtIndex {
                             .with_context(|| format!("dropping invalid index on {leaf}"))?;
                         info!(%leaf, "removed invalid transaction event day index");
                         Metrics::migration_leaves_repaired().increment(1);
-                        progress.update(|s| s.leaves_repaired += 1)?;
+                        progress.update(|s| s.leaves_repaired += 1).await?;
                     }
                     Some((true, Some(parent), _, _))
                         if parent == &format!("public.{class_index}") =>
                     {
                         Metrics::migration_leaves_skipped().increment(1);
-                        progress.update(|s| {
-                            s.leaves_skipped += 1;
-                            s.leaves_completed += 1;
-                        })?;
+                        progress
+                            .update(|s| {
+                                s.leaves_skipped += 1;
+                                s.leaves_completed += 1;
+                            })
+                            .await?;
                         continue;
                     }
                     Some((true, Some(parent), _, _)) => {
@@ -142,7 +146,7 @@ impl TransactionEventIngestedAtIndex {
                     .with_context(|| format!("indexing transaction event day partition {leaf}"))?;
                     created += 1;
                     Metrics::migration_leaves_built().increment(1);
-                    progress.update(|s| s.leaves_built += 1)?;
+                    progress.update(|s| s.leaves_built += 1).await?;
                     info!(%leaf, "built transaction event day ingested_at index");
                 }
 
@@ -156,7 +160,7 @@ impl TransactionEventIngestedAtIndex {
                     format!("attaching index for transaction event day partition {leaf}")
                 })?;
                 sqlx::query("SET lock_timeout = 0").execute(&mut *conn).await?;
-                progress.update(|s| s.leaves_completed += 1)?;
+                progress.update(|s| s.leaves_completed += 1).await?;
             }
 
             let valid: bool = sqlx::query_scalar(

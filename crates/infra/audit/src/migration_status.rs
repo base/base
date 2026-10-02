@@ -2,7 +2,12 @@
 
 use std::{
     fmt,
-    sync::{Arc, Mutex},
+    future::Future,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
 };
 
 use chrono::{DateTime, Utc};
@@ -10,7 +15,10 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::{Metrics, MigrationBackend, MigrationDurableKey, MigrationStore};
+use crate::{
+    AuditMigration, Metrics, MigrationBackend, MigrationCacheWriter, MigrationDurableKey,
+    MigrationRecord, MigrationStore,
+};
 
 /// Observable operation result; a terminal result never automatically retries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,6 +259,10 @@ pub struct MigrationReporter {
     pub backend: Arc<Mutex<Option<MigrationBackend>>>,
     /// Authoritative database record identity, not exposed by HTTP.
     pub durable: Arc<Mutex<Option<MigrationDurableKey>>>,
+    /// Lazy serialized cache writer; no filesystem IO happens under status locks.
+    pub cache_writer: Arc<Mutex<Option<MigrationCacheWriter>>>,
+    /// Cache update ordering, so an older IO failure cannot overwrite newer status.
+    pub revision: Arc<AtomicU64>,
 }
 
 impl fmt::Debug for MigrationReporter {
@@ -268,6 +280,8 @@ impl MigrationReporter {
             store: None,
             backend: Arc::new(Mutex::new(None)),
             durable: Arc::new(Mutex::new(None)),
+            cache_writer: Arc::new(Mutex::new(None)),
+            revision: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -281,37 +295,80 @@ impl MigrationReporter {
         status
     }
 
-    /// Updates and persists observable progress before publishing metrics.
-    pub fn update(&self, change: impl FnOnce(&mut MigrationStatus)) -> Result<(), MigrationError> {
-        let mut status = self.status.lock().map_err(|_| MigrationError::Worker)?;
-        change(&mut status);
-        status.updated_at = Utc::now();
-        status.ready = status.schema_ready
-            && !self.cancel.is_cancelled()
-            && status.worker_available
-            && status.phase != MigrationPhase::Stopping
-            && !matches!(
-                status.error_code.as_deref(),
-                Some("cancellation_unconfirmed" | "state_io" | "state_corrupt")
-            );
-        let persisted = if let Some(store) = &self.store {
-            let target = self.durable.lock().map_err(|_| MigrationError::Worker)?;
-            store.save_bound(
-                &status,
-                self.backend.lock().map_err(|_| MigrationError::Worker)?.as_ref(),
-                target.as_ref().map(|key| key.target.as_str()),
-            )
-        } else {
-            Ok(())
+    /// Updates the cache under a brief lock, then awaits bounded off-runtime persistence.
+    pub async fn update(
+        &self,
+        change: impl FnOnce(&mut MigrationStatus),
+    ) -> Result<(), MigrationError> {
+        let (record, revision) = {
+            let mut status = self.status.lock().map_err(|_| MigrationError::Worker)?;
+            let completed_before_stop = status.state == MigrationState::Succeeded
+                && status.complete
+                && status.cleanup_confirmed
+                && status.finished_at.is_some();
+            change(&mut status);
+            status.updated_at = Utc::now();
+            status.ready = status.schema_ready
+                && !self.cancel.is_cancelled()
+                && status.worker_available
+                && status.phase != MigrationPhase::Stopping
+                && !matches!(
+                    status.error_code.as_deref(),
+                    Some("cancellation_unconfirmed" | "state_io" | "state_corrupt")
+                );
+            if self.cancel.is_cancelled() {
+                status.phase = MigrationPhase::Stopping;
+                if !completed_before_stop {
+                    status.complete = false;
+                }
+                if !completed_before_stop && status.state == MigrationState::Succeeded {
+                    status.state = if status.cleanup_confirmed {
+                        MigrationState::Stopped
+                    } else {
+                        MigrationState::Failed
+                    };
+                }
+            }
+            let revision = self.revision.fetch_add(1, Ordering::AcqRel) + 1;
+            let record = MigrationRecord {
+                fingerprint: AuditMigration::fingerprint(),
+                target: self
+                    .durable
+                    .lock()
+                    .map_err(|_| MigrationError::Worker)?
+                    .as_ref()
+                    .map(|key| key.target.clone()),
+                status: status.clone(),
+                backend: self.backend.lock().map_err(|_| MigrationError::Worker)?.clone(),
+            };
+            (record, revision)
+        };
+        let writer = (|| -> Result<Option<MigrationCacheWriter>, MigrationError> {
+            let mut writer = self.cache_writer.lock().map_err(|_| MigrationError::Worker)?;
+            if writer.is_none()
+                && let Some(store) = &self.store
+            {
+                *writer = Some(MigrationCacheWriter::new(store.clone())?);
+            }
+            Ok(writer.clone())
+        })();
+        let persisted = match writer {
+            Ok(Some(writer)) => writer.save(record, revision).await,
+            Ok(None) => Ok(()),
+            Err(error) => Err(error),
         };
         if persisted.is_err() {
-            status.state = MigrationState::Failed;
-            status.ready = false;
-            status.complete = false;
-            if status.error_code.as_deref() != Some("cancellation_unconfirmed") {
-                status.error_code = Some("state_io".into());
+            let mut status = self.status.lock().map_err(|_| MigrationError::Worker)?;
+            if self.revision.load(Ordering::Acquire) == revision {
+                status.state = MigrationState::Failed;
+                status.ready = false;
+                status.complete = false;
+                if status.error_code.as_deref() != Some("cancellation_unconfirmed") {
+                    status.error_code = Some("state_io".into());
+                }
             }
         }
+        let status = self.snapshot();
         for state in MigrationState::ALL {
             Metrics::migration_state(state.label()).set(f64::from(status.state == state));
         }
@@ -330,11 +387,26 @@ impl MigrationReporter {
     }
 
     /// Moves to a step only while no shutdown was requested.
-    pub fn phase(&self, phase: MigrationPhase) -> Result<(), MigrationError> {
+    pub async fn phase(&self, phase: MigrationPhase) -> Result<(), MigrationError> {
         self.check_running()?;
-        self.update(|s| s.phase = phase)?;
+        self.update(|s| s.phase = phase).await?;
         info!(phase = phase.label(), "migration phase changed");
         Ok(())
+    }
+
+    /// Bounds finite database setup/restore IO and lets stop win a response blackhole.
+    /// Long-running DDL and advisory-lock waits use their separate owned lifecycle.
+    pub async fn io<T>(
+        &self,
+        operation: impl Future<Output = Result<T, MigrationError>>,
+    ) -> Result<T, MigrationError> {
+        tokio::select! {
+            biased;
+            _ = self.cancel.cancelled() => Err(MigrationError::StopRequested),
+            result = tokio::time::timeout(Duration::from_secs(2), operation) => {
+                result.unwrap_or(Err(MigrationError::CancellationUnconfirmed))
+            }
+        }
     }
 
     /// Prevents further work after stop is requested.
@@ -343,31 +415,33 @@ impl MigrationReporter {
     }
 
     /// Publishes a terminal result without raw error chains.
-    pub fn finish(&self, result: Result<(), MigrationError>) -> Result<(), MigrationError> {
-        self.finish_at(result, Utc::now())
+    pub async fn finish(&self, result: Result<(), MigrationError>) -> Result<(), MigrationError> {
+        self.finish_at(result, Utc::now()).await
     }
 
     /// Publishes the exact durable terminal timestamp, without a transient different result.
-    pub fn finish_at(
+    pub async fn finish_at(
         &self,
         result: Result<(), MigrationError>,
         finished_at: DateTime<Utc>,
     ) -> Result<(), MigrationError> {
         let phase = self.snapshot().phase;
-        let persisted = self.update(|s| {
-            s.state =
-                if result.is_ok() { MigrationState::Succeeded } else { MigrationState::Failed };
-            s.complete = result.is_ok();
-            s.finished_at = Some(finished_at);
-            s.partition = None;
-            s.phase = MigrationPhase::Idle;
-            if let Err(error) = &result {
-                s.error_code = Some(error.code().into());
-                if let MigrationError::Database { sqlstate } = error {
-                    s.sqlstate.clone_from(sqlstate);
+        let persisted = self
+            .update(|s| {
+                s.state =
+                    if result.is_ok() { MigrationState::Succeeded } else { MigrationState::Failed };
+                s.complete = result.is_ok();
+                s.finished_at = Some(finished_at);
+                s.partition = None;
+                s.phase = MigrationPhase::Idle;
+                if let Err(error) = &result {
+                    s.error_code = Some(error.code().into());
+                    if let MigrationError::Database { sqlstate } = error {
+                        s.sqlstate.clone_from(sqlstate);
+                    }
                 }
-            }
-        });
+            })
+            .await;
         let status = self.snapshot();
         if status.state == MigrationState::Failed {
             Metrics::migration_failures_total(phase.label()).increment(1);
@@ -387,8 +461,8 @@ impl MigrationReporter {
 mod tests {
     use super::*;
 
-    #[test]
-    fn storage_failure_never_publishes_success_or_readiness() {
+    #[tokio::test]
+    async fn storage_failure_never_publishes_success_or_readiness() {
         let mut progress = MigrationReporter::new("storage-failure".into());
         progress.store = Some(MigrationStore {
             path: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -400,25 +474,25 @@ mod tests {
                 ))
                 .join("missing-directory/state.json"),
         });
-        assert_eq!(progress.finish(Ok(())).unwrap_err().code(), "state_io");
+        assert_eq!(progress.finish(Ok(())).await.unwrap_err().code(), "state_io");
         assert_eq!(progress.snapshot().state, MigrationState::Failed);
         assert!(!progress.snapshot().ready && !progress.snapshot().complete);
     }
 
-    #[test]
-    fn driver_error_text_never_enters_status() {
+    #[tokio::test]
+    async fn driver_error_text_never_enters_status() {
         let secret = "postgres://user:super-secret@private-host/database";
         let error = anyhow::Error::from(sqlx::Error::Configuration(secret.into()));
         let reporter = MigrationReporter::new("test".into());
-        reporter.finish(Err(MigrationError::database(&error))).unwrap();
+        reporter.finish(Err(MigrationError::database(&error))).await.unwrap();
         let json = serde_json::to_string(&reporter.snapshot()).unwrap();
         assert!(!json.contains("super-secret"));
         assert!(!json.contains("private-host"));
         assert_eq!(reporter.snapshot().error_code.as_deref(), Some("database"));
     }
 
-    #[test]
-    fn readiness_precedes_completion_and_survives_reconcile_failure() {
+    #[tokio::test]
+    async fn readiness_precedes_completion_and_survives_reconcile_failure() {
         let reporter = MigrationReporter::new("test".into());
         reporter
             .update(|s| {
@@ -426,10 +500,11 @@ mod tests {
                 s.worker_available = true;
                 s.phase = MigrationPhase::Reconciling;
             })
+            .await
             .unwrap();
         assert!(reporter.snapshot().ready);
         assert!(!reporter.snapshot().complete);
-        reporter.finish(Err(MigrationError::Database { sqlstate: None })).unwrap();
+        reporter.finish(Err(MigrationError::Database { sqlstate: None })).await.unwrap();
         assert!(reporter.snapshot().ready);
         assert_eq!(reporter.snapshot().state, MigrationState::Failed);
     }

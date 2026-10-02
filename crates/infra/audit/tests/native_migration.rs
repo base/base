@@ -9,7 +9,7 @@ use std::{
     env,
     fs::{self, File},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, atomic::Ordering, mpsc},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -18,6 +18,7 @@ use audit_archiver_lib::{
     MigrationReporter, MigrationSession, MigrationState, MigrationStatus, MigrationStore,
     PgTransactionEventSink, TransactionEventIngestedAtIndex, index_transaction_event_partitions,
 };
+use audit_archiver_lib::{MigrationCacheWriter, MigrationHttp};
 use sqlx::{
     ConnectOptions, Connection, PgConnection, Postgres, Transaction, postgres::PgConnectOptions,
 };
@@ -27,6 +28,76 @@ use tokio::{
     process::{Child, Command},
     time::{Instant, sleep, timeout},
 };
+use tokio_util::sync::CancellationToken;
+
+/// Owned loopback proxy that forwards requests but discards a selected query's responses.
+/// It models a response blackhole without relying on server-side statement timeouts.
+#[derive(Debug)]
+pub struct NativeResponseProxy {
+    /// URL with only this owned listener's port changed.
+    pub url: String,
+    /// Confirms that the selected query was forwarded before response loss.
+    pub triggered: CancellationToken,
+    /// Listener lifetime; accepted connections end when their owned child closes.
+    pub task: tokio::task::JoinHandle<anyhow::Result<()>>,
+}
+
+impl Drop for NativeResponseProxy {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+impl NativeResponseProxy {
+    /// Starts a session-transparent response-dropping proxy to the already verified cluster.
+    pub async fn start(url: &str, query: &'static [u8]) -> anyhow::Result<Self> {
+        let options: PgConnectOptions = url.parse()?;
+        let backend = options.get_port();
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let port = listener.local_addr()?.port();
+        let proxy_url = format!(
+            "postgres://{}@127.0.0.1:{port}/{}",
+            options.get_username(),
+            options.get_database().unwrap()
+        );
+        let triggered = CancellationToken::new();
+        let observed = triggered.clone();
+        let task = tokio::spawn(async move {
+            loop {
+                let (mut client, _) = listener.accept().await?;
+                let observed = observed.clone();
+                tokio::spawn(async move {
+                    let mut server = TcpStream::connect(("127.0.0.1", backend)).await?;
+                    let mut requests = [0u8; 4096];
+                    let mut responses = [0u8; 4096];
+                    let mut tail = Vec::new();
+                    let mut dropping = false;
+                    loop {
+                        tokio::select! {
+                            read = client.read(&mut requests) => {
+                                let count = read?;
+                                if count == 0 { return anyhow::Ok(()); }
+                                tail.extend_from_slice(&requests[..count]);
+                                if tail.windows(query.len()).any(|bytes| bytes == query) {
+                                    dropping = true;
+                                    observed.cancel();
+                                }
+                                server.write_all(&requests[..count]).await?;
+                                if tail.len() > 1024 { tail.drain(..tail.len() - 1024); }
+                            },
+                            read = server.read(&mut responses) => {
+                                let count = read?;
+                                if count == 0 { return anyhow::Ok(()); }
+                                if !dropping { client.write_all(&responses[..count]).await?; }
+                            },
+                        }
+                    }
+                });
+            }
+        });
+        Ok(Self { url: proxy_url, triggered, task })
+    }
+}
 
 /// Only an explicitly owned local PG17 data directory can authorize these tests.
 #[derive(Debug)]
@@ -281,7 +352,7 @@ async fn stop_during_advisory_wait_never_applies_schema() -> anyhow::Result<()> 
     let cloned = progress.clone();
     let url = db.url.clone();
     let mut worker = tokio::spawn(async move { ManagedMigration::worker(&url, &cloned).await });
-    db.wait("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name LIKE 'audit-migrate-%' AND wait_event='advisory')").await?;
+    db.wait("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name LIKE 'audit-migrate-%' AND application_name NOT IN ('audit-migrate-control','audit-migrate-observe') AND query LIKE '%pg_try_advisory_lock%')").await?;
     progress.cancel.cancel();
     let mut control = MigrationSession::connect(&db.url, "native-advisory-control").await?;
     ManagedMigration::shutdown(&mut control, &mut worker, &progress, Duration::from_secs(9))
@@ -306,7 +377,7 @@ async fn censored_control_activity_never_proves_backend_absence() -> anyhow::Res
     let cloned = progress.clone();
     let url = db.url.clone();
     let mut worker = tokio::spawn(async move { ManagedMigration::worker(&url, &cloned).await });
-    db.wait("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name LIKE 'audit-migrate-%' AND wait_event='advisory')").await?;
+    db.wait("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name LIKE 'audit-migrate-%' AND application_name NOT IN ('audit-migrate-control','audit-migrate-observe') AND query LIKE '%pg_try_advisory_lock%')").await?;
     progress.cancel.cancel();
     // Deliberately wrong control role: metadata absence cannot authorize a stopped result.
     let error =
@@ -398,6 +469,346 @@ async fn state_write_failure_cannot_bypass_owned_cancellation() -> anyhow::Resul
     assert_eq!(error.code(), "state_io");
     assert!(!MigrationSession::exists(&mut control, &owner).await?);
     assert!(progress.snapshot().cancellation_confirmed);
+    held.rollback().await?;
+    AuditMigration::run(&db.url).await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17 and locally built audit binary"]
+async fn response_blackhole_during_setup_or_restore_has_bounded_real_signal_exit()
+-> anyhow::Result<()> {
+    for restore in [false, true] {
+        let mut db = NativeDatabase::new().await?;
+        let scratch = NativeDatabase::scratch()?;
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let port = listener.local_addr()?.port();
+        drop(listener);
+        let generation = if restore { "blackhole-restore" } else { "blackhole-set" };
+        if restore {
+            let mut initial = db.child(port, generation, &scratch).await?;
+            NativeDatabase::status(port, MigrationState::Succeeded).await?;
+            NativeDatabase::signal(&mut initial, "-INT").await?;
+        }
+        let query: &'static [u8] = if restore {
+            b"SELECT version, success, checksum FROM public._sqlx_migrations"
+        } else {
+            b"SET statement_timeout='2s'"
+        };
+        let proxy = NativeResponseProxy::start(&db.url, query).await?;
+        db.url.clone_from(&proxy.url);
+        let path = NativeDatabase::scratch()?;
+        let mut child = db.child(port, generation, &path).await?;
+        timeout(Duration::from_secs(15), proxy.triggered.cancelled()).await?;
+        let (code, body) = NativeDatabase::http(port, "/status").await?;
+        assert_eq!(code, 200);
+        let pending: MigrationStatus = serde_json::from_str(&body)?;
+        assert!(!pending.ready && !pending.complete && !pending.cleanup_confirmed);
+        assert_eq!(NativeDatabase::http(port, "/healthz").await?.0, 200);
+        assert_eq!(NativeDatabase::http(port, "/readyz").await?.0, 503);
+        let pid = child.id().unwrap().to_string();
+        let started = Instant::now();
+        assert!(
+            Command::new("kill")
+                .args([if restore { "-INT" } else { "-TERM" }, &pid])
+                .status()
+                .await?
+                .success()
+        );
+        let result = timeout(Duration::from_secs(9), child.wait()).await??;
+        assert!(!result.success(), "unobserved cleanup must fail closed");
+        assert!(started.elapsed() < Duration::from_secs(9));
+        let record = MigrationStore { path: path.join("state.json") }.load(generation)?.unwrap();
+        assert_eq!(record.status.state, MigrationState::Failed);
+        assert!(
+            !record.status.complete
+                && !record.status.cleanup_confirmed
+                && !record.status.cancellation_confirmed
+        );
+        assert_eq!(record.status.error_code.as_deref(), Some("cancellation_unconfirmed"));
+        let exists: bool =
+            sqlx::query_scalar("SELECT to_regclass('public.transaction_events') IS NOT NULL")
+                .fetch_one(&mut db.admin)
+                .await?;
+        assert_eq!(exists, restore, "setup response loss cannot authorize schema DDL");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires two explicitly owned disposable PostgreSQL 17 clusters"]
+async fn same_named_wrong_server_cannot_approve_signal_or_prove_owned_absence() -> anyhow::Result<()>
+{
+    let db = NativeDatabase::new().await?;
+    let url = env::var("TIPS_AUDIT_TEST_OBSERVER_POSTGRES_URL")?;
+    let options: PgConnectOptions = url.parse()?;
+    anyhow::ensure!(options.get_host() == "127.0.0.1", "observer cluster must be loopback");
+    let mut admin = options.connect().await?;
+    let (version, directory): (i32, String) = sqlx::query_as(
+        "SELECT current_setting('server_version_num')::int,current_setting('data_directory')",
+    )
+    .fetch_one(&mut admin)
+    .await?;
+    let expected =
+        PathBuf::from(env::var("TIPS_AUDIT_TEST_OBSERVER_CLUSTER_PATH")?).canonicalize()?;
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize()?;
+    anyhow::ensure!(
+        (170000..180000).contains(&version)
+            && expected.starts_with(root.join(".tmp"))
+            && PathBuf::from(directory).canonicalize()? == expected,
+        "foreign observer cluster refused"
+    );
+    let source: PgConnectOptions = db.url.parse()?;
+    let role = source.get_username();
+    let database = source.get_database().unwrap();
+    anyhow::ensure!(
+        role.starts_with("migration_")
+            && database.starts_with("native_audit_")
+            && role.bytes().chain(database.bytes()).all(|b| b.is_ascii_alphanumeric() || b == b'_'),
+        "unsafe fixture names"
+    );
+    sqlx::query(&format!("CREATE ROLE {role} LOGIN")).execute(&mut admin).await?;
+    sqlx::query(&format!("CREATE DATABASE {database} OWNER {role}")).execute(&mut admin).await?;
+    let wrong_url = format!("postgres://{role}@127.0.0.1:{}/{database}", options.get_port());
+    let progress = MigrationReporter::new("wrong-server".into());
+    let cloned = progress.clone();
+    let source_url = db.url.clone();
+    let (approval, receive) = tokio::sync::oneshot::channel();
+    let worker = tokio::spawn(async move {
+        ManagedMigration::worker_guarded(&source_url, &cloned, Some(receive)).await
+    });
+    timeout(Duration::from_secs(5), async {
+        while progress.backend.lock().unwrap().is_none() {
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await?;
+    let owner = progress.backend.lock().unwrap().clone().unwrap();
+    let mut control = MigrationSession::connect(&db.url, "native-proven-observer").await?;
+    assert!(MigrationSession::exists(&mut control, &owner).await?);
+    let observer = MigrationSession::identity(&mut control).await?;
+    assert_eq!(
+        MigrationSession::signal(&mut control, &observer, true).await.unwrap_err().code(),
+        "cancellation_unconfirmed"
+    );
+    control.ping().await?;
+    // A reviewed new generation on a changed target must not filter away a
+    // previously unconfirmed owner, even if its record came from another endpoint.
+    let original_key = MigrationDurable::bootstrap(&mut control, "prior-orphan").await?;
+    let mut foreign_key = original_key.clone();
+    foreign_key.target.push_str(":old-endpoint");
+    let prior = MigrationReporter::new("prior-orphan".into());
+    *prior.backend.lock().unwrap() = Some(owner.clone());
+    MigrationDurable::save(&mut control, &foreign_key, &prior).await?;
+    let next = MigrationDurable::bootstrap(&mut control, "new-generation").await?;
+    assert_eq!(
+        MigrationDurable::owners(&mut control, &next).await.unwrap_err().code(),
+        "state_corrupt"
+    );
+    assert!(MigrationSession::exists(&mut control, &owner).await?);
+    control.close().await?;
+    // Reconnect to a different actual writer with identical login/database names.
+    let mut control = MigrationSession::connect(&wrong_url, "native-reconnected-observer").await?;
+    let mut unrelated =
+        MigrationSession::connect(&wrong_url, "native-wrong-server-unrelated").await?;
+    assert_eq!(MigrationSession::identity(&mut control).await?.database, owner.database);
+    assert_eq!(MigrationSession::identity(&mut control).await?.role, owner.role);
+    assert_eq!(
+        ManagedMigration::approve(&mut control, &progress, &worker).await.unwrap_err().code(),
+        "cancellation_unconfirmed"
+    );
+    assert_eq!(
+        MigrationSession::exists(&mut control, &owner).await.unwrap_err().code(),
+        "cancellation_unconfirmed"
+    );
+    assert_eq!(
+        MigrationSession::signal(&mut control, &owner, true).await.unwrap_err().code(),
+        "cancellation_unconfirmed"
+    );
+    assert_eq!(
+        MigrationSession::stop(&mut control, &owner, Instant::now(), Duration::from_secs(3))
+            .await
+            .unwrap_err()
+            .code(),
+        "cancellation_unconfirmed"
+    );
+    unrelated.ping().await?;
+    let mut correct =
+        MigrationSession::connect(&db.url, "native-original-owner-verification").await?;
+    assert!(
+        MigrationSession::exists(&mut correct, &owner).await?,
+        "wrong writer did not signal the owner"
+    );
+    approval.send(false).unwrap();
+    assert_eq!(
+        timeout(Duration::from_secs(5), worker).await??.unwrap_err().code(),
+        "cancellation_unconfirmed"
+    );
+    let root: bool =
+        sqlx::query_scalar("SELECT to_regclass('public.transaction_events') IS NOT NULL")
+            .fetch_one(&mut correct)
+            .await?;
+    assert!(!root, "wrong-server preflight cannot authorize DDL");
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17 and locally built audit binary"]
+async fn missing_runtime_table_never_restores_schema_readiness() -> anyhow::Result<()> {
+    let mut db = NativeDatabase::new().await?;
+    AuditMigration::run(&db.url).await?;
+    sqlx::query("DROP TABLE public.transaction_events CASCADE").execute(&mut db.admin).await?;
+    assert!(AuditMigration::run(&db.url).await.is_err());
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+    for restored in [false, true] {
+        let scratch = NativeDatabase::scratch()?;
+        let mut child = db.child(port, "missing-root", &scratch).await?;
+        let failed = NativeDatabase::status(port, MigrationState::Failed).await?;
+        assert!(!failed.schema_ready && !failed.ready && !failed.complete);
+        assert_eq!(failed.attempt, 1);
+        assert_eq!(NativeDatabase::http(port, "/healthz").await?.0, 200);
+        assert_eq!(NativeDatabase::http(port, "/readyz").await?.0, 503);
+        NativeDatabase::signal(&mut child, if restored { "-INT" } else { "-TERM" }).await?;
+    }
+    let progress = MigrationReporter::new("missing-root-stopped".into());
+    {
+        let mut status = progress.status.lock().unwrap();
+        status.state = MigrationState::Stopped;
+        status.cleanup_confirmed = true;
+        status.cancellation_confirmed = true;
+    }
+    let mut control = MigrationSession::connect(&db.url, "native-missing-root-restore").await?;
+    let key = MigrationDurable::bootstrap(&mut control, "missing-root-stopped").await?;
+    MigrationDurable::save(&mut control, &key, &progress).await?;
+    let scratch = NativeDatabase::scratch()?;
+    let mut child = db.child(port, "missing-root-stopped", &scratch).await?;
+    let failed = NativeDatabase::status(port, MigrationState::Failed).await?;
+    assert_eq!(failed.attempt, 2);
+    assert!(!failed.schema_ready && !failed.ready && !failed.complete);
+    assert_eq!(NativeDatabase::http(port, "/healthz").await?.0, 200);
+    assert_eq!(NativeDatabase::http(port, "/readyz").await?.0, 503);
+    NativeDatabase::signal(&mut child, "-TERM").await?;
+    let root: bool =
+        sqlx::query_scalar("SELECT to_regclass('public.transaction_events') IS NOT NULL")
+            .fetch_one(&mut control)
+            .await?;
+    assert!(!root, "restoration cannot recreate dropped applied schema");
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17"]
+async fn compatibility_index_rejects_checksum_drift_before_any_catalog_mutation()
+-> anyhow::Result<()> {
+    for needs_build in [false, true] {
+        let mut db = NativeDatabase::new().await?;
+        if needs_build {
+            PgTransactionEventSink::migrate(&db.url).await?;
+        } else {
+            AuditMigration::run(&db.url).await?;
+        }
+        sqlx::query(
+            "UPDATE public._sqlx_migrations SET checksum=decode('00','hex') WHERE version=2",
+        )
+        .execute(&mut db.admin)
+        .await?;
+        let catalog_sql = "SELECT c.oid::bigint,c.relname::text,i.indisvalid,i.indisready,i.indrelid::bigint FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid WHERE c.relnamespace='public'::regnamespace ORDER BY c.oid";
+        let history_sql =
+            "SELECT version,success,checksum FROM public._sqlx_migrations ORDER BY version";
+        let catalog: Vec<(i64, String, bool, bool, i64)> =
+            sqlx::query_as(catalog_sql).fetch_all(&mut db.admin).await?;
+        let history: Vec<(i64, bool, Vec<u8>)> =
+            sqlx::query_as(history_sql).fetch_all(&mut db.admin).await?;
+        assert!(index_transaction_event_partitions(&db.url).await.is_err());
+        assert!(AuditMigration::run(&db.url).await.is_err());
+        let after_catalog: Vec<(i64, String, bool, bool, i64)> =
+            sqlx::query_as(catalog_sql).fetch_all(&mut db.admin).await?;
+        let after_history: Vec<(i64, bool, Vec<u8>)> =
+            sqlx::query_as(history_sql).fetch_all(&mut db.admin).await?;
+        assert_eq!(catalog, after_catalog);
+        assert_eq!(history, after_history);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17"]
+async fn stalled_cache_writer_keeps_probes_live_and_does_not_delay_owned_cleanup()
+-> anyhow::Result<()> {
+    let mut db = NativeDatabase::new().await?;
+    PgTransactionEventSink::migrate(&db.url).await?;
+    let mut blocker = MigrationSession::connect(&db.url, "native-stalled-cache-blocker").await?;
+    let held = NativeDatabase::held_writer(&mut blocker).await?;
+    let progress = MigrationReporter::new("stalled-cache".into());
+    let cloned = progress.clone();
+    let url = db.url.clone();
+    let mut worker = tokio::spawn(async move { ManagedMigration::worker(&url, &cloned).await });
+    db.wait("SELECT EXISTS(SELECT 1 FROM pg_stat_progress_create_index p JOIN pg_stat_activity a ON a.pid=p.pid WHERE a.datname=current_database() AND a.application_name LIKE 'audit-migrate-%' AND p.phase LIKE 'waiting%')").await?;
+    let owner = progress.backend.lock().unwrap().clone().unwrap();
+    let scratch = NativeDatabase::scratch()?;
+    let store = MigrationStore { path: scratch.join("state.json") };
+    let sink = store.clone();
+    let (entered, waiting) = tokio::sync::oneshot::channel();
+    let mut entered = Some(entered);
+    let (release, barrier) = mpsc::channel();
+    *progress.cache_writer.lock().unwrap() =
+        Some(MigrationCacheWriter::with_sink(move |record, revoked| {
+            if let Some(entered) = entered.take() {
+                let _ = entered.send(());
+                let _ = barrier.recv();
+            }
+            sink.save_record(&record, || !revoked.load(Ordering::Acquire))
+        })?);
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    let router = MigrationHttp { progress: progress.clone(), metrics: None }.router();
+    let server = tokio::spawn(async move { axum::serve(listener, router).await });
+    let mut control = MigrationSession::connect(&db.url, "native-stalled-cache-control").await?;
+    let cloned = progress.clone();
+    let started = Instant::now();
+    let stopping = tokio::spawn(async move {
+        let result =
+            ManagedMigration::shutdown(&mut control, &mut worker, &cloned, Duration::from_secs(9))
+                .await;
+        (result, control)
+    });
+    timeout(Duration::from_secs(2), waiting).await??;
+    for path in ["/healthz", "/readyz", "/status"] {
+        let response =
+            timeout(Duration::from_millis(500), NativeDatabase::http(port, path)).await??;
+        assert_eq!(response.0, if path == "/readyz" { 503 } else { 200 });
+    }
+    let (result, mut control) = timeout(Duration::from_secs(9), stopping).await??;
+    assert_eq!(result.unwrap_err().code(), "state_io");
+    assert!(started.elapsed() < Duration::from_secs(9));
+    assert!(!MigrationSession::exists(&mut control, &owner).await?);
+    assert!(progress.snapshot().cleanup_confirmed);
+    assert!(!progress.snapshot().ready && !progress.snapshot().complete);
+    assert!(!store.path.exists(), "stalled write has not published a file");
+    // The IO thread is still stuck here. Cleanup and probe responsiveness did not
+    // require releasing it. A revoked old write must not later overwrite cleanup.
+    let cloned = progress.clone();
+    let terminal = tokio::spawn(async move {
+        cloned
+            .update(|s| {
+                s.state = MigrationState::Failed;
+                s.error_code = Some("state_io".into());
+                s.cleanup_confirmed = true;
+            })
+            .await
+    });
+    tokio::task::yield_now().await;
+    release.send(())?;
+    timeout(Duration::from_secs(2), terminal).await???;
+    let restored = store.load("stalled-cache")?.unwrap();
+    assert_eq!(restored.status.state, MigrationState::Failed);
+    assert!(restored.status.cleanup_confirmed && !restored.status.complete);
+    let absent: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM pg_stat_progress_create_index WHERE pid=$1) AND NOT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1)")
+        .bind(owner.pid).fetch_one(&mut control).await?;
+    assert!(absent);
+    server.abort();
     held.rollback().await?;
     AuditMigration::run(&db.url).await?;
     Ok(())
@@ -519,10 +930,18 @@ async fn full_up_serializes_with_schema_only_and_index_callers() -> anyhow::Resu
     sqlx::migrate::Migrate::lock(&mut owner).await?;
     let url = db.url.clone();
     let attempt = tokio::spawn(async move { AuditMigration::run(&url).await });
-    db.wait("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name='audit-migrate-up' AND wait_event='advisory')").await?;
+    db.wait("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name='audit-migrate-up' AND query LIKE '%pg_try_advisory_lock%')").await?;
+    let url = db.url.clone();
+    let schema = tokio::spawn(async move { PgTransactionEventSink::migrate(&url).await });
+    let url = db.url.clone();
+    let index = tokio::spawn(async move { index_transaction_event_partitions(&url).await });
+    db.wait("SELECT count(*)>=3 FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND query LIKE '%pg_try_advisory_lock%'").await?;
+    assert!(!schema.is_finished() && !index.is_finished());
     assert!(!attempt.is_finished());
     sqlx::migrate::Migrate::unlock(&mut owner).await?;
     timeout(Duration::from_secs(20), attempt).await???;
+    timeout(Duration::from_secs(20), schema).await???;
+    timeout(Duration::from_secs(20), index).await???;
     assert_eq!(index_transaction_event_partitions(&db.url).await?, 0);
     Ok(())
 }
@@ -623,7 +1042,7 @@ async fn managed_terminal_restart_hosts_without_rerunning() -> anyhow::Result<()
             ManagedMigration::supervise(&config, &cloned, Some(state)).await
         });
         timeout(Duration::from_secs(5), async {
-            while !progress.snapshot().worker_available {
+            while !progress.snapshot().worker_available || progress.snapshot().state != state {
                 sleep(Duration::from_millis(20)).await;
             }
         })
@@ -810,7 +1229,7 @@ async fn unconfirmed_failed_generation_retains_and_cleans_owner_without_retry() 
     let key = MigrationDurable::bootstrap(&mut store_conn, "initial").await?;
     let progress = MigrationReporter::new("initial".into());
     *progress.backend.lock().unwrap() = Some(backend.clone());
-    progress.finish(Err(audit_archiver_lib::MigrationError::CancellationUnconfirmed))?;
+    progress.finish(Err(audit_archiver_lib::MigrationError::CancellationUnconfirmed)).await?;
     MigrationDurable::save(&mut store_conn, &key, &progress).await?;
     let config = ManagedMigrationConfig {
         database_url: db.url.clone(),
@@ -854,6 +1273,51 @@ async fn unconfirmed_failed_generation_retains_and_cleans_owner_without_retry() 
     assert!(persisted.status.cleanup_confirmed);
     let absent: bool = sqlx::query_scalar("SELECT to_regclass('_sqlx_migrations') IS NULL AND to_regclass('transaction_events') IS NULL").fetch_one(&mut store_conn).await?;
     assert!(absent, "failed generation must clean its owner without schema/index retry");
+    progress.cancel.cancel();
+    timeout(Duration::from_secs(3), task).await???;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17"]
+async fn new_generation_persists_prior_owner_cleanup_without_hiding_failed_record()
+-> anyhow::Result<()> {
+    let db = NativeDatabase::new().await?;
+    let mut old = MigrationSession::connect(&db.url, "native-prior-failed-owner").await?;
+    let backend = MigrationSession::identity(&mut old).await?;
+    let mut control = MigrationSession::connect(&db.url, "native-prior-failed-seed").await?;
+    let old_key = MigrationDurable::bootstrap(&mut control, "failed-before-bump").await?;
+    let prior = MigrationReporter::new("failed-before-bump".into());
+    *prior.backend.lock().unwrap() = Some(backend.clone());
+    prior.finish(Err(audit_archiver_lib::MigrationError::CancellationUnconfirmed)).await?;
+    MigrationDurable::save(&mut control, &old_key, &prior).await?;
+    let progress = MigrationReporter::new("reviewed-bump".into());
+    let config = ManagedMigrationConfig {
+        database_url: db.url.clone(),
+        address: "127.0.0.1:0".parse()?,
+        metrics_enabled: false,
+        metrics_interval_secs: 1,
+        run_id: "reviewed-bump".into(),
+        state_path: NativeDatabase::scratch()?.join("state.json"),
+        shutdown_timeout: Duration::from_secs(9),
+    };
+    let cloned = progress.clone();
+    let task =
+        tokio::spawn(async move { ManagedMigration::supervise(&config, &cloned, None).await });
+    timeout(Duration::from_secs(15), async {
+        while progress.snapshot().state != MigrationState::Succeeded {
+            sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await?;
+    let persisted = MigrationDurable::load(&mut control, &old_key).await?.unwrap();
+    assert_eq!(persisted.status.state, MigrationState::Failed);
+    assert!(persisted.status.cleanup_confirmed);
+    assert_eq!(persisted.backend.as_ref(), Some(&backend));
+    assert!(!MigrationSession::exists(&mut control, &backend).await?);
+    assert!(old.ping().await.is_err());
+    let next = MigrationDurable::bootstrap(&mut control, "later-bump").await?;
+    assert!(MigrationDurable::owners(&mut control, &next).await?.is_empty());
     progress.cancel.cancel();
     timeout(Duration::from_secs(3), task).await???;
     Ok(())

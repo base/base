@@ -22,10 +22,13 @@ pub use migration_status::{
 };
 
 mod migration_session;
-pub use migration_session::{MigrationBackend, MigrationSession};
+pub use migration_session::{MigrationBackend, MigrationServer, MigrationSession};
 
 mod migration_store;
 pub use migration_store::{MigrationRecord, MigrationStore};
+
+mod migration_cache;
+pub use migration_cache::{MigrationCachePermit, MigrationCacheWrite, MigrationCacheWriter};
 
 mod migration_durable;
 pub use migration_durable::{MigrationDurable, MigrationDurableKey};

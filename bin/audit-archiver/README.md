@@ -140,6 +140,13 @@ CONCURRENTLY`, then attaches it. Reruns skip valid attached indexes and repair
 invalid unattached indexes left by interruption. The compatibility `index`
 command still reconciles without applying schema. Both paths hold one sqlx
 migration lock on a dedicated session, including final validation.
+Before online DDL, the compatibility command verifies a contiguous known schema
+history with immutable checksums through its prerequisite. It accepts valid v2
+history without applying v3; unknown, failed, missing, or changed history fails closed.
+Lock acquisition polls `pg_try_advisory_lock` on SQLx 0.8's exact database key.
+A blocking advisory-lock waiter holds a statement snapshot that can deadlock a
+concurrent index build's old-snapshot wait. Polling finishes each statement before
+sleeping; the owner still holds the same session lock throughout required work.
 
 Historical scans can take hours. Do not deploy the full command in a database
 init container or wait for index completion inside Codeflow V1/Sif's 14400-second
@@ -212,6 +219,8 @@ health or status.
   facility is available; `200` during indexing and succeeded idle. A terminal
   reconcile failure after schema may remain ready. Schema failure and stopping
   remain unready. Probes use cached state, not the busy DDL connection.
+  Verification includes the actual partitioned runtime root and a shared read-only
+  column/access probe. Retained migration history cannot make a dropped table ready.
 - `GET /status`: version-1 JSON with `mode=migrate_up`, `run_id`, `attempt`,
   `state=running|succeeded|failed|stopped`, `phase`, `schema_ready`,
   `worker_available`, `ready`, `complete`, `cleanup_confirmed`,
@@ -262,12 +271,24 @@ exact live owned backend before dispatch.
 The observer must use the same login role without `SET ROLE` drift; otherwise
 metadata visibility/ownership proof fails closed.
 Writer endpoint changes require checked recovery, not unverified disappearance claims.
+Each saved worker also captures actual postmaster start time, server address/port,
+and database OID using nonprivileged SQL. Observation and signalling verify that
+provenance in the same statement as the exact backend match. A different server,
+unverified reconnect, or failover cannot turn row absence into cleanup proof.
+Previously confirmed cleanup needs no new-server absence claim; unconfirmed
+owners remain blocked when their original server cannot be observed.
 
 The atomic mode-0600 fsynced file is a same-pod cache only. Losing `emptyDir`
 does not authorize retry of FAILED. If the DB is unavailable or bootstrap is
 denied, no durable record can be written: fail closed without dispatching schema
 or index work and host an observable failure. Total DB/storage outage cannot
 guarantee terminal durability. Never infer cancellation from a dropped socket.
+Cache reads/writes run on dedicated IO threads, outside Tokio's blocking pool.
+Cached snapshot locks never cover filesystem IO. Writes are serialized by revision;
+cancelled or timed-out waiters revoke publication before rename. A two-second cache
+wait cannot postpone database cancellation, and runtime shutdown does not join a
+wedged cache thread. A cache failure remains observable and is recorded in the
+native database when that control path is available.
 
 ### Graceful stop and cancellation proof
 
@@ -282,6 +303,10 @@ The absolute native stop budget is at most 30 seconds. Database cancel/terminate
 disappearance uses at most two thirds, subdivided into three equal phases.
 Remaining time is reserved for durable terminal commit, gate release, and bounded
 control/HTTP joins. Repeated signals never bypass ownership verification.
+Finite setup, bootstrap, restoration, observation, and native record queries have
+client-side bounds; a server-side statement timeout alone cannot bound response
+loss. Stop wins setup/restoration waits. One outer stop-origin deadline includes
+terminal persistence and HTTP exit; unavailable observation never confirms cleanup.
 Use pod termination grace of at least 45 seconds; no preStop sleep is needed for
 this non-traffic worker. Denied/unreachable/unverified cleanup reports
 `cancellation_unconfirmed`, never a false stopped state. SIGKILL or network loss
