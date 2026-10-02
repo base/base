@@ -7,9 +7,6 @@ on:
         required: false
         type: string
         default: ""
-      build_command:
-        required: true
-        type: string
       test_command:
         required: true
         type: string
@@ -153,11 +150,27 @@ jobs:
           toolchain: nightly
           components: rustfmt
       - run: just check::format
-  build:
-    name: Build
-    runs-on: depot-ubuntu-24.04-8
+  rust:
+    name: Rust
+    needs: changes
+    # One sandbox so that Clippy, the tests, the system tests and the benchmark
+    # share a single `target/` and a single toolchain/tool/Docker setup instead
+    # of each compiling the workspace from scratch.
+    runs-on: depot-ubuntu-24.04-32
+    timeout-minutes: 120
     env:
       DIFF_BASE: ${{ inputs.diff_base }}
+      RUN_SYSTEM_TESTS: >-
+        ${{ inputs.run_system_tests && (
+        github.event_name != 'pull_request' ||
+        needs.changes.outputs.system-tests == 'true' ||
+        contains(github.event.pull_request.labels.*.name, 'ci:system') ||
+        contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
+      RUN_BENCH: >-
+        ${{ github.event_name != 'pull_request' ||
+        needs.changes.outputs.proof-mpt-bench == 'true' ||
+        contains(github.event.pull_request.labels.*.name, 'ci:perf') ||
+        contains(github.event.pull_request.labels.*.name, 'ci:full') }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -171,54 +184,22 @@ jobs:
           native-deps: "true"
           foundry: "true"
           sp1: "true"
-      - name: Run build
-        run: ${{ inputs.build_command }}
-  clippy:
-    name: Clippy
-    runs-on: depot-ubuntu-24.04-8
-    env:
-      DIFF_BASE: ${{ inputs.diff_base }}
-    steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
-        with:
-          egress-policy: audit
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: ${{ inputs.diff_base != '' && 2 || 1 }}
-      - uses: ./.depot/actions/setup
-        with:
-          native-deps: "true"
-          foundry: "true"
           components: clippy
+          tools: cargo-nextest
+      # Later steps run even if an earlier one failed so that a lint failure does
+      # not hide test failures (and vice versa), matching the previous
+      # one-job-per-check reporting.
       - name: Run clippy
         run: ${{ inputs.clippy_command }}
-  test:
-    name: Test
-    runs-on: depot-ubuntu-24.04-8
-    env:
-      DIFF_BASE: ${{ inputs.diff_base }}
-    steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
-        with:
-          egress-policy: audit
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: ${{ inputs.diff_base != '' && 2 || 1 }}
-      - uses: ./.depot/actions/setup
-        with:
-          native-deps: "true"
-          foundry: "true"
-          sp1: "true"
-          tools: cargo-nextest
       - name: Clear prior JUnit report
+        if: ${{ !cancelled() }}
         run: rm -f target/nextest/ci/test-results.xml
       - name: Run tests
+        if: ${{ !cancelled() }}
         run: ${{ inputs.test_command }}
       - name: Check for JUnit testcases
-        if: always()
-        id: junit-results
+        if: ${{ !cancelled() }}
+        id: junit-tests
         shell: bash
         run: |
           if [ -f target/nextest/ci/test-results.xml ] && grep -q '<testcase[ >]' target/nextest/ci/test-results.xml; then
@@ -227,31 +208,62 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Report test results
-        if: ${{ always() && steps.junit-results.outputs.present == 'true' }}
+        if: ${{ !cancelled() && steps.junit-tests.outputs.present == 'true' }}
         uses: mikepenz/action-junit-report@bccf2e31636835cf0874589931c4116687171386 # v6.4.0
         with:
+          check_name: Test Results
           report_paths: target/nextest/ci/test-results.xml
-  bench:
-    name: Benchmarks
-    needs: changes
-    if: >-
-      github.event_name != 'pull_request' ||
-      needs.changes.outputs.proof-mpt-bench == 'true' ||
-      contains(github.event.pull_request.labels.*.name, 'ci:perf') ||
-      contains(github.event.pull_request.labels.*.name, 'ci:full')
-    runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
-    steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+      # nextest writes both suites to the same JUnit path, so the test report
+      # must be published before the system tests overwrite it.
+      - name: Clear test JUnit report
+        if: ${{ !cancelled() && env.RUN_SYSTEM_TESTS == 'true' }}
+        run: rm -f target/nextest/ci/test-results.xml
+      - name: Pre-pull docker images
+        if: ${{ !cancelled() && env.RUN_SYSTEM_TESTS == 'true' }}
+        run: just devnet pull-images
+      - name: Run system tests
+        if: ${{ !cancelled() && env.RUN_SYSTEM_TESTS == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          just build::contracts
+          runtime_dir="$(mktemp -d)"
+          runtime_file="$runtime_dir/shared-l1.json"
+          network_name="base-system-tests-shared-l1-$GITHUB_RUN_ID"
+          # Use the ci profile (as tests-ci does) so the devnet dependency tree is
+          # compiled once and reused by nextest below, not rebuilt in dev.
+          cargo run --locked --profile ci -p base-system-tests --bin base-devnet -- \
+            shared-l1 --runtime-file "$runtime_file" --network-name "$network_name" &
+          fixture_pid=$!
+          cleanup() {
+            kill -INT "$fixture_pid" 2>/dev/null || true
+            wait "$fixture_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          until [ -f "$runtime_file" ]; do
+            kill -0 "$fixture_pid"
+            sleep 1
+          done
+          BASE_SYSTEM_TEST_SHARED_L1_RUNTIME="$runtime_file" just devnet tests-ci
+      - name: Check for system test JUnit testcases
+        if: ${{ !cancelled() && env.RUN_SYSTEM_TESTS == 'true' }}
+        id: junit-system-tests
+        shell: bash
+        run: |
+          if [ -f target/nextest/ci/test-results.xml ] && grep -q '<testcase[ >]' target/nextest/ci/test-results.xml; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Report system test results
+        if: ${{ !cancelled() && steps.junit-system-tests.outputs.present == 'true' }}
+        uses: mikepenz/action-junit-report@bccf2e31636835cf0874589931c4116687171386 # v6.4.0
         with:
-          egress-policy: audit
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 1
-      - uses: ./.depot/actions/setup
-        with:
-          native-deps: "true"
-      - run: cargo bench --locked -p base-proof-mpt --bench trie_node -- --test
+          check_name: System Test Results
+          report_paths: target/nextest/ci/test-results.xml
+      - name: Run benchmarks
+        if: ${{ !cancelled() && env.RUN_BENCH == 'true' }}
+        run: cargo bench --locked -p base-proof-mpt --bench trie_node -- --test
   docker:
     name: Docker
     runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
@@ -300,68 +312,3 @@ jobs:
           rustup target add x86_64-unknown-linux-musl
       - name: Run SIGSEGV tests under musl
         run: cargo test --locked -p base-cli-utils --test sigsegv_test --target x86_64-unknown-linux-musl
-  system-tests:
-    name: System Tests
-    needs: changes
-    if: >-
-      inputs.run_system_tests && (
-      github.event_name != 'pull_request' ||
-      needs.changes.outputs.system-tests == 'true' ||
-      contains(github.event.pull_request.labels.*.name, 'ci:system') ||
-      contains(github.event.pull_request.labels.*.name, 'ci:full'))
-    runs-on: depot-ubuntu-24.04-16
-    timeout-minutes: 90
-    steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
-        with:
-          egress-policy: audit
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 1
-      - uses: ./.depot/actions/setup
-        with:
-          native-deps: "true"
-          foundry: "true"
-          sp1: "true"
-          tools: cargo-nextest
-      - name: Clear prior JUnit report
-        run: rm -f target/nextest/ci/test-results.xml
-      - name: Pre-pull docker images
-        run: just devnet pull-images
-      - name: Run system tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          just build::contracts
-          runtime_dir="$(mktemp -d)"
-          runtime_file="$runtime_dir/shared-l1.json"
-          network_name="base-system-tests-shared-l1-$GITHUB_RUN_ID"
-          cargo run --locked -p base-system-tests --bin base-devnet -- \
-            shared-l1 --runtime-file "$runtime_file" --network-name "$network_name" &
-          fixture_pid=$!
-          cleanup() {
-            kill -INT "$fixture_pid" 2>/dev/null || true
-            wait "$fixture_pid" 2>/dev/null || true
-          }
-          trap cleanup EXIT
-          until [ -f "$runtime_file" ]; do
-            kill -0 "$fixture_pid"
-            sleep 1
-          done
-          BASE_SYSTEM_TEST_SHARED_L1_RUNTIME="$runtime_file" just devnet tests-ci
-      - name: Check for JUnit testcases
-        if: always()
-        id: junit-results
-        shell: bash
-        run: |
-          if [ -f target/nextest/ci/test-results.xml ] && grep -q '<testcase[ >]' target/nextest/ci/test-results.xml; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Report test results
-        if: ${{ always() && steps.junit-results.outputs.present == 'true' }}
-        uses: mikepenz/action-junit-report@bccf2e31636835cf0874589931c4116687171386 # v6.4.0
-        with:
-          report_paths: target/nextest/ci/test-results.xml
