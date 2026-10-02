@@ -410,16 +410,16 @@ where
         }
     }
 
-    /// Evicts validity-predicate transactions whose last valid block is before
-    /// the newly committed `block_number`.
+    /// Evicts validity-predicate transactions whose last valid block is at or
+    /// before the newly committed `committed_block`, since the next block cannot include them.
     ///
     /// Canonical-state maintenance catches block-only deadlines and transactions
     /// missed by flashblock publication. Entries removed through inclusion or
     /// replacement remain indexed until their deadline, bounding index growth
     /// to the furthest accepted block bound.
-    fn expire_by_block(&self, block_number: u64) {
+    fn expire_by_block(&self, committed_block: u64) {
         let _admission_guard = self.protocol_admission_lock.lock();
-        let expired = self.block_expiry.write().drain_expired(block_number);
+        let expired = self.block_expiry.write().drain_expired(committed_block);
         let removed = self.remove_dropped_across_pools(expired);
         // Release any guard slots directly rather than deferring to the
         // reconciliation sweep: an EIP-8130 transaction may carry block_number
@@ -430,7 +430,7 @@ where
             GuardMetrics::record_block_expiry_invalidations(removed.len());
             debug!(
                 count = removed.len(),
-                block = block_number,
+                block = committed_block,
                 "validity transactions invalidated by block expiry"
             );
         }
@@ -2627,7 +2627,7 @@ mod tests {
         // Only the new hash remains, tracked at its own bound.
         let mut index = pool.block_expiry.write();
         assert!(index.drain_expired(150).is_empty());
-        assert_eq!(index.drain_expired(201), vec![new_hash]);
+        assert_eq!(index.drain_expired(200), vec![new_hash]);
     }
 
     #[test]
@@ -2770,7 +2770,7 @@ mod tests {
         pool.add_transaction(TransactionOrigin::Local, continuation).await.unwrap();
         assert!(pool.get(&continuation_hash).is_some());
         assert!(pool.get(&block_only_hash).is_some());
-        pool.expire_by_block(101);
+        pool.expire_by_block(100);
         assert!(pool.get(&block_only_hash).is_none());
     }
 
@@ -2796,10 +2796,22 @@ mod tests {
         assert_eq!(pool.block_expiry.read().len(), 1);
         assert!(pool.get(&hash).is_some());
 
-        // Once the last valid block is behind the tip, block-expiry eviction
-        // removes it and releases any guard capacity it held.
-        pool.expire_by_block(101);
-        assert!(pool.get(&hash).is_none());
-        assert!(!pool.guard.read().contains(&hash));
+        // Exercise canonical maintenance at the inclusive last-valid-block boundary.
+        for (committed_block, remains_live) in [(99, true), (100, false)] {
+            let block = SealedBlock::seal_slow(BaseBlock {
+                header: alloy_consensus::Header { number: committed_block, ..Default::default() },
+                body: Default::default(),
+            });
+            pool.on_canonical_state_change(CanonicalStateUpdate {
+                new_tip: &block,
+                pending_block_base_fee: 0,
+                pending_block_blob_fee: None,
+                changed_accounts: Vec::new(),
+                mined_transactions: Vec::new(),
+                update_kind: PoolUpdateKind::Commit,
+            });
+            assert_eq!(pool.get(&hash).is_some(), remains_live);
+            assert_eq!(pool.guard.read().contains(&hash), remains_live);
+        }
     }
 }

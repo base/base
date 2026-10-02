@@ -2,6 +2,8 @@
 
 #![allow(missing_docs)]
 
+use std::time::Duration;
+
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::TransactionResponse;
 use alloy_primitives::{Address, U256};
@@ -179,6 +181,10 @@ async fn expired_position_predicate_emits_builder_expired() -> eyre::Result<()> 
 
 #[tokio::test]
 async fn expired_flashblock_predicate_releases_same_nonce_before_block_seals() -> eyre::Result<()> {
+    const FIRST_FLASHBLOCK_TIMEOUT: Duration = Duration::from_secs(1);
+    // The configured block takes two seconds; allow one extra second for sealing and RPC.
+    const BLOCK_BUILD_TIMEOUT: Duration = Duration::from_secs(3);
+
     let mut config = BuilderConfig::for_tests().with_block_time_ms(2000);
     config.flashblocks_ws_addr.set_port(get_available_port());
     let instance = LocalInstanceBuilder::new(config)
@@ -193,7 +199,7 @@ async fn expired_flashblock_predicate_releases_same_nonce_before_block_seals() -
     let target_block = driver.latest().await?.header.number + 1;
     let listener = instance.spawn_flashblocks_listener();
     // Wait for the WebSocket handshake before asking the driver to build flashblock 1.
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
     let original = driver
         .create_transaction()
         .with_signer(&accounts[0])
@@ -234,14 +240,14 @@ async fn expired_flashblock_predicate_releases_same_nonce_before_block_seals() -
 
     let build = driver.build_new_block();
     tokio::pin!(build);
-    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+    tokio::time::timeout(FIRST_FLASHBLOCK_TIMEOUT, async {
         loop {
             if listener.find_flashblock(1).is_some() {
                 break Ok::<(), eyre::Report>(());
             }
             tokio::select! {
                 result = &mut build => eyre::bail!("block completed before flashblock 1: {:?}", result.as_ref().map(|block| block.header.number)),
-                _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {}
+                _ = tokio::time::sleep(Duration::from_millis(10)) => {}
             }
         }
     }).await??;
@@ -256,7 +262,7 @@ async fn expired_flashblock_predicate_releases_same_nonce_before_block_seals() -
         .send()
         .await?;
     let replacement_hash = *replacement.tx_hash();
-    let block = tokio::time::timeout(std::time::Duration::from_secs(30), build).await??;
+    let block = tokio::time::timeout(BLOCK_BUILD_TIMEOUT, build).await??;
     assert!(
         block.transactions.into_transactions().any(|tx| tx.tx_hash() == replacement_hash),
         "unbumped same-nonce transaction should be included in the current block"
