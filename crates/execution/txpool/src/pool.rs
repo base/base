@@ -16,9 +16,10 @@ use reth_transaction_pool::{
     AddedTransactionOutcome, AllPoolTransactions, AllTransactionsEvents, BestTransactions,
     BestTransactionsAttributes, BlobStore, BlobStoreError, BlockInfo, FullTransactionEvent,
     GetPooledTransactionLimit, NewBlobSidecar, NewTransactionEvent, Pool, PoolResult, PoolSize,
-    PoolTransaction, PropagatedTransactions, SubPool, TransactionEvents, TransactionListenerKind,
-    TransactionOrigin, TransactionPool, TransactionPoolExt, TransactionValidationOutcome,
-    TransactionValidationTaskExecutor, TransactionValidator, ValidPoolTransaction,
+    PoolTransaction, PoolUpdateKind, PropagatedTransactions, SubPool, TransactionEvents,
+    TransactionListenerKind, TransactionOrigin, TransactionPool, TransactionPoolExt,
+    TransactionValidationOutcome, TransactionValidationTaskExecutor, TransactionValidator,
+    ValidPoolTransaction,
     pool::{AddedTransactionState, TransactionEvent},
 };
 use tokio::{spawn, sync::mpsc};
@@ -95,7 +96,7 @@ pub struct BaseTransactionPool<
     /// Block and flashblock deadline index for validity transactions, including
     /// EIP-1559 advanced submissions.
     block_expiry: Arc<RwLock<crate::BlockExpiryIndex>>,
-    /// Highest published position; admission checks it under `protocol_admission_lock`.
+    /// Highest published position on the current branch; checked under `protocol_admission_lock`.
     published_flashblock: Arc<RwLock<Option<PredicateContext>>>,
     /// Serializes pool admission with successful flashblock publication and
     /// deadline eviction, so a same-nonce submission cannot race the sweep.
@@ -1596,6 +1597,10 @@ where
         // consumes an admission slot even until its pool entry is pruned below.
         {
             let _admission_guard = self.protocol_admission_lock.lock();
+            if update.update_kind == PoolUpdateKind::Reorg {
+                // The new branch can rebuild an earlier block or restart its flashblock indices.
+                *self.published_flashblock.write() = None;
+            }
             let mut guard = self.guard.write();
             for hash in &mined_transactions {
                 guard.release(hash);
@@ -2730,6 +2735,101 @@ mod tests {
         let error = pool.add_transaction(TransactionOrigin::Local, late).await.unwrap_err();
         assert!(error.to_string().contains("validity deadline expired"), "{error}");
         assert!(pool.get(&original_hash).is_none());
+    }
+
+    #[tokio::test]
+    async fn canonical_reorg_restarts_flashblock_admission_and_expiry() {
+        for (new_tip, rebuilt_block) in [(99, 100), (100, 101)] {
+            for nonce_key in [U256::ZERO, U256::from(1)] {
+                let (pool, client) = build_integration_pool();
+                let signer = signer();
+                fund(&client, signer.address());
+                assert_eq!(publish(&pool, 101, 2), 0);
+
+                let block = SealedBlock::seal_slow(BaseBlock {
+                    header: alloy_consensus::Header {
+                        number: new_tip,
+                        gas_limit: pool.block_info().block_gas_limit,
+                        timestamp: INTEGRATION_POOL_NOW_SECS,
+                        ..Default::default()
+                    },
+                    body: Default::default(),
+                });
+                pool.on_canonical_state_change(CanonicalStateUpdate {
+                    new_tip: &block,
+                    pending_block_base_fee: 0,
+                    pending_block_blob_fee: None,
+                    changed_accounts: Vec::new(),
+                    mined_transactions: Vec::new(),
+                    update_kind: PoolUpdateKind::Reorg,
+                });
+                let transaction = self_paid_eoa_8130(&signer, nonce_key, 0, 0, 1_000)
+                    .with_validity_predicates(vec![
+                        ValidityPredicate::BlockNumber {
+                            op: ValidityOperator::LessThanOrEqual,
+                            value: U256::from(rebuilt_block),
+                        },
+                        ValidityPredicate::FlashblockIndex {
+                            op: ValidityOperator::LessThanOrEqual,
+                            value: U256::from(1),
+                        },
+                    ]);
+                let hash = *transaction.hash();
+                pool.add_transaction(TransactionOrigin::Local, transaction)
+                    .await
+                    .expect("orphaned publication must not reject a valid rebuilt-block deadline");
+                assert!(pool.get(&hash).is_some());
+
+                assert_eq!(publish(&pool, rebuilt_block, 1), 1);
+                assert!(pool.get(&hash).is_none());
+                assert!(!pool.guard.read().contains(&hash));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn canonical_commit_preserves_publication_ahead_of_committed_head() {
+        for nonce_key in [U256::ZERO, U256::from(1)] {
+            let (pool, client) = build_integration_pool();
+            let signer = signer();
+            fund(&client, signer.address());
+            assert_eq!(publish(&pool, 101, 2), 0);
+
+            // Canonical maintenance can lag publication of the block being built.
+            let block = SealedBlock::seal_slow(BaseBlock {
+                header: alloy_consensus::Header {
+                    number: 100,
+                    gas_limit: pool.block_info().block_gas_limit,
+                    timestamp: INTEGRATION_POOL_NOW_SECS,
+                    ..Default::default()
+                },
+                body: Default::default(),
+            });
+            pool.on_canonical_state_change(CanonicalStateUpdate {
+                new_tip: &block,
+                pending_block_base_fee: 0,
+                pending_block_blob_fee: None,
+                changed_accounts: Vec::new(),
+                mined_transactions: Vec::new(),
+                update_kind: PoolUpdateKind::Commit,
+            });
+            let transaction = self_paid_eoa_8130(&signer, nonce_key, 0, 0, 1_000)
+                .with_validity_predicates(vec![
+                    ValidityPredicate::BlockNumber {
+                        op: ValidityOperator::LessThanOrEqual,
+                        value: U256::from(101),
+                    },
+                    ValidityPredicate::FlashblockIndex {
+                        op: ValidityOperator::LessThanOrEqual,
+                        value: U256::from(1),
+                    },
+                ]);
+            let hash = *transaction.hash();
+            let error =
+                pool.add_transaction(TransactionOrigin::Local, transaction).await.unwrap_err();
+            assert!(error.to_string().contains("validity deadline expired"), "{error}");
+            assert!(pool.get(&hash).is_none());
+        }
     }
 
     #[tokio::test]
