@@ -89,7 +89,8 @@ mod tests {
     fn excluding_self_rejects_the_token_address() {
         let token_address = Address::with_last_byte(1);
         assert_eq!(
-            B20CreditRecipientStrategy::ExcludingZeroAndSelf.recipient(token_address, token_address),
+            B20CreditRecipientStrategy::ExcludingZeroAndSelf
+                .recipient(token_address, token_address),
             Err(B20CreditRecipientError)
         );
     }
