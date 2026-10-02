@@ -19,8 +19,8 @@ use url::Url;
 pub struct BatcherConfig {
     /// L1 RPC endpoint.
     pub l1_rpc_url: Url,
-    /// L2 HTTP RPC endpoint, the source of the unsafe blocks the batcher submits. The DA throttle
-    /// (`miner_setMaxDASize`) is also sent to it.
+    /// L2 HTTP RPC endpoint, the source of the unsafe blocks the batcher submits. The DA limits
+    /// are also pushed to it over `miner_setMaxDASize`.
     pub l2_rpc_url: Url,
     /// Optional L1 WebSocket endpoint for new-block subscriptions.
     ///

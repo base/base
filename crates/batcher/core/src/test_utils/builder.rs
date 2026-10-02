@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     AdminHandle, BatchDriver, BatchDriverConfig, BatchDriverInputs, DaThrottle, DerivationStatus,
-    NoopThrottleClient, ThrottleClient, ThrottleController,
+    ThrottleController,
     test_utils::{PendingL1HeadSource, PendingSource},
 };
 
@@ -57,22 +57,13 @@ impl SubmissionStub {
 /// dropping the derivation sender is fatal to the driver, dropping the admin handle silences
 /// its admin arm.
 #[derive(Debug)]
-pub struct DriverFixture<
-    R,
-    P,
-    TM,
-    S = PendingSource,
-    L = PendingL1HeadSource,
-    TC = Arc<NoopThrottleClient>,
-> where
-    TC: ThrottleClient,
-{
+pub struct DriverFixture<R, P, TM, S = PendingSource, L = PendingL1HeadSource> {
     runtime: R,
     pipeline: P,
     tx_manager: TM,
     source: S,
     l1_head_source: L,
-    throttle: DaThrottle<TC>,
+    throttle: DaThrottle,
     max_pending: usize,
     initial_l1_head: u64,
     safe_head: BlockInfo,
@@ -100,7 +91,7 @@ impl<R: Runtime, P: BatchPipeline, TM: TxManager> DriverFixture<R, P, TM> {
             tx_manager,
             source: PendingSource,
             l1_head_source: PendingL1HeadSource,
-            throttle: DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
+            throttle: DaThrottle::new(ThrottleController::disabled()),
             max_pending: 1,
             initial_l1_head: 0,
             safe_head: BlockInfo::default(),
@@ -109,17 +100,16 @@ impl<R: Runtime, P: BatchPipeline, TM: TxManager> DriverFixture<R, P, TM> {
     }
 }
 
-impl<R, P, TM, S, L, TC> DriverFixture<R, P, TM, S, L, TC>
+impl<R, P, TM, S, L> DriverFixture<R, P, TM, S, L>
 where
     R: Runtime,
     P: BatchPipeline,
     TM: TxManager,
     S: UnsafeBlockSource,
     L: L1HeadSource,
-    TC: ThrottleClient,
 {
     /// Replace the L2 block source.
-    pub fn source<S2: UnsafeBlockSource>(self, source: S2) -> DriverFixture<R, P, TM, S2, L, TC> {
+    pub fn source<S2: UnsafeBlockSource>(self, source: S2) -> DriverFixture<R, P, TM, S2, L> {
         DriverFixture {
             runtime: self.runtime,
             pipeline: self.pipeline,
@@ -138,7 +128,7 @@ where
     pub fn l1_head_source<L2: L1HeadSource>(
         self,
         l1_head_source: L2,
-    ) -> DriverFixture<R, P, TM, S, L2, TC> {
+    ) -> DriverFixture<R, P, TM, S, L2> {
         DriverFixture {
             runtime: self.runtime,
             pipeline: self.pipeline,
@@ -153,23 +143,10 @@ where
         }
     }
 
-    /// Replace the DA throttle.
-    pub fn throttle<TC2: ThrottleClient>(
-        self,
-        throttle: DaThrottle<TC2>,
-    ) -> DriverFixture<R, P, TM, S, L, TC2> {
-        DriverFixture {
-            runtime: self.runtime,
-            pipeline: self.pipeline,
-            tx_manager: self.tx_manager,
-            source: self.source,
-            l1_head_source: self.l1_head_source,
-            throttle,
-            max_pending: self.max_pending,
-            initial_l1_head: self.initial_l1_head,
-            safe_head: self.safe_head,
-            force_blobs_when_throttling: self.force_blobs_when_throttling,
-        }
+    /// Replace the DA throttle. Subscribe to it first to watch the limits the driver publishes.
+    pub fn throttle(mut self, throttle: DaThrottle) -> Self {
+        self.throttle = throttle;
+        self
     }
 
     /// Set `max_pending_transactions`.
@@ -197,7 +174,7 @@ where
     }
 
     /// Build the driver and the handles that feed it.
-    pub fn build(self) -> (BatchDriver<R, P, S, TM, TC, L>, DriverHandles) {
+    pub fn build(self) -> (BatchDriver<R, P, S, TM, L>, DriverHandles) {
         let (admin, admin_rx) = AdminHandle::channel();
         let (derivation_status_tx, derivation_status_rx) = mpsc::channel(1);
         let driver = BatchDriver::new(

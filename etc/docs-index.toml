@@ -144,7 +144,7 @@ digest = "0cd289e19a"
 
 ["crates/batcher/admin/README.md"]
 summary = "Batcher admin JSON-RPC API: start, stop, flush, status, and DA throttle controller methods (admin_*), their behavior and error codes. Use when operating the batcher."
-digest = "557b8b8f0c"
+digest = "5c08642d89"
 
 ["crates/batcher/blobs/README.md"]
 summary = "base-blobs: EIP-4844 blob encoder and decoder for the batcher wire format (130,044 payload bytes per blob); excludes KZG commitments and submission."
@@ -160,7 +160,7 @@ digest = "ce9421e523"
 
 ["crates/batcher/core/README.md"]
 summary = "base-batcher-core: async BatchDriver, SubmissionQueue for L1 transactions, and the DA throttle subsystem (Off, Step, Linear) that limits sequencer DA via miner_setMaxDASize."
-digest = "fdc7f66087"
+digest = "e5165c05ef"
 
 ["crates/batcher/encoder/README.md"]
 summary = "base-batcher-encoder: synchronous, no-I/O encoder from L2 blocks to L1 submissions. Covers channel closing rules, blob framing, metric labels, and BatchEncoder usage."

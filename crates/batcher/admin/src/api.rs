@@ -41,10 +41,6 @@ pub trait BatcherAdminApi {
         config: ThrottleConfig,
     ) -> RpcResult<()>;
 
-    /// Clear the throttle dedup cache so limits are re-applied unconditionally.
-    #[method(name = "resetThrottleController")]
-    async fn reset_throttle_controller(&self) -> RpcResult<()>;
-
     /// Read the current driver runtime state.
     #[method(name = "getBatcherStatus")]
     async fn get_batcher_status(&self) -> RpcResult<BatcherStatus>;
@@ -102,10 +98,6 @@ impl BatcherAdminApiServer for BatcherAdminApiServerImpl {
         config: ThrottleConfig,
     ) -> RpcResult<()> {
         self.handle.set_throttle(strategy, config).await.map_err(Self::admin_error)
-    }
-
-    async fn reset_throttle_controller(&self) -> RpcResult<()> {
-        self.handle.reset_throttle().await.map_err(Self::admin_error)
     }
 
     async fn get_batcher_status(&self) -> RpcResult<BatcherStatus> {
