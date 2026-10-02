@@ -93,14 +93,8 @@ impl ManagedMigration {
         progress.cancel = cancel.clone();
         progress.store = Some(store);
         if let Some(record) = &restored {
-            *progress.status.lock().map_err(|_| MigrationError::Worker)? = record.status.clone();
-            // Local cache is not an authoritative result until the database record is read.
-            {
-                let mut status = progress.status.lock().map_err(|_| MigrationError::Worker)?;
-                status.state = MigrationState::Running;
-                status.phase = MigrationPhase::Starting;
-            }
-            *progress.backend.lock().map_err(|_| MigrationError::Worker)? = record.backend.clone();
+            // The local record supplies a target comparison hint only, never
+            // lifecycle status or an owner authorized for cleanup.
             if let Some(target) = &record.target {
                 *progress.durable.lock().map_err(|_| MigrationError::Worker)? =
                     Some(MigrationDurableKey {
@@ -209,6 +203,10 @@ impl ManagedMigration {
         progress: &MigrationReporter,
         _restored: Option<MigrationState>,
     ) -> Result<(), MigrationError> {
+        // Discard any cache-derived lifecycle fields before setup can fail.
+        *progress.status.lock().map_err(|_| MigrationError::Worker)? =
+            MigrationStatus::new(config.run_id.clone());
+        *progress.backend.lock().map_err(|_| MigrationError::Worker)? = None;
         let mut control = match progress
             .io(MigrationSession::connect(&config.database_url, "audit-migrate-control"))
             .await
@@ -221,7 +219,15 @@ impl ManagedMigration {
             }
         };
         let mut gate_owned = false;
-        let result = Self::durable_attempt(config, progress, &mut control, &mut gate_owned).await;
+        let mut transition_authorized = false;
+        let result = Self::durable_attempt(
+            config,
+            progress,
+            &mut control,
+            &mut gate_owned,
+            &mut transition_authorized,
+        )
+        .await;
         if matches!(result, Err(MigrationError::StopRequested)) {
             let _ = timeout(config.shutdown_timeout / 15, control.close()).await;
             let _ = progress.finish(Err(MigrationError::CancellationUnconfirmed)).await;
@@ -229,7 +235,9 @@ impl ManagedMigration {
         }
         if let Err(error) = &result {
             let key = progress.durable.lock().map_err(|_| MigrationError::Worker)?.clone();
-            if let Some(key) = key.filter(|_| gate_owned && !progress.cancel.is_cancelled()) {
+            if let Some(key) = key
+                .filter(|_| gate_owned && transition_authorized && !progress.cancel.is_cancelled())
+            {
                 let _ =
                     Self::terminal(&mut control, &key, progress, Err(error.clone()), false).await;
             } else {
@@ -252,6 +260,7 @@ impl ManagedMigration {
         progress: &MigrationReporter,
         control: &mut PgConnection,
         gate_owned: &mut bool,
+        transition_authorized: &mut bool,
     ) -> Result<(), MigrationError> {
         progress
             .io(async {
@@ -268,13 +277,13 @@ impl ManagedMigration {
         // must not leave a cache-derived key available to the error writer.
         let local = progress.durable.lock().map_err(|_| MigrationError::Worker)?.take();
         let key = progress.io(MigrationDurable::bootstrap(control, &config.run_id)).await?;
-        *progress.durable.lock().map_err(|_| MigrationError::Worker)? = Some(key.clone());
         if local.as_ref().is_some_and(|old| old.target != key.target) {
             // Never signal a cache owner belonging to another target.
             *progress.backend.lock().map_err(|_| MigrationError::Worker)? = None;
             return Err(MigrationError::StateCorrupt);
         }
         let restored = progress.io(MigrationDurable::load(control, &key)).await?;
+        *progress.durable.lock().map_err(|_| MigrationError::Worker)? = Some(key.clone());
         if let Some(record) = &restored {
             *progress.backend.lock().map_err(|_| MigrationError::Worker)? = record.backend.clone();
         }
@@ -299,6 +308,9 @@ impl ManagedMigration {
             restored_status.cleanup_confirmed = false;
             *progress.status.lock().map_err(|_| MigrationError::Worker)? = restored_status;
             *progress.backend.lock().map_err(|_| MigrationError::Worker)? = record.backend.clone();
+            // Only reconciled database status and ownership may authorize a fallback
+            // transition. Gate possession and an observed target alone are not enough.
+            *transition_authorized = true;
             if matches!(record.status.state, MigrationState::Succeeded | MigrationState::Failed) {
                 let schema = progress
                     .io(async {
@@ -349,13 +361,12 @@ impl ManagedMigration {
             }
         }
         let attempt = restored.as_ref().map_or(1, |record| record.status.attempt + 1);
-        progress
-            .update(|s| {
-                *s = MigrationStatus::new(config.run_id.clone());
-                s.attempt = attempt;
-            })
-            .await?;
+        let mut status = MigrationStatus::new(config.run_id.clone());
+        status.attempt = attempt;
+        *progress.status.lock().map_err(|_| MigrationError::Worker)? = status;
         *progress.backend.lock().map_err(|_| MigrationError::Worker)? = None;
+        *transition_authorized = true;
+        progress.update(|_| {}).await?;
         MigrationDurable::save(control, &key, progress).await?;
         Metrics::migration_attempts_total().increment(1);
         let worker_progress = progress.clone();

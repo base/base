@@ -271,9 +271,12 @@ exact live owned backend before dispatch.
 Only the control connection that actually owns the generation gate writes the
 authoritative ledger. It commits the observed RUNNING owner before approving DDL;
 auxiliary observers are read-only. Each ledger mutation checks gate ownership on
-that same SQL backend. A cached target key is never write authority. Failures before
-gate acquisition/actual-target validation remain local unready failures, and all
-terminal paths release the owned gate before idle hosting.
+that same SQL backend. Gate possession and an actual target key alone do not
+authorize a lifecycle transition: current database records and owners must first
+be loaded and reconciled. A cache supplies only a target comparison hint, never
+status or cleanup ownership. Cache-target mismatch is a local unready failure;
+it cannot modify target ledger rows or erase unconfirmed owners. All terminal
+paths release the owned gate before idle hosting.
 The observer must use the same login role without `SET ROLE` drift; otherwise
 metadata visibility/ownership proof fails closed.
 Writer endpoint changes require checked recovery, not unverified disappearance claims.
