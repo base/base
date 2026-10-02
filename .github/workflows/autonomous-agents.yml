@@ -1,7 +1,9 @@
 name: Autonomous Agents
 
 # Agents are defined in .github/agents/registry.json: label, branch prefix, model,
-# and the minimum and maximum number of pull requests each may keep open.
+# trigger, and the minimum and maximum number of pull requests each may keep open.
+# `on:` cannot read the registry, so both triggers are listed here and the
+# controller ignores events that do not match an agent's `trigger`.
 # Runbook: .github/agents/README.md
 
 on:
@@ -76,7 +78,8 @@ jobs:
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 etc/scripts/ci/autonomous_agents.py plan --github-output "$GITHUB_OUTPUT"
+          EVENT_NAME: ${{ github.event_name }}
+        run: python3 etc/scripts/ci/autonomous_agents.py plan --event-name "$EVENT_NAME" --github-output "$GITHUB_OUTPUT"
 
   close:
     name: Close surplus pull requests

@@ -12,7 +12,7 @@ from typing import Any
 import autonomous_agents as agents
 
 INDEX = agents.load_docs_index()
-SPEC = agents.AgentSpec("docs-index", "agent:docs-index", "x.md", "agent/docs-index-", "claude-sonnet-5-5", 0, 1)
+SPEC = agents.AgentSpec("docs-index", "agent:docs-index", "x.md", "agent/docs-index-", "claude-sonnet-5-5", "push", 0, 1)
 
 
 def entry(path: str, summary: str = "Covers a thing.", digest: str = "0000000000") -> Any:
@@ -44,7 +44,7 @@ class RegistryTests(unittest.TestCase):
     def write(self, **overrides: Any) -> Path:
         agent = {
             "label": "agent:x", "instructions": "x.md", "branch_prefix": "agent/x-",
-            "model": "claude-sonnet-5-5", "min_open_prs": 1, "max_open_prs": 2,
+            "model": "claude-sonnet-5-5", "trigger": "schedule", "min_open_prs": 1, "max_open_prs": 2,
         }  # fmt: skip
         agent.update(overrides)
         path = Path(tempfile.mkdtemp()) / "registry.json"
@@ -56,6 +56,7 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(target["repository"], "base/base")
         spec = loaded[agents.AGENT]
         self.assertEqual((spec.min_open_prs, spec.max_open_prs), (0, 1))
+        self.assertEqual(spec.trigger, "push")
         self.assertTrue((agents.ROOT / spec.instructions).is_file())
 
     def test_bounds_and_model_come_from_the_registry(self) -> None:
@@ -65,6 +66,7 @@ class RegistryTests(unittest.TestCase):
     def test_rejects_bad_definitions(self) -> None:
         for override in (
             {"model": "gpt-5"},
+            {"trigger": "cron"},
             {"branch_prefix": "x-"},
             {"branch_prefix": "agent/x"},
             {"min_open_prs": 2, "max_open_prs": 1},
@@ -104,7 +106,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(agents.plan_agent(SPEC, [], needed=False), {"include": [], "close": []})
 
     def test_minimum_above_one_opens_several(self) -> None:
-        spec = agents.AgentSpec("x", "l", "i", "agent/x-", "claude-sonnet-5-5", 2, 3)
+        spec = agents.AgentSpec("x", "l", "i", "agent/x-", "claude-sonnet-5-5", "push", 2, 3)
         plan = agents.plan_agent(spec, [{"pull_request": 1, "branch": "agent/x-1"}], needed=True)
         self.assertEqual([item["mode"] for item in plan["include"]], ["refresh", "create"])
 
@@ -235,7 +237,7 @@ class ProcessTests(unittest.TestCase):
         import unittest.mock as mock
 
         with mock.patch.object(agents, "command_plan", side_effect=IndexError("parents")):
-            self.assertEqual(agents.main(["plan"]), 1)
+            self.assertEqual(agents.main(["plan", "--event-name", "push"]), 1)
 
 
 def _broken_open(stream: Path):
@@ -252,6 +254,33 @@ def _broken_open(stream: Path):
     return lambda *_a, **_k: Broken()
 
 
+class TriggerTests(unittest.TestCase):
+    def plan(self, spec_trigger: str, event: str) -> dict[str, str]:
+        import unittest.mock as mock
+
+        spec = agents.AgentSpec("docs-index", "l", "i", "agent/docs-index-", "claude-sonnet-5-5", spec_trigger, 0, 1)
+        github = FakeGitHub([{"number": 4, "headRefName": "agent/docs-index-a"}])
+        out = Path(tempfile.mkdtemp()) / "out"
+        target = {"repository": "a/b", "base_branch": "main"}
+        with (
+            mock.patch.object(agents, "load_registry", return_value=(target, {"docs-index": spec})),
+            mock.patch.object(agents, "docs_index_needed", return_value=False),
+            mock.patch.object(agents, "load_docs_index"),
+        ):
+            agents.command_plan(github, "docs-index", event, out)
+        text = out.read_text()
+        return {"count": "count" in text and text.split("count<<")[1].split("\n")[1], "close_count": text.split("close_count<<")[1].split("\n")[1]}
+
+    def test_only_the_configured_trigger_does_work(self) -> None:
+        self.assertEqual(self.plan("push", "schedule"), {"count": "0", "close_count": "0"})
+        self.assertEqual(self.plan("schedule", "push"), {"count": "0", "close_count": "0"})
+
+    def test_the_configured_trigger_and_manual_dispatch_reconcile(self) -> None:
+        for trigger, event in (("push", "push"), ("schedule", "schedule"), ("push", "workflow_dispatch"), ("schedule", "workflow_dispatch")):
+            with self.subTest(trigger=trigger, event=event):
+                self.assertEqual(self.plan(trigger, event)["close_count"], "1")  # current index closes the open PR
+
+
 class PublishTests(unittest.TestCase):
     """Drive `command_publish` with a fake GitHub to pin when it changes nothing."""
 
@@ -259,7 +288,7 @@ class PublishTests(unittest.TestCase):
         import os
         import unittest.mock as mock
 
-        spec = agents.AgentSpec("docs-index", "agent:docs-index", "x.md", "agent/docs-index-", "claude-sonnet-5-5", min_open, 1)
+        spec = agents.AgentSpec("docs-index", "agent:docs-index", "x.md", "agent/docs-index-", "claude-sonnet-5-5", "push", min_open, 1)
         github = FakeGitHub(open_prs)
         report = Path(tempfile.mkdtemp()) / "report.json"
         report.write_text(json.dumps({"substantive": substantive, "added": [], "updated": [], "confirmed": []}))

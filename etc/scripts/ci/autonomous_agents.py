@@ -33,6 +33,7 @@ REGISTRY_REL = Path(".github/agents/registry.json")
 DOCS_INDEX_REL = Path("etc/scripts/local/docs-index.py")
 AGENT = "docs-index"
 AGENT_FILES = ("etc/docs-index.toml", "llms.txt", "llms-full.txt")
+TRIGGERS = ("push", "schedule")
 MODEL_RE = re.compile(r"^claude-[a-z0-9][a-z0-9.-]*$")
 BRANCH_RE = re.compile(r"^agent/[A-Za-z0-9._/-]+$")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
@@ -67,6 +68,7 @@ class AgentSpec:
     instructions: str
     branch_prefix: str
     model: str
+    trigger: str
     min_open_prs: int
     max_open_prs: int
 
@@ -134,6 +136,7 @@ def load_registry(path: Path | None = None) -> tuple[dict[str, str], dict[str, A
             instructions=str(raw["instructions"]),
             branch_prefix=str(raw["branch_prefix"]),
             model=str(raw["model"]),
+            trigger=str(raw["trigger"]),
             min_open_prs=raw["min_open_prs"],
             max_open_prs=raw["max_open_prs"],
         )
@@ -142,6 +145,8 @@ def load_registry(path: Path | None = None) -> tuple[dict[str, str], dict[str, A
             errors.append("model must look like `claude-...`")
         if not BRANCH_RE.match(spec.branch_prefix) or not spec.branch_prefix.endswith("-"):
             errors.append("branch_prefix must start with `agent/` and end with `-`")
+        if spec.trigger not in TRIGGERS:
+            errors.append(f"trigger must be one of {', '.join(TRIGGERS)}")
         if not spec.label:
             errors.append("label is required")
         if not all(isinstance(n, int) and not isinstance(n, bool) for n in (spec.min_open_prs, spec.max_open_prs)):
@@ -205,16 +210,31 @@ def write_github_outputs(path: Path, outputs: dict[str, Any]) -> None:
             output.write(f"{key}<<{delimiter}\n{encoded}\n{delimiter}\n")
 
 
-def command_plan(github: GitHub, agent: str, github_output: Path | None) -> int:
+def event_matches_trigger(spec: AgentSpec, event_name: str) -> bool:
+    """Return whether an event may run the agent.
+
+    The workflow listens for every trigger because `on:` cannot read the
+    registry, so the registry's `trigger` decides which events do work. Manual
+    dispatch always runs, so an operator can start any agent.
+    """
+    return event_name not in TRIGGERS or event_name == spec.trigger
+
+
+def command_plan(github: GitHub, agent: str, event_name: str, github_output: Path | None) -> int:
     """Print the reconciliation plan and expose it as step outputs."""
     target, agents = load_registry()
     spec = agents[agent]
-    needed = docs_index_needed(load_docs_index())
-    open_prs = open_agent_prs(github, target, spec)
-    plan = plan_agent(spec, open_prs, needed)
+    if not event_matches_trigger(spec, event_name):
+        print(f"{spec.name} runs on {spec.trigger}, not {event_name}; nothing to do")
+        plan: dict[str, Any] = {"include": [], "close": []}
+        needed, open_count = False, 0
+    else:
+        needed = docs_index_needed(load_docs_index())
+        open_prs = open_agent_prs(github, target, spec)
+        plan, open_count = plan_agent(spec, open_prs, needed), len(open_prs)
     outputs = {
         "needed": "true" if needed else "false",
-        "open_count": len(open_prs),
+        "open_count": open_count,
         "matrix": {"include": plan["include"]},
         "count": len(plan["include"]),
         "close": plan["close"],
@@ -678,6 +698,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         return command
 
     plan = add("plan")
+    plan.add_argument("--event-name", required=True, help="GitHub event that started the run")
     plan.add_argument("--github-output", type=Path)
     close = add("close")
     close.add_argument("--pull-requests", required=True, help="JSON list from the plan's `close` output")
@@ -707,7 +728,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         if args.command == "plan":
-            return command_plan(GhCli(), args.agent, args.github_output)
+            return command_plan(GhCli(), args.agent, args.event_name, args.github_output)
         if args.command == "close":
             return command_close(GhCli(), args.agent, json.loads(args.pull_requests))
         if args.command == "prepare":
@@ -718,7 +739,7 @@ def main(argv: list[str] | None = None) -> int:
             return command_finalize(args.work, args.baseline, args.report)
         return command_publish(GhCli(), args.agent, args.mode, args.branch, args.pull_request, args.report)
     except MainMoved as error:
-        # Not a failure: the next scheduled or push-triggered run starts from the new main.
+        # Not a failure: the next run of the agent's trigger starts from the new main.
         print(f"notice: {error}")
         return 0
     except (AgentError, OSError, KeyError, IndexError, TypeError, ValueError, subprocess.CalledProcessError) as error:
