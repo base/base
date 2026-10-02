@@ -41,6 +41,7 @@ jobs:
       docker: ${{ steps.filter.outputs.docker }}
       proof-mpt-bench: ${{ steps.filter.outputs.proof-mpt-bench }}
       system-tests: ${{ steps.system-tests.outputs.system-tests }}
+      upgrade-signal: ${{ steps.filter.outputs.upgrade-signal }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -74,6 +75,24 @@ jobs:
               - 'crates/proof/primitives/**'
               - 'crates/execution/trie/**'
               - 'etc/scripts/ci/**'
+              - '.depot/workflows/ci-core.yml'
+            # The upgrade_signal system tests are the slowest binary (~800s of
+            # ~2900s of test time). On PRs run them only when code they
+            # exercise, or the shared test environment, changes. Merge-queue CI
+            # and the ci:system / ci:full labels still run them.
+            upgrade-signal:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.cargo/**'
+              - 'rust-toolchain.toml'
+              - 'etc/systems/**'
+              - 'etc/docker/**'
+              - 'crates/utilities/upgrade-signal/**'
+              - 'crates/utilities/test-utils/**'
+              - 'crates/common/genesis/**'
+              - 'crates/consensus/**'
+              - 'crates/execution/cli/**'
+              - 'crates/execution/node/**'
               - '.depot/workflows/ci-core.yml'
             # Non-crate inputs which can affect the system-test environment.
             # Crate changes are classified by the dependency-aware step below.
@@ -292,8 +311,19 @@ jobs:
         run: rm -f target/nextest/ci/test-results.xml
       - name: Run system tests
         shell: bash
+        env:
+          UPGRADE_SIGNAL_CHANGED: ${{ needs.changes.outputs.upgrade-signal }}
+          CI_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
           set -euo pipefail
+          # Skip the slow upgrade_signal binary on PRs that cannot affect it.
+          test_filter=''
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && \
+             [ "$UPGRADE_SIGNAL_CHANGED" != true ] && \
+             ! grep -Eq '(^|,)ci:(system|full)(,|$)' <<<"$CI_LABELS"; then
+            test_filter='not binary(upgrade_signal)'
+            echo "Skipping upgrade_signal system tests (no relevant changes)."
+          fi
           # Image pulls are network-bound; overlap them with the compile.
           just devnet pull-images &
           pull_pid=$!
@@ -317,7 +347,7 @@ jobs:
             kill -0 "$fixture_pid"
             sleep 1
           done
-          BASE_SYSTEM_TEST_SHARED_L1_RUNTIME="$runtime_file" just devnet tests-ci
+          BASE_SYSTEM_TEST_SHARED_L1_RUNTIME="$runtime_file" just devnet tests-ci "$test_filter"
       - name: Check for JUnit testcases
         if: always()
         id: junit-results

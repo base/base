@@ -259,8 +259,8 @@ tests: _install-nextest _build-contracts
     RUST_MIN_STACK={{ system_test_min_stack }} cargo nextest run -p base-system-tests
 
 # Runs system tests with ci profile for minimal disk usage
-tests-ci: _install-nextest _build-contracts
-    RUST_MIN_STACK={{ system_test_min_stack }} cargo nextest run -P ci --locked -p base-system-tests --cargo-profile ci --no-fail-fast
+tests-ci filter='': _install-nextest _build-contracts
+    RUST_MIN_STACK={{ system_test_min_stack }} cargo nextest run -P ci --locked -p base-system-tests --cargo-profile ci --no-fail-fast {{ if filter == '' { '' } else { "-E '" + filter + "'" } }}
 
 # Builds base-bench in release mode and runs a benchmark
 bench *args:
