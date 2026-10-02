@@ -23,7 +23,6 @@ import os
 import re
 import subprocess
 import sys
-import tomllib
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -196,11 +195,12 @@ def docs_index_needed(index: Any) -> bool:
 
 
 def write_github_outputs(path: Path, outputs: dict[str, Any]) -> None:
-    """Append step outputs; non-strings are JSON encoded."""
+    """Append step outputs in the multiline-safe format; non-strings are JSON encoded."""
     with path.open("a") as output:
         for key, value in outputs.items():
             encoded = value if isinstance(value, str) else json.dumps(value, separators=(",", ":"))
-            output.write(f"{key}={encoded}\n")
+            delimiter = f"ghadelim_{uuid.uuid4().hex}"
+            output.write(f"{key}<<{delimiter}\n{encoded}\n{delimiter}\n")
 
 
 def command_plan(github: GitHub, agent: str, github_output: Path | None) -> int:
@@ -412,21 +412,28 @@ def run_claude(claude: Path, model: str, prompt: str, stream_path: Path) -> None
     stop_token = f"agent-{uuid.uuid4()}"
     print(f"::stop-commands::{stop_token}", flush=True)
     try:
-        with stream_path.open("w") as stream:
-            process = subprocess.Popen(command, cwd=ROOT, env=environment, text=True, stdout=subprocess.PIPE)
-            assert process.stdout
-            for line in process.stdout:
-                stream.write(line)
-                if not line.strip():
-                    continue
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    print("[claude] non-JSON output suppressed", flush=True)
-                    continue
-                for rendered in render_claude_event(event):
-                    print(rendered, flush=True)
-            return_code = process.wait()
+        with (
+            stream_path.open("w") as stream,
+            subprocess.Popen(command, cwd=ROOT, env=environment, text=True, stdout=subprocess.PIPE) as process,
+        ):
+            # Popen's exit waits for the child, so kill it first on any error.
+            try:
+                assert process.stdout
+                for line in process.stdout:
+                    stream.write(line)
+                    if not line.strip():
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        print("[claude] non-JSON output suppressed", flush=True)
+                        continue
+                    for rendered in render_claude_event(event):
+                        print(rendered, flush=True)
+                return_code = process.wait()
+            except BaseException:
+                process.kill()
+                raise
     finally:
         print(f"::{stop_token}::", flush=True)
     if return_code:
@@ -680,7 +687,7 @@ def main(argv: list[str] | None = None) -> int:
         # Not a failure: the next scheduled or push-triggered run starts from the new main.
         print(f"notice: {error}")
         return 0
-    except (AgentError, OSError, KeyError, ValueError, subprocess.CalledProcessError) as error:
+    except (AgentError, OSError, KeyError, IndexError, TypeError, ValueError, subprocess.CalledProcessError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 

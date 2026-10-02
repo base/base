@@ -202,6 +202,56 @@ class ValidationTests(unittest.TestCase):
         self.assertIn("not a valid manifest", errors[0])
 
 
+class ProcessTests(unittest.TestCase):
+    def test_outputs_survive_newlines_and_quotes(self) -> None:
+        path = Path(tempfile.mkdtemp()) / "out"
+        agents.write_github_outputs(path, {"a": "x\ny=z", "b": {"k": [1]}})
+        lines = path.read_text().splitlines()
+        self.assertTrue(lines[0].startswith("a<<ghadelim_"))
+        self.assertEqual(lines[1:3], ["x", "y=z"])
+        self.assertEqual(lines[5], '{"k":[1]}')
+
+    def test_a_failing_stream_write_kills_the_child_and_closes_the_log_group(self) -> None:
+        import io
+        import os
+        import stat
+        import unittest.mock as mock
+
+        workdir = Path(tempfile.mkdtemp())
+        pid_file = workdir / "pid"
+        script = workdir / "claude"
+        script.write_text(f"#!/bin/sh\necho $$ > {pid_file}\necho '{{}}'\nexec sleep 60\n")
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        stream = Path(tempfile.mkdtemp()) / "stream.jsonl"
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out), mock.patch.object(Path, "open", side_effect=_broken_open(stream)):
+            with self.assertRaises(OSError):
+                agents.run_claude(script, "claude-sonnet-5-5", "p", stream)
+        self.assertRegex(out.getvalue(), r"::stop-commands::(agent-[0-9a-f-]+)\n::\1::")
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int(pid_file.read_text()), 0)
+
+    def test_top_level_handler_reports_malformed_api_responses(self) -> None:
+        import unittest.mock as mock
+
+        with mock.patch.object(agents, "command_plan", side_effect=IndexError("parents")):
+            self.assertEqual(agents.main(["plan"]), 1)
+
+
+def _broken_open(stream: Path):
+    class Broken:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def write(self, _):
+            raise OSError("disk full")
+
+    return lambda *_a, **_k: Broken()
+
+
 class RenderTests(unittest.TestCase):
     def test_pr_body_lists_each_group_and_omits_empty_ones(self) -> None:
         body = agents.render_pr_body({"added": ["a.md"], "updated": [], "confirmed": ["b.md"]}, SPEC)
