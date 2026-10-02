@@ -641,7 +641,8 @@ impl PgTransactionEventSink {
         Ok(Self::new_with_retention_pool(pool, retention_pool))
     }
 
-    /// Runs pending Postgres migrations.
+    /// Runs pending schema migrations only; [`crate::AuditMigration`] also
+    /// reconciles and validates required online work.
     ///
     /// A database that recorded the pre-partition migrations 001-004 is reset
     /// first. Its old table and their `_sqlx_migrations` rows are dropped in the
@@ -649,47 +650,47 @@ impl PgTransactionEventSink {
     /// only if the baseline does. Every other database gets sqlx's standard
     /// checks.
     pub async fn migrate(database_url: &str) -> Result<()> {
-        let pool = PgPoolOptions::new().max_connections(1).connect(database_url).await?;
-        let mut conn = pool.acquire().await?;
-        // Hold sqlx's migration lock across the legacy-history check and the
-        // run, so a concurrent migrator cannot change the history between
-        // them. The lock is session-level and reentrant; run_direct takes it
-        // again and releases its own hold.
+        let mut conn = PgConnection::connect(database_url).await?;
         conn.lock().await?;
-        let result = async {
-            let legacy_versions = legacy_transaction_event_migration_versions(&mut conn).await?;
-            if legacy_versions.is_empty() {
-                TRANSACTION_EVENT_MIGRATOR.run_direct(&mut *conn).await?;
-                return anyhow::Ok(());
-            }
+        let result = Self::migrate_on(&mut conn).await;
+        let unlock = conn.unlock().await;
+        let close = conn.close().await;
+        result?;
+        unlock?;
+        close?;
+        Ok(())
+    }
 
-            let mut tx = conn.begin().await?;
-            // Bound the DROP's lock wait so a long-running vacuum or query on
-            // the old table fails the migration quickly instead of queueing
-            // ingest behind it. The migrator can simply be retried.
-            sqlx::query("SET LOCAL lock_timeout = '60s'").execute(&mut *tx).await?;
-            sqlx::query("DROP TABLE IF EXISTS transaction_events").execute(&mut *tx).await?;
-            sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ANY($1)")
-                .bind(&legacy_versions)
-                .execute(&mut *tx)
-                .await?;
-            // sqlx applies each migration in a savepoint of this transaction.
-            TRANSACTION_EVENT_MIGRATOR.run_direct(&mut *tx).await?;
-            tx.commit().await?;
-            info!(
-                legacy_versions = ?legacy_versions,
-                "reset legacy transaction event migration history"
-            );
-            anyhow::Ok(())
+    /// Applies schema on a session whose caller owns the migration lock.
+    ///
+    /// Disabling sqlx's inner lock avoids reentrant holds leaking on failure.
+    pub async fn migrate_on(conn: &mut PgConnection) -> Result<()> {
+        let mut migrator = sqlx::migrate!("./migrations");
+        migrator.set_locking(false);
+        let legacy_versions = legacy_transaction_event_migration_versions(conn).await?;
+        if legacy_versions.is_empty() {
+            migrator.run_direct(&mut *conn).await?;
+            return anyhow::Ok(());
         }
-        .await;
-        // Keep the migration's own error. A failed unlock is harmless: this
-        // pool closes when migrate returns, which ends the session and releases
-        // the lock.
-        if let Err(err) = conn.unlock().await {
-            warn!(error = %err, "failed to release transaction event migration lock");
-        }
-        result
+
+        let mut tx = conn.begin().await?;
+        // Bound the DROP's lock wait so a long-running vacuum or query on
+        // the old table fails the migration quickly instead of queueing
+        // ingest behind it. The migrator can simply be retried.
+        sqlx::query("SET LOCAL lock_timeout = '60s'").execute(&mut *tx).await?;
+        sqlx::query("DROP TABLE IF EXISTS transaction_events").execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ANY($1)")
+            .bind(&legacy_versions)
+            .execute(&mut *tx)
+            .await?;
+        // sqlx applies each migration in a savepoint of this transaction.
+        migrator.run_direct(&mut *tx).await?;
+        tx.commit().await?;
+        info!(
+            legacy_versions = ?legacy_versions,
+            "reset legacy transaction event migration history"
+        );
+        anyhow::Ok(())
     }
 
     /// Creates a sink from an existing ingest pool. Retention uses the same pool.

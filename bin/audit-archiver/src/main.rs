@@ -1,18 +1,18 @@
 //! Audit archiver binary entry point.
 
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use audit_archiver_lib::{
-    AuditArchiverApiServer, AuditArchiverRpc, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
+    AuditArchiverApiServer, AuditArchiverRpc, AuditMigration, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
     DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS, DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS,
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
     DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
     DEFAULT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS,
     DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS,
-    DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, Metrics, PgTransactionEventSink,
-    TransactionEventIngestConfig, TransactionEventRetentionConfig,
-    index_transaction_event_partitions,
+    DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, ManagedMigration, ManagedMigrationConfig,
+    Metrics, MigrationError, PgTransactionEventSink, TransactionEventIngestConfig,
+    TransactionEventRetentionConfig, index_transaction_event_partitions,
 };
 use axum::{
     BoxError,
@@ -64,6 +64,22 @@ struct Args {
 
     #[arg(value_enum)]
     migration_direction: Option<MigrationDirection>,
+
+    /// Host one full migration attempt and its terminal result on the metrics listener.
+    #[arg(long, env = "TIPS_AUDIT_MIGRATE_MANAGED")]
+    managed: bool,
+
+    /// Nonsensitive identity shared across container restarts in the same pod.
+    #[arg(long, env = "TIPS_AUDIT_MIGRATION_RUN_ID")]
+    migration_run_id: Option<String>,
+
+    /// Atomic state file on a writable same-pod volume.
+    #[arg(long, env = "TIPS_AUDIT_MIGRATION_STATE_PATH")]
+    migration_state_path: Option<PathBuf>,
+
+    /// Absolute owned Postgres cancellation budget, at most 30 seconds.
+    #[arg(long, env = "TIPS_AUDIT_MIGRATION_SHUTDOWN_TIMEOUT_SECS", default_value = "30")]
+    migration_shutdown_timeout_secs: u64,
 
     #[command(flatten)]
     log: LogArgs,
@@ -184,6 +200,28 @@ async fn main() -> Result<()> {
         .init_tracing_subscriber()
         .expect("Failed to initialize tracing");
 
+    if args.managed {
+        if !matches!(args.command, Command::Migrate)
+            || !matches!(args.migration_direction, Some(MigrationDirection::Up))
+        {
+            return Err(MigrationError::Configuration.into());
+        }
+        return ManagedMigration::run(ManagedMigrationConfig {
+            database_url: args.postgres_url.ok_or(MigrationError::Configuration)?,
+            address: SocketAddr::new(args.metrics.addr, args.metrics.port),
+            metrics_enabled: args.metrics.enabled,
+            metrics_interval_secs: args.metrics.interval,
+            run_id: args.migration_run_id.ok_or(MigrationError::Configuration)?,
+            state_path: args.migration_state_path.ok_or(MigrationError::Configuration)?,
+            shutdown_timeout: Duration::from_secs(args.migration_shutdown_timeout_secs),
+        })
+        .await
+        .map_err(Into::into);
+    }
+    if args.migration_run_id.is_some() || args.migration_state_path.is_some() {
+        return Err(MigrationError::Configuration.into());
+    }
+
     base_cli_utils::MetricsConfig::from(args.metrics.clone())
         .init()
         .expect("Failed to install Prometheus exporter");
@@ -218,7 +256,7 @@ async fn run_migrations(args: &Args) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("TIPS_AUDIT_POSTGRES_URL must be set for migrations"))?;
 
     info!("Running audit archiver Postgres migrations");
-    PgTransactionEventSink::migrate(postgres_url).await?;
+    AuditMigration::run(postgres_url).await.map_err(|error| MigrationError::database(&error))?;
     info!("Audit archiver Postgres migrations complete");
     Ok(())
 }

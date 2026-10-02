@@ -122,27 +122,29 @@ well before it reaches zero), `transaction_event_partitions_created`,
 
 Migration `002_transaction_events_ingested_at_index.sql` registers a BRIN index
 on the partitioned `transaction_events` table and its hot/warm/cold parents.
-It uses `ON ONLY`: `migrate up` creates metadata quickly but does **not** build
-indexes on existing day partitions. The root index remains invalid until the
-day indexes are built and attached. Future day partitions automatically get
-their index on attach, even while the parent index is being completed.
+Its `ON ONLY` SQL creates parent metadata without scanning populated days.
+Ordinary `migrate up` now commits schema, runs the shared online reconciler
+outside the schema transaction, validates the catalog, and only then succeeds.
+Future day partitions inherit the index when attached. Applied SQL and sqlx
+checksums remain immutable.
 
-After deploying the migrator, arrange a separate, monitored one-off run using
-the `audit_archiver_migration` database credential:
+Run the full lifecycle with the migration-owner credential:
 
 ```bash
 # TIPS_AUDIT_POSTGRES_URL must point at the target network database.
-audit-archiver index
+audit-archiver migrate up
 ```
 
-The `index` command builds one BRIN index at a time with `CREATE INDEX
-CONCURRENTLY` and attaches it to the class index. It is intentionally separate
-from the chart's `migrate up` init container: production has many populated
-day partitions, and building them can take hours. Re-running the command is
-safe; it skips attached indexes and drops/rebuilds invalid indexes left by a
-canceled concurrent build. Monitor Postgres storage, read I/O, and ingest
-latency during the build. Do not run two index jobs against the same database;
-the command also holds the migration lock to serialize them.
+The shared reconciler builds one BRIN index at a time with `CREATE INDEX
+CONCURRENTLY`, then attaches it. Reruns skip valid attached indexes and repair
+invalid unattached indexes left by interruption. The compatibility `index`
+command still reconciles without applying schema. Both paths hold one sqlx
+migration lock on a dedicated session, including final validation.
+
+Historical scans can take hours. Do not deploy the full command in a database
+init container or wait for index completion inside Codeflow V1/Sif's 14400-second
+deployment deadline. Use native managed main-container execution below. Monitor
+storage, read I/O, and ingest latency; deployment readiness is not completion.
 
 Check completion in each network database:
 
@@ -162,3 +164,110 @@ All four should report `indisvalid = true`. The `ingested_at` BRIN index
 serves DataPilot's timestamp cutoff; it does not by itself index an epoch
 expression used for parallel slicing. Evaluate that expression's query plan
 separately before enabling `NUM_SLICES` on the production primary.
+
+## Native managed migration
+
+```bash
+export TIPS_AUDIT_MIGRATE_MANAGED=true
+export TIPS_AUDIT_MIGRATION_RUN_ID=pod-uid-attempt-1
+export TIPS_AUDIT_MIGRATION_STATE_PATH=/var/run/audit-migrator/state.json
+export TIPS_AUDIT_METRICS_ENABLED=true
+export TIPS_AUDIT_METRICS_PORT=9002
+audit-archiver migrate up --managed
+```
+
+Only `migrate up` accepts managed execution. New arguments/environment:
+
+- `--managed`: `TIPS_AUDIT_MIGRATE_MANAGED`, disabled by default.
+- `--migration-run-id`: `TIPS_AUDIT_MIGRATION_RUN_ID`, required; 1–128 ASCII
+  letters, digits, hyphens, underscores, dots, or colons. Use a nonsensitive
+  pod UID plus reviewed attempt generation.
+- `--migration-state-path`: `TIPS_AUDIT_MIGRATION_STATE_PATH`, required writable
+  file on a same-pod volume. Its parent directory must already exist.
+- `--migration-shutdown-timeout-secs`:
+  `TIPS_AUDIT_MIGRATION_SHUTDOWN_TIMEOUT_SECS`, default `30`, range `1`–`30`.
+
+Keep the existing migration-owner `TIPS_AUDIT_POSTGRES_URL`, metrics address,
+interval, and logging configuration. Supply credentials through environment,
+never command arguments. The main container must receive envmapper/all-env and
+secret mounts before `exec` of the native binary. Retain secret-init only; remove
+the database migration init step. Runtime API/ingest configuration is unchanged.
+Use desired replicas `0`/`1`, `maxSurge: 0`, and `maxUnavailable: 1`. Disabled or
+scale-zero means no schema or online work. Resume starts one resumable attempt.
+A chart's old `operation=index` may map to full managed `migrate up`, but must
+document that it now also applies schema; it must not remain an index-only job.
+
+### One listener, availability, and completion
+
+The metrics address/port (default `0.0.0.0:9002`) hosts all endpoints; recorder-only
+installation prevents a competing exporter listener. Restrict this internal
+listener to trusted probe/scrape clients. Disabling metrics does not disable
+health or status.
+
+- `GET /healthz`: `200` while the supervisor is responsive, including terminal
+  operation failure. Do not use operation success as a liveness probe.
+- `GET /readyz`: `503` until schema is committed/verified and the worker/control
+  facility is available; `200` during indexing and succeeded idle. A terminal
+  reconcile failure after schema may remain ready. Schema failure and stopping
+  remain unready. Probes use cached state, not the busy DDL connection.
+- `GET /status`: version-1 JSON with `mode=migrate_up`, `run_id`, `attempt`,
+  `state=running|succeeded|failed|stopped`, `phase`, `schema_ready`,
+  `worker_available`, `ready`, `complete`, `cancellation_confirmed`, timestamps,
+  operation/partition, leaf progress counts, safe error code, and SQLSTATE.
+  Phases are `starting`, `waiting_for_lock`, `schema`, `reconciling`,
+  `validating`, `idle`, and `stopping`. `complete` is true only on success.
+- `GET /metrics`: Prometheus scrape on the same listener.
+
+Managed results stay idle and observable until signal; no tight in-process
+retry and no exit merely because reconciliation failed. Alert on failed state
+and missing/overdue completion; Codeflow deployment success does not certify
+that indexes finished.
+
+Metrics use `tips_audit_migration_` plus `state{state}`, `phase{phase}`,
+`schema_ready`, `worker_available`, `complete`, `attempts_total`,
+`failures_total{phase}`, `leaves_total`, `leaves_completed`, `leaves_built`,
+`leaves_repaired`, `leaves_skipped`, `last_progress_timestamp_seconds`,
+`duration_seconds`, and `cancellation_total{outcome}`. Cancellation outcomes are
+`requested`, `confirmed`, and `unconfirmed`. Total/completed leaves are current-pass
+gauges; built/repaired/skipped are process counters. Labels are bounded enums,
+never run identities, partitions, backend PIDs, or error text. Status counts
+describe the attempt; totals can change as partitions appear.
+
+### Restart and deliberate retry
+
+State writes are atomic, mode `0600`, and fsynced with their directory. Same-pod
+container restarts restore succeeded/failed/stopped results without rerunning;
+schema metadata is checked read-only before readiness. Interrupted running
+attempts resume once only after their previous owned backend is verified gone.
+A still-live prior backend fails closed instead of authorizing competing work.
+A new reviewed run ID authorizes a new attempt; an already-valid database
+performs verification without rebuilding indexes. Schema/work fingerprints
+prevent restoring stale success for a changed requirement. Corrupt state fails
+closed and requires inspected recovery, never silent execution.
+
+An `emptyDir` survives container restarts, **not pod deletion or scale-zero**.
+A new pod starts one new resumable attempt, including after an earlier failure.
+Cross-pod terminal restoration requires separate durable storage; a run ID alone
+does not provide it.
+
+### Graceful stop and cancellation proof
+
+SIGTERM/SIGINT immediately makes the worker unready and prevents new DDL dispatch.
+An independent same-role control connection repeatedly cancels only the captured
+PID/backend-start/database/role/generated application identity. It falls back to
+terminating that exact backend and verifies disappearance before reporting
+`stopped`. Neither socket/client drop nor a true `pg_cancel_backend` return is
+proof that PostgreSQL stopped.
+
+The absolute database stop budget is at most 30 seconds: one third for cooperative
+cancel, one third for termination fallback, one third for disappearance/cleanup.
+Use pod termination grace of at least 45 seconds; no preStop sleep is needed for
+this non-traffic worker. Denied/unreachable/unverified cleanup reports
+`cancellation_unconfirmed`, never a false stopped state. SIGKILL or network loss
+cannot guarantee immediate cancellation. Interrupted concurrent builds may leave
+invalid unattached indexes; the same reconciler repairs them on resume. Stop
+never reverses schema migrations or deletes transaction data.
+
+Connection, parser, and OS error text is omitted from managed diagnostics; logs
+use static messages and safe structured fields. Statement and slow-query logging
+is disabled on managed database connections. Use `TIPS_AUDIT_LOG_FORMAT=json`.

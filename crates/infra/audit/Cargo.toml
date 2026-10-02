@@ -11,10 +11,15 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
+log = "0.4"
 tower-http.workspace = true
+tokio-util.workspace = true
 async-trait.workspace = true
+base-cli-utils.workspace = true
+metrics-process.workspace = true
 jsonrpsee-types.workspace = true
 base-observability-events.workspace = true
+metrics-exporter-prometheus.workspace = true
 metrics = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["full"] }
 anyhow = { workspace = true, features = ["std"] }
