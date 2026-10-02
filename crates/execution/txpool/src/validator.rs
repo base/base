@@ -1297,8 +1297,11 @@ where
             sender_bytecode_hash: sender_account.bytecode_hash,
             payer_auth: intrinsic.payer_auth,
             watch_set,
-            sender_locked,
-            payer_locked,
+            // Without the Keystore an account's only key is its own secp256k1
+            // key, which can never change: its authorization is as stable as a
+            // locked account's, so it is exempt from the signature limit.
+            sender_locked: sender_locked || !keystore,
+            payer_locked: payer_locked || !keystore,
             payer_trusted,
             payer_max_cost,
             manifest,
@@ -3693,8 +3696,9 @@ mod tests {
     }
 
     /// Before Zenith, admitting an EOA transaction reads no Keystore state, so
-    /// no `AccountConfiguration` slot is captured or watched; at Zenith the
-    /// same transaction depends on the account's Keystore state.
+    /// no `AccountConfiguration` slot is captured or watched and the signer is
+    /// exempt from the signature limit; at Zenith the same transaction depends
+    /// on the account's Keystore state.
     #[test]
     fn eip8130_admission_reads_keystore_only_at_zenith() {
         let signer = PrivateKeySigner::random();
@@ -3716,6 +3720,10 @@ mod tests {
             .expect("EOA transaction is admitted before Zenith");
         assert!(everest.manifest.has_no_config_slots());
         assert!(!watches_keystore(&everest));
+        assert!(
+            everest.sender_locked && everest.payer_locked,
+            "without the Keystore a signer's key cannot change, so it is exempt from the signature limit"
+        );
 
         let zenith =
             build_test_validator_with_account_and_spec(sender, funded(), zenith_chain_spec())
@@ -3723,6 +3731,7 @@ mod tests {
                 .expect("EOA transaction is admitted at Zenith");
         assert!(!zenith.manifest.has_no_config_slots());
         assert!(watches_keystore(&zenith));
+        assert!(!zenith.sender_locked, "an unlocked Keystore account is signature-limited");
     }
 
     /// Admission reserves only the transaction's fees: call value is not

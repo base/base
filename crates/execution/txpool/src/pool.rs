@@ -185,6 +185,19 @@ where
         self
     }
 
+    /// Sets the operator-allowlisted EIP-8130 payers (see
+    /// [`MempoolGuard::with_allowlisted_payers`]). Call after
+    /// [`Self::with_guard_limits`] and before sharing the pool.
+    #[must_use]
+    pub fn with_allowlisted_payers(self, payers: impl IntoIterator<Item = Address>) -> Self {
+        {
+            let mut guard = self.guard.write();
+            let current = core::mem::replace(&mut *guard, MempoolGuard::unlimited());
+            *guard = current.with_allowlisted_payers(payers);
+        }
+        self
+    }
+
     /// Builds guard admission metadata carried by a validated EIP-8130 transaction.
     pub fn admission_for(transaction: &T) -> Option<Admission> {
         transaction.as_eip8130()?;
@@ -2042,8 +2055,28 @@ mod tests {
 
     fn build_integration_pool()
     -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
+        build_integration_pool_at(false)
+    }
+
+    /// [`build_integration_pool`] with the Keystore active (Zenith at genesis).
+    fn build_zenith_integration_pool()
+    -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
+        build_integration_pool_at(true)
+    }
+
+    fn build_integration_pool_at(
+        zenith: bool,
+    ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
         let mut genesis = build_test_genesis_everest();
         genesis.config.chain_id = test_chain_id();
+        if zenith {
+            genesis.config.extra_fields.insert(
+                "base".to_string(),
+                serde_json::json!({
+                    "azul": 0, "beryl": 0, "cobalt": 0, "denim": 0, "everest": 0, "zenith": 0
+                }),
+            );
+        }
         let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
@@ -2156,7 +2189,7 @@ mod tests {
     async fn protocol_and_sidecar_eip8130_routes_enforce_sender_limit() {
         let cap = u64::from(GuardLimits::default().signature_limit);
 
-        let (protocol_pool, protocol_client) = build_integration_pool();
+        let (protocol_pool, protocol_client) = build_zenith_integration_pool();
         let protocol_signer = signer();
         fund(&protocol_client, protocol_signer.address());
         for sequence in 0..cap {
@@ -2179,7 +2212,7 @@ mod tests {
             "guard-rejected protocol transaction must not publish pool events"
         );
 
-        let (sidecar_pool, sidecar_client) = build_integration_pool();
+        let (sidecar_pool, sidecar_client) = build_zenith_integration_pool();
         let sidecar_signer = signer();
         fund(&sidecar_client, sidecar_signer.address());
         for key in 1..=cap {
@@ -2200,9 +2233,23 @@ mod tests {
         assert!(matches!(over_events.next().await, Some(TransactionEvent::Discarded)));
     }
 
+    /// Without the Keystore a signer's key can never change, so the sender
+    /// signature limit does not apply: a sender may queue past it.
+    #[tokio::test]
+    async fn sender_signature_limit_does_not_apply_before_zenith() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let cap = u64::from(GuardLimits::default().signature_limit);
+        for sequence in 0..cap + 2 {
+            let transaction = self_paid_eoa_8130(&signer, U256::ZERO, sequence, 0, 1_000);
+            assert!(pool.add_transaction(TransactionOrigin::Local, transaction).await.is_ok());
+        }
+    }
+
     #[tokio::test]
     async fn nonce_free_sidecar_members_are_guarded_independently() {
-        let (pool, client) = build_integration_pool();
+        let (pool, client) = build_zenith_integration_pool();
         let signer = signer();
         fund(&client, signer.address());
         let cap = u64::from(GuardLimits::default().signature_limit);
