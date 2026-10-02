@@ -21,7 +21,7 @@ use super::{
 };
 use crate::{
     DerivationActor, DerivationActorRequest, DerivationState, EngineActorRequest, EngineProcessor,
-    EngineRequestReceiver, NodeActor, NodeMode, QueuedDerivationEngineClient,
+    EngineRequestReceiver, NodeActor, NodeMode, NodeOperatingMode, QueuedDerivationEngineClient,
     QueuedEngineDerivationClient, SequencerEngineRequestCoordinator, ValidatorEngineRequestHandler,
 };
 
@@ -287,11 +287,19 @@ impl HarnessBuilder {
                         .start(engine_actor_request_rx)
                         .await
                 }
-                NodeMode::Sequencer => {
+                NodeMode::Sequencer | NodeMode::ShadowSequencer | NodeMode::IsolatedSequencer => {
+                    let operating_mode = match role {
+                        NodeMode::Validator => NodeOperatingMode::Validator,
+                        NodeMode::Sequencer => NodeOperatingMode::Sequencer,
+                        NodeMode::IsolatedSequencer => NodeOperatingMode::IsolatedSequencer,
+                        NodeMode::ShadowSequencer => NodeOperatingMode::ShadowSequencer {
+                            blocks_per_cycle: std::num::NonZeroU64::MIN,
+                        },
+                    };
                     let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
                     SequencerEngineRequestCoordinator::new(
                         engine_processor,
-                        false,
+                        operating_mode,
                         None,
                         self.sequencer_stopped,
                         unsafe_head_tx,

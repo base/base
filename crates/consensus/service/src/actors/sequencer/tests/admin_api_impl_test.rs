@@ -8,7 +8,7 @@ use rstest::rstest;
 use tokio::sync::oneshot;
 
 use crate::{
-    ConductorError, EngineClientError, ResetReason, SequencerAdminQuery,
+    ConductorError, EngineClientError, NodeOperatingMode, ResetReason, SequencerAdminQuery,
     actors::{MockConductor, MockSequencerEngineClient, sequencer::tests::test_util::test_actor},
 };
 
@@ -151,7 +151,11 @@ async fn test_start_sequencer_conductor_is_leader(
     actor.conductor = Some(conductor);
     actor.engine_client = Arc::new(client);
     actor.is_active = false;
-    actor.shadow_blocks_per_cycle = shadow.then(|| NonZeroU64::new(1).unwrap());
+    actor.mode = if shadow {
+        NodeOperatingMode::ShadowSequencer { blocks_per_cycle: NonZeroU64::new(1).unwrap() }
+    } else {
+        NodeOperatingMode::Sequencer
+    };
 
     let result = async {
         match via_channel {
@@ -328,7 +332,11 @@ async fn test_start_sequencer_unsafe_head_mismatch(
     let mut actor = test_actor();
     actor.engine_client = Arc::new(client);
     actor.is_active = false;
-    actor.shadow_blocks_per_cycle = shadow.then(|| NonZeroU64::new(1).unwrap());
+    actor.mode = if shadow {
+        NodeOperatingMode::ShadowSequencer { blocks_per_cycle: NonZeroU64::new(1).unwrap() }
+    } else {
+        NodeOperatingMode::Sequencer
+    };
 
     let result = async {
         match via_channel {

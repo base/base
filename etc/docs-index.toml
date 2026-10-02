@@ -407,7 +407,7 @@ summary = "MDBX proof-history DB schema: versioned DupSort tables, tombstones, B
 digest = "559e8e9f95"
 
 ["crates/execution/tx-forwarding/README.md"]
-summary = "base-tx-forwarding: forwards mempool txs to builder RPCs with per-destination queues, dedup, batching, resend; spawn_requests for custom ForwardRequest; CLI flags table. Use to configure forwarding."
+summary = "base-tx-forwarding: forwards mempool txs to builder RPCs via per-destination queues fed by FIFO and tip-priority lanes; dedup, batching, resend; spawn_requests for custom ForwardRequest; CLI flags."
 digest = "b72a1536e1"
 
 ["crates/execution/txpool-rpc/README.md"]

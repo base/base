@@ -12,7 +12,7 @@ extern crate tracing;
 mod service;
 pub use service::{
     DerivationDelegateConfig, FollowNode, FollowNodeConfig, HEAD_STREAM_POLL_INTERVAL, L1Config,
-    L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder, ShutdownSignal,
+    L1ConfigBuilder, NodeMode, NodeOperatingMode, RollupNode, RollupNodeBuilder, ShutdownSignal,
     UpgradeSignalBuilderConfig,
 };
 
@@ -49,7 +49,7 @@ pub use actors::{
     QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
     QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient, ReconcileShadowRequest,
     RecoveryModeGuard, ResetOrigin, ResetOutcome, ResetReason, ResetRequest, ResetRequestOutcome,
-    RpcActor, RpcActorError, RpcContext, ScheduledTicker, SealState, SealStepError,
+    ResetResponder, RpcActor, RpcActorError, RpcContext, ScheduledTicker, SealState, SealStepError,
     SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
     SequencerEngineClient, SequencerEngineRequestCoordinator, SequencerEngineState, ShadowCycle,
     ShadowFunding, ShadowReconciliationGate, ShadowReconciliationTask, ShadowSequencingState,

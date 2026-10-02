@@ -19,7 +19,7 @@ use base_consensus_providers::{
     AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider,
     OnlinePipeline,
 };
-use base_consensus_rpc::{BaseRpc, RpcBuilder};
+use base_consensus_rpc::{AdminNetworkAccess, BaseRpc, RpcBuilder};
 use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListener};
 use base_protocol::L2BlockInfo;
 use base_upgrade_signal::{UpgradeSignalMetricLayer, UpgradeSignalMetrics};
@@ -32,7 +32,7 @@ use crate::{
     DerivationActor, DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest,
     EngineConfig, EngineProcessor, EngineRequestReceiver, EngineRpcProcessor, L1OriginSelector,
     L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder, NetworkConfig,
-    NodeActor, NodeMode, PayloadBuilder, PrefetchedChainProvider, PreparedL1Origin,
+    NodeActor, NodeOperatingMode, PayloadBuilder, PrefetchedChainProvider, PreparedL1Origin,
     QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
     QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
     QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor, RpcContext, SequencerActor,
@@ -186,8 +186,7 @@ where
 }
 
 impl RollupNode {
-    /// The mode of operation for the node.
-    const fn mode(&self) -> NodeMode {
+    const fn mode(&self) -> NodeOperatingMode {
         self.engine_config.mode
     }
 
@@ -282,11 +281,10 @@ impl RollupNode {
         let (engine_queue_length_tx, engine_queue_length_rx) = watch::channel(0);
         let engine = Engine::new(engine_state, engine_state_tx, engine_queue_length_tx);
 
-        let mode = self.mode();
+        let node_mode = self.mode();
         let checkpoint_reader: Arc<dyn ForkchoiceCheckpointReader> =
             Arc::new(checkpoint_client.clone());
         let checkpoint_writer: Arc<dyn CheckpointWriter> = Arc::new(checkpoint_client);
-        let shadow_sequencer = mode.is_sequencer() && self.sequencer_config.is_shadow_sequencer();
         let engine_processor = EngineProcessor::new_with_checkpoint(
             Arc::clone(&engine_client),
             Arc::clone(&self.config),
@@ -303,21 +301,18 @@ impl RollupNode {
             engine_queue_length_rx,
         );
 
-        let engine_handler = if mode.is_validator() {
+        let engine_handler = if node_mode.is_validator() {
             ConfiguredEngineReceiver::Validator(ValidatorEngineRequestHandler::new(
                 engine_processor,
             ))
         } else {
-            ConfiguredEngineReceiver::Sequencer(
-                SequencerEngineRequestCoordinator::new(
-                    engine_processor,
-                    shadow_sequencer,
-                    conductor,
-                    self.sequencer_config.sequencer_stopped,
-                    unsafe_head_tx,
-                )
-                .with_isolated(self.sequencer_config.isolated),
-            )
+            ConfiguredEngineReceiver::Sequencer(SequencerEngineRequestCoordinator::new(
+                engine_processor,
+                node_mode,
+                conductor,
+                self.sequencer_config.sequencer_stopped,
+                unsafe_head_tx,
+            ))
         };
         let engine_actor = EngineActor::new(cancellation_token, engine_request_rx, engine_handler);
 
@@ -605,9 +600,7 @@ impl RollupNode {
 
             // Create the admin API channel
             let (sequencer_admin_api_tx, sequencer_admin_api_rx) = mpsc::channel(1024);
-            // Isolated sequencers keep the network actor for startup catch-up but never
-            // publish their private fork.
-            let queued_gossip_client = if self.sequencer_config.isolated {
+            let queued_gossip_client = if node_mode.is_isolated() {
                 QueuedUnsafePayloadGossipClient::private()
             } else {
                 QueuedUnsafePayloadGossipClient::new(gossip_payload_tx)
@@ -630,7 +623,7 @@ impl RollupNode {
                     conductor,
                     engine_client,
                     is_active: self.sequencer_config.sequencer_stopped.not(),
-                    shadow_blocks_per_cycle: self.sequencer_config.shadow_blocks_per_cycle,
+                    mode: node_mode,
                     shadow_funding: self.sequencer_config.shadow_funding,
                     recovery_mode,
                     rollup_config: Arc::clone(&self.config),
@@ -677,8 +670,11 @@ impl RollupNode {
                     RpcContext {
                         cancellation: cancellation.clone(),
                         p2p_network: Some(network_rpc),
-                        network_admin: Some(net_admin_rpc),
-                        isolated_sequencer: self.sequencer_config.isolated,
+                        admin_network_access: if node_mode.is_isolated() {
+                            AdminNetworkAccess::Disabled
+                        } else {
+                            AdminNetworkAccess::Enabled(net_admin_rpc)
+                        },
                         l1_watcher_queries: l1_query_tx,
                     }
                 )),
