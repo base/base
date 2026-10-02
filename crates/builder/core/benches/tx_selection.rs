@@ -1,7 +1,7 @@
 //! Benchmarks for transaction selection in the flashblocks payload build loop.
 //!
-//! Transaction construction and EVM execution are excluded. The benchmarks cover the production
-//! non-parking pending-pool iterator, the lane-aware parking adapter used by flashblocks, and the
+//! Transaction construction and EVM execution are excluded. The benchmarks cover reth's plain
+//! pending-pool `pool.best()` iterator, the lane-aware parking adapter used by flashblocks, and the
 //! validity-predicate parking and state-index wakeup cycle.
 
 use std::{hint::black_box, sync::Arc, time::Instant};
