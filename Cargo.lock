@@ -3292,7 +3292,6 @@ dependencies = [
  "k256 0.13.4",
  "metrics",
  "metrics-exporter-prometheus",
- "nanoid",
  "opentelemetry 0.32.0",
  "parking_lot",
  "rand 0.9.5",
@@ -6391,7 +6390,6 @@ dependencies = [
  "jsonrpsee",
  "k256 0.13.4",
  "libp2p",
- "nanoid",
  "prometheus-scraper",
  "rand 0.9.5",
  "reqwest 0.13.4",
@@ -6417,6 +6415,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -6697,11 +6696,11 @@ dependencies = [
  "base-prover-service-client",
  "base-prover-service-protocol",
  "eyre",
- "nanoid",
  "serde",
  "serde_json",
  "tokio",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -13138,15 +13137,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "nanoid"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ffa00dec017b5b1a8b7cf5e2c008bfda1aa7e0697ac1508b491fdf2622fb4d8"
-dependencies = [
- "rand 0.8.7",
 ]
 
 [[package]]

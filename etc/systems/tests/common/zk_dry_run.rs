@@ -13,9 +13,9 @@ use base_prover_service_protocol::{
     ProofStatus, ProveBlockRangeRequest, ZkBackend, ZkProofRequest, ZkVm,
 };
 use eyre::{Result, WrapErr};
-use nanoid::nanoid;
 use tokio::time::{sleep, timeout};
 use url::Url;
+use uuid::Uuid;
 
 const SAFE_L2_TIMEOUT: Duration = Duration::from_secs(120);
 const SAFE_L2_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -65,7 +65,7 @@ pub(crate) async fn prove_block_range_with_dry_run_stats(
     let client_config = ProverServiceClientConfig::new(prover_url.as_str())
         .with_request_timeout(Duration::from_secs(30));
     let client = ProofRequesterClient::connect(&client_config)?;
-    let session_id = format!("{session_prefix}-{}", nanoid!());
+    let session_id = format!("{session_prefix}-{}", Uuid::new_v4());
     let response = client
         .prove_block_range(ProveBlockRangeRequest {
             proof: ProofRequest {
