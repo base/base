@@ -38,7 +38,8 @@ is the ordered upstream registry; new required online operations belong there
 with their prerequisite, resumable reconciliation, validation, and behavioral
 tests. Do not change applied migration SQL to register runtime work.
 
-`ManagedMigration` hosts that lifecycle and terminal results on one probe/status/
+`audit-archiver migrate up --serve` uses `ManagedMigration` to host that lifecycle
+and terminal results in the foreground on one probe/status/
 metrics listener, with exact-owned Postgres cancellation and durable configured
 retry generations in purpose-specific database records. The same-pod file is
 only an atomic cache; FAILED does not retry after pod loss.

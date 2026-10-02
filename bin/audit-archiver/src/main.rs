@@ -65,9 +65,10 @@ struct Args {
     #[arg(value_enum)]
     migration_direction: Option<MigrationDirection>,
 
-    /// Host one full migration attempt and its terminal result on the metrics listener.
-    #[arg(long, env = "TIPS_AUDIT_MIGRATE_MANAGED")]
-    managed: bool,
+    /// Serve migration health, status, and metrics in the foreground, including terminal results.
+    /// Only valid with `migrate up`; this does not serve transaction ingestion.
+    #[arg(long = "serve", env = "TIPS_AUDIT_MIGRATE_SERVE")]
+    migration_serve: bool,
 
     /// Stable reviewed retry generation shared across pod replacements.
     #[arg(long = "migration-generation", env = "TIPS_AUDIT_MIGRATION_GENERATION")]
@@ -211,7 +212,7 @@ async fn main() -> Result<()> {
         .init_tracing_subscriber()
         .expect("Failed to initialize tracing");
 
-    if args.managed {
+    if args.migration_serve {
         if !matches!(args.command, Command::Migrate)
             || !matches!(args.migration_direction, Some(MigrationDirection::Up))
         {
@@ -412,6 +413,33 @@ async fn readyz_handler(State(state): State<HealthState>) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn migration_serve_flag_is_distinct_from_ingestion_command() {
+        let migration =
+            Args::try_parse_from(["audit-archiver", "migrate", "up", "--serve"]).unwrap();
+        assert!(matches!(migration.command, Command::Migrate));
+        assert!(matches!(migration.migration_direction, Some(MigrationDirection::Up)));
+        assert!(migration.migration_serve);
+        let ingestion = Args::try_parse_from(["audit-archiver", "serve"]).unwrap();
+        assert!(matches!(ingestion.command, Command::Serve));
+        assert!(!ingestion.migration_serve);
+        assert!(Args::try_parse_from(["audit-archiver", "migrate", "up", "--managed"]).is_err());
+    }
+
+    #[test]
+    fn migration_serve_environment_and_help_match_public_contract() {
+        let command = Args::command();
+        let flag = command.get_arguments().find(|arg| arg.get_long() == Some("serve")).unwrap();
+        assert_eq!(flag.get_env(), Some(std::ffi::OsStr::new("TIPS_AUDIT_MIGRATE_SERVE")));
+        let help = Args::command().render_long_help().to_string();
+        assert!(help.contains("--serve"));
+        assert!(help.contains("TIPS_AUDIT_MIGRATE_SERVE"));
+        assert!(help.contains("foreground"));
+        assert!(!help.contains("--managed"));
+        assert!(!help.contains("TIPS_AUDIT_MIGRATE_MANAGED"));
+    }
 
     #[tokio::test]
     async fn serve_without_postgres_fails_before_accepting_events() {

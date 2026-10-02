@@ -233,8 +233,11 @@ impl NativeDatabase {
         path: &Path,
     ) -> anyhow::Result<Child> {
         let log = File::create(path.join(format!("{run_id}.log")))?;
+        // Preserved rejected baseline binaries predate the public flag rename.
+        let current = PathBuf::from(env::var("TIPS_AUDIT_TEST_BINARY")?);
+        let flag = if binary == current { "--serve" } else { "--managed" };
         Ok(Command::new(binary)
-            .args(["migrate", "up", "--managed"])
+            .args(["migrate", "up", flag])
             .env("TIPS_AUDIT_POSTGRES_URL", &self.url)
             .env("TIPS_AUDIT_MIGRATION_GENERATION", run_id)
             .env("TIPS_AUDIT_MIGRATION_STATE_PATH", path.join("state.json"))
@@ -445,6 +448,67 @@ async fn censored_control_activity_never_proves_backend_absence() -> anyhow::Res
 
 #[tokio::test]
 #[ignore = "requires owned disposable PostgreSQL 17 and locally built audit binary"]
+async fn migration_serve_cli_environment_and_invalid_combinations() -> anyhow::Result<()> {
+    let db = NativeDatabase::new().await?;
+    let binary = PathBuf::from(env::var("TIPS_AUDIT_TEST_BINARY")?);
+    for args in [
+        vec!["--serve"],
+        vec!["serve", "--serve"],
+        vec!["index", "--serve"],
+        vec!["migrate", "--serve"],
+        vec!["migrate", "up", "--managed"],
+    ] {
+        let output = timeout(
+            Duration::from_secs(3),
+            Command::new(&binary).args(args).env_remove("TIPS_AUDIT_MIGRATE_SERVE").output(),
+        )
+        .await??;
+        assert!(!output.status.success());
+        assert!(String::from_utf8(output.stderr)?.contains("configuration"));
+    }
+    // The old env no longer selects a service: ordinary up completes and exits.
+    let ordinary = timeout(
+        Duration::from_secs(10),
+        Command::new(&binary)
+            .args(["migrate", "up"])
+            .env("TIPS_AUDIT_POSTGRES_URL", &db.url)
+            .env("TIPS_AUDIT_MIGRATE_MANAGED", "true")
+            .env_remove("TIPS_AUDIT_MIGRATE_SERVE")
+            .env("TIPS_AUDIT_METRICS_ENABLED", "false")
+            .output(),
+    )
+    .await??;
+    assert!(ordinary.status.success(), "{}", String::from_utf8(ordinary.stderr)?);
+    let scratch = NativeDatabase::scratch()?;
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+    // The new env alone selects foreground service semantics, without --serve.
+    let mut child = Command::new(&binary)
+        .args(["migrate", "up"])
+        .env("TIPS_AUDIT_POSTGRES_URL", &db.url)
+        .env("TIPS_AUDIT_MIGRATE_SERVE", "true")
+        .env_remove("TIPS_AUDIT_MIGRATE_MANAGED")
+        .env("TIPS_AUDIT_MIGRATION_GENERATION", "serve-env")
+        .env("TIPS_AUDIT_MIGRATION_STATE_PATH", scratch.join("state.json"))
+        .env("TIPS_AUDIT_MIGRATION_SHUTDOWN_TIMEOUT_SECS", "9")
+        .env("TIPS_AUDIT_METRICS_ADDR", "127.0.0.1")
+        .env("TIPS_AUDIT_METRICS_PORT", port.to_string())
+        .env("TIPS_AUDIT_METRICS_ENABLED", "false")
+        .stdout(File::create(scratch.join("serve-env.log"))?)
+        .stderr(File::create(scratch.join("serve-env-stderr.log"))?)
+        .kill_on_drop(true)
+        .spawn()?;
+    let status = NativeDatabase::status(port, MigrationState::Succeeded).await?;
+    assert!(status.complete && status.ready);
+    assert!(child.try_wait()?.is_none(), "terminal migration service remains in foreground");
+    assert_eq!(NativeDatabase::http(port, "/healthz").await?.0, 200);
+    NativeDatabase::signal(&mut child, "-TERM").await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17 and locally built audit binary"]
 async fn malformed_secret_url_is_terminal_and_never_disclosed() -> anyhow::Result<()> {
     let mut db = NativeDatabase::new().await?;
     db.url = "postgres://private-user:secret-password@private-host:bad-port/database".into();
@@ -456,13 +520,7 @@ async fn malformed_secret_url_is_terminal_and_never_disclosed() -> anyhow::Resul
         .await?;
     assert!(help.status.success());
     let parse = Command::new(&binary)
-        .args([
-            "migrate",
-            "up",
-            "--managed",
-            "--migration-shutdown-timeout-secs",
-            "secret-password",
-        ])
+        .args(["migrate", "up", "--serve", "--migration-shutdown-timeout-secs", "secret-password"])
         .env("TIPS_AUDIT_POSTGRES_URL", &db.url)
         .output()
         .await?;

@@ -172,20 +172,29 @@ serves DataPilot's timestamp cutoff; it does not by itself index an epoch
 expression used for parallel slicing. Evaluate that expression's query plan
 separately before enabling `NUM_SLICES` on the production primary.
 
-## Native managed migration
+## Native migration service
 
 ```bash
-export TIPS_AUDIT_MIGRATE_MANAGED=true
+export TIPS_AUDIT_MIGRATE_SERVE=true
 export TIPS_AUDIT_MIGRATION_GENERATION=initial
 export TIPS_AUDIT_MIGRATION_STATE_PATH=/var/run/audit-migrator/state.json
 export TIPS_AUDIT_METRICS_ENABLED=true
 export TIPS_AUDIT_METRICS_PORT=9002
-audit-archiver migrate up --managed
+audit-archiver migrate up --serve
 ```
 
-Only `migrate up` accepts managed execution. New arguments/environment:
+Only `migrate up` accepts `--serve`. Plain `migrate up` completes the full lifecycle
+and exits. `migrate up --serve` runs in the foreground and keeps migration health,
+status, and metrics available after success or failure until signalled. It does not
+daemonize, watch for new work, or retry a failed generation. This flag is distinct
+from the positional `audit-archiver serve` ingestion command.
 
-- `--managed`: `TIPS_AUDIT_MIGRATE_MANAGED`, disabled by default.
+New arguments/environment:
+
+- `--serve`: `TIPS_AUDIT_MIGRATE_SERVE`, disabled by default. The unreleased
+  `--managed` spelling is removed without an alias;
+  `TIPS_AUDIT_MIGRATE_MANAGED` is no longer read. Deployment consumers must update
+  the flag/environment variable together; other migration contracts are unchanged.
 - `--migration-generation`: `TIPS_AUDIT_MIGRATION_GENERATION`, required; 1–128
   ASCII letters, digits, hyphens, underscores, dots, or colons. Use a stable
   configured generation across pod replacements, never a pod UID. Bump only
