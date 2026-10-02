@@ -61,7 +61,7 @@ crate-deps:
 reth-pin:
     python3 {{justfile_directory()}}/etc/scripts/local/pin-reth.py check
 
-# Verifies the docs-index skill lists every Markdown doc with a reviewed summary
+# Verifies llms.txt and llms-full.txt list every Markdown doc with a reviewed summary
 docs-index:
     python3 {{justfile_directory()}}/etc/scripts/local/docs-index.py check
 

@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
-"""Keep the docs-index skill in sync with the Markdown docs in the repository.
+"""Keep `llms.txt` and `llms-full.txt` in sync with the Markdown docs in the repository.
 
-`.agents/skills/docs-index/SKILL.md` lists every Markdown doc with a one-line
-summary so agents can find documentation without grepping the whole tree. Docs
-stay next to the code they describe; this script only verifies the index.
+`llms.txt` lists every Markdown doc with a one-line summary so agents can find
+documentation without grepping the whole tree. Docs stay next to the code they
+describe; this script maintains the index.
 
-Each entry records a digest of the doc it summarizes. `check` fails when a doc
-is missing from the index, an entry points at a doc that no longer exists, a
-summary is missing or too long, or a doc changed since its summary was last
-reviewed.
+`etc/docs-index.toml` is the source of truth: one table per doc holding its
+summary and a digest of the doc it summarizes. `llms.txt` and the index region
+of `llms-full.txt` are generated from it. The hand-written region of
+`llms-full.txt` between the `LLMS_EXTRAS` markers is preserved verbatim.
 
-Workflow:
+`check` fails when a doc is missing from the manifest, an entry points at a doc
+that no longer exists, a summary is a placeholder or too long, a doc changed
+since its summary was last reviewed, or a generated file is stale.
 
-- New doc: run `sync`, then replace the `TODO` summary it adds.
+Workflow (see `.agents/skills/update-docs-index/SKILL.md`):
+
+- New doc: run `sync`, then replace the `TODO` summary it adds in the manifest.
 - Changed doc: re-read its summary, edit it if it is no longer accurate, then
   run `stamp <path>` to record the doc's new digest.
 - Deleted or moved doc: run `sync` to drop the dead entry.
+- Edited the manifest by hand: run `generate` (`sync` and `stamp` also regenerate).
 
 `validate` is an optional, non-deterministic second opinion: it asks a small
 model on the LLM gateway whether each summary is supported by its doc. It needs
@@ -32,6 +37,8 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
+import tomllib
 import unittest
 import urllib.error
 import urllib.request
@@ -39,11 +46,37 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-INDEX_REL = Path(".agents/skills/docs-index/SKILL.md")
+MANIFEST_REL = Path("etc/docs-index.toml")
+LLMS_REL = Path("llms.txt")
+LLMS_FULL_REL = Path("llms-full.txt")
 # Skills are already discoverable by agents, so they are not indexed.
 EXCLUDED_PREFIXES = (".agents/",)
-START_MARKER = "<!-- docs-index:start -->"
-END_MARKER = "<!-- docs-index:end -->"
+EXTRAS_START = "<!-- LLMS_EXTRAS_START -->"
+EXTRAS_END = "<!-- LLMS_EXTRAS_END -->"
+AUTOGEN_START = "<!-- LLMS_AUTOGEN_START -->"
+AUTOGEN_END = "<!-- LLMS_AUTOGEN_END -->"
+EXTRAS_PLACEHOLDER = "<!-- Add hand-written repository guidance here. This region is preserved on regeneration. -->"
+MANIFEST_HEADER = """# Source of truth for the summaries in llms.txt and llms-full.txt.
+# Edit `summary` by hand. `digest` is written by `python3 etc/scripts/local/docs-index.py sync|stamp`.
+# Workflow: .agents/skills/update-docs-index/SKILL.md
+"""
+LLMS_TITLE = "Base"
+LLMS_SUMMARY = (
+    "Base is a rollup built on Ethereum. This repository is its Rust monorepo: execution, consensus, "
+    "batcher, builder, proof stack, and operator tooling. This index lists every Markdown doc in the "
+    "repository with a one-line summary; docs live next to the code they describe. "
+    "Paths are relative to the repository root."
+)
+LLMS_FULL_TITLE = "Base: Full Context"
+LLMS_FULL_SUMMARY = (
+    "Repository map, common commands, and conventions for working in the Base monorepo, followed by the "
+    "same per-doc index as llms.txt. Paths are relative to the repository root."
+)
+SECTION_REPO = "Repository"
+SECTION_GUIDES = "Guides and specs"
+SECTION_BINARIES = "Binaries"
+SECTION_CRATES = "Crates: "
+SECTION_TOOLING = "Tooling, testing and infrastructure"
 PLACEHOLDER = "TODO: summarize"
 MAX_SUMMARY_LEN = 200
 DIGEST_LEN = 10
@@ -69,13 +102,11 @@ Summary: {summary}
 {document}
 </document>
 """
-ENTRY_RE = re.compile(
-    rf"^- `(?P<path>[^`]+)` — (?P<summary>.+) <!-- (?P<digest>[0-9a-f]{{{DIGEST_LEN}}}) -->$"
-)
+DIGEST_RE = re.compile(rf"^[0-9a-f]{{{DIGEST_LEN}}}$")
 
 
 class DocsIndexError(RuntimeError):
-    """Raised when the index file cannot be parsed."""
+    """Raised when the manifest or a generated file cannot be read or parsed."""
 
 
 @dataclass(frozen=True)
@@ -85,10 +116,6 @@ class Entry:
     path: str
     summary: str
     digest: str
-
-    def render(self) -> str:
-        """Render the entry as an index line."""
-        return f"- `{self.path}` — {self.summary} <!-- {self.digest} -->"
 
 
 def digest_of(data: bytes) -> str:
@@ -121,32 +148,154 @@ def list_docs(root: Path) -> dict[str, str]:
     return docs
 
 
-def split_index(text: str) -> tuple[str, list[str], str]:
-    """Split the index file into text before the markers, entry lines, and text after."""
-    if text.count(START_MARKER) != 1 or text.count(END_MARKER) != 1:
-        raise DocsIndexError(f"expected exactly one {START_MARKER} and one {END_MARKER}")
-    head, rest = text.split(START_MARKER)
-    body, tail = rest.split(END_MARKER)
-    return head, body.strip("\n").splitlines(), tail
-
-
-def parse_entries(lines: list[str]) -> list[Entry]:
-    """Parse index lines; blank lines are ignored, anything else must be an entry."""
+def parse_manifest(text: str) -> list[Entry]:
+    """Parse the manifest: one table per doc with string `summary` and `digest` fields."""
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise DocsIndexError(f"{MANIFEST_REL} is not valid TOML: {exc}") from exc
     entries = []
-    for number, line in enumerate(lines, 1):
-        if not line.strip():
-            continue
-        match = ENTRY_RE.match(line)
-        if not match:
-            raise DocsIndexError(f"malformed index entry (line {number} of the index): {line!r}")
-        entries.append(Entry(match["path"], match["summary"], match["digest"]))
+    for path, fields in data.items():
+        if not isinstance(fields, dict) or set(fields) != {"summary", "digest"}:
+            raise DocsIndexError(f"{MANIFEST_REL}: [{path!r}] must have exactly `summary` and `digest`")
+        summary, digest = fields["summary"], fields["digest"]
+        if not isinstance(summary, str) or not isinstance(digest, str) or not DIGEST_RE.match(digest):
+            raise DocsIndexError(f"{MANIFEST_REL}: [{path!r}] has a malformed summary or digest")
+        entries.append(Entry(path, summary, digest))
     return entries
 
 
-def render_index(head: str, entries: list[Entry], tail: str) -> str:
-    """Rebuild the index file around the given entries."""
-    body = "\n".join(entry.render() for entry in entries)
-    return f"{head}{START_MARKER}\n{body}\n{END_MARKER}{tail}"
+def render_manifest(entries: list[Entry]) -> str:
+    """Render the manifest. JSON string escapes are valid TOML basic-string escapes."""
+    blocks = [
+        f"[{json.dumps(entry.path)}]\n"
+        f"summary = {json.dumps(entry.summary, ensure_ascii=False)}\n"
+        f"digest = {json.dumps(entry.digest)}"
+        for entry in entries
+    ]
+    return f"{MANIFEST_HEADER}\n" + "\n\n".join(blocks) + "\n"
+
+
+def section_of(path: str) -> str:
+    """Return the llms.txt section a doc belongs to, derived from its path."""
+    parts = path.split("/")
+    if len(parts) == 1:
+        return SECTION_REPO
+    if parts[0] == "docs":
+        return SECTION_GUIDES
+    if parts[0] == "bin":
+        return SECTION_BINARIES
+    if parts[0] == "crates" and len(parts) > 2:
+        return f"{SECTION_CRATES}{parts[1]}"
+    return SECTION_TOOLING
+
+
+def section_order(title: str) -> tuple[int, str]:
+    """Sort key placing sections in a stable, reader-friendly order."""
+    if title == SECTION_REPO:
+        return (0, title)
+    if title == SECTION_GUIDES:
+        return (1, title)
+    if title == SECTION_BINARIES:
+        return (2, title)
+    if title.startswith(SECTION_CRATES):
+        return (3, title)
+    return (4, title)
+
+
+def render_sections(entries: list[Entry]) -> str:
+    """Render one `##` section per group with a bullet per doc."""
+    groups: dict[str, list[Entry]] = {}
+    for entry in entries:
+        groups.setdefault(section_of(entry.path), []).append(entry)
+    blocks = []
+    for title in sorted(groups, key=section_order):
+        bullets = "\n".join(f"- [{e.path}]({e.path}): {e.summary}" for e in groups[title])
+        blocks.append(f"## {title}\n\n{bullets}")
+    return "\n\n".join(blocks)
+
+
+def render_optional(full: bool) -> str:
+    """Render the `## Optional` section, which llms.txt readers may skip."""
+    other = (
+        "- [llms.txt](llms.txt): This index without the repository map and conventions"
+        if full
+        else "- [llms-full.txt](llms-full.txt): Repository map, common commands, and conventions, plus this index"
+    )
+    return "\n".join(
+        [
+            "## Optional",
+            "",
+            other,
+            "- [Base documentation (llms.txt)](https://docs.base.org/llms.txt): Index of the public docs site for builders and node operators",
+            "- [Base specs](https://specs.base.org): Protocol overview, including past and upcoming upgrades",
+        ]
+    )
+
+
+def render_llms(entries: list[Entry]) -> str:
+    """Render llms.txt: title, summary, and the per-doc index."""
+    return (
+        f"# {LLMS_TITLE}\n\n> {LLMS_SUMMARY}\n\n{render_sections(entries)}\n\n{render_optional(False)}\n"
+    )
+
+
+def extract_extras(existing: str) -> str:
+    """Return the verbatim hand-written region of an existing llms-full.txt, or '' if absent."""
+    if not existing:
+        return ""
+    if existing.count(EXTRAS_START) != 1 or existing.count(EXTRAS_END) != 1:
+        raise DocsIndexError(f"{LLMS_FULL_REL}: expected exactly one {EXTRAS_START} and one {EXTRAS_END}")
+    head, rest = existing.split(EXTRAS_START)
+    if EXTRAS_END not in rest or EXTRAS_START in head:
+        raise DocsIndexError(f"{LLMS_FULL_REL}: extras markers are out of order")
+    return rest.split(EXTRAS_END)[0].strip()
+
+
+def render_llms_full(existing: str, entries: list[Entry]) -> str:
+    """Render llms-full.txt: preserved hand-written extras above a regenerated index."""
+    extras = extract_extras(existing) or EXTRAS_PLACEHOLDER
+    autogen = f"{render_sections(entries)}\n\n{render_optional(True)}"
+    return (
+        f"# {LLMS_FULL_TITLE}\n\n> {LLMS_FULL_SUMMARY}\n\n"
+        f"{EXTRAS_START}\n\n{extras}\n\n{EXTRAS_END}\n\n"
+        f"{AUTOGEN_START}\n\n{autogen}\n\n{AUTOGEN_END}\n"
+    )
+
+
+def read_optional(path: Path) -> str:
+    """Read a text file, returning '' if it does not exist."""
+    return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+def load_manifest(root: Path) -> list[Entry]:
+    """Read and parse the manifest."""
+    return parse_manifest((root / MANIFEST_REL).read_text(encoding="utf-8"))
+
+
+def write_manifest(root: Path, entries: list[Entry]) -> None:
+    """Write the manifest."""
+    (root / MANIFEST_REL).write_text(render_manifest(entries), encoding="utf-8")
+
+
+def write_outputs(root: Path, entries: list[Entry]) -> None:
+    """Regenerate llms.txt and llms-full.txt, preserving the hand-written extras."""
+    full = render_llms_full(read_optional(root / LLMS_FULL_REL), entries)
+    (root / LLMS_REL).write_text(render_llms(entries), encoding="utf-8")
+    (root / LLMS_FULL_REL).write_text(full, encoding="utf-8")
+
+
+def stale_outputs(root: Path, entries: list[Entry]) -> list[str]:
+    """Return a problem line for each generated file that differs from what `generate` would write."""
+    expected = {
+        LLMS_REL: render_llms(entries),
+        LLMS_FULL_REL: render_llms_full(read_optional(root / LLMS_FULL_REL), entries),
+    }
+    return [
+        f"{rel}: {'missing' if not (root / rel).exists() else 'out of date'} (run `generate`)"
+        for rel, text in expected.items()
+        if read_optional(root / rel) != text
+    ]
 
 
 def find_problems(entries: list[Entry], docs: dict[str, str]) -> list[str]:
@@ -176,7 +325,7 @@ def find_problems(entries: list[Entry], docs: dict[str, str]) -> list[str]:
                 f"update the summary if needed, then run `stamp {entry.path}`"
             )
     problems.extend(
-        f"{path}: not in the index (run `sync`, then write a summary)"
+        f"{path}: not in the manifest (run `sync`, then write a summary)"
         for path in sorted(docs.keys() - seen)
     )
     return problems
@@ -205,17 +354,6 @@ def stamp_entries(entries: list[Entry], docs: dict[str, str], paths: list[str]) 
         Entry(entry.path, entry.summary, docs[entry.path]) if entry.path in wanted else entry
         for entry in entries
     ]
-
-
-def load_index(root: Path) -> tuple[str, list[Entry], str]:
-    """Read and parse the index file."""
-    head, lines, tail = split_index((root / INDEX_REL).read_text(encoding="utf-8"))
-    return head, parse_entries(lines), tail
-
-
-def write_index(root: Path, head: str, entries: list[Entry], tail: str) -> None:
-    """Write the index file."""
-    (root / INDEX_REL).write_text(render_index(head, entries, tail), encoding="utf-8")
 
 
 def parse_verdict(reply: str) -> tuple[bool, str]:
@@ -290,9 +428,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("check", help="verify the index matches the docs (default)")
-    sub.add_parser("sync", help="add placeholder entries for new docs and drop dead entries")
-    stamp = sub.add_parser("stamp", help="record that a changed doc's summary has been reviewed")
+    sub.add_parser("check", help="verify the manifest and generated files match the docs (default)")
+    sub.add_parser("sync", help="add placeholder entries for new docs, drop dead entries, and regenerate")
+    sub.add_parser("generate", help="regenerate llms.txt and llms-full.txt from the manifest")
+    stamp = sub.add_parser("stamp", help="record that a changed doc's summary has been reviewed, then regenerate")
     stamp.add_argument("paths", nargs="+", help="repo-relative doc paths")
     validate = sub.add_parser(
         "validate", help="ask a small model on the LLM gateway whether summaries match their docs"
@@ -313,12 +452,16 @@ def main(argv: list[str] | None = None) -> int:
         return run_tests()
     try:
         docs = list_docs(ROOT)
-        head, entries, tail = load_index(ROOT)
+        entries = load_manifest(ROOT)
         if args.command == "sync":
             entries = sync_entries(entries, docs)
-            write_index(ROOT, head, entries, tail)
+            write_manifest(ROOT, entries)
+            write_outputs(ROOT, entries)
             todo = sum(entry.summary.startswith(PLACEHOLDER) for entry in entries)
             print(f"synced {len(entries)} docs; {todo} summaries still need writing")
+        elif args.command == "generate":
+            write_outputs(ROOT, entries)
+            print(f"generated {LLMS_REL} and {LLMS_FULL_REL} ({len(entries)} docs)")
         elif args.command == "validate":
             unknown = sorted(set(args.paths) - {entry.path for entry in entries})
             if unknown:
@@ -332,11 +475,13 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             print(f"ok: {len(chosen)} summaries judged accurate by {args.model}")
         elif args.command == "stamp":
-            write_index(ROOT, head, stamp_entries(entries, docs, args.paths), tail)
+            entries = stamp_entries(entries, docs, args.paths)
+            write_manifest(ROOT, entries)
+            write_outputs(ROOT, entries)
         else:
-            problems = find_problems(entries, docs)
+            problems = find_problems(entries, docs) + stale_outputs(ROOT, entries)
             if problems:
-                print(f"error: {INDEX_REL} is out of date:", file=sys.stderr)
+                print(f"error: {MANIFEST_REL}, {LLMS_REL} or {LLMS_FULL_REL} is out of date:", file=sys.stderr)
                 for problem in problems:
                     print(f"  {problem}", file=sys.stderr)
                 return 1
@@ -354,24 +499,74 @@ def _entry(path: str, summary: str = "Does a thing.", digest: str = "0123456789"
 class DocsIndexTests(unittest.TestCase):
     """Unit tests for index parsing, validation, and maintenance."""
 
-    def test_entry_round_trips_through_parser(self) -> None:
-        entry = _entry("docs/guides/P2P.md", "How Base nodes find and talk to peers.")
-        self.assertEqual(parse_entries([entry.render()]), [entry])
+    def test_manifest_round_trips_including_quotes_and_unicode(self) -> None:
+        entries = [
+            _entry("docs/guides/P2P.md", 'Says "hi" \\ and \u2014 more.'),
+            _entry("crates/a/README.md", "Plain."),
+        ]
+        self.assertEqual(parse_manifest(render_manifest(entries)), entries)
 
-    def test_malformed_entry_is_rejected(self) -> None:
-        with self.assertRaises(DocsIndexError):
-            parse_entries(["- `docs/a.md` no digest or separator"])
+    def test_manifest_rejects_bad_tables(self) -> None:
+        for text in (
+            'not = "a table"\n',
+            '["a.md"]\nsummary = "x"\n',
+            '["a.md"]\nsummary = "x"\ndigest = "zzz"\n',
+            '["a.md"]\nsummary = "x"\ndigest = "0123456789"\nextra = 1\n',
+            "[[[broken",
+        ):
+            with self.assertRaises(DocsIndexError, msg=text):
+                parse_manifest(text)
 
-    def test_markers_are_required_exactly_once(self) -> None:
-        with self.assertRaises(DocsIndexError):
-            split_index("no markers here")
-        with self.assertRaises(DocsIndexError):
-            split_index(f"{START_MARKER}\n{END_MARKER}\n{START_MARKER}\n{END_MARKER}")
+    def test_sections_group_and_order_docs(self) -> None:
+        self.assertEqual(section_of("README.md"), SECTION_REPO)
+        self.assertEqual(section_of("docs/guides/P2P.md"), SECTION_GUIDES)
+        self.assertEqual(section_of("bin/node/README.md"), SECTION_BINARIES)
+        self.assertEqual(section_of("crates/proof/mpt/README.md"), f"{SECTION_CRATES}proof")
+        self.assertEqual(section_of("etc/docker/README.md"), SECTION_TOOLING)
+        self.assertEqual(section_of("acceptance/README.md"), SECTION_TOOLING)
+        titles = [SECTION_TOOLING, f"{SECTION_CRATES}proof", SECTION_BINARIES, f"{SECTION_CRATES}batcher", SECTION_REPO]
+        self.assertEqual(
+            sorted(titles, key=section_order),
+            [SECTION_REPO, SECTION_BINARIES, f"{SECTION_CRATES}batcher", f"{SECTION_CRATES}proof", SECTION_TOOLING],
+        )
 
-    def test_render_preserves_text_outside_markers(self) -> None:
-        text = f"intro\n\n{START_MARKER}\n{_entry('a.md').render()}\n{END_MARKER}\n\noutro\n"
-        head, lines, tail = split_index(text)
-        self.assertEqual(render_index(head, parse_entries(lines), tail), text)
+    def test_llms_txt_lists_every_doc_once_with_its_summary(self) -> None:
+        entries = [_entry("README.md", "Top."), _entry("crates/a/b/README.md", "Deep.")]
+        text = render_llms(entries)
+        self.assertTrue(text.startswith(f"# {LLMS_TITLE}\n\n> "))
+        self.assertIn("- [README.md](README.md): Top.", text)
+        self.assertIn("- [crates/a/b/README.md](crates/a/b/README.md): Deep.", text)
+        self.assertEqual(text.count("](README.md)"), 1)
+        self.assertEqual(text.count("## Optional"), 1)
+
+    def test_llms_full_preserves_extras_and_regenerates_the_index(self) -> None:
+        first = render_llms_full("", [_entry("README.md", "Old.")])
+        self.assertIn(EXTRAS_PLACEHOLDER, first)
+        edited = first.replace(EXTRAS_PLACEHOLDER, "## Hand written\n\nKeep me.")
+        second = render_llms_full(edited, [_entry("README.md", "New.")])
+        self.assertIn("## Hand written\n\nKeep me.", second)
+        self.assertIn("- [README.md](README.md): New.", second)
+        self.assertNotIn("Old.", second)
+        self.assertEqual(render_llms_full(second, [_entry("README.md", "New.")]), second)
+
+    def test_llms_full_rejects_unbalanced_extras_markers(self) -> None:
+        with self.assertRaises(DocsIndexError):
+            render_llms_full(f"# x\n{EXTRAS_START}\nno end marker", [])
+        with self.assertRaises(DocsIndexError):
+            render_llms_full(f"# x\n{EXTRAS_END}\n{EXTRAS_START}\n", [])
+
+    def test_stale_outputs_detects_missing_and_edited_files(self) -> None:
+        entries = [_entry("README.md", "Top.")]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertEqual(len(stale_outputs(root, entries)), 2)
+            write_outputs(root, entries)
+            self.assertEqual(stale_outputs(root, entries), [])
+            (root / LLMS_REL).write_text("hand edited\n", encoding="utf-8")
+            problems = stale_outputs(root, entries)
+            self.assertEqual(len(problems), 1)
+            self.assertIn("llms.txt: out of date", problems[0])
+            self.assertEqual(stale_outputs(root, [_entry("README.md", "Changed.")])[0][:9], "llms.txt:")
 
     def test_matching_index_has_no_problems(self) -> None:
         self.assertEqual(find_problems([_entry("a.md")], {"a.md": "0123456789"}), [])
@@ -379,7 +574,7 @@ class DocsIndexTests(unittest.TestCase):
     def test_missing_doc_is_reported(self) -> None:
         problems = find_problems([], {"a.md": "0123456789"})
         self.assertEqual(len(problems), 1)
-        self.assertIn("a.md: not in the index", problems[0])
+        self.assertIn("a.md: not in the manifest", problems[0])
 
     def test_dead_entry_is_reported(self) -> None:
         problems = find_problems([_entry("gone.md")], {})
