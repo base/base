@@ -9,18 +9,21 @@ use alloy_primitives::{B256, U256};
 use alloy_rpc_types_eth::{
     BlockId, BlockOverrides,
     simulate::{SimBlock, SimulatePayload, SimulatedBlock},
+    state::EvmOverrides,
 };
 use base_common_chains::BaseUpgrade;
+use base_execution_chainspec::BaseChainSpec;
+use base_execution_evm::{BaseNextBlockEnvAttributes, BasePendingForecast};
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks, Hardforks};
 use reth_errors::RethError;
-use reth_evm::{ConfigureEvm, Evm, execute::BlockBuilder};
+use reth_evm::{ConfigureEvm, Evm, HaltReasonFor, execute::BlockBuilder};
 use reth_primitives_traits::SealedHeader;
-use reth_revm::{database::StateProviderDatabase, db::State};
+use reth_revm::{cancelled::CancelOnDrop, database::StateProviderDatabase, db::State};
 use reth_rpc_convert::RpcTxReq;
 use reth_rpc_eth_api::{
     EthApiTypes, FromEvmError, RpcBlock, RpcConvert,
     helpers::{
-        Call, EthCall, LoadBlock, SpawnBlocking, estimate::EstimateCall,
+        Call, EthCall, LoadBlock, LoadState, SpawnBlocking, estimate::EstimateCall,
         pending_block::LoadPendingBlock,
     },
 };
@@ -29,7 +32,10 @@ use reth_rpc_eth_types::{
     error::{AsEthApiError, FromEthApiError},
     simulate::{self, EthSimulateError},
 };
-use revm::{context::Block, context_interface::Cfg};
+use revm::{
+    context::Block,
+    context_interface::{Cfg, result::ResultAndState},
+};
 use revm_inspectors::transfer::TransferInspector;
 
 use crate::{BaseEthApi, BaseEthApiError, eth::RpcNodeCore};
@@ -37,6 +43,8 @@ use crate::{BaseEthApi, BaseEthApiError, eth::RpcNodeCore};
 impl<N, Rpc> EthCall for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
+    N::Evm: ConfigureEvm<NextBlockEnvCtx = BaseNextBlockEnvAttributes>,
+    N::Provider: ChainSpecProvider<ChainSpec = BaseChainSpec>,
     BaseEthApiError: FromEvmError<N::Evm>,
     Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError, Evm = N::Evm>,
 {
@@ -249,17 +257,59 @@ where
 impl<N, Rpc> EstimateCall for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
+    N::Evm: ConfigureEvm<NextBlockEnvCtx = BaseNextBlockEnvAttributes>,
+    N::Provider: ChainSpecProvider<ChainSpec = BaseChainSpec>,
     BaseEthApiError: FromEvmError<N::Evm>,
     Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError, Evm = N::Evm>,
 {
+    async fn estimate_gas_at(
+        &self,
+        request: RpcTxReq<<Self::RpcConvert as RpcConvert>::Network>,
+        at: BlockId,
+        overrides: EvmOverrides,
+    ) -> Result<U256, Self::Error> {
+        let (evm_env, at) = BasePendingForecast::evm_env_at(self, at).await?;
+        self.spawn_blocking_io_fut(async move |this| {
+            let state = this.state_at_block_id(at).await?;
+            EstimateCall::estimate_gas_with(&this, evm_env, request, state, overrides)
+        })
+        .await
+    }
 }
 
 impl<N, Rpc> Call for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
+    N::Evm: ConfigureEvm<NextBlockEnvCtx = BaseNextBlockEnvAttributes>,
+    N::Provider: ChainSpecProvider<ChainSpec = BaseChainSpec>,
     BaseEthApiError: FromEvmError<N::Evm>,
     Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError, Evm = N::Evm>,
 {
+    /// Mirrors Reth's default with the scheduled pending forecast. Tracing keeps using the default
+    /// `spawn_with_call_at`.
+    async fn transact_call_at(
+        &self,
+        request: RpcTxReq<<Self::RpcConvert as RpcConvert>::Network>,
+        at: BlockId,
+        overrides: EvmOverrides,
+    ) -> Result<ResultAndState<HaltReasonFor<Self::Evm>>, Self::Error> {
+        let guard = CancelOnDrop::default();
+        let cancel = guard.clone();
+        let (evm_env, at) = BasePendingForecast::evm_env_at(self, at).await?;
+        let result = self
+            .spawn_with_state_at_block(at, move |this, mut db| {
+                if cancel.is_cancelled() {
+                    return Err(EthApiError::InternalEthError.into());
+                }
+                let (evm_env, tx_env) =
+                    this.prepare_call_env(evm_env, request, &mut db, overrides)?;
+                this.transact(&mut db, evm_env, tx_env)
+            })
+            .await;
+        drop(guard);
+        result
+    }
+
     #[inline]
     fn call_gas_limit(&self) -> u64 {
         self.inner.eth_api.gas_cap()
