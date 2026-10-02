@@ -160,8 +160,11 @@ jobs:
     # One sandbox so that Clippy, the tests and the benchmark share a single
     # `target/` and toolchain/tool setup instead of each compiling the workspace
     # from scratch. System tests are wall-clock bound by Docker rather than CPU,
-    # so they run in a parallel job instead of extending this one.
-    runs-on: depot-ubuntu-24.04-32
+    # so they run in a parallel job instead of extending this one. They also set
+    # the workflow's critical path, so this job only needs to finish inside that
+    # window: an 8 vCPU runner costs a quarter of a 32 vCPU one per second, which
+    # mostly idled (14-31% average CPU).
+    runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 120
     env:
       DIFF_BASE: ${{ inputs.diff_base }}
