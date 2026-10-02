@@ -22,7 +22,7 @@ use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
     UpgradeSignalBuilderConfig,
 };
-use base_consensus_peers::{PeerScoreLevel, SecretKeyLoader};
+use base_consensus_peers::{BootNode, PeerScoreLevel, SecretKeyLoader};
 use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient, RollupNodeApiClient, RpcBuilder};
 use base_consensus_sources::BlockSigner;
 use base_upgrade_signal::{
@@ -63,12 +63,20 @@ pub struct InProcessConsensusConfig {
     pub sequencer_key: Option<B256>,
     /// P2P identity key.
     pub p2p_key: Option<B256>,
+    /// Address used by the consensus RPC listener.
+    pub rpc_addr: IpAddr,
+    /// Address used by the discovery and gossip listeners.
+    pub p2p_listen_addr: IpAddr,
+    /// Address advertised to discovery and gossip peers.
+    pub p2p_advertise_addr: IpAddr,
     /// Optional fixed RPC port.
     pub rpc_port: Option<u16>,
     /// Optional fixed P2P TCP port.
     pub p2p_tcp_port: Option<u16>,
     /// Optional fixed P2P UDP port.
     pub p2p_udp_port: Option<u16>,
+    /// Consensus bootnodes used to join an external P2P network.
+    pub bootnodes: Vec<String>,
     /// Unsafe block signer address.
     pub unsafe_block_signer: alloy_primitives::Address,
     /// L1 slot duration override in seconds.
@@ -97,6 +105,7 @@ pub struct InProcessConsensus {
     rpc_addr: SocketAddr,
     rpc_client: HttpClient,
     p2p_tcp_port: u16,
+    p2p_advertise_addr: IpAddr,
     peer_id: String,
     _checkpoint_dir: TempDir,
     _handle: JoinHandle<()>,
@@ -149,7 +158,7 @@ impl InProcessConsensus {
         let rpc_port = config.rpc_port.unwrap_or_else(get_available_port);
         let p2p_tcp_port = config.p2p_tcp_port.unwrap_or_else(get_available_port);
         let p2p_udp_port = config.p2p_udp_port.unwrap_or_else(get_available_port);
-        let listen_ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let listen_ip = config.p2p_listen_addr;
 
         // Build keypair from P2P key or generate a random one.
         let keypair = if let Some(mut p2p_key) = config.p2p_key {
@@ -163,7 +172,9 @@ impl InProcessConsensus {
         // Build the signing key for discv5 from the same P2P key material.
         let signing_key = extract_signing_key(&keypair)?;
 
-        let local_node = LocalNode::new(signing_key, listen_ip, p2p_tcp_port, p2p_udp_port);
+        let static_advertise_addr = config.p2p_advertise_addr != listen_ip;
+        let local_node =
+            LocalNode::new(signing_key, config.p2p_advertise_addr, p2p_tcp_port, p2p_udp_port);
 
         let gossip_address: libp2p::Multiaddr = format!("/ip4/{listen_ip}/tcp/{p2p_tcp_port}")
             .parse()
@@ -177,6 +188,20 @@ impl InProcessConsensus {
         );
         net_config.scoring = PeerScoreLevel::Off;
         net_config.keypair = keypair;
+        net_config.discovery_config = NetworkConfig::discv5_config(
+            SocketAddr::new(listen_ip, p2p_udp_port).into(),
+            static_advertise_addr,
+        );
+        net_config.enr_update = !static_advertise_addr;
+        net_config.bootnodes = config
+            .bootnodes
+            .iter()
+            .map(|bootnode| {
+                BootNode::parse_bootnode(bootnode)
+                    .map_err(|error| eyre::eyre!("Failed to parse bootnode '{bootnode}': {error}"))
+            })
+            .collect::<Result<Vec<_>>>()?
+            .into();
         // Use flood_publish since the mesh may not fully form with only two peers.
         net_config.gossip_config = base_consensus_gossip::default_config_builder()
             .flood_publish(true)
@@ -213,10 +238,18 @@ impl InProcessConsensus {
             mode: config.mode,
         };
 
-        let rpc_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), rpc_port);
+        let rpc_bind_addr = SocketAddr::new(config.rpc_addr, rpc_port);
+        let rpc_addr = SocketAddr::new(
+            if config.rpc_addr.is_unspecified() {
+                IpAddr::V4(Ipv4Addr::LOCALHOST)
+            } else {
+                config.rpc_addr
+            },
+            rpc_port,
+        );
         let rpc_config = RpcBuilder {
             no_restart: true,
-            socket: rpc_addr,
+            socket: rpc_bind_addr,
             enable_admin: true,
             admin_persistence: None,
             ws_enabled: false,
@@ -286,6 +319,7 @@ impl InProcessConsensus {
             rpc_addr,
             rpc_client,
             p2p_tcp_port,
+            p2p_advertise_addr: config.p2p_advertise_addr,
             peer_id,
             _checkpoint_dir: checkpoint_dir,
             _handle: handle,
@@ -375,7 +409,7 @@ impl InProcessConsensus {
 
     /// Returns the P2P multiaddr including the peer ID.
     pub fn p2p_addr(&self) -> String {
-        format!("/ip4/127.0.0.1/tcp/{}/p2p/{}", self.p2p_tcp_port, self.peer_id)
+        format!("/ip4/{}/tcp/{}/p2p/{}", self.p2p_advertise_addr, self.p2p_tcp_port, self.peer_id)
     }
 
     /// Returns the RPC port.

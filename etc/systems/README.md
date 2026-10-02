@@ -4,6 +4,26 @@ System-test and development-network infrastructure for Base nodes. In addition t
 L1/L2 stack used by system tests, this crate can continue a Base mainnet execution snapshot with
 real builder and client execution and consensus components in one managed launcher process.
 
+## Fresh devnet sequencer
+
+The `fresh` mode runs the same in-process builder and sequencer stack used by system tests against
+an already-running development L1. The Docker devnet supplies the generated L1/L2 genesis files,
+rollup configuration, L1 RPC endpoints, persistent builder datadir, and stable network ports:
+
+```bash
+cargo run -p base-system-tests --bin base-devnet --no-default-features -- fresh \
+  --l1-rpc-url http://l1-el:4545 \
+  --l1-beacon-url http://l1-cl:4052 \
+  --p2p-key "$BUILDER_P2P_KEY" \
+  --sequencer-key "$SEQUENCER_KEY" \
+  --p2p-addr 172.30.0.20
+```
+
+`just devnet up-single` runs this mode in the `base-builder` container. The batcher, client, RPC
+node, L1, and setup services remain separate Compose services. The HA/conductor topology continues
+to use the integrated `base sequencer` command because it requires multiple independently managed
+sequencers.
+
 ## Snapshot devnet topology
 
 The snapshot mode starts these real local network roles inside one managed launcher process:
