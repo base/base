@@ -4,8 +4,8 @@ _elf_stub := "BASE_SUCCINCT_ELF_STUB=1"
 default:
     @just --justfile {{source_file()}} --list --list-prefix '  check::'
 
-# Runs formatting, clippy, udeps, and deny checks
-all: format clippy udeps deny
+# Runs formatting, clippy, udeps, deny, and docs-index checks
+all: format clippy udeps deny docs-index
 
 # Checks formatting
 format:
@@ -60,6 +60,10 @@ crate-deps:
 # Verifies git-based reth-* workspace deps match etc/upstream-pins/reth.toml
 reth-pin:
     python3 {{justfile_directory()}}/etc/scripts/local/pin-reth.py check
+
+# Verifies the docs-index skill lists every Markdown doc with a reviewed summary
+docs-index:
+    python3 {{justfile_directory()}}/etc/scripts/local/docs-index.py check
 
 [private]
 _build-contracts:
