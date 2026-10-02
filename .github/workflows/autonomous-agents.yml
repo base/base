@@ -100,7 +100,7 @@ jobs:
         run: python3 etc/scripts/ci/autonomous_agents.py close --pull-requests "$CLOSING"
 
   docs-index:
-    name: Docs index agent (${{ matrix.mode }})
+    name: Docs index agent
     needs: plan
     if: >-
       needs.plan.outputs.count != '0' &&
