@@ -27,6 +27,9 @@ pub use migration_session::{MigrationBackend, MigrationSession};
 mod migration_store;
 pub use migration_store::{MigrationRecord, MigrationStore};
 
+mod migration_durable;
+pub use migration_durable::{MigrationDurable, MigrationDurableKey};
+
 mod managed_migration;
 pub use managed_migration::{ManagedMigration, ManagedMigrationConfig};
 

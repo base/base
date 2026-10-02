@@ -39,7 +39,9 @@ with their prerequisite, resumable reconciliation, validation, and behavioral
 tests. Do not change applied migration SQL to register runtime work.
 
 `ManagedMigration` hosts that lifecycle and terminal results on one probe/status/
-metrics listener, with exact-owned Postgres cancellation and same-pod state.
+metrics listener, with exact-owned Postgres cancellation and durable configured
+retry generations in purpose-specific database records. The same-pod file is
+only an atomic cache; FAILED does not retry after pod loss.
 See the binary README for deployment, restart, readiness, and stop contracts.
 
 The `native_migration` acceptance tests refuse foreign data directories and

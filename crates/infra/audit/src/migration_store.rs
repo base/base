@@ -13,14 +13,66 @@ use serde::{Deserialize, Serialize};
 use crate::{AuditMigration, MigrationBackend, MigrationError, MigrationStatus};
 
 /// Persisted record; backend ownership is never exposed by public HTTP status.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MigrationRecord {
     /// Exact immutable schema and registered-work identity.
     pub fingerprint: String,
+    /// Actual database binding; local cache is never authoritative.
+    #[serde(default)]
+    pub target: Option<String>,
     /// Public result/progress.
     pub status: MigrationStatus,
     /// Previous owned backend, including interrupted attempts.
     pub backend: Option<MigrationBackend>,
+}
+
+impl std::fmt::Debug for MigrationRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MigrationRecord { persisted content redacted }")
+    }
+}
+
+impl MigrationRecord {
+    /// Rejects untrusted persisted text before publishing cached HTTP/log fields.
+    pub fn validate(&self) -> Result<(), MigrationError> {
+        let status = &self.status;
+        let safe_error = status.error_code.as_deref().is_none_or(|code| {
+            matches!(
+                code,
+                "configuration"
+                    | "state_io"
+                    | "state_corrupt"
+                    | "database"
+                    | "stop_requested"
+                    | "cancellation_unconfirmed"
+                    | "http"
+                    | "worker"
+            )
+        });
+        let safe_sqlstate = status.sqlstate.as_deref().is_none_or(|code| {
+            code.len() == 5 && code.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+        });
+        let safe_operation = status
+            .operation
+            .as_deref()
+            .is_none_or(|id| crate::RequiredAuditWork::ALL.iter().any(|work| work.id() == id));
+        let safe_partition = status.partition.as_deref().is_none_or(|name| {
+            ["hot", "warm", "cold"].iter().any(|class| {
+                name.strip_prefix(&format!("transaction_events_{class}_"))
+                    .is_some_and(|day| day.len() == 8 && day.bytes().all(|b| b.is_ascii_digit()))
+            })
+        });
+        if status.version != 1
+            || status.mode != "migrate_up"
+            || !safe_error
+            || !safe_sqlstate
+            || !safe_operation
+            || !safe_partition
+        {
+            return Err(MigrationError::StateCorrupt);
+        }
+        Ok(())
+    }
 }
 
 /// State file backed by deployment's same-pod volume.
@@ -49,6 +101,7 @@ impl MigrationStore {
         {
             return Err(MigrationError::StateCorrupt);
         }
+        record.validate()?;
         Ok(Some(record))
     }
 
@@ -57,6 +110,16 @@ impl MigrationStore {
         &self,
         status: &MigrationStatus,
         backend: Option<&MigrationBackend>,
+    ) -> Result<(), MigrationError> {
+        self.save_bound(status, backend, None)
+    }
+
+    /// Saves a local cache with actual target binding.
+    pub fn save_bound(
+        &self,
+        status: &MigrationStatus,
+        backend: Option<&MigrationBackend>,
+        target: Option<&str>,
     ) -> Result<(), MigrationError> {
         let parent = self
             .path
@@ -77,6 +140,7 @@ impl MigrationStore {
         ));
         let record = MigrationRecord {
             fingerprint: AuditMigration::fingerprint(),
+            target: target.map(str::to_owned),
             status: status.clone(),
             backend: backend.cloned(),
         };
@@ -110,6 +174,26 @@ mod tests {
         env,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    #[test]
+    fn persisted_diagnostics_reject_untrusted_secret_text() {
+        let mut record = MigrationRecord {
+            fingerprint: AuditMigration::fingerprint(),
+            target: None,
+            status: MigrationStatus::new("initial".into()),
+            backend: None,
+        };
+        record.status.error_code = Some("postgres://secret-password@host".into());
+        assert_eq!(record.validate().unwrap_err().code(), "state_corrupt");
+        record.status.error_code = Some("database".into());
+        record.status.sqlstate = Some("secret-password".into());
+        assert_eq!(record.validate().unwrap_err().code(), "state_corrupt");
+        record.status.sqlstate = Some("57014".into());
+        record.status.partition = Some("secret-password".into());
+        assert_eq!(record.validate().unwrap_err().code(), "state_corrupt");
+        record.status.partition = Some("transaction_events_cold_20261002".into());
+        assert!(record.validate().is_ok());
+    }
 
     #[test]
     fn atomic_terminal_restoration_and_deliberate_identity() {

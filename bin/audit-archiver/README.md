@@ -169,7 +169,7 @@ separately before enabling `NUM_SLICES` on the production primary.
 
 ```bash
 export TIPS_AUDIT_MIGRATE_MANAGED=true
-export TIPS_AUDIT_MIGRATION_RUN_ID=pod-uid-attempt-1
+export TIPS_AUDIT_MIGRATION_GENERATION=initial
 export TIPS_AUDIT_MIGRATION_STATE_PATH=/var/run/audit-migrator/state.json
 export TIPS_AUDIT_METRICS_ENABLED=true
 export TIPS_AUDIT_METRICS_PORT=9002
@@ -179,11 +179,13 @@ audit-archiver migrate up --managed
 Only `migrate up` accepts managed execution. New arguments/environment:
 
 - `--managed`: `TIPS_AUDIT_MIGRATE_MANAGED`, disabled by default.
-- `--migration-run-id`: `TIPS_AUDIT_MIGRATION_RUN_ID`, required; 1–128 ASCII
-  letters, digits, hyphens, underscores, dots, or colons. Use a nonsensitive
-  pod UID plus reviewed attempt generation.
+- `--migration-generation`: `TIPS_AUDIT_MIGRATION_GENERATION`, required; 1–128
+  ASCII letters, digits, hyphens, underscores, dots, or colons. Use a stable
+  configured generation across pod replacements, never a pod UID. Bump only
+  deliberately after reviewing a failed generation. The old run-id env/flag
+  is removed; JSON `run_id` contains this stable generation for compatibility.
 - `--migration-state-path`: `TIPS_AUDIT_MIGRATION_STATE_PATH`, required writable
-  file on a same-pod volume. Its parent directory must already exist.
+  local cache file on a same-pod volume. Its parent directory must already exist.
 - `--migration-shutdown-timeout-secs`:
   `TIPS_AUDIT_MIGRATION_SHUTDOWN_TIMEOUT_SECS`, default `30`, range `1`–`30`.
 
@@ -212,7 +214,8 @@ health or status.
   remain unready. Probes use cached state, not the busy DDL connection.
 - `GET /status`: version-1 JSON with `mode=migrate_up`, `run_id`, `attempt`,
   `state=running|succeeded|failed|stopped`, `phase`, `schema_ready`,
-  `worker_available`, `ready`, `complete`, `cancellation_confirmed`, timestamps,
+  `worker_available`, `ready`, `complete`, `cleanup_confirmed`,
+  `cancellation_confirmed`, timestamps,
   operation/partition, leaf progress counts, safe error code, and SQLSTATE.
   Phases are `starting`, `waiting_for_lock`, `schema`, `reconciling`,
   `validating`, `idle`, and `stopping`. `complete` is true only on success.
@@ -224,7 +227,7 @@ and missing/overdue completion; Codeflow deployment success does not certify
 that indexes finished.
 
 Metrics use `tips_audit_migration_` plus `state{state}`, `phase{phase}`,
-`schema_ready`, `worker_available`, `complete`, `attempts_total`,
+`schema_ready`, `worker_available`, `complete`, `cleanup_confirmed`, `attempts_total`,
 `failures_total{phase}`, `leaves_total`, `leaves_completed`, `leaves_built`,
 `leaves_repaired`, `leaves_skipped`, `last_progress_timestamp_seconds`,
 `duration_seconds`, and `cancellation_total{outcome}`. Cancellation outcomes are
@@ -235,20 +238,36 @@ describe the attempt; totals can change as partitions appear.
 
 ### Restart and deliberate retry
 
-State writes are atomic, mode `0600`, and fsynced with their directory. Same-pod
-container restarts restore succeeded/failed/stopped results without rerunning;
-schema metadata is checked read-only before readiness. Interrupted running
-attempts resume once only after their previous owned backend is verified gone.
-A still-live prior backend fails closed instead of authorizing competing work.
-A new reviewed run ID authorizes a new attempt; an already-valid database
-performs verification without rebuilding indexes. Schema/work fingerprints
-prevent restoring stale success for a changed requirement. Corrupt state fails
-closed and requires inspected recovery, never silent execution.
+The purpose-specific Postgres record, not an `emptyDir`, is authoritative.
+A stable FAILED generation survives pod replacement and idles without schema or
+index work until an explicitly configured generation bump. SUCCEEDED restoration
+performs full read-only current catalog validation; stale completeness becomes
+FAILED, never automatic repair. Interrupted RUNNING and confirmed STOPPED resume
+once after verifying or cancelling the exact saved prior owner. Even a new
+generation must not hide a prior unconfirmed owner. Every terminal record retains
+ownership and `cleanup_confirmed`; the generated session nonce is separate from
+the configured generation.
 
-An `emptyDir` survives container restarts, **not pod deletion or scale-zero**.
-A new pod starts one new resumable attempt, including after an earlier failure.
-Cross-pod terminal restoration requires separate durable storage; a run ID alone
-does not provide it.
+New immutable migration 003 defines two narrow native record tables. Bootstrap
+uses that same idempotent SQL before schema migrations, without advancing schema
+history, so schema failures can be recorded. A distinct control-session advisory
+gate serializes record decisions; the worker owns the SQLx migration lock once
+through schema and online work. Only native code manages these records.
+
+Records bind the actual native database target token, database OID and writer
+endpoint, immutable SQL checksums, and validator semantic version. Target or
+same-generation fingerprint mismatch fails closed. Use direct session-affine
+Postgres connections, not transaction pooling. The control observer must see the
+exact live owned backend before dispatch.
+The observer must use the same login role without `SET ROLE` drift; otherwise
+metadata visibility/ownership proof fails closed.
+Writer endpoint changes require checked recovery, not unverified disappearance claims.
+
+The atomic mode-0600 fsynced file is a same-pod cache only. Losing `emptyDir`
+does not authorize retry of FAILED. If the DB is unavailable or bootstrap is
+denied, no durable record can be written: fail closed without dispatching schema
+or index work and host an observable failure. Total DB/storage outage cannot
+guarantee terminal durability. Never infer cancellation from a dropped socket.
 
 ### Graceful stop and cancellation proof
 
@@ -259,8 +278,10 @@ terminating that exact backend and verifies disappearance before reporting
 `stopped`. Neither socket/client drop nor a true `pg_cancel_backend` return is
 proof that PostgreSQL stopped.
 
-The absolute database stop budget is at most 30 seconds: one third for cooperative
-cancel, one third for termination fallback, one third for disappearance/cleanup.
+The absolute native stop budget is at most 30 seconds. Database cancel/terminate/
+disappearance uses at most two thirds, subdivided into three equal phases.
+Remaining time is reserved for durable terminal commit, gate release, and bounded
+control/HTTP joins. Repeated signals never bypass ownership verification.
 Use pod termination grace of at least 45 seconds; no preStop sleep is needed for
 this non-traffic worker. Denied/unreachable/unverified cleanup reports
 `cancellation_unconfirmed`, never a false stopped state. SIGKILL or network loss

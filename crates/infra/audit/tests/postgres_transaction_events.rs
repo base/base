@@ -376,7 +376,7 @@ async fn postgres_partition_migration_discards_pre_partition_rows() -> anyhow::R
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1, 2], "legacy history is replaced by the new migrations");
+    assert_eq!(versions, vec![1, 2, 3], "legacy history is replaced by the new migrations");
     PgTransactionEventSink::connect(&harness.database_url, 1).await?.check_schema_ready().await?;
     harness.assert_schema_matches_snapshot().await?;
 
@@ -393,7 +393,7 @@ async fn postgres_fresh_database_runs_partitioned_migrations() -> anyhow::Result
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1, 2]);
+    assert_eq!(versions, vec![1, 2, 3]);
 
     Ok(())
 }
@@ -440,7 +440,7 @@ async fn postgres_migrates_past_an_unrecorded_004_with_an_invalid_index() -> any
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1, 2], "004 is never run, and legacy history is replaced");
+    assert_eq!(versions, vec![1, 2, 3], "004 is never run, and legacy history is replaced");
     let (valid, partitioned): (bool, bool) = sqlx::query_as(
         "SELECT i.indisvalid, c.relkind = 'I' FROM pg_index i \
          JOIN pg_class c ON c.oid = i.indexrelid \

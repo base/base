@@ -1,6 +1,10 @@
 //! Dedicated operation and control sessions with exact-owned Postgres cancellation.
 
-use std::{str::FromStr, time::Duration};
+use std::{
+    str::FromStr,
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -10,7 +14,7 @@ use tokio::time::{Instant, sleep, timeout_at};
 use crate::MigrationError;
 
 /// Exact server-side identity; protects unrelated sessions and PID reuse.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MigrationBackend {
     /// Owned server PID.
     pub pid: i32,
@@ -29,6 +33,17 @@ pub struct MigrationBackend {
 pub struct MigrationSession;
 
 impl MigrationSession {
+    /// Generates a bounded per-session ownership nonce, separate from retry generation.
+    pub fn nonce() -> String {
+        static SESSION: AtomicU64 = AtomicU64::new(0);
+        format!(
+            "audit-migrate-{}-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_micros(),
+            SESSION.fetch_add(1, Ordering::Relaxed)
+        )
+    }
+
     /// Opens a dedicated session, disabling statement logging and secret-bearing errors.
     pub async fn connect(url: &str, application: &str) -> Result<PgConnection, MigrationError> {
         let options = PgConnectOptions::from_str(url)
@@ -64,17 +79,19 @@ impl MigrationSession {
             .fetch_one(control).await.map_err(|error| MigrationError::database(&error.into()))
     }
 
-    /// A different role can see censored activity columns; absence then is not evidence.
+    /// Requires the matching login role without effective-role drift; censored absence is not proof.
     pub async fn verify_control(
         control: &mut PgConnection,
         owner: &MigrationBackend,
     ) -> Result<(), MigrationError> {
-        let visible: bool = sqlx::query_scalar("SELECT current_user=$1 AND current_database()=$2")
-            .bind(&owner.role)
-            .bind(&owner.database)
-            .fetch_one(control)
-            .await
-            .map_err(|_| MigrationError::CancellationUnconfirmed)?;
+        let visible: bool = sqlx::query_scalar(
+            "SELECT session_user=$1 AND current_user=session_user AND current_database()=$2",
+        )
+        .bind(&owner.role)
+        .bind(&owner.database)
+        .fetch_one(control)
+        .await
+        .map_err(|_| MigrationError::CancellationUnconfirmed)?;
         if visible { Ok(()) } else { Err(MigrationError::CancellationUnconfirmed) }
     }
 

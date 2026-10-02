@@ -50,6 +50,8 @@ base_metrics::define_metrics! {
     migration_worker_available: gauge,
     #[describe("Every registered migration requirement validated")]
     migration_complete: gauge,
+    #[describe("Exact owned backend cleanup verified for the current attempt")]
+    migration_cleanup_confirmed: gauge,
     #[describe("Owned migration attempts started")]
     migration_attempts_total: counter,
     #[describe("Migration attempts with terminal failure")]

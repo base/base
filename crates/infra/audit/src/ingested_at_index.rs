@@ -45,6 +45,7 @@ impl TransactionEventIngestedAtIndex {
             ready,
             "run audit-archiver migrate up before indexing transaction event partitions"
         );
+        Self::validate_parent_definitions(conn).await?;
 
         // CREATE INDEX CONCURRENTLY cannot run inside a transaction. Keep all
         // statements on this session, with a short lock wait for partition ATTACH
@@ -85,25 +86,27 @@ impl TransactionEventIngestedAtIndex {
                 progress.update(|s| s.partition = Some(leaf.clone()))?;
                 let name = format!("{leaf}_ingested_at_idx");
                 let class_index = format!("{class}_ingested_at_idx");
-                let status: Option<(bool, Option<String>)> = sqlx::query_as(
-                    "SELECT i.indisvalid, parent.relname::text \
-                 FROM pg_class idx \
-                 JOIN pg_index i ON i.indexrelid = idx.oid \
-                 LEFT JOIN pg_inherits p ON p.inhrelid = idx.oid \
-                 LEFT JOIN pg_class parent ON parent.oid = p.inhparent \
-                 WHERE idx.oid = to_regclass($1)",
+                let status: Option<(bool, Option<String>, bool, bool)> = sqlx::query_as(
+                    "SELECT i.indisvalid, CASE WHEN p.inhparent IS NULL THEN NULL WHEN p.inhparent=to_regclass($3) THEN $3 ELSE 'unexpected' END, i.indrelid=to_regclass($2), i.indisready AND am.amname='brin' AND i.indnkeyatts=1 AND i.indnatts=1 AND i.indkey[0]=a.attnum AND i.indpred IS NULL AND i.indexprs IS NULL \
+                     FROM pg_class idx JOIN pg_index i ON i.indexrelid=idx.oid JOIN pg_am am ON am.oid=idx.relam LEFT JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attname='ingested_at' LEFT JOIN pg_inherits p ON p.inhrelid=idx.oid WHERE idx.oid=to_regclass($1)",
                 )
                 .bind(format!("public.{name}"))
+                .bind(format!("public.{leaf}"))
+                .bind(format!("public.{class_index}"))
                 .fetch_optional(&mut *conn)
                 .await?;
+                if let Some((valid, _, owned, defined)) = &status {
+                    ensure!(*owned, "named index does not belong to expected day table");
+                    ensure!(!*valid || *defined, "valid day index has unexpected definition");
+                }
 
                 match status.as_ref() {
-                    Some((false, Some(parent))) => {
+                    Some((false, Some(parent), _, _)) => {
                         bail!(
                             "invalid attached index {name} under {parent}; repair it before retrying"
                         );
                     }
-                    Some((false, None)) => {
+                    Some((false, None, _, _)) => {
                         // A canceled concurrent build leaves an INVALID index with
                         // the intended name. IF NOT EXISTS would silently keep it.
                         sqlx::query(&format!("DROP INDEX CONCURRENTLY public.{name}"))
@@ -114,7 +117,9 @@ impl TransactionEventIngestedAtIndex {
                         Metrics::migration_leaves_repaired().increment(1);
                         progress.update(|s| s.leaves_repaired += 1)?;
                     }
-                    Some((true, Some(parent))) if parent == &class_index => {
+                    Some((true, Some(parent), _, _))
+                        if parent == &format!("public.{class_index}") =>
+                    {
                         Metrics::migration_leaves_skipped().increment(1);
                         progress.update(|s| {
                             s.leaves_skipped += 1;
@@ -122,13 +127,13 @@ impl TransactionEventIngestedAtIndex {
                         })?;
                         continue;
                     }
-                    Some((true, Some(parent))) => {
+                    Some((true, Some(parent), _, _)) => {
                         bail!("index {name} is attached to unexpected parent {parent}");
                     }
                     _ => {}
                 }
 
-                if !matches!(status, Some((true, None))) {
+                if !matches!(status, Some((true, None, _, _))) {
                     sqlx::query(&format!(
                         "CREATE INDEX CONCURRENTLY {name} ON public.{leaf} USING brin (ingested_at)"
                     ))
@@ -169,6 +174,16 @@ impl TransactionEventIngestedAtIndex {
         bail!(
             "transaction event ingested_at index is still invalid; retry after partition maintenance"
         )
+    }
+
+    /// Checks canonical parent OIDs and definitions before any destructive leaf repair.
+    /// Parent validity may be false until all expected leaf indexes are attached.
+    pub async fn validate_parent_definitions(conn: &mut PgConnection) -> Result<()> {
+        let parents: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_am am ON am.oid=c.relam JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attname='ingested_at' WHERE c.relnamespace='public'::regnamespace AND c.relname IN ('transaction_events_ingested_at_idx','transaction_events_hot_ingested_at_idx','transaction_events_warm_ingested_at_idx','transaction_events_cold_ingested_at_idx') AND i.indrelid=to_regclass('public.' || replace(c.relname,'_ingested_at_idx','')) AND am.amname='brin' AND i.indnkeyatts=1 AND i.indnatts=1 AND i.indkey[0]=a.attnum AND i.indpred IS NULL AND i.indexprs IS NULL AND (c.relname='transaction_events_ingested_at_idx' AND NOT EXISTS (SELECT 1 FROM pg_inherits p WHERE p.inhrelid=c.oid) OR c.relname!='transaction_events_ingested_at_idx' AND EXISTS (SELECT 1 FROM pg_inherits p WHERE p.inhrelid=c.oid AND p.inhparent='public.transaction_events_ingested_at_idx'::regclass))"
+        ).fetch_one(conn).await?;
+        ensure!(parents == 4, "required parent index definitions invalid");
+        Ok(())
     }
 
     /// Validates every table/index edge and BRIN definition in one catalog snapshot.

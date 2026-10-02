@@ -14,9 +14,9 @@ use std::{
 };
 
 use audit_archiver_lib::{
-    AuditMigration, ManagedMigration, ManagedMigrationConfig, MigrationPhase, MigrationReporter,
-    MigrationSession, MigrationState, MigrationStatus, MigrationStore, PgTransactionEventSink,
-    TransactionEventIngestedAtIndex, index_transaction_event_partitions,
+    AuditMigration, ManagedMigration, ManagedMigrationConfig, MigrationDurable, MigrationPhase,
+    MigrationReporter, MigrationSession, MigrationState, MigrationStatus, MigrationStore,
+    PgTransactionEventSink, TransactionEventIngestedAtIndex, index_transaction_event_partitions,
 };
 use sqlx::{
     ConnectOptions, Connection, PgConnection, Postgres, Transaction, postgres::PgConnectOptions,
@@ -114,7 +114,7 @@ impl NativeDatabase {
         Ok(Command::new(binary)
             .args(["migrate", "up", "--managed"])
             .env("TIPS_AUDIT_POSTGRES_URL", &self.url)
-            .env("TIPS_AUDIT_MIGRATION_RUN_ID", run_id)
+            .env("TIPS_AUDIT_MIGRATION_GENERATION", run_id)
             .env("TIPS_AUDIT_MIGRATION_STATE_PATH", path.join("state.json"))
             .env("TIPS_AUDIT_MIGRATION_SHUTDOWN_TIMEOUT_SECS", "9")
             .env("TIPS_AUDIT_METRICS_ENABLED", "true")
@@ -218,12 +218,13 @@ async fn real_term_single_listener_restart_and_deliberate_retry() -> anyhow::Res
     assert_eq!(locks, 0);
     held.rollback().await?;
     let mut restored = db.child(port, "signal-one", &scratch).await?;
-    let saved = NativeDatabase::status(port, MigrationState::Stopped).await?;
-    assert_eq!(saved.attempt, stopped.attempt);
+    let saved = NativeDatabase::status(port, MigrationState::Succeeded).await?;
+    assert_eq!(saved.attempt, stopped.attempt + 1);
+    assert!(saved.complete && saved.ready && saved.cleanup_confirmed && saved.leaves_repaired > 0);
     NativeDatabase::signal(&mut restored, "-TERM").await?;
     let mut retry = db.child(port, "signal-two", &scratch).await?;
     let completed = NativeDatabase::status(port, MigrationState::Succeeded).await?;
-    assert!(completed.complete && completed.ready && completed.leaves_repaired > 0);
+    assert!(completed.complete && completed.ready && completed.leaves_built == 0);
     NativeDatabase::signal(&mut retry, "-INT").await?;
     assert_eq!(store.load("signal-two")?.unwrap().status.state, MigrationState::Succeeded);
     assert_eq!(index_transaction_event_partitions(&db.url).await?, 0);
@@ -325,6 +326,33 @@ async fn censored_control_activity_never_proves_backend_absence() -> anyhow::Res
 async fn malformed_secret_url_is_terminal_and_never_disclosed() -> anyhow::Result<()> {
     let mut db = NativeDatabase::new().await?;
     db.url = "postgres://private-user:secret-password@private-host:bad-port/database".into();
+    let binary = PathBuf::from(env::var("TIPS_AUDIT_TEST_BINARY")?);
+    let help = Command::new(&binary)
+        .arg("--help")
+        .env("TIPS_AUDIT_POSTGRES_URL", &db.url)
+        .output()
+        .await?;
+    assert!(help.status.success());
+    let parse = Command::new(&binary)
+        .args([
+            "migrate",
+            "up",
+            "--managed",
+            "--migration-shutdown-timeout-secs",
+            "secret-password",
+        ])
+        .env("TIPS_AUDIT_POSTGRES_URL", &db.url)
+        .output()
+        .await?;
+    assert!(!parse.status.success());
+    for output in [help, parse] {
+        for bytes in [output.stdout, output.stderr] {
+            let text = String::from_utf8(bytes)?;
+            for secret in ["secret-password", "private-user", "private-host", "bad-port"] {
+                assert!(!text.contains(secret));
+            }
+        }
+    }
     let scratch = NativeDatabase::scratch()?;
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
@@ -424,12 +452,15 @@ async fn termination_fallback_verifies_an_idle_owned_backend_and_its_lock_gone()
 
 #[tokio::test]
 #[ignore = "requires owned disposable PostgreSQL 17"]
-async fn interrupted_restart_fails_closed_if_recorded_backend_still_exists() -> anyhow::Result<()> {
+async fn interrupted_restart_cleans_recorded_owner_before_resuming() -> anyhow::Result<()> {
     let db = NativeDatabase::new().await?;
     let mut old = MigrationSession::connect(&db.url, "native-prior-attempt").await?;
     let backend = MigrationSession::identity(&mut old).await?;
     let progress = MigrationReporter::new("same-pod-interrupted".into());
     *progress.backend.lock().unwrap() = Some(backend.clone());
+    let mut store_conn = MigrationSession::connect(&db.url, "native-save-interrupted").await?;
+    let key = MigrationDurable::bootstrap(&mut store_conn, "same-pod-interrupted").await?;
+    MigrationDurable::save(&mut store_conn, &key, &progress).await?;
     let scratch = NativeDatabase::scratch()?;
     let config = ManagedMigrationConfig {
         database_url: db.url.clone(),
@@ -444,23 +475,19 @@ async fn interrupted_restart_fails_closed_if_recorded_backend_still_exists() -> 
     let task = tokio::spawn(async move {
         ManagedMigration::supervise(&config, &cloned, Some(MigrationState::Running)).await
     });
-    timeout(Duration::from_secs(8), async {
-        while progress.snapshot().state != MigrationState::Failed {
+    timeout(Duration::from_secs(15), async {
+        while progress.snapshot().state != MigrationState::Succeeded {
             sleep(Duration::from_millis(20)).await;
         }
     })
     .await?;
-    assert_eq!(progress.snapshot().error_code.as_deref(), Some("cancellation_unconfirmed"));
-    assert!(!progress.snapshot().ready && !progress.snapshot().schema_ready);
-    assert_eq!(progress.snapshot().attempt, 1);
+    assert!(progress.snapshot().cleanup_confirmed && progress.snapshot().complete);
+    assert_eq!(progress.snapshot().attempt, 2);
     let mut control = MigrationSession::connect(&db.url, "native-restart-verification").await?;
-    assert!(
-        MigrationSession::exists(&mut control, &backend).await?,
-        "restart must not kill an unverified prior session"
-    );
+    assert!(!MigrationSession::exists(&mut control, &backend).await?);
+    assert!(old.ping().await.is_err());
     progress.cancel.cancel();
-    assert!(timeout(Duration::from_secs(2), task).await??.is_err());
-    old.close().await?;
+    timeout(Duration::from_secs(2), task).await???;
     Ok(())
 }
 
@@ -566,11 +593,16 @@ async fn managed_terminal_restart_hosts_without_rerunning() -> anyhow::Result<()
         .join(SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos().to_string());
     std::fs::create_dir_all(&dir)?;
     let store = MigrationStore { path: dir.join("state.json") };
-    for state in [MigrationState::Succeeded, MigrationState::Failed, MigrationState::Stopped] {
+    for state in [MigrationState::Succeeded, MigrationState::Failed] {
         let mut saved = MigrationStatus::new("same-pod".into());
         saved.state = state;
         saved.complete = state == MigrationState::Succeeded;
         store.save(&saved, None)?;
+        let mut durable = MigrationSession::connect(&db.url, "native-terminal-seed").await?;
+        let key = MigrationDurable::bootstrap(&mut durable, "same-pod").await?;
+        let seed = MigrationReporter::new("same-pod".into());
+        *seed.status.lock().unwrap() = saved.clone();
+        MigrationDurable::save(&mut durable, &key, &seed).await?;
         let progress = MigrationReporter {
             status: Arc::new(std::sync::Mutex::new(saved)),
             store: Some(store.clone()),
@@ -622,5 +654,409 @@ async fn invalid_parent_contract_fails_without_rewriting_applied_history() -> an
             .fetch_all(&mut db.admin)
             .await?;
     assert_eq!(history, after);
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17 and locally built audit binary"]
+async fn cache_failure_during_real_signal_still_cancels_and_persists_failed_generation()
+-> anyhow::Result<()> {
+    let mut db = NativeDatabase::new().await?;
+    PgTransactionEventSink::migrate(&db.url).await?;
+    let mut blocker = MigrationSession::connect(&db.url, "native-cache-fault-blocker").await?;
+    let held = NativeDatabase::held_writer(&mut blocker).await?;
+    let scratch = NativeDatabase::scratch()?;
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+    let mut child = db.child(port, "initial", &scratch).await?;
+    db.wait("SELECT EXISTS(SELECT 1 FROM pg_stat_progress_create_index p JOIN pg_stat_activity a ON a.pid=p.pid WHERE a.datname=current_database() AND a.application_name LIKE 'audit-migrate-%' AND p.phase LIKE 'waiting%')").await?;
+    let store = MigrationStore { path: scratch.join("state.json") };
+    let owner = store.load("initial")?.unwrap().backend.unwrap();
+    let detached = scratch.with_extension("detached");
+    fs::rename(&scratch, &detached)?;
+    let pid = child.id().unwrap();
+    assert!(Command::new("kill").args(["-TERM", &pid.to_string()]).status().await?.success());
+    assert!(!timeout(Duration::from_secs(9), child.wait()).await??.success());
+    let mut control = MigrationSession::connect(&db.url, "native-cache-fault-verify").await?;
+    assert!(!MigrationSession::exists(&mut control, &owner).await?);
+    let key = MigrationDurable::bootstrap(&mut control, "initial").await?;
+    let failed = MigrationDurable::load(&mut control, &key).await?.unwrap();
+    assert_eq!(failed.status.state, MigrationState::Failed);
+    assert!(failed.status.cleanup_confirmed);
+    assert_eq!(failed.status.error_code.as_deref(), Some("state_io"));
+    assert_eq!(failed.backend.unwrap(), owner);
+    held.rollback().await?;
+    let newpod = NativeDatabase::scratch()?;
+    let mut suppressed = db.child(port, "initial", &newpod).await?;
+    let status = NativeDatabase::status(port, MigrationState::Failed).await?;
+    assert_eq!(status.attempt, 1);
+    assert!(!status.complete && status.cleanup_confirmed);
+    NativeDatabase::signal(&mut suppressed, "-TERM").await?;
+    let newpod = NativeDatabase::scratch()?;
+    let mut retry = db.child(port, "reviewed-2", &newpod).await?;
+    let succeeded = NativeDatabase::status(port, MigrationState::Succeeded).await?;
+    assert!(succeeded.complete && succeeded.cleanup_confirmed && succeeded.leaves_repaired > 0);
+    NativeDatabase::signal(&mut retry, "-INT").await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17"]
+async fn wrong_definition_valid_leaf_fails_but_invalid_expected_leaf_repairs() -> anyhow::Result<()>
+{
+    let db = NativeDatabase::new().await?;
+    PgTransactionEventSink::migrate(&db.url).await?;
+    let mut owner = MigrationSession::connect(&db.url, "native-definition-fixture").await?;
+    let leaf: String = sqlx::query_scalar("SELECT c.relname::text FROM pg_inherits p JOIN pg_class c ON c.oid=p.inhrelid WHERE p.inhparent='transaction_events_cold'::regclass ORDER BY c.relname LIMIT 1").fetch_one(&mut owner).await?;
+    let name = format!("{leaf}_ingested_at_idx");
+    sqlx::query(&format!("CREATE INDEX {name} ON {leaf}(event_type)")).execute(&mut owner).await?;
+    assert!(AuditMigration::run(&db.url).await.is_err());
+    let still_valid: bool =
+        sqlx::query_scalar("SELECT indisvalid FROM pg_index WHERE indexrelid=to_regclass($1)")
+            .bind(&name)
+            .fetch_one(&mut owner)
+            .await?;
+    assert!(still_valid, "valid wrong-definition index must remain untouched");
+    sqlx::query(&format!("DROP INDEX {name}")).execute(&mut owner).await?;
+    let mut held = NativeDatabase::held_writer(&mut owner).await?;
+    sqlx::query("INSERT INTO transaction_events (event_id,schema_version,event_time,event_date,retention_class,producer,event_type,data) SELECT event_id || '-two',schema_version,event_time,event_date,retention_class,producer,event_type,data FROM transaction_events WHERE event_id='held'").execute(&mut *held).await?;
+    held.commit().await?;
+    assert!(
+        sqlx::query(&format!("CREATE UNIQUE INDEX CONCURRENTLY {name} ON {leaf}(event_type)"))
+            .execute(&mut owner)
+            .await
+            .is_err()
+    );
+    let invalid: bool =
+        sqlx::query_scalar("SELECT NOT indisvalid FROM pg_index WHERE indexrelid=to_regclass($1)")
+            .bind(&name)
+            .fetch_one(&mut owner)
+            .await?;
+    assert!(invalid);
+    AuditMigration::run(&db.url).await?;
+    TransactionEventIngestedAtIndex::validate(&mut owner).await?;
+    let rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM transaction_events").fetch_one(&mut owner).await?;
+    assert_eq!(rows, 2);
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17"]
+async fn effective_role_drift_cannot_prove_owned_backend_absence() -> anyhow::Result<()> {
+    let mut db = NativeDatabase::new().await?;
+    let mut owner = MigrationSession::connect(&db.url, "native-role-owner").await?;
+    let backend = MigrationSession::identity(&mut owner).await?;
+    let role = format!("native_effective_{}", chrono::Utc::now().timestamp_micros());
+    sqlx::query(&format!("CREATE ROLE {role} NOLOGIN")).execute(&mut db.admin).await?;
+    sqlx::query(&format!("GRANT {role} TO {}", backend.role)).execute(&mut db.admin).await?;
+    let mut control = MigrationSession::connect(&db.url, "native-role-observer").await?;
+    sqlx::query(&format!("SET ROLE {role}")).execute(&mut control).await?;
+    assert_eq!(
+        MigrationSession::exists(&mut control, &backend).await.unwrap_err().code(),
+        "cancellation_unconfirmed"
+    );
+    assert_eq!(
+        MigrationSession::signal(&mut control, &backend, true).await.unwrap_err().code(),
+        "cancellation_unconfirmed"
+    );
+    sqlx::query("RESET ROLE").execute(&mut control).await?;
+    assert!(MigrationSession::exists(&mut control, &backend).await?);
+    owner.close().await?;
+    MigrationSession::verify_gone(&mut control, &backend, Duration::from_secs(2)).await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17 and locally built audit binary"]
+async fn copied_cache_target_change_fails_before_any_schema_dispatch() -> anyhow::Result<()> {
+    let first = NativeDatabase::new().await?;
+    let mut other = NativeDatabase::new().await?;
+    let scratch = NativeDatabase::scratch()?;
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+    let mut initial = first.child(port, "initial", &scratch).await?;
+    NativeDatabase::status(port, MigrationState::Succeeded).await?;
+    NativeDatabase::signal(&mut initial, "-TERM").await?;
+    let mut changed = other.child(port, "initial", &scratch).await?;
+    let failed = NativeDatabase::status(port, MigrationState::Failed).await?;
+    assert!(!failed.schema_ready && !failed.ready && !failed.complete);
+    assert_eq!(failed.error_code.as_deref(), Some("state_corrupt"));
+    let absent: bool = sqlx::query_scalar("SELECT to_regclass('_sqlx_migrations') IS NULL AND to_regclass('transaction_events') IS NULL").fetch_one(&mut other.admin).await?;
+    assert!(absent, "foreign-target cache cannot authorize schema or index work");
+    let bound: bool = sqlx::query_scalar("SELECT target_id LIKE '%' || (SELECT oid::text FROM pg_database WHERE datname=current_database()) || ':%' AND record->'backend'='null'::jsonb FROM audit_migration_runs WHERE generation='initial'").fetch_one(&mut other.admin).await?;
+    assert!(bound, "foreign cache owner must not be copied into another target record");
+    let pid = changed.id().unwrap();
+    assert!(Command::new("kill").args(["-TERM", &pid.to_string()]).status().await?.success());
+    assert!(!timeout(Duration::from_secs(9), changed.wait()).await??.success());
+    let newpod = NativeDatabase::scratch()?;
+    let mut suppressed = other.child(port, "initial", &newpod).await?;
+    let again = NativeDatabase::status(port, MigrationState::Failed).await?;
+    assert_eq!(again.error_code.as_deref(), Some("state_corrupt"));
+    NativeDatabase::signal(&mut suppressed, "-TERM").await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17"]
+async fn unconfirmed_failed_generation_retains_and_cleans_owner_without_retry() -> anyhow::Result<()>
+{
+    let db = NativeDatabase::new().await?;
+    let mut old = MigrationSession::connect(&db.url, "native-unconfirmed-owner").await?;
+    let backend = MigrationSession::identity(&mut old).await?;
+    let mut store_conn = MigrationSession::connect(&db.url, "native-unconfirmed-seed").await?;
+    let key = MigrationDurable::bootstrap(&mut store_conn, "initial").await?;
+    let progress = MigrationReporter::new("initial".into());
+    *progress.backend.lock().unwrap() = Some(backend.clone());
+    progress.finish(Err(audit_archiver_lib::MigrationError::CancellationUnconfirmed))?;
+    MigrationDurable::save(&mut store_conn, &key, &progress).await?;
+    let config = ManagedMigrationConfig {
+        database_url: db.url.clone(),
+        address: "127.0.0.1:0".parse()?,
+        metrics_enabled: false,
+        metrics_interval_secs: 1,
+        run_id: "initial".into(),
+        state_path: NativeDatabase::scratch()?.join("state.json"),
+        shutdown_timeout: Duration::from_secs(9),
+    };
+    let cloned = progress.clone();
+    let task =
+        tokio::spawn(async move { ManagedMigration::supervise(&config, &cloned, None).await });
+    timeout(Duration::from_secs(10), async {
+        while !progress.snapshot().cleanup_confirmed {
+            sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await?;
+    assert_eq!(progress.snapshot().state, MigrationState::Failed);
+    assert_eq!(progress.snapshot().attempt, 1);
+    assert!(!progress.snapshot().ready && !progress.snapshot().complete);
+    assert!(!MigrationSession::exists(&mut store_conn, &backend).await?);
+    assert!(old.ping().await.is_err());
+    timeout(Duration::from_secs(3), async {
+        loop {
+            if MigrationDurable::load(&mut store_conn, &key)
+                .await?
+                .unwrap()
+                .status
+                .cleanup_confirmed
+            {
+                return anyhow::Ok(());
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await??;
+    let persisted = MigrationDurable::load(&mut store_conn, &key).await?.unwrap();
+    assert_eq!(persisted.backend.unwrap(), backend);
+    assert!(persisted.status.cleanup_confirmed);
+    let absent: bool = sqlx::query_scalar("SELECT to_regclass('_sqlx_migrations') IS NULL AND to_regclass('transaction_events') IS NULL").fetch_one(&mut store_conn).await?;
+    assert!(absent, "failed generation must clean its owner without schema/index retry");
+    progress.cancel.cancel();
+    timeout(Duration::from_secs(3), task).await???;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17 and project-local pg_dump"]
+async fn native_schema_matches_committed_snapshot() -> anyhow::Result<()> {
+    let mut db = NativeDatabase::new().await?;
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='audit_archiver')")
+            .fetch_one(&mut db.admin)
+            .await?;
+    if !exists {
+        sqlx::query("CREATE ROLE audit_archiver NOLOGIN").execute(&mut db.admin).await?;
+    }
+    PgTransactionEventSink::migrate(&db.url).await?;
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize()?;
+    let binary = PathBuf::from(env::var("TIPS_AUDIT_TEST_PG_DUMP")?).canonicalize()?;
+    anyhow::ensure!(binary.starts_with(root.join(".tmp")), "foreign pg_dump refused");
+    let output = Command::new(binary)
+        .args([
+            "--schema-only",
+            "--no-owner",
+            "--exclude-table=_sqlx_migrations",
+            "--exclude-table=transaction_events_*_2*",
+            "--dbname",
+            &db.url,
+        ])
+        .output()
+        .await?;
+    anyhow::ensure!(output.status.success(), "owned pg_dump failed");
+    let stdout = String::from_utf8(output.stdout)?;
+    let mut lines = Vec::new();
+    for line in stdout.lines() {
+        let preamble = ["--", "\\restrict", "\\unrestrict", "SET ", "SELECT pg_catalog.set_config"]
+            .iter()
+            .any(|prefix| line.starts_with(prefix));
+        let repeated_blank =
+            line.is_empty() && lines.last().is_none_or(|last: &&str| last.is_empty());
+        if !preamble && !repeated_blank {
+            lines.push(line);
+        }
+    }
+    while lines.last().is_some_and(|last| last.is_empty()) {
+        lines.pop();
+    }
+    let header = "-- Schema produced by crates/infra/audit/migrations, excluding dated day\n-- partitions and _sqlx_migrations. Generated by the postgres_transaction_events\n-- tests; regenerate with UPDATE_SCHEMA_SNAPSHOT=1 instead of editing by hand.\n";
+    let snapshot = format!("{header}\n{}\n", lines.join("\n"));
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("schema.sql");
+    if env::var_os("UPDATE_SCHEMA_SNAPSHOT").is_some() {
+        fs::write(path, snapshot)?;
+    } else {
+        assert_eq!(fs::read_to_string(path)?, snapshot);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17 and locally built audit binary"]
+async fn failed_generation_survives_emptydir_loss_and_bump_retries_once() -> anyhow::Result<()> {
+    let mut db = NativeDatabase::new().await?;
+    PgTransactionEventSink::migrate(&db.url).await?;
+    let mut owner = MigrationSession::connect(&db.url, "native-invalid-unrelated").await?;
+    let leaf: String = sqlx::query_scalar("SELECT c.relname::text FROM pg_inherits p JOIN pg_class c ON c.oid=p.inhrelid WHERE p.inhparent='transaction_events_cold'::regclass ORDER BY c.relname LIMIT 1").fetch_one(&mut owner).await?;
+    let name = format!("{leaf}_ingested_at_idx");
+    sqlx::query("CREATE TABLE unrelated_events (event_type text, ingested_at timestamptz)")
+        .execute(&mut owner)
+        .await?;
+    sqlx::query("INSERT INTO unrelated_events VALUES('duplicate',now()),('duplicate',now())")
+        .execute(&mut owner)
+        .await?;
+    assert!(
+        sqlx::query(&format!(
+            "CREATE UNIQUE INDEX CONCURRENTLY {name} ON unrelated_events(event_type)"
+        ))
+        .execute(&mut owner)
+        .await
+        .is_err()
+    );
+    let oid: i64 = sqlx::query_scalar("SELECT indexrelid::bigint FROM pg_index WHERE indexrelid=to_regclass($1) AND indrelid='unrelated_events'::regclass AND NOT indisvalid").bind(&name).fetch_one(&mut owner).await?;
+    let scratch = NativeDatabase::scratch()?;
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+    let mut first = db.child(port, "initial", &scratch).await?;
+    let failed = NativeDatabase::status(port, MigrationState::Failed).await?;
+    assert!(failed.schema_ready && failed.cleanup_confirmed && !failed.complete);
+    let untouched: i64 = sqlx::query_scalar(
+        "SELECT indexrelid::bigint FROM pg_index WHERE indexrelid=to_regclass($1)",
+    )
+    .bind(&name)
+    .fetch_one(&mut owner)
+    .await?;
+    assert_eq!(untouched, oid, "unrelated invalid index must never be dropped");
+    NativeDatabase::signal(&mut first, "-TERM").await?;
+    sqlx::query(&format!("DROP INDEX {name}")).execute(&mut owner).await?;
+    let newpod = NativeDatabase::scratch()?;
+    let mut restored = db.child(port, "initial", &newpod).await?;
+    let suppressed = NativeDatabase::status(port, MigrationState::Failed).await?;
+    assert_eq!(suppressed.attempt, failed.attempt);
+    assert_eq!(suppressed.finished_at, failed.finished_at);
+    assert_eq!(suppressed.leaves_built, 0);
+    assert!(suppressed.cleanup_confirmed && !suppressed.complete);
+    NativeDatabase::signal(&mut restored, "-TERM").await?;
+    let deliberate = NativeDatabase::scratch()?;
+    let mut retry = db.child(port, "reviewed-2", &deliberate).await?;
+    let completed = NativeDatabase::status(port, MigrationState::Succeeded).await?;
+    assert_eq!(completed.attempt, 1);
+    assert!(completed.complete && completed.cleanup_confirmed && completed.leaves_built > 0);
+    NativeDatabase::signal(&mut retry, "-INT").await?;
+    let repeated = NativeDatabase::scratch()?;
+    let mut final_pod = db.child(port, "reviewed-2", &repeated).await?;
+    let verified = NativeDatabase::status(port, MigrationState::Succeeded).await?;
+    assert_eq!(verified.attempt, 1);
+    assert_eq!(verified.leaves_built, completed.leaves_built);
+    NativeDatabase::signal(&mut final_pod, "-TERM").await?;
+    let records: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_migration_runs")
+        .fetch_one(&mut db.admin)
+        .await?;
+    assert_eq!(records, 2);
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17 and locally built audit binary"]
+async fn restored_success_revalidates_full_catalog_without_repair() -> anyhow::Result<()> {
+    let mut db = NativeDatabase::new().await?;
+    let scratch = NativeDatabase::scratch()?;
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+    let mut first = db.child(port, "initial", &scratch).await?;
+    let succeeded = NativeDatabase::status(port, MigrationState::Succeeded).await?;
+    assert!(succeeded.complete && succeeded.cleanup_confirmed);
+    NativeDatabase::signal(&mut first, "-TERM").await?;
+    sqlx::query("DROP INDEX transaction_events_ingested_at_idx").execute(&mut db.admin).await?;
+    let newpod = NativeDatabase::scratch()?;
+    let mut restored = db.child(port, "initial", &newpod).await?;
+    let failed = NativeDatabase::status(port, MigrationState::Failed).await?;
+    assert!(failed.schema_ready && failed.cleanup_confirmed && !failed.complete);
+    assert_eq!(failed.attempt, succeeded.attempt);
+    let absent: bool =
+        sqlx::query_scalar("SELECT to_regclass('transaction_events_ingested_at_idx') IS NULL")
+            .fetch_one(&mut db.admin)
+            .await?;
+    assert!(absent, "success restoration must not repair missing catalog work");
+    NativeDatabase::signal(&mut restored, "-TERM").await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17"]
+async fn durable_target_and_fingerprint_mismatch_fail_closed() -> anyhow::Result<()> {
+    let db = NativeDatabase::new().await?;
+    let mut conn = MigrationSession::connect(&db.url, "native-binding-test").await?;
+    let mut key = MigrationDurable::bootstrap(&mut conn, "initial").await?;
+    let progress = MigrationReporter::new("initial".into());
+    MigrationDurable::save(&mut conn, &key, &progress).await?;
+    key.target.push_str("-wrong-target");
+    assert_eq!(MigrationDurable::load(&mut conn, &key).await.unwrap_err().code(), "state_corrupt");
+    key.target = key.target.trim_end_matches("-wrong-target").into();
+    sqlx::query("UPDATE audit_migration_runs SET fingerprint='old-validator'")
+        .execute(&mut conn)
+        .await?;
+    assert_eq!(MigrationDurable::load(&mut conn, &key).await.unwrap_err().code(), "state_corrupt");
+    let dispatch: bool = sqlx::query_scalar("SELECT to_regclass('_sqlx_migrations') IS NOT NULL")
+        .fetch_one(&mut conn)
+        .await?;
+    assert!(!dispatch, "bootstrap must not fabricate applied schema history");
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17 and locally built audit binary"]
+async fn first_schema_failure_is_durable_before_migration_history_exists() -> anyhow::Result<()> {
+    let db = NativeDatabase::new().await?;
+    let mut owner = MigrationSession::connect(&db.url, "native-schema-failure").await?;
+    sqlx::query("CREATE TABLE transaction_events (wrong_column int)").execute(&mut owner).await?;
+    let scratch = NativeDatabase::scratch()?;
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+    let mut first = db.child(port, "initial", &scratch).await?;
+    let failed = NativeDatabase::status(port, MigrationState::Failed).await?;
+    assert!(!failed.schema_ready && !failed.ready && failed.cleanup_confirmed);
+    NativeDatabase::signal(&mut first, "-TERM").await?;
+    sqlx::query("DROP TABLE transaction_events").execute(&mut owner).await?;
+    let newpod = NativeDatabase::scratch()?;
+    let mut second = db.child(port, "initial", &newpod).await?;
+    let suppressed = NativeDatabase::status(port, MigrationState::Failed).await?;
+    assert_eq!(suppressed.attempt, 1);
+    assert!(!suppressed.schema_ready && !suppressed.complete);
+    let schema_absent: bool =
+        sqlx::query_scalar("SELECT to_regclass('transaction_events') IS NULL")
+            .fetch_one(&mut owner)
+            .await?;
+    assert!(schema_absent);
+    NativeDatabase::signal(&mut second, "-TERM").await?;
+    let newpod = NativeDatabase::scratch()?;
+    let mut retry = db.child(port, "reviewed-2", &newpod).await?;
+    let succeeded = NativeDatabase::status(port, MigrationState::Succeeded).await?;
+    assert!(succeeded.complete && succeeded.cleanup_confirmed);
+    NativeDatabase::signal(&mut retry, "-TERM").await?;
     Ok(())
 }

@@ -56,7 +56,7 @@ struct HealthState {
     transaction_event_sink: PgTransactionEventSink,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     #[arg(value_enum, default_value_t = Command::Serve)]
@@ -69,8 +69,8 @@ struct Args {
     #[arg(long, env = "TIPS_AUDIT_MIGRATE_MANAGED")]
     managed: bool,
 
-    /// Nonsensitive identity shared across container restarts in the same pod.
-    #[arg(long, env = "TIPS_AUDIT_MIGRATION_RUN_ID")]
+    /// Stable reviewed retry generation shared across pod replacements.
+    #[arg(long = "migration-generation", env = "TIPS_AUDIT_MIGRATION_GENERATION")]
     migration_run_id: Option<String>,
 
     /// Atomic state file on a writable same-pod volume.
@@ -92,7 +92,7 @@ struct Args {
 
     /// Postgres connection URL for transaction observability events. Required
     /// when serving HTTP ingest and RPC queries.
-    #[arg(long, env = "TIPS_AUDIT_POSTGRES_URL")]
+    #[arg(long, env = "TIPS_AUDIT_POSTGRES_URL", hide_env_values = true)]
     postgres_url: Option<String>,
 
     /// Maximum Postgres connections used by the transaction-event ingest sink.
@@ -194,7 +194,18 @@ struct Args {
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
 
-    let args = Args::parse();
+    let args = match Args::try_parse() {
+        Ok(args) => args,
+        Err(error)
+            if matches!(
+                error.kind(),
+                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+            ) =>
+        {
+            error.exit()
+        }
+        Err(_) => return Err(MigrationError::Configuration.into()),
+    };
 
     LogConfig::from(args.log.clone())
         .init_tracing_subscriber()

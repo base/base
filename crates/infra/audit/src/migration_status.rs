@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::{Metrics, MigrationBackend, MigrationStore};
+use crate::{Metrics, MigrationBackend, MigrationDurableKey, MigrationStore};
 
 /// Observable operation result; a terminal result never automatically retries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,6 +176,9 @@ pub struct MigrationStatus {
     pub complete: bool,
     /// Owned database backend absence has been verified on stop.
     pub cancellation_confirmed: bool,
+    /// Exact owned backend disappearance verified for every terminal result.
+    #[serde(default)]
+    pub cleanup_confirmed: bool,
     /// Attempt start time.
     pub started_at: DateTime<Utc>,
     /// Terminal result time.
@@ -218,6 +221,7 @@ impl MigrationStatus {
             ready: false,
             complete: false,
             cancellation_confirmed: false,
+            cleanup_confirmed: false,
             started_at: now,
             finished_at: None,
             updated_at: now,
@@ -245,6 +249,8 @@ pub struct MigrationReporter {
     pub store: Option<MigrationStore>,
     /// Owned backend persisted separately from public HTTP status.
     pub backend: Arc<Mutex<Option<MigrationBackend>>>,
+    /// Authoritative database record identity, not exposed by HTTP.
+    pub durable: Arc<Mutex<Option<MigrationDurableKey>>>,
 }
 
 impl fmt::Debug for MigrationReporter {
@@ -261,12 +267,18 @@ impl MigrationReporter {
             cancel: CancellationToken::new(),
             store: None,
             backend: Arc::new(Mutex::new(None)),
+            durable: Arc::new(Mutex::new(None)),
         }
     }
 
     /// Returns a consistent cached public status.
     pub fn snapshot(&self) -> MigrationStatus {
-        self.status.lock().expect("migration snapshot lock poisoned").clone()
+        let mut status = self.status.lock().expect("migration snapshot lock poisoned").clone();
+        if self.cancel.is_cancelled() {
+            status.ready = false;
+            status.phase = MigrationPhase::Stopping;
+        }
+        status
     }
 
     /// Updates and persists observable progress before publishing metrics.
@@ -275,14 +287,20 @@ impl MigrationReporter {
         change(&mut status);
         status.updated_at = Utc::now();
         status.ready = status.schema_ready
+            && !self.cancel.is_cancelled()
             && status.worker_available
             && status.phase != MigrationPhase::Stopping
             && !matches!(
                 status.error_code.as_deref(),
-                Some("cancellation_unconfirmed" | "state_io")
+                Some("cancellation_unconfirmed" | "state_io" | "state_corrupt")
             );
         let persisted = if let Some(store) = &self.store {
-            store.save(&status, self.backend.lock().map_err(|_| MigrationError::Worker)?.as_ref())
+            let target = self.durable.lock().map_err(|_| MigrationError::Worker)?;
+            store.save_bound(
+                &status,
+                self.backend.lock().map_err(|_| MigrationError::Worker)?.as_ref(),
+                target.as_ref().map(|key| key.target.as_str()),
+            )
         } else {
             Ok(())
         };
@@ -303,6 +321,7 @@ impl MigrationReporter {
         Metrics::migration_schema_ready().set(f64::from(status.schema_ready));
         Metrics::migration_worker_available().set(f64::from(status.worker_available));
         Metrics::migration_complete().set(f64::from(status.complete));
+        Metrics::migration_cleanup_confirmed().set(f64::from(status.cleanup_confirmed));
         Metrics::migration_leaves_total().set(status.leaves_total as f64);
         Metrics::migration_leaves_completed().set(status.leaves_completed as f64);
         Metrics::migration_last_progress_timestamp_seconds()
@@ -325,12 +344,21 @@ impl MigrationReporter {
 
     /// Publishes a terminal result without raw error chains.
     pub fn finish(&self, result: Result<(), MigrationError>) -> Result<(), MigrationError> {
+        self.finish_at(result, Utc::now())
+    }
+
+    /// Publishes the exact durable terminal timestamp, without a transient different result.
+    pub fn finish_at(
+        &self,
+        result: Result<(), MigrationError>,
+        finished_at: DateTime<Utc>,
+    ) -> Result<(), MigrationError> {
         let phase = self.snapshot().phase;
         let persisted = self.update(|s| {
             s.state =
                 if result.is_ok() { MigrationState::Succeeded } else { MigrationState::Failed };
             s.complete = result.is_ok();
-            s.finished_at = Some(Utc::now());
+            s.finished_at = Some(finished_at);
             s.partition = None;
             s.phase = MigrationPhase::Idle;
             if let Err(error) = &result {

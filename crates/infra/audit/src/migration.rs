@@ -84,6 +84,13 @@ impl AuditMigration {
     pub async fn run_on(conn: &mut PgConnection, progress: &MigrationReporter) -> Result<()> {
         progress.phase(MigrationPhase::WaitingForLock)?;
         conn.lock().await?;
+        let expected = progress.backend.lock().map_err(|_| MigrationError::Worker)?.clone();
+        if let Some(expected) = expected {
+            ensure!(
+                MigrationSession::identity(conn).await? == expected,
+                "operation connection is not session-affine"
+            );
+        }
         progress.phase(MigrationPhase::Schema)?;
         PgTransactionEventSink::migrate_on(conn).await?;
         Self::verify_schema(conn).await?;
@@ -124,9 +131,23 @@ impl AuditMigration {
         Ok(())
     }
 
+    /// Verifies current completeness read-only, never repairing a restored success.
+    pub async fn verify_complete(conn: &mut PgConnection) -> Result<()> {
+        let mut tx = conn.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *tx)
+            .await?;
+        Self::verify_schema(&mut tx).await?;
+        for work in RequiredAuditWork::ALL {
+            work.validate(&mut tx).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// State restoration identity includes all schema checksums and online contracts.
     pub fn fingerprint() -> String {
-        let mut fingerprint = String::from("audit-v1:");
+        let mut fingerprint = String::from("audit-v2:validator:2;");
         for migration in sqlx::migrate!("./migrations").iter() {
             fingerprint.push_str(&format!("schema:{}:", migration.version));
             for byte in migration.checksum.iter() {
