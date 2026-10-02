@@ -1262,6 +1262,65 @@ async fn full_up_reconciles_validates_and_repeats_without_builds() -> anyhow::Re
 
 #[tokio::test]
 #[ignore = "requires owned disposable PostgreSQL 17"]
+async fn cold_managed_bootstrap_overlaps_ordinary_003_without_deadlock() -> anyhow::Result<()> {
+    let mut db = NativeDatabase::new().await?;
+    // This event trigger is confined to this unique owned fixture database.
+    // Pause the ordinary 003 CREATE before relation creation, not its lock wait.
+    sqlx::raw_sql("CREATE FUNCTION pause_ordinary_native_tables() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN IF current_setting('application_name')='audit-migrate-up' AND strpos(current_query(),'audit_migration_identity')>0 THEN PERFORM pg_advisory_xact_lock(55998866); END IF; END $$; CREATE EVENT TRIGGER pause_ordinary_native_tables ON ddl_command_start WHEN TAG IN ('CREATE TABLE') EXECUTE FUNCTION pause_ordinary_native_tables()")
+        .execute(&mut db.admin).await?;
+    sqlx::query("SELECT pg_advisory_lock(55998866)").execute(&mut db.admin).await?;
+    let url = db.url.clone();
+    let ordinary = tokio::spawn(async move { AuditMigration::run(&url).await });
+    db.wait("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name='audit-migrate-up' AND wait_event='advisory' AND query LIKE '%audit_migration_identity%')").await?;
+    let absent: bool =
+        sqlx::query_scalar("SELECT to_regclass('public.audit_migration_identity') IS NULL")
+            .fetch_one(&mut db.admin)
+            .await?;
+    assert!(absent, "ordinary 003 is paused before creating native tables");
+    let progress = MigrationReporter::new("cold-bootstrap".into());
+    let config = ManagedMigrationConfig {
+        database_url: db.url.clone(),
+        address: "127.0.0.1:0".parse()?,
+        metrics_enabled: false,
+        metrics_interval_secs: 1,
+        run_id: "cold-bootstrap".into(),
+        state_path: NativeDatabase::scratch()?.join("state.json"),
+        shutdown_timeout: Duration::from_secs(9),
+    };
+    let cloned = progress.clone();
+    let managed =
+        tokio::spawn(async move { ManagedMigration::supervise(&config, &cloned, None).await });
+    timeout(Duration::from_secs(10), async {
+        while progress.snapshot().phase != MigrationPhase::WaitingForLock
+            || progress.backend.lock().unwrap().is_none()
+        {
+            sleep(Duration::from_millis(10)).await;
+        }
+        anyhow::Ok(())
+    })
+    .await??;
+    let native_present: bool = sqlx::query_scalar("SELECT to_regclass('public.audit_migration_identity') IS NOT NULL AND to_regclass('public.audit_migration_runs') IS NOT NULL").fetch_one(&mut db.admin).await?;
+    assert!(native_present, "managed bootstrap committed while ordinary 003 was paused");
+    assert!(!ordinary.is_finished() && !managed.is_finished());
+    sqlx::query("SELECT pg_advisory_unlock(55998866)").execute(&mut db.admin).await?;
+    timeout(Duration::from_secs(20), ordinary).await???;
+    timeout(Duration::from_secs(20), async {
+        while progress.snapshot().state != MigrationState::Succeeded {
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await?;
+    AuditMigration::verify_complete(&mut db.admin).await?;
+    assert!(progress.snapshot().complete && progress.snapshot().cleanup_confirmed);
+    progress.cancel.cancel();
+    timeout(Duration::from_secs(3), managed).await???;
+    sqlx::raw_sql("DROP EVENT TRIGGER pause_ordinary_native_tables; DROP FUNCTION pause_ordinary_native_tables()")
+        .execute(&mut db.admin).await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17"]
 async fn full_up_serializes_with_schema_only_and_index_callers() -> anyhow::Result<()> {
     let mut db = NativeDatabase::new().await?;
     PgTransactionEventSink::migrate(&db.url).await?;
