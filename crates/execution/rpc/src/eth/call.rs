@@ -268,9 +268,21 @@ where
         at: BlockId,
         overrides: EvmOverrides,
     ) -> Result<U256, Self::Error> {
-        let (evm_env, at) = BasePendingForecast::evm_env_at(self, at).await?;
+        let (evm_env, at, forecast) = BasePendingForecast::evm_env_at(self, at).await?;
         self.spawn_blocking_io_fut(async move |this| {
             let state = this.state_at_block_id(at).await?;
+            let overrides = if let Some(forecast) = forecast {
+                forecast
+                    .state_overrides(
+                        this.provider().chain_spec().as_ref(),
+                        StateProviderDatabase::new(&state),
+                        overrides,
+                    )
+                    .map_err(RethError::other)
+                    .map_err(Self::Error::from_eth_err)?
+            } else {
+                overrides
+            };
             EstimateCall::estimate_gas_with(&this, evm_env, request, state, overrides)
         })
         .await
@@ -295,12 +307,20 @@ where
     ) -> Result<ResultAndState<HaltReasonFor<Self::Evm>>, Self::Error> {
         let guard = CancelOnDrop::default();
         let cancel = guard.clone();
-        let (evm_env, at) = BasePendingForecast::evm_env_at(self, at).await?;
+        let (evm_env, at, forecast) = BasePendingForecast::evm_env_at(self, at).await?;
         let result = self
             .spawn_with_state_at_block(at, move |this, mut db| {
                 if cancel.is_cancelled() {
                     return Err(EthApiError::InternalEthError.into());
                 }
+                let overrides = if let Some(forecast) = forecast {
+                    forecast
+                        .state_overrides(this.provider().chain_spec().as_ref(), &mut db, overrides)
+                        .map_err(RethError::other)
+                        .map_err(Self::Error::from_eth_err)?
+                } else {
+                    overrides
+                };
                 let (evm_env, tx_env) =
                     this.prepare_call_env(evm_env, request, &mut db, overrides)?;
                 this.transact(&mut db, evm_env, tx_env)

@@ -3,8 +3,10 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use alloy_eips::Encodable2718;
-use alloy_primitives::{Bytes, U256};
+use alloy_primitives::{B256, Bytes, U256, hex};
 use alloy_rpc_client::RpcClient;
+use base_common_consensus::Predeploys;
+use base_common_evm::BaseTime;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
 use base_protocol::BaseTimeUpdateTx;
@@ -42,6 +44,24 @@ async fn call_code(
     let state_overrides = json!({ (probe.to_string()): { "code": code } });
     let params = json!([{ "to": probe }, tag, state_overrides, block_overrides]);
     Ok(words(&request(client, "eth_call", params).await?))
+}
+
+/// Returns `BaseTime.timestampMs()` at `tag`.
+async fn base_time_ms(client: &RpcClient, tag: &str, state_overrides: Value) -> eyre::Result<u64> {
+    let call = json!({
+        "to": Predeploys::BASE_TIME,
+        "data": hex::encode_prefixed(BaseTime::TIMESTAMP_MS_SELECTOR),
+    });
+    Ok(words(&request(client, "eth_call", json!([call, tag, state_overrides])).await?)[0])
+}
+
+/// Returns code that reverts unless `BaseTime.timestampMs()` equals the first calldata word.
+fn base_time_guard_code() -> String {
+    format!(
+        "0x63{}60e01b600052602060006004600073{}5afa5060005160003514603a5760006000fd5b00",
+        hex::encode(BaseTime::TIMESTAMP_MS_SELECTOR),
+        hex::encode(Predeploys::BASE_TIME),
+    )
 }
 
 /// Asserts that a pending estimate passes `guard` only with `expected` calldata, and that the
@@ -264,18 +284,27 @@ async fn canonical_denim_rpc_responses_include_millisecond_timestamps() -> eyre:
 #[tokio::test]
 async fn pending_forecast_follows_the_block_schedule() -> eyre::Result<()> {
     // Genesis is block 0 at 1s with a two-second legacy interval. Denim activates with block 2
-    // at 5s, after which blocks advance by 200ms.
+    // at 5s, after which blocks advance by 200ms. Its BaseTime implementation is not linked yet.
     let mut genesis = build_test_genesis();
     genesis.config.extra_fields.insert("base".into(), json!({ "denim": 5 }));
+    genesis.alloc.remove(&BaseTime::IMPLEMENTATION_ADDRESS);
+    genesis
+        .alloc
+        .get_mut(&Predeploys::BASE_TIME)
+        .and_then(|proxy| proxy.storage.as_mut())
+        .expect("test genesis should include BaseTime proxy storage")
+        .remove(&B256::from(BaseTime::IMPLEMENTATION_SLOT));
     let harness = TestHarness::builder()
         .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(genesis)))
         .build()
         .await?;
     let client = harness.rpc_client()?;
 
-    // Latest block and its successor's seconds: legacy, first Denim block, same second, and
-    // second rollover.
-    for (latest, seconds) in [(0, 3), (1, 5), (4, 5), (6, 6)] {
+    // Latest block and its successor's seconds and BaseTime: legacy, first Denim block (which
+    // links BaseTime), same second, and second rollover.
+    for (latest, seconds, timestamp_ms) in
+        [(0, 3, None), (1, 5, Some(5_000)), (4, 5, Some(5_600)), (6, 6, Some(6_000))]
+    {
         while harness.latest_block().number < latest {
             let number = harness.latest_block().number + 1;
             harness.build_block_from_transactions(block_transactions(&harness, number)?).await?;
@@ -286,12 +315,26 @@ async fn pending_forecast_follows_the_block_schedule() -> eyre::Result<()> {
             [seconds, latest + 1]
         );
         assert_pending_estimate(&client, TIMESTAMP_GUARD_CODE, seconds, seconds - 1).await?;
-        // Latest keeps its own context.
+        assert_eq!(base_time_ms(&client, "pending", Value::Null).await.ok(), timestamp_ms);
+        if let Some(timestamp_ms) = timestamp_ms {
+            let guard = base_time_guard_code();
+            assert_pending_estimate(&client, &guard, timestamp_ms, timestamp_ms - 200).await?;
+        }
+
+        // Forecasts never persist; latest keeps its own context.
         assert_eq!(
             call_code(&client, ENVIRONMENT_CODE, "latest", Value::Null).await?,
             [harness.latest_block().timestamp, latest]
         );
+        let latest_ms = (latest >= 2).then(|| 5_000 + (latest - 2) * 200);
+        assert_eq!(base_time_ms(&client, "latest", Value::Null).await.ok(), latest_ms);
     }
+
+    // User state overrides take precedence over the forecast.
+    let millis_override = json!({ (Predeploys::BASE_TIME.to_string()): {
+        "stateDiff": { (B256::ZERO.to_string()): B256::from(U256::from(300)) }
+    } });
+    assert_eq!(base_time_ms(&client, "pending", millis_override).await?, 6_300);
 
     // User block overrides take precedence over the forecast.
     let block_override = json!({ "time": "0x9", "number": "0x7" });
@@ -300,10 +343,12 @@ async fn pending_forecast_follows_the_block_schedule() -> eyre::Result<()> {
     // An executed pending block is used as-is rather than advanced again.
     let prepared = harness.prepare_unsafe_block(block_transactions(&harness, 7)?).await?;
     assert_eq!(call_code(&client, ENVIRONMENT_CODE, "pending", Value::Null).await?, [6, 7]);
+    assert_eq!(base_time_ms(&client, "pending", Value::Null).await?, 6_000);
 
     // Once forkchoice consumes it, pending forecasts its successor.
     harness.engine().update_forkchoice(prepared.parent_hash, prepared.new_block_hash, None).await?;
     harness.wait_for_header(prepared.new_block_hash, prepared.new_block_number).await?;
     assert_eq!(call_code(&client, ENVIRONMENT_CODE, "pending", Value::Null).await?, [6, 8]);
+    assert_eq!(base_time_ms(&client, "pending", Value::Null).await?, 6_200);
     Ok(())
 }
