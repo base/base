@@ -14,22 +14,6 @@ all-targets: contracts elfs
 ci: contracts
     cargo build --locked --workspace --all-targets --profile ci
 
-# Builds only affected packages with ci profile
-affected-ci base="main": contracts
-    #!/usr/bin/env bash
-    set -euo pipefail
-    pkg_args_output="$(python3 {{justfile_directory()}}/etc/scripts/local/affected-crates.py {{ base }} --cargo-args)"
-    pkg_args=()
-    while IFS= read -r line; do
-        [ -n "$line" ] && pkg_args+=("$line")
-    done <<< "$pkg_args_output"
-    if [ "${#pkg_args[@]}" -eq 0 ]; then
-        echo "No affected crates to build."
-        exit 0
-    fi
-    echo "Building affected crates:${pkg_args[*]}"
-    cargo build --locked --all-targets --profile ci "${pkg_args[@]}"
-
 elfs:
     just succinct build-elfs
 
