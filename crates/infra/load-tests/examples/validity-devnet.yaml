@@ -13,10 +13,9 @@
 #     crates/infra/load-tests/examples/validity-devnet.yaml
 #
 # For predicates to be ENFORCED (not merely transported), the target devnet must run:
-#   - ingress/mempool node: --enable-experimental-validity-transactions
-#     (also requires transaction forwarding to the builder)
-#   - builder: --builder.enable-experimental-validity-transactions on the flashblocks builder
-# Against a stock devnet without these flags, validity txs are rejected at ingress.
+#   - ingress/mempool node: --enable-tx-forwarding with a --builder-rpc-urls
+#     endpoint targeting the builder
+# Without transaction forwarding to the builder, validity txs are not enforced.
 
 # HTTP submission endpoints. Batches are distributed across all configured URLs.
 transaction_submission_rpcs:

@@ -17,7 +17,7 @@ use base_observability_events::{TransactionEventCapture, TransactionEventType};
 
 fn validity_instance() -> LocalInstanceBuilder {
     LocalInstanceBuilder::new(BuilderConfig::for_tests()).install_ext::<BuilderApiExtension>(
-        BuilderApiExtensionConfig::new(true, DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
+        BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
     )
 }
 

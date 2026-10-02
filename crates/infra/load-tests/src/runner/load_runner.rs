@@ -244,7 +244,7 @@ impl LoadRunner {
             {
                 return Err(BaselineError::Config(format!(
                     "submission endpoint {url} does not serve base_sendRawTransactionValidity; \
-                     start the node with --enable-experimental-validity-transactions"
+                     enable transaction forwarding or a sequencer on the node"
                 )));
             }
             debug!(url = %url, "validity endpoint capability probe passed");

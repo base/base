@@ -7,15 +7,12 @@ pub use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 
 use crate::{
-    NoopMeteringProvider, ShadowValidityBuilderApi, ShadowValidityConfig,
-    ShadowValidityConfigError, SharedMeteringProvider,
+    NoopMeteringProvider, ShadowValidityBuilderApi, ShadowValidityConfig, SharedMeteringProvider,
 };
 
-/// Builder RPC configuration for experimental validity-bearing transactions.
+/// Builder RPC configuration for validity-bearing transactions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuilderApiExtensionConfig {
-    /// Whether the builder accepts non-empty experimental validity metadata.
-    pub accept_experimental_validity_transactions: bool,
     /// Maximum number of validity predicates accepted per transaction.
     pub max_validity_predicates: usize,
     /// Shadow-only validity injection configuration.
@@ -24,31 +21,14 @@ pub struct BuilderApiExtensionConfig {
 
 impl BuilderApiExtensionConfig {
     /// Creates a builder RPC configuration.
-    pub const fn new(
-        accept_experimental_validity_transactions: bool,
-        max_validity_predicates: usize,
-    ) -> Self {
-        Self {
-            accept_experimental_validity_transactions,
-            max_validity_predicates,
-            shadow_validity: ShadowValidityConfig::disabled(),
-        }
+    pub const fn new(max_validity_predicates: usize) -> Self {
+        Self { max_validity_predicates, shadow_validity: ShadowValidityConfig::disabled() }
     }
 
     /// Enables the supplied shadow validity injection configuration.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if injection is enabled while validity extensions are disabled.
-    pub const fn with_shadow_validity(
-        mut self,
-        shadow_validity: ShadowValidityConfig,
-    ) -> Result<Self, ShadowValidityConfigError> {
-        if shadow_validity.is_enabled() && !self.accept_experimental_validity_transactions {
-            return Err(ShadowValidityConfigError::ValidityTransactionsDisabled);
-        }
+    pub const fn with_shadow_validity(mut self, shadow_validity: ShadowValidityConfig) -> Self {
         self.shadow_validity = shadow_validity;
-        Ok(self)
+        self
     }
 
     /// Pairs this validity config with a metering cache for insert.
@@ -67,7 +47,7 @@ impl BuilderApiExtensionConfig {
 
 impl Default for BuilderApiExtensionConfig {
     fn default() -> Self {
-        Self::new(false, DEFAULT_MAX_VALIDITY_PREDICATES)
+        Self::new(DEFAULT_MAX_VALIDITY_PREDICATES)
     }
 }
 
@@ -97,7 +77,6 @@ impl BaseNodeExtension for BuilderApiExtension {
         builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
             let api = ShadowValidityBuilderApi::new(
                 ctx.pool().clone(),
-                ctx.provider().clone(),
                 config,
                 Arc::clone(&metering_provider),
             );
