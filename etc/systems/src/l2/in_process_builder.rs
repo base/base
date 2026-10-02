@@ -458,6 +458,7 @@ fn create_node_config(
         node_config.debug.startup_sync_state_idle = true;
     }
 
+    config.runtime.bound_engine_memory(&mut node_config);
     if let Some(persistence_threshold) = config.persistence_threshold {
         node_config.engine.persistence_threshold = persistence_threshold;
     }
