@@ -215,7 +215,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         privileged: bool,
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
-        let to = B20CreditRecipientStrategy::ExcludingSelf
+        let to = B20CreditRecipientStrategy::ExcludingZeroAndSelf
             .recipient(to, token.token_address())
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         let from = NonZeroAddress::new(caller)
@@ -242,7 +242,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
         // Validate before allowance / transfer-policy-id SLOADs.
-        let to = B20CreditRecipientStrategy::ExcludingSelf
+        let to = B20CreditRecipientStrategy::ExcludingZeroAndSelf
             .recipient(to, token.token_address())
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         let from = NonZeroAddress::new(from)
@@ -312,7 +312,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::Mint)?;
         }
-        B20CreditRecipientStrategy::ExcludingSelf
+        B20CreditRecipientStrategy::ExcludingZeroAndSelf
             .recipient(to, token.token_address())
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         B20Guards::ensure_policy_type(token, B20PolicyType::MintReceiver, to)?;
@@ -380,7 +380,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         B20Guards::ensure_token_role(token, caller, B20TokenRole::Seize)?;
         // A valid recipient guards against a disguised burn or a balance stranded on this token;
         // `from != 0` guards against a disguised mint, matching `transfer_inner`.
-        B20CreditRecipientStrategy::ExcludingSelf
+        B20CreditRecipientStrategy::ExcludingZeroAndSelf
             .recipient(to, token.token_address())
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         if from == Address::ZERO {

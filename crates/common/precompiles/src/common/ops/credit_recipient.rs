@@ -29,12 +29,12 @@ impl B20CreditRecipient {
 /// A frozen rule for choosing a B-20 credit recipient.
 ///
 /// Each variant is a complete predicate. Denim asset and stablecoin logic select
-/// [`Self::ExcludingSelf`]. A different recipient rule is a new variant.
+/// [`Self::ExcludingZeroAndSelf`]. A different recipient rule is a new variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum B20CreditRecipientStrategy {
     /// Rejects the zero address and the token address being credited, so a credit cannot burn by
     /// transfer or sit stranded on the token.
-    ExcludingSelf,
+    ExcludingZeroAndSelf,
 }
 
 impl B20CreditRecipientStrategy {
@@ -46,7 +46,7 @@ impl B20CreditRecipientStrategy {
         token_address: Address,
     ) -> Result<B20CreditRecipient, B20CreditRecipientError> {
         match self {
-            Self::ExcludingSelf => {
+            Self::ExcludingZeroAndSelf => {
                 if address == Address::ZERO || address == token_address {
                     return Err(B20CreditRecipientError);
                 }
@@ -68,7 +68,7 @@ mod tests {
     fn excluding_self_accepts_an_ordinary_address() {
         let address = Address::with_last_byte(1);
         assert_eq!(
-            B20CreditRecipientStrategy::ExcludingSelf
+            B20CreditRecipientStrategy::ExcludingZeroAndSelf
                 .recipient(address, Address::with_last_byte(2))
                 .unwrap()
                 .get(),
@@ -79,7 +79,7 @@ mod tests {
     #[test]
     fn excluding_self_rejects_the_zero_address() {
         assert_eq!(
-            B20CreditRecipientStrategy::ExcludingSelf
+            B20CreditRecipientStrategy::ExcludingZeroAndSelf
                 .recipient(Address::ZERO, Address::with_last_byte(1)),
             Err(B20CreditRecipientError)
         );
@@ -89,7 +89,7 @@ mod tests {
     fn excluding_self_rejects_the_token_address() {
         let token_address = Address::with_last_byte(1);
         assert_eq!(
-            B20CreditRecipientStrategy::ExcludingSelf.recipient(token_address, token_address),
+            B20CreditRecipientStrategy::ExcludingZeroAndSelf.recipient(token_address, token_address),
             Err(B20CreditRecipientError)
         );
     }
@@ -103,7 +103,7 @@ mod tests {
         )
         .0;
         assert_eq!(
-            B20CreditRecipientStrategy::ExcludingSelf
+            B20CreditRecipientStrategy::ExcludingZeroAndSelf
                 .recipient(address, Address::repeat_byte(0x22))
                 .unwrap()
                 .get(),
