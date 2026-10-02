@@ -6,9 +6,17 @@
 summary = "Depot CI setup: required variables and secrets, cache behavior (sccache WebDAV), and which workflows stay on GitHub Actions. Use when changing CI or debugging Depot builds."
 digest = "e66bc30bc0"
 
+[".github/agents/README.md"]
+summary = "Autonomous agents: the registry fields (label, branch prefix, model, min/max open PRs), how the docs-index agent keeps one PR open, required secrets and settings, and safety boundaries."
+digest = "ed8e209f4d"
+
+[".github/agents/docs-index.md"]
+summary = "Instructions for the docs-index autonomous agent: write or re-review summaries in etc/docs-index.toml for the listed docs only; the workflow stamps digests and regenerates llms.txt."
+digest = "9ff8bdd0ee"
+
 ["CLAUDE.md"]
 summary = "Repo coding conventions for agents: crate naming, lib.rs and module layout, Cargo manifest rules, doc and lint policy, tracing style, testing and mocking rules, review expectations."
-digest = "daa45d4733"
+digest = "ab683cfd0d"
 
 ["CONTRIBUTING.md"]
 summary = "Contribution policy: open an issue first, work only on assigned issues, no typo or refactor PRs, dev setup (Rust, just, Foundry), run just ci, PR and bug report expectations."
@@ -672,7 +680,7 @@ digest = "f5f0f3eed8"
 
 ["docs/guides/TESTING.md"]
 summary = "Testing overview: what just ci and just pr run, the four tiers (unit, action, system, fuzz), other checks, the CI pipeline, and guidelines. Use to decide which command or test tier covers your change."
-digest = "261c1fa398"
+digest = "e37bf2d126"
 
 ["docs/guides/UPGRADES.md"]
 summary = "Step-by-step guide to adding a network upgrade (Azul as example): BaseUpgrade enum, RollupConfig activation, timestamps, plus BaseSpecId and precompile routing if EVM rules change, and a checklist."

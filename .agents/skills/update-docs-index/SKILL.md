@@ -1,6 +1,6 @@
 ---
 name: update-docs-index
-description: "Update llms.txt and llms-full.txt, the repo's index of every Markdown doc. Use after adding, moving, deleting, or editing any .md file, or when `just check::docs-index` fails."
+description: "Update llms.txt and llms-full.txt, the repo's index of every Markdown doc, by hand. Normally the docs-index autonomous agent does this; use this skill to reproduce or debug it locally."
 ---
 
 # Update the docs index
@@ -33,4 +33,4 @@ Do not edit the index regions of either file by hand. They are generated from `e
 
 Text between `<!-- LLMS_EXTRAS_START -->` and `<!-- LLMS_EXTRAS_END -->` in `llms-full.txt` is preserved verbatim on every regeneration. Edit it there when the repository layout, common commands, or conventions change. Everything between the `LLMS_AUTOGEN` markers is overwritten.
 
-CI runs `check` (the `metadata-checks` job in `.depot/workflows/ci-core.yml`, and `just check::docs-index` locally).
+No pre-merge check runs `check`. The `docs-index` autonomous agent (`.github/agents/README.md`) runs these same steps on `main` and keeps one pull request open until the index is current. Feature PRs should leave the index alone.

@@ -37,7 +37,7 @@ The full rules are in [CLAUDE.md](CLAUDE.md). The ones most often needed:
 
 ## Finding and maintaining docs
 
-Find a doc through the index below instead of grepping the tree. After adding, moving, deleting, or editing any Markdown doc, follow `.agents/skills/update-docs-index/SKILL.md`. CI fails when the index is stale.
+Find a doc through the index below instead of grepping the tree. Do not edit the index in feature PRs. The docs-index autonomous agent (`.github/agents/README.md`) keeps it current in a single PR.
 
 <!-- LLMS_EXTRAS_END -->
 
@@ -244,6 +244,8 @@ Find a doc through the index below instead of grepping the tree. After adding, m
 ## Tooling, testing and infrastructure
 
 - [.depot/README.md](.depot/README.md): Depot CI setup: required variables and secrets, cache behavior (sccache WebDAV), and which workflows stay on GitHub Actions. Use when changing CI or debugging Depot builds.
+- [.github/agents/README.md](.github/agents/README.md): Autonomous agents: the registry fields (label, branch prefix, model, min/max open PRs), how the docs-index agent keeps one PR open, required secrets and settings, and safety boundaries.
+- [.github/agents/docs-index.md](.github/agents/docs-index.md): Instructions for the docs-index autonomous agent: write or re-review summaries in etc/docs-index.toml for the listed docs only; the workflow stamps digests and regenerates llms.txt.
 - [acceptance/README.md](acceptance/README.md): Acceptance runner that provisions the real Docker Compose devnet and checks RPC behavior from TOML scenarios. Covers CLI workflows, JSON results, reports, and safety limits.
 - [actions/README.md](actions/README.md): Action test framework: simulated rollup actors (L1 miner, batcher, sequencer, verifier) driven step by step against real derivation logic. Use when writing or understanding action tests.
 - [actions/harness/README.md](actions/harness/README.md): base-action-harness design: which parts use production components versus test-only synthetic boundaries, known production gaps, and a roadmap for making action tests more production-like.
