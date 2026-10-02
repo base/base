@@ -101,7 +101,6 @@ pub struct BasePayloadBuilder<
     Pool,
     Client,
     Evm,
-    Txs = (),
     Attrs = BasePayloadBuilderAttributes<TxTy<<Evm as ConfigureEvm>::Primitives>>,
 > {
     /// The type responsible for creating the evm.
@@ -112,19 +111,15 @@ pub struct BasePayloadBuilder<
     pub client: Client,
     /// Settings for the builder, e.g. DA settings.
     pub config: BaseBuilderConfig,
-    /// The type responsible for yielding the best transactions for the payload if mempool
-    /// transactions are allowed.
-    pub best_transactions: Txs,
     /// Marker for the payload attributes type.
     _pd: PhantomData<Attrs>,
 }
 
-impl<Pool, Client, Evm, Txs, Attrs> Clone for BasePayloadBuilder<Pool, Client, Evm, Txs, Attrs>
+impl<Pool, Client, Evm, Attrs> Clone for BasePayloadBuilder<Pool, Client, Evm, Attrs>
 where
     Pool: Clone,
     Client: Clone,
     Evm: ConfigureEvm,
-    Txs: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -132,13 +127,12 @@ where
             pool: self.pool.clone(),
             client: self.client.clone(),
             config: self.config.clone(),
-            best_transactions: self.best_transactions.clone(),
             _pd: PhantomData,
         }
     }
 }
 
-impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, (), Attrs> {
+impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, Attrs> {
     /// `BasePayloadBuilder` constructor.
     ///
     /// Configures the builder with the default settings.
@@ -153,29 +147,11 @@ impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, (), Attrs> 
         evm_config: Evm,
         config: BaseBuilderConfig,
     ) -> Self {
-        Self { pool, client, evm_config, config, best_transactions: (), _pd: PhantomData }
+        Self { pool, client, evm_config, config, _pd: PhantomData }
     }
 }
 
-impl<Pool, Client, Evm, Txs, Attrs> BasePayloadBuilder<Pool, Client, Evm, Txs, Attrs> {
-    /// Configures the type responsible for yielding the transactions that should be included in the
-    /// payload.
-    pub fn with_transactions<T>(
-        self,
-        best_transactions: T,
-    ) -> BasePayloadBuilder<Pool, Client, Evm, T, Attrs> {
-        BasePayloadBuilder {
-            pool: self.pool,
-            client: self.client,
-            evm_config: self.evm_config,
-            best_transactions,
-            config: self.config,
-            _pd: PhantomData,
-        }
-    }
-}
-
-impl<Pool, Client, Evm, N, T, Attrs> BasePayloadBuilder<Pool, Client, Evm, T, Attrs>
+impl<Pool, Client, Evm, N, Attrs> BasePayloadBuilder<Pool, Client, Evm, Attrs>
 where
     Pool: TransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>> + Clone,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades> + BlockReader,
@@ -288,17 +264,15 @@ where
 }
 
 /// Implementation of the [`PayloadBuilder`] trait for [`BasePayloadBuilder`].
-impl<Pool, Client, Evm, N, Txs, Attrs> PayloadBuilder
-    for BasePayloadBuilder<Pool, Client, Evm, Txs, Attrs>
+impl<Pool, Client, Evm, N, Attrs> PayloadBuilder for BasePayloadBuilder<Pool, Client, Evm, Attrs>
 where
     N: PayloadPrimitives,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades> + BlockReader + Clone,
-    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>>,
+    Pool: ParkableTransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>>,
     Evm: ConfigureEvm<
             Primitives = N,
             NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, Client::ChainSpec>,
         >,
-    Txs: BasePayloadTransactions<Pool>,
     Attrs: Attributes<Transaction = N::SignedTx>,
 {
     type Attributes = Attrs;
@@ -308,8 +282,11 @@ where
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
     ) -> Result<BuildOutcome<Self::BuiltPayload>, PayloadBuilderError> {
-        let pool = self.pool.clone();
-        self.build_payload(args, |attrs| self.best_transactions.best_transactions(pool, attrs))
+        self.build_payload(args, |attrs| {
+            ParkableBestPayloadTransactions::new(
+                self.pool.best_transactions_with_attributes_and_parking(attrs),
+            )
+        })
     }
 
     fn on_missing_payload(
@@ -581,56 +558,6 @@ impl<Txs> Builder<'_, Txs> {
             mode,
         )?;
         Ok(witness)
-    }
-}
-
-/// A type that returns the [`PayloadTransactions`] that should be included in the payload.
-pub trait BasePayloadTransactions<Pool>: Clone + Send + Sync + Unpin + 'static
-where
-    Pool: TransactionPool,
-    Pool::Transaction: BasePooledTx,
-{
-    /// Returns an iterator that yields the transaction in the order they should get included in the
-    /// new payload.
-    ///
-    /// Custom iterators without lane-aware parking can use [`NonParkablePayloadTransactions`],
-    /// which treats parking as a lane skip for the current scan.
-    fn best_transactions(
-        &self,
-        pool: Pool,
-        attr: BestTransactionsAttributes,
-    ) -> impl ParkablePayloadTransactions<Transaction = Pool::Transaction>;
-}
-
-impl<Pool> BasePayloadTransactions<Pool> for ()
-where
-    Pool: ParkableTransactionPool,
-    Pool::Transaction: BasePooledTx,
-{
-    fn best_transactions(
-        &self,
-        pool: Pool,
-        attr: BestTransactionsAttributes,
-    ) -> impl ParkablePayloadTransactions<Transaction = Pool::Transaction> {
-        ParkableBestPayloadTransactions::new(
-            pool.best_transactions_with_attributes_and_parking(attr),
-        )
-    }
-}
-
-impl<Pool, F, Transactions> BasePayloadTransactions<Pool> for F
-where
-    Pool: TransactionPool,
-    Pool::Transaction: BasePooledTx,
-    F: Fn(Pool, BestTransactionsAttributes) -> Transactions + Clone + Send + Sync + Unpin + 'static,
-    Transactions: ParkablePayloadTransactions<Transaction = Pool::Transaction>,
-{
-    fn best_transactions(
-        &self,
-        pool: Pool,
-        attr: BestTransactionsAttributes,
-    ) -> impl ParkablePayloadTransactions<Transaction = Pool::Transaction> {
-        self(pool, attr)
     }
 }
 
@@ -1643,10 +1570,10 @@ mod tests {
 
     use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
     use crate::{
-        BasePayloadBuilderAttributes, MeteringProvider, NonParkablePayloadTransactions,
-        NoopMeteringProvider, ParkablePayloadTransactions, ResourceMeteringConfig,
-        ResourceMeteringDimension, ResourceMeteringOperation, ResourceMeteringSchedule,
-        SharedMeteringProvider, config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
+        BasePayloadBuilderAttributes, MeteringProvider, NoopMeteringProvider,
+        ParkablePayloadTransactions, ResourceMeteringConfig, ResourceMeteringDimension,
+        ResourceMeteringOperation, ResourceMeteringSchedule, SharedMeteringProvider,
+        config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
     };
 
     #[derive(Debug)]
@@ -1773,14 +1700,10 @@ mod tests {
         transactions: Txs,
     ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>
     where
-        Txs: PayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
+        Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
     {
         let funded_sender = pool_transaction(0).sender();
-        build_parkable_pool_payload(
-            ctx,
-            NonParkablePayloadTransactions::new(transactions),
-            &[funded_sender],
-        )
+        build_parkable_pool_payload(ctx, transactions, &[funded_sender])
     }
 
     fn build_parkable_pool_payload<Txs>(
@@ -1822,15 +1745,10 @@ mod tests {
         evict: impl FnOnce(Vec<TxHash>),
     ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>
     where
-        Txs: PayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
+        Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
     {
         let funded_sender = pool_transaction(0).sender();
-        build_parkable_pool_payload_with(
-            ctx,
-            NonParkablePayloadTransactions::new(transactions),
-            &[funded_sender],
-            evict,
-        )
+        build_parkable_pool_payload_with(ctx, transactions, &[funded_sender], evict)
     }
 
     fn build_parkable_pool_payload_with<Txs>(
@@ -1903,16 +1821,26 @@ mod tests {
         /// Whether promoted transactions are yielded before the remaining queued ones, as when
         /// they outbid them.
         promoted_first: bool,
+        invalid: Arc<Mutex<Vec<(Address, u64)>>>,
     }
 
     impl TestParkableTransactions {
         fn new(transactions: Vec<BasePooledTransaction>) -> Self {
+            Self::recording(transactions, Arc::default())
+        }
+
+        /// Records every `(sender, nonce)` the builder marks invalid into `invalid`.
+        fn recording(
+            transactions: Vec<BasePooledTransaction>,
+            invalid: Arc<Mutex<Vec<(Address, u64)>>>,
+        ) -> Self {
             Self {
                 queued: transactions.into(),
                 ready: VecDeque::new(),
                 parked: HashMap::default(),
                 current: None,
                 promoted_first: true,
+                invalid,
             }
         }
 
@@ -1937,8 +1865,9 @@ mod tests {
             Some(transaction)
         }
 
-        fn mark_invalid(&mut self, _sender: Address, _nonce: u64) {
+        fn mark_invalid(&mut self, sender: Address, nonce: u64) {
             self.current = None;
+            self.invalid.lock().unwrap().push((sender, nonce));
         }
     }
 
@@ -1967,7 +1896,7 @@ mod tests {
     }
 
     struct FinalizeAfterFirstTransaction {
-        transactions: std::vec::IntoIter<BasePooledTransaction>,
+        transactions: TestParkableTransactions,
         calls: usize,
         // Models the resolver retaining its clone until the finalized payload is returned.
         cancel: ManuallyDrop<CancelOnDrop>,
@@ -1981,10 +1910,30 @@ mod tests {
             if self.calls == 2 {
                 self.cancel.request_finalization();
             }
-            self.transactions.next()
+            self.transactions.next(())
         }
 
-        fn mark_invalid(&mut self, _sender: Address, _nonce: u64) {}
+        fn mark_invalid(&mut self, sender: Address, nonce: u64) {
+            self.transactions.mark_invalid(sender, nonce);
+        }
+    }
+
+    impl ParkablePayloadTransactions for FinalizeAfterFirstTransaction {
+        fn park_current(&mut self) {
+            self.transactions.park_current();
+        }
+
+        fn mark_current_committed(&mut self) {
+            self.transactions.mark_current_committed();
+        }
+
+        fn promote(&mut self, transaction_hash: B256) -> bool {
+            self.transactions.promote(transaction_hash)
+        }
+
+        fn discard_parked(&mut self, transaction_hash: B256) -> bool {
+            self.transactions.discard_parked(transaction_hash)
+        }
     }
 
     #[test]
@@ -1992,7 +1941,7 @@ mod tests {
         let ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
         ctx.cancel.request_finalization();
         let transactions = FinalizeAfterFirstTransaction {
-            transactions: vec![pool_transaction(0)].into_iter(),
+            transactions: TestParkableTransactions::new(vec![pool_transaction(0)]),
             calls: 0,
             cancel: ManuallyDrop::new(ctx.cancel.clone()),
         };
@@ -2007,7 +1956,10 @@ mod tests {
     fn denim_finalization_preserves_completed_pool_transactions() {
         let ctx = pool_payload_context(DENIM_TIMESTAMP);
         let transactions = FinalizeAfterFirstTransaction {
-            transactions: vec![pool_transaction(0), pool_transaction(1)].into_iter(),
+            transactions: TestParkableTransactions::new(vec![
+                pool_transaction(0),
+                pool_transaction(1),
+            ]),
             calls: 0,
             cancel: ManuallyDrop::new(ctx.cancel.clone()),
         };
@@ -2268,23 +2220,6 @@ mod tests {
         }
     }
 
-    struct RecordingTransactions {
-        transactions: std::vec::IntoIter<BasePooledTransaction>,
-        invalid: Arc<Mutex<Vec<(Address, u64)>>>,
-    }
-
-    impl PayloadTransactions for RecordingTransactions {
-        type Transaction = BasePooledTransaction;
-
-        fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
-            self.transactions.next()
-        }
-
-        fn mark_invalid(&mut self, sender: Address, nonce: u64) {
-            self.invalid.lock().unwrap().push((sender, nonce));
-        }
-    }
-
     fn cpu_schedule(
         block_limit: u64,
         transaction_limit: Option<u64>,
@@ -2386,7 +2321,7 @@ mod tests {
     ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>> {
         let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
         ctx.builder_config.resource_metering = resource_metering;
-        let transactions = RecordingTransactions { transactions: txs.into_iter(), invalid };
+        let transactions = TestParkableTransactions::recording(txs, invalid);
         build_pool_payload_with(ctx, transactions, move |hashes| {
             evicted.lock().unwrap().extend(hashes);
         })
@@ -2543,7 +2478,7 @@ mod tests {
         evicted: Arc<Mutex<Vec<TxHash>>>,
         invalid: Arc<Mutex<Vec<(Address, u64)>>>,
     ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>> {
-        let transactions = RecordingTransactions { transactions: vec![tx].into_iter(), invalid };
+        let transactions = TestParkableTransactions::recording(vec![tx], invalid);
         build_pool_payload_with(ctx, transactions, move |hashes| {
             evicted.lock().unwrap().extend(hashes);
         })
@@ -2601,8 +2536,7 @@ mod tests {
 
         let evicted = Arc::new(Mutex::new(Vec::new()));
         let invalid = Arc::new(Mutex::new(Vec::new()));
-        let transactions =
-            RecordingTransactions { transactions: vec![first, second].into_iter(), invalid };
+        let transactions = TestParkableTransactions::recording(vec![first, second], invalid);
         let outcome = build_pool_payload_with(ctx, transactions, {
             let evicted = Arc::clone(&evicted);
             move |hashes| {
@@ -2750,10 +2684,7 @@ mod tests {
 
         let evicted = Arc::new(Mutex::new(Vec::new()));
         let invalid = Arc::new(Mutex::new(Vec::new()));
-        let transactions = RecordingTransactions {
-            transactions: vec![mempool].into_iter(),
-            invalid: Arc::clone(&invalid),
-        };
+        let transactions = TestParkableTransactions::recording(vec![mempool], Arc::clone(&invalid));
         let outcome = build_pool_payload_with(ctx, transactions, {
             let evicted = Arc::clone(&evicted);
             move |hashes| {
@@ -2801,13 +2732,8 @@ mod tests {
             .unwrap_or(0);
 
         let invalid = Arc::new(Mutex::new(Vec::new()));
-        let transactions = RecordingTransactions { transactions: vec![tx].into_iter(), invalid };
-        ctx.execute_best_transactions(
-            &mut info,
-            &mut builder,
-            NonParkablePayloadTransactions::new(transactions),
-        )
-        .expect("mempool scan");
+        let transactions = TestParkableTransactions::recording(vec![tx], invalid);
+        ctx.execute_best_transactions(&mut info, &mut builder, transactions).expect("mempool scan");
         let nonce_after = builder
             .evm_mut()
             .db_mut()
