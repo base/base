@@ -112,9 +112,18 @@ pub(crate) async fn bind_rpc_server(
     if !config.ws_enabled() {
         server_config = server_config.http_only();
     }
+    // Forwarding to this server's own address would bounce an unknown method back to itself
+    // until a limit trips, so such an upstream is ignored.
     let forward = config
         .forward_unmatched_to
         .as_ref()
+        .filter(|upstream| {
+            let is_self = config.forwards_to_self(upstream);
+            if is_self {
+                warn!(target: "rpc", upstream = %upstream, "ignoring RPC forward upstream that points at this server");
+            }
+            !is_self
+        })
         .map(|upstream| ForwardUnmatchedLayer::new(upstream, &module, config.http_timeout))
         .transpose()
         .map_err(|err| std::io::Error::other(format!("invalid upstream RPC endpoint: {err}")))?;

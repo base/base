@@ -31,7 +31,7 @@ pub struct FollowNodeOverrides {
     /// node inserts payloads over IPC instead of a network engine endpoint.
     pub l2_engine_rpc: Option<Url>,
     /// Upstream JSON-RPC endpoint that receives every method the follow RPC server does not
-    /// serve itself.
+    /// serve itself, taking precedence over `--rpc.forward-upstream`.
     pub rpc_forward_upstream: Option<Url>,
 }
 
@@ -42,7 +42,7 @@ impl FollowNodeOverrides {
     }
 
     /// Forwards RPC methods the follow server does not serve to the embedded execution node's
-    /// HTTP endpoint, so one endpoint serves both layers.
+    /// HTTP endpoint. `None` leaves the configured `--rpc.forward-upstream` in place.
     pub fn with_rpc_forward_upstream(mut self, upstream: Option<Url>) -> Self {
         self.rpc_forward_upstream = upstream;
         self
@@ -331,7 +331,11 @@ impl ConsensusFollowNodeArgs {
         let l2_source = RemoteL2Client::new(self.config.source_l2_rpc.clone());
         let mut rpc_builder = Option::<RpcBuilder>::from(self.config.rpc_flags.clone());
         if let Some(rpc_builder) = rpc_builder.as_mut() {
-            rpc_builder.forward_unmatched_to = overrides.rpc_forward_upstream.clone();
+            rpc_builder.forward_unmatched_to = overrides
+                .rpc_forward_upstream
+                .clone()
+                .or_else(|| rpc_builder.forward_unmatched_to.take())
+                .or_else(|| Some(self.config.l2_rpc_url.clone()));
         }
 
         Ok(FollowNode::new(FollowNodeConfig {

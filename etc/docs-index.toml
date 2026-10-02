@@ -56,7 +56,7 @@ digest = "6d0de36199"
 
 ["bin/base/README.md"]
 summary = "Unified base node binary: OTLP tracing, the single RPC endpoint forwarding execution methods, the batcher, rpc, sequencer and update subcommands, their flags and env vars, and chain selection."
-digest = "2a18b2cc93"
+digest = "84257eba84"
 
 ["bin/basectl/README.md"]
 summary = "basectl operator console reference: global options, TUI and scriptable commands (block, sync-status, p2p, txpool, conductor, sequencer, batcher, doctor, proofs), JSON output and examples."
