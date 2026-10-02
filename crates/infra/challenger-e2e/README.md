@@ -155,44 +155,31 @@ first, which current deployments do not: B is not a registered TEE proposer, so
 Path 4 takes the ZK-fallback branch and the run ends there. This scenario stages
 the Path 3 shape directly instead of waiting for it.
 
-Game B is given a real SNARK of its canonical roots as in step 5, is patched as
-in step 6, and A then drops B's TEE proof through the game's own
-`nullify(TEE, ...)`. That order is forced, not chosen: `nullify` refutes a
-checkpoint by proving a root that *differs* from the stored one, and
-`_checkIntermediateRoot` reverts with `IntermediateRootSameAsProposed()` when
-they match — so the root has to be corrupted first. The game is therefore an
-invalid `InvalidDualProposal` for one Anvil write plus one transaction, with no
-proof request in between.
+Game B is given a real SNARK of its canonical roots as in step 5. A then drops
+B's TEE proof through the game's own `nullify(TEE, ...)` **while every root is
+still canonical**, waits out every challenger scan that could have seen both
+proofs, and only then patches a root as in step 6. `nullify` only requires the
+proven root to differ from the stored one (`_checkIntermediateRoot`), and the
+TEE verifier is mocked for that call, so it proves a fixed placeholder root at
+index 0. Until the patch B is a valid ZK-only game, which the challenger leaves
+alone.
 
-That window is measured rather than assumed shut:
-`invalid_dual_proposal_detected_total` is read either side of staging. If it
-moved, the challenger may have a Path 4 proof in flight, and its later ZK
-nullification would clear the game while satisfying every assertion below — a
-green run that never reached `InvalidZkProposal`. But a challenger that scanned in
-there did nothing wrong; it classified exactly the shape it was shown. So the
-Path 3 claim is **abandoned with a warning**, not failed — asserting would turn a
-setup race into a recurring false failure on a job that runs every deploy. Re-run
-on a fresh fork.
+The wait is what makes the scenario deterministic. A challenger step classifies
+every game from its proofs in one pass, then reads each candidate's roots when it
+gets to it — over a minute later on zeronet's factory. A step that classified B
+with both proofs and read its roots after the patch would dispute it as
+`InvalidDualProposal` (Path 4), clearing the ZK proof while satisfying every
+state assertion below without `InvalidZkProposal` ever being reached; no order of
+the two writes avoids that on its own. So after the TEE nullify the driver waits
+for `games_scanned_total` to advance twice: the second advance comes from a pass
+that began after the step in flight at the nullify had finished. Earlier versions
+assumed the exposure was one Anvil write wide and abandoned the Path 3 claim when
+it was hit, which let a `path3` run go green without testing Path 3. Now
+`invalid_dual_proposal_detected_total` moving during Path 3 **fails** the run.
 
-The counter is compared **after** the dispute cycle finishes, not at staging
-time. The driver increments it only once `validate_game` returns — a round trip
-to the L2 RPC — so at staging time a scan that classified the game may not have
-counted yet, and no amount of waiting there distinguishes "did not see it" from
-"has not finished looking". (`games_scanned_total` cannot stand in for that
-wait: the scanner advances it by the size of the whole scanned range, so one
-scan of two games already moves it by two.)
-
-Waiting for the ZK proof to go is therefore unconditional, and a timeout fails
-the run — the game is invalid, and an E2E that reports success over an
-undisputed invalid game is worse than none. Only once the proof is gone is the
-counter compared to decide whether the *claim* can be made.
-
-On the raced path the one-dispute bound is also skipped. A challenger that saw
-the dual-proof shape may legitimately have tried a TEE nullification — which
-fails on its unregistered key — and then a ZK fallback, and both are counted at
-submission. Two submissions is the right answer to what it was shown. The
-collateral-damage check runs either way: a staging race is no licence to touch
-games this scenario never corrupted.
+Waiting for the ZK proof to go is unconditional, and a timeout fails the run —
+the game is invalid, and an E2E that reports success over an undisputed invalid
+game is worse than none.
 
 The end state is ambiguous about how it was reached, so the path is confirmed
 positively too: `invalid_zk_proposal_detected_total` must have advanced.
@@ -247,7 +234,7 @@ answerable without reading the whole stream. Note the prefix: the driver's
 |---|---|
 | Every failed run | `@data.message.fields.verdict:fail` |
 | Every Path 3 outcome, all runs | `@data.message.fields.phase:path3` |
-| Coverage lost to a race or a skip | `@data.message.fields.verdict:skip` |
+| A phase that ran but was not asserted | `@data.message.fields.verdict:skip` |
 | What one run actually asserted | `"scenario complete"` — has `phases_asserted` |
 | Which scenario a run was | `"starting scenario"` — has `scenario`, both keys, the timeouts |
 | A named contract revert | `"reverted with"` |
@@ -260,9 +247,9 @@ filter on them.
 Two fields worth knowing:
 
 - **`phases_asserted`** on `scenario complete` is what the run *claimed to
-  cover*, which is not the same as which logs appeared. Path 3 is omitted when a
-  staging race skipped the claim, so the absence of a `path3` phase is no longer
-  ambiguous between "not in this scenario" and "skipped".
+  cover*, which is not the same as which logs appeared. For `all` it is built
+  from what ran: `path2-skip` only when Path 1 landed as a ZK challenge, `path3`
+  only when Path 4 took its TEE-first branch.
 - **`branch`** on Path 4 says `tee-first`, `zk-fallback` or `both-cleared`.
   Today it is always `zk-fallback` on zeronet, because the throwaway key is not
   a registered TEE proposer; a `tee-first` run is the only one that reaches
