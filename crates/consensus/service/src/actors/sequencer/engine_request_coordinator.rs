@@ -23,8 +23,8 @@ use super::{CanonicalUnsafeCatchup, Conductor, SequencerEngineState, ShadowRecon
 use crate::{
     BuildRequest, EngineActorRequest, EngineClientError, EngineDerivationClient, EngineError,
     EngineProcessor, EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest, Metrics,
-    ReconcileShadowRequest, ResetOrigin, ResetReason, ResetRequest, ResetRequestOutcome,
-    actors::engine::ResetOutcome,
+    NodeOperatingMode, ReconcileShadowRequest, ResetOrigin, ResetReason, ResetRequest,
+    ResetRequestOutcome, actors::engine::ResetOutcome,
 };
 
 const MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP: u64 = 300;
@@ -109,15 +109,15 @@ where
     EngineClient_: EngineClient,
     DerivationClient: EngineDerivationClient,
 {
-    /// Creates a request handler with optional shadow request routing.
+    /// Creates a request handler for the given operating mode.
     pub fn new(
         processor: EngineProcessor<EngineClient_, DerivationClient>,
-        shadow_mode: bool,
+        mode: NodeOperatingMode,
         conductor: Option<Arc<dyn Conductor>>,
         sequencer_stopped: bool,
         unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
     ) -> Self {
-        let sequencer_state = if shadow_mode {
+        let sequencer_state = if mode.is_shadow_sequencer() {
             SequencerEngineState::CatchingUp {
                 shadow: true,
                 catchup: CanonicalUnsafeCatchup::default(),
@@ -130,15 +130,9 @@ where
             sequencer_state,
             conductor,
             sequencer_stopped,
-            isolated: false,
+            isolated: mode.is_isolated(),
             unsafe_head_tx,
         }
-    }
-
-    /// Configures the coordinator as an isolated sequencer.
-    pub const fn with_isolated(mut self, isolated: bool) -> Self {
-        self.isolated = isolated;
-        self
     }
 
     /// Returns the state entered once a non-shadow sequencer has caught up to the canonical tip.
@@ -844,7 +838,7 @@ mod tests {
     use super::{BootstrapRole, SequencerEngineRequestCoordinator, SequencerEngineState};
     use crate::{
         CanonicalUnsafeCatchup, Conductor, ConductorError, EngineProcessor, MockConductor,
-        MockEngineDerivationClient, ShadowReconciliationGate,
+        MockEngineDerivationClient, NodeOperatingMode, ShadowReconciliationGate,
     };
 
     fn coordinator(
@@ -852,6 +846,11 @@ mod tests {
         stopped: bool,
         conductor: Option<Arc<dyn Conductor>>,
     ) -> SequencerEngineRequestCoordinator<MockEngineClient, MockEngineDerivationClient> {
+        let mode = if shadow {
+            NodeOperatingMode::ShadowSequencer { blocks_per_cycle: std::num::NonZeroU64::MIN }
+        } else {
+            NodeOperatingMode::Sequencer
+        };
         let (state_tx, _) = watch::channel(EngineState::default());
         let (queue_tx, _) = watch::channel(0usize);
         let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
@@ -862,13 +861,7 @@ mod tests {
             engine,
         );
         let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
-        SequencerEngineRequestCoordinator::new(
-            processor,
-            shadow,
-            conductor,
-            stopped,
-            unsafe_head_tx,
-        )
+        SequencerEngineRequestCoordinator::new(processor, mode, conductor, stopped, unsafe_head_tx)
     }
 
     #[tokio::test]
@@ -967,8 +960,13 @@ mod tests {
             Engine::new(state, state_tx, queue_tx),
         );
         let (head_tx, _) = watch::channel(head);
+        let mode = if shadow {
+            NodeOperatingMode::ShadowSequencer { blocks_per_cycle: std::num::NonZeroU64::MIN }
+        } else {
+            NodeOperatingMode::Sequencer
+        };
         let mut coordinator =
-            SequencerEngineRequestCoordinator::new(processor, shadow, None, true, head_tx);
+            SequencerEngineRequestCoordinator::new(processor, mode, None, true, head_tx);
         let mut catchup = CanonicalUnsafeCatchup::default();
         for &(number, hash) in observations {
             catchup.buffer_payload(BaseExecutionPayloadEnvelope {
@@ -1024,7 +1022,23 @@ mod tests {
 
     #[tokio::test]
     async fn isolated_sequencer_bootstraps_as_follower() {
-        let coordinator = coordinator(false, false, None).with_isolated(true);
+        let (state_tx, _) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let processor = EngineProcessor::new(
+            Arc::new(test_engine_client_builder().build()),
+            Arc::new(RollupConfig::default()),
+            MockEngineDerivationClient::new(),
+            engine,
+        );
+        let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
+        let coordinator = SequencerEngineRequestCoordinator::new(
+            processor,
+            NodeOperatingMode::IsolatedSequencer,
+            None,
+            false,
+            unsafe_head_tx,
+        );
         assert_eq!(coordinator.resolve_bootstrap_role().await, BootstrapRole::ConductorFollower);
     }
 
@@ -1057,9 +1071,13 @@ mod tests {
             Engine::new(state, state_tx, queue_tx),
         );
         let (head_tx, _) = watch::channel(head);
-        let mut coordinator =
-            SequencerEngineRequestCoordinator::new(processor, false, None, true, head_tx)
-                .with_isolated(true);
+        let mut coordinator = SequencerEngineRequestCoordinator::new(
+            processor,
+            NodeOperatingMode::IsolatedSequencer,
+            None,
+            true,
+            head_tx,
+        );
         let mut catchup = CanonicalUnsafeCatchup::default();
         for &(number, hash) in observations {
             catchup.buffer_payload(BaseExecutionPayloadEnvelope {
