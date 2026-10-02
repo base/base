@@ -73,6 +73,18 @@ impl DevnetBlockInterval {
         }
     }
 
+    /// Returns the number of unpersisted blocks allowed before Engine API intake is stalled.
+    ///
+    /// Keeps Reth's default 16-block persistence-backpressure window equivalent in wall-clock
+    /// time. At a 200ms cadence, 160 blocks provide the same 32 seconds of persistence headroom
+    /// as 16 two-second blocks instead of stalling Engine API intake after only 3.2 seconds.
+    pub const fn persistence_backpressure_threshold(self) -> u64 {
+        match self {
+            Self::TwoSeconds => 16,
+            Self::TwoHundredMilliseconds => 160,
+        }
+    }
+
     /// Returns the default block gas limit for snapshot-backed development networks.
     ///
     /// Both cadences expose five billion gas per second of theoretical block capacity.

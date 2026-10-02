@@ -26,6 +26,11 @@ pub use in_process_standalone_consensus::{
     InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig,
 };
 
+mod light_stack;
+pub use light_stack::{
+    LightChain, LightFeeParams, LightGenesisFiles, LightL2Stack, LightL2StackConfig,
+};
+
 mod snapshot_boundary;
 pub use snapshot_boundary::SnapshotBoundary;
 

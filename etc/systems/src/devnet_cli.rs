@@ -18,8 +18,9 @@ use url::Url;
 
 use crate::{
     DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund, DevnetSnapshotHead,
-    InProcessNodeRuntime, SequencerStack, SequencerStackConfig, SharedL1, SnapshotChainConfig,
-    SnapshotL2Stack, SystemTestStackBuilder,
+    InProcessNodeRuntime, LightGenesisFiles, LightL2Stack, LightL2StackConfig, SequencerStack,
+    SequencerStackConfig, SharedL1, SnapshotChainConfig, SnapshotL2Stack, SystemTestPorts,
+    SystemTestStackBuilder,
 };
 
 /// Local Base development network launcher.
@@ -38,6 +39,8 @@ pub enum DevnetCommand {
     Fresh(Box<FreshArgs>),
     /// Continue Base snapshot datadirs without an L1.
     Snapshot(SnapshotArgs),
+    /// Run a fresh-genesis builder and standalone sequencer without an L1 or Docker.
+    Light(LightArgs),
     /// Start a CI-scoped shared L1 and write its runtime manifest.
     SharedL1(SharedL1Args),
 }
@@ -226,12 +229,81 @@ pub struct SnapshotRuntime {
     pub client_rpc_url: String,
 }
 
+/// Arguments for an L1-free fresh-genesis light development network.
+#[derive(Debug, Args)]
+pub struct LightArgs {
+    /// Builder execution datadir, which must not hold a database. A temporary directory removed
+    /// on exit is used when omitted.
+    #[arg(long, env = "BASE_LIGHT_DATADIR")]
+    pub datadir: Option<PathBuf>,
+    /// Bind the stable developer ports instead of allocating free ports.
+    #[arg(long)]
+    pub stable_ports: bool,
+    /// Interval between locally produced blocks.
+    #[arg(long, value_enum, default_value_t)]
+    pub block_interval: DevnetBlockInterval,
+    /// Block gas limit of the generated chain. Defaults to 60 Mgas for 2s blocks and 6 Mgas for
+    /// 200ms blocks. Ignored for a custom `--l2-genesis`, whose gas limit is used.
+    #[arg(long, conflicts_with = "l2_genesis")]
+    pub block_gas_limit: Option<NonZeroU64>,
+    /// Account to mint ETH to in the first block, in addition to the prefunded Anvil accounts.
+    #[arg(long)]
+    pub prefund_address: Option<Address>,
+    /// Amount of wei minted to `--prefund-address`.
+    #[arg(long, default_value_t = 1_000_000_000_000_000_000_000_u128)]
+    pub prefund_amount: u128,
+    /// Fresh L2 genesis JSON replacing the generated chain. Must be stamped within the last hour.
+    #[arg(long, requires = "rollup_config")]
+    pub l2_genesis: Option<PathBuf>,
+    /// Rollup configuration JSON matching `--l2-genesis`.
+    #[arg(long, requires = "l2_genesis")]
+    pub rollup_config: Option<PathBuf>,
+    /// Pending/basefee/queued transaction count limit.
+    #[arg(long, default_value_t = 50_000)]
+    pub txpool_max_transactions: usize,
+    /// Pending/basefee/queued transaction size limit in megabytes.
+    #[arg(long, default_value_t = 256)]
+    pub txpool_max_size_mb: usize,
+    /// Maximum number of transaction slots retained per sender.
+    #[arg(long, default_value_t = 1_024)]
+    pub txpool_max_account_slots: usize,
+    /// Machine-readable endpoint output, written once the chain is advancing.
+    #[arg(long)]
+    pub runtime_file: Option<PathBuf>,
+}
+
+/// Machine-readable state emitted by the light devnet launcher.
+#[derive(Debug, Serialize)]
+pub struct LightRuntime {
+    /// Current launcher state.
+    pub status: &'static str,
+    /// L2 chain ID.
+    pub chain_id: u64,
+    /// L2 genesis block hash.
+    pub genesis_hash: B256,
+    /// Configured interval between local blocks, in milliseconds.
+    pub block_interval_ms: u64,
+    /// Configured block gas limit.
+    pub block_gas_limit: u64,
+    /// Builder execution JSON-RPC URL.
+    pub builder_rpc_url: String,
+    /// Builder execution WebSocket URL.
+    pub builder_ws_url: String,
+    /// Builder Flashblocks WebSocket URL.
+    pub builder_flashblocks_url: String,
+    /// Builder Prometheus metrics URL.
+    pub builder_metrics_url: String,
+    /// Builder execution datadir.
+    pub datadir: PathBuf,
+}
+
 impl DevnetCli {
     /// Runs the selected development network until interrupted.
     pub async fn run(self) -> Result<()> {
         match self.command {
             DevnetCommand::Fresh(args) => (*args).run().await,
             DevnetCommand::Snapshot(args) => args.run().await,
+            DevnetCommand::Light(args) => args.run().await,
             DevnetCommand::SharedL1(args) => args.run().await,
         }
     }
@@ -433,6 +505,83 @@ impl SnapshotRuntime {
     }
 }
 
+impl LightArgs {
+    /// Returns the stack configuration selected by these arguments.
+    pub fn stack_config(&self) -> LightL2StackConfig {
+        let genesis_files = self
+            .l2_genesis
+            .clone()
+            .zip(self.rollup_config.clone())
+            .map(|(l2_genesis, rollup_config)| LightGenesisFiles { l2_genesis, rollup_config });
+        LightL2StackConfig {
+            runtime: InProcessNodeRuntime::Host,
+            block_interval: self.block_interval,
+            block_gas_limit: self.block_gas_limit.map(NonZeroU64::get),
+            datadir: self.datadir.clone(),
+            ports: self.stable_ports.then(SystemTestPorts::standard),
+            prefund: self
+                .prefund_address
+                .map(|address| DevnetPrefund { address, amount: self.prefund_amount }),
+            genesis_files,
+            txpool_max_transactions: self.txpool_max_transactions,
+            txpool_max_size_mb: self.txpool_max_size_mb,
+            txpool_max_account_slots: self.txpool_max_account_slots,
+        }
+    }
+
+    /// Starts the light stack, writes its runtime manifest, and waits for shutdown.
+    pub async fn run(self) -> Result<()> {
+        let mut stack = LightL2Stack::start(self.stack_config()).await?;
+        let runtime = LightRuntime::ready(&stack)?;
+        if let Some(path) = &self.runtime_file {
+            let encoded = serde_json::to_vec_pretty(&runtime)?;
+            std::fs::write(path, encoded)
+                .wrap_err_with(|| format!("failed to write runtime manifest {}", path.display()))?;
+        }
+
+        println!("light devnet ready (no L1: no safe or finalized head, no batcher)");
+        println!("chain id:    {}", runtime.chain_id);
+        println!("builder RPC: {}", runtime.builder_rpc_url);
+        println!("builder WS:  {}", runtime.builder_ws_url);
+        println!("flashblocks: {}", runtime.builder_flashblocks_url);
+        println!(
+            "block:       every {}ms, gas limit {}",
+            runtime.block_interval_ms, runtime.block_gas_limit
+        );
+        println!("datadir:     {}", runtime.datadir.display());
+        if let Some(path) = &self.runtime_file {
+            println!("runtime:     {}", path.display());
+        }
+        println!("press Ctrl-C to stop");
+        tokio::select! {
+            result = DevnetCli::shutdown_signal() => result?,
+            error = stack.next_error() => {
+                let _ = stack.shutdown().await;
+                eyre::bail!("standalone consensus failed: {error}");
+            }
+        }
+        stack.shutdown().await
+    }
+}
+
+impl LightRuntime {
+    /// Captures the ready endpoints from a running light stack.
+    pub fn ready(stack: &LightL2Stack) -> Result<Self> {
+        Ok(Self {
+            status: "ready",
+            chain_id: stack.chain_id(),
+            genesis_hash: stack.genesis_hash(),
+            block_interval_ms: stack.block_interval().duration().as_millis() as u64,
+            block_gas_limit: stack.block_gas_limit(),
+            builder_rpc_url: stack.builder_rpc_url()?.to_string(),
+            builder_ws_url: stack.builder_ws_url()?.to_string(),
+            builder_flashblocks_url: stack.builder_flashblocks_url()?.to_string(),
+            builder_metrics_url: stack.builder_metrics_url()?.to_string(),
+            datadir: stack.datadir().to_path_buf(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::num::NonZeroU64;
@@ -492,6 +641,99 @@ mod tests {
         assert!(args.prefund_address.is_some());
         assert_eq!(args.block_interval, DevnetBlockInterval::TwoHundredMilliseconds);
         assert!(args.block_gas_limit.is_none());
+    }
+
+    #[test]
+    fn parses_light_command_defaults() {
+        let cli = DevnetCli::try_parse_from(["base-devnet", "light"]).unwrap();
+
+        let DevnetCommand::Light(args) = cli.command else { panic!("expected light command") };
+        let config = args.stack_config();
+        assert!(args.datadir.is_none());
+        assert_eq!(config.block_interval, DevnetBlockInterval::TwoSeconds);
+        assert!(config.ports.is_none());
+        assert!(config.prefund.is_none());
+        assert!(config.genesis_files.is_none());
+        assert!(config.block_gas_limit.is_none());
+        assert!(args.runtime_file.is_none());
+    }
+
+    #[test]
+    fn parses_light_command() {
+        let cli = DevnetCli::try_parse_from([
+            "base-devnet",
+            "light",
+            "--datadir",
+            "/tmp/light",
+            "--block-interval",
+            "200ms",
+            "--stable-ports",
+            "--block-gas-limit",
+            "90000000",
+            "--prefund-address",
+            "0x0000000000000000000000000000000000000001",
+            "--prefund-amount",
+            "7",
+            "--runtime-file",
+            "/tmp/light.json",
+            "--txpool-max-account-slots",
+            "8",
+        ])
+        .unwrap();
+
+        let DevnetCommand::Light(args) = cli.command else { panic!("expected light command") };
+        let config = args.stack_config();
+        assert_eq!(config.datadir.as_deref().and_then(|path| path.to_str()), Some("/tmp/light"));
+        assert_eq!(config.block_interval, DevnetBlockInterval::TwoHundredMilliseconds);
+        assert_eq!(config.ports.unwrap().l2_builder_http, 7545);
+        assert_eq!(config.block_gas_limit, Some(90_000_000));
+        assert_eq!(config.prefund.unwrap().amount, 7);
+        assert_eq!(config.txpool_max_account_slots, 8);
+        assert_eq!(
+            args.runtime_file.as_deref().and_then(|path| path.to_str()),
+            Some("/tmp/light.json")
+        );
+    }
+
+    #[test]
+    fn light_genesis_files_must_be_paired() {
+        assert!(
+            DevnetCli::try_parse_from(["base-devnet", "light", "--l2-genesis", "/tmp/g.json"])
+                .is_err()
+        );
+        assert!(
+            DevnetCli::try_parse_from(["base-devnet", "light", "--rollup-config", "/tmp/r.json"])
+                .is_err()
+        );
+
+        let cli = DevnetCli::try_parse_from([
+            "base-devnet",
+            "light",
+            "--l2-genesis",
+            "/tmp/g.json",
+            "--rollup-config",
+            "/tmp/r.json",
+        ])
+        .unwrap();
+        let DevnetCommand::Light(args) = cli.command else { panic!("expected light command") };
+        assert!(args.stack_config().genesis_files.is_some());
+    }
+
+    #[test]
+    fn light_rejects_gas_limit_with_custom_genesis() {
+        assert!(
+            DevnetCli::try_parse_from([
+                "base-devnet",
+                "light",
+                "--l2-genesis",
+                "/tmp/g.json",
+                "--rollup-config",
+                "/tmp/r.json",
+                "--block-gas-limit",
+                "1",
+            ])
+            .is_err()
+        );
     }
 
     #[test]
