@@ -76,8 +76,8 @@ use reth_evm::{ConfigureEvm, TxEnvFor};
 use reth_provider::CanonStateSubscriptions;
 use reth_rpc::eth::EthFilter;
 use reth_rpc_eth_api::{
-    EthApiTypes, EthFilterApiServer, FromEthApiError, RpcBlock, RpcReceipt, RpcTransaction,
-    helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi, LoadPendingBlock},
+    EthApiTypes, EthFilterApiServer, RpcBlock, RpcReceipt, RpcTransaction,
+    helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi},
 };
 use reth_rpc_eth_types::EthApiError;
 use revm::context::TxEnv;
@@ -191,11 +191,9 @@ impl<Eth: EthApiTypes, FB> EthApiExt<Eth, FB> {
 #[async_trait]
 impl<Eth, FB> EthApiOverrideServer for EthApiExt<Eth, FB>
 where
-    Eth: FullEthApi<NetworkTypes = BaseRpcTypes> + LoadPendingBlock + Clone + Send + Sync + 'static,
-    Eth::Error: FromEthApiError,
+    Eth: FullEthApi<NetworkTypes = BaseRpcTypes>,
     Eth::Evm: ConfigureEvm<NextBlockEnvCtx = BaseNextBlockEnvAttributes>,
-    <Eth as reth_rpc_eth_api::RpcNodeCore>::Provider:
-        ChainSpecProvider<ChainSpec = BaseChainSpec> + reth_provider::BlockReaderIdExt,
+    Eth::Provider: ChainSpecProvider<ChainSpec = BaseChainSpec>,
     TxEnvFor<Eth::Evm>: From<BaseRevm<TxEnv>>,
     reth_evm::EvmFactoryFor<Eth::Evm>: alloy_evm::EvmFactory<BlockEnv = revm::context::BlockEnv>,
     FB: FlashblocksAPI + Send + Sync + 'static,

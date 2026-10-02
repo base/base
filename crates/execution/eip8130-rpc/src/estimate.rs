@@ -14,11 +14,8 @@ use base_execution_evm::{BaseNextBlockEnvAttributes, BasePendingForecast};
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 use reth_chainspec::ChainSpecProvider;
 use reth_errors::RethError;
-use reth_evm::{ConfigureEvm, EvmFactoryFor, HaltReasonFor, TxEnvFor};
-use reth_rpc_eth_api::{
-    FromEthApiError,
-    helpers::{FullEthApi, LoadPendingBlock},
-};
+use reth_evm::{ConfigureEvm, EvmFactoryFor, TxEnvFor};
+use reth_rpc_eth_api::{FromEthApiError, helpers::FullEthApi};
 use reth_rpc_eth_types::error::api::{FromEvmHalt, FromRevert};
 use revm::context::{Block, BlockEnv, TxEnv, result::ExecutionResult};
 
@@ -75,25 +72,16 @@ impl Eip8130GasEstimator {
         eth_api: &Eth,
         request: BaseTransactionRequest,
         block_id: BlockId,
-        overrides: EvmOverrides,
+        mut overrides: EvmOverrides,
     ) -> Result<U256, ErrorObjectOwned>
     where
-        Eth: FullEthApi<NetworkTypes = BaseRpcTypes>
-            + LoadPendingBlock
-            + Clone
-            + Send
-            + Sync
-            + 'static,
-        Eth::Error: FromEthApiError,
+        Eth: FullEthApi<NetworkTypes = BaseRpcTypes>,
         Eth::Evm: ConfigureEvm<NextBlockEnvCtx = BaseNextBlockEnvAttributes>,
         Eth::Provider: ChainSpecProvider<ChainSpec = BaseChainSpec>,
         TxEnvFor<Eth::Evm>: From<BaseRevm<TxEnv>>,
         // Pin the block env to revm's concrete type so block overrides can be
         // applied directly (Base's `EvmFactory::BlockEnv` is `revm::BlockEnv`).
         EvmFactoryFor<Eth::Evm>: EvmFactory<BlockEnv = BlockEnv>,
-        // Surface phase reverts/halts as execution errors, like the standard
-        // estimator (`FullEthApi` already guarantees these on `Eth::Error`).
-        Eth::Error: FromRevert + FromEvmHalt<HaltReasonFor<Eth::Evm>>,
         ErrorObjectOwned: From<Eth::Error>,
     {
         let (evm_env, at, forecast) = BasePendingForecast::evm_env_at(eth_api, block_id).await?;
@@ -109,28 +97,21 @@ impl Eip8130GasEstimator {
             )
         })?;
 
-        let EvmOverrides { mut state, block } = overrides;
-
         let result = eth_api
             .spawn_with_state_at_block(at, move |this, mut db| {
                 let mut evm_env = evm_env;
                 // Block overrides first (mutating the block env), then state, so
                 // the simulation matches the standard call path's ordering.
-                if let Some(block) = block {
+                if let Some(block) = overrides.block.take() {
                     apply_block_overrides(*block, &mut db, &mut evm_env.block_env);
                 }
                 if let Some(forecast) = forecast {
-                    state = forecast
-                        .state_overrides(
-                            this.provider().chain_spec().as_ref(),
-                            &mut db,
-                            EvmOverrides::state(state),
-                        )
+                    overrides = forecast
+                        .state_overrides(this.provider().chain_spec().as_ref(), &mut db, overrides)
                         .map_err(RethError::other)
-                        .map_err(Eth::Error::from_eth_err)?
-                        .state;
+                        .map_err(Eth::Error::from_eth_err)?;
                 }
-                if let Some(state) = state {
+                if let Some(state) = overrides.state {
                     apply_state_overrides(state, &mut db).map_err(Eth::Error::from_eth_err)?;
                 }
                 this.transact(db, evm_env, sim_tx.into())

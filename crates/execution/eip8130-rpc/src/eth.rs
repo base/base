@@ -16,10 +16,9 @@ use jsonrpsee::{
 use reth_chainspec::ChainSpecProvider;
 use reth_evm::{ConfigureEvm, EvmFactoryFor, TxEnvFor};
 use reth_rpc_eth_api::{
-    EthApiTypes, FromEthApiError, RpcNodeCore,
-    helpers::{EthCall, EthState, FullEthApi, LoadPendingBlock},
+    EthApiTypes,
+    helpers::{EthCall, EthState, FullEthApi},
 };
-use reth_storage_api::BlockReaderIdExt;
 use revm::context::{BlockEnv, TxEnv};
 use tracing::debug;
 
@@ -87,10 +86,9 @@ impl<Eth: EthApiTypes> Eip8130EthApiExt<Eth> {
 #[async_trait]
 impl<Eth> Eip8130EthApiOverrideServer for Eip8130EthApiExt<Eth>
 where
-    Eth: FullEthApi<NetworkTypes = BaseRpcTypes> + LoadPendingBlock + Clone + Send + Sync + 'static,
-    Eth::Error: FromEthApiError,
+    Eth: FullEthApi<NetworkTypes = BaseRpcTypes>,
     Eth::Evm: ConfigureEvm<NextBlockEnvCtx = BaseNextBlockEnvAttributes>,
-    <Eth as RpcNodeCore>::Provider: ChainSpecProvider<ChainSpec = BaseChainSpec> + BlockReaderIdExt,
+    Eth::Provider: ChainSpecProvider<ChainSpec = BaseChainSpec>,
     TxEnvFor<Eth::Evm>: From<BaseRevm<TxEnv>>,
     EvmFactoryFor<Eth::Evm>: EvmFactory<BlockEnv = BlockEnv>,
     jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
