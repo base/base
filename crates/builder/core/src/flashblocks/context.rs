@@ -699,54 +699,32 @@ impl BasePayloadBuilderCtx {
         Self::skip_pooled_current(best_txs, tx);
     }
 
-    /// Defers the current validity-gated candidate by parking it for a later flashblock, or, when
-    /// the iterator cannot park it, rejects it and closes the candidate. Emits the matching
-    /// builder-decision event and updates `diag`. Returns `true` when the transaction was parked.
+    /// Parks the current validity-gated candidate for a later position or flashblock, emits the
+    /// deferred builder-decision event, and counts it in `diag`.
     ///
     /// A parked transaction is re-evaluated on every later flashblock and after every promotion,
     /// so `BUILDER_DEFERRED` is emitted only when `deferrals` has not already recorded the same
     /// reason for it in this block. `diag` still counts every park.
-    fn defer_or_reject_current<B: PayloadTxsBounds>(
+    fn defer_current<B: PayloadTxsBounds>(
         &self,
         best_txs: &mut B,
         diag: &mut FlashblockDiagnostics,
         deferrals: &mut BlockDeferrals,
         cx: &DecisionContext<'_>,
-        tx: &B::Transaction,
+        tx_hash: TxHash,
         ordering_position: u64,
-    ) -> bool {
-        if best_txs.park_current() {
-            if deferrals.record(*tx.hash(), cx.reason) {
-                self.emit_builder_decision_event(
-                    cx.payload_id,
-                    TransactionEventType::BuilderDeferred,
-                    *tx.hash(),
-                    Some(ordering_position),
-                    || {
-                        BuilderDeferredEventData::new(
-                            cx.reason, cx.detail, cx.info, cx.limits, None,
-                        )
-                    },
-                );
-            }
-            diag.txs_deferred += 1;
-            true
-        } else {
+    ) {
+        best_txs.park_current();
+        if deferrals.record(tx_hash, cx.reason) {
             self.emit_builder_decision_event(
                 cx.payload_id,
-                TransactionEventType::BuilderRejected,
-                *tx.hash(),
+                TransactionEventType::BuilderDeferred,
+                tx_hash,
                 Some(ordering_position),
-                || {
-                    BuilderRejectedEventData::new(
-                        cx.reason, cx.detail, false, cx.info, cx.limits, None,
-                    )
-                },
+                || BuilderDeferredEventData::new(cx.reason, cx.detail, cx.info, cx.limits, None),
             );
-            diag.txs_rejected_other += 1;
-            Self::skip_pooled_current(best_txs, tx);
-            false
         }
+        diag.txs_deferred += 1;
     }
 
     /// Executes the given best transactions and updates the execution info.
@@ -844,14 +822,7 @@ impl BasePayloadBuilderCtx {
                     .increment(1);
                 validity_candidates_deferred += 1;
                 predicate_eval_cutoff_hit = true;
-                self.defer_or_reject_current(
-                    best_txs,
-                    &mut diag,
-                    deferrals,
-                    &cx,
-                    &tx,
-                    ordering_position,
-                );
+                self.defer_current(best_txs, &mut diag, deferrals, &cx, tx_hash, ordering_position);
                 continue;
             }
 
@@ -941,20 +912,19 @@ impl BasePayloadBuilderCtx {
                     self.expire_current(best_txs, &mut diag, &cx, &tx, ordering_position);
                 } else {
                     // Recoverable state mismatch: park under the current blocker to retry at a
-                    // later position or flashblock, or reject if the iterator cannot park it.
+                    // later position or flashblock.
                     let (_, blocker_index) = blocking_predicate
                         .expect("unsatisfied, non-terminal predicate implies a blocking key");
-                    if self.defer_or_reject_current(
+                    self.defer_current(
                         best_txs,
                         &mut diag,
                         deferrals,
                         &cx,
-                        &tx,
+                        tx_hash,
                         ordering_position,
-                    ) {
-                        let predicate = tx.validity_predicates()[blocker_index].clone();
-                        predicate_index.park(tx_hash, tx, predicate);
-                    }
+                    );
+                    let predicate = tx.validity_predicates()[blocker_index].clone();
+                    predicate_index.park(tx_hash, tx, predicate);
                 }
                 continue;
             }
@@ -1789,9 +1759,7 @@ mod tests {
     }
 
     impl ParkablePayloadTransactions for LimitRejectionTransactions {
-        fn park_current(&mut self) -> bool {
-            false
-        }
+        fn park_current(&mut self) {}
 
         fn mark_current_committed(&mut self) {}
 
@@ -1823,9 +1791,7 @@ mod tests {
     }
 
     impl ParkablePayloadTransactions for LifecycleRecorder {
-        fn park_current(&mut self) -> bool {
-            false
-        }
+        fn park_current(&mut self) {}
 
         fn mark_current_committed(&mut self) {
             self.committed += 1;
