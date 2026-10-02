@@ -15,7 +15,8 @@ The workflow ran `python3 etc/scripts/local/docs-index.py sync` on a checkout of
 2. Read each listed doc in full.
 3. For each new doc, replace the `TODO: summarize` text in `etc/docs-index.toml` with a summary.
 4. For each changed doc, edit its summary only if the doc no longer supports it. Leave an accurate summary as it is.
-5. Stop. Do not edit `digest` values, `llms.txt`, or `llms-full.txt`. The workflow stamps the listed docs and regenerates both files.
+5. If there are no new docs and every changed doc's summary is still accurate, make no edit. The workflow then publishes nothing and leaves any open pull request to be closed. Do not rewrite a summary to have something to show.
+6. Stop. Do not edit `digest` values, `llms.txt`, or `llms-full.txt`. The workflow stamps the listed docs and regenerates both files.
 
 ## Rules
 

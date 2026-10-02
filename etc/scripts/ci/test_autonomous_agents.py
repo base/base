@@ -12,7 +12,7 @@ from typing import Any
 import autonomous_agents as agents
 
 INDEX = agents.load_docs_index()
-SPEC = agents.AgentSpec("docs-index", "agent:docs-index", "x.md", "agent/docs-index-", "claude-sonnet-5-5", 1, 1)
+SPEC = agents.AgentSpec("docs-index", "agent:docs-index", "x.md", "agent/docs-index-", "claude-sonnet-5-5", 0, 1)
 
 
 def entry(path: str, summary: str = "Covers a thing.", digest: str = "0000000000") -> Any:
@@ -55,7 +55,7 @@ class RegistryTests(unittest.TestCase):
         target, loaded = agents.load_registry()
         self.assertEqual(target["repository"], "base/base")
         spec = loaded[agents.AGENT]
-        self.assertEqual((spec.min_open_prs, spec.max_open_prs), (1, 1))
+        self.assertEqual((spec.min_open_prs, spec.max_open_prs), (0, 1))
         self.assertTrue((agents.ROOT / spec.instructions).is_file())
 
     def test_bounds_and_model_come_from_the_registry(self) -> None:
@@ -88,7 +88,7 @@ class PlanTests(unittest.TestCase):
         found = agents.open_agent_prs(github, {"repository": "a/b", "base_branch": "main"}, SPEC)
         self.assertEqual([pull["pull_request"] for pull in found], [4, 9])
 
-    def test_creates_the_minimum_when_work_exists_and_none_is_open(self) -> None:
+    def test_starts_a_candidate_run_when_work_exists_and_none_is_open(self) -> None:
         plan = agents.plan_agent(SPEC, [], needed=True)
         self.assertEqual(plan, {"include": [{"mode": "create", "pull_request": 0, "branch": ""}], "close": []})
 
@@ -250,6 +250,45 @@ def _broken_open(stream: Path):
             raise OSError("disk full")
 
     return lambda *_a, **_k: Broken()
+
+
+class PublishTests(unittest.TestCase):
+    """Drive `command_publish` with a fake GitHub to pin when it changes nothing."""
+
+    def publish(self, mode: str, substantive: bool, open_prs: list[dict[str, Any]], min_open: int = 0) -> FakeGitHub:
+        import os
+        import unittest.mock as mock
+
+        spec = agents.AgentSpec("docs-index", "agent:docs-index", "x.md", "agent/docs-index-", "claude-sonnet-5-5", min_open, 1)
+        github = FakeGitHub(open_prs)
+        report = Path(tempfile.mkdtemp()) / "report.json"
+        report.write_text(json.dumps({"substantive": substantive, "added": [], "updated": [], "confirmed": []}))
+        target = {"repository": "a/b", "base_branch": "main"}
+        env = {"GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "1"}
+        with mock.patch.object(agents, "load_registry", return_value=(target, {"docs-index": spec})), mock.patch.dict(os.environ, env):
+            agents.command_publish(github, "docs-index", mode, "agent/docs-index-a" if mode == "refresh" else "", 4, report)
+        return github
+
+    def test_no_update_needed_opens_nothing(self) -> None:
+        github = self.publish("create", substantive=False, open_prs=[])
+        self.assertEqual(github.calls, [])
+
+    def test_no_update_needed_closes_the_open_pull_request_instead_of_refreshing_it(self) -> None:
+        open_prs = [{"number": 4, "headRefName": "agent/docs-index-a"}]
+        github = self.publish("refresh", substantive=False, open_prs=open_prs)
+        self.assertEqual([call[:3] for call in github.calls], [["pr", "close", "4"]])
+
+    def test_the_registry_floor_keeps_a_pull_request_open_even_without_an_update(self) -> None:
+        open_prs = [{"number": 4, "headRefName": "agent/docs-index-a"}]
+        with self.assertRaises(AssertionError):  # falls through to the real refresh, which needs the API
+            self.publish("refresh", substantive=False, open_prs=open_prs, min_open=1)
+
+    def test_digest_only_restamps_are_not_an_update(self) -> None:
+        main = [entry("a.md", "Same.", "1111111111")]
+        self.assertFalse(agents.is_substantive(INDEX, main, [entry("a.md", "Same.", "2222222222")]))
+        self.assertTrue(agents.is_substantive(INDEX, main, [entry("a.md", "Different.", "2222222222")]))
+        self.assertTrue(agents.is_substantive(INDEX, main, main + [entry("b.md")]))
+        self.assertTrue(agents.is_substantive(INDEX, main, []))
 
 
 class RenderTests(unittest.TestCase):

@@ -172,19 +172,21 @@ def open_agent_prs(github: GitHub, target: dict[str, str], spec: AgentSpec) -> l
 
 
 def plan_agent(spec: AgentSpec, open_prs: list[dict[str, Any]], needed: bool) -> dict[str, Any]:
-    """Decide which pull requests to create, refresh, and close.
+    """Decide which runs to start and which pull requests to close.
 
-    With work to do, the agent keeps between `min_open_prs` and `max_open_prs`
-    pull requests open: it refreshes the oldest ones up to the maximum, opens
-    new ones up to the minimum, and closes any beyond the maximum. With no work,
-    every open pull request is closed, because the index is already current.
+    With no work, every open pull request is closed, because the index is
+    already current. With work, the oldest open pull requests up to
+    `max_open_prs` are refreshed and the rest are closed. A run is also started
+    to create a pull request when fewer than `min_open_prs` are open, or when
+    none is open at all. That run is a candidate: `command_publish` lets the
+    agent decline it when its result changes nothing and `min_open_prs` allows.
     """
     if not needed:
         return {"include": [], "close": open_prs}
     kept, excess = open_prs[: spec.max_open_prs], open_prs[spec.max_open_prs :]
     include = [{"mode": "refresh", **pull} for pull in kept]
-    missing = max(0, spec.min_open_prs - len(kept))
-    include += [{"mode": "create", "pull_request": 0, "branch": ""} for _ in range(missing)]
+    creates = max(spec.min_open_prs, 1) - len(kept)
+    include += [{"mode": "create", "pull_request": 0, "branch": ""} for _ in range(max(0, creates))]
     return {"include": include, "close": excess}
 
 
@@ -484,6 +486,19 @@ def command_run_agent(
     return 1
 
 
+def is_substantive(index: Any, main_entries: list[Any], final_entries: list[Any]) -> bool:
+    """Return whether the result differs from `main` by more than digests.
+
+    An added or removed entry, or a changed summary, is a real update. Restamping
+    a digest after the agent confirmed a summary is still accurate is not: it
+    records a review and tells readers nothing new, so it never justifies a pull
+    request by itself.
+    """
+    before = {entry.path: entry.summary for entry in main_entries}
+    after = {entry.path: entry.summary for entry in final_entries}
+    return before != after
+
+
 def command_finalize(work_path: Path, baseline_path: Path, report_path: Path) -> int:
     """Stamp the reviewed docs, regenerate the index files, and verify the result."""
     index = load_docs_index()
@@ -502,7 +517,11 @@ def command_finalize(work_path: Path, baseline_path: Path, report_path: Path) ->
         return 1
     baseline = {entry.path: entry.summary for entry in index.parse_manifest(baseline_path.read_text())}
     summaries = {entry.path: entry.summary for entry in entries}
+    main_text = subprocess.run(
+        ["git", "show", f"HEAD:{index.MANIFEST_REL}"], cwd=ROOT, check=True, text=True, stdout=subprocess.PIPE
+    ).stdout
     report = {
+        "substantive": is_substantive(index, index.parse_manifest(main_text), entries),
         "added": work.new,
         "updated": [p for p in work.changed if summaries[p] != baseline[p]],
         "confirmed": [p for p in work.changed if summaries[p] == baseline[p]],
@@ -594,9 +613,24 @@ def command_publish(
     report = json.loads(report_path.read_text())
     local = {path: (ROOT / path).read_bytes() for path in AGENT_FILES}
     message = "docs: refresh docs index"
+    open_count = len(open_agent_prs(github, target, spec))
+
+    if not report["substantive"]:
+        # The agent decided no update is needed, so leave the repository alone
+        # unless that would drop the open pull requests below the registry floor.
+        if mode == "create" and open_count >= spec.min_open_prs:
+            print(f"{spec.name} decided no update is needed; nothing to open")
+            return 0
+        if mode == "refresh" and open_count - 1 >= spec.min_open_prs:
+            github.run(
+                ["pr", "close", str(pull_request), "--repo", repository, "--delete-branch",
+                 "--comment", "Closing: on the latest main the agent decided no index update is needed."]
+            )  # fmt: skip
+            print(f"closed #{pull_request}: no update is needed")
+            return 0
 
     if mode == "create":
-        if len(open_agent_prs(github, target, spec)) >= spec.max_open_prs:
+        if open_count >= spec.max_open_prs:
             print(f"{spec.name} already has {spec.max_open_prs} open pull request(s); nothing to open")
             return 0
     elif branch_is_current(github, repository, base_branch, branch, local):
