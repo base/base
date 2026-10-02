@@ -3326,7 +3326,6 @@ dependencies = [
  "reth-rpc-engine-api",
  "reth-rpc-eth-types",
  "reth-rpc-layer",
- "reth-storage-api",
  "reth-tasks",
  "reth-testing-utils",
  "reth-tracing-otlp",

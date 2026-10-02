@@ -176,14 +176,13 @@ just anvil-nitro-local up
 Set `L2_BASE_DENIM_BLOCK` to another block to move activation, or set it to an
 empty value to leave Denim unscheduled.
 
-To exercise validity transactions on the native payload builder, the deployment
-must schedule Denim and configure both sides of the forwarding path:
+To exercise validity transactions on the native payload builder, the deployment must schedule Denim and configure both sides
+of the forwarding path:
 
-- builder: `--builder.enable-experimental-validity-transactions` and
-  `--builder.payload-builder-cutover`. The builder flag also registers
+- builder: `--builder.payload-builder-cutover`. The builder always registers
   `base_sendRawTransactionValidity` for direct submission.
-- mempool/client: `--enable-experimental-validity-transactions` and a
-  `--builder-rpc-urls` endpoint targeting the builder
+- mempool/client: `--enable-tx-forwarding` and a `--builder-rpc-urls` endpoint
+  targeting the builder
 
 The default devnet compose files include these flags and schedule Cobalt at
 block 22 and Denim at block 25. Builder selection and block cadence change at
