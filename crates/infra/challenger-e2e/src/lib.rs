@@ -4,7 +4,7 @@ mod config;
 pub use config::{Config, ProverMode, Scenario};
 
 mod mock_prover;
-pub use mock_prover::MockProver;
+pub use mock_prover::{MockProofRequests, MockProver};
 
 mod mock_verifier;
 

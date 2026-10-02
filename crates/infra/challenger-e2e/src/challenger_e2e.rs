@@ -15,7 +15,7 @@ use base_proof_contracts::{
 };
 use base_proof_rpc::L2HttpProvider;
 use base_proof_submission::{AggregateProofSubmitter, ProofSubmissionError};
-use base_prover_service_protocol::ZkBackend;
+use base_prover_service_protocol::{SnarkPlonkProofRequest, ZkBackend, ZkProofRequest, ZkVm};
 use base_tx_manager::{
     NoopTxMetrics, SignerConfig, SimpleTxManager, TxCandidate, TxManager, TxManagerConfig,
     TxManagerError,
@@ -219,6 +219,7 @@ impl ChallengerE2e {
             ProverMode::Mock => {
                 let mock = MockProver::start(config.mock_proving_time).await?;
                 config.zk_rpc_url = mock.url().clone();
+                config.mock_requests = Some(mock.requests());
                 Some(mock)
             }
             ProverMode::Real => None,
@@ -897,6 +898,13 @@ impl ChallengerE2e {
     ///
     /// Read from the challenger's mined transactions, so it holds in `real`
     /// mode too, where it costs nothing and confirms what the proof proved.
+    ///
+    /// In `mock` mode the request behind the proof is checked as well. A real
+    /// proof commits to the range, L1 head, interval, schedule and prover it
+    /// was requested for, and the verifier rejects one whose journal does not
+    /// match the game. The mock checks none of that, so a challenger asking
+    /// for the wrong range would still land a dispute with the right index
+    /// and root. It must have requested exactly what this checkpoint needs.
     async fn assert_disputes_prove_canonical(
         config: &Config,
         provider: &RootProvider,
@@ -957,7 +965,60 @@ impl ChallengerE2e {
             root = %checkpoint.expected_root,
             "every dispute proved the canonical root at the corrupted index"
         );
+
+        if let Some(requests) = &config.mock_requests {
+            let verifier = AggregateVerifierContractClient::new(provider.clone());
+            let l1_head = verifier.l1_head(game).await?;
+            let schedule = verifier.game_info(game).await?.l2_block_number;
+            let expected =
+                Self::expected_dispute_request(checkpoint, l1_head, schedule, challenger.address());
+            let requested: Vec<_> = requests
+                .snark_requests()
+                .into_iter()
+                .filter(|request| request.prover_address == challenger.address())
+                .collect();
+            ensure!(
+                requested.contains(&expected),
+                "the challenger disputed game {game}, but never requested the proof that \
+                 dispute needs: expected {expected:?}, the challenger requested {requested:?}"
+            );
+            info!(
+                phase = %phase,
+                game = %game,
+                start_block = checkpoint.start_block,
+                block_count = checkpoint.block_count,
+                l1_head = %l1_head,
+                schedule_l2_block_number = schedule,
+                "the challenger requested the proof a real dispute would need"
+            );
+        }
         Ok(())
+    }
+
+    /// The SNARK request a real proof of `checkpoint` on this game must come
+    /// from: one checkpoint's range, the game's L1 head, its interval, a
+    /// schedule pinned to the game's final L2 block, and the disputer as
+    /// prover. Mirrors what the challenger builds (`build_zk_request`) and
+    /// what the contract reconstructs into the journal.
+    const fn expected_dispute_request(
+        checkpoint: &Checkpoint,
+        l1_head: B256,
+        schedule_l2_block_number: u64,
+        prover_address: Address,
+    ) -> SnarkPlonkProofRequest {
+        SnarkPlonkProofRequest {
+            proof: ZkProofRequest {
+                start_block_number: checkpoint.start_block,
+                number_of_blocks_to_prove: checkpoint.block_count,
+                sequence_window: None,
+                l1_head: Some(l1_head),
+                intermediate_root_interval: Some(checkpoint.interval),
+                schedule_l2_block_number: Some(schedule_l2_block_number),
+                zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
+            },
+            prover_address,
+        }
     }
 
     /// Path 3: the challenger must clear the invalid ZK-only proposal.
@@ -1151,10 +1212,12 @@ impl ChallengerE2e {
         let contents = format!(
             "unset BASE_CHALLENGER_SIGNER_ENDPOINT\n\
              unset BASE_CHALLENGER_SIGNER_ADDRESS\n\
-             export BASE_CHALLENGER_L1_ETH_RPC={fork_url}\n\
-             export BASE_CHALLENGER_ZK_RPC_URL={zk_rpc_url}\n\
+             export BASE_CHALLENGER_L1_ETH_RPC={}\n\
+             export BASE_CHALLENGER_ZK_RPC_URL={}\n\
              export BASE_CHALLENGER_PRIVATE_KEY={}\n",
-            hex::encode_prefixed(signer.to_bytes())
+            shell_quote(fork_url.as_str()),
+            shell_quote(zk_rpc_url.as_str()),
+            shell_quote(&hex::encode_prefixed(signer.to_bytes()))
         );
 
         let staging = path.with_extension("tmp");
@@ -1863,9 +1926,33 @@ impl RevertData for ProofSubmissionError {
     }
 }
 
+/// Quotes `value` for a POSIX shell, so sourcing the env file assigns it
+/// verbatim. A URL is free to carry `&`, `;` or `#`, which unquoted would end
+/// or comment out the assignment and leave the sidecar with a truncated or
+/// stale endpoint.
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Sourced by `/bin/sh` exactly as the sidecar does, so the assertion is on
+    /// what the shell assigns rather than on the quoting itself.
+    #[test]
+    fn env_file_values_survive_sourcing_verbatim() {
+        for value in [
+            "http://127.0.0.1:41234/",
+            "https://prover.example/rpc?a=1&b=2;c#frag",
+            "it's $HOME `id` \\ \"quoted\"",
+        ] {
+            let script = format!("V={}; printf %s \"$V\"", shell_quote(value));
+            let output =
+                std::process::Command::new("/bin/sh").arg("-c").arg(&script).output().unwrap();
+            assert_eq!(String::from_utf8(output.stdout).unwrap(), value, "{script}");
+        }
+    }
 
     /// The point of the helper: a zeronet run failed on a bare `0x09bde339`,
     /// which cost a manual keccak sweep to identify.

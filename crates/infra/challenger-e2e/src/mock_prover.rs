@@ -33,7 +33,7 @@ use base_prover_service_protocol::{
     DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
     ListProofsRequest, ListProofsResponse, ProofRequestKind, ProofResult, ProofStatus,
     ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer,
-    SnarkPlonkProofResult, ZkProofResult, ZkVm,
+    SnarkPlonkProofRequest, SnarkPlonkProofResult, ZkProofResult, ZkVm,
 };
 use eyre::{Context, Result};
 use jsonrpsee::{
@@ -106,11 +106,24 @@ impl MockProverService {
     fn prove(&self, request: ProveBlockRangeRequest) -> RpcResult<ProveBlockRangeResponse> {
         let session_id = request.proof.session_id;
         let kind = request.proof.request;
-        if matches!(kind, ProofRequestKind::Tee(_)) {
-            info!(session_id = %session_id, "mock prover refused a TEE proof request");
-            return Err(Self::invalid_params(
-                "TEE proofs are not served by the challenger E2E mock prover",
-            ));
+        match &kind {
+            ProofRequestKind::SnarkPlonk(_) => {}
+            ProofRequestKind::Tee(_) => {
+                info!(session_id = %session_id, "mock prover refused a TEE proof request");
+                return Err(Self::invalid_params(
+                    "TEE proofs are not served by the challenger E2E mock prover",
+                ));
+            }
+            // Every result this mock returns is a PLONK receipt, so serving a
+            // compressed request would hand back a proof type the real service
+            // never would, and a caller asking for the wrong type would pass.
+            ProofRequestKind::Compressed(_) => {
+                info!(session_id = %session_id, "mock prover refused a compressed proof request");
+                return Err(Self::invalid_params(
+                    "compressed proofs are not served by the challenger E2E mock prover; only \
+                     SNARK PLONK, which is all a dispute can use",
+                ));
+            }
         }
 
         let mut sessions = self.sessions.lock().expect("mock prover state poisoned");
@@ -193,11 +206,35 @@ impl ProverRequesterApiServer for MockProverRpc {
     }
 }
 
+/// Read access to the SNARK requests a [`MockProver`] has accepted.
+///
+/// The mock proves nothing, so the request is the only place a wrong range,
+/// L1 head or schedule can still be caught: against a real prover it would
+/// produce a proof whose journal the verifier rejects. Cloneable and separate
+/// from [`MockProver`], whose drop stops the server.
+#[derive(Debug, Clone)]
+pub struct MockProofRequests(Arc<MockProverService>);
+
+impl MockProofRequests {
+    /// Every accepted SNARK PLONK request, in no particular order.
+    pub fn snark_requests(&self) -> Vec<SnarkPlonkProofRequest> {
+        let sessions = self.0.sessions.lock().expect("mock prover state poisoned");
+        sessions
+            .values()
+            .filter_map(|session| match &session.request {
+                ProofRequestKind::SnarkPlonk(request) => Some(request.clone()),
+                ProofRequestKind::Compressed(_) | ProofRequestKind::Tee(_) => None,
+            })
+            .collect()
+    }
+}
+
 /// A running mock prover. Stops when dropped.
 #[derive(Debug)]
 pub struct MockProver {
     url: Url,
     handle: ServerHandle,
+    service: Arc<MockProverService>,
 }
 
 impl MockProver {
@@ -213,10 +250,15 @@ impl MockProver {
         let address = server.local_addr().context("mock prover has no local address")?;
         let service =
             Arc::new(MockProverService { sessions: Mutex::new(HashMap::new()), proving_time });
-        let handle = server.start(MockProverRpc(service).into_rpc());
+        let handle = server.start(MockProverRpc(Arc::clone(&service)).into_rpc());
         let url = Url::parse(&format!("http://{address}")).context("mock prover URL")?;
         info!(url = %url, proving_time = ?proving_time, "started the mock prover");
-        Ok(Self { url, handle })
+        Ok(Self { url, handle, service })
+    }
+
+    /// The requests this mock has accepted, readable after it is moved.
+    pub fn requests(&self) -> MockProofRequests {
+        MockProofRequests(Arc::clone(&self.service))
     }
 
     /// Endpoint to hand to the challenger and to the driver's staging step.
@@ -331,6 +373,34 @@ mod tests {
         };
         let error = service(Duration::ZERO).prove(request).expect_err("TEE refused");
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+    }
+
+    #[test]
+    fn compressed_requests_are_refused() {
+        let ProofRequestKind::SnarkPlonk(snark_request) = snark("c", 100).proof.request else {
+            unreachable!("snark() builds a SNARK request");
+        };
+        let request = ProveBlockRangeRequest {
+            proof: ProofRequest {
+                session_id: "compressed".to_owned(),
+                request: ProofRequestKind::Compressed(snark_request.proof),
+            },
+            retry_failed: true,
+        };
+        let error = service(Duration::ZERO).prove(request).expect_err("compressed refused");
+        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+    }
+
+    #[test]
+    fn accepted_snark_requests_are_readable() {
+        let requests = MockProofRequests(Arc::new(service(Duration::ZERO)));
+        requests.0.prove(snark("a", 100)).expect("accepted");
+        requests.0.prove(snark("b", 130)).expect("accepted");
+
+        let mut starts: Vec<u64> =
+            requests.snark_requests().iter().map(|r| r.proof.start_block_number).collect();
+        starts.sort_unstable();
+        assert_eq!(starts, [100, 130]);
     }
 
     /// End to end over HTTP, through the same client crate the challenger uses.
