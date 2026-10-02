@@ -773,7 +773,7 @@ impl PgTransactionEventSink {
     where
         E: sqlx::Executor<'e, Database = sqlx::Postgres>,
     {
-        sqlx::query("SELECT event_id, schema_version, event_time, event_date, retention_class, producer, event_type, data, ingested_at FROM public.transaction_events LIMIT 0")
+        sqlx::query("SELECT event_id, schema_version, event_time, event_date, retention_class, producer, event_type, network, tx_hash, block_hash, block_number, payload_id, request_id, data, ingested_at FROM public.transaction_events LIMIT 0")
             .execute(executor).await?;
         Ok(())
     }

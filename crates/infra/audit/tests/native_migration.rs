@@ -4,6 +4,8 @@
 //! to the cluster created under this checkout's .tmp/, then `cargo test -p
 //! audit-archiver-lib --test native_migration -- --ignored --test-threads=1`.
 //! These tests refuse a foreign data directory, including localhost tunnels.
+//! The before/after ledger regression additionally requires
+//! `TIPS_AUDIT_TEST_BASELINE_BINARY` pointing to the preserved f44a4c237 binary.
 
 use std::{
     env,
@@ -51,6 +53,16 @@ impl Drop for NativeResponseProxy {
 impl NativeResponseProxy {
     /// Starts a session-transparent response-dropping proxy to the already verified cluster.
     pub async fn start(url: &str, query: &'static [u8]) -> anyhow::Result<Self> {
+        Self::start_inner(url, query, false).await
+    }
+
+    /// Holds only auxiliary observer upstream sockets after their client closes.
+    /// This models a session proxy retaining a dispatched SQL write, not cancellation.
+    pub async fn start_inner(
+        url: &str,
+        query: &'static [u8],
+        linger_auxiliary: bool,
+    ) -> anyhow::Result<Self> {
         let options: PgConnectOptions = url.parse()?;
         let backend = options.get_port();
         let listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -72,12 +84,23 @@ impl NativeResponseProxy {
                     let mut responses = [0u8; 4096];
                     let mut tail = Vec::new();
                     let mut dropping = false;
+                    let mut auxiliary = false;
                     loop {
                         tokio::select! {
                             read = client.read(&mut requests) => {
-                                let count = read?;
-                                if count == 0 { return anyhow::Ok(()); }
+                                let count = match read {
+                                    Ok(count) => count,
+                                    Err(error) => {
+                                        if linger_auxiliary && auxiliary { sleep(Duration::from_secs(3)).await; }
+                                        return Err(anyhow::Error::from(error));
+                                    }
+                                };
+                                if count == 0 {
+                                    if linger_auxiliary && auxiliary { sleep(Duration::from_secs(3)).await; }
+                                    return anyhow::Ok(());
+                                }
                                 tail.extend_from_slice(&requests[..count]);
+                                auxiliary |= tail.windows(b"audit-migrate-observe".len()).any(|bytes| bytes == b"audit-migrate-observe");
                                 if tail.windows(query.len()).any(|bytes| bytes == query) {
                                     dropping = true;
                                     observed.cancel();
@@ -88,7 +111,12 @@ impl NativeResponseProxy {
                             read = server.read(&mut responses) => {
                                 let count = read?;
                                 if count == 0 { return anyhow::Ok(()); }
-                                if !dropping { client.write_all(&responses[..count]).await?; }
+                                if !dropping && let Err(error) = client.write_all(&responses[..count]).await {
+                                    // A closed downstream can race EOF delivery. Keep the
+                                    // upstream alive on BOTH paths, not only client.read(0).
+                                    if linger_auxiliary && auxiliary { sleep(Duration::from_secs(3)).await; }
+                                    return Err(anyhow::Error::from(error));
+                                }
                             },
                         }
                     }
@@ -144,6 +172,18 @@ impl NativeDatabase {
         Ok(Self { url, admin })
     }
 
+    /// Seeds a fixture ledger using the same session-owned generation gate as native code.
+    pub async fn save(
+        conn: &mut PgConnection,
+        key: &audit_archiver_lib::MigrationDurableKey,
+        progress: &MigrationReporter,
+    ) -> anyhow::Result<()> {
+        MigrationDurable::lock(conn, progress).await?;
+        MigrationDurable::save(conn, key, progress).await?;
+        MigrationDurable::unlock(conn).await?;
+        Ok(())
+    }
+
     /// Waits for an observable database trigger instead of timing a fast index build.
     pub async fn wait(&mut self, sql: &str) -> anyhow::Result<()> {
         timeout(Duration::from_secs(20), async {
@@ -181,6 +221,17 @@ impl NativeDatabase {
     /// Executes the actual locally built binary with one loopback listener.
     pub async fn child(&self, port: u16, run_id: &str, path: &Path) -> anyhow::Result<Child> {
         let binary = PathBuf::from(env::var("TIPS_AUDIT_TEST_BINARY")?);
+        self.child_binary(&binary, port, run_id, path).await
+    }
+
+    /// Runs a preserved baseline binary for before/after regression evidence.
+    pub async fn child_binary(
+        &self,
+        binary: &Path,
+        port: u16,
+        run_id: &str,
+        path: &Path,
+    ) -> anyhow::Result<Child> {
         let log = File::create(path.join(format!("{run_id}.log")))?;
         Ok(Command::new(binary)
             .args(["migrate", "up", "--managed"])
@@ -599,7 +650,7 @@ async fn same_named_wrong_server_cannot_approve_signal_or_prove_owned_absence() 
     foreign_key.target.push_str(":old-endpoint");
     let prior = MigrationReporter::new("prior-orphan".into());
     *prior.backend.lock().unwrap() = Some(owner.clone());
-    MigrationDurable::save(&mut control, &foreign_key, &prior).await?;
+    NativeDatabase::save(&mut control, &foreign_key, &prior).await?;
     let next = MigrationDurable::bootstrap(&mut control, "new-generation").await?;
     assert_eq!(
         MigrationDurable::owners(&mut control, &next).await.unwrap_err().code(),
@@ -654,6 +705,294 @@ async fn same_named_wrong_server_cannot_approve_signal_or_prove_owned_absence() 
 
 #[tokio::test]
 #[ignore = "requires owned disposable PostgreSQL 17 and locally built audit binary"]
+async fn delayed_auxiliary_running_writer_cannot_overwrite_terminal_failure() -> anyhow::Result<()>
+{
+    for baseline in [true, false] {
+        let mut db = NativeDatabase::new().await?;
+        PgTransactionEventSink::migrate(&db.url).await?;
+        let mut blocker = MigrationSession::connect(&db.url, "native-late-ledger-blocker").await?;
+        let held = NativeDatabase::held_writer(&mut blocker).await?;
+        let mut control = MigrationSession::connect(&db.url, "native-late-ledger-observer").await?;
+        MigrationDurable::bootstrap(&mut control, "late-writer").await?;
+        sqlx::raw_sql("CREATE FUNCTION delay_auxiliary_record() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF current_setting('application_name')='audit-migrate-observe' AND NEW.record->'backend'<>'null'::jsonb THEN PERFORM pg_advisory_xact_lock(44556677); END IF; RETURN NEW; END $$; CREATE TRIGGER delay_auxiliary_record BEFORE INSERT ON public.audit_migration_runs FOR EACH ROW EXECUTE FUNCTION delay_auxiliary_record()")
+            .execute(&mut db.admin).await?;
+        sqlx::query("SELECT pg_advisory_lock(44556677)").execute(&mut db.admin).await?;
+        let scratch = NativeDatabase::scratch()?;
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let port = listener.local_addr()?.port();
+        drop(listener);
+        let binary = PathBuf::from(env::var(if baseline {
+            "TIPS_AUDIT_TEST_BASELINE_BINARY"
+        } else {
+            "TIPS_AUDIT_TEST_BINARY"
+        })?);
+        let proxy = if baseline {
+            let proxy =
+                NativeResponseProxy::start_inner(&db.url, b"never-drop-this-query", true).await?;
+            db.url = proxy.url.clone();
+            Some(proxy)
+        } else {
+            None
+        };
+        let mut child = db.child_binary(&binary, port, "late-writer", &scratch).await?;
+        if baseline {
+            db.wait("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name='audit-migrate-observe' AND wait_event='advisory')").await?;
+        } else {
+            db.wait("SELECT EXISTS(SELECT 1 FROM pg_stat_progress_create_index p JOIN pg_stat_activity a ON a.pid=p.pid WHERE a.datname=current_database() AND a.application_name LIKE 'audit-migrate-%' AND p.phase LIKE 'waiting%')").await?;
+        }
+        fs::rename(scratch.join("state.json"), scratch.join("state-before-fault.json"))?;
+        fs::create_dir(scratch.join("state.json"))?;
+        let pid = child.id().unwrap();
+        assert!(Command::new("kill").args(["-TERM", &pid.to_string()]).status().await?.success());
+        timeout(Duration::from_secs(2), async {
+            loop {
+                let failed: bool = sqlx::query_scalar("SELECT record->'status'->>'state'='failed' FROM audit_migration_runs WHERE generation='late-writer'").fetch_one(&mut control).await?;
+                if failed { return anyhow::Ok(()); }
+                sleep(Duration::from_millis(5)).await;
+            }
+        }).await??;
+        // Wait for BOTH terminal/control cache-failure commits before releasing
+        // the old auxiliary statement; the child exit confirms no later control write.
+        assert!(!timeout(Duration::from_secs(9), child.wait()).await??.success());
+        sqlx::query("SELECT pg_advisory_unlock(44556677)").execute(&mut db.admin).await?;
+        let state: String = timeout(Duration::from_secs(2), async {
+            loop {
+                let observed: String = sqlx::query_scalar("SELECT record->'status'->>'state' FROM audit_migration_runs WHERE generation='late-writer'").fetch_one(&mut control).await?;
+                if !baseline || observed == "running" { return anyhow::Ok(observed); }
+                sleep(Duration::from_millis(5)).await;
+            }
+        }).await??;
+        drop(proxy);
+        eprintln!(
+            "ledger baseline={baseline}, failed_before_release=true, state_after_release={state}"
+        );
+        assert_eq!(
+            state,
+            if baseline { "running" } else { "failed" },
+            "baseline reproduces the late auxiliary overwrite; corrected control has no auxiliary ledger writer"
+        );
+        if !baseline {
+            let key = MigrationDurable::bootstrap(&mut control, "late-writer").await?;
+            let terminal = MigrationDurable::load(&mut control, &key).await?.unwrap();
+            let stale = MigrationReporter::new("late-writer".into());
+            assert!(
+                MigrationDurable::save(&mut control, &key, &stale).await.is_err(),
+                "non-gate-owner cannot overwrite terminal"
+            );
+            assert_eq!(
+                MigrationDurable::load(&mut control, &key).await?.unwrap().status.state,
+                terminal.status.state
+            );
+            let replacement = NativeDatabase::scratch()?;
+            let mut suppressed = db.child(port, "late-writer", &replacement).await?;
+            assert_eq!(NativeDatabase::status(port, MigrationState::Failed).await?.attempt, 1);
+            NativeDatabase::signal(&mut suppressed, "-INT").await?;
+        }
+        held.rollback().await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17"]
+async fn non_gate_owner_cache_or_network_failure_cannot_mutate_active_generation()
+-> anyhow::Result<()> {
+    let mut db = NativeDatabase::new().await?;
+    PgTransactionEventSink::migrate(&db.url).await?;
+    let mut blocker = MigrationSession::connect(&db.url, "native-gate-first-blocker").await?;
+    let held = NativeDatabase::held_writer(&mut blocker).await?;
+    let first = MigrationReporter::new("shared-generation".into());
+    let config = ManagedMigrationConfig {
+        database_url: db.url.clone(),
+        address: "127.0.0.1:0".parse()?,
+        metrics_enabled: false,
+        metrics_interval_secs: 1,
+        run_id: "shared-generation".into(),
+        state_path: NativeDatabase::scratch()?.join("state.json"),
+        shutdown_timeout: Duration::from_secs(9),
+    };
+    let first_config = config.clone();
+    let cloned = first.clone();
+    let first_task =
+        tokio::spawn(
+            async move { ManagedMigration::supervise(&first_config, &cloned, None).await },
+        );
+    db.wait("SELECT EXISTS(SELECT 1 FROM pg_stat_progress_create_index p JOIN pg_stat_activity a ON a.pid=p.pid WHERE a.datname=current_database() AND a.application_name LIKE 'audit-migrate-%' AND p.phase LIKE 'waiting%')").await?;
+    let owner = first.backend.lock().unwrap().clone().unwrap();
+    let key = first.durable.lock().unwrap().clone().unwrap();
+    let mut control = MigrationSession::connect(&db.url, "native-gate-record-verification").await?;
+    let original: serde_json::Value = sqlx::query_scalar(
+        "SELECT record FROM audit_migration_runs WHERE generation='shared-generation'",
+    )
+    .fetch_one(&mut control)
+    .await?;
+    for cache_failure in [true, false] {
+        let mut second = MigrationReporter::new("shared-generation".into());
+        *second.durable.lock().unwrap() = Some(key.clone());
+        *second.backend.lock().unwrap() = Some(owner.clone());
+        let proxy = NativeResponseProxy::start(&db.url, b"pg_try_advisory_lock").await?;
+        let mut second_config = config.clone();
+        if cache_failure {
+            second.store = Some(MigrationStore {
+                path: NativeDatabase::scratch()?.join("missing-parent/state.json"),
+            });
+        } else {
+            second_config.database_url = proxy.url.clone();
+        }
+        let cloned = second.clone();
+        let task = tokio::spawn(async move {
+            ManagedMigration::supervise(&second_config, &cloned, None).await
+        });
+        timeout(Duration::from_secs(5), async {
+            while second.snapshot().state != MigrationState::Failed {
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await?;
+        if !cache_failure {
+            assert!(proxy.triggered.is_cancelled());
+        }
+        let current: serde_json::Value = sqlx::query_scalar(
+            "SELECT record FROM audit_migration_runs WHERE generation='shared-generation'",
+        )
+        .fetch_one(&mut control)
+        .await?;
+        assert_eq!(current, original, "a copied cache key is not gate ownership");
+        assert!(
+            MigrationSession::exists(&mut control, &owner).await?,
+            "unauthorized supervisor did not signal first worker"
+        );
+        second.cancel.cancel();
+        let result = timeout(Duration::from_secs(3), task).await??;
+        assert!(result.is_err());
+    }
+    first.cancel.cancel();
+    timeout(Duration::from_secs(9), first_task).await???;
+    assert!(!MigrationSession::exists(&mut control, &owner).await?);
+    // A fresh gate owner reloads the now-committed STOPPED record rather than the
+    // stale RUNNING cache. It can safely resume after the original owner is gone.
+    held.rollback().await?;
+    let resumed = MigrationReporter::new("shared-generation".into());
+    *resumed.durable.lock().unwrap() = Some(key);
+    *resumed.backend.lock().unwrap() = Some(owner);
+    let cloned = resumed.clone();
+    let task =
+        tokio::spawn(async move { ManagedMigration::supervise(&config, &cloned, None).await });
+    timeout(Duration::from_secs(15), async {
+        while resumed.snapshot().state != MigrationState::Succeeded {
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await?;
+    assert_eq!(resumed.snapshot().attempt, 2);
+    resumed.cancel.cancel();
+    timeout(Duration::from_secs(3), task).await???;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17"]
+async fn committed_early_failure_releases_generation_gate_before_idle() -> anyhow::Result<()> {
+    let db = NativeDatabase::new().await?;
+    let progress = MigrationReporter::new("gate-error-idle".into());
+    let mut writes = 0;
+    *progress.cache_writer.lock().unwrap() = Some(MigrationCacheWriter::with_sink(move |_, _| {
+        writes += 1;
+        if writes == 1 { Ok(()) } else { Err(audit_archiver_lib::MigrationError::StateIo) }
+    })?);
+    let config = ManagedMigrationConfig {
+        database_url: db.url.clone(),
+        address: "127.0.0.1:0".parse()?,
+        metrics_enabled: false,
+        metrics_interval_secs: 1,
+        run_id: "gate-error-idle".into(),
+        state_path: NativeDatabase::scratch()?.join("state.json"),
+        shutdown_timeout: Duration::from_secs(9),
+    };
+    let cloned = progress.clone();
+    let task =
+        tokio::spawn(async move { ManagedMigration::supervise(&config, &cloned, None).await });
+    let mut control = MigrationSession::connect(&db.url, "native-gate-error-verifier").await?;
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let key = progress.durable.lock().unwrap().clone();
+            if let Some(key) = key
+                && MigrationDurable::load(&mut control, &key)
+                    .await?
+                    .is_some_and(|record| record.status.state == MigrationState::Failed)
+            {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+        anyhow::Ok(())
+    })
+    .await??;
+    timeout(Duration::from_secs(3), async {
+        loop {
+            let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+                .bind(MigrationDurable::GATE)
+                .fetch_one(&mut control)
+                .await?;
+            if acquired {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+        anyhow::Ok(())
+    })
+    .await??;
+    assert!(!task.is_finished(), "failed result is still hosted after releasing gate");
+    MigrationDurable::unlock(&mut control).await?;
+    progress.cancel.cancel();
+    assert!(timeout(Duration::from_secs(3), task).await??.is_err());
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17 and locally built audit binary"]
+async fn missing_runtime_insert_column_cannot_restore_schema_readiness() -> anyhow::Result<()> {
+    let mut db = NativeDatabase::new().await?;
+    AuditMigration::run(&db.url).await?;
+    let history: Vec<(i64, bool, Vec<u8>)> =
+        sqlx::query_as("SELECT version,success,checksum FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&mut db.admin)
+            .await?;
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+    let initial = NativeDatabase::scratch()?;
+    let mut succeeded = db.child(port, "missing-runtime-column", &initial).await?;
+    assert!(NativeDatabase::status(port, MigrationState::Succeeded).await?.complete);
+    NativeDatabase::signal(&mut succeeded, "-INT").await?;
+    sqlx::query("ALTER TABLE public.transaction_events DROP COLUMN request_id")
+        .execute(&mut db.admin)
+        .await?;
+    TransactionEventIngestedAtIndex::validate(&mut db.admin).await?;
+    assert!(AuditMigration::verify_schema(&mut db.admin).await.is_err());
+    assert!(AuditMigration::run(&db.url).await.is_err());
+    let sink = PgTransactionEventSink::connect(&db.url, 1).await?;
+    assert!(sink.check_schema_ready().await.is_err());
+    for _ in 0..2 {
+        let scratch = NativeDatabase::scratch()?;
+        let mut child = db.child(port, "missing-runtime-column", &scratch).await?;
+        let failed = NativeDatabase::status(port, MigrationState::Failed).await?;
+        assert!(!failed.schema_ready && !failed.ready && !failed.complete);
+        assert_eq!(failed.attempt, 1);
+        assert_eq!(NativeDatabase::http(port, "/healthz").await?.0, 200);
+        assert_eq!(NativeDatabase::http(port, "/readyz").await?.0, 503);
+        NativeDatabase::signal(&mut child, "-TERM").await?;
+    }
+    let after: Vec<(i64, bool, Vec<u8>)> =
+        sqlx::query_as("SELECT version,success,checksum FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&mut db.admin)
+            .await?;
+    assert_eq!(history, after);
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires owned disposable PostgreSQL 17 and locally built audit binary"]
 async fn missing_runtime_table_never_restores_schema_readiness() -> anyhow::Result<()> {
     let mut db = NativeDatabase::new().await?;
     AuditMigration::run(&db.url).await?;
@@ -681,7 +1020,7 @@ async fn missing_runtime_table_never_restores_schema_readiness() -> anyhow::Resu
     }
     let mut control = MigrationSession::connect(&db.url, "native-missing-root-restore").await?;
     let key = MigrationDurable::bootstrap(&mut control, "missing-root-stopped").await?;
-    MigrationDurable::save(&mut control, &key, &progress).await?;
+    NativeDatabase::save(&mut control, &key, &progress).await?;
     let scratch = NativeDatabase::scratch()?;
     let mut child = db.child(port, "missing-root-stopped", &scratch).await?;
     let failed = NativeDatabase::status(port, MigrationState::Failed).await?;
@@ -871,7 +1210,7 @@ async fn interrupted_restart_cleans_recorded_owner_before_resuming() -> anyhow::
     *progress.backend.lock().unwrap() = Some(backend.clone());
     let mut store_conn = MigrationSession::connect(&db.url, "native-save-interrupted").await?;
     let key = MigrationDurable::bootstrap(&mut store_conn, "same-pod-interrupted").await?;
-    MigrationDurable::save(&mut store_conn, &key, &progress).await?;
+    NativeDatabase::save(&mut store_conn, &key, &progress).await?;
     let scratch = NativeDatabase::scratch()?;
     let config = ManagedMigrationConfig {
         database_url: db.url.clone(),
@@ -1021,7 +1360,7 @@ async fn managed_terminal_restart_hosts_without_rerunning() -> anyhow::Result<()
         let key = MigrationDurable::bootstrap(&mut durable, "same-pod").await?;
         let seed = MigrationReporter::new("same-pod".into());
         *seed.status.lock().unwrap() = saved.clone();
-        MigrationDurable::save(&mut durable, &key, &seed).await?;
+        NativeDatabase::save(&mut durable, &key, &seed).await?;
         let progress = MigrationReporter {
             status: Arc::new(std::sync::Mutex::new(saved)),
             store: Some(store.clone()),
@@ -1230,7 +1569,7 @@ async fn unconfirmed_failed_generation_retains_and_cleans_owner_without_retry() 
     let progress = MigrationReporter::new("initial".into());
     *progress.backend.lock().unwrap() = Some(backend.clone());
     progress.finish(Err(audit_archiver_lib::MigrationError::CancellationUnconfirmed)).await?;
-    MigrationDurable::save(&mut store_conn, &key, &progress).await?;
+    NativeDatabase::save(&mut store_conn, &key, &progress).await?;
     let config = ManagedMigrationConfig {
         database_url: db.url.clone(),
         address: "127.0.0.1:0".parse()?,
@@ -1290,7 +1629,7 @@ async fn new_generation_persists_prior_owner_cleanup_without_hiding_failed_recor
     let prior = MigrationReporter::new("failed-before-bump".into());
     *prior.backend.lock().unwrap() = Some(backend.clone());
     prior.finish(Err(audit_archiver_lib::MigrationError::CancellationUnconfirmed)).await?;
-    MigrationDurable::save(&mut control, &old_key, &prior).await?;
+    NativeDatabase::save(&mut control, &old_key, &prior).await?;
     let progress = MigrationReporter::new("reviewed-bump".into());
     let config = ManagedMigrationConfig {
         database_url: db.url.clone(),
@@ -1476,7 +1815,7 @@ async fn durable_target_and_fingerprint_mismatch_fail_closed() -> anyhow::Result
     let mut conn = MigrationSession::connect(&db.url, "native-binding-test").await?;
     let mut key = MigrationDurable::bootstrap(&mut conn, "initial").await?;
     let progress = MigrationReporter::new("initial".into());
-    MigrationDurable::save(&mut conn, &key, &progress).await?;
+    NativeDatabase::save(&mut conn, &key, &progress).await?;
     key.target.push_str("-wrong-target");
     assert_eq!(MigrationDurable::load(&mut conn, &key).await.unwrap_err().code(), "state_corrupt");
     key.target = key.target.trim_end_matches("-wrong-target").into();

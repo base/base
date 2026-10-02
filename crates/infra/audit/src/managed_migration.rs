@@ -220,7 +220,8 @@ impl ManagedMigration {
                 return published;
             }
         };
-        let result = Self::durable_attempt(config, progress, &mut control).await;
+        let mut gate_owned = false;
+        let result = Self::durable_attempt(config, progress, &mut control, &mut gate_owned).await;
         if matches!(result, Err(MigrationError::StopRequested)) {
             let _ = timeout(config.shutdown_timeout / 15, control.close()).await;
             let _ = progress.finish(Err(MigrationError::CancellationUnconfirmed)).await;
@@ -228,14 +229,18 @@ impl ManagedMigration {
         }
         if let Err(error) = &result {
             let key = progress.durable.lock().map_err(|_| MigrationError::Worker)?.clone();
-            if let Some(key) = key.filter(|_| !progress.cancel.is_cancelled()) {
+            if let Some(key) = key.filter(|_| gate_owned && !progress.cancel.is_cancelled()) {
                 let _ =
                     Self::terminal(&mut control, &key, progress, Err(error.clone()), false).await;
             } else {
                 let _ = progress.finish(Err(error.clone())).await;
             }
+            // Close releases an acquired gate on every error before terminal idle.
+            // A restored cache key never authorizes a database write or a signal.
+            let _ = timeout(config.shutdown_timeout / 15, control.close()).await;
             // A failed generation is hosted without retry, even for store/observer failure.
             progress.cancel.cancelled().await;
+            return result;
         }
         let _ = timeout(config.shutdown_timeout / 15, control.close()).await;
         result
@@ -246,6 +251,7 @@ impl ManagedMigration {
         config: &ManagedMigrationConfig,
         progress: &MigrationReporter,
         control: &mut PgConnection,
+        gate_owned: &mut bool,
     ) -> Result<(), MigrationError> {
         progress
             .io(async {
@@ -256,9 +262,12 @@ impl ManagedMigration {
             })
             .await?;
         MigrationDurable::lock(control, progress).await?;
+        *gate_owned = true;
         progress.check_running()?;
+        // Keep the cache binding only as a comparison hint. Bootstrap failure
+        // must not leave a cache-derived key available to the error writer.
+        let local = progress.durable.lock().map_err(|_| MigrationError::Worker)?.take();
         let key = progress.io(MigrationDurable::bootstrap(control, &config.run_id)).await?;
-        let local = progress.durable.lock().map_err(|_| MigrationError::Worker)?.clone();
         *progress.durable.lock().map_err(|_| MigrationError::Worker)? = Some(key.clone());
         if local.as_ref().is_some_and(|old| old.target != key.target) {
             // Never signal a cache owner belonging to another target.
@@ -334,6 +343,7 @@ impl ManagedMigration {
                     progress.update(|s| *s = restored.status).await?;
                 }
                 MigrationDurable::unlock(control).await?;
+                *gate_owned = false;
                 progress.cancel.cancelled().await;
                 return progress.update(|s| s.phase = MigrationPhase::Stopping).await;
             }
@@ -355,7 +365,15 @@ impl ManagedMigration {
             Self::worker_guarded(&url, &worker_progress, Some(receive)).await
         });
         let observed = Self::approve(control, progress, &worker).await;
-        let _ = approval.send(observed.is_ok());
+        // Only the generation-gate owner persists worker ownership. The auxiliary
+        // observer never writes the ledger, so a cancelled observer cannot publish
+        // a delayed RUNNING record after the control's terminal commit.
+        let recorded = if observed.is_ok() {
+            progress.io(MigrationDurable::save(control, &key, progress)).await
+        } else {
+            Err(MigrationError::CancellationUnconfirmed)
+        };
+        let _ = approval.send(observed.is_ok() && recorded.is_ok());
         tokio::select! {
             biased;
             _ = progress.cancel.cancelled() => {
@@ -365,6 +383,7 @@ impl ManagedMigration {
                     Self::terminal(control, &key, progress, cleanup.clone(), cleanup.is_ok()).await?;
                     MigrationDurable::unlock(control).await
                 }).await.unwrap_or(Err(MigrationError::StateIo))?;
+                *gate_owned = false;
                 cleanup
             }
             result = &mut worker => {
@@ -378,6 +397,7 @@ impl ManagedMigration {
                 if progress.update(|s| s.cleanup_confirmed = cleanup.is_ok()).await.is_err() { result = Err(MigrationError::StateIo); }
                 let terminal = timeout_at(deadline, Self::terminal(control, &key, progress, result, false)).await.unwrap_or(Err(MigrationError::StateIo));
                 timeout_at(deadline, MigrationDurable::unlock(control)).await.unwrap_or(Err(MigrationError::StateIo))?;
+                *gate_owned = false;
                 progress.cancel.cancelled().await;
                 let stopping = progress.update(|s| s.phase = MigrationPhase::Stopping).await;
                 terminal?;
@@ -508,10 +528,6 @@ impl ManagedMigration {
             .await?;
         if !progress.io(MigrationSession::exists(&mut observer, &owner)).await? {
             return Err(MigrationError::CancellationUnconfirmed);
-        }
-        let key = progress.durable.lock().map_err(|_| MigrationError::Worker)?.clone();
-        if let Some(key) = key {
-            progress.io(MigrationDurable::save(&mut observer, &key, progress)).await?;
         }
         let _ = timeout(Duration::from_secs(2), observer.close()).await;
         if let Some(approval) = approval {

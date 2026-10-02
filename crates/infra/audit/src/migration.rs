@@ -158,7 +158,7 @@ impl AuditMigration {
 
     /// State restoration identity includes all schema checksums and online contracts.
     pub fn fingerprint() -> String {
-        let mut fingerprint = String::from("audit-v2:validator:3;");
+        let mut fingerprint = String::from("audit-v2:validator:4;");
         for migration in sqlx::migrate!("./migrations").iter() {
             fingerprint.push_str(&format!("schema:{}:", migration.version));
             for byte in migration.checksum.iter() {

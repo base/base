@@ -28,6 +28,15 @@ impl MigrationDurable {
     /// Distinct from sqlx's database migration lock; serializes record decisions.
     pub const GATE: i64 = 0x4155_4449_5452_554e;
 
+    /// Same-statement proof that this SQL backend owns the generation gate.
+    pub fn gate_owner() -> String {
+        format!(
+            "EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND granted AND mode='ExclusiveLock' AND classid=({}::bigint >> 32)::oid AND objid=({}::bigint & 4294967295)::oid AND objsubid=1)",
+            Self::GATE,
+            Self::GATE
+        )
+    }
+
     /// Acquires the generation gate with bounded queries and a responsive stop gate.
     pub async fn lock(
         conn: &mut PgConnection,
@@ -151,8 +160,9 @@ impl MigrationDurable {
         let server = owner.server.as_ref().ok_or(MigrationError::CancellationUnconfirmed)?;
         let value = serde_json::to_value(owner).map_err(|_| MigrationError::StateIo)?;
         let statement = format!(
-            "UPDATE public.audit_migration_runs SET record=jsonb_set(record,'{{status,cleanup_confirmed}}','true'::jsonb),updated_at=now() WHERE target_id=$10 AND record->'backend'=$11 AND {} AND NOT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$7 AND backend_start=$8 AND datname=$2 AND usename=$1 AND application_name=$9)",
-            MigrationSession::OBSERVER
+            "UPDATE public.audit_migration_runs SET record=jsonb_set(record,'{{status,cleanup_confirmed}}','true'::jsonb),updated_at=now() WHERE target_id=$10 AND record->'backend'=$11 AND {} AND {} AND NOT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$7 AND backend_start=$8 AND datname=$2 AND usename=$1 AND application_name=$9)",
+            MigrationSession::OBSERVER,
+            Self::gate_owner()
         );
         let result = tokio::time::timeout(
             Duration::from_secs(2),
@@ -196,14 +206,31 @@ impl MigrationDurable {
     }
 
     /// Writes a candidate record before it becomes visible as terminal over HTTP.
+    /// Refuses mutation unless this exact SQL backend owns the generation gate.
     pub async fn save_record(
         conn: &mut PgConnection,
         key: &MigrationDurableKey,
         record: MigrationRecord,
     ) -> Result<(), MigrationError> {
         let value = serde_json::to_value(record).map_err(|_| MigrationError::StateIo)?;
-        tokio::time::timeout(Duration::from_secs(2), sqlx::query("INSERT INTO public.audit_migration_runs(generation,target_id,fingerprint,record) VALUES($1,$2,$3,$4) ON CONFLICT(generation) DO UPDATE SET record=EXCLUDED.record,updated_at=now() WHERE audit_migration_runs.target_id=EXCLUDED.target_id AND audit_migration_runs.fingerprint=EXCLUDED.fingerprint")
-            .bind(&key.generation).bind(&key.target).bind(AuditMigration::fingerprint()).bind(value)
-            .execute(conn)).await.map_err(|_| MigrationError::StateIo)?.map_err(|_| MigrationError::StateIo).and_then(|result| if result.rows_affected()==1 { Ok(()) } else { Err(MigrationError::StateCorrupt) })
+        let statement = format!(
+            "INSERT INTO public.audit_migration_runs(generation,target_id,fingerprint,record) SELECT $1,$2,$3,$4 WHERE {} ON CONFLICT(generation) DO UPDATE SET record=EXCLUDED.record,updated_at=now() WHERE audit_migration_runs.target_id=EXCLUDED.target_id AND audit_migration_runs.fingerprint=EXCLUDED.fingerprint",
+            Self::gate_owner()
+        );
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            sqlx::query(&statement)
+                .bind(&key.generation)
+                .bind(&key.target)
+                .bind(AuditMigration::fingerprint())
+                .bind(value)
+                .execute(conn),
+        )
+        .await
+        .map_err(|_| MigrationError::StateIo)?
+        .map_err(|_| MigrationError::StateIo)
+        .and_then(|result| {
+            if result.rows_affected() == 1 { Ok(()) } else { Err(MigrationError::StateCorrupt) }
+        })
     }
 }

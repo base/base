@@ -268,6 +268,12 @@ endpoint, immutable SQL checksums, and validator semantic version. Target or
 same-generation fingerprint mismatch fails closed. Use direct session-affine
 Postgres connections, not transaction pooling. The control observer must see the
 exact live owned backend before dispatch.
+Only the control connection that actually owns the generation gate writes the
+authoritative ledger. It commits the observed RUNNING owner before approving DDL;
+auxiliary observers are read-only. Each ledger mutation checks gate ownership on
+that same SQL backend. A cached target key is never write authority. Failures before
+gate acquisition/actual-target validation remain local unready failures, and all
+terminal paths release the owned gate before idle hosting.
 The observer must use the same login role without `SET ROLE` drift; otherwise
 metadata visibility/ownership proof fails closed.
 Writer endpoint changes require checked recovery, not unverified disappearance claims.
