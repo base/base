@@ -123,12 +123,19 @@ well before it reaches zero), `transaction_event_partitions_created`,
 Migration `002_transaction_events_ingested_at_index.sql` registers a BRIN index
 on the partitioned `transaction_events` table and its hot/warm/cold parents.
 It uses `ON ONLY`: `migrate up` creates metadata quickly but does **not** build
-indexes on existing day partitions. The root index remains invalid until the
-day indexes are built and attached. Future day partitions automatically get
-their index on attach, even while the parent index is being completed.
+indexes on existing day partitions. The root index remains invalid while
+attached days are missing matching indexes. New day partitions automatically
+get their index on attach; existing unindexed days can expire through retention.
 
-After deploying the migrator, arrange a separate, monitored one-off run using
-the `audit_archiver_migration` database credential:
+Choose coverage explicitly after deploying the parent definitions. For
+forward-only coverage, leave existing day tables unindexed and verify new-day
+inheritance as retention removes old tables. Check actual class settings and
+pre-created future days; defaults are hot 3, warm 7, and cold 30 days. Do not run
+`index` for this choice. Temporary root invalidity and extraction cost must be
+acceptable to the query owner.
+
+If existing days need coverage now, arrange a separate, monitored one-off run
+using the `audit_archiver_migration` database credential:
 
 ```bash
 # TIPS_AUDIT_POSTGRES_URL must point at the target network database.
@@ -139,12 +146,14 @@ The `index` command builds one BRIN index at a time with `CREATE INDEX
 CONCURRENTLY` and attaches it to the class index. It is intentionally separate
 from the chart's `migrate up` init container: production has many populated
 day partitions, and building them can take hours. Re-running the command is
-safe; it skips attached indexes and drops/rebuilds invalid indexes left by a
-canceled concurrent build. Monitor Postgres storage, read I/O, and ingest
+safe for supported interrupted builds: it skips valid attached indexes and
+drops/rebuilds invalid unattached indexes left by a canceled concurrent build.
+Invalid attached or wrongly attached indexes require investigation. Monitor
+Postgres storage, read I/O, and ingest
 latency during the build. Do not run two index jobs against the same database;
 the command also holds the migration lock to serialize them.
 
-Check completion in each network database:
+Inspect index coverage in each network database:
 
 ```sql
 SELECT c.relname, i.indisvalid
@@ -158,7 +167,18 @@ WHERE c.relname IN (
 );
 ```
 
-All four should report `indisvalid = true`. The `ingested_at` BRIN index
+Complete coverage requires all four entries to report `indisvalid = true`.
+With forward-only coverage, invalid parents are expected until the unindexed
+days expire. This does not impair table correctness or require a historical
+backfill; verify new-day inheritance and revisit coverage as retention runs.
+
+The `ingested_at` BRIN index
 serves DataPilot's timestamp cutoff; it does not by itself index an epoch
 expression used for parallel slicing. Evaluate that expression's query plan
 separately before enabling `NUM_SLICES` on the production primary.
+
+See [Add indexes to the partitioned transaction-event schema](../../docs/transaction-events/partition-indexes.md)
+for the forward-only/backfill decision, attachment and coverage checks, safe
+stop/retry procedures, and how to add a future index without changing applied
+migrations. `migrate up` success and ingestion readiness do not imply indexing
+completion; the current `index` command is specific to this BRIN index.
