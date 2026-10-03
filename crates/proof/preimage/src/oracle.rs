@@ -92,6 +92,8 @@ where
 }
 
 /// An [`OracleServer`] is a router for the host to serve data back to the client [`OracleReader`].
+///
+/// Responses contain a length prefix and, only for nonempty preimages, a value payload.
 #[derive(Debug, Clone, Copy)]
 pub struct OracleServer<C> {
     channel: C,
@@ -126,9 +128,10 @@ where
         // Fetch the preimage value from the preimage getter.
         let value = fetcher.get_preimage(preimage_key).await?;
 
-        // Write the length as a big-endian u64 followed by the data.
         self.channel.write(value.len().to_be_bytes().as_ref()).await?;
-        self.channel.write(value.as_ref()).await?;
+        if !value.is_empty() {
+            self.channel.write(value.as_ref()).await?;
+        }
 
         trace!(target: "oracle_server", key = %preimage_key, "Successfully wrote preimage data");
 
@@ -137,7 +140,7 @@ where
 }
 
 #[cfg(all(test, feature = "std"))]
-mod test {
+mod tests {
     use alloc::sync::Arc;
     use std::collections::HashMap;
 
@@ -247,5 +250,69 @@ mod test {
         let (contents_a, contents_b) = c.unwrap();
         assert_eq!(contents_a, MOCK_DATA_A);
         assert_eq!(contents_b, MOCK_DATA_B);
+    }
+
+    #[tokio::test]
+    async fn get_empty_then_nonempty_preimage() {
+        let empty_key = PreimageKey::new(*keccak256(b""), PreimageKeyType::Keccak256);
+        let value = b"preimage";
+        let key = PreimageKey::new(*keccak256(value), PreimageKeyType::Keccak256);
+        let fetcher = TestFetcher {
+            preimages: Arc::new(Mutex::new(HashMap::from([
+                (empty_key, Vec::new()),
+                (key, value.to_vec()),
+            ]))),
+        };
+        let channel = BidirectionalChannel::new().unwrap();
+        let reader = OracleReader::new(channel.client);
+        let server = OracleServer::new(channel.host);
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::join!(
+                async {
+                    assert!(reader.get(empty_key).await.unwrap().is_empty());
+                    assert_eq!(reader.get(key).await.unwrap(), value);
+                },
+                async {
+                    server.next_preimage_request(&fetcher).await.unwrap();
+                    server.next_preimage_request(&fetcher).await.unwrap();
+                }
+            );
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_exact_empty_then_nonempty_preimage() {
+        let empty_key = PreimageKey::new(*keccak256(b""), PreimageKeyType::Keccak256);
+        let value = b"preimage";
+        let key = PreimageKey::new(*keccak256(value), PreimageKeyType::Keccak256);
+        let fetcher = TestFetcher {
+            preimages: Arc::new(Mutex::new(HashMap::from([
+                (empty_key, Vec::new()),
+                (key, value.to_vec()),
+            ]))),
+        };
+        let channel = BidirectionalChannel::new().unwrap();
+        let reader = OracleReader::new(channel.client);
+        let server = OracleServer::new(channel.host);
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::join!(
+                async {
+                    reader.get_exact(empty_key, &mut []).await.unwrap();
+                    let mut buffer = [0; 8];
+                    reader.get_exact(key, &mut buffer).await.unwrap();
+                    assert_eq!(&buffer, value);
+                },
+                async {
+                    server.next_preimage_request(&fetcher).await.unwrap();
+                    server.next_preimage_request(&fetcher).await.unwrap();
+                }
+            );
+        })
+        .await
+        .unwrap();
     }
 }
