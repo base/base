@@ -26,9 +26,8 @@ build and attach physical indexes separately when historical coverage is needed.
 Postgres marks a partitioned index valid when its required child indexes are
 attached and valid. A root definition alone does not establish usable coverage.
 
-For the implemented BRIN example, see
-[`002_transaction_events_ingested_at_index.sql`](../../crates/infra/audit/migrations/002_transaction_events_ingested_at_index.sql).
-It registers `ingested_at` index metadata on the root and all three class tables.
+The installed `ingested_at` BRIN index uses parent-only metadata on the root
+and all three class tables.
 New day tables acquire matching indexes when partition maintenance attaches them,
 even while older missing indexes leave the parent invalid. This does not
 retroactively index days that were already attached when migration 002 ran.
@@ -40,6 +39,8 @@ new index. Let normal partition creation index new days and retention remove old
 days. This avoids scanning populated historical partitions, but accepts partial
 coverage and potentially slower extraction until the old days disappear.
 Do not run `audit-archiver index` for this choice: it backfills existing days.
+Temporary parent-index invalidity does not impair table correctness and does
+not by itself require a historical backfill.
 
 Before choosing forward-only coverage:
 
@@ -225,8 +226,8 @@ parallel slicing needs separate plan validation before enabling `NUM_SLICES`.
 2. Add a **new**, unused migration version in
    [`crates/infra/audit/migrations/`](../../crates/infra/audit/migrations/).
    Never rewrite applied or legacy SQL, change a recorded checksum, or reset
-   migration history to install an index. Follow migration 002's parent-only
-   pattern for this two-level tree: root and each class definition, with class
+   migration history to install an index. Use parent-only definitions for
+   this two-level tree: root and each class definition, with class
    indexes attached to the root. Keep populated-leaf concurrent builds outside
    the schema transaction. Changing a unique index also requires checking
    Postgres's partition-key restrictions.

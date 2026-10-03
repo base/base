@@ -48,7 +48,7 @@ digest = "de5b6325d7"
 
 ["bin/audit-archiver/README.md"]
 summary = "audit-archiver service, retention config, and S3 rollout; schema-only migrate up, explicit ingested_at backfill versus forward-only coverage, and the partition-index guide."
-digest = "edba48f22c"
+digest = "8254adbf00"
 
 ["bin/base-telemetry/README.md"]
 summary = "base-telemetry backend: CLI and env config, per-IP rate limiting, and on-demand P2P reachability probes for execution-layer (enode) and consensus-layer (ENR or multiaddr) nodes."
@@ -684,7 +684,7 @@ digest = "e1240243d9"
 
 ["docs/transaction-events/partition-indexes.md"]
 summary = "Add partitioned audit indexes: parent-only migrations, forward-only versus historical coverage, explicit native BRIN backfill, catalog checks, locks, cancellation, and future-index steps."
-digest = "f74c7eb9ac"
+digest = "408c3b4cc9"
 
 ["docs/transaction-events/tips-parity-checklist.md"]
 summary = "Checklist for verifying TIPS UI audit-archiver/Postgres responses match the S3-backed routes (block, txn, bundle, rejected) before switching TIPS_UI_QUERY_BACKEND=audit."
