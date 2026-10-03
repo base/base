@@ -73,9 +73,7 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
             where
                 A: serde::de::MapAccess<'de>,
             {
-                use alloc::string::String;
-
-                use alloy_primitives::{U64, map::HashMap};
+                use alloy_primitives::U64;
 
                 enum Fields {
                     ParentHash,
@@ -96,7 +94,7 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
                     BlobGasUsed,
                     ExcessBlobGas,
                     WithdrawalsRoot,
-                    Unknown(alloc::string::String),
+                    Unknown,
                 }
 
                 impl<'de> serde::Deserialize<'de> for Fields {
@@ -139,7 +137,7 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
                                     "blobGasUsed" => Fields::BlobGasUsed,
                                     "excessBlobGas" => Fields::ExcessBlobGas,
                                     "withdrawalsRoot" => Fields::WithdrawalsRoot,
-                                    _ => Fields::Unknown(value.into()),
+                                    _ => Fields::Unknown,
                                 })
                             }
                         }
@@ -166,8 +164,6 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
                 let mut blob_gas_used = None;
                 let mut excess_blob_gas = None;
                 let mut withdrawals_root = None;
-
-                let mut extra_fields = HashMap::new();
 
                 while let Some(key) = map.next_key()? {
                     match key {
@@ -207,9 +203,8 @@ impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
                             excess_blob_gas = Some(raw.to());
                         }
                         Fields::WithdrawalsRoot => withdrawals_root = Some(map.next_value()?),
-                        Fields::Unknown(field) => {
-                            let raw = map.next_value::<String>()?;
-                            extra_fields.insert(field, raw);
+                        Fields::Unknown => {
+                            map.next_value::<serde::de::IgnoredAny>()?;
                         }
                     }
                 }
@@ -777,6 +772,9 @@ mod tests {
     #[cfg(feature = "serde")]
     use super::*;
 
+    #[cfg(feature = "serde")]
+    const PAYLOAD_V3_JSON: &str = r#"{"parentHash":"0xe927a1448525fb5d32cb50ee1408461a945ba6c39bd5cf5621407d500ecc8de9","feeRecipient":"0x0000000000000000000000000000000000000000","stateRoot":"0x10f8a0830000e8edef6d00cc727ff833f064b1950afd591ae41357f97e543119","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","prevRandao":"0xe0d8b4521a7da1582a713244ffb6a86aa1726932087386e2dc7973f43fc6cb24","blockNumber":"0x1","gasLimit":"0x2ffbd2","gasUsed":"0x0","timestamp":"0x1235","extraData":"0xd883010d00846765746888676f312e32312e30856c696e7578","baseFeePerGas":"0x342770c0","blockHash":"0x44d0fa5f2f73a938ebb96a2a21679eb8dea3e7b7dd8fd9f35aa756dda8bf0a8a","transactions":[],"withdrawals":[],"blobGasUsed":"0x0","excessBlobGas":"0x0"}"#;
+
     #[test]
     #[cfg(feature = "serde")]
     fn serde_payload_input_enum_v4() {
@@ -793,7 +791,7 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn serde_payload_input_enum_v3() {
-        let response_v3 = r#"{"parentHash":"0xe927a1448525fb5d32cb50ee1408461a945ba6c39bd5cf5621407d500ecc8de9","feeRecipient":"0x0000000000000000000000000000000000000000","stateRoot":"0x10f8a0830000e8edef6d00cc727ff833f064b1950afd591ae41357f97e543119","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","prevRandao":"0xe0d8b4521a7da1582a713244ffb6a86aa1726932087386e2dc7973f43fc6cb24","blockNumber":"0x1","gasLimit":"0x2ffbd2","gasUsed":"0x0","timestamp":"0x1235","extraData":"0xd883010d00846765746888676f312e32312e30856c696e7578","baseFeePerGas":"0x342770c0","blockHash":"0x44d0fa5f2f73a938ebb96a2a21679eb8dea3e7b7dd8fd9f35aa756dda8bf0a8a","transactions":[],"withdrawals":[],"blobGasUsed":"0x0","excessBlobGas":"0x0"}"#;
+        let response_v3 = PAYLOAD_V3_JSON;
 
         let payload: BaseExecutionPayload = serde_json::from_str(response_v3).unwrap();
         assert!(payload.as_v3().is_some());
@@ -801,6 +799,20 @@ mod tests {
 
         let payload_v3: ExecutionPayloadV3 = serde_json::from_str(response_v3).unwrap();
         assert_eq!(payload.as_v3().unwrap(), &payload_v3);
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn serde_payload_ignores_unknown_fields_of_any_type() {
+        let with_unknown_fields = PAYLOAD_V3_JSON.replacen(
+            '{',
+            r#"{"blockAccessList":null,"slotNumber":7,"futureField":{"nested":[true]},"#,
+            1,
+        );
+
+        let payload: BaseExecutionPayload = serde_json::from_str(&with_unknown_fields).unwrap();
+        let expected: BaseExecutionPayload = serde_json::from_str(PAYLOAD_V3_JSON).unwrap();
+        assert_eq!(payload, expected);
     }
 
     #[test]
