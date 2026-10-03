@@ -53,6 +53,7 @@ url.workspace = true
 http.workspace = true
 redb.workspace = true
 serde.workspace = true
+serde_json = { workspace = true, features = ["std"] }
 tower = { workspace = true, features = ["limit", "load-shed"] }
 bytes.workspace = true
 discv5.workspace = true

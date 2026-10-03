@@ -11,6 +11,7 @@ use std::{
 
 use base_consensus_rpc::RpcBuilder;
 use clap::Parser;
+use url::Url;
 
 /// RPC CLI Arguments
 #[derive(Parser, Debug, Clone, PartialEq, Eq)]
@@ -51,6 +52,13 @@ pub struct RpcArgs {
         value_parser = clap::value_parser!(NonZeroUsize),
     )]
     pub max_concurrent_requests: NonZeroUsize,
+    /// Execution JSON-RPC endpoint that receives every method this server does not serve itself,
+    /// so one endpoint answers both consensus and execution namespaces.
+    ///
+    /// Defaults to `http://localhost:8545` for `base-consensus node` and to `--l2-rpc-url` for
+    /// `follow`.
+    #[arg(long = "rpc.forward-upstream", env = "BASE_NODE_RPC_FORWARD_UPSTREAM")]
+    pub forward_upstream: Option<Url>,
 }
 
 /// RPC CLI arguments for embedded consensus nodes.
@@ -123,6 +131,9 @@ impl From<EmbeddedRpcArgs> for RpcArgs {
             dev_enabled: args.dev_enabled,
             http_timeout_secs: args.http_timeout_secs,
             max_concurrent_requests: args.max_concurrent_requests,
+            // The embedded execution node's address is only known after it launches, so the
+            // unified binary supplies it through the start overrides.
+            forward_upstream: None,
         }
     }
 }
@@ -141,6 +152,7 @@ impl From<RpcArgs> for Option<RpcBuilder> {
             dev_enabled: args.dev_enabled,
             http_timeout: Duration::from_secs(args.http_timeout_secs),
             max_concurrent_requests: args.max_concurrent_requests,
+            forward_unmatched_to: args.forward_upstream,
         })
     }
 }
@@ -161,6 +173,7 @@ mod tests {
     #[case::set_port_alias(&["--rpc.port", "8743"], |args: &mut RpcArgs| { args.listen_port = 8743; })]
     #[case::enable_admin(&["--rpc.enable-admin"], |args: &mut RpcArgs| { args.enable_admin = true; })]
     #[case::admin_state(&["--rpc.admin-state", "/"], |args: &mut RpcArgs| { args.admin_persistence = Some(PathBuf::from("/")); })]
+    #[case::forward_upstream(&["--rpc.forward-upstream", "http://el:8545"], |args: &mut RpcArgs| { args.forward_upstream = Some(Url::parse("http://el:8545").unwrap()); })]
     fn test_parse_rpc_args(#[case] args: &[&str], #[case] mutate: impl Fn(&mut RpcArgs)) {
         let args = [&["base-consensus"], args].concat();
         let cli = RpcArgs::parse_from(args);
@@ -185,6 +198,18 @@ mod tests {
         let mut expected = EmbeddedRpcArgs::default();
         mutate(&mut expected);
         assert_eq!(cli, expected);
+    }
+
+    #[test]
+    fn forward_upstream_is_carried_into_the_rpc_builder() {
+        let args = RpcArgs::parse_from(["base-consensus", "--rpc.forward-upstream", "http://el:1"]);
+        let builder = Option::<RpcBuilder>::from(args).unwrap();
+
+        assert_eq!(builder.forward_unmatched_to.as_ref().map(Url::as_str), Some("http://el:1/"));
+        assert_eq!(
+            Option::<RpcBuilder>::from(RpcArgs::default()).unwrap().forward_unmatched_to,
+            None
+        );
     }
 
     #[test]

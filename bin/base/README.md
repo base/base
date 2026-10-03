@@ -38,6 +38,32 @@ base batcher --l1-rpc-url <url> --l2-rpc-url <url> --rollup-rpc-url <url> --priv
 The former standalone binary's `BATCHER_*` environment variables are replaced by
 these shared or `BASE_BATCHER_*` names.
 
+## Single RPC endpoint
+
+The consensus RPC server (`--rpc.addr` / `--rpc.port`, default `0.0.0.0:9545`) always also answers
+execution-layer methods. It serves its own namespaces (`optimism_*`, `opp2p_*`, `admin_*`,
+`base_*`, `healthz`) and forwards every method it does not register, including batch entries, to an
+execution node's HTTP server. Point consensus clients, operators, and execution clients at one
+address. Forwarded calls return the execution node's results and errors unchanged.
+
+A JSON-RPC batch is split by backend: entries for consensus methods run in-process, and all the
+other entries are sent to the execution node together as a single batch. Responses come back in
+the original order under the caller's request ids. If the execution node cannot be reached, only the
+forwarded entries fail. The consensus entries in the same batch still succeed.
+
+The upstream is chosen per mode:
+
+- `rpc`, `follow`, and `sequencer` use the embedded execution node's bound HTTP address.
+- A standalone consensus node uses `--rpc.forward-upstream` /
+  `BASE_NODE_RPC_FORWARD_UPSTREAM`, defaulting to `http://localhost:8545`. Standalone `follow` uses
+  `--l2-rpc-url` unless `--rpc.forward-upstream` is set.
+
+An upstream that points back at the consensus server's own address is ignored with a warning, so a
+misconfiguration cannot loop. The execution node keeps its own `--http.*` listener. Forwarding
+covers request/response calls over HTTP; use the execution node's own `--ws` endpoint for
+`eth_subscribe`. If the execution node is unreachable, forwarded calls return an internal error
+while consensus methods keep working.
+
 ## `base rpc`
 
 `base rpc` starts a validator-oriented node by launching an embedded execution node and an embedded

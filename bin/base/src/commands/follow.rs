@@ -17,7 +17,10 @@ use clap::Args;
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
 
-use crate::{commands::rpc::engine_ipc_url, config::ResolvedChainConfig};
+use crate::{
+    commands::rpc::{engine_ipc_url, execution_rpc_url},
+    config::ResolvedChainConfig,
+};
 
 /// Arguments for `base follow`.
 #[derive(Args, Clone, Debug)]
@@ -97,10 +100,13 @@ impl FollowCommand {
             // Keep the execution node handle alive until both services have coordinated shutdown.
             let execution_node = handle.node;
             let execution_exit = handle.node_exit_future;
+            let execution_rpc =
+                execution_rpc_url(execution_node.rpc_server_handle().http_local_addr());
 
             let follow_cancellation = CancellationToken::new();
             let follow_exit = follow_args.start_with_overrides(
-                FollowNodeOverrides::embedded_execution(l2_engine_rpc),
+                FollowNodeOverrides::embedded_execution(l2_engine_rpc)
+                    .with_rpc_forward_upstream(execution_rpc),
                 follow_cancellation.clone(),
             );
             tokio::pin!(execution_exit);

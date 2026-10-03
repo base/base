@@ -29,6 +29,9 @@ use crate::{
     SequencerArgs, metrics::CliMetrics,
 };
 
+/// Execution JSON-RPC endpoint a standalone consensus node forwards unmatched methods to.
+const DEFAULT_FORWARD_UPSTREAM: &str = "http://localhost:8545";
+
 /// Overrides supplied by callers that embed consensus alongside another service.
 #[derive(Clone, Debug, Default)]
 pub struct ConsensusNodeOverrides {
@@ -38,6 +41,9 @@ pub struct ConsensusNodeOverrides {
     pub l2_engine_jwt_secret: Option<JwtSecret>,
     /// Override for the L1 RPC endpoint used by consensus upgrade-signal reads.
     pub upgrade_signal_l1_rpc: Option<Url>,
+    /// Upstream JSON-RPC endpoint that receives every method the consensus RPC server does not
+    /// serve itself, taking precedence over `--rpc.forward-upstream`.
+    pub rpc_forward_upstream: Option<Url>,
 }
 
 impl ConsensusNodeOverrides {
@@ -52,7 +58,15 @@ impl ConsensusNodeOverrides {
             l2_engine_rpc: Some(l2_engine_rpc),
             l2_engine_jwt_secret: None,
             upgrade_signal_l1_rpc,
+            rpc_forward_upstream: None,
         }
+    }
+
+    /// Forwards RPC methods the consensus server does not serve to the embedded execution node's
+    /// HTTP endpoint. `None` leaves the configured `--rpc.forward-upstream` in place.
+    pub fn with_rpc_forward_upstream(mut self, upstream: Option<Url>) -> Self {
+        self.rpc_forward_upstream = upstream;
+        self
     }
 }
 
@@ -511,6 +525,9 @@ impl ConsensusNodeArgs {
             da_batcher_sender_override: self.config.l1_rpc_args.l1_da_batcher_sender_override,
         };
 
+        // An embedded execution node always supplies the engine override; its HTTP address is
+        // supplied the same way, so only a standalone node falls back to the default upstream.
+        let standalone = overrides.l2_engine_rpc.is_none();
         let l2_engine_rpc = overrides
             .l2_engine_rpc
             .unwrap_or_else(|| self.config.l2_client_args.l2_engine_rpc.clone());
@@ -535,7 +552,20 @@ impl ConsensusNodeArgs {
                 genesis_signer,
             )
             .await?;
-        let rpc_config = self.config.rpc_flags.clone().into();
+        let mut rpc_config: Option<base_consensus_rpc::RpcBuilder> =
+            self.config.rpc_flags.clone().into();
+        if let Some(rpc_config) = rpc_config.as_mut() {
+            rpc_config.forward_unmatched_to = overrides
+                .rpc_forward_upstream
+                .clone()
+                .or_else(|| rpc_config.forward_unmatched_to.take())
+                .or_else(|| {
+                    standalone.then(|| {
+                        Url::parse(DEFAULT_FORWARD_UPSTREAM)
+                            .expect("DEFAULT_FORWARD_UPSTREAM is a valid URL")
+                    })
+                });
+        }
 
         let engine_config = EngineConfig {
             config: Arc::new(cfg.clone()),

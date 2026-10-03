@@ -1,6 +1,6 @@
 //! RPC Server Actor
 
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
 use base_consensus_gossip::P2pRpcRequest;
@@ -17,13 +17,19 @@ use derive_more::Constructor;
 use http::StatusCode;
 use jsonrpsee::{
     RpcModule,
-    server::{Server, ServerConfig, ServerHandle, middleware::http::ProxyGetRequestLayer},
+    server::{
+        Server, ServerConfig, ServerHandle,
+        middleware::{http::ProxyGetRequestLayer, rpc::RpcServiceBuilder},
+    },
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tower_http::timeout::TimeoutLayer;
 
-use crate::{NodeActor, RpcActorError, actors::CancellableContext};
+use crate::{
+    NodeActor, RpcActorError,
+    actors::{CancellableContext, rpc::forward::ForwardUnmatchedLayer},
+};
 
 /// An actor that handles the RPC server for the rollup node.
 #[derive(Constructor, Debug)]
@@ -62,6 +68,12 @@ impl CancellableContext for RpcContext {
     }
 }
 
+/// Fraction of the server's HTTP timeout given to a forwarded upstream request.
+///
+/// It is below one so the upstream client times out first and the caller receives a JSON-RPC
+/// error, instead of racing the server's own timeout layer, which answers with a bare HTTP 408.
+const FORWARD_TIMEOUT_FRACTION: f32 = 0.8;
+
 /// Launches the jsonrpsee [`Server`].
 ///
 /// If the RPC server is disabled, this will return `Ok(None)`.
@@ -73,6 +85,17 @@ pub(crate) async fn launch_rpc_server(
     config: &RpcBuilder,
     module: RpcModule<()>,
 ) -> Result<ServerHandle, std::io::Error> {
+    bind_rpc_server(config, module).await.map(|(_, handle)| handle)
+}
+
+/// Binds and starts the jsonrpsee [`Server`], returning the bound address alongside its handle.
+///
+/// When [`RpcBuilder::forward_unmatched_to`] is set, every method that is not registered on
+/// `module` is proxied to that upstream JSON-RPC server.
+pub(crate) async fn bind_rpc_server(
+    config: &RpcBuilder,
+    module: RpcModule<()>,
+) -> Result<(SocketAddr, ServerHandle), std::io::Error> {
     // SECURITY: This unauthenticated control-plane RPC is internal.
     // Deployments must restrict it to trusted operators on a private network.
     let middleware = tower::ServiceBuilder::new()
@@ -95,19 +118,38 @@ pub(crate) async fn launch_rpc_server(
     if !config.ws_enabled() {
         server_config = server_config.http_only();
     }
+    // Forwarding to this server's own address would bounce an unknown method back to itself
+    // until a limit trips, so such an upstream is ignored.
+    let forward = config
+        .forward_unmatched_to
+        .as_ref()
+        .filter(|upstream| {
+            let is_self = config.forwards_to_self(upstream);
+            if is_self {
+                warn!(target: "rpc", upstream = %upstream, "ignoring RPC forward upstream that points at this server");
+            }
+            !is_self
+        })
+        .map(|upstream| {
+            ForwardUnmatchedLayer::new(
+                upstream,
+                &module,
+                config.http_timeout.mul_f32(FORWARD_TIMEOUT_FRACTION),
+            )
+        })
+        .transpose()
+        .map_err(|err| std::io::Error::other(format!("invalid upstream RPC endpoint: {err}")))?;
     let server = Server::builder()
         .set_config(server_config.build())
         .set_http_middleware(middleware)
+        .set_rpc_middleware(RpcServiceBuilder::new().option_layer(forward))
         .build(config.socket)
         .await?;
 
-    if let Ok(addr) = server.local_addr() {
-        info!(target: "rpc", addr = ?addr, "RPC server bound to address");
-    } else {
-        error!(target: "rpc", "Failed to get local address for RPC server");
-    }
+    let addr = server.local_addr()?;
+    info!(target: "rpc", addr = ?addr, "RPC server bound to address");
 
-    Ok(server.start(module))
+    Ok((addr, server.start(module)))
 }
 
 #[async_trait]
@@ -219,6 +261,7 @@ mod tests {
             dev_enabled: false,
             http_timeout: Duration::from_secs(60),
             max_concurrent_requests: NonZeroUsize::new(1024).expect("nonzero"),
+            forward_unmatched_to: None,
         };
         let result = launch_rpc_server(&launcher, RpcModule::new(())).await;
         assert!(result.is_ok());
@@ -235,6 +278,7 @@ mod tests {
             dev_enabled: false,
             http_timeout: Duration::from_secs(60),
             max_concurrent_requests: NonZeroUsize::new(1024).expect("nonzero"),
+            forward_unmatched_to: None,
         };
         let mut modules = RpcModule::new(());
 

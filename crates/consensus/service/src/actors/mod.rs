@@ -25,7 +25,8 @@ pub use engine::{
 mod rpc;
 pub(crate) use rpc::launch_rpc_server;
 pub use rpc::{
-    QueuedEngineRpcClient, QueuedSequencerAdminAPIClient, RpcActor, RpcActorError, RpcContext,
+    ForwardUnmatched, ForwardUnmatchedLayer, QueuedEngineRpcClient, QueuedSequencerAdminAPIClient,
+    RpcActor, RpcActorError, RpcContext,
 };
 
 mod derivation;
