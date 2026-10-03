@@ -102,6 +102,12 @@ sol! {
         /// Error returned when a proof type has already been verified.
         error AlreadyProven(uint8 proofType);
 
+        /// Error returned when the TEE or ZK verifier rejects a proof, e.g. a
+        /// ZK proof from a program other than `ZK_AGGREGATE_HASH` /
+        /// `ZK_RANGE_HASH`. The SP1 PLONK verifier reverts with the same
+        /// selector.
+        error InvalidProof();
+
         /// Returns the root claim (output root) of this game.
         function rootClaim() external pure returns (bytes32);
 
@@ -419,6 +425,11 @@ pub const fn invalid_parent_game_selector() -> [u8; 4] {
 /// The 4-byte selector for `TEEVerifier.InvalidSigner(address)`.
 pub const fn invalid_signer_selector() -> [u8; 4] {
     IAggregateVerifier::InvalidSigner::SELECTOR
+}
+
+/// The 4-byte selector for `InvalidProof()`.
+pub const fn invalid_proof_selector() -> [u8; 4] {
+    IAggregateVerifier::InvalidProof::SELECTOR
 }
 
 /// The 4-byte selector for `AlreadyProven(uint8)`.
