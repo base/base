@@ -22,8 +22,7 @@ use base_execution_txpool::{
     estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::{
-    EventOccurrence, GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventType,
-    transaction_event,
+    GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
@@ -74,14 +73,9 @@ macro_rules! emit_native_validity_event {
                 tx_hash: $tx_hash,
                 block_number: $ctx.parent().number().saturating_add(1),
                 payload_id: $ctx.payload_id().to_string(),
-                // The payload job rebuilds the same payload ID repeatedly and the consideration
-                // index restarts with each build, so each emission is its own occurrence.
-                occurrence: EventOccurrence::next(),
-                id: {
-                    "validity_consideration_index" => $attempt,
-                },
                 data: {
                     "builder_mode" => "native",
+                    "validity_consideration_index" => $attempt,
                     "source_queue" => "txpool_best",
                     "parent_hash" => format!("{:#x}", $ctx.parent().hash()),
                     $( $data_name => $data_value ),*

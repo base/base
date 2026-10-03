@@ -2,7 +2,7 @@ use std::{collections::VecDeque, sync::Arc, time::Instant};
 
 use alloy_primitives::TxHash;
 use base_observability_events::{
-    EventOccurrence, TransactionEventProducer, TransactionEventType, transaction_event,
+    TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use jsonrpsee::{
     core::{
@@ -250,7 +250,6 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                         TransactionEventType::TxpoolBuilderForwardAttempt,
                         *tx_hash,
                         method,
-                        Some(attempt),
                         Map::from_iter([
                             ("attempt".to_string(), json!(attempt)),
                             ("batch_size".to_string(), json!(tx_count)),
@@ -287,7 +286,6 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                                     TransactionEventType::TxpoolBuilderForwardFailure,
                                     tx_hash,
                                     method,
-                                    Some(attempt),
                                     Map::from_iter([
                                         ("attempt".to_string(), json!(attempt)),
                                         ("batch_size".to_string(), json!(tx_count)),
@@ -326,7 +324,6 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                             TransactionEventType::TxpoolBuilderForwardDropped,
                             *tx_hash,
                             method,
-                            Some(attempt),
                             Map::from_iter([
                                 ("drop_reason".to_string(), json!("rpc_failure")),
                                 ("attempt".to_string(), json!(attempt)),
@@ -374,31 +371,21 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
     }
 
     /// Records one forward attempt or outcome for one request.
-    ///
-    /// `attempt` restarts at zero for every batch, and one destination can carry several
-    /// requests for the same transaction, so the event ID carries a per-emission occurrence.
     fn emit_forward_event(
         &self,
         event_type: TransactionEventType,
         tx_hash: Option<TxHash>,
         rpc_method: &'static str,
-        attempt: Option<u32>,
         mut data: Map<String, serde_json::Value>,
     ) {
         data.entry("target".to_string()).or_insert_with(|| json!("builder_forwarder"));
         data.entry("rpc_method".to_string()).or_insert_with(|| json!(rpc_method));
-        let attempt_id = attempt.map(|attempt| attempt.to_string()).unwrap_or_default();
+        data.entry("builder_url".to_string()).or_insert_with(|| json!(self.url_label.as_ref()));
 
         let _ = transaction_event!(
             producer: TransactionEventProducer::BaseRethNode,
             event_type: event_type,
             maybe_tx_hash: tx_hash,
-            occurrence: EventOccurrence::next(),
-            id: {
-                "builder_url" => self.url_label.as_ref(),
-                "attempt" => attempt_id,
-                "tx_hash" => tx_hash.map(|hash| format!("{hash:#x}")).unwrap_or_default(),
-            },
             data: data,
         );
     }

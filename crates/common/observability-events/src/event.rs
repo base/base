@@ -261,7 +261,8 @@ impl fmt::Display for TransactionEventType {
 pub struct TransactionEvent {
     /// Schema version. Must be [`SCHEMA_VERSION`] for this envelope.
     pub schema_version: String,
-    /// Producer-generated event identifier used for collector/audit dedupe.
+    /// Random producer-assigned identifier for this emission. Redelivered copies keep it, so
+    /// collectors and ingest drop them.
     pub event_id: String,
     /// Wall-clock time when the source observed the event.
     pub event_time: DateTime<Utc>,

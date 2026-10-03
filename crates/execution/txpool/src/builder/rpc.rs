@@ -10,7 +10,7 @@ use alloy_primitives::TxHash;
 use base_bundles::MeterBundleResponse;
 use base_common_consensus::BaseTransactionSigned;
 use base_observability_events::{
-    EventOccurrence, TransactionEventProducer, TransactionEventType, transaction_event,
+    TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use jsonrpsee::{
     core::RpcResult,
@@ -27,11 +27,10 @@ use crate::{
     ValidatedTransactionExtensions,
 };
 
-/// Host name of this builder, part of the validated-insert event ID.
+/// Host name of this builder, recorded on each validated-insert event.
 ///
 /// Every mempool node forwards each transaction to all builders, so without it the events from
-/// different builders share an ID and the archive keeps only one of them. Empty if the host name
-/// cannot be read.
+/// different builders would be indistinguishable. Empty if the host name cannot be read.
 static BUILDER_HOST: LazyLock<String> = LazyLock::new(|| {
     hostname::get().ok().and_then(|name| name.into_string().ok()).unwrap_or_default()
 });
@@ -223,9 +222,6 @@ where
 
 impl<P, E> BuilderApiImpl<P, E> {
     /// Records the outcome of one `base_insertValidatedTransaction` call.
-    ///
-    /// Forwarders resend the same transaction on separate calls and from several nodes, and
-    /// each call has its own outcome, so the event ID carries a per-emission occurrence.
     fn emit_validated_insert_event(
         &self,
         event_type: TransactionEventType,
@@ -234,16 +230,12 @@ impl<P, E> BuilderApiImpl<P, E> {
     ) {
         data.entry("rpc_method".to_string())
             .or_insert_with(|| json!("base_insertValidatedTransaction"));
+        data.entry("builder_host".to_string()).or_insert_with(|| json!(BUILDER_HOST.as_str()));
 
         let _ = transaction_event!(
             producer: TransactionEventProducer::BaseBuilder,
             event_type: event_type,
             tx_hash: tx_hash,
-            occurrence: EventOccurrence::next(),
-            id: {
-                "builder_host" => BUILDER_HOST.as_str(),
-                "tx_hash" => format!("{tx_hash:#x}"),
-            },
             data: data,
         );
     }

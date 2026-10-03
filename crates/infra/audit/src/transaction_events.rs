@@ -1751,9 +1751,7 @@ mod tests {
         body::{Body, to_bytes},
         http::{Request, StatusCode},
     };
-    use base_observability_events::{
-        EventOccurrence, TransactionEventBuilder, TransactionEventProducer,
-    };
+    use base_observability_events::{TransactionEventBuilder, TransactionEventProducer};
     use chrono::Utc;
     use serde_json::{Map, json};
     use tower::ServiceExt;
@@ -2245,51 +2243,35 @@ mod tests {
         assert_eq!(response.rejected, 0);
     }
 
-    /// Producer events with identical semantic inputs but separate occurrences are persisted
-    /// separately, while resending the same serialized lines still deduplicates.
+    /// Producer events with identical inputs are persisted separately, while resending the same
+    /// serialized lines still deduplicates.
     #[tokio::test]
-    async fn producer_occurrences_persist_separately_and_retries_still_deduplicate() {
-        let attempt = |occurrence: Option<EventOccurrence>| {
-            let builder = TransactionEventBuilder::new(
-                TransactionEventProducer::BaseRethNode,
-                TransactionEventType::TxpoolBuilderForwardAttempt,
-            )
-            .tx_hash(
-                serde_json::from_value(json!(
-                    "0x1111111111111111111111111111111111111111111111111111111111111111"
-                ))
-                .unwrap(),
-            );
-            let builder = match occurrence {
-                Some(occurrence) => builder.occurrence(occurrence),
-                None => builder,
-            };
+    async fn producer_emissions_persist_separately_and_retries_still_deduplicate() {
+        let attempt = || {
             serde_json::to_value(
-                builder
-                    .id_part("attempt", 0)
-                    .data_field("attempt", json!(0))
-                    .build_with_network("base-mainnet"),
+                TransactionEventBuilder::new(
+                    TransactionEventProducer::BaseRethNode,
+                    TransactionEventType::TxpoolBuilderForwardAttempt,
+                )
+                .tx_hash(
+                    serde_json::from_value(json!(
+                        "0x1111111111111111111111111111111111111111111111111111111111111111"
+                    ))
+                    .unwrap(),
+                )
+                .data_field("attempt", json!(0))
+                .build_with_network("base-mainnet"),
             )
             .unwrap()
         };
         let state = state(Arc::new(FakeSink::default()));
 
-        let distinct = ndjson(vec![
-            attempt(Some(EventOccurrence::new(1, 1))),
-            attempt(Some(EventOccurrence::new(1, 2))),
-            attempt(Some(EventOccurrence::new(2, 1))),
-        ]);
-        let (_, Json(first)) = ingest_transaction_event_batch(&state, distinct.clone()).await;
+        let body = ndjson(vec![attempt(), attempt(), attempt()]);
+        let (_, Json(first)) = ingest_transaction_event_batch(&state, body.clone()).await;
         assert_eq!((first.accepted, first.duplicate), (3, 0));
 
-        let (_, Json(retried)) = ingest_transaction_event_batch(&state, distinct).await;
+        let (_, Json(retried)) = ingest_transaction_event_batch(&state, body).await;
         assert_eq!((retried.accepted, retried.duplicate), (0, 3));
-
-        // Without an occurrence the same inputs share one ID and the second is discarded.
-        let (_, Json(legacy)) =
-            ingest_transaction_event_batch(&state, ndjson(vec![attempt(None), attempt(None)]))
-                .await;
-        assert_eq!((legacy.accepted, legacy.duplicate), (1, 1));
     }
 
     #[tokio::test]

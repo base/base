@@ -11,7 +11,7 @@ use base_execution_txpool::{
     ValidityPredicate, deserialize_bounded_predicates,
 };
 use base_observability_events::{
-    EventOccurrence, TransactionEventProducer, TransactionEventType, transaction_event,
+    TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use jsonrpsee::{
     core::{RpcResult, async_trait, client::ClientT},
@@ -369,9 +369,6 @@ where
             producer: TransactionEventProducer::BaseRethNode,
             event_type: TransactionEventType::TxpoolSendRawTransactionValidity,
             tx_hash: tx_hash,
-            // Each admission request is its own observation, even for a resubmitted
-            // transaction with the same or different predicates.
-            occurrence: EventOccurrence::next(),
             data: {
                 "rpc_method" => "base_sendRawTransactionValidity",
                 "validity_predicates" => &options.validity,

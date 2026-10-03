@@ -465,16 +465,11 @@ impl Tracker {
         if let Some(overflow_reason) = event_data.overflow_reason {
             data.insert("overflow_reason".to_string(), json!(overflow_reason));
         }
-        let event_time_ns = Local::now().timestamp_nanos_opt().unwrap_or_default();
 
         let _ = transaction_event!(
             producer: TransactionEventProducer::BaseRethNode,
             event_type: event_type,
             tx_hash: tx_hash,
-            id: {
-                "event_index" => event_index,
-                "event_time" => event_time_ns,
-            },
             data: data,
         );
     }

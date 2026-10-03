@@ -14,7 +14,7 @@ use base_common_consensus::{
     BaseTransaction, BaseTransactionInfo, DepositInfo, DepositReceiptExt, EIP8130_TX_TYPE_ID,
 };
 use base_observability_events::{
-    EventOccurrence, TransactionEventProducer, TransactionEventType, transaction_event,
+    TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
@@ -76,9 +76,6 @@ where
             producer: TransactionEventProducer::BaseRethNode,
             event_type: TransactionEventType::TxpoolSendRawTransaction,
             tx_hash: tx_hash,
-            // Each admission request is its own observation, including resubmissions of the
-            // same transaction and the same transaction arriving at different nodes.
-            occurrence: EventOccurrence::next(),
             data: {
                 "rpc_method" => "eth_sendRawTransaction",
             },

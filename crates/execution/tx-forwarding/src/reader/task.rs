@@ -11,7 +11,7 @@ use base_execution_txpool::{
     ValidatedTransaction, ValidatedTransactionExtensions,
 };
 use base_observability_events::{
-    EventOccurrence, TransactionEventProducer, TransactionEventType, transaction_event,
+    TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use reth_transaction_pool::{
     PoolTransaction, Priority, TransactionOrdering, TransactionPool, ValidPoolTransaction,
@@ -240,23 +240,11 @@ where
     }
 
     /// Records one hand-off of `tx_hash` to this destination's queue.
-    ///
-    /// Each hand-off is its own event: the same transaction is consumed once per destination and
-    /// again after `resend_after`, and `iterator_index` restarts with every snapshot, so the
-    /// event ID carries a per-emission occurrence.
     fn emit_builder_consumed_event(&self, tx_hash: TxHash, iterator_index: u64) {
         let _ = transaction_event!(
             producer: TransactionEventProducer::BaseRethNode,
             event_type: TransactionEventType::TxpoolBuilderConsumed,
             tx_hash: tx_hash,
-            // Every destination's reader walks the same pool snapshot, so `iterator_index` alone
-            // collides across destinations.
-            occurrence: EventOccurrence::next(),
-            id: {
-                "builder_url" => self.url_label.as_ref(),
-                "tx_hash" => format!("{tx_hash:#x}"),
-                "iterator_index" => iterator_index,
-            },
             data: {
                 "source" => "best_transactions",
                 "target" => "builder_forwarder",

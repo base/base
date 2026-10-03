@@ -8,8 +8,8 @@ use serde_json::{Map, Value};
 use tracing::debug;
 
 use crate::{
-    EventIdBuilder, EventOccurrence, TransactionEvent, TransactionEventProducer,
-    TransactionEventType, TransactionEventWriter, TransactionEventWriterConfig, WriteEventError,
+    EventId, TransactionEvent, TransactionEventProducer, TransactionEventType,
+    TransactionEventWriter, TransactionEventWriterConfig, WriteEventError,
 };
 
 static GLOBAL_TRANSACTION_EVENT_WRITER: OnceLock<TransactionEventWriter> = OnceLock::new();
@@ -86,7 +86,6 @@ impl GlobalTransactionEventWriter {
 pub struct TransactionEventBuilder {
     producer: TransactionEventProducer,
     event_type: TransactionEventType,
-    event_id: EventIdBuilder,
     tx_hash: Option<TxHash>,
     block_hash: Option<B256>,
     block_number: Option<u64>,
@@ -96,14 +95,11 @@ pub struct TransactionEventBuilder {
 }
 
 impl TransactionEventBuilder {
-    /// Creates a builder with required event identity fields.
+    /// Creates a builder with the required event fields.
     pub fn new(producer: TransactionEventProducer, event_type: TransactionEventType) -> Self {
         Self {
             producer,
             event_type,
-            event_id: EventIdBuilder::new()
-                .part("producer", producer)
-                .part("event_type", event_type),
             tx_hash: None,
             block_hash: None,
             block_number: None,
@@ -113,95 +109,57 @@ impl TransactionEventBuilder {
         }
     }
 
-    /// Adds a producer-specific event ID component.
-    pub fn id_part(mut self, name: &str, value: impl std::fmt::Display) -> Self {
-        self.event_id = self.event_id.part(name, value);
-        self
-    }
-
-    /// Sets the transaction hash join key and includes it in the event ID.
-    pub fn tx_hash(mut self, tx_hash: TxHash) -> Self {
-        self.event_id = self.event_id.part("tx_hash", tx_hash);
+    /// Sets the transaction hash join key.
+    pub const fn tx_hash(mut self, tx_hash: TxHash) -> Self {
         self.tx_hash = Some(tx_hash);
         self
     }
 
     /// Sets the transaction hash join key when present.
-    pub fn maybe_tx_hash(self, tx_hash: Option<TxHash>) -> Self {
+    pub const fn maybe_tx_hash(self, tx_hash: Option<TxHash>) -> Self {
         match tx_hash {
             Some(tx_hash) => self.tx_hash(tx_hash),
             None => self,
         }
     }
 
-    /// Sets the block hash join key and includes it in the event ID.
-    pub fn block_hash(mut self, block_hash: B256) -> Self {
-        self.event_id = self.event_id.part("block_hash", block_hash);
+    /// Sets the block hash join key.
+    pub const fn block_hash(mut self, block_hash: B256) -> Self {
         self.block_hash = Some(block_hash);
         self
     }
 
     /// Sets the block hash join key when present.
-    pub fn maybe_block_hash(self, block_hash: Option<B256>) -> Self {
+    pub const fn maybe_block_hash(self, block_hash: Option<B256>) -> Self {
         match block_hash {
             Some(block_hash) => self.block_hash(block_hash),
             None => self,
         }
     }
 
-    /// Sets the block number join key and includes it in the event ID.
-    pub fn block_number(mut self, block_number: u64) -> Self {
-        self.event_id = self.event_id.part("block_number", block_number);
+    /// Sets the block number join key.
+    pub const fn block_number(mut self, block_number: u64) -> Self {
         self.block_number = Some(block_number);
         self
     }
 
     /// Sets the block number join key when present.
-    pub fn maybe_block_number(self, block_number: Option<u64>) -> Self {
+    pub const fn maybe_block_number(self, block_number: Option<u64>) -> Self {
         match block_number {
             Some(block_number) => self.block_number(block_number),
             None => self,
         }
     }
 
-    /// Sets the payload ID join key and includes it in the event ID.
+    /// Sets the payload ID join key.
     pub fn payload_id(mut self, payload_id: impl Into<String>) -> Self {
-        let payload_id = payload_id.into();
-        self.event_id = self.event_id.part("payload_id", &payload_id);
-        self.payload_id = Some(payload_id);
+        self.payload_id = Some(payload_id.into());
         self
     }
 
-    /// Sets the request ID join key and includes it in the event ID.
+    /// Sets the request ID join key.
     pub fn request_id(mut self, request_id: impl Into<String>) -> Self {
-        let request_id = request_id.into();
-        self.event_id = self.event_id.part("request_id", &request_id);
-        self.request_id = Some(request_id);
-        self
-    }
-
-    /// Makes the event ID unique to one producer observation.
-    ///
-    /// Use this for event types that record each time something happened, where two
-    /// observations with identical join keys and ID parts are still distinct events. Pass
-    /// [`EventOccurrence::next`] in production. The occurrence is hashed once when the event is
-    /// built, so retries and replays of the serialized event keep the same ID.
-    pub fn occurrence(mut self, occurrence: EventOccurrence) -> Self {
-        self.event_id = self
-            .event_id
-            .part("occurrence_instance", format!("{:032x}", occurrence.instance()))
-            .part("occurrence_sequence", occurrence.sequence());
-        self
-    }
-
-    /// Scopes the event ID to one producer process.
-    ///
-    /// Use this for event types whose remaining ID parts already identify one observation
-    /// within a process, so repeated emissions there still deduplicate, while the same parts
-    /// from another replica or after a restart stay distinct. Pass
-    /// [`EventOccurrence::process_instance`] in production.
-    pub fn process_instance(mut self, instance: u128) -> Self {
-        self.event_id = self.event_id.part("process_instance", format!("{instance:032x}"));
+        self.request_id = Some(request_id.into());
         self
     }
 
@@ -218,15 +176,13 @@ impl TransactionEventBuilder {
     }
 
     /// Builds an event for the given network label without writing it.
+    ///
+    /// Assigns a new random [`EventId`], so every built event is a distinct emission.
     pub fn build_with_network(self, network: &str) -> TransactionEvent {
-        let mut event = TransactionEvent::new(
-            self.event_id.finish(),
-            Utc::now(),
-            self.producer,
-            self.event_type,
-        )
-        .with_network(network)
-        .with_data(self.data);
+        let mut event =
+            TransactionEvent::new(EventId::random(), Utc::now(), self.producer, self.event_type)
+                .with_network(network)
+                .with_data(self.data);
 
         event.tx_hash = self.tx_hash;
         event.block_hash = self.block_hash;
@@ -277,9 +233,6 @@ macro_rules! transaction_event {
         $(, maybe_block_number: $maybe_block_number:expr)?
         $(, payload_id: $payload_id:expr)?
         $(, request_id: $request_id:expr)?
-        $(, occurrence: $occurrence:expr)?
-        $(, process_instance: $process_instance:expr)?
-        $(, id: { $( $id_name:expr => $id_value:expr ),* $(,)? })?
         $(, data: { $( $data_name:expr => $data_value:expr ),* $(,)? })?
         $(,)?
     ) => {{
@@ -292,9 +245,6 @@ macro_rules! transaction_event {
             $(.maybe_block_number($maybe_block_number))?
             $(.payload_id($payload_id))?
             $(.request_id($request_id))?
-            $(.occurrence($occurrence))?
-            $(.process_instance($process_instance))?
-            $($(.id_part($id_name, $id_value))*)?
             $($(.data_field($data_name, $crate::__private::json!($data_value)))*)?;
         builder.emit_global()
     }};
@@ -309,9 +259,6 @@ macro_rules! transaction_event {
         $(, maybe_block_number: $maybe_block_number:expr)?
         $(, payload_id: $payload_id:expr)?
         $(, request_id: $request_id:expr)?
-        $(, occurrence: $occurrence:expr)?
-        $(, process_instance: $process_instance:expr)?
-        $(, id: { $( $id_name:expr => $id_value:expr ),* $(,)? })?
         , data: $data:expr
         $(,)?
     ) => {{
@@ -324,9 +271,6 @@ macro_rules! transaction_event {
             $(.maybe_block_number($maybe_block_number))?
             $(.payload_id($payload_id))?
             $(.request_id($request_id))?
-            $(.occurrence($occurrence))?
-            $(.process_instance($process_instance))?
-            $($(.id_part($id_name, $id_value))*)?
             .data($data);
         builder.emit_global()
     }};
@@ -342,9 +286,6 @@ macro_rules! transaction_event {
         $(, maybe_block_number: $maybe_block_number:expr)?
         $(, payload_id: $payload_id:expr)?
         $(, request_id: $request_id:expr)?
-        $(, occurrence: $occurrence:expr)?
-        $(, process_instance: $process_instance:expr)?
-        $(, id: { $( $id_name:expr => $id_value:expr ),* $(,)? })?
         $(, data: { $( $data_name:expr => $data_value:expr ),* $(,)? })?
         $(,)?
     ) => {{
@@ -357,9 +298,6 @@ macro_rules! transaction_event {
             $(.maybe_block_number($maybe_block_number))?
             $(.payload_id($payload_id))?
             $(.request_id($request_id))?
-            $(.occurrence($occurrence))?
-            $(.process_instance($process_instance))?
-            $($(.id_part($id_name, $id_value))*)?
             $($(.data_field($data_name, $crate::__private::json!($data_value)))*)?;
         match $writer {
             Some(writer) => builder.emit_to(writer),
@@ -378,9 +316,6 @@ macro_rules! transaction_event {
         $(, maybe_block_number: $maybe_block_number:expr)?
         $(, payload_id: $payload_id:expr)?
         $(, request_id: $request_id:expr)?
-        $(, occurrence: $occurrence:expr)?
-        $(, process_instance: $process_instance:expr)?
-        $(, id: { $( $id_name:expr => $id_value:expr ),* $(,)? })?
         , data: $data:expr
         $(,)?
     ) => {{
@@ -393,9 +328,6 @@ macro_rules! transaction_event {
             $(.maybe_block_number($maybe_block_number))?
             $(.payload_id($payload_id))?
             $(.request_id($request_id))?
-            $(.occurrence($occurrence))?
-            $(.process_instance($process_instance))?
-            $($(.id_part($id_name, $id_value))*)?
             .data($data);
         match $writer {
             Some(writer) => builder.emit_to(writer),
@@ -412,10 +344,9 @@ mod tests {
     use serde_json::{Map, json};
 
     use crate::{
-        DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, EventIdBuilder,
-        EventOccurrence, TransactionEvent, TransactionEventBuilder, TransactionEventEmitOutcome,
-        TransactionEventProducer, TransactionEventType, TransactionEventWriter,
-        TransactionEventWriterConfig,
+        DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEvent,
+        TransactionEventBuilder, TransactionEventEmitOutcome, TransactionEventProducer,
+        TransactionEventType, TransactionEventWriter, TransactionEventWriterConfig,
     };
 
     fn disabled_writer() -> TransactionEventWriter {
@@ -446,7 +377,6 @@ mod tests {
         .block_number(42)
         .payload_id("0xabc")
         .request_id("request-1")
-        .id_part("event_index", 7)
         .data_field("event_index", json!(7))
         .build(&writer);
 
@@ -462,138 +392,33 @@ mod tests {
         assert!(event.event_id.starts_with("0x"));
     }
 
-    #[test]
-    fn builder_event_id_changes_when_id_part_changes() {
-        let writer = disabled_writer();
-        let first = TransactionEventBuilder::new(
-            TransactionEventProducer::BaseRethNode,
-            TransactionEventType::Pending,
-        )
-        .tx_hash(TxHash::repeat_byte(0x11))
-        .id_part("event_index", 1)
-        .build(&writer);
-        let second = TransactionEventBuilder::new(
-            TransactionEventProducer::BaseRethNode,
-            TransactionEventType::Pending,
-        )
-        .tx_hash(TxHash::repeat_byte(0x11))
-        .id_part("event_index", 2)
-        .build(&writer);
-
-        assert_ne!(first.event_id, second.event_id);
-    }
-
-    fn forward_attempt(occurrence: EventOccurrence) -> TransactionEvent {
+    fn pending(tx_hash: TxHash) -> TransactionEvent {
         TransactionEventBuilder::new(
-            TransactionEventProducer::BaseRethNode,
-            TransactionEventType::TxpoolBuilderForwardAttempt,
-        )
-        .tx_hash(TxHash::repeat_byte(0x11))
-        .occurrence(occurrence)
-        .id_part("attempt", 0)
-        .build_with_network("base-devnet")
-    }
-
-    #[test]
-    fn occurrence_separates_observations_with_identical_semantic_inputs() {
-        let first = forward_attempt(EventOccurrence::new(7, 1));
-        let second = forward_attempt(EventOccurrence::new(7, 2));
-        let other_process = forward_attempt(EventOccurrence::new(8, 1));
-        let rebuilt_first = forward_attempt(EventOccurrence::new(7, 1));
-
-        assert_ne!(first.event_id, second.event_id);
-        assert_ne!(first.event_id, other_process.event_id);
-        assert_eq!(first.event_id, rebuilt_first.event_id);
-    }
-
-    #[test]
-    fn process_instance_separates_processes_but_not_repeats_within_one() {
-        let build = |instance| {
-            TransactionEventBuilder::new(
-                TransactionEventProducer::BaseBuilder,
-                TransactionEventType::BuilderConsidered,
-            )
-            .tx_hash(TxHash::repeat_byte(0x11))
-            .payload_id("0xabc")
-            .process_instance(instance)
-            .id_part("ordering_position", 3)
-            .build_with_network("base-devnet")
-        };
-
-        assert_eq!(build(1).event_id, build(1).event_id);
-        assert_ne!(build(1).event_id, build(2).event_id);
-    }
-
-    #[test]
-    fn emitters_without_occurrence_keep_their_existing_event_id() {
-        let tx_hash = TxHash::repeat_byte(0x22);
-        let event = TransactionEventBuilder::new(
             TransactionEventProducer::BaseRethNode,
             TransactionEventType::Pending,
         )
         .tx_hash(tx_hash)
-        .id_part("event_index", 1)
-        .build_with_network("base-devnet");
+        .data_field("event_index", json!(1))
+        .build_with_network("base-devnet")
+    }
 
-        let expected = EventIdBuilder::new()
-            .part("producer", TransactionEventProducer::BaseRethNode)
-            .part("event_type", TransactionEventType::Pending)
-            .part("tx_hash", tx_hash)
-            .part("event_index", 1)
-            .finish();
-        assert_eq!(event.event_id, expected);
+    #[test]
+    fn identical_inputs_build_distinct_event_ids() {
+        let tx_hash = TxHash::repeat_byte(0x11);
+
+        assert_ne!(pending(tx_hash).event_id, pending(tx_hash).event_id);
     }
 
     #[test]
     fn serialized_event_id_is_fixed_across_retries_and_replays() {
-        let event = forward_attempt(EventOccurrence::next());
+        let event = pending(TxHash::repeat_byte(0x11));
         let line = serde_json::to_string(&event).unwrap();
 
-        // A collector retry or journal replay re-reads the serialized line; nothing recomputes
-        // the ID from its parts.
+        // A collector retry or journal replay re-reads the serialized line; nothing regenerates
+        // the ID.
         let replayed: TransactionEvent = serde_json::from_str(&line).unwrap();
         assert_eq!(replayed.event_id, event.event_id);
         assert_eq!(serde_json::to_string(&replayed).unwrap(), line);
-
-        // The occurrence only feeds the hash: the envelope keeps the same fields and ID format.
-        let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-        let keys: Vec<_> = value.as_object().unwrap().keys().cloned().collect();
-        assert!(!keys.iter().any(|key| key.contains("occurrence")));
-        assert!(!event.data.contains_key("occurrence_sequence"));
-        assert_eq!(event.event_id.len(), 66);
-        assert!(event.event_id.starts_with("0x"));
-    }
-
-    #[test]
-    fn macro_accepts_occurrence_and_process_instance() {
-        let capture = crate::TransactionEventCapture::install();
-        let tx_hash = TxHash::repeat_byte(0x44);
-
-        for occurrence in [EventOccurrence::new(1, 1), EventOccurrence::new(1, 2)] {
-            let result = transaction_event!(
-                producer: TransactionEventProducer::BaseRethNode,
-                event_type: TransactionEventType::TxpoolSendRawTransaction,
-                tx_hash: tx_hash,
-                occurrence: occurrence,
-            );
-            assert_eq!(result.unwrap(), TransactionEventEmitOutcome::Emitted);
-        }
-        for _ in 0..2 {
-            let result = transaction_event!(
-                producer: TransactionEventProducer::BaseBuilder,
-                event_type: TransactionEventType::BuilderConsidered,
-                tx_hash: tx_hash,
-                process_instance: 9,
-                id: { "ordering_position" => 1 },
-            );
-            assert_eq!(result.unwrap(), TransactionEventEmitOutcome::Emitted);
-        }
-
-        let events: Vec<_> =
-            capture.events().into_iter().filter(|event| event.tx_hash == Some(tx_hash)).collect();
-        assert_eq!(events.len(), 4);
-        assert_ne!(events[0].event_id, events[1].event_id);
-        assert_eq!(events[2].event_id, events[3].event_id);
     }
 
     #[test]
@@ -605,9 +430,6 @@ mod tests {
             producer: TransactionEventProducer::BaseRethNode,
             event_type: TransactionEventType::Pending,
             tx_hash: TxHash::repeat_byte(0x11),
-            id: {
-                "event_index" => 1,
-            },
             data: {
                 "source" => "txpool",
                 "event_index" => 1,
