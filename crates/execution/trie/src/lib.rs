@@ -41,7 +41,7 @@ pub mod metrics;
 #[cfg(feature = "metrics")]
 pub use metrics::{
     BaseProofsHashedAccountCursor, BaseProofsHashedStorageCursor, BaseProofsStorage,
-    BaseProofsTrieCursor, StateMetrics, StateSeekKind, StorageMetrics,
+    BaseProofsTrieCursor, StateMetrics, StateSeekKind,
 };
 
 #[cfg(not(feature = "metrics"))]
