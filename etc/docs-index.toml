@@ -684,7 +684,7 @@ digest = "1089184709"
 
 ["docs/transaction-events/partition-indexes.md"]
 summary = "Add partitioned audit indexes: parent-only migrations, forward-only versus historical coverage, explicit native BRIN backfill, catalog checks, locks, cancellation, and future-index steps."
-digest = "e5291a6b3b"
+digest = "f74c7eb9ac"
 
 ["docs/transaction-events/tips-parity-checklist.md"]
 summary = "Checklist for verifying TIPS UI audit-archiver/Postgres responses match the S3-backed routes (block, txn, bundle, rejected) before switching TIPS_UI_QUERY_BACKEND=audit."
