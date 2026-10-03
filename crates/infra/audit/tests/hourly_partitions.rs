@@ -436,7 +436,7 @@ impl ResponseProxy {
 #[ignore = "requires explicitly owned disposable PostgreSQL 17"]
 /// Same-OID subtree mutations never authorize deleting altered retained members.
 pub async fn hourly_detached_member_shape_changes_are_not_drop_authority() -> anyhow::Result<()> {
-    for change in ["rename", "rebound", "reparent", "primary_key", "outside_data"] {
+    for change in ["rename", "rebound", "reparent", "primary_key", "deferrable", "outside_data"] {
         let mut db = HourlyDatabase::new().await?;
         let (mut owner, hour) = db.catalog_hourly().await?;
         let day = hour.date_naive();
@@ -496,6 +496,9 @@ pub async fn hourly_detached_member_shape_changes_are_not_drop_authority() -> an
                 sqlx::query(&format!("ALTER TABLE {name} DROP CONSTRAINT {name}_pkey"))
                     .execute(&mut owner)
                     .await?;
+            }
+            "deferrable" => {
+                sqlx::raw_sql(&format!("ALTER TABLE {name} DROP CONSTRAINT {name}_pkey; ALTER TABLE {name} ADD PRIMARY KEY(event_id) DEFERRABLE INITIALLY IMMEDIATE")).execute(&mut owner).await?;
             }
             "outside_data" => {
                 // The detached day no longer supplies its inherited class/date bound.
@@ -601,6 +604,172 @@ pub async fn hourly_detached_heap_future_data_is_guarded_or_preserved() -> anyho
             dropped?;
         }
     }
+    Ok(())
+}
+
+/// Same-key deferrable PKs cannot be adopted as targetless ON CONFLICT arbiters.
+#[tokio::test]
+#[ignore = "requires explicitly owned disposable PostgreSQL 17"]
+pub async fn hourly_deferrable_identity_is_refused_without_catalog_repair() -> anyhow::Result<()> {
+    for bucket in ["hot", "warm", "hour"] {
+        let mut db = HourlyDatabase::new().await?;
+        let (mut owner, hour) = db.catalog_hourly().await?;
+        let (class, time, name, keys) = if bucket == "hour" {
+            sqlx::query("SELECT transaction_events_create_hour('hot',$1)")
+                .bind(hour)
+                .execute(&mut owner)
+                .await?;
+            ("hot", hour, format!("transaction_events_hot_{}", hour.format("%Y%m%d%H")), "event_id")
+        } else {
+            let time = Utc::now();
+            (
+                bucket,
+                time,
+                format!("transaction_events_{bucket}_{}", time.format("%Y%m%d")),
+                "event_id,retention_class,event_date",
+            )
+        };
+        sqlx::raw_sql(&format!("ALTER TABLE {name} DROP CONSTRAINT {name}_pkey; ALTER TABLE {name} ADD PRIMARY KEY ({keys}) DEFERRABLE INITIALLY IMMEDIATE")).execute(&mut owner).await?;
+        let semantics: (bool, bool, bool) = sqlx::query_as("SELECT i.indimmediate,k.condeferrable,k.condeferred FROM pg_index i JOIN pg_constraint k ON k.conindid=i.indexrelid WHERE i.indrelid=to_regclass($1) AND i.indisprimary").bind(&name).fetch_one(&mut owner).await?;
+        assert_eq!(semantics, (false, true, false));
+        // Demonstrate the actual writer incompatibility, not just a catalog bit.
+        sqlx::query("SET ROLE audit_archiver").execute(&mut db.admin).await?;
+        let write = sqlx::query("INSERT INTO transaction_events(event_id,schema_version,event_time,event_date,retention_class,producer,event_type,data) VALUES('deferrable-probe','transaction-event/v1',$1,$2,$3,'base-builder','BUILDER_ACCEPTED','{}') ON CONFLICT DO NOTHING").bind(time).bind(time.date_naive()).bind(class).execute(&mut db.admin).await.unwrap_err();
+        assert_eq!(write.as_database_error().and_then(|e| e.code()).as_deref(), Some("55000"));
+        eprintln!("{bucket}: reproduced targetless root writer refusal: {write}");
+        let before: serde_json::Value =
+            sqlx::query_scalar("SELECT jsonb_agg(to_jsonb(i) ORDER BY indexrelid) FROM pg_index i")
+                .fetch_one(&mut owner)
+                .await?;
+        let (functions, value) = if bucket == "hour" {
+            (["validate_hour", "create_hour", "detach_hour"], time.to_rfc3339())
+        } else {
+            (
+                ["validate_day", "create_partition", "detach_partition"],
+                time.date_naive().to_string(),
+            )
+        };
+        for function in functions {
+            let cast = if bucket == "hour" { "timestamptz" } else { "date" };
+            assert!(
+                sqlx::query(&format!("SELECT transaction_events_{function}($1,$2::{cast})"))
+                    .bind(class)
+                    .bind(&value)
+                    .execute(&mut db.admin)
+                    .await
+                    .is_err(),
+                "{bucket} {function} must refuse a deferrable PK"
+            );
+        }
+        sqlx::query("RESET ROLE").execute(&mut db.admin).await?;
+        assert!(HourlyTransactionEventPartitions::validate(&mut owner).await.is_err());
+        assert!(HourlyTransactionEventPartitions::horizons(&mut owner, time).await.is_err());
+        let sink = PgTransactionEventSink::connect(&db.url, 2).await?;
+        assert!(sink.maintain_partitions_at(time).await.is_err());
+        assert!(index_transaction_event_partitions(&db.url).await.is_err());
+        let start = if bucket == "hour" {
+            time
+        } else {
+            time.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc()
+        };
+        let end = start
+            + if bucket == "hour" { ChronoDuration::hours(1) } else { ChronoDuration::days(1) };
+        assert!(
+            sqlx::query("SELECT transaction_events_record_detach(to_regclass($1)::oid,$2,$3,$4)")
+                .bind(&name)
+                .bind(class)
+                .bind(start)
+                .bind(end)
+                .execute(&mut owner)
+                .await
+                .is_err(),
+            "owner-only proof capture must refuse non-immediate arbiters too"
+        );
+        let after: serde_json::Value =
+            sqlx::query_scalar("SELECT jsonb_agg(to_jsonb(i) ORDER BY indexrelid) FROM pg_index i")
+                .fetch_one(&mut owner)
+                .await?;
+        assert_eq!(before, after);
+        let proof_count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM transaction_events_detached_partitions")
+                .fetch_one(&mut owner)
+                .await?;
+        assert_eq!(proof_count, 0);
+        // Only the fixture owner repairs; normal paths above never rewrite it.
+        sqlx::raw_sql(&format!("ALTER TABLE {name} DROP CONSTRAINT {name}_pkey; ALTER TABLE {name} ADD PRIMARY KEY ({keys})")).execute(&mut owner).await?;
+        HourlyTransactionEventPartitions::validate(&mut owner).await?;
+        sqlx::query("SET ROLE audit_archiver").execute(&mut db.admin).await?;
+        for expected in [1, 0] {
+            let rows = sqlx::query("INSERT INTO transaction_events(event_id,schema_version,event_time,event_date,retention_class,producer,event_type,data) VALUES('deferrable-probe','transaction-event/v1',$1,$2,$3,'base-builder','BUILDER_ACCEPTED','{}') ON CONFLICT DO NOTHING").bind(time).bind(time.date_naive()).bind(class).execute(&mut db.admin).await?.rows_affected();
+            assert_eq!(
+                rows, expected,
+                "explicit immediate fixture repair restores first-winner dedup"
+            );
+        }
+        sqlx::query("RESET ROLE").execute(&mut db.admin).await?;
+    }
+    Ok(())
+}
+
+/// Expanded but inactive topology must refuse deferrable PKs before DDL/preparation.
+#[tokio::test]
+#[ignore = "requires explicitly owned disposable PostgreSQL 17"]
+pub async fn hourly_null_cutoff_deferrable_primary_key_refuses_activation() -> anyhow::Result<()> {
+    let mut db = HourlyDatabase::new().await?;
+    PgTransactionEventSink::migrate(&db.url).await?;
+    let mut owner = PgConnection::connect(&db.url).await?;
+    HourlyDatabase::prepare_hourly(&mut owner).await?;
+    // Owner-induced drift affects both the parent and its retained daily PKs.
+    sqlx::raw_sql("ALTER TABLE transaction_events DROP CONSTRAINT transaction_events_pkey; ALTER TABLE transaction_events ADD PRIMARY KEY(event_id,retention_class,event_date) DEFERRABLE INITIALLY IMMEDIATE").execute(&mut owner).await?;
+    let now = Utc::now();
+    let day = now.date_naive();
+    let before: serde_json::Value = sqlx::query_scalar("SELECT jsonb_build_object('indexes',(SELECT jsonb_agg(to_jsonb(i) ORDER BY indexrelid) FROM pg_index i),'constraints',(SELECT jsonb_agg(to_jsonb(k) ORDER BY oid) FROM pg_constraint k),'policy',(SELECT to_jsonb(p) FROM transaction_events_partition_policy p),'proof',(SELECT jsonb_agg(to_jsonb(d)) FROM transaction_events_detached_partitions d))").fetch_one(&mut owner).await?;
+    assert_eq!(HourlyTransactionEventPartitions::cutoff(&mut owner).await?, None);
+    sqlx::query("SET ROLE audit_archiver").execute(&mut db.admin).await?;
+    for function in ["validate_day", "create_partition", "detach_partition"] {
+        assert!(
+            sqlx::query(&format!("SELECT transaction_events_{function}('hot',$1)"))
+                .bind(day)
+                .execute(&mut db.admin)
+                .await
+                .is_err(),
+            "NULL policy {function} must refuse deferrable PK"
+        );
+    }
+    // A newly requested daily bucket must not inherit a deferrable parent arbiter.
+    assert!(
+        sqlx::query("SELECT transaction_events_create_partition('hot',$1)")
+            .bind(day + ChronoDuration::days(20))
+            .execute(&mut db.admin)
+            .await
+            .is_err()
+    );
+    sqlx::query("RESET ROLE").execute(&mut db.admin).await?;
+    assert!(HourlyTransactionEventPartitions::validate(&mut owner).await.is_err());
+    assert!(HourlyTransactionEventPartitions::horizons(&mut owner, now).await.is_err());
+    let sink = PgTransactionEventSink::connect(&db.url, 2).await?;
+    assert!(sink.maintain_partitions_at(now).await.is_err());
+    assert!(
+        sqlx::query("SELECT transaction_events_prepare_hourly('hot')")
+            .execute(&mut owner)
+            .await
+            .is_err(),
+        "class preparation must refuse the deferrable parent too"
+    );
+    assert!(
+        sqlx::query("SELECT transaction_events_prepare_hourly('hot',$1)")
+            .bind(day)
+            .execute(&mut owner)
+            .await
+            .is_err()
+    );
+    assert!(
+        HourlyTransactionEventPartitions::activate(&db.url, day + ChronoDuration::days(7), true)
+            .await
+            .is_err()
+    );
+    let after: serde_json::Value = sqlx::query_scalar("SELECT jsonb_build_object('indexes',(SELECT jsonb_agg(to_jsonb(i) ORDER BY indexrelid) FROM pg_index i),'constraints',(SELECT jsonb_agg(to_jsonb(k) ORDER BY oid) FROM pg_constraint k),'policy',(SELECT to_jsonb(p) FROM transaction_events_partition_policy p),'proof',(SELECT jsonb_agg(to_jsonb(d)) FROM transaction_events_detached_partitions d))").fetch_one(&mut owner).await?;
+    assert_eq!(before, after, "refusal must not repair catalog or record detach authority");
     Ok(())
 }
 

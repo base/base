@@ -428,7 +428,7 @@ digest = "906eadac6b"
 
 ["crates/infra/audit/README.md"]
 summary = "Postgres transaction-event ingest/RPC, opt-in hourly HOT/WARM routing, forward-only BRIN transition, explicit index recovery, owned PG17 tests and immutable schema/rollout gates."
-digest = "346340a44c"
+digest = "0c690e6b9d"
 
 ["crates/infra/basectl/README.md"]
 summary = "basectl-cli: the basectl clap parser and commands (blocks, sync, txpool, peers, proofs, conductor), interactive monitor, flashblocks JSON-lines stream, Denim readiness checks, and pods view config."

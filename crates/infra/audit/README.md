@@ -55,6 +55,10 @@ CDC and catalog/OID introspection too; old targeted writers cannot be rolled
 back in after activation. Full RPC/UI/ETL reads keep all valid history; no guessed
 event-time cutoff is added to an `ingested_at` extraction.
 
+Identity PKs must be non-deferrable (`pg_index.indimmediate`): even a deferrable
+constraint that is initially immediate cannot arbitrate `ON CONFLICT`. Catalog
+guards refuse this drift without automatic repair.
+
 ### Forward-only indexing and the atomic transition
 
 Historical leaves may remain unindexed and age out according to their actual

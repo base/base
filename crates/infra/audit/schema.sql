@@ -64,7 +64,7 @@ BEGIN
     END IF;
     FOR row_value IN SELECT t.relid,t.parentrelid,c.relname,c.relkind FROM pg_partition_tree('public.transaction_events'::regclass) t JOIN pg_class c ON c.oid=t.relid LOOP
         IF row_value.relkind='p' THEN
-            IF EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid=row_value.relid AND i.indexrelid NOT IN (to_regclass(format('public.%I',row_value.relname||'_pkey')),to_regclass(format('public.%I',row_value.relname||'_ingested_at_idx'))) AND NOT EXISTS(SELECT 1 FROM unnest(read_indexes) r CROSS JOIN LATERAL pg_partition_tree(r::regclass) x WHERE x.relid=i.indexrelid)) OR NOT EXISTS(SELECT 1 FROM pg_index i JOIN pg_class idx ON idx.oid=i.indexrelid JOIN pg_class tbl ON tbl.oid=i.indrelid WHERE i.indrelid=row_value.relid AND idx.oid=to_regclass(format('public.%I',row_value.relname||'_pkey')) AND idx.relkind='I' AND idx.relowner=tbl.relowner AND i.indisprimary AND i.indisvalid AND i.indisready AND i.indnkeyatts=3 AND i.indnatts=3 AND i.indexprs IS NULL AND i.indpred IS NULL AND ARRAY(SELECT a.attname::text FROM unnest(i.indkey::smallint[]) WITH ORDINALITY k(num,pos) JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.num ORDER BY k.pos)=ARRAY['event_id','retention_class','event_date']) THEN
+            IF EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid=row_value.relid AND i.indexrelid NOT IN (to_regclass(format('public.%I',row_value.relname||'_pkey')),to_regclass(format('public.%I',row_value.relname||'_ingested_at_idx'))) AND NOT EXISTS(SELECT 1 FROM unnest(read_indexes) r CROSS JOIN LATERAL pg_partition_tree(r::regclass) x WHERE x.relid=i.indexrelid)) OR NOT EXISTS(SELECT 1 FROM pg_index i JOIN pg_class idx ON idx.oid=i.indexrelid JOIN pg_class tbl ON tbl.oid=i.indrelid WHERE i.indrelid=row_value.relid AND idx.oid=to_regclass(format('public.%I',row_value.relname||'_pkey')) AND idx.relkind='I' AND idx.relowner=tbl.relowner AND i.indisprimary AND i.indisvalid AND i.indisready AND i.indimmediate AND i.indnkeyatts=3 AND i.indnatts=3 AND i.indexprs IS NULL AND i.indpred IS NULL AND ARRAY(SELECT a.attname::text FROM unnest(i.indkey::smallint[]) WITH ORDINALITY k(num,pos) JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.num ORDER BY k.pos)=ARRAY['event_id','retention_class','event_date']) THEN
                 RAISE EXCEPTION 'unexpected parent PK/index inventory: %',row_value.relname;
             END IF;
         END IF;
@@ -192,6 +192,7 @@ BEGIN
     PERFORM public.transaction_events_validate_day(p_class,day_value);
     EXECUTE format('CREATE TABLE public.%I (LIKE public.transaction_events INCLUDING DEFAULTS, PRIMARY KEY(event_id))', partition_name);
     EXECUTE format('ALTER TABLE public.%I ATTACH PARTITION public.%I FOR VALUES FROM (%L) TO (%L)', parent_name, partition_name, p_hour, p_hour+interval '1 hour');
+    PERFORM public.transaction_events_validate_hour(p_class,p_hour);
     RETURN true;
 END $$;
 
@@ -220,6 +221,7 @@ BEGIN
         IF changed AND p_class <> 'cold' AND cutoff IS NOT NULL THEN
             EXECUTE format('ALTER TABLE public.%I ADD PRIMARY KEY (event_id, retention_class, event_date)', partition_name);
         END IF;
+        PERFORM public.transaction_events_validate_day(p_class,p_day);
         RETURN changed;
     END IF;
     IF to_regclass(format('public.%I', partition_name)) IS NOT NULL THEN
@@ -313,8 +315,8 @@ CREATE FUNCTION public.transaction_events_detached_members(p_oid oid) RETURNS js
         'bound',CASE WHEN c.oid=p_oid THEN NULL ELSE pg_get_expr(c.relpartbound,c.oid) END,
         'key',pg_get_partkeydef(c.oid),
         'attributes',(SELECT jsonb_agg(jsonb_build_array(a.attnum,a.attname,a.atttypid,a.atttypmod,a.attnotnull,a.attidentity,a.attgenerated) ORDER BY a.attnum) FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped),
-        'constraints',(SELECT jsonb_agg(jsonb_build_array(k.oid,k.conname,k.contype,k.conkey,k.conindid,k.convalidated,k.connoinherit,pg_get_constraintdef(k.oid)) ORDER BY k.oid) FROM pg_constraint k WHERE k.conrelid=c.oid),
-        'primary_key',(SELECT jsonb_agg(jsonb_build_array(i.indexrelid,idx.relnamespace,idx.relname,idx.relkind,idx.relowner,i.indisvalid,i.indisready,i.indisunique,i.indnkeyatts,i.indnatts,i.indkey::text,pg_get_indexdef(i.indexrelid)) ORDER BY i.indexrelid) FROM pg_index i JOIN pg_class idx ON idx.oid=i.indexrelid WHERE i.indrelid=c.oid AND i.indisprimary)
+        'constraints',(SELECT jsonb_agg(jsonb_build_array(k.oid,k.conname,k.contype,k.conkey,k.conindid,k.convalidated,k.connoinherit,k.condeferrable,k.condeferred,pg_get_constraintdef(k.oid)) ORDER BY k.oid) FROM pg_constraint k WHERE k.conrelid=c.oid),
+        'primary_key',(SELECT jsonb_agg(jsonb_build_array(i.indexrelid,idx.relnamespace,idx.relname,idx.relkind,idx.relowner,i.indisvalid,i.indisready,i.indisunique,i.indimmediate,i.indnkeyatts,i.indnatts,i.indkey::text,pg_get_indexdef(i.indexrelid)) ORDER BY i.indexrelid) FROM pg_index i JOIN pg_class idx ON idx.oid=i.indexrelid WHERE i.indrelid=c.oid AND i.indisprimary)
     ) ORDER BY c.oid) FROM members m JOIN pg_class c ON c.oid=m.relid;
 $$;
 
@@ -404,7 +406,7 @@ BEGIN
     -- a redundant heap scan: existing rows already obey the attached partition.
     FOR member IN SELECT c.oid,c.relname FROM pg_class c WHERE c.relkind='r' AND c.oid IN (SELECT relid FROM pg_partition_tree(p_oid::regclass) UNION SELECT p_oid) LOOP
         keys := CASE WHEN length(member.relname)=length('transaction_events_'||p_class||'_')+10 THEN ARRAY['event_id'] ELSE ARRAY['event_id','retention_class','event_date'] END;
-        IF NOT EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid=member.oid AND i.indisprimary AND i.indisvalid AND i.indisready AND i.indnkeyatts=cardinality(keys) AND i.indnatts=cardinality(keys) AND i.indpred IS NULL AND i.indexprs IS NULL AND ARRAY(SELECT a.attname::text FROM unnest(i.indkey::smallint[]) WITH ORDINALITY k(num,pos) JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.num ORDER BY k.pos)=keys) THEN RAISE EXCEPTION 'invalid detached member primary key'; END IF;
+        IF NOT EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid=member.oid AND i.indisprimary AND i.indisvalid AND i.indisready AND i.indimmediate AND i.indnkeyatts=cardinality(keys) AND i.indnatts=cardinality(keys) AND i.indpred IS NULL AND i.indexprs IS NULL AND ARRAY(SELECT a.attname::text FROM unnest(i.indkey::smallint[]) WITH ORDINALITY k(num,pos) JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.num ORDER BY k.pos)=keys) THEN RAISE EXCEPTION 'invalid detached member primary key'; END IF;
         guard := format('retention_class = %L AND event_date = %L::date',p_class,(p_start AT TIME ZONE 'UTC')::date);
         IF cardinality(keys)=1 THEN
             start_time := to_timestamp(right(member.relname,10),'YYYYMMDDHH24');
@@ -455,6 +457,7 @@ BEGIN
     IF owner_id IS NULL OR NOT EXISTS(SELECT 1 FROM pg_partitioned_table p JOIN pg_attribute a ON a.attrelid=p.partrelid AND a.attname='retention_class' WHERE p.partrelid=root_id AND p.partstrat='l' AND p.partnatts=1 AND p.partattrs[0]=a.attnum AND p.partexprs IS NULL) THEN RAISE EXCEPTION 'invalid root'; END IF;
     class_id := to_regclass(format('public.%I','transaction_events_'||p_class));
     IF NOT EXISTS(SELECT 1 FROM pg_class c JOIN pg_inherits i ON i.inhrelid=c.oid JOIN pg_partitioned_table p ON p.partrelid=c.oid JOIN pg_attribute a ON a.attrelid=c.oid AND a.attname='event_date' WHERE c.oid=class_id AND c.relkind='p' AND c.relnamespace='public'::regnamespace AND c.relowner=owner_id AND i.inhparent=root_id AND pg_get_expr(c.relpartbound,c.oid)=format('FOR VALUES IN (%L)',p_class) AND p.partstrat='r' AND p.partnatts=1 AND p.partattrs[0]=a.attnum AND p.partexprs IS NULL) THEN RAISE EXCEPTION 'invalid class ancestry: %',p_class; END IF;
+    IF EXISTS(SELECT 1 FROM pg_index WHERE indrelid IN (root_id,class_id) AND indisprimary AND NOT indimmediate) THEN RAISE EXCEPTION 'deferrable parent primary key cannot arbitrate ON CONFLICT'; END IF;
     RETURN class_id;
 END $$;
 
@@ -473,7 +476,9 @@ BEGIN
     SELECT regexp_match(pg_get_expr(c.relpartbound,c.oid), '^FOR VALUES FROM \(''([^'']+)''\) TO \(''([^'']+)''\)$') INTO bounds FROM pg_class c JOIN pg_class parent ON parent.oid=parent_id JOIN pg_inherits i ON i.inhrelid=c.oid WHERE c.oid=day_id AND c.relkind=expected_kind AND c.relnamespace='public'::regnamespace AND c.relowner=parent.relowner AND i.inhparent=parent_id;
     IF bounds IS NULL OR bounds[1]::date IS DISTINCT FROM p_day OR bounds[2]::date IS DISTINCT FROM p_day+1 THEN RAISE EXCEPTION 'invalid day ancestry/bounds: %/%',p_class,p_day; END IF;
     IF expected_kind='p' AND NOT EXISTS(SELECT 1 FROM pg_partitioned_table p JOIN pg_attribute a ON a.attrelid=p.partrelid AND a.attname='event_time' WHERE p.partrelid=day_id AND p.partstrat='r' AND p.partnatts=1 AND p.partattrs[0]=a.attnum AND p.partexprs IS NULL) THEN RAISE EXCEPTION 'invalid hourly day key'; END IF;
-    IF expected_kind='r' AND NOT EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid=day_id AND i.indisprimary AND i.indisvalid AND i.indisready AND i.indnkeyatts=3 AND i.indnatts=3 AND i.indpred IS NULL AND i.indexprs IS NULL AND ARRAY(SELECT a.attname::text FROM unnest(i.indkey::smallint[]) WITH ORDINALITY k(num,pos) JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.num ORDER BY k.pos)=ARRAY['event_id','retention_class','event_date']) THEN RAISE EXCEPTION 'invalid daily primary key'; END IF;
+    -- ON CONFLICT requires immediate uniqueness even for INITIALLY IMMEDIATE
+    -- deferrable constraints; pg_index.indimmediate is its arbiter eligibility bit.
+    IF expected_kind='r' AND NOT EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid=day_id AND i.indisprimary AND i.indisvalid AND i.indisready AND i.indimmediate AND i.indnkeyatts=3 AND i.indnatts=3 AND i.indpred IS NULL AND i.indexprs IS NULL AND ARRAY(SELECT a.attname::text FROM unnest(i.indkey::smallint[]) WITH ORDINALITY k(num,pos) JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.num ORDER BY k.pos)=ARRAY['event_id','retention_class','event_date']) THEN RAISE EXCEPTION 'invalid daily primary key'; END IF;
     IF expected_kind='p' AND EXISTS(SELECT 1 FROM pg_index WHERE indrelid=day_id AND indisprimary) THEN RAISE EXCEPTION 'unexpected hourly day primary key'; END IF;
     RETURN day_id;
 END $_$;
@@ -515,7 +520,7 @@ BEGIN
     hour_id := to_regclass(format('public.%I','transaction_events_'||p_class||'_'||to_char(p_hour AT TIME ZONE 'UTC','YYYYMMDDHH24')));
     SELECT regexp_match(pg_get_expr(c.relpartbound,c.oid), '^FOR VALUES FROM \(''([^'']+)''\) TO \(''([^'']+)''\)$') INTO bounds FROM pg_class c JOIN pg_class parent ON parent.oid=parent_id JOIN pg_inherits i ON i.inhrelid=c.oid WHERE c.oid=hour_id AND c.relkind='r' AND c.relnamespace='public'::regnamespace AND c.relowner=parent.relowner AND i.inhparent=parent_id;
     IF bounds IS NULL OR bounds[1]::timestamptz IS DISTINCT FROM p_hour OR bounds[2]::timestamptz IS DISTINCT FROM p_hour+interval '1 hour' THEN RAISE EXCEPTION 'invalid hour ancestry/bounds: %/%',p_class,p_hour; END IF;
-    IF NOT EXISTS(SELECT 1 FROM pg_index i JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attname='event_id' WHERE i.indrelid=hour_id AND i.indisprimary AND i.indisvalid AND i.indisready AND i.indnkeyatts=1 AND i.indnatts=1 AND i.indkey[0]=a.attnum AND i.indpred IS NULL AND i.indexprs IS NULL) THEN RAISE EXCEPTION 'invalid hour primary key'; END IF;
+    IF NOT EXISTS(SELECT 1 FROM pg_index i JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attname='event_id' WHERE i.indrelid=hour_id AND i.indisprimary AND i.indisvalid AND i.indisready AND i.indimmediate AND i.indnkeyatts=1 AND i.indnatts=1 AND i.indkey[0]=a.attnum AND i.indpred IS NULL AND i.indexprs IS NULL) THEN RAISE EXCEPTION 'invalid hour primary key'; END IF;
     RETURN hour_id;
 END $_$;
 

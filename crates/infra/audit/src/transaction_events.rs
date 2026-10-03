@@ -1420,7 +1420,8 @@ fn partition_horizon_secs(
 }
 
 async fn list_day_partitions(conn: &mut sqlx::PgConnection) -> Result<Vec<ExistingPartition>> {
-    HourlyTransactionEventPartitions::validate_days(conn).await?;
+    // Reject known malformed hour arbiters before any daily retention DDL too.
+    HourlyTransactionEventPartitions::validate(conn).await?;
     let rows: Vec<(String, bool)> = sqlx::query_as(
         "SELECT c.relname::text, c.relispartition \
          FROM pg_class c \
