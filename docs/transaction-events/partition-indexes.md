@@ -71,6 +71,21 @@ to migration 002 or its recorded checksum.
 
 ## Run the existing `ingested_at` workflow
 
+**Before either command below, verify that `public.transaction_events` already
+uses the reviewed partitioned baseline and that `_sqlx_migrations` matches the
+reviewed applied history, including migration descriptions and checksums.**
+Version numbers alone do not distinguish the partitioned baseline from legacy
+migrations.
+
+If the database still has the recognized legacy migrations 001–004, **stop**.
+`migrate up` deletes the old transaction-events table and resets that legacy
+history before applying the partitioned baseline, discarding its existing rows.
+Follow the reviewed upgrade process, including export or explicit retention/data
+loss approval, before proceeding; see the [migration warning in the binary README](../../bin/audit-archiver/README.md).
+Do not use this index guide's commands to initialize an unverified database or
+as a schema-readiness probe. Resolve missing, unfamiliar, or inconsistent schema
+and history through the reviewed upgrade process first.
+
 Use the reviewed binary for the target schema and a session-affine connection to
 the intended network database. Provision `TIPS_AUDIT_POSTGRES_URL` through the
 approved secret mechanism using the `audit_archiver_migration` credential; never
@@ -94,7 +109,7 @@ migration log is not an indexing-complete signal.
 indexes or a generic required-work registry. It does the following on one
 connection while holding the SQLx migration advisory lock:
 
-1. Checks for successful migration version 2 and the root index definition.
+1. Checks for successful migration version 2 and existence of the root index.
 2. Enumerates physical public day tables under the three class parents. The
    supported leaf suffix is exactly eight digits (`YYYYMMDD`).
 3. Skips valid indexes attached to the expected class index. Attaches a valid
