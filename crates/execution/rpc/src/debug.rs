@@ -41,6 +41,7 @@ use tokio::sync::{Semaphore, oneshot};
 use crate::{
     metrics::{DebugApiExtMetrics, DebugApis},
     state::BaseStateProviderFactory,
+    witness::witness_concurrency,
 };
 
 /// Represents the current proofs sync status.
@@ -115,7 +116,7 @@ pub struct DebugApiExtInner<Eth: FullEthApi, Storage, Provider, EvmConfig, Attrs
     state_provider_factory: BaseStateProviderFactory<Eth, Storage>,
     evm_config: EvmConfig,
     task_spawner: Runtime,
-    semaphore: Semaphore,
+    semaphore: Arc<Semaphore>,
     _attrs: PhantomData<Attrs>,
 }
 
@@ -140,7 +141,7 @@ where
             eth_api,
             evm_config,
             task_spawner,
-            semaphore: Semaphore::new(3),
+            semaphore: Arc::new(Semaphore::new(witness_concurrency())),
             _attrs: PhantomData,
         }
     }
@@ -194,7 +195,9 @@ where
         attributes: Attrs::RpcPayloadAttributes,
     ) -> RpcResult<ExecutionWitness> {
         DebugApiExtMetrics::record_operation_async(DebugApis::DebugExecutePayload, async {
-            let _permit = self.inner.semaphore.acquire().await;
+            // Owned so the permit moves into the blocking task: a disconnect must not free capacity
+            // while execution is still running.
+            let permit = Arc::clone(&self.inner.semaphore).acquire_owned().await;
 
             let parent_header = self.parent_header(parent_block_hash).to_rpc_result()?;
 
@@ -205,6 +208,7 @@ where
             let this = Arc::clone(&self.inner);
             let eth_api = self.inner.eth_api.provider().clone();
             self.inner.task_spawner.spawn_blocking_task(async move {
+                let _permit = permit;
                 let result = async {
                     let parent_hash = parent_header.hash();
                     let attributes = Attrs::try_new(parent_hash, attributes, 3)
@@ -249,7 +253,9 @@ where
 
     async fn execution_witness(&self, block_id: BlockNumberOrTag) -> RpcResult<ExecutionWitness> {
         DebugApiExtMetrics::record_operation_async(DebugApis::DebugExecutionWitness, async {
-            let _permit = self.inner.semaphore.acquire().await;
+            // Owned so the permit moves into the blocking task: a disconnect must not free capacity
+            // while execution is still running.
+            let permit = Arc::clone(&self.inner.semaphore).acquire_owned().await;
 
             let block = self
                 .inner
@@ -258,34 +264,43 @@ where
                 .await?
                 .ok_or(EthApiError::HeaderNotFound(block_id.into()))?;
 
+            // Block execution and witness generation are CPU-heavy; run them on the blocking pool so
+            // concurrent requests can't starve the async runtime.
+            let (tx, rx) = oneshot::channel();
             let this = Arc::clone(&self.inner);
-            let block_number = block.header().number();
+            self.inner.task_spawner.spawn_blocking_task(async move {
+                let _permit = permit;
+                let result = async {
+                    let block_number = block.header().number();
+                    let state_provider = this
+                        .state_provider_factory
+                        .state_provider(Some(BlockId::Number(
+                            block.parent_num_hash().number.into(),
+                        )))
+                        .await
+                        .map_err(EthApiError::from)?;
+                    let db = StateProviderDatabase::new(&state_provider);
+                    let block_executor = this.eth_api.evm_config().executor(db);
 
-            let state_provider = this
-                .state_provider_factory
-                .state_provider(Some(BlockId::Number(block.parent_num_hash().number.into())))
-                .await
-                .map_err(EthApiError::from)?;
-            let db = StateProviderDatabase::new(&state_provider);
-            let block_executor = this.eth_api.evm_config().executor(db);
+                    let mut witness = None;
+                    let mode = ExecutionWitnessMode::default();
+                    let _ = block_executor
+                        .execute_with_state_closure(&block, |statedb: &State<_>| {
+                            witness =
+                                Some(ExecutionWitnessRecord::new(statedb).into_execution_witness(
+                                    &statedb.database.0,
+                                    this.eth_api.provider(),
+                                    block_number,
+                                    mode,
+                                ));
+                        })
+                        .map_err(EthApiError::from)?;
+                    witness.expect("state closure runs after execution").map_err(EthApiError::from)
+                };
+                let _ = tx.send(result.await);
+            });
 
-            let mut witness = None;
-
-            let mode = ExecutionWitnessMode::default();
-            let _ = block_executor
-                .execute_with_state_closure(&block, |statedb: &State<_>| {
-                    witness = Some(ExecutionWitnessRecord::new(statedb).into_execution_witness(
-                        &statedb.database.0,
-                        self.inner.eth_api.provider(),
-                        block_number,
-                        mode,
-                    ));
-                })
-                .map_err(EthApiError::from)?;
-
-            let witness = witness.unwrap().map_err(EthApiError::from)?;
-
-            Ok(witness)
+            Ok(rx.await.map_err(|err| internal_rpc_err(err.to_string()))??)
         })
         .await
     }

@@ -23,6 +23,24 @@ use reth_tasks::Runtime;
 use reth_transaction_pool::TransactionPool;
 use tokio::sync::{Semaphore, oneshot};
 
+/// Minimum number of concurrent witness/payload executions allowed.
+const MIN_WITNESS_CONCURRENCY: usize = 3;
+
+/// Maximum number of concurrent witness/payload executions allowed.
+///
+/// Witness generation is CPU-bound and each request already fans out across several cores, so
+/// throughput plateaus well below one request per core. On a 32-core Base mainnet devbox it
+/// reached ~93% of peak at 16 concurrent requests, while more only added queueing latency.
+const MAX_WITNESS_CONCURRENCY: usize = 16;
+
+/// Returns the permit count for witness/payload execution semaphores: half the available
+/// parallelism, clamped to [`MIN_WITNESS_CONCURRENCY`]..=[`MAX_WITNESS_CONCURRENCY`].
+pub(crate) fn witness_concurrency() -> usize {
+    std::thread::available_parallelism()
+        .map_or(MIN_WITNESS_CONCURRENCY, |n| n.get() / 2)
+        .clamp(MIN_WITNESS_CONCURRENCY, MAX_WITNESS_CONCURRENCY)
+}
+
 #[cfg_attr(not(test), rpc(server, namespace = "debug"))]
 #[cfg_attr(test, rpc(server, client, namespace = "debug"))]
 /// RPC trait for the `debug_executePayload` endpoint.
@@ -48,7 +66,7 @@ impl<Pool, Provider, EvmConfig, Attrs> BaseDebugWitnessApi<Pool, Provider, EvmCo
         task_spawner: Runtime,
         builder: BasePayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
     ) -> Self {
-        let semaphore = Arc::new(Semaphore::new(3));
+        let semaphore = Arc::new(Semaphore::new(witness_concurrency()));
         let inner = BaseDebugWitnessApiInner { provider, builder, task_spawner, semaphore };
         Self { inner: Arc::new(inner) }
     }
@@ -99,7 +117,9 @@ where
         parent_block_hash: B256,
         attributes: Attrs::RpcPayloadAttributes,
     ) -> RpcResult<ExecutionWitness> {
-        let _permit = self.inner.semaphore.acquire().await;
+        // Owned so the permit moves into the blocking task: a disconnect must not free capacity
+        // while execution is still running.
+        let permit = Arc::clone(&self.inner.semaphore).acquire_owned().await;
 
         let parent_header = self.parent_header(parent_block_hash).to_rpc_result()?;
 
@@ -109,6 +129,7 @@ where
         let (tx, rx) = oneshot::channel();
         let this = self.clone();
         self.inner.task_spawner.spawn_blocking_task(async move {
+            let _permit = permit;
             let res = this.inner.builder.payload_witness(parent_header, attributes, task_cancel);
             let _ = tx.send(res);
         });
