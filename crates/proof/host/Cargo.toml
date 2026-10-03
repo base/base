@@ -49,6 +49,7 @@ ark-ff.workspace = true
 # misc
 serde.workspace = true
 tracing.workspace = true
+reqwest.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
