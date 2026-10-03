@@ -47,8 +47,8 @@ summary = "base-acceptance CLI entry point for the acceptance system: lists subc
 digest = "de5b6325d7"
 
 ["bin/audit-archiver/README.md"]
-summary = "audit-archiver service: NDJSON ingest into Postgres, JSON-RPC queries, retention classes and partition maintenance, event_seq extraction split, env vars, S3 removal rollout."
-digest = "9b82a1d70d"
+summary = "audit-archiver service: NDJSON ingest into Postgres, JSON-RPC queries, retention classes and partition maintenance, env vars, S3 removal rollout, and explicit ingested_at index coverage."
+digest = "323e3f35e4"
 
 ["bin/base-telemetry/README.md"]
 summary = "base-telemetry backend: CLI and env config, per-IP rate limiting, and on-demand P2P reachability probes for execution-layer (enode) and consensus-layer (ENR or multiaddr) nodes."
@@ -427,8 +427,8 @@ summary = "Base txpool: BaseTransactionValidator (L1 data fee), BaseOrdering/Tim
 digest = "906eadac6b"
 
 ["crates/infra/audit/README.md"]
-summary = "audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers the migrations and schema snapshot regeneration."
-digest = "012c106e66"
+summary = "audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers migrations and schema snapshots, and links the partition-index guide."
+digest = "b3c0221894"
 
 ["crates/infra/basectl/README.md"]
 summary = "basectl-cli: the basectl clap parser and commands (blocks, sync, txpool, peers, proofs, conductor), interactive monitor, flashblocks JSON-lines stream, Denim readiness checks, and pods view config."
@@ -681,6 +681,10 @@ digest = "e87f3373b8"
 ["docs/transaction-events/README.md"]
 summary = "Spec for transaction-event/v1, the JSONL business event journal for transaction observability: config fields, envelope, event vocabulary, Vector to audit-archiver ingest, Postgres retention, examples."
 digest = "1089184709"
+
+["docs/transaction-events/partition-indexes.md"]
+summary = "Add partitioned audit indexes: parent-only migrations, forward-only versus historical coverage, explicit native BRIN backfill, catalog checks, locks, cancellation, and future-index steps."
+digest = "e5291a6b3b"
 
 ["docs/transaction-events/tips-parity-checklist.md"]
 summary = "Checklist for verifying TIPS UI audit-archiver/Postgres responses match the S3-backed routes (block, txn, bundle, rejected) before switching TIPS_UI_QUERY_BACKEND=audit."
