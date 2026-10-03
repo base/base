@@ -9,7 +9,6 @@ idempotently in Postgres, and provides JSON-RPC queries by transaction, block,
 bundle, and rejection. Postgres schema readiness is checked before the
 `audit-archiver` binary starts serving; see the binary README for the
 S3 removal and rollout prerequisites.
-```
 
 ## Postgres schema
 
@@ -28,6 +27,14 @@ UPDATE_SCHEMA_SNAPSHOT=1 cargo test -p audit-archiver-lib \
 applied. The migrator recognizes their recorded rows by version and checksum,
 then drops the old table and resets that history in the same transaction that
 applies the partitioned baseline.
+
+## Partitioned indexes
+
+See [Add indexes to the partitioned transaction-event schema](../../../docs/transaction-events/partition-indexes.md)
+for parent-only migrations, forward-only coverage versus historical backfill,
+native reconciliation, and catalog validation. `migrate up` applies schema only;
+the separate `audit-archiver index` command backfills the existing `ingested_at`
+BRIN index. New index definitions do not register a generic backfill operation.
 
 ## License
 
