@@ -25,10 +25,10 @@ services:
     container_name: setup-devnet
     env_file: devnet-env
     volumes:
-      - ../../.devnet/l2/configs:/devnet/l2/configs
-      - ../../.devnet/l1/configs:/output
-      - ../../.devnet/l1/reth:/data/l1-reth
-      - ../../.devnet/l1/lighthouse:/data/l1-lighthouse
+      - ${DEVNET_ROOT:-../../.devnet}/l2/configs:/devnet/l2/configs
+      - ${DEVNET_ROOT:-../../.devnet}/l1/configs:/output
+      - ${DEVNET_ROOT:-../../.devnet}/l1/reth:/data/l1-reth
+      - ${DEVNET_ROOT:-../../.devnet}/l1/lighthouse:/data/l1-lighthouse
     environment:
       - UPGRADE_SIGNAL_MODE=${UPGRADE_SIGNAL_MODE:-runtime-admin}
       - UPGRADE_SIGNAL_L1_BLOCK_TAG=${UPGRADE_SIGNAL_L1_BLOCK_TAG:-latest}
@@ -54,6 +54,7 @@ services:
       - L2_BASE_BERYL_BLOCK=${L2_BASE_BERYL_BLOCK-}
       - L2_BASE_COBALT_BLOCK=${L2_BASE_COBALT_BLOCK-}
       - L2_BASE_DENIM_BLOCK=${L2_BASE_DENIM_BLOCK-}
+      - L2_BASE_EVEREST_BLOCK=${L2_BASE_EVEREST_BLOCK-}
       - L2_BASE_ZENITH_BLOCK=${L2_BASE_ZENITH_BLOCK-}
       - CHAIN_ID=${L1_CHAIN_ID}
       - SLOT_DURATION=${L1_SLOT_DURATION_OVERRIDE:-12}
@@ -74,8 +75,8 @@ services:
       - "${L1_AUTH_PORT}:${L1_AUTH_PORT}"   # Auth RPC (Engine API)
       - "${L1_P2P_PORT}:${L1_P2P_PORT}"     # P2P
     volumes:
-      - ../../.devnet/l1/reth:/data
-      - ../../.devnet/l1/configs:/genesis:ro
+      - ${DEVNET_ROOT:-../../.devnet}/l1/reth:/data
+      - ${DEVNET_ROOT:-../../.devnet}/l1/configs:/genesis:ro
     entrypoint: /usr/local/bin/reth
     command:
       - node
@@ -115,8 +116,8 @@ services:
       - "${L1_CL_P2P_PORT}:${L1_CL_P2P_PORT}"       # P2P TCP
       - "${L1_CL_P2P_PORT}:${L1_CL_P2P_PORT}/udp"   # P2P UDP
     volumes:
-      - ../../.devnet/l1/lighthouse:/data
-      - ../../.devnet/l1/configs:/genesis:ro
+      - ${DEVNET_ROOT:-../../.devnet}/l1/lighthouse:/data
+      - ${DEVNET_ROOT:-../../.devnet}/l1/configs:/genesis:ro
     command:
       - lighthouse
       - bn
@@ -163,7 +164,7 @@ services:
       l1-cl:
         condition: service_healthy
     volumes:
-      - ../../.devnet/l1/configs:/genesis
+      - ${DEVNET_ROOT:-../../.devnet}/l1/configs:/genesis
     command:
       - lighthouse
       - vc
@@ -193,9 +194,9 @@ services:
       - "${L2_CL_BOOTNODE_P2P_PORT}:${L2_CL_BOOTNODE_P2P_PORT}"     # Consensus P2P TCP metadata
       - "${L2_CL_BOOTNODE_P2P_PORT}:${L2_CL_BOOTNODE_P2P_PORT}/udp" # Consensus discovery
     volumes:
-      - ../../.devnet/l2/el-bootnode:/data
-      - ../../.devnet/l2/cl-bootnode-enr:/bootnodes
-      - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ${DEVNET_ROOT:-../../.devnet}/l2/el-bootnode:/data
+      - ${DEVNET_ROOT:-../../.devnet}/l2/cl-bootnode-enr:/bootnodes
+      - ${DEVNET_ROOT:-../../.devnet}/l2/configs:/genesis/l2:ro
     environment:
       - BASE_CHAIN_NAME=dev
       - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
@@ -254,11 +255,11 @@ services:
       - "${L2_BUILDER_CL_P2P_PORT}:${L2_BUILDER_CL_P2P_PORT}"       # Consensus P2P TCP
       - "${L2_BUILDER_CL_P2P_PORT}:${L2_BUILDER_CL_P2P_PORT}/udp"   # Consensus P2P UDP
     volumes:
-      - ../../.devnet/l2/builder:/data
-      - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
-      - ../../.devnet/l1/configs:/genesis:ro
-      - ../../.devnet/l2/configs:/genesis/l2:ro
-      - ../../.devnet/transaction-events:/var/log/transaction-events
+      - ${DEVNET_ROOT:-../../.devnet}/l2/builder:/data
+      - ${DEVNET_ROOT:-../../.devnet}/l2/cl-bootnode-enr:/bootnodes:ro
+      - ${DEVNET_ROOT:-../../.devnet}/l1/configs:/genesis:ro
+      - ${DEVNET_ROOT:-../../.devnet}/l2/configs:/genesis/l2:ro
+      - ${DEVNET_ROOT:-../../.devnet}/transaction-events:/var/log/transaction-events
     environment:
       - BASE_CHAIN_NAME=dev
       - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
@@ -305,7 +306,6 @@ services:
       - --builder.enable-resource-metering
       - --builder.enable-experimental-validity-transactions
       - --builder.payload-builder-cutover
-      - --builder.max-rejected-txs-per-block=${BUILDER_MAX_REJECTED_TXS_PER_BLOCK}
       - --txpool.nolocals
       - --rollup.txpool-max-inflight-delegated-slots=32768
       - --txpool.pending-max-count=200000
@@ -396,7 +396,8 @@ services:
   # Shadow DA: the Rust base batcher runs in --shadow-mode alongside the
   # op-batcher, posting to SHADOW_BATCH_INBOX_ADDRESS from SHADOW_BATCHER_ADDR
   # (a distinct L1 sender, so its nonces never collide with the op-batcher's).
-  # It anchors recovery on base-shadow-validator via --parity-validator-l2-rpc-url.
+  # It follows the derivation of base-shadow-validator, whose rollup node derives the
+  # shadow inbox, and compares its blocks with the builder's.
   base-batcher:
     image: base:local
     build:
@@ -409,8 +410,10 @@ services:
     depends_on:
       base-builder:
         condition: service_healthy
+      base-shadow-validator:
+        condition: service_healthy
     environment:
-      - BASE_BATCHER_ROLLUP_RPC_URL=http://base-builder:${L2_BUILDER_CL_RPC_PORT}
+      - BASE_BATCHER_ROLLUP_RPC_URL=http://base-shadow-validator:${L2_SHADOW_CL_RPC_PORT}
     command:
       - batcher
       - --l1-rpc-url=http://l1-el:${L1_HTTP_PORT}
@@ -452,11 +455,11 @@ services:
       - "${L2_CLIENT_CL_P2P_PORT}:${L2_CLIENT_CL_P2P_PORT}"     # Consensus P2P TCP
       - "${L2_CLIENT_CL_P2P_PORT}:${L2_CLIENT_CL_P2P_PORT}/udp" # Consensus P2P UDP
     volumes:
-      - ../../.devnet/l2/client:/data
-      - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
-      - ../../.devnet/l1/configs:/genesis:ro
-      - ../../.devnet/l2/configs:/genesis/l2:ro
-      - ../../.devnet/transaction-events:/var/log/transaction-events
+      - ${DEVNET_ROOT:-../../.devnet}/l2/client:/data
+      - ${DEVNET_ROOT:-../../.devnet}/l2/cl-bootnode-enr:/bootnodes:ro
+      - ${DEVNET_ROOT:-../../.devnet}/l1/configs:/genesis:ro
+      - ${DEVNET_ROOT:-../../.devnet}/l2/configs:/genesis/l2:ro
+      - ${DEVNET_ROOT:-../../.devnet}/transaction-events:/var/log/transaction-events
     environment:
       - BASE_CHAIN_NAME=dev
       - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
@@ -573,10 +576,10 @@ services:
       - "${L2_BASE_RPC_CL_P2P_PORT}:${L2_BASE_RPC_CL_P2P_PORT}"     # Consensus P2P TCP
       - "${L2_BASE_RPC_CL_P2P_PORT}:${L2_BASE_RPC_CL_P2P_PORT}/udp" # Consensus P2P UDP
     volumes:
-      - ../../.devnet/l2/base-rpc:/data
-      - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
-      - ../../.devnet/l1/configs:/genesis:ro
-      - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ${DEVNET_ROOT:-../../.devnet}/l2/base-rpc:/data
+      - ${DEVNET_ROOT:-../../.devnet}/l2/cl-bootnode-enr:/bootnodes:ro
+      - ${DEVNET_ROOT:-../../.devnet}/l1/configs:/genesis:ro
+      - ${DEVNET_ROOT:-../../.devnet}/l2/configs:/genesis/l2:ro
     environment:
       - BASE_CHAIN_NAME=dev
       - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
@@ -679,10 +682,10 @@ services:
       - "${L2_SHADOW_CL_P2P_PORT}:${L2_SHADOW_CL_P2P_PORT}"     # Consensus P2P TCP
       - "${L2_SHADOW_CL_P2P_PORT}:${L2_SHADOW_CL_P2P_PORT}/udp" # Consensus P2P UDP
     volumes:
-      - ../../.devnet/l2/shadow-validator:/data
-      - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
-      - ../../.devnet/l1/configs:/genesis:ro
-      - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ${DEVNET_ROOT:-../../.devnet}/l2/shadow-validator:/data
+      - ${DEVNET_ROOT:-../../.devnet}/l2/cl-bootnode-enr:/bootnodes:ro
+      - ${DEVNET_ROOT:-../../.devnet}/l1/configs:/genesis:ro
+      - ${DEVNET_ROOT:-../../.devnet}/l2/configs:/genesis/l2:ro
     environment:
       - BASE_CHAIN_NAME=dev
       - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}

@@ -53,9 +53,7 @@ mod validate;
 pub use validate::{NonceMode, NonceStatus, NonceValidator};
 
 mod events;
-pub use events::{
-    AccountConfigurationEvents, AccountCreated, ActorAuthorized, ActorRevoked, DelegationApplied,
-};
+pub use events::{AccountConfigurationEvents, AccountCreated, ActorAuthorized, ActorRevoked};
 
 mod apply;
 pub use apply::{

@@ -1,4 +1,7 @@
-//! Test [`ThrottleClient`] implementations.
+//! Test [`ThrottleClient`] implementation.
+//!
+//! Hand-rolled rather than mocked because the integration tests under `tests/` use it, and an
+//! `automock` mock is only built under `cfg(test)`, which they cannot see.
 
 use std::sync::{Arc, Mutex};
 
@@ -9,21 +12,23 @@ use crate::ThrottleClient;
 /// Shared handle to the call log of a [`TrackingThrottleClient`].
 pub type ThrottleCallLog = Arc<Mutex<Vec<(u64, u64)>>>;
 
-/// [`ThrottleClient`] that records every `set_max_da_size` call in order.
-///
-/// Use [`TrackingThrottleClient::new`] to obtain both the client and a shared
-/// handle to the recorded calls.
-#[derive(Debug, Default, Clone)]
+/// [`ThrottleClient`] that records every `set_max_da_size` call in order, failed ones included.
+#[derive(Debug)]
 pub struct TrackingThrottleClient {
-    /// Recorded `(max_tx_size, max_block_size)` calls in order.
-    pub calls: ThrottleCallLog,
+    calls: ThrottleCallLog,
+    failures: Mutex<usize>,
 }
 
 impl TrackingThrottleClient {
-    /// Create a new client and return a shared reference to the recorded calls.
+    /// Create a client whose calls all succeed, and its shared call log.
     pub fn new() -> (Self, ThrottleCallLog) {
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        (Self { calls: Arc::clone(&calls) }, calls)
+        let calls = ThrottleCallLog::default();
+        (Self { calls: Arc::clone(&calls), failures: Mutex::new(0) }, calls)
+    }
+
+    /// Make the first `failures` calls fail.
+    pub fn with_failures(self, failures: usize) -> Self {
+        Self { failures: Mutex::new(failures), ..self }
     }
 }
 
@@ -33,10 +38,14 @@ impl ThrottleClient for TrackingThrottleClient {
         max_tx_size: u64,
         max_block_size: u64,
     ) -> BoxFuture<'_, Result<(), Box<dyn std::error::Error + Send + Sync>>> {
-        let calls = Arc::clone(&self.calls);
-        Box::pin(async move {
-            calls.lock().unwrap().push((max_tx_size, max_block_size));
+        self.calls.lock().unwrap().push((max_tx_size, max_block_size));
+        let mut failures = self.failures.lock().unwrap();
+        let result = if *failures > 0 {
+            *failures -= 1;
+            Err("the block builder refused the limits".into())
+        } else {
             Ok(())
-        })
+        };
+        Box::pin(async move { result })
     }
 }

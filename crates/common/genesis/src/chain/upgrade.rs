@@ -7,7 +7,7 @@ use alloc::{
 use core::fmt::Display;
 
 use alloy_hardforks::{EthereumHardfork, hardfork};
-use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use spin::RwLock;
 
 /// Upgrade configuration for Base-specific upgrades.
 #[derive(Debug, Copy, Clone, Default, Hash, Eq, PartialEq)]
@@ -31,6 +31,10 @@ pub struct BaseUpgradeConfig {
     /// Active if `denim` != None && L2 block timestamp >= `Some(denim)`, inactive otherwise.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub denim: Option<u64>,
+    /// `everest` sets the activation time for the Everest network upgrade.
+    /// Active if `everest` != None && L2 block timestamp >= `Some(everest)`, inactive otherwise.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub everest: Option<u64>,
     /// `zenith` sets the activation time for the Zenith network upgrade.
     /// Active if `zenith` != None && L2 block timestamp >= `Some(zenith)`, inactive otherwise.
     #[cfg_attr(
@@ -47,6 +51,7 @@ impl BaseUpgradeConfig {
             && self.beryl.is_none()
             && self.cobalt.is_none()
             && self.denim.is_none()
+            && self.everest.is_none()
             && self.zenith.is_none()
     }
 }
@@ -71,6 +76,10 @@ hardfork!(
     /// unscheduled for now, but it is a first-class upgrade: contract-backed and part of the
     /// execution fork ladder, so live chains can activate it once an activation time is
     /// configured.
+    ///
+    /// [`Everest`](BaseUpgrade::Everest) is the fifth Base-specific network upgrade. Like
+    /// [`Denim`](BaseUpgrade::Denim) it is unscheduled for now, contract-backed, and part of the
+    /// execution fork ladder.
     ///
     /// [`Zenith`](BaseUpgrade::Zenith) is a hardfork for future experimental features. It is
     /// genesis-configurable but not contract-backed, since the L1 upgrade-signal contract does
@@ -113,6 +122,8 @@ hardfork!(
         Cobalt,
         /// Denim: Fourth Base-specific network upgrade. Unscheduled for now.
         Denim,
+        /// Everest: Fifth Base-specific network upgrade. Unscheduled for now.
+        Everest,
         /// Zenith: hardfork for future experimental features.
         Zenith,
     }
@@ -127,7 +138,7 @@ impl BaseUpgrade {
     /// These are the upgrades that participate in the reth/revm hardfork schedule. Excludes the
     /// contract-only [`Delta`](Self::Delta) and [`PectraBlobSchedule`](Self::PectraBlobSchedule)
     /// upgrades, and [`Zenith`](Self::Zenith), which does not yet change EVM execution.
-    pub const EXECUTION_VARIANTS: [Self; 13] = [
+    pub const EXECUTION_VARIANTS: [Self; 14] = [
         Self::Bedrock,
         Self::Regolith,
         Self::Canyon,
@@ -141,6 +152,7 @@ impl BaseUpgrade {
         Self::Beryl,
         Self::Cobalt,
         Self::Denim,
+        Self::Everest,
     ];
 
     /// The contract-backed upgrade set, in activation order.
@@ -155,7 +167,7 @@ impl BaseUpgrade {
     /// upgrades by ascending append-only registration id with names kept offchain. This order MUST
     /// match the contract's registration order — reordering silently misattributes every
     /// activation timestamp. Only ever append.
-    pub const CONTRACT_VARIANTS: [Self; 14] = [
+    pub const CONTRACT_VARIANTS: [Self; 15] = [
         Self::Regolith,
         Self::Canyon,
         Self::Delta,
@@ -170,6 +182,7 @@ impl BaseUpgrade {
         Self::Beryl,
         Self::Cobalt,
         Self::Denim,
+        Self::Everest,
     ];
 
     /// Returns true if this upgrade participates in the execution fork ladder.
@@ -202,6 +215,7 @@ impl BaseUpgrade {
             Self::Beryl => 10,
             Self::Cobalt => 11,
             Self::Denim => 12,
+            Self::Everest => 13,
             Self::Delta | Self::PectraBlobSchedule | Self::Zenith => return None,
         })
     }
@@ -228,6 +242,7 @@ impl BaseUpgrade {
             Self::Beryl => "beryl",
             Self::Cobalt => "cobalt",
             Self::Denim => "denim",
+            Self::Everest => "everest",
             Self::Zenith => "zenith",
         }
     }
@@ -272,6 +287,7 @@ impl BaseUpgrade {
             "beryl" | "baseberyl" | "v2" => Self::Beryl,
             "cobalt" | "basecobalt" | "v3" => Self::Cobalt,
             "denim" | "basedenim" => Self::Denim,
+            "everest" | "baseeverest" => Self::Everest,
             // Zenith is not contract-backed: even though `contract_id` emits "zenith", it is
             // deliberately not resolvable here, so the L1 upgrade signal can never address it.
             _ => return None,
@@ -417,49 +433,36 @@ pub struct RuntimeUpgradeRegistryEntry {
     pub last_updated_block_number: Option<u64>,
 }
 
+/// Process-global runtime upgrade activation overrides, keyed by chain ID.
+///
+/// Only reachable through the associated functions on [`RuntimeUpgradeRegistry`].
+static REGISTRY: RwLock<BTreeMap<u64, RuntimeUpgradeRegistryEntry>> = RwLock::new(BTreeMap::new());
+
 /// Process-local runtime upgrade activation registry.
 ///
 /// The runtime upgrade signal treats the L1 contract as the authoritative source for these
 /// overrides, so schedule application may replace the entire override set for a chain rather than
 /// merging with previously stored entries.
 ///
-/// Internally this registry uses `spin::RwLock`, so access is routed through the helper methods on
-/// [`RuntimeUpgradeRegistry`] rather than exposing the raw lock to callers.
+/// The registry state lives in a process-global `spin::RwLock` that is only reachable through the
+/// associated functions on [`RuntimeUpgradeRegistry`]; the lock is not exposed to callers.
 #[derive(Debug, Clone, Copy)]
 pub struct RuntimeUpgradeRegistry;
 
 impl RuntimeUpgradeRegistry {
-    /// Returns the global runtime upgrade activation registry.
-    fn registry() -> &'static RwLock<BTreeMap<u64, RuntimeUpgradeRegistryEntry>> {
-        static REGISTRY: Once<RwLock<BTreeMap<u64, RuntimeUpgradeRegistryEntry>>> = Once::new();
-        REGISTRY.call_once(|| RwLock::new(BTreeMap::new()))
-    }
-
-    /// Returns a registry read guard.
-    fn read_registry() -> RwLockReadGuard<'static, BTreeMap<u64, RuntimeUpgradeRegistryEntry>> {
-        Self::registry().read()
-    }
-
-    /// Returns a registry write guard.
-    fn write_registry() -> RwLockWriteGuard<'static, BTreeMap<u64, RuntimeUpgradeRegistryEntry>> {
-        Self::registry().write()
-    }
-
     /// Returns the runtime activation override for a chain and contract upgrade ID.
     pub fn activation(chain_id: u64, upgrade_id: BaseUpgrade) -> Option<UpgradeActivation> {
-        Self::read_registry()
-            .get(&chain_id)
-            .and_then(|entry| entry.overrides.activation(upgrade_id))
+        REGISTRY.read().get(&chain_id).and_then(|entry| entry.overrides.activation(upgrade_id))
     }
 
     /// Returns all runtime activation overrides for a chain.
     pub fn overrides(chain_id: u64) -> Option<UpgradeActivationOverrides> {
-        Self::read_registry().get(&chain_id).map(|entry| entry.overrides.clone())
+        REGISTRY.read().get(&chain_id).map(|entry| entry.overrides.clone())
     }
 
     /// Returns the latest L1 block number whose schedule was applied for a chain.
     pub fn last_updated_block_number(chain_id: u64) -> Option<u64> {
-        Self::read_registry().get(&chain_id).and_then(|entry| entry.last_updated_block_number)
+        REGISTRY.read().get(&chain_id).and_then(|entry| entry.last_updated_block_number)
     }
 
     /// Replaces all runtime activation overrides unless their L1 block predates stored state.
@@ -472,7 +475,7 @@ impl RuntimeUpgradeRegistry {
         l1_block_number: u64,
         overrides: UpgradeActivationOverrides,
     ) -> bool {
-        let mut registry = Self::write_registry();
+        let mut registry = REGISTRY.write();
         if registry
             .get(&chain_id)
             .and_then(|entry| entry.last_updated_block_number)
@@ -493,12 +496,12 @@ impl RuntimeUpgradeRegistry {
 
     /// Clears all runtime activation overrides and their L1 block watermark for a chain.
     pub fn clear_chain(chain_id: u64) {
-        Self::write_registry().remove(&chain_id);
+        REGISTRY.write().remove(&chain_id);
     }
 
     /// Removes one runtime activation override for a chain and contract upgrade ID.
     pub fn remove_activation_override(chain_id: u64, upgrade_id: BaseUpgrade) -> bool {
-        let mut registry = Self::write_registry();
+        let mut registry = REGISTRY.write();
         let Some(entry) = registry.get_mut(&chain_id) else {
             return false;
         };
@@ -508,7 +511,7 @@ impl RuntimeUpgradeRegistry {
 
     /// Sets one runtime activation override for a chain and contract upgrade ID.
     pub fn set_activation(chain_id: u64, upgrade_id: BaseUpgrade, activation: UpgradeActivation) {
-        let mut registry = Self::write_registry();
+        let mut registry = REGISTRY.write();
         let entry = registry.entry(chain_id).or_default();
         entry.overrides.set_activation(upgrade_id, activation)
     }
@@ -531,7 +534,7 @@ impl RuntimeUpgradeRegistry {
 
         impl Drop for ZenithActivationGuard {
             fn drop(&mut self) {
-                let mut registry = RuntimeUpgradeRegistry::write_registry();
+                let mut registry = REGISTRY.write();
                 let entry = registry.entry(self.chain_id).or_default();
                 if let Some(previous) = self.previous {
                     entry.overrides.activations.insert(BaseUpgrade::Zenith, previous);
@@ -544,7 +547,7 @@ impl RuntimeUpgradeRegistry {
             }
         }
 
-        let mut registry = Self::write_registry();
+        let mut registry = REGISTRY.write();
         let remove_chain_if_empty = !registry.contains_key(&chain_id);
         let entry = registry.entry(chain_id).or_default();
         let previous = entry.overrides.activation(BaseUpgrade::Zenith);
@@ -669,6 +672,7 @@ impl UpgradeConfig {
             beryl: Some(1_782_410_400),
             cobalt: Some(1_790_791_200),
             denim: None,
+            everest: None,
             zenith: None,
         },
     };
@@ -693,6 +697,7 @@ impl UpgradeConfig {
             beryl: Some(1_781_805_600),
             cobalt: Some(1_790_186_400),
             denim: None,
+            everest: None,
             zenith: None,
         },
     };
@@ -743,6 +748,7 @@ impl UpgradeConfig {
             BaseUpgrade::Beryl => self.base.beryl = None,
             BaseUpgrade::Cobalt => self.base.cobalt = None,
             BaseUpgrade::Denim => self.base.denim = None,
+            BaseUpgrade::Everest => self.base.everest = None,
             BaseUpgrade::Zenith => self.base.zenith = None,
         }
     }
@@ -783,6 +789,7 @@ impl UpgradeConfig {
             BaseUpgrade::Beryl => self.base.beryl,
             BaseUpgrade::Cobalt => self.base.cobalt,
             BaseUpgrade::Denim => self.base.denim,
+            BaseUpgrade::Everest => self.base.everest,
             BaseUpgrade::Zenith => self.base.zenith,
         };
 
@@ -813,6 +820,7 @@ impl UpgradeConfig {
             BaseUpgrade::Beryl => self.base.beryl = Some(timestamp),
             BaseUpgrade::Cobalt => self.base.cobalt = Some(timestamp),
             BaseUpgrade::Denim => self.base.denim = Some(timestamp),
+            BaseUpgrade::Everest => self.base.everest = Some(timestamp),
             BaseUpgrade::Zenith => self.base.zenith = Some(timestamp),
         }
     }
@@ -945,6 +953,7 @@ mod tests {
                 beryl: Some(12),
                 cobalt: Some(13),
                 denim: Some(14),
+                everest: Some(15),
                 zenith: None,
             },
         };

@@ -16,7 +16,6 @@ use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONC
 use alloy_evm::Database;
 use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::HashMap};
 use base_builder_publish::WebSocketPublisher;
-use base_bundles::RejectedTransaction;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
 use base_common_flashblocks::{
@@ -106,8 +105,6 @@ pub(super) struct BuilderOutputs {
     /// WebSocket publisher for broadcasting flashblocks
     /// to all connected subscribers.
     pub ws_pub: Arc<WebSocketPublisher>,
-    /// Sender for forwarding per-block batches of rejected transactions to the audit-archiver.
-    pub rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
 }
 
 /// Base payload builder
@@ -121,8 +118,7 @@ pub(super) struct BasePayloadBuilder<Pool, Client> {
     pub client: Client,
     /// System configuration for the builder
     pub config: BuilderConfig,
-    /// The outbound channels the builder emits built payloads, flashblocks, and rejected
-    /// transactions to.
+    /// The outbound channels for built payloads and flashblocks.
     pub outputs: BuilderOutputs,
     /// Last flashblock emitted by this builder instance.
     last_emitted_flashblock_id: Arc<LastEmittedFlashblockId>,
@@ -240,7 +236,6 @@ where
             cancel,
             extra,
             builder_config: self.config.clone(),
-            rejected_tx_sender: self.outputs.rejected_tx_sender.clone(),
         })
     }
 
@@ -961,7 +956,6 @@ where
         // Build the final block WITH state root computed
         let (final_payload, _, _) = build_block(state, ctx, info, FlashblockId::default(), true)?;
 
-        ctx.flush_rejected_txs(info);
         self.emit_final_inclusion_events(ctx, &final_payload);
 
         let elapsed = start_time.elapsed();

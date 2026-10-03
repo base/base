@@ -1,10 +1,10 @@
-//! Builder for test [`BatchDriver`] instances, and block and [`BatchSubmission`] stubs.
+//! Builder for test [`BatchDriver`] instances, and block and [`SubmissionPayload`] stubs.
 
 use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::Header;
-use alloy_primitives::Address;
-use base_batcher_encoder::{BatchPipeline, BatchSubmission, BlobPayload, SubmissionId};
+use alloy_primitives::{Address, B256};
+use base_batcher_encoder::{BatchPipeline, BlobPayload, SubmissionPayload};
 use base_batcher_source::{L1HeadSource, UnsafeBlockSource};
 use base_common_consensus::BaseBlock;
 use base_protocol::{BlockInfo, Frame};
@@ -18,7 +18,7 @@ use crate::{
     test_utils::{PendingL1HeadSource, PendingSource},
 };
 
-/// Factory for empty L2 block stubs used in driver tests.
+/// Factory for the empty L2 blocks and the block references used in driver tests.
 #[derive(Debug)]
 pub struct BlockStub;
 
@@ -28,33 +28,29 @@ impl BlockStub {
     pub fn with_number(number: u64) -> BaseBlock {
         BaseBlock { header: Header { number, ..Default::default() }, body: Default::default() }
     }
+
+    /// Returns a [`BlockInfo`] numbered `number`, with a hash derived from that number.
+    pub fn info(number: u64) -> BlockInfo {
+        BlockInfo { hash: B256::with_last_byte(number as u8), number, ..Default::default() }
+    }
 }
 
-/// Factory methods for [`BatchSubmission`] stubs used in driver tests.
+/// Factory methods for [`SubmissionPayload`] stubs used in driver tests.
 #[derive(Debug)]
 pub struct SubmissionStub;
 
 impl SubmissionStub {
-    /// Returns a stub submission with id `0`.
-    pub fn stub() -> BatchSubmission {
-        Self::with_id(0)
-    }
-
-    /// Returns a stub submission with the given id.
-    pub fn with_id(id: u64) -> BatchSubmission {
-        BatchSubmission::blobs(
-            SubmissionId(id),
-            vec![BlobPayload::new(vec![Arc::new(Frame::default())])],
-        )
+    /// Returns a one-blob payload holding an empty frame.
+    pub fn stub() -> SubmissionPayload {
+        SubmissionPayload::Blobs(vec![BlobPayload::new(vec![Arc::new(Frame::default())])])
     }
 }
 
-/// Builds a [`BatchDriver`] for tests, with a parked source, a parked L1 head source, a
-/// disabled throttle and at most one in-flight transaction unless told otherwise.
+/// Builds a [`BatchDriver`] for tests.
 ///
-/// The driver starts from L1 head 0 and, unless [`safe_head`](Self::safe_head) says
-/// otherwise, from the L2 genesis (block 0) as safe head, so it drops blocks numbered 0 as
-/// already safe.
+/// Unless told otherwise, the driver has a parked source, a parked L1 head source, a disabled
+/// throttle and at most one in-flight transaction. It starts from L1 head 0 and from the L2
+/// genesis (block 0) as safe head, so it drops blocks numbered 0 as already safe.
 ///
 /// [`build`](Self::build) also creates the derivation-status and admin channels and hands
 /// their sending sides back as [`DriverHandles`]. Keep them alive while the driver runs:
@@ -78,8 +74,13 @@ pub struct DriverFixture<
     l1_head_source: L,
     throttle: DaThrottle<TC>,
     max_pending: usize,
+    initial_l1_head: u64,
     safe_head: BlockInfo,
+    force_blobs_when_throttling: bool,
 }
+
+/// How long a fixture-built driver waits for its in-flight submissions on cancellation.
+pub const DRAIN_TIMEOUT: Duration = Duration::from_millis(10);
 
 /// The sending sides of a fixture-built driver's channels.
 #[derive(Debug)]
@@ -101,7 +102,9 @@ impl<R: Runtime, P: BatchPipeline, TM: TxManager> DriverFixture<R, P, TM> {
             l1_head_source: PendingL1HeadSource,
             throttle: DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
             max_pending: 1,
+            initial_l1_head: 0,
             safe_head: BlockInfo::default(),
+            force_blobs_when_throttling: true,
         }
     }
 }
@@ -125,7 +128,9 @@ where
             l1_head_source: self.l1_head_source,
             throttle: self.throttle,
             max_pending: self.max_pending,
+            initial_l1_head: self.initial_l1_head,
             safe_head: self.safe_head,
+            force_blobs_when_throttling: self.force_blobs_when_throttling,
         }
     }
 
@@ -142,7 +147,9 @@ where
             l1_head_source,
             throttle: self.throttle,
             max_pending: self.max_pending,
+            initial_l1_head: self.initial_l1_head,
             safe_head: self.safe_head,
+            force_blobs_when_throttling: self.force_blobs_when_throttling,
         }
     }
 
@@ -159,7 +166,9 @@ where
             l1_head_source: self.l1_head_source,
             throttle,
             max_pending: self.max_pending,
+            initial_l1_head: self.initial_l1_head,
             safe_head: self.safe_head,
+            force_blobs_when_throttling: self.force_blobs_when_throttling,
         }
     }
 
@@ -169,9 +178,21 @@ where
         self
     }
 
+    /// Set the L1 head the driver starts from.
+    pub const fn initial_l1_head(mut self, l1_head: u64) -> Self {
+        self.initial_l1_head = l1_head;
+        self
+    }
+
     /// Set the safe L2 head the driver starts from.
     pub const fn safe_head(mut self, safe_head: BlockInfo) -> Self {
         self.safe_head = safe_head;
+        self
+    }
+
+    /// Set whether throttling forces blob submissions.
+    pub const fn force_blobs_when_throttling(mut self, force_blobs_when_throttling: bool) -> Self {
+        self.force_blobs_when_throttling = force_blobs_when_throttling;
         self
     }
 
@@ -186,15 +207,15 @@ where
             BatchDriverConfig {
                 inbox: Address::ZERO,
                 max_pending_transactions: self.max_pending,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
+                drain_timeout: DRAIN_TIMEOUT,
+                force_blobs_when_throttling: self.force_blobs_when_throttling,
                 stopped: false,
             },
             self.throttle,
             BatchDriverInputs {
                 source: self.source,
                 l1_head_source: self.l1_head_source,
-                initial_l1_head: 0,
+                initial_l1_head: self.initial_l1_head,
                 initial_safe_head: self.safe_head,
                 derivation_status_rx,
                 admin_rx,

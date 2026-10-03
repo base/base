@@ -86,10 +86,13 @@ disputes games it was never given would pass the run.
    `counteredIndex` stay set, and a challenger that "defends" a legitimate
    challenge of a wrong TEE root fails here. If it was a TEE nullify there is
    no challenge to leave standing, and the same window proves **idempotence**:
-   the challenger must not dispute a game it has already nullified. Path 2
-   *dispute* (fraudulent ZK against a correct TEE root) is not staged: the real
-   prover cannot produce a wrong-root proof the real verifier accepts. That
-   half stays in the mock driver tests.
+   the challenger must not dispute a game it has already nullified.
+
+   With `CHALLENGER_E2E_SCENARIO=path1-path2`, the driver then restores the
+   canonical root while preserving the recorded challenge. That makes the
+   challenge fraudulent without mocking proof verification. The challenger
+   must detect **Path 2 dispute**, clear `zkProver` and `counteredIndex`, and
+   move B's nonce again.
 5. **Path 4 `InvalidDualProposal`.** Game B was staged *before* the challenger
    was released: A requested a real SNARK of B's canonical roots from
    `BASE_CHALLENGER_ZK_RPC_URL` (not the fork) and submitted
@@ -142,6 +145,7 @@ is pointed at and talks to the same prover-service.
 | `BASE_CHALLENGER_GAME_TYPE` | Yes | `AggregateVerifier` game type |
 | `BASE_CHALLENGER_ANCHOR_STATE_REGISTRY_ADDR` | Yes | `AnchorStateRegistry` on L1; read to find the scanner's lower bound |
 | `CHALLENGER_E2E_ANVIL_PORT` | No (default `18545`) | Fork port; not 8545, which the production challenger reserves for its signer sidecar |
+| `CHALLENGER_E2E_SCENARIO` | No (default `all`) | `all` for the existing combined run, or `path1-path2` for complete Path 2 coverage |
 | `CHALLENGER_E2E_CHALLENGER_METRICS_URL` | No (default `http://127.0.0.1:7300/metrics`) | Prometheus endpoint of the challenger under test |
 | `CHALLENGER_E2E_GAME_LOOKBACK` | No (default `50`) | Factory indices searched for two games to corrupt |
 | `CHALLENGER_E2E_STARTUP_TIMEOUT` | No (default `5m`) | Budget for the fork and the first scan |

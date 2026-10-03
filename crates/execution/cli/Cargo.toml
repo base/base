@@ -64,6 +64,8 @@ base-upgrade-signal = { workspace = true, features = ["metrics"] }
 tar.workspace = true
 zstd.workspace = true
 eyre.workspace = true
+rayon.workspace = true
+blake3.workspace = true
 humantime.workspace = true
 url.workspace = true
 backon.workspace = true
@@ -88,11 +90,16 @@ alloy-primitives.workspace = true
 base-common-genesis.workspace = true
 rstest.workspace = true
 tempfile.workspace = true
+criterion.workspace = true
 axum = { workspace = true, features = ["tokio", "http1"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [build-dependencies]
 base-execution-chainspec = { workspace = true, features = ["std"] }
+
+[[bench]]
+name = "proofs_download"
+harness = false
 
 [features]
 default = []

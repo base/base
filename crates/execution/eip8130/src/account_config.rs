@@ -538,12 +538,7 @@ impl AccountState {
     #[must_use]
     pub const fn lock_status(&self, now: u64) -> LockStatus {
         if self.flags & Eip8130Constants::FLAG_LOCKED == 0 {
-            return LockStatus {
-                locked: false,
-                has_initiated_unlock: false,
-                unlocks_at: 0,
-                unlock_delay: 0,
-            };
+            return LockStatus::UNLOCKED;
         }
         if self.flags & Eip8130Constants::FLAG_UNLOCK_INITIATED == 0 {
             // Hard-locked: lock_union holds the configured delay; synthesize the
@@ -624,6 +619,12 @@ pub struct LockStatus {
     pub unlocks_at: u64,
     /// The configured unlock delay in seconds (reported only while hard-locked).
     pub unlock_delay: u16,
+}
+
+impl LockStatus {
+    /// The status of an account that is not locked.
+    pub const UNLOCKED: Self =
+        Self { locked: false, has_initiated_unlock: false, unlocks_at: 0, unlock_delay: 0 };
 }
 
 #[cfg(test)]

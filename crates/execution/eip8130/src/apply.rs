@@ -271,9 +271,6 @@ impl DelegationEffect {
             Bytecode::new_eip7702(self.target)
         };
         sctx.set_code(self.account, code)?;
-        // Protocol-injected: the Solidity contract never emits this on the EVM
-        // path; EIP-8130 requires the receipt log for successful delegation updates.
-        AccountConfigurationEvents::emit_delegation_applied(sctx, self.account, self.target)?;
         Ok(())
     }
 
@@ -1085,7 +1082,7 @@ mod tests {
     use revm::state::Bytecode;
 
     use super::*;
-    use crate::{AccountCreated, ActorAuthorized, ActorRevoked, DelegationApplied};
+    use crate::{AccountCreated, ActorAuthorized, ActorRevoked};
 
     const ACCOUNT: Address = address!("0x00000000000000000000000000000000000000a1");
     const K1: Address = Eip8130Constants::K1_AUTHENTICATOR;
@@ -2549,7 +2546,7 @@ mod tests {
     }
 
     #[test]
-    fn delegation_install_emits_delegation_applied() {
+    fn delegation_install_sets_indicator_without_logs() {
         let target = Address::repeat_byte(0x33);
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |sctx| {
@@ -2557,10 +2554,8 @@ mod tests {
         })
         .unwrap();
 
-        let events = storage.get_events(AccountConfigurationStorage::ADDRESS);
-        assert_eq!(events.len(), 1);
-        let applied = DelegationApplied::decode_log_data(&events[0]).unwrap();
-        assert_eq!(applied.account, ACCOUNT);
-        assert_eq!(applied.target, target);
+        let code = storage.get_account_info(ACCOUNT).and_then(|info| info.code.as_ref());
+        assert_eq!(code.and_then(Bytecode::eip7702_address), Some(target));
+        assert!(storage.get_events(AccountConfigurationStorage::ADDRESS).is_empty());
     }
 }

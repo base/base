@@ -26,9 +26,10 @@ use base_shadow_indexer_db::{
     DEFAULT_DATABASE, DEFAULT_PORT, DEFAULT_USERNAME, PgConnectionParams, ShadowDbConfig,
 };
 use base_tx_forwarding::{
-    DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY, DEFAULT_INLINE_SIMULATION_TIMEOUT_MS,
-    DEFAULT_INLINE_SIMULATION_WORKERS, DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS,
-    DEFAULT_RESEND_AFTER_MS, TxForwardingConfig, TxForwardingExtension,
+    DEFAULT_FIFO_PERCENT, DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY,
+    DEFAULT_INLINE_SIMULATION_TIMEOUT_MS, DEFAULT_INLINE_SIMULATION_WORKERS,
+    DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
+    TxForwardingExtension,
 };
 use base_txpool_rpc::{
     DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
@@ -408,6 +409,31 @@ pub struct RpcStandardNodeArgs {
     )]
     pub tx_forwarding_max_rps: u32,
 
+    /// Percentage of forwarded transactions picked oldest-first (0-100).
+    ///
+    /// The rest are picked by highest tip per gas. 100 is pure FIFO. Only matters while a builder
+    /// queue is backed up; with no backlog every pending transaction goes in the next batch.
+    #[arg(
+        long = "tx-forwarding-fifo-percent",
+        value_name = "TX_FORWARDING_FIFO_PERCENT",
+        default_value_t = DEFAULT_FIFO_PERCENT,
+        value_parser = clap::value_parser!(u8).range(0..=100),
+        requires = "enable_tx_forwarding"
+    )]
+    pub tx_forwarding_fifo_percent: u8,
+
+    /// Per-builder forwarding queue capacity [default: 2x the batch size].
+    ///
+    /// A transaction's forwarding order is fixed once it enters this queue, so a deeper queue
+    /// delays the point where FIFO and priority picks apply.
+    #[arg(
+        long = "tx-forwarding-queue-capacity",
+        value_name = "TX_FORWARDING_QUEUE_CAPACITY",
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..),
+        requires = "enable_tx_forwarding"
+    )]
+    pub tx_forwarding_queue_capacity: Option<usize>,
+
     /// Run `meter_bundle` on the mempool node before inserting into the forwarding pool.
     ///
     /// Has no effect until the sim-worker path is wired; keep off in production.
@@ -558,6 +584,8 @@ impl From<&StandardNodeArgs> for TxForwardingConfig {
             .with_resend_after_ms(args.rpc.tx_forwarding_resend_after_ms)
             .with_max_batch_size(args.rpc.tx_forwarding_batch_size)
             .with_max_rps(args.rpc.tx_forwarding_max_rps)
+            .with_fifo_percent(args.rpc.tx_forwarding_fifo_percent)
+            .with_queue_capacity(args.rpc.tx_forwarding_queue_capacity)
             .with_inline_simulation(args.rpc.enable_inline_simulation)
             .with_inline_simulation_workers(args.rpc.inline_simulation_workers)
             .with_inline_simulation_queue_capacity(args.rpc.inline_simulation_queue_capacity)
@@ -990,6 +1018,8 @@ mod tests {
             tx_forwarding_resend_after_ms: DEFAULT_RESEND_AFTER_MS,
             tx_forwarding_batch_size: DEFAULT_MAX_BATCH_SIZE,
             tx_forwarding_max_rps: DEFAULT_MAX_RPS,
+            tx_forwarding_fifo_percent: DEFAULT_FIFO_PERCENT,
+            tx_forwarding_queue_capacity: None,
             enable_inline_simulation: false,
             inline_simulation_workers: DEFAULT_INLINE_SIMULATION_WORKERS,
             inline_simulation_queue_capacity: DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY,
@@ -1279,6 +1309,55 @@ mod tests {
         assert_eq!(config.inline_simulation_workers, 8);
         assert_eq!(config.inline_simulation_queue_capacity, 32);
         assert_eq!(config.inline_simulation_timeout_ms, 500);
+    }
+
+    #[test]
+    fn forwarding_lane_flags_reach_the_config() {
+        let defaults = TxForwardingConfig::from(
+            &CommandParser::<StandardNodeArgs>::parse_from([
+                "base-reth",
+                "--enable-tx-forwarding",
+                "--builder-rpc-urls",
+                "http://localhost:8545",
+            ])
+            .args,
+        );
+        let configured = TxForwardingConfig::from(
+            &CommandParser::<StandardNodeArgs>::parse_from([
+                "base-reth",
+                "--enable-tx-forwarding",
+                "--builder-rpc-urls",
+                "http://localhost:8545",
+                "--tx-forwarding-fifo-percent",
+                "35",
+                "--tx-forwarding-queue-capacity",
+                "64",
+            ])
+            .args,
+        );
+
+        assert_eq!(defaults.fifo_percent, DEFAULT_FIFO_PERCENT);
+        assert_eq!(defaults.queue_capacity, None);
+        assert_eq!(configured.fifo_percent, 35);
+        assert_eq!(configured.queue_capacity, Some(64));
+    }
+
+    #[test]
+    fn forwarding_lane_flags_reject_out_of_range_values() {
+        for (flag, value) in
+            [("--tx-forwarding-fifo-percent", "101"), ("--tx-forwarding-queue-capacity", "0")]
+        {
+            let result = CommandParser::<StandardNodeArgs>::try_parse_from([
+                "base-reth",
+                "--enable-tx-forwarding",
+                "--builder-rpc-urls",
+                "http://localhost:8545",
+                flag,
+                value,
+            ]);
+
+            assert!(result.is_err(), "{flag} {value} must be rejected");
+        }
     }
 
     #[test]

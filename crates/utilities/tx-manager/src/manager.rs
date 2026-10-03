@@ -113,9 +113,8 @@ impl PreparedTx {
 
 /// Mutable fee-bump state tracked across iterations in the send loop.
 ///
-/// Groups the values that [`SimpleTxManager::try_fee_bump`] and
-/// [`SimpleTxManager::apply_bump_result`] update on each successful
-/// fee bump so they can be passed as a single argument.
+/// Groups the values that [`SimpleTxManager::try_fee_bump`] updates on each
+/// successful fee bump so they can be passed as a single argument.
 #[derive(Debug)]
 struct BumpState {
     /// Current maximum priority fee per gas (tip).
@@ -1147,11 +1146,7 @@ where
             // for the next resubmission timer tick. take_bump_fees clears
             // the flag atomically so a failed bump does not re-trigger.
             if send_state.take_bump_fees() {
-                if let Some(abort) =
-                    self.try_fee_bump(candidate, send_state, &receipt_tx, &mut bump).await
-                {
-                    return Err(abort);
-                }
+                self.try_fee_bump(candidate, send_state, &receipt_tx, &mut bump).await;
                 // Reset the bump ticker so we get a full interval
                 // before the next timer-driven bump.
                 bump_ticker = self.runtime.interval(self.config.resubmission_timeout);
@@ -1187,11 +1182,7 @@ where
             };
 
             // Bump tick fired — run fee bump logic.
-            if let Some(abort) =
-                self.try_fee_bump(candidate, send_state, &receipt_tx, &mut bump).await
-            {
-                return Err(abort);
-            }
+            self.try_fee_bump(candidate, send_state, &receipt_tx, &mut bump).await;
             bump_ticker = self.runtime.interval(self.config.resubmission_timeout);
             bump_ticker.next().await;
         }
@@ -1199,65 +1190,29 @@ where
 
     /// Performs a fee bump attempt and applies the result to the tracked state.
     ///
-    /// Returns `Some(error)` if the send loop must abort, `None` to continue.
-    ///
-    /// When a bump attempt yields a non-retryable error but the
-    /// receipt-polling task has already recorded a mined tx on
-    /// `send_state`, the abort is suppressed so the send loop can
-    /// deliver the receipt on the next iteration. This avoids a
-    /// false-negative failure report when, for example, a fee bump
-    /// publish gets `NonceTooLow` because the original tx was already
-    /// confirmed.
+    /// A failed bump is logged and the send keeps waiting, because a version published
+    /// earlier may still be mined. Aborting is left to [`SendState::critical_error_at`].
     async fn try_fee_bump(
         &self,
         candidate: &TxCandidate,
         send_state: &Arc<SendState>,
         receipt_tx: &mpsc::Sender<TransactionReceipt>,
         state: &mut BumpState,
-    ) -> Option<TxManagerError> {
-        // If the receipt-polling task has already detected the original tx
+    ) {
+        // If a receipt-polling task has already detected a published version
         // on-chain, skip the fee bump entirely. This avoids a race where
         // `estimate_gas` on the replacement tx reverts because the
-        // original calldata has already executed (e.g. `GameAlreadyExists`),
+        // calldata has already executed (e.g. `GameAlreadyExists`),
         // producing noisy error logs even though the proposal will succeed.
         if send_state.is_waiting_for_confirmation() {
-            info!("skipping fee bump — original tx already mined, awaiting confirmation");
-            return None;
+            info!("skipping fee bump, a published tx is already mined and awaits confirmation");
+            return;
         }
 
-        let result = self.handle_fee_bump(candidate, send_state, receipt_tx, state).await;
-        Self::apply_bump_result_with_suppression(result, state, send_state)
-    }
-
-    /// Applies a fee bump result with mined-tx suppression.
-    ///
-    /// If the bump failed with a non-retryable error *but* the original
-    /// tx was already mined ([`SendState::is_waiting_for_confirmation`]),
-    /// the error is suppressed and logged at `info` level (not `error`).
-    /// This prevents false-positive alerts in the benign "tx confirmed
-    /// while we were bumping" case.
-    ///
-    /// On success or retryable error, delegates directly to
-    /// [`apply_bump_result`](Self::apply_bump_result).
-    fn apply_bump_result_with_suppression(
-        result: TxManagerResult<BumpState>,
-        state: &mut BumpState,
-        send_state: &SendState,
-    ) -> Option<TxManagerError> {
-        // Check for mined-tx suppression *before* apply_bump_result so
-        // the `error!` log inside that function is never emitted for the
-        // benign "tx already confirmed" case.
-        if let Err(ref e) = result
-            && !e.is_retryable()
-            && send_state.is_waiting_for_confirmation()
-        {
-            info!(
-                error = %e,
-                "fee bump failed but original tx already mined, suppressing abort"
-            );
-            return None;
+        match self.handle_fee_bump(candidate, send_state, receipt_tx, state).await {
+            Ok(new_state) => *state = new_state,
+            Err(error) => warn!(error = %error, "fee bump failed, will retry next tick"),
         }
-        Self::apply_bump_result(result, state)
     }
 
     /// Handles a single fee bump iteration.
@@ -1330,32 +1285,6 @@ where
         self.spawn_wait_for_tx(Arc::clone(send_state), new_hash, receipt_tx.clone());
 
         Ok(BumpState::from_prepared(prepared, new_hash))
-    }
-
-    /// Applies the result of a fee bump attempt, updating the tracked fee
-    /// state on success or logging the error on failure.
-    ///
-    /// Returns `Some(error)` when the caller must abort the send loop
-    /// (non-retryable error), or `None` when the loop should continue
-    /// (success or retryable error).
-    fn apply_bump_result(
-        result: TxManagerResult<BumpState>,
-        state: &mut BumpState,
-    ) -> Option<TxManagerError> {
-        match result {
-            Ok(new_state) => {
-                *state = new_state;
-                None
-            }
-            Err(e) if !e.is_retryable() => {
-                error!(error = %e, "non-retryable error during fee bump");
-                Some(e)
-            }
-            Err(e) => {
-                warn!(error = %e, "fee bump failed, will retry next tick");
-                None
-            }
-        }
     }
 
     /// Publishes the initial transaction, retrying a transient nonce gap.
@@ -1460,6 +1389,10 @@ where
                     warn!(error = %classified, "publish failed, will retry");
                 } else if matches!(classified, TxManagerError::ExecutionReverted { .. }) {
                     error!(error = %classified, "transaction execution reverted");
+                } else if matches!(classified, TxManagerError::NonceTooLow)
+                    && send_state.has_published()
+                {
+                    warn!(error = %classified, "nonce too low, a published version may be mined");
                 } else {
                     error!(error = %classified, "publish failed with non-retryable error");
                 }
@@ -1480,8 +1413,7 @@ where
     /// sends it through the provided channel once confirmed.
     ///
     /// The task delegates to [`wait_mined`](Self::wait_mined), which polls
-    /// internally until the transaction is confirmed or the manager shuts
-    /// down.
+    /// internally until the transaction is confirmed or the manager shuts down.
     ///
     /// Returns the [`JoinHandle`](tokio::task::JoinHandle) of the spawned
     /// task so callers can await its completion if needed.
@@ -1527,7 +1459,11 @@ where
         })
     }
 
-    /// Spawns a receipt polling task on the configured runtime.
+    /// Spawns a task on the configured runtime that polls the receipt of one published
+    /// version of the transaction.
+    ///
+    /// The task runs until the version is confirmed, the send ends or the manager shuts
+    /// down.
     fn spawn_wait_for_tx(
         &self,
         send_state: Arc<SendState>,
@@ -1573,9 +1509,8 @@ where
     /// the transaction is mined and confirmed to the required depth.
     ///
     /// Returns `Some(receipt)` when the transaction reaches
-    /// `num_confirmations` depth, or `None` if the manager is closed or
-    /// the transaction is still not mined when the `confirmation_timeout`
-    /// deadline is exceeded.
+    /// `num_confirmations` depth, or `None` if the manager is closed. Callers
+    /// that need a bound wrap it in a timeout.
     pub async fn wait_mined(
         send_state: &SendState,
         provider: &P,
@@ -1606,7 +1541,6 @@ where
     where
         Rt: Runtime,
     {
-        let deadline = runtime.now() + config.confirmation_timeout;
         let mut poll_immediately = true;
 
         loop {
@@ -1635,18 +1569,6 @@ where
                 Err(e) => {
                     warn!(tx_hash = %tx_hash, error = %e, "receipt query failed");
                 }
-            }
-
-            // Give up at the deadline only if the transaction is not mined. Once it is mined
-            // the send loop stops fee bumping and relies on this poller alone, so keep polling
-            // until the confirmation depth is reached.
-            if runtime.now() >= deadline && !send_state.is_mined(tx_hash) {
-                warn!(
-                    tx_hash = %tx_hash,
-                    timeout = ?config.confirmation_timeout,
-                    "confirmation timeout exceeded",
-                );
-                return None;
             }
 
             // Check shutdown state each iteration to support cancellation.
@@ -1857,12 +1779,12 @@ mod tests {
     use alloy_transport::mock::Asserter;
     use base_runtime::{
         Clock,
-        deterministic::{Config, Context, Runner},
+        deterministic::{Config, Runner},
     };
     use rstest::rstest;
     use tokio::sync::mpsc;
 
-    use super::{BumpState, PreparedTx, SimpleTxManager, TxEnvelope};
+    use super::{PreparedTx, SimpleTxManager, TxEnvelope};
     use crate::{
         GasPriceCaps, NonceManager, NoopTxMetrics, SendState, TxCandidate, TxManagerConfig,
         TxManagerError,
@@ -2036,19 +1958,27 @@ mod tests {
         }
     }
 
+    /// A poller keeps polling an unmined transaction and delivers it once it is mined.
     #[test]
-    fn wait_mined_confirmation_timeout_uses_virtual_time() {
+    fn receipt_polling_waits_for_the_transaction_to_be_mined() {
         Runner::start(Config::seeded(0), |ctx| async move {
+            let tx_hash = B256::with_last_byte(1);
+            let (receipt, block) = mined_receipt(tx_hash, 10);
+
+            // Report the transaction unmined for 4 polls, then mined and confirmed at 4 s.
             let asserter = Asserter::new();
-            for _ in 0..5 {
+            for _ in 0..4 {
                 asserter.push_success(&1u64);
-                asserter.push_success(&Option::<alloy_rpc_types_eth::TransactionReceipt>::None);
+                asserter.push_success(&Option::<TransactionReceipt>::None);
             }
+            asserter.push_success(&14u64);
+            asserter.push_success(&Some(&receipt));
+            asserter.push_success(&Some(&block));
             let provider = ProviderBuilder::new().connect_mocked_client(asserter);
             let send_state = SendState::new(3).expect("send state should be valid");
             let config = TxManagerConfig {
+                num_confirmations: 5,
                 receipt_query_interval: Duration::from_secs(1),
-                confirmation_timeout: Duration::from_secs(3),
                 network_timeout: Duration::from_secs(30),
                 ..TxManagerConfig::default()
             };
@@ -2070,10 +2000,10 @@ mod tests {
                 metrics: Arc::new(NoopTxMetrics),
             };
 
-            let receipt = manager.wait_mined_for_tx(&send_state, B256::with_last_byte(1)).await;
+            let confirmed = manager.wait_mined_for_tx(&send_state, tx_hash).await;
 
-            assert!(receipt.is_none(), "receipt polling should stop at confirmation timeout");
-            assert_eq!(ctx.now(), Duration::from_secs(3));
+            assert_eq!(confirmed.map(|receipt| receipt.transaction_hash), Some(tx_hash));
+            assert_eq!(ctx.now(), Duration::from_secs(4));
         });
     }
 
@@ -2107,49 +2037,6 @@ mod tests {
         (receipt, block)
     }
 
-    /// A mined transaction that reaches the confirmation depth only after the
-    /// confirmation timeout must still be delivered: once it is mined nothing
-    /// else watches it, so abandoning it would leave the send pending forever.
-    #[test]
-    fn wait_mined_keeps_polling_mined_tx_past_confirmation_timeout() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let tx_hash = B256::with_last_byte(1);
-            let (receipt, block) = mined_receipt(tx_hash, 10);
-
-            // Script the chain tip so the 5 required confirmations are only reached at tip 14,
-            // on the poll after the 3s timeout.
-            let asserter = Asserter::new();
-            for tip in [10u64, 10, 10, 10, 14] {
-                asserter.push_success(&tip);
-                asserter.push_success(&Some(&receipt));
-                asserter.push_success(&Some(&block));
-            }
-            let provider = ProviderBuilder::new().connect_mocked_client(asserter);
-
-            let send_state = SendState::new(3).expect("send state should be valid");
-            let config = TxManagerConfig {
-                num_confirmations: 5,
-                receipt_query_interval: Duration::from_secs(1),
-                confirmation_timeout: Duration::from_secs(3),
-                network_timeout: Duration::from_secs(30),
-                ..TxManagerConfig::default()
-            };
-
-            let confirmed = SimpleTxManager::<_, Context>::wait_mined_using_runtime(
-                &ctx,
-                &send_state,
-                &provider,
-                tx_hash,
-                &config,
-                &AtomicBool::new(false),
-            )
-            .await;
-
-            assert_eq!(confirmed.map(|receipt| receipt.transaction_hash), Some(tx_hash));
-            assert_eq!(ctx.now(), Duration::from_secs(4));
-        });
-    }
-
     /// A poller stops querying L1 once the receipt receiver is dropped, as happens when the
     /// send is cancelled, even if its transaction is mined and not yet confirmed.
     #[test]
@@ -2171,7 +2058,6 @@ mod tests {
             let config = TxManagerConfig {
                 num_confirmations: 5,
                 receipt_query_interval: Duration::from_secs(1),
-                confirmation_timeout: Duration::from_secs(3),
                 network_timeout: Duration::from_secs(30),
                 ..TxManagerConfig::default()
             };
@@ -2204,208 +2090,6 @@ mod tests {
             ctx.sleep(Duration::from_secs(10)).await;
             assert_eq!(asserter.read_q().len(), unused_responses);
         });
-    }
-
-    // ── apply_bump_result ─────────────────────────────────────────────
-
-    #[rstest]
-    #[case::success_updates_state(
-        Ok(BumpState { tip: 200, fee_cap: 2000, blob_fee_cap: None, gas_limit: 50_000, tx_hash: B256::with_last_byte(0x42), nonce: 0, sidecar: None }),
-        false, 200, 2000, None, 50_000, B256::with_last_byte(0x42),
-    )]
-    #[case::success_with_blob_fee_cap(
-        Ok(BumpState { tip: 300, fee_cap: 3000, blob_fee_cap: Some(10_000), gas_limit: 60_000, tx_hash: B256::with_last_byte(0x43), nonce: 1, sidecar: None }),
-        false, 300, 3000, Some(10_000), 60_000, B256::with_last_byte(0x43),
-    )]
-    #[case::non_retryable_returns_abort(
-        Err(TxManagerError::FeeLimitExceeded { fee: 500, ceiling: 100 }),
-        true, 100, 1000, Some(5_000), 21_000, B256::ZERO,
-    )]
-    #[case::retryable_continues(
-        Err(TxManagerError::Rpc("transient error".to_string())),
-        false, 100, 1000, Some(5_000), 21_000, B256::ZERO,
-    )]
-    fn apply_bump_result(
-        #[case] input: Result<BumpState, TxManagerError>,
-        #[case] abort_expected: bool,
-        #[case] expected_tip: u128,
-        #[case] expected_fee_cap: u128,
-        #[case] expected_blob_fee_cap: Option<u128>,
-        #[case] expected_gas_limit: u64,
-        #[case] expected_hash: B256,
-    ) {
-        let mut state = BumpState {
-            tip: 100,
-            fee_cap: 1000,
-            blob_fee_cap: Some(5_000),
-            gas_limit: 21_000,
-            tx_hash: B256::ZERO,
-            nonce: 0,
-            sidecar: None,
-        };
-
-        let abort = SimpleTxManager::<RootProvider>::apply_bump_result(input, &mut state);
-
-        assert_eq!(abort.is_some(), abort_expected);
-        assert_eq!(state.tip, expected_tip);
-        assert_eq!(state.fee_cap, expected_fee_cap);
-        assert_eq!(state.blob_fee_cap, expected_blob_fee_cap);
-        assert_eq!(state.gas_limit, expected_gas_limit);
-        assert_eq!(state.tx_hash, expected_hash);
-    }
-
-    // ── apply_bump_result_with_suppression ───────────────────────────
-    //
-    // Tests for `apply_bump_result_with_suppression`, which is the
-    // extracted helper that `try_fee_bump` calls. When a non-retryable
-    // error occurs but the original tx is already mined, the abort is
-    // suppressed so the send loop can deliver the receipt.
-
-    /// Threshold used for `SendState` construction in suppression tests.
-    const SUPPRESSION_NONCE_TOO_LOW_THRESHOLD: u64 = 3;
-
-    /// Hash recorded as a mined tx when simulating a confirmed original.
-    const MINED_TX_HASH: B256 = B256::repeat_byte(0xAA);
-
-    /// Default initial `BumpState` for suppression tests.
-    fn default_bump_state() -> BumpState {
-        BumpState {
-            tip: 100,
-            fee_cap: 1000,
-            blob_fee_cap: None,
-            gas_limit: 21_000,
-            tx_hash: B256::ZERO,
-            nonce: 0,
-            sidecar: None,
-        }
-    }
-
-    /// Creates a `SendState` and optionally marks a tx as mined.
-    fn suppression_send_state(tx_mined: bool) -> SendState {
-        let state =
-            SendState::new(SUPPRESSION_NONCE_TOO_LOW_THRESHOLD).expect("should create send state");
-        if tx_mined {
-            state.tx_mined(MINED_TX_HASH);
-        }
-        state
-    }
-
-    /// Non-retryable errors are suppressed when the original tx is
-    /// mined, and propagated when it is not.
-    #[rstest]
-    #[case::nonce_too_low_mined_suppressed(
-        TxManagerError::NonceTooLow,
-        true,  // tx is mined
-        false, // abort suppressed → no abort
-    )]
-    #[case::nonce_too_low_not_mined_propagates(
-        TxManagerError::NonceTooLow,
-        false, // tx is NOT mined
-        true,  // abort propagates
-    )]
-    #[case::fee_limit_exceeded_mined_suppressed(
-        TxManagerError::FeeLimitExceeded { fee: 500, ceiling: 100 },
-        true,
-        false,
-    )]
-    #[case::fee_limit_exceeded_not_mined_propagates(
-        TxManagerError::FeeLimitExceeded { fee: 500, ceiling: 100 },
-        false,
-        true,
-    )]
-    #[case::insufficient_funds_mined_suppressed(TxManagerError::InsufficientFunds, true, false)]
-    #[case::insufficient_funds_not_mined_propagates(TxManagerError::InsufficientFunds, false, true)]
-    #[case::execution_reverted_mined_suppressed(
-        TxManagerError::ExecutionReverted { reason: Some("revert".into()), data: None },
-        true,
-        false,
-    )]
-    #[case::execution_reverted_not_mined_propagates(
-        TxManagerError::ExecutionReverted { reason: Some("revert".into()), data: None },
-        false,
-        true,
-    )]
-    #[case::channel_closed_mined_suppressed(TxManagerError::ChannelClosed, true, false)]
-    #[case::channel_closed_not_mined_propagates(TxManagerError::ChannelClosed, false, true)]
-    fn bump_result_with_suppression_non_retryable(
-        #[case] error: TxManagerError,
-        #[case] tx_mined: bool,
-        #[case] abort_expected: bool,
-    ) {
-        let send_state = suppression_send_state(tx_mined);
-        assert_eq!(send_state.is_waiting_for_confirmation(), tx_mined);
-
-        let mut state = default_bump_state();
-
-        let abort = SimpleTxManager::<RootProvider>::apply_bump_result_with_suppression(
-            Err(error),
-            &mut state,
-            &send_state,
-        );
-
-        assert_eq!(
-            abort.is_some(),
-            abort_expected,
-            "abort_expected={abort_expected}, tx_mined={tx_mined}",
-        );
-    }
-
-    /// Retryable errors are never aborted by `apply_bump_result`, so
-    /// suppression is irrelevant — the send loop continues regardless.
-    #[rstest]
-    #[case::rpc_error_mined(TxManagerError::Rpc("transient".into()), true)]
-    #[case::rpc_error_not_mined(TxManagerError::Rpc("transient".into()), false)]
-    #[case::underpriced_mined(TxManagerError::Underpriced, true)]
-    #[case::underpriced_not_mined(TxManagerError::Underpriced, false)]
-    #[case::replacement_underpriced_mined(TxManagerError::ReplacementUnderpriced, true)]
-    #[case::fee_too_low_not_mined(TxManagerError::FeeTooLow, false)]
-    fn bump_result_with_suppression_retryable_never_aborts(
-        #[case] error: TxManagerError,
-        #[case] tx_mined: bool,
-    ) {
-        let send_state = suppression_send_state(tx_mined);
-        let mut state = default_bump_state();
-
-        let abort = SimpleTxManager::<RootProvider>::apply_bump_result_with_suppression(
-            Err(error),
-            &mut state,
-            &send_state,
-        );
-
-        assert!(abort.is_none(), "retryable errors should never cause an abort");
-    }
-
-    /// Success results pass through to `apply_bump_result` and update
-    /// state, regardless of mined state.
-    #[rstest]
-    #[case::success_not_mined(false)]
-    #[case::success_mined(true)]
-    fn bump_result_with_suppression_success_never_aborts(#[case] tx_mined: bool) {
-        let send_state = suppression_send_state(tx_mined);
-
-        let new_state = BumpState {
-            tip: 200,
-            fee_cap: 2000,
-            blob_fee_cap: None,
-            gas_limit: 50_000,
-            tx_hash: B256::with_last_byte(0x42),
-            nonce: 0,
-            sidecar: None,
-        };
-
-        let mut state = default_bump_state();
-
-        let abort = SimpleTxManager::<RootProvider>::apply_bump_result_with_suppression(
-            Ok(new_state),
-            &mut state,
-            &send_state,
-        );
-
-        assert!(abort.is_none(), "success should never cause an abort");
-        // State should be updated to the new values.
-        assert_eq!(state.tip, 200);
-        assert_eq!(state.fee_cap, 2000);
-        assert_eq!(state.tx_hash, B256::with_last_byte(0x42));
     }
 
     // ── should_reset_nonce_on_send_error ───────────────────────────────

@@ -21,7 +21,7 @@ pub enum BaseTxEnvelope {
         /// which `TxEnvelope` alone cannot reproduce.
         enveloped: Bytes,
     },
-    /// An enshrined EIP-8130 account-abstraction transaction (type `0x79`, Zenith onwards). Its
+    /// An enshrined EIP-8130 account-abstraction transaction (type `0x79`, Everest onwards). Its
     /// enshrined execution path is layered on with the EIP-8130 track; this variant carries the
     /// signed transaction so the envelope and receipts can already represent it.
     ///

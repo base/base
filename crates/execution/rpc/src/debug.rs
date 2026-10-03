@@ -26,7 +26,10 @@ use reth_provider::{
     BlockReaderIdExt, ChainSpecProvider, HeaderProvider, NodePrimitivesProvider, ProviderError,
     ProviderResult, StateProviderFactory,
 };
-use reth_revm::{State, database::StateProviderDatabase, witness::ExecutionWitnessRecord};
+use reth_revm::{
+    State, cancelled::CancelOnDrop, database::StateProviderDatabase,
+    witness::ExecutionWitnessRecord,
+};
 use reth_rpc_api::eth::helpers::FullEthApi;
 use reth_rpc_eth_types::EthApiError;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
@@ -195,6 +198,9 @@ where
 
             let parent_header = self.parent_header(parent_block_hash).to_rpc_result()?;
 
+            // Cancels the blocking task if this future is dropped (e.g. the client disconnected).
+            let cancel = CancelOnDrop::default();
+            let task_cancel = cancel.clone();
             let (tx, rx) = oneshot::channel();
             let this = Arc::clone(&self.inner);
             let eth_api = self.inner.eth_api.provider().clone();
@@ -211,7 +217,7 @@ where
                         evm_config: this.evm_config.clone(),
                         chain_spec: this.provider.chain_spec(),
                         config,
-                        cancel: Default::default(),
+                        cancel: task_cancel,
                         best_payload: Default::default(),
                         builder_config: Default::default(),
                     };

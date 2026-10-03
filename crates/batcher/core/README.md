@@ -15,34 +15,32 @@ Each arm advances the pipeline or adjusts submission pressure without blocking t
 `BatchDriverConfig` carries the L1 inbox address, in-flight transaction limit, shutdown drain
 timeout, DA-throttle submission policy, and whether block ingestion starts stopped.
 
-`SubmissionQueue` owns the entire L1 submission lifecycle. It holds the `TxManager`, a
-`FuturesUnordered` set of in-flight receipt futures, and a txpool-blocked flag. When the driver
-calls `submit_pending`, the queue sends one L1 transaction per ready submission, as blobs or
-calldata depending on its `DaType`, until `max_pending_transactions` are in flight. Each
-transaction becomes a receipt future that resolves to a `(SubmissionId, TxOutcome)` pair when
-it settles. Confirmed receipts call `pipeline.confirm` and `pipeline.advance_l1_head`. Failed
-submissions are requeued. A `TxpoolBlocked` outcome sets a sticky flag that prevents further
-submissions until `recover_txpool` successfully cancels the stuck transaction. A blob
+`SubmissionQueue` owns the entire L1 submission lifecycle. It holds the `TxManager` and a
+`FuturesUnordered` set of in-flight receipt futures. When the driver calls `submit_pending`,
+the queue sends one L1 transaction per ready submission, as blobs or calldata depending on its
+`DaType`, until `max_pending_transactions` are in flight. Each transaction becomes a receipt
+future that resolves to a `(SubmissionId, TxOutcome)` pair when it settles. Confirmed receipts
+call `pipeline.confirm` and `pipeline.advance_l1_head`. Failed submissions are requeued. A blob
 submission that cannot be built into a transaction is fatal: the encoder packs blobs within
 protocol limits, so a retry would fail the same way. In-flight transactions survive a pipeline
 reset and keep counting against the limit until they settle; the reset pipeline ignores the
 stale ids they report.
 
-`TxOutcome` represents the three terminal states of an L1 submission: `Confirmed { l1_block }`,
-`Failed`, and `TxpoolBlocked`. Failed frames are requeued for retry; txpool-blocked frames are
-also requeued but submission is suspended until the nonce slot is freed.
+`TxOutcome` represents the two terminal states of an L1 submission: `Confirmed { l1_block }`
+and `Failed`.
 
 The throttle subsystem controls how much DA data the sequencer may include per block and per
 transaction based on the L1 DA backlog. `ThrottleController` takes a `ThrottleConfig` and a
 `ThrottleStrategy` and produces `ThrottleParams` from a raw backlog byte count.
-`ThrottleStrategy::Off` disables throttling entirely. `ThrottleStrategy::Step` applies full
-intensity when the backlog exceeds the configured threshold. `ThrottleStrategy::Linear` grows
+`ThrottleStrategy::Off` disables throttling entirely. `ThrottleStrategy::Step` applies
+`max_intensity` once the backlog reaches the configured threshold. `ThrottleStrategy::Linear` grows
 intensity linearly from zero at the threshold to `max_intensity` at twice the threshold.
 `ThrottleParams` carries a fractional `intensity` value and the corresponding
 `max_block_size` and `max_tx_size` byte limits computed by
 interpolating between the upper and lower limits in `ThrottleConfig`. `DaThrottle` wraps a
-`ThrottleController` and a `ThrottleClient` with a last-applied dedup cache so that the
-`miner_setMaxDASize` RPC call is only issued when the computed limits actually change between ticks.
+`ThrottleController` and a `ThrottleClient` with a last-applied dedup cache. The
+`miner_setMaxDASize` RPC call is issued at startup, whenever the computed limits change, after an
+admin command replaces or resets the controller, and again after a push the block builder refused.
 
 `ThrottleClient` is the async trait that connects the throttle controller to the block builder.
 Its single method, `set_max_da_size`, forwards the per-transaction and per-block byte limits to

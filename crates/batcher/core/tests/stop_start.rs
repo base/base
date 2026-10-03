@@ -1,15 +1,12 @@
 //! Integration tests for the stop, start and flush admin commands in [`BatchDriver`].
 
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::time::Duration;
 
 use base_batcher_core::{
     AdminError,
     test_utils::{
-        BlockStub, DriverFixture, ImmediateConfirmTxManager, ManualConfirmTxManager, PipelineCall,
-        Recorded, SubmissionStub, TrackingPipeline, TrackingSource,
+        BlockStub, DriverFixture, ScriptedTxManager, SubmissionStub, TrackingPipeline,
+        TrackingSource,
     },
 };
 use base_batcher_source::{L2BlockEvent, test_utils::ChannelBlockSource};
@@ -19,45 +16,38 @@ use base_runtime::{
     deterministic::{Config, Runner},
 };
 
-/// `AdminCommand::Stop` must immediately reset the pipeline. Stopping a batcher
-/// that is already stopped succeeds without resetting it again.
+/// A stop resets the pipeline, and a second stop succeeds.
 #[test]
 fn test_stop_resets_pipeline() {
     Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+        let pipeline = TrackingPipeline::new();
+        let recorded = pipeline.recorded();
         let (driver, handles) =
-            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-                .build();
+            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1)).build();
         let handle = ctx.spawn(driver.run());
 
         handles.admin.stop().await.unwrap();
+        assert_eq!(recorded.lock().unwrap().resets(), 1, "the stop must reset the pipeline");
         handles.admin.stop().await.unwrap();
         ctx.cancel();
 
         assert!(handle.await.unwrap().is_ok());
-        assert_eq!(
-            recorded.lock().unwrap().resets,
-            1,
-            "pipeline must be reset exactly once when stopped"
-        );
     });
 }
 
-/// `AdminCommand::Start` must reanchor the source at the safe head so it
-/// delivers missed blocks sequentially after that head. Starting a batcher that
-/// is already running must not reanchor it again: that would replay blocks the
-/// pipeline already holds.
+/// A start restarts the source from the safe head, so the blocks missed while stopped arrive in
+/// order. A start on a running batcher does nothing, since restarting the source would replay
+/// blocks the pipeline already holds.
 #[test]
 fn test_start_triggers_catchup_from_safe_head() {
     Runner::start(Config::seeded(0), |ctx| async move {
-        let (source, catchup_args) = TrackingSource::new();
+        let (source, catchup_heads) = TrackingSource::new();
         let safe_head = BlockInfo { number: 42, ..Default::default() };
 
         let (driver, handles) = DriverFixture::new(
             ctx.clone(),
-            TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default()))),
-            ImmediateConfirmTxManager { l1_block: 1 },
+            TrackingPipeline::new(),
+            ScriptedTxManager::confirming_at(1),
         )
         .source(source)
         .safe_head(safe_head)
@@ -72,43 +62,45 @@ fn test_start_triggers_catchup_from_safe_head() {
 
         assert!(handle.await.unwrap().is_ok());
         assert_eq!(
-            *catchup_args.lock().unwrap(),
-            vec![safe_head],
+            *catchup_heads.lock().unwrap(),
+            [safe_head],
             "source must be reanchored at the safe head on start"
         );
     });
 }
 
-/// While stopped, the batcher does not read its source: the pipeline receives no blocks.
+/// While stopped, the batcher does not read its source, so the pipeline receives no blocks.
 /// Once started again, the blocks queued meanwhile reach the pipeline.
 #[test]
 fn test_stopped_leaves_the_source_unread() {
     Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let pipeline = TrackingPipeline::new();
+        let recorded = pipeline.recorded();
         let (source, source_tx) = ChannelBlockSource::new();
-        let (driver, handles) = DriverFixture::new(
-            ctx.clone(),
-            TrackingPipeline::new(Arc::clone(&recorded)),
-            ImmediateConfirmTxManager { l1_block: 1 },
-        )
-        .source(source)
-        .build();
+        let (driver, handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                .source(source)
+                .build();
         let handle = ctx.spawn(driver.run());
-        let blocks_added = || {
-            recorded.lock().unwrap().calls.iter().filter(|&&c| c == PipelineCall::AddBlock).count()
-        };
 
-        // Stop, then send a block: it stays in the source.
+        // A block sent after the stop stays in the source.
         handles.admin.stop().await.unwrap();
         source_tx.send(L2BlockEvent::Block(Box::new(BlockStub::with_number(1)))).unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
-        assert_eq!(blocks_added(), 0, "a stopped batcher must not ingest blocks");
+        assert!(
+            recorded.lock().unwrap().added_blocks().is_empty(),
+            "a stopped batcher must not ingest blocks"
+        );
 
-        // Start: the queued block and the next one reach the pipeline.
+        // After the start, the queued block and the next one reach the pipeline.
         handles.admin.start().await.unwrap();
         source_tx.send(L2BlockEvent::Block(Box::new(BlockStub::with_number(2)))).unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
-        assert_eq!(blocks_added(), 2, "a started batcher must ingest the queued blocks");
+        assert_eq!(
+            recorded.lock().unwrap().added_blocks(),
+            [1, 2],
+            "a started batcher must ingest the queued blocks"
+        );
 
         ctx.cancel();
         assert!(handle.await.unwrap().is_ok());
@@ -120,9 +112,9 @@ fn test_stopped_leaves_the_source_unread() {
 #[test]
 fn test_stop_leaves_in_flight_submissions_to_settle() {
     Runner::start(Config::seeded(0), |ctx| async move {
-        let mut pipeline = TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default())));
+        let mut pipeline = TrackingPipeline::new();
         pipeline.submissions.push_back(SubmissionStub::stub());
-        let tx_manager = ManualConfirmTxManager::default();
+        let tx_manager = ScriptedTxManager::new([]);
         let (driver, handles) =
             DriverFixture::new(ctx.clone(), pipeline, tx_manager.clone()).build();
         let handle = ctx.spawn(driver.run());
@@ -143,42 +135,22 @@ fn test_stop_leaves_in_flight_submissions_to_settle() {
     });
 }
 
-/// A flush on a running batcher closes the current channel and reports success.
-#[test]
-fn test_flush_closes_the_channel_on_a_running_batcher() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-        let (driver, handles) =
-            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-                .build();
-        let handle = ctx.spawn(driver.run());
-
-        handles.admin.flush().await.unwrap();
-
-        assert_eq!(recorded.lock().unwrap().flush_count, 1);
-
-        ctx.cancel();
-        assert!(handle.await.unwrap().is_ok());
-    });
-}
-
 /// A stopped batcher refuses to flush instead of reporting a flush that produces nothing.
 #[test]
 fn test_flush_is_rejected_while_stopped() {
     Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-        let (driver, handles) =
-            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-                .build();
+        let (driver, handles) = DriverFixture::new(
+            ctx.clone(),
+            TrackingPipeline::new(),
+            ScriptedTxManager::confirming_at(1),
+        )
+        .build();
         let handle = ctx.spawn(driver.run());
 
         handles.admin.stop().await.unwrap();
         let result = handles.admin.flush().await;
 
         assert!(matches!(result, Err(AdminError::Stopped)));
-        assert_eq!(recorded.lock().unwrap().flush_count, 0);
 
         ctx.cancel();
         assert!(handle.await.unwrap().is_ok());

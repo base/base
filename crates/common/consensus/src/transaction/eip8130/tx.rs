@@ -36,7 +36,8 @@ use crate::transaction::eip8130::{
 ///   `sender_auth` as a 65-byte ECDSA signature); `Some` selects the
 ///   configured-actor path with an explicit account address.
 /// - [`Self::payer`]: `None` selects self-pay (the resolved sender pays);
-///   `Some` selects sponsored pay (the payer address pays).
+///   [`Eip8130Constants::OPEN_PAYER`] selects open payer mode (the payer is
+///   recovered from `payer_auth`); any other address selects that payer.
 ///
 /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -45,27 +46,37 @@ use crate::transaction::eip8130::{
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct TxEip8130 {
     /// EIP-155 chain ID this transaction is bound to.
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub chain_id: ChainId,
     /// Explicit sender account address, or `None` for the EOA path.
     pub sender: Option<Address>,
     /// High 192 bits of the compound nonce; with `nonce_sequence` forms the
     /// per-account replay protection key.
     pub nonce_key: U256,
-    /// Sequence number within the nonce key.
+    /// Sequence number within the nonce key. Named `nonce` in JSON, like every
+    /// other transaction type; `nonceSequence` is also accepted.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "nonce", alias = "nonceSequence", with = "alloy_serde::quantity")
+    )]
     pub nonce_sequence: u64,
-    /// Lower bound of the validity window: a Unix timestamp in **milliseconds**.
-    /// The transaction is invalid when `block.timestamp * 1000 < valid_after`;
-    /// `0` means no lower bound.
+    /// Lower bound of the validity window: a Unix timestamp in **seconds or
+    /// milliseconds** (auto-detected per EIP-8130 Timestamp Normalization; see
+    /// [`Self::valid_after_ms`]). After normalization the transaction is invalid
+    /// when `block.timestamp * 1000 < valid_after_ms`; `0` means no lower bound.
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub valid_after: u64,
-    /// Upper bound of the validity window: a Unix timestamp in **milliseconds**.
-    /// The bound is inclusive — the transaction is still valid at
-    /// `block.timestamp * 1000 == valid_before` and invalid only once
-    /// `block.timestamp * 1000 > valid_before`; `0` means no expiry. It MUST be
+    /// Upper bound of the validity window: a Unix timestamp in **seconds or
+    /// milliseconds** (auto-detected; see [`Self::valid_before_ms`]). After
+    /// normalization the bound is inclusive — the transaction is still valid at
+    /// `block.timestamp * 1000 == valid_before_ms` and invalid only once
+    /// `block.timestamp * 1000 > valid_before_ms`; `0` means no expiry. It MUST be
     /// non-zero for nonce-free (`nonce_key == NONCE_KEY_MAX`) transactions, which
     /// additionally require `valid_before` to be strictly in the future when the
     /// nonce is recorded: the nonce-manager replay ring's admission window is
     /// `(now, now + NONCE_FREE_MAX_EXPIRY_WINDOW]`, so a nonce-free transaction
     /// cannot actually be included exactly at `valid_before`.
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub valid_before: u64,
     /// Max priority fee per gas (tip) the sender is willing to pay.
     #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
@@ -73,7 +84,12 @@ pub struct TxEip8130 {
     /// Max total fee per gas (base + tip cap) the sender is willing to pay.
     #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub max_fee_per_gas: u128,
-    /// Gas limit for the entire AA transaction execution.
+    /// Gas limit for the entire AA transaction execution. Named `gas` in JSON,
+    /// like every other transaction type; `gasLimit` is also accepted.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "gas", alias = "gasLimit", with = "alloy_serde::quantity")
+    )]
     pub gas_limit: u64,
     /// Account-mutation entries applied before calls execute.
     pub account_changes: Vec<AccountChange>,
@@ -84,11 +100,42 @@ pub struct TxEip8130 {
     /// wire body between `calls` and `payer` and committed to by both the
     /// sender and payer signatures, but otherwise uninterpreted by the protocol.
     pub metadata: Bytes,
-    /// Optional explicit payer; `None` means the resolved sender pays gas.
+    /// Optional payer; `None` means the resolved sender pays gas, and
+    /// [`Eip8130Constants::OPEN_PAYER`] means the payer is recovered from
+    /// `payer_auth`.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, deserialize_with = "super::Eip8130PayerSerde::deserialize")
+    )]
     pub payer: Option<Address>,
 }
 
 impl TxEip8130 {
+    /// The lower validity bound normalized to Unix **milliseconds**.
+    ///
+    /// [`Self::valid_after`] may be supplied in seconds or milliseconds; this
+    /// applies [`Eip8130Constants::normalize_timestamp_ms`] so callers compare
+    /// against `block.timestamp * 1000` (or a millisecond wall clock) uniformly.
+    /// `0` (no lower bound) is preserved. The raw field is still what the wire
+    /// encoding, signature hashes, and replay id commit to; only validity-window
+    /// comparisons use this normalized view.
+    #[must_use]
+    pub const fn valid_after_ms(&self) -> u64 {
+        Eip8130Constants::normalize_timestamp_ms(self.valid_after)
+    }
+
+    /// The upper validity bound normalized to Unix **milliseconds**.
+    ///
+    /// [`Self::valid_before`] may be supplied in seconds or milliseconds; this
+    /// applies [`Eip8130Constants::normalize_timestamp_ms`]. `0` (no expiry) is
+    /// preserved. As with [`Self::valid_after_ms`], the raw field remains the
+    /// signed/encoded/replay-committed value; this normalized view is used only
+    /// for validity-window and nonce-free expiry comparisons.
+    #[must_use]
+    pub const fn valid_before_ms(&self) -> u64 {
+        Eip8130Constants::normalize_timestamp_ms(self.valid_before)
+    }
+
     /// Encodes an `Option<Address>` as the AA wire format: zero-length byte
     /// string when `None`, 20-byte string when `Some`.
     fn encode_address_opt(addr: &Option<Address>, out: &mut dyn BufMut) {
@@ -114,6 +161,45 @@ impl TxEip8130 {
             20 => Ok(Some(Address::from_slice(&raw))),
             _ => Err(alloy_rlp::Error::Custom("invalid Option<Address> length")),
         }
+    }
+
+    /// Encodes `payer`: empty for self-pay, the single byte `0x00` for open
+    /// payer mode ([`Eip8130Constants::OPEN_PAYER`]), otherwise the 20-byte
+    /// address.
+    fn encode_payer(payer: Option<Address>, out: &mut dyn BufMut) {
+        match payer {
+            Some(Eip8130Constants::OPEN_PAYER) => [0u8].as_slice().encode(out),
+            payer => Self::encode_address_opt(&payer, out),
+        }
+    }
+
+    /// Length contribution of `payer` under [`Self::encode_payer`].
+    const fn payer_encoded_length(payer: Option<Address>) -> usize {
+        match payer {
+            Some(Eip8130Constants::OPEN_PAYER) => 1,
+            payer => Self::address_opt_encoded_length(&payer),
+        }
+    }
+
+    /// Decodes the [`Self::encode_payer`] wire format. A 20-byte zero address
+    /// is rejected so open payer mode has a single encoding.
+    fn decode_payer(buf: &mut &[u8]) -> alloy_rlp::Result<Option<Address>> {
+        let raw = Bytes::decode(buf)?;
+        match raw.as_ref() {
+            [] => Ok(None),
+            [0] => Ok(Some(Eip8130Constants::OPEN_PAYER)),
+            bytes if bytes.len() == 20 && bytes != [0u8; 20] => {
+                Ok(Some(Address::from_slice(bytes)))
+            }
+            _ => Err(alloy_rlp::Error::Custom("invalid EIP-8130 payer encoding")),
+        }
+    }
+
+    /// Whether the transaction uses open payer mode: the sender does not name a
+    /// payer, and any key willing to pay signs `payer_auth`.
+    #[must_use]
+    pub fn is_open_payer(&self) -> bool {
+        self.payer == Some(Eip8130Constants::OPEN_PAYER)
     }
 
     /// Encodes the inner phase list of `calls` as `rlp([rlp([Call, ...]), ...])`.
@@ -173,7 +259,7 @@ impl TxEip8130 {
             + self.account_changes.length()
             + Self::calls_encoded_length(&self.calls)
             + self.metadata.length()
-            + Self::address_opt_encoded_length(&self.payer)
+            + Self::payer_encoded_length(self.payer)
     }
 
     /// Encodes the RLP fields (no list header) in canonical order, encoding
@@ -191,7 +277,7 @@ impl TxEip8130 {
         self.account_changes.encode(out);
         Self::encode_calls(&self.calls, out);
         self.metadata.encode(out);
-        Self::encode_address_opt(&self.payer, out);
+        Self::encode_payer(self.payer, out);
     }
 
     /// Length of all RLP fields (no list header).
@@ -219,7 +305,7 @@ impl TxEip8130 {
             account_changes: Decodable::decode(buf)?,
             calls: Self::decode_calls(buf)?,
             metadata: Decodable::decode(buf)?,
-            payer: Self::decode_address_opt(buf)?,
+            payer: Self::decode_payer(buf)?,
         })
     }
 
@@ -324,7 +410,7 @@ impl TxEip8130 {
             + self.account_changes.length()
             + Self::calls_encoded_length(&self.calls)
             + self.metadata.length()
-            + Self::address_opt_encoded_length(&self.payer);
+            + Self::payer_encoded_length(self.payer);
         let mut buf = Vec::with_capacity(
             Eip8130Constants::REPLAY_ID_TYPE.len()
                 + length_of_length(payload_length)
@@ -339,7 +425,7 @@ impl TxEip8130 {
         self.account_changes.encode(&mut buf);
         Self::encode_calls(&self.calls, &mut buf);
         self.metadata.encode(&mut buf);
-        Self::encode_address_opt(&self.payer, &mut buf);
+        Self::encode_payer(self.payer, &mut buf);
         keccak256(&buf)
     }
 
@@ -628,6 +714,7 @@ mod tests {
             })],
             calls: vec![vec![Call {
                 to: address!("0x00000000000000000000000000000000000000cc"),
+                value: U256::from(0x1234u64),
                 data: bytes!("deadbeef"),
             }]],
             metadata: bytes!("c0ffee"),
@@ -640,6 +727,26 @@ mod tests {
         Header { list: true, payload_length: count }.encode(&mut encoded);
         encoded.resize(encoded.len() + count, 0xc0);
         encoded
+    }
+
+    #[test]
+    fn validity_bounds_normalize_seconds_to_milliseconds() {
+        let mut tx = sample_tx();
+        // Zero (disabled) is preserved on both bounds.
+        tx.valid_after = 0;
+        tx.valid_before = 0;
+        assert_eq!(tx.valid_after_ms(), 0);
+        assert_eq!(tx.valid_before_ms(), 0);
+        // Seconds (< threshold) are scaled by 1000.
+        tx.valid_after = 1_700_000_000;
+        tx.valid_before = 1_700_000_020;
+        assert_eq!(tx.valid_after_ms(), 1_700_000_000_000);
+        assert_eq!(tx.valid_before_ms(), 1_700_000_020_000);
+        // Milliseconds (>= threshold) pass through unchanged.
+        tx.valid_after = 1_700_000_000_000;
+        tx.valid_before = 1_700_000_020_000;
+        assert_eq!(tx.valid_after_ms(), 1_700_000_000_000);
+        assert_eq!(tx.valid_before_ms(), 1_700_000_020_000);
     }
 
     #[test]
@@ -767,6 +874,31 @@ mod tests {
     }
 
     #[test]
+    fn open_payer_roundtrips_as_single_zero_byte() {
+        let tx = TxEip8130 { payer: Some(Eip8130Constants::OPEN_PAYER), ..sample_tx() };
+        assert!(tx.is_open_payer());
+
+        let mut payer = Vec::new();
+        TxEip8130::encode_payer(tx.payer, &mut payer);
+        assert_eq!(payer, vec![0x00]);
+        assert_eq!(TxEip8130::payer_encoded_length(tx.payer), 1);
+
+        let mut buf = Vec::new();
+        tx.encode(&mut buf);
+        assert_eq!(buf.len(), tx.length());
+        assert_eq!(TxEip8130::decode(&mut buf.as_slice()).unwrap(), tx);
+    }
+
+    #[test]
+    fn payer_rejects_zero_address_and_other_lengths() {
+        for raw in [vec![0u8; 20], vec![1u8], vec![0u8; 19]] {
+            let mut buf = Vec::new();
+            Bytes::from(raw).encode(&mut buf);
+            assert!(TxEip8130::decode_payer(&mut buf.as_slice()).is_err());
+        }
+    }
+
+    #[test]
     fn signing_hashes_are_distinct() {
         let tx = sample_tx();
         let sender_hash = tx.sender_signature_hash();
@@ -839,11 +971,11 @@ mod tests {
         let tx = TxEip8130 {
             chain_id: 1,
             calls: vec![
-                vec![Call { to: Address::ZERO, data: bytes!("01") }],
+                vec![Call { to: Address::ZERO, value: U256::from(7u64), data: bytes!("01") }],
                 vec![],
                 vec![
-                    Call { to: Address::ZERO, data: bytes!("02") },
-                    Call { to: Address::ZERO, data: bytes!("03") },
+                    Call { to: Address::ZERO, value: U256::ZERO, data: bytes!("02") },
+                    Call { to: Address::ZERO, value: U256::ZERO, data: bytes!("03") },
                 ],
             ],
             ..Default::default()
@@ -852,6 +984,22 @@ mod tests {
         tx.encode(&mut buf);
         let decoded = TxEip8130::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(tx, decoded);
+    }
+
+    #[test]
+    fn call_value_is_covered_by_signature_hash() {
+        let mut tx = TxEip8130 {
+            chain_id: 1,
+            calls: vec![vec![Call { to: Address::ZERO, value: U256::ZERO, data: bytes!("01") }]],
+            ..Default::default()
+        };
+        let zero_value_hash = tx.sender_signature_hash();
+        tx.calls[0][0].value = U256::from(1u64);
+        let nonzero_value_hash = tx.sender_signature_hash();
+        assert_ne!(
+            zero_value_hash, nonzero_value_hash,
+            "call value must be part of the signed preimage",
+        );
     }
 
     #[test]
@@ -935,21 +1083,19 @@ mod tests {
 
         let json = serde_json::json!({
             "type": "0x79",
-            "tx": {
-                "chainId": 1,
-                "sender": null,
-                "nonceKey": "0x0",
-                "nonceSequence": 1,
-                "validAfter": 0,
-                "validBefore": 0,
-                "maxPriorityFeePerGas": "0x3b9aca00",
-                "maxFeePerGas": "0x3b9aca00",
-                "gasLimit": 21000,
-                "accountChanges": [],
-                "calls": [],
-                "metadata": "0x",
-                "payer": null
-            },
+            "chainId": "0x1",
+            "sender": null,
+            "nonceKey": "0x0",
+            "nonce": "0x1",
+            "validAfter": "0x0",
+            "validBefore": "0x0",
+            "maxPriorityFeePerGas": "0x3b9aca00",
+            "maxFeePerGas": "0x3b9aca00",
+            "gas": "0x5208",
+            "accountChanges": [],
+            "calls": [],
+            "metadata": "0x",
+            "payer": null,
             "senderAuth": "0x",
             "payerAuth": "0x"
         });
@@ -963,6 +1109,52 @@ mod tests {
 
         let envelope = result.unwrap();
         assert!(matches!(envelope, BaseTxEnvelope::Eip8130(_)));
+    }
+
+    /// The JSON is flat and uses hex quantities for every integer, with the
+    /// standard `nonce` / `gas` names and single-call fields generic tooling
+    /// reads. The EIP field names `nonceSequence` / `gasLimit` and a short
+    /// `"0x00"` open payer are also accepted.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn eip8130_json_is_a_standard_transaction_shape() {
+        use crate::{BaseTxEnvelope, Eip8130Signed};
+
+        let tx = TxEip8130 {
+            chain_id: 8453,
+            nonce_sequence: 7,
+            valid_before: 1_700_000_000,
+            gas_limit: 21_000,
+            payer: Some(Eip8130Constants::OPEN_PAYER),
+            ..Default::default()
+        };
+        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(
+            tx,
+            Bytes::from_static(&[0xab]),
+            Bytes::from_static(&[0xcd]),
+        ));
+        let json = serde_json::to_value(&envelope).unwrap();
+        assert_eq!(json["type"], "0x79");
+        assert_eq!(json["chainId"], "0x2105");
+        assert_eq!(json["nonce"], "0x7");
+        assert_eq!(json["gas"], "0x5208");
+        assert_eq!(json["validAfter"], "0x0");
+        assert_eq!(json["validBefore"], "0x6553f100");
+        assert_eq!(json["to"], serde_json::Value::Null);
+        assert_eq!(json["value"], "0x0");
+        assert_eq!(json["input"], "0x");
+        assert_eq!(json["senderAuth"], "0xab");
+        assert!(json.get("tx").is_none(), "the transaction fields are not nested");
+        assert_eq!(serde_json::from_value::<BaseTxEnvelope>(json.clone()).unwrap(), envelope);
+
+        let mut eip_names = json;
+        let fields = eip_names.as_object_mut().unwrap();
+        let nonce = fields.remove("nonce").unwrap();
+        let gas = fields.remove("gas").unwrap();
+        fields.insert("nonceSequence".into(), nonce);
+        fields.insert("gasLimit".into(), gas);
+        fields.insert("payer".into(), "0x00".into());
+        assert_eq!(serde_json::from_value::<BaseTxEnvelope>(eip_names).unwrap(), envelope);
     }
 
     #[test]
@@ -981,11 +1173,15 @@ mod tests {
     #[test]
     fn size_counts_call_data_heap() {
         let bare = TxEip8130 {
-            calls: vec![vec![Call { to: Address::ZERO, data: Bytes::new() }]],
+            calls: vec![vec![Call { to: Address::ZERO, value: U256::ZERO, data: Bytes::new() }]],
             ..Default::default()
         };
         let with_data = TxEip8130 {
-            calls: vec![vec![Call { to: Address::ZERO, data: Bytes::from(vec![0xab; 4_096]) }]],
+            calls: vec![vec![Call {
+                to: Address::ZERO,
+                value: U256::ZERO,
+                data: Bytes::from(vec![0xab; 4_096]),
+            }]],
             ..Default::default()
         };
 

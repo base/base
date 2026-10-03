@@ -371,8 +371,9 @@ where
         }
     }
 
-    /// Evicts validity-predicate transactions whose last valid block is before
-    /// the newly committed `block_number`.
+    /// Evicts validity-predicate transactions whose last valid block is at or
+    /// before the newly committed `committed_block`, since none of them can be
+    /// included in the next block to be built.
     ///
     /// This is the pool-side, block-granular half of validity expiry (the
     /// builder enforces the finer flashblock deadline). Driven from
@@ -380,9 +381,9 @@ where
     /// transactions removed by other paths (inclusion, replacement) are cleaned
     /// up lazily when their own expiry block is reached, bounding index growth to
     /// the furthest live block bound.
-    fn expire_by_block(&self, block_number: u64) {
+    fn expire_by_block(&self, committed_block: u64) {
         let _admission_guard = self.protocol_admission_lock.lock();
-        let expired = self.block_expiry.write().drain_expired(block_number);
+        let expired = self.block_expiry.write().drain_expired(committed_block.saturating_add(1));
         let removed = self.remove_dropped_across_pools(expired);
         // Release any guard slots directly rather than deferring to the
         // reconciliation sweep: an EIP-8130 transaction may carry block_number
@@ -393,7 +394,7 @@ where
             GuardMetrics::record_block_expiry_invalidations(removed.len());
             debug!(
                 count = removed.len(),
-                block = block_number,
+                block = committed_block,
                 "validity transactions invalidated by block expiry"
             );
         }
@@ -1808,7 +1809,7 @@ mod tests {
     };
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
-    use base_test_utils::build_test_genesis_zenith;
+    use base_test_utils::build_test_genesis_everest;
     use futures::{StreamExt, future::join_all};
     use reth_primitives_traits::SealedBlock;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
@@ -2033,9 +2034,16 @@ mod tests {
         BaseEvmConfig,
     >;
 
+    /// Realistic wall clock the integration pool starts at (Unix seconds), so
+    /// millisecond `valid_before` bounds are compared against a representative
+    /// `block.timestamp * 1000` rather than the epoch.
+    const INTEGRATION_POOL_NOW_SECS: u64 = 1_700_000_000;
+    /// [`INTEGRATION_POOL_NOW_SECS`] expressed in milliseconds.
+    const INTEGRATION_POOL_NOW_MS: u64 = INTEGRATION_POOL_NOW_SECS * 1_000;
+
     fn build_integration_pool()
     -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
-        let mut genesis = build_test_genesis_zenith();
+        let mut genesis = build_test_genesis_everest();
         genesis.config.chain_id = test_chain_id();
         let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
         let client = MockEthProvider::<BasePrimitives>::new()
@@ -2048,8 +2056,24 @@ mod tests {
             .no_cancun()
             .build_with_tasks(Runtime::test(), blob_store.clone())
             .map(|inner| {
-                BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
-                    .require_l1_data_gas_fee(false)
+                // Seed a realistic wall clock so millisecond-scale nonce-free
+                // `valid_before` bounds evaluate against a representative `now`
+                // (default is timestamp 0, where no future ms bound is reachable).
+                // Reuse the same seam the live head uses: `update_l1_block_info`
+                // with `tx = None` stores only the header timestamp and leaves the
+                // L1 block info untouched, so the harness shares the one admission
+                // clock writer rather than a second, unsynchronized setter.
+                let validator =
+                    BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
+                        .require_l1_data_gas_fee(false);
+                validator.update_l1_block_info::<_, TxEip1559>(
+                    &alloy_consensus::Header {
+                        timestamp: INTEGRATION_POOL_NOW_SECS,
+                        ..Default::default()
+                    },
+                    None,
+                );
+                validator
             });
         let ordering = BaseOrdering::default();
         let pool = Pool::new(validator, ordering.clone(), blob_store, PoolConfig::default());
@@ -2184,24 +2208,44 @@ mod tests {
         fund(&client, signer.address());
         let cap = u64::from(GuardLimits::default().signature_limit);
 
+        // Distinct millisecond `valid_before` bounds, each inside the nonce-free
+        // admission window `(now_ms, now_ms + NONCE_FREE_MAX_EXPIRY_WINDOW]`, so
+        // each is a separately-tracked sidecar member; `cap` stays far below the
+        // 20_000 ms window.
         let mut admitted = Vec::new();
         for offset in 0..cap {
-            let transaction =
-                self_paid_eoa_8130(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, offset + 1, 1_000);
+            let transaction = self_paid_eoa_8130(
+                &signer,
+                Eip8130Constants::NONCE_KEY_MAX,
+                0,
+                INTEGRATION_POOL_NOW_MS + offset + 1,
+                1_000,
+            );
             admitted.push(*transaction.hash());
             assert!(pool.add_transaction(TransactionOrigin::Local, transaction).await.is_ok());
         }
         assert!(admitted.iter().all(|hash| pool.nonce_pool.read().contains(hash)));
 
-        let over = self_paid_eoa_8130(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, cap + 1, 1_000);
+        let over = self_paid_eoa_8130(
+            &signer,
+            Eip8130Constants::NONCE_KEY_MAX,
+            0,
+            INTEGRATION_POOL_NOW_MS + cap + 1,
+            1_000,
+        );
         let over_hash = *over.hash();
         assert!(pool.add_transaction(TransactionOrigin::Local, over).await.is_err());
         assert!(pool.get(&over_hash).is_none());
 
         let removed = pool.remove_transactions(vec![admitted[0]]);
         assert_eq!(removed.len(), 1);
-        let replacement =
-            self_paid_eoa_8130(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, cap + 2, 1_000);
+        let replacement = self_paid_eoa_8130(
+            &signer,
+            Eip8130Constants::NONCE_KEY_MAX,
+            0,
+            INTEGRATION_POOL_NOW_MS + cap + 2,
+            1_000,
+        );
         assert!(pool.add_transaction(TransactionOrigin::Local, replacement).await.is_ok());
     }
 
@@ -2331,16 +2375,10 @@ mod tests {
         let signer = signer();
         fund(&client, signer.address());
 
-        let nonce_free = self_paid_eoa_8130(
-            &signer,
-            Eip8130Constants::NONCE_KEY_MAX,
-            0,
-            Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
-            1_000,
-        );
-        let nonce_free_hash = *nonce_free.hash();
-        pool.add_transaction(TransactionOrigin::Local, nonce_free).await.unwrap();
-        let pooled = pool.get(&nonce_free_hash).unwrap();
+        let keyed = self_paid_eoa_8130(&signer, U256::from(2), 0, 0, 1_000);
+        let keyed_hash = *keyed.hash();
+        pool.add_transaction(TransactionOrigin::Local, keyed).await.unwrap();
+        let pooled = pool.get(&keyed_hash).unwrap();
         let (address, slot) = pooled
             .transaction
             .watch_set()
@@ -2350,7 +2388,7 @@ mod tests {
                 InvalidationKey::Slot { address, slot } => Some((*address, *slot)),
                 _ => None,
             })
-            .expect("EOA authorization must expose an exact config-slot dependency");
+            .expect("a 2D nonce channel must expose an exact nonce-slot dependency");
 
         let removed = pool.apply_state_diff(&[AccountStateDiff {
             address,
@@ -2358,8 +2396,8 @@ mod tests {
             ..Default::default()
         }]);
         assert_eq!(removed.len(), 1);
-        assert_eq!(*removed[0].hash(), nonce_free_hash);
-        assert!(pool.get(&nonce_free_hash).is_none());
+        assert_eq!(*removed[0].hash(), keyed_hash);
+        assert!(pool.get(&keyed_hash).is_none());
 
         let channel = self_paid_eoa_8130(&signer, U256::from(1), 0, 0, 1_000);
         let channel_hash = *channel.hash();
@@ -2382,7 +2420,7 @@ mod tests {
             &signer,
             Eip8130Constants::NONCE_KEY_MAX,
             0,
-            Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
+            INTEGRATION_POOL_NOW_MS + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
             1_000,
         );
         let hash = *transaction.hash();
@@ -2526,9 +2564,13 @@ mod tests {
         assert_eq!(pool.block_expiry.read().len(), 1);
         assert!(pool.get(&hash).is_some());
 
-        // Once the last valid block is behind the tip, block-expiry eviction
-        // removes it and releases any guard capacity it held.
-        pool.expire_by_block(101);
+        // The transaction stays while its last valid block can still be built.
+        pool.expire_by_block(99);
+        assert!(pool.get(&hash).is_some());
+
+        // Once its last valid block is committed, the next block cannot include it,
+        // so block-expiry eviction removes it and releases any guard capacity it held.
+        pool.expire_by_block(100);
         assert!(pool.get(&hash).is_none());
         assert!(!pool.guard.read().contains(&hash));
     }

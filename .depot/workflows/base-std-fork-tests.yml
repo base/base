@@ -7,12 +7,14 @@
 
 name: Base Std Interface Tests
 on:
+  # ci:base-std and ci:full must start the matrix immediately when applied.
   pull_request:
+    types: [opened, reopened, synchronize, labeled]
   merge_group:
   workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event.action != 'labeled' }}
 env:
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: "sccache"
@@ -20,8 +22,48 @@ permissions:
   contents: read
   pull-requests: write
 jobs:
+  changes:
+    name: Detect Base Std Interface Changes
+    # Merge-queue and manual runs always execute the matrix, so path detection
+    # is only useful for a PR.
+    if: github.event_name == 'pull_request'
+    runs-on: depot-ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      base-std: ${{ steps.filter.outputs.base-std }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            # These are the two base/base crates patched into base-anvil below.
+            # Workspace/toolchain inputs can alter that build, so retain them.
+            base-std:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.cargo/**'
+              - 'rust-toolchain.toml'
+              - 'crates/common/chains/**'
+              - 'crates/common/precompiles/**'
+              - '.depot/actions/setup/**'
+              - '.depot/workflows/base-std-fork-tests.yml'
   fork-tests:
     name: Base Std Interface Tests (${{ matrix.fork }})
+    needs: changes
+    if: >-
+      always() && (github.event_name != 'pull_request' ||
+      needs.changes.outputs.base-std == 'true' ||
+      contains(github.event.pull_request.labels.*.name, 'ci:base-std') ||
+      contains(github.event.pull_request.labels.*.name, 'ci:full'))
     runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 120
     strategy:
@@ -68,10 +110,6 @@ jobs:
           just: "false"
       - name: Checkout pinned fork-test pair
         shell: bash
-        env:
-          # BASE_STD_TOKEN must be a PAT with Contents:Read on base/base-std.
-          # GITHUB_TOKEN is repo-scoped and cannot access other repos, even internal ones.
-          GH_TOKEN: ${{ secrets.BASE_STD_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -81,8 +119,8 @@ jobs:
 
           # FETCH_HEAD supports commit SHAs and tags (including annotated tags),
           # keeping refs independently configurable for each repository.
-          gh repo clone base/base-std "$workdir/base-std" -- \
-            --filter=blob:none --no-checkout
+          git clone --filter=blob:none --no-checkout \
+            https://github.com/base/base-std.git "$workdir/base-std"
           git -C "$workdir/base-std" fetch --depth 1 origin "$BASE_STD_REF"
           git -C "$workdir/base-std" checkout --detach FETCH_HEAD
           git -C "$workdir/base-std" submodule update --init --recursive --depth 1
@@ -193,8 +231,15 @@ jobs:
           fi
   aggregate:
     name: Base Std Interface Tests
-    if: always()
-    needs: fork-tests
+    # Keep the stable aggregate check for selected runs, but skip it with the
+    # matrix when this PR did not touch either patched base-anvil dependency.
+    if: >-
+      always() && (
+      github.event_name != 'pull_request' ||
+      needs.changes.outputs.base-std == 'true' ||
+      contains(github.event.pull_request.labels.*.name, 'ci:base-std') ||
+      contains(github.event.pull_request.labels.*.name, 'ci:full'))
+    needs: [changes, fork-tests]
     runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
     steps:
       - name: Harden the runner (Audit all outbound calls)
