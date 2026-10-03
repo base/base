@@ -6,7 +6,7 @@ use alloy_primitives::B256;
 use alloy_signer_local::PrivateKeySigner;
 use base_batcher_core::{
     AdminHandle, BatchDriver, BatchDriverConfig, BatchDriverError, BatchDriverInputs, DaThrottle,
-    DerivationStatus, NoopThrottleClient, ThrottleController,
+    DerivationStatus, ThrottleController,
 };
 use base_batcher_encoder::{BatchEncoder, EncoderConfig};
 use base_common_consensus::BaseBlock;
@@ -192,7 +192,7 @@ impl Batcher {
                 force_blobs_when_throttling: true,
                 stopped: false,
             },
-            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
+            DaThrottle::new(ThrottleController::disabled()),
             BatchDriverInputs {
                 source,
                 l1_head_source,
