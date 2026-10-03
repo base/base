@@ -38,11 +38,10 @@ pub struct BatcherArgs {
     #[arg(long = "l1-ws-url", env = "BASE_BATCHER_L1_WS_URL")]
     pub l1_ws_url: Option<Url>,
 
-    /// Parity validator L2 RPC endpoint for shadow mode.
+    /// Parity validator L2 RPC endpoint, whose derived block hashes are compared
+    /// with the sequencer's.
     ///
-    /// Required with `--dangerously-override-batch-inbox-address` and rejected
-    /// without it. The validator's derived block hashes are compared with the
-    /// sequencer's.
+    /// Required with `--shadow-mode`.
     #[arg(long = "parity-validator-l2-rpc-url", env = "BASE_BATCHER_PARITY_VALIDATOR_L2_RPC_URL")]
     pub parity_validator_l2_rpc_url: Option<Url>,
 
@@ -59,15 +58,12 @@ pub struct BatcherArgs {
     pub signer: SignerCli,
 
     /// Run as a shadow batcher.
-    ///
-    /// Must be set together with `--dangerously-override-batch-inbox-address`, so a
-    /// canonical deployment cannot turn into a shadow one by setting a single flag.
     #[arg(long = "shadow-mode", env = "BASE_BATCHER_SHADOW_MODE")]
     pub shadow_mode: bool,
 
     /// The shadow inbox, which the `--rollup-rpc-url` node must derive.
     ///
-    /// Requires `--shadow-mode`. Canonical deployments must not set this flag.
+    /// Required with `--shadow-mode`.
     #[arg(
         long = "dangerously-override-batch-inbox-address",
         env = "BASE_BATCHER_DANGEROUSLY_OVERRIDE_BATCH_INBOX_ADDRESS"
@@ -171,7 +167,8 @@ pub struct BatcherArgs {
 
     /// Disable DA throttling.
     ///
-    /// Pass this flag to submit batches at full rate regardless of DA backlog.
+    /// The batcher never pushes DA limits to the `--l2-rpc-url` endpoint, however large its DA
+    /// backlog grows. Required with `--shadow-mode`.
     #[arg(long = "no-throttle", env = "BASE_BATCHER_NO_THROTTLE")]
     pub no_throttle: bool,
 
@@ -416,6 +413,7 @@ mod tests {
             "0x1111111111111111111111111111111111111111",
             "--parity-validator-l2-rpc-url",
             "http://validator:9545",
+            "--no-throttle",
         ]);
         let config = cli.into_config(false).expect("config should build");
 

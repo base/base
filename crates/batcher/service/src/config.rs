@@ -64,7 +64,9 @@ pub struct BatcherConfig {
     pub max_pending_transactions: usize,
     /// Transaction manager configuration.
     pub tx_manager: TxManagerConfig,
-    /// Throttle configuration (optional).
+    /// DA throttle configuration, `None` to disable the throttle.
+    ///
+    /// Rejected with [`batch_inbox_override`](Self::batch_inbox_override).
     pub throttle: Option<ThrottleConfig>,
     /// Number of recent L1 blocks to inspect for a confirmed batcher transaction.
     ///

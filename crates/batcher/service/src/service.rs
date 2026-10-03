@@ -341,6 +341,12 @@ impl BatcherService {
             (Some(_), None) => eyre::bail!("shadow mode requires a parity validator L2 RPC URL"),
             _ => {}
         }
+        if self.config.batch_inbox_override.is_some() && self.config.throttle.is_some() {
+            eyre::bail!(
+                "shadow mode requires the DA throttle to be disabled: the batcher would push its \
+                 DA limits to the sequencer it reads blocks from"
+            );
+        }
 
         let signer_config = self
             .config
@@ -759,6 +765,16 @@ mod tests {
         },
         "parity validator L2 RPC URL requires shadow mode"
     )]
+    #[case::shadow_with_throttle(
+        BatcherConfig {
+            batch_inbox_override: Some(Address::ZERO),
+            parity_validator_l2_rpc_url: Some("http://127.0.0.1:1".parse().unwrap()),
+            throttle: Some(ThrottleConfig::default()),
+            ..BatcherConfig::default()
+        },
+        "shadow mode requires the DA throttle to be disabled: the batcher would push its DA \
+         limits to the sequencer it reads blocks from"
+    )]
     #[tokio::test]
     async fn setup_refuses_a_config_it_cannot_run(
         #[case] config: BatcherConfig,
@@ -852,6 +868,7 @@ mod tests {
         let config = BatcherConfig {
             batch_inbox_override: Some(BATCH_INBOX),
             parity_validator_l2_rpc_url: Some(server.url("/").parse().unwrap()),
+            throttle: None,
             ..mocked_config(&server, Address::repeat_byte(0x51))
         };
 
