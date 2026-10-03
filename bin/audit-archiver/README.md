@@ -170,9 +170,9 @@ well before it reaches zero), `transaction_event_partitions_created`,
 Migration `002_transaction_events_ingested_at_index.sql` registers a BRIN index
 on the partitioned `transaction_events` table and its hot/warm/cold parents.
 It uses `ON ONLY`: `migrate up` creates metadata quickly but does **not** build
-indexes on existing day partitions. The root index remains invalid until the
-day indexes are built and attached. Future day partitions automatically get
-their index on attach, even while the parent index is being completed.
+indexes on existing day partitions. The root index remains invalid while
+attached days are missing matching indexes. New day partitions automatically
+get their index on attach; existing unindexed days can expire through retention.
 
 Choose coverage explicitly after deploying the parent definitions. For
 forward-only coverage, leave existing day tables unindexed and verify new-day
@@ -200,7 +200,7 @@ Postgres storage, read I/O, and ingest
 latency during the build. Do not run two index jobs against the same database;
 the command also holds the migration lock to serialize them.
 
-Check completion in each network database:
+Inspect index coverage in each network database:
 
 ```sql
 SELECT c.relname, i.indisvalid
@@ -214,7 +214,12 @@ WHERE c.relname IN (
 );
 ```
 
-All four should report `indisvalid = true`. The `ingested_at` BRIN index
+Complete coverage requires all four entries to report `indisvalid = true`.
+With forward-only coverage, invalid parents are expected until the unindexed
+days expire. This does not impair table correctness or require a historical
+backfill; verify new-day inheritance and revisit coverage as retention runs.
+
+The `ingested_at` BRIN index
 serves DataPilot's timestamp cutoff; it does not by itself index an epoch
 expression used for parallel slicing. Evaluate that expression's query plan
 separately before enabling `NUM_SLICES` on the production primary.

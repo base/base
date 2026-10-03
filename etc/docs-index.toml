@@ -48,7 +48,7 @@ digest = "de5b6325d7"
 
 ["bin/audit-archiver/README.md"]
 summary = "audit-archiver service: NDJSON ingest into Postgres, JSON-RPC queries, retention classes and partition maintenance, env vars, S3 removal rollout, and explicit ingested_at index coverage."
-digest = "323e3f35e4"
+digest = "0c189d062e"
 
 ["bin/base-telemetry/README.md"]
 summary = "base-telemetry backend: CLI and env config, per-IP rate limiting, and on-demand P2P reachability probes for execution-layer (enode) and consensus-layer (ENR or multiaddr) nodes."
@@ -684,7 +684,7 @@ digest = "1089184709"
 
 ["docs/transaction-events/partition-indexes.md"]
 summary = "Add partitioned audit indexes: parent-only migrations, forward-only versus historical coverage, explicit native BRIN backfill, catalog checks, locks, cancellation, and future-index steps."
-digest = "f74c7eb9ac"
+digest = "408c3b4cc9"
 
 ["docs/transaction-events/tips-parity-checklist.md"]
 summary = "Checklist for verifying TIPS UI audit-archiver/Postgres responses match the S3-backed routes (block, txn, bundle, rejected) before switching TIPS_UI_QUERY_BACKEND=audit."
