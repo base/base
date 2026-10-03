@@ -3,7 +3,7 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use alloy_eips::Encodable2718;
-use alloy_primitives::Bytes;
+use alloy_primitives::{Bytes, U256};
 use alloy_rpc_client::RpcClient;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
@@ -16,9 +16,72 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 const BLOCK_NUMBER: u64 = 1;
 const TIMESTAMP_MILLIS_PART: u16 = 200;
 const TIMESTAMP_MS_QUANTITY: &str = "0x4b0";
+/// Returns `TIMESTAMP` and `NUMBER`.
+const ENVIRONMENT_CODE: &str = "0x426000524360205260406000f3";
+/// Reverts unless `TIMESTAMP` equals the first calldata word.
+const TIMESTAMP_GUARD_CODE: &str = "0x4260003514600d5760006000fd5b00";
 
 async fn request(client: &RpcClient, method: &'static str, params: Value) -> eyre::Result<Value> {
     Ok(client.request(method, params).await?)
+}
+
+fn words(output: &Value) -> Vec<u64> {
+    let output: Bytes =
+        serde_json::from_value(output.clone()).expect("call output should be bytes");
+    output.chunks(32).map(|word| U256::from_be_slice(word).to::<u64>()).collect()
+}
+
+/// Executes `code` at `tag` and returns its output words.
+async fn call_code(
+    client: &RpcClient,
+    code: &str,
+    tag: &str,
+    block_overrides: Value,
+) -> eyre::Result<Vec<u64>> {
+    let probe = Account::Alice.address();
+    let state_overrides = json!({ (probe.to_string()): { "code": code } });
+    let params = json!([{ "to": probe }, tag, state_overrides, block_overrides]);
+    Ok(words(&request(client, "eth_call", params).await?))
+}
+
+/// Asserts that a pending estimate passes `guard` only with `expected` calldata, and that the
+/// estimated gas suffices in the same context.
+async fn assert_pending_estimate(
+    client: &RpcClient,
+    guard: &str,
+    expected: u64,
+    stale: u64,
+) -> eyre::Result<()> {
+    let probe = Account::Bob.address();
+    let overrides = json!({ (probe.to_string()): { "code": guard } });
+    let call = |word: u64| json!({ "to": probe, "data": format!("0x{word:064x}") });
+
+    let gas =
+        request(client, "eth_estimateGas", json!([call(expected), "pending", overrides])).await?;
+    let mut exact = call(expected);
+    exact["gas"] = gas;
+    request(client, "eth_call", json!([exact, "pending", overrides])).await?;
+
+    let stale: Result<Value, _> =
+        client.request("eth_estimateGas", json!([call(stale), "pending", overrides])).await;
+    assert_eq!(
+        stale.unwrap_err().as_error_resp().map(|error| error.code),
+        Some(3),
+        "pending estimate must observe {expected}"
+    );
+    Ok(())
+}
+
+/// Returns block `number`'s system transactions, including the `BaseTime` deposit after Denim.
+fn block_transactions(harness: &TestHarness, number: u64) -> eyre::Result<Vec<Bytes>> {
+    let schedule = harness.chain_spec().denim_timestamp_schedule()?.expect("Denim is scheduled");
+    let mut transactions = vec![L1_BLOCK_INFO_DEPOSIT_TX];
+    if schedule.is_denim_active_at_block(number) {
+        let millis_part = schedule.block_timestamp_parts(number).1;
+        let base_time = BaseTimeUpdateTx::new(millis_part)?.into_deposit_tx(number);
+        transactions.push(base_time.encoded_2718().into());
+    }
+    Ok(transactions)
 }
 
 fn assert_quantity(response: &Value, field: &str) {
@@ -195,5 +258,52 @@ async fn canonical_denim_rpc_responses_include_millisecond_timestamps() -> eyre:
         &log_transaction_hash,
     ));
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn pending_forecast_follows_the_block_schedule() -> eyre::Result<()> {
+    // Genesis is block 0 at 1s with a two-second legacy interval. Denim activates with block 2
+    // at 5s, after which blocks advance by 200ms.
+    let mut genesis = build_test_genesis();
+    genesis.config.extra_fields.insert("base".into(), json!({ "denim": 5 }));
+    let harness = TestHarness::builder()
+        .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(genesis)))
+        .build()
+        .await?;
+    let client = harness.rpc_client()?;
+
+    // Latest block and its successor's seconds: legacy, first Denim block, same second, and
+    // second rollover.
+    for (latest, seconds) in [(0, 3), (1, 5), (4, 5), (6, 6)] {
+        while harness.latest_block().number < latest {
+            let number = harness.latest_block().number + 1;
+            harness.build_block_from_transactions(block_transactions(&harness, number)?).await?;
+        }
+
+        assert_eq!(
+            call_code(&client, ENVIRONMENT_CODE, "pending", Value::Null).await?,
+            [seconds, latest + 1]
+        );
+        assert_pending_estimate(&client, TIMESTAMP_GUARD_CODE, seconds, seconds - 1).await?;
+        // Latest keeps its own context.
+        assert_eq!(
+            call_code(&client, ENVIRONMENT_CODE, "latest", Value::Null).await?,
+            [harness.latest_block().timestamp, latest]
+        );
+    }
+
+    // User block overrides take precedence over the forecast.
+    let block_override = json!({ "time": "0x9", "number": "0x7" });
+    assert_eq!(call_code(&client, ENVIRONMENT_CODE, "pending", block_override).await?, [9, 7]);
+
+    // An executed pending block is used as-is rather than advanced again.
+    let prepared = harness.prepare_unsafe_block(block_transactions(&harness, 7)?).await?;
+    assert_eq!(call_code(&client, ENVIRONMENT_CODE, "pending", Value::Null).await?, [6, 7]);
+
+    // Once forkchoice consumes it, pending forecasts its successor.
+    harness.engine().update_forkchoice(prepared.parent_hash, prepared.new_block_hash, None).await?;
+    harness.wait_for_header(prepared.new_block_hash, prepared.new_block_number).await?;
+    assert_eq!(call_code(&client, ENVIRONMENT_CODE, "pending", Value::Null).await?, [6, 8]);
     Ok(())
 }
