@@ -61,4 +61,4 @@ pub use sync::SyncStatusApiClient;
 pub use sync::SyncStatusApiServer;
 
 mod ws;
-pub use ws::WsRPC;
+pub use ws::{HeadKind, WsRPC};
