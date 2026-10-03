@@ -279,6 +279,9 @@ sol! {
         /// Returns the TEE verifier used by this game.
         function TEE_VERIFIER() external view returns (address);
 
+        /// Returns the ZK verifier used by this game.
+        function ZK_VERIFIER() external view returns (address);
+
         /// Returns the SP1 aggregation program hash this game verifies ZK
         /// proofs against.
         ///
@@ -515,6 +518,17 @@ impl AggregateVerifierContractClient {
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
         contract_call!(contract.TEE_VERIFIER().call(), "TEE_VERIFIER failed")
+    }
+
+    /// Returns the ZK verifier used by a game.
+    pub async fn zk_verifier_address(
+        &self,
+        game_address: Address,
+    ) -> Result<Address, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        contract_call!(contract.ZK_VERIFIER().call(), "ZK_VERIFIER failed")
     }
 
     /// Returns the SP1 aggregation program hash a game or implementation
@@ -948,6 +962,47 @@ pub fn encode_challenge_calldata(
     Bytes::from(call.abi_encode())
 }
 
+/// Which dispute a decoded [`DisputeCall`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisputeKind {
+    /// `nullify(bytes,uint256,bytes32)`.
+    Nullify,
+    /// `challenge(bytes,uint256,bytes32)`.
+    Challenge,
+}
+
+/// The arguments of a `nullify` or `challenge` call, which share a layout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisputeCall {
+    /// Which of the two functions was called.
+    pub kind: DisputeKind,
+    /// Proof bytes, proof-type discriminator first.
+    pub proof_bytes: Bytes,
+    /// Index of the intermediate root being disputed.
+    pub intermediate_root_index: U256,
+    /// Root the proof claims is correct at that index.
+    pub intermediate_root_to_prove: B256,
+}
+
+/// Decodes calldata built by [`encode_nullify_calldata`] or
+/// [`encode_challenge_calldata`]. Returns `None` for any other call.
+pub fn decode_dispute_calldata(calldata: &[u8]) -> Option<DisputeCall> {
+    if let Ok(call) = IAggregateVerifier::nullifyCall::abi_decode(calldata) {
+        return Some(DisputeCall {
+            kind: DisputeKind::Nullify,
+            proof_bytes: call.proofBytes,
+            intermediate_root_index: call.intermediateRootIndex,
+            intermediate_root_to_prove: call.intermediateRootToProve,
+        });
+    }
+    IAggregateVerifier::challengeCall::abi_decode(calldata).ok().map(|call| DisputeCall {
+        kind: DisputeKind::Challenge,
+        proof_bytes: call.proofBytes,
+        intermediate_root_index: call.intermediateRootIndex,
+        intermediate_root_to_prove: call.intermediateRootToProve,
+    })
+}
+
 /// Encodes the calldata for `IAggregateVerifier.resolve()`.
 ///
 /// Resolves the game after its dispute period has elapsed. Returns the
@@ -1146,5 +1201,25 @@ mod tests {
             &claim[..4],
             "resolve and claimCredit must have different selectors"
         );
+    }
+
+    #[test]
+    fn decode_dispute_calldata_round_trips_both_disputes() {
+        let root = B256::repeat_byte(0x7a);
+        let proof = Bytes::from_static(&[1, 2, 3]);
+
+        let nullify = decode_dispute_calldata(&encode_nullify_calldata(proof.clone(), 19, root))
+            .expect("nullify decodes");
+        assert_eq!(nullify.kind, DisputeKind::Nullify);
+        assert_eq!(nullify.intermediate_root_index, U256::from(19));
+        assert_eq!(nullify.intermediate_root_to_prove, root);
+        assert_eq!(nullify.proof_bytes, proof);
+
+        let challenge = decode_dispute_calldata(&encode_challenge_calldata(proof, 4, root))
+            .expect("challenge decodes");
+        assert_eq!(challenge.kind, DisputeKind::Challenge);
+        assert_eq!(challenge.intermediate_root_index, U256::from(4));
+
+        assert!(decode_dispute_calldata(&encode_resolve_calldata()).is_none());
     }
 }
