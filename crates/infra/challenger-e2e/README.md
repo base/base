@@ -27,6 +27,24 @@ One process, one fork, two TEE-only in-progress games (newest-first, lookback
 skip. Game B is Path 4, followed by Path 3 only when the TEE proof is removed
 first. The run bails if fewer than two such games exist.
 
+Games are also filtered on their **aggregation program**. Every hash on an
+`AggregateVerifier` is `immutable`, so a verification-key rotation deploys a new
+implementation and registers it on the factory, while every clone created before
+it stays pinned to the old `ZK_AGGREGATE_HASH`. A proof from the current
+prover-service cannot verify against such a clone. The driver therefore reads the
+hash from `gameImpls(gameType)` and skips candidates that do not match — without
+that, a stale clone costs a full SNARK and then reverts `InvalidProof()` at
+submission, roughly 35 minutes in, with nothing in the error naming the rotation.
+When the implementation has changed and the proposer has not yet created enough
+games against it, the run stops during selection and says so.
+
+This filter keeps selection consistent with the factory and nothing more. It
+cannot tell whether the prover-service builds the program the implementation
+expects: a prover upgraded ahead of the on-chain hashes fails at the same
+`verifyProposalProof` with the same `InvalidProof()`, and this check passes.
+That is what the 2026-09-29 zeronet failures were — every selected game
+carried the implementation's current hashes.
+
 The anchor bound is not cosmetic: the scanner starts at one past the anchor
 game's factory index, so a game at or before the anchor is one the challenger
 will never look at, however invalid it is made — the dispute waits below would
@@ -130,6 +148,114 @@ disputes games it was never given would pass the run.
    a message that says the check could not be completed rather than that the
    challenger moved something.
 
+## `CHALLENGER_E2E_SCENARIO=path3`
+
+Step 6 only reaches Path 3 when the challenger happens to drop the TEE proof
+first, which current deployments do not: B is not a registered TEE proposer, so
+Path 4 takes the ZK-fallback branch and the run ends there. This scenario stages
+the Path 3 shape directly instead of waiting for it.
+
+Game B is given a real SNARK of its canonical roots as in step 5. A then drops
+B's TEE proof through the game's own `nullify(TEE, ...)` **while every root is
+still canonical**, waits out every challenger scan that could have seen both
+proofs, and only then patches a root as in step 6. `nullify` only requires the
+proven root to differ from the stored one (`_checkIntermediateRoot`), and the
+TEE verifier is mocked for that call, so it proves a fixed placeholder root at
+index 0. Until the patch B is a valid ZK-only game, which the challenger leaves
+alone.
+
+The wait is what makes the scenario deterministic. A challenger step classifies
+every game from its proofs in one pass, then reads each candidate's roots when it
+gets to it — over a minute later on zeronet's factory. A step that classified B
+with both proofs and read its roots after the patch would dispute it as
+`InvalidDualProposal` (Path 4), clearing the ZK proof while satisfying every
+state assertion below without `InvalidZkProposal` ever being reached; no order of
+the two writes avoids that on its own. So after the TEE nullify the driver waits
+for `games_scanned_total` to advance twice: the second advance comes from a pass
+that began after the step in flight at the nullify had finished. Earlier versions
+assumed the exposure was one Anvil write wide and abandoned the Path 3 claim when
+it was hit, which let a `path3` run go green without testing Path 3. Now
+`invalid_dual_proposal_detected_total` moving during Path 3 **fails** the run.
+
+Waiting for the ZK proof to go is unconditional, and a timeout fails the run —
+the game is invalid, and an E2E that reports success over an undisputed invalid
+game is worse than none.
+
+The end state is ambiguous about how it was reached, so the path is confirmed
+positively too: `invalid_zk_proposal_detected_total` must have advanced.
+
+Going through `nullify` rather than a storage write means the game reaches the
+exact state a real TEE nullification produces — `proofCount` and `expectedResolution` included —
+rather than the approximation a storage write would leave. A has no enclave to
+sign with, so the game's `TEE_VERIFIER()` is replaced with a runtime that
+returns `true` for the duration of that one transaction and restored
+immediately after; the restore is asserted, because a fork left with a
+permissive verifier would pass every assertion that follows. The challenger's
+own proof and nullification run against the real, restored verifiers.
+
+Restoring the bytecode is not the whole of it. A real `nullify(TEE, ...)` also
+nullifies the TEE verifier *globally* (`AggregateVerifier.sol:697` →
+`Verifier.nullify()`), and the permissive runtime returned success without setting
+that flag — so a restored-but-live verifier would let other games on the fork
+verify TEE proofs that a genuine TEE-first Path 4 would have blocked. The driver
+therefore writes the flag itself with `anvil_setStorageAt` (slot 0, the sole
+storage variable of the `Verifier` base) and asserts `nullified()` reads true.
+`Verifier.nullify()` cannot be called directly: it is restricted to a registered,
+respected dispute game.
+
+What is left is `(teeProver == 0, zkProver != 0, counteredIndex == 0)` over an
+invalid root — `InvalidZkProposal`. The challenger must clear `zkProver`,
+leave `counteredIndex` at 0, and move B's nonce.
+
+Staging happens *after* the quiet window of step 2, not before it: B is a valid
+dual-proof game until it is patched, so this scenario gets the same positive
+case as every other one. Game A is never corrupted here, so it is added to the
+watch set of step 7 — `snapshot_bystanders` excludes both games under test, and
+without that A would be the one valid game nobody re-reads. One further bound
+covers disputes that revert, which move no game state and are therefore
+invisible to every state comparison: clearing Path 3 takes exactly one dispute
+submission, so the run fails if the challenger submitted more. That count is
+re-read after a further quiet window, because on its own it is sampled the
+moment B's ZK proof disappears and says nothing about the scans that follow —
+and by then the whole fork is quiet, B included, since a fully-nullified game is
+terminal to the scanner.
+
+Each destructive scenario ends by nullifying a *global* verifier, so they
+cannot share a fork: run `all`, `path1-path2` and `path3` in separate pods.
+
+## Reading a run in Datadog
+
+Every outcome log carries a `phase` field, and the ones that assert a claim also
+carry `verdict`. Datadog sees each line alone, so these are what make a run
+answerable without reading the whole stream. Note the prefix: the driver's
+`tracing` fields land under `@data.message.fields.*`, not `@*`.
+
+| Want | Query |
+|---|---|
+| Every failed run | `@data.message.fields.verdict:fail` |
+| Every Path 3 outcome, all runs | `@data.message.fields.phase:path3` |
+| A phase that ran but was not asserted | `@data.message.fields.verdict:skip` |
+| What one run actually asserted | `"scenario complete"` — has `phases_asserted` |
+| Which scenario a run was | `"starting scenario"` — has `scenario`, both keys, the timeouts |
+| A named contract revert | `"reverted with"` |
+
+`phase` values: `setup`, `quiet-window`, `path1`, `path2-skip`, `path2-dispute`,
+`path3`, `path4`, `bystanders`. `verdict` values: `pass`, `skip` on a phase;
+`pass`, `fail` on the run. They are asserted by a unit test because dashboards
+filter on them.
+
+Two fields worth knowing:
+
+- **`phases_asserted`** on `scenario complete` is what the run *claimed to
+  cover*, which is not the same as which logs appeared. For `all` it is built
+  from what ran: `path2-skip` only when Path 1 landed as a ZK challenge, `path3`
+  only when Path 4 took its TEE-first branch.
+- **`branch`** on Path 4 says `tee-first`, `zk-fallback` or `both-cleared`.
+  Today it is always `zk-fallback` on zeronet, because the throwaway key is not
+  a registered TEE proposer; a `tee-first` run is the only one that reaches
+  Path 3 in situ, and it is tagged `reached=in-situ` to distinguish it from the
+  staged `path3` scenario.
+
 ## Required environment
 
 `BASE_CHALLENGER_*` is shared with the challenger under test — both read the
@@ -145,7 +271,7 @@ is pointed at and talks to the same prover-service.
 | `BASE_CHALLENGER_GAME_TYPE` | Yes | `AggregateVerifier` game type |
 | `BASE_CHALLENGER_ANCHOR_STATE_REGISTRY_ADDR` | Yes | `AnchorStateRegistry` on L1; read to find the scanner's lower bound |
 | `CHALLENGER_E2E_ANVIL_PORT` | No (default `18545`) | Fork port; not 8545, which the production challenger reserves for its signer sidecar |
-| `CHALLENGER_E2E_SCENARIO` | No (default `all`) | `all` for the existing combined run, or `path1-path2` for complete Path 2 coverage |
+| `CHALLENGER_E2E_SCENARIO` | No (default `all`) | `all` for the existing combined run, `path1-path2` for complete Path 2 coverage, or `path3` for an unconditional Path 3 |
 | `CHALLENGER_E2E_CHALLENGER_METRICS_URL` | No (default `http://127.0.0.1:7300/metrics`) | Prometheus endpoint of the challenger under test |
 | `CHALLENGER_E2E_GAME_LOOKBACK` | No (default `50`) | Factory indices searched for two games to corrupt |
 | `CHALLENGER_E2E_STARTUP_TIMEOUT` | No (default `5m`) | Budget for the fork and the first scan |
