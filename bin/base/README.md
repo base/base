@@ -46,6 +46,11 @@ execution-layer methods. It serves its own namespaces (`optimism_*`, `opp2p_*`, 
 execution node's HTTP server. Point consensus clients, operators, and execution clients at one
 address. Forwarded calls return the execution node's results and errors unchanged.
 
+A JSON-RPC batch is split by backend: entries for consensus methods run in-process, and all the
+other entries are sent to the execution node together as a single batch. Responses come back in
+the original order under the caller's request ids. If the execution node cannot be reached, only the
+forwarded entries fail. The consensus entries in the same batch still succeed.
+
 The upstream is chosen per mode:
 
 - `rpc`, `follow`, and `sequencer` use the embedded execution node's bound HTTP address.
