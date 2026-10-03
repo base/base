@@ -92,7 +92,8 @@ infrastructure:
   posting to `SHADOW_BATCH_INBOX_ADDRESS` from `SHADOW_BATCHER_ADDR` — a distinct,
   funded dev account, so its L1 nonces never collide with the op-batcher's. It
   follows the shadow validator's derivation through `--rollup-rpc-url` and compares
-  blocks with it through `--parity-validator-l2-rpc-url`.
+  blocks with it through `--parity-validator-l2-rpc-url`. It runs with `--no-throttle`,
+  which shadow mode requires.
 - **Shadow validator — `base-shadow-validator`.** A validator-mode `rpc` node
   that overrides the batch inbox and batcher sender
   (`--l1.dangerously-override-da-batch-inbox`,
