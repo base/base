@@ -62,10 +62,10 @@ static_assertions.workspace = true
 [dev-dependencies]
 alloy-rpc-types-debug.workspace = true
 eyre.workspace = true
+rstest.workspace = true
 mockall.workspace = true
 rand_08.workspace = true
 tempfile.workspace = true
-test-case.workspace = true
 reth-node-api.workspace = true
 alloy-genesis.workspace = true
 reth-chainspec.workspace = true
