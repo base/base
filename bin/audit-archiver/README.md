@@ -1,6 +1,11 @@
 # `audit-archiver`
 
-Reads audit log events via RPC and archives them to S3.
+Accepts transaction observability events over HTTP, stores them in Postgres,
+and serves Postgres-backed transaction event queries over JSON-RPC.
+`TIPS_AUDIT_POSTGRES_URL` is required to serve; startup fails if the Postgres
+schema is not ready. This S3 removal needs no new database migration.
+If still on the pre-partition schema, `migrate up` resets the table and deletes
+its old rows: export them or agree on retention before running that migration.
 
 ## Security Model
 
@@ -8,20 +13,42 @@ The unauthenticated RPC and ingest APIs are internal endpoints. Restrict them to
 trusted producers with private-network controls; never expose them publicly. The
 wildcard bind supports container networking.
 
-When `TIPS_AUDIT_POSTGRES_URL` is set, `audit-archiver` also accepts
-transaction observability event batches over HTTP and stores them in Postgres.
+`audit-archiver` accepts transaction observability event batches over HTTP and
+stores them in Postgres.
 The HTTP ingest endpoint is intended for Vector and accepts newline-delimited
 JSON, with one `transaction-event/v1` object per line:
 
 ```bash
-curl -sS -X POST "http://127.0.0.1:8080/v1/transaction-events/batch" \
-  -H "content-type: application/x-ndjson" \
-  --data-binary '{"schema_version":"transaction-event/v1","event_id":"example-builder-accepted-1","event_time":"2026-06-02T00:00:00Z","producer":"base-builder","event_type":"BUILDER_ACCEPTED","network":"base-mainnet","tx_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","block_hash":null,"block_number":null,"payload_id":null,"request_id":null,"data":{"position":1}}
-'
+printf '{"schema_version":"transaction-event/v1","event_id":"example-builder-accepted-1","event_time":"%s","producer":"base-builder","event_type":"BUILDER_ACCEPTED","network":"base-mainnet","tx_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","block_hash":null,"block_number":null,"payload_id":null,"request_id":null,"data":{"position":1}}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" |
+  curl -sS -X POST "http://127.0.0.1:9100/v1/transaction-events/batch" \
+    -H "content-type: application/x-ndjson" \
+    --data-binary @-
 ```
 
 The endpoint is intended for Vector HTTP output from the dedicated transaction
 event journal. It is not a stdout/stderr log ingestion endpoint.
+
+The legacy S3 archive, bundle-event RPC ingest, and rejected-transaction
+S3 RPC ingest are removed. The old RPC methods return "method not found";
+they never acknowledge events that would be discarded. Existing S3 history is
+not migrated; decide whether to export or retain it before deleting buckets.
+
+The old S3 rejection feed only covered enforced per-transaction execution-time
+rejections. `BUILDER_REJECTED` records that decision, its reason, predicted time,
+and limit in the journal, but not the full S3 `MeterBundleResponse`. Bundle
+lifecycle events have no one-to-one transaction-journal equivalent. The old
+builder forwarder and bundle connector log and drop failed RPC batches; verify
+no legacy bundle sender remains and journal rejections reach Postgres before
+deploying this binary. Chart settings alone are not proof.
+
+Roll out only after the old ingress bundle sender is gone and the builder's
+transaction event journal is enabled. On each network, compare
+`BUILDER_REJECTED` emissions with events queryable from Postgres and monitor
+`transaction_events_persisted`, `transaction_events_rejected`, and Vector
+discard/retry metrics during the soak. `TIPS_AUDIT_NOOP_ARCHIVE` previously
+covered bundle workers only: rejected-transaction RPC calls could still write
+to S3. Confirm S3 writes have stopped before removing S3 IAM or buckets.
 
 To verify the local devnet path end-to-end:
 
@@ -91,3 +118,47 @@ well before it reaches zero), `transaction_event_partitions_created`,
 - `TIPS_AUDIT_TRANSACTION_EVENT_COLD_RETENTION_DAYS` (default `30`, at most `90`)
 - `TIPS_AUDIT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS` (default `5000`): Postgres `lock_timeout` per partition create, detach, or drop
 
+## Incremental warehouse extraction index
+
+Migration `002_transaction_events_ingested_at_index.sql` registers a BRIN index
+on the partitioned `transaction_events` table and its hot/warm/cold parents.
+It uses `ON ONLY`: `migrate up` creates metadata quickly but does **not** build
+indexes on existing day partitions. The root index remains invalid until the
+day indexes are built and attached. Future day partitions automatically get
+their index on attach, even while the parent index is being completed.
+
+After deploying the migrator, arrange a separate, monitored one-off run using
+the `audit_archiver_migration` database credential:
+
+```bash
+# TIPS_AUDIT_POSTGRES_URL must point at the target network database.
+audit-archiver index
+```
+
+The `index` command builds one BRIN index at a time with `CREATE INDEX
+CONCURRENTLY` and attaches it to the class index. It is intentionally separate
+from the chart's `migrate up` init container: production has many populated
+day partitions, and building them can take hours. Re-running the command is
+safe; it skips attached indexes and drops/rebuilds invalid indexes left by a
+canceled concurrent build. Monitor Postgres storage, read I/O, and ingest
+latency during the build. Do not run two index jobs against the same database;
+the command also holds the migration lock to serialize them.
+
+Check completion in each network database:
+
+```sql
+SELECT c.relname, i.indisvalid
+FROM pg_index i
+JOIN pg_class c ON c.oid = i.indexrelid
+WHERE c.relname IN (
+    'transaction_events_ingested_at_idx',
+    'transaction_events_hot_ingested_at_idx',
+    'transaction_events_warm_ingested_at_idx',
+    'transaction_events_cold_ingested_at_idx'
+);
+```
+
+All four should report `indisvalid = true`. The `ingested_at` BRIN index
+serves DataPilot's timestamp cutoff; it does not by itself index an epoch
+expression used for parallel slicing. Evaluate that expression's query plan
+separately before enabling `NUM_SLICES` on the production primary.

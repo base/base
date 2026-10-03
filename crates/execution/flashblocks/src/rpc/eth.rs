@@ -63,18 +63,21 @@ use alloy_rpc_types_eth::Filter;
 use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_network::Base;
 use base_common_rpc_types::{BaseLogResponse, BaseRpcTypes, BaseTransactionRequest};
+use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130_rpc::{ChannelNonceReader, Eip8130EverestGate, Eip8130GasEstimator};
+use base_execution_evm::BaseNextBlockEnvAttributes;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
-use reth_evm::TxEnvFor;
+use reth_chainspec::ChainSpecProvider;
+use reth_evm::{ConfigureEvm, TxEnvFor};
 use reth_provider::CanonStateSubscriptions;
 use reth_rpc::eth::EthFilter;
 use reth_rpc_eth_api::{
-    EthApiTypes, EthFilterApiServer, FromEthApiError, RpcBlock, RpcReceipt, RpcTransaction,
-    helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi, LoadPendingBlock},
+    EthApiTypes, EthFilterApiServer, RpcBlock, RpcReceipt, RpcTransaction,
+    helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi},
 };
 use reth_rpc_eth_types::EthApiError;
 use revm::context::TxEnv;
@@ -188,17 +191,9 @@ impl<Eth: EthApiTypes, FB> EthApiExt<Eth, FB> {
 #[async_trait]
 impl<Eth, FB> EthApiOverrideServer for EthApiExt<Eth, FB>
 where
-    Eth: FullEthApi<NetworkTypes = BaseRpcTypes>
-        + LoadPendingBlock
-        + Clone
-        + Send
-        + Sync
-        + 'static,
-    Eth::Error: FromEthApiError,
-    <Eth as reth_rpc_eth_api::RpcNodeCore>::Provider:
-        reth_chainspec::ChainSpecProvider + reth_provider::BlockReaderIdExt,
-    <<Eth as reth_rpc_eth_api::RpcNodeCore>::Provider as reth_chainspec::ChainSpecProvider>::ChainSpec:
-        base_common_chains::Upgrades,
+    Eth: FullEthApi<NetworkTypes = BaseRpcTypes>,
+    Eth::Evm: ConfigureEvm<NextBlockEnvCtx = BaseNextBlockEnvAttributes>,
+    Eth::Provider: ChainSpecProvider<ChainSpec = BaseChainSpec>,
     TxEnvFor<Eth::Evm>: From<BaseRevm<TxEnv>>,
     reth_evm::EvmFactoryFor<Eth::Evm>: alloy_evm::EvmFactory<BlockEnv = revm::context::BlockEnv>,
     FB: FlashblocksAPI + Send + Sync + 'static,

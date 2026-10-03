@@ -47,6 +47,7 @@ alloy-signer = { workspace = true, optional = true }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 
 # misc
+thiserror = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["as_ref", "deref_mut", "try_from"] }
 
 [dev-dependencies]
@@ -74,6 +75,7 @@ std = [
 	"revm?/std",
 	"serde/std",
 	"serde_json/std",
+	"thiserror?/std",
 ]
 arbitrary = [
 	"alloy-consensus/arbitrary",
@@ -100,7 +102,13 @@ serde = [
 	"revm?/serde",
 ]
 network = [ "dep:alloy-network" ]
-eip8130 = [ "dep:alloy-evm", "dep:base-common-evm", "dep:revm", "std" ]
+eip8130 = [
+	"dep:alloy-evm",
+	"dep:base-common-evm",
+	"dep:revm",
+	"dep:thiserror",
+	"std",
+]
 reth = [
 	"dep:alloy-signer",
 	"dep:reth-primitives-traits",

@@ -87,7 +87,9 @@ impl BaseUpgradeExt for BaseUpgrade {
     }
 
     fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> BaseUpgrade {
-        if chain_spec.is_everest_active_at_timestamp(timestamp) {
+        if chain_spec.is_zenith_active_at_timestamp(timestamp) {
+            Self::Zenith
+        } else if chain_spec.is_everest_active_at_timestamp(timestamp) {
             Self::Everest
         } else if chain_spec.is_denim_active_at_timestamp(timestamp) {
             Self::Denim

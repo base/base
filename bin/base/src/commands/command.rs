@@ -66,7 +66,7 @@ impl BaseCommand {
             Self::Update(update) => (*update).run(),
             Self::Reth(reth) => {
                 chain_resolver.reject_for_reth_command("base reth")?;
-                (*reth).run()
+                reth.command.run()
             }
             Self::Proofs(command) => {
                 chain_resolver.reject_for_reth_command("base proofs")?;
@@ -76,7 +76,7 @@ impl BaseCommand {
             }
             Self::Snapshot(snapshot) => {
                 chain_resolver.reject_for_reth_command("base snapshot")?;
-                (*snapshot).run()
+                snapshot.command.run()
             }
         }
     }

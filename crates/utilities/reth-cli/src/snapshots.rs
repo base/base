@@ -13,7 +13,8 @@ const SNAPSHOT_SOURCE_URL: &str = "https://chain.base.org";
 const MAINNET_SNAPSHOT_URL: &str = "https://mainnet-v2-snapshots.base.org";
 const SEPOLIA_SNAPSHOT_URL: &str = "https://sepolia-v2-snapshots.base.org";
 const ZERONET_SNAPSHOT_URL: &str = "https://zeronet-v2-snapshots.base.org";
-const FULL_HISTORY_DISTANCE: u64 = 1_339_200;
+/// Thirty-one days of history at Denim's 200ms block interval.
+const FULL_HISTORY_DISTANCE: u64 = 13_392_000;
 
 /// Reth snapshot and pruning-default initialization for Base execution layer binaries.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -44,7 +45,7 @@ impl Snapshots {
     /// Initializes Reth's global snapshot download URLs and pruning defaults.
     ///
     /// This sets up the snapshot sources and makes the full preset retain approximately one month
-    /// of bodies, receipts, and account and storage history.
+    /// of bodies, receipts, and account and storage history at Denim's 200ms block interval.
     ///
     /// ### Panics
     ///
@@ -117,11 +118,11 @@ mod tests {
     }
 
     #[test]
-    fn full_preset_retains_one_month_of_history() {
+    fn full_preset_retains_one_month_of_denim_history() {
         Snapshots::init_snapshots();
 
         let defaults = DefaultPruningValues::get_global();
-        let distance = Some(PruneMode::Distance(FULL_HISTORY_DISTANCE));
+        let distance = Some(PruneMode::Distance(31 * 24 * 60 * 60 * 1_000 / 200));
         assert_eq!(defaults.full_prune_modes.bodies_history, distance);
         assert_eq!(defaults.full_prune_modes.receipts, distance);
         assert_eq!(defaults.full_prune_modes.account_history, distance);

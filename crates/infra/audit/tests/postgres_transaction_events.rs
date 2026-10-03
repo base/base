@@ -9,19 +9,29 @@
 
 use std::{
     path::PathBuf,
+    sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use audit_archiver_lib::{
+    AuditArchiverApiServer, AuditArchiverRpc, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
+    DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
+    DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
     MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE, PgTransactionEventSink, RejectedTransactionEventQuery,
-    TransactionEventRetentionConfig, TransactionEventSchemaReadinessError, TransactionEventSink,
+    TransactionEventIngestConfig, TransactionEventRetentionConfig,
+    TransactionEventSchemaReadinessError, TransactionEventSink, index_transaction_event_partitions,
+};
+use axum::{
+    body::{Body, to_bytes},
+    http::{Request, StatusCode},
 };
 use base_observability_events::TransactionEvent;
 use chrono::Utc;
-use serde_json::json;
+use serde_json::{Value, json};
 use sqlx::{Executor, PgPool, migrate::Migrator, postgres::PgPoolOptions};
 use testcontainers::{ImageExt, core::ExecCommand, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
+use tower::ServiceExt;
 
 /// Production RDS is Postgres 17. `testcontainers-modules` still defaults to
 /// Postgres 11, which lacks the partitioning features the schema relies on.
@@ -194,9 +204,69 @@ fn legacy_migrations_through(last_version: i64) -> anyhow::Result<PathBuf> {
     Ok(target)
 }
 
-#[tokio::test]
-async fn transaction_events_ready_without_postgres_sink() {
-    PgTransactionEventSink::check_optional_schema_ready(None).await.unwrap();
+fn default_ingest_config() -> TransactionEventIngestConfig {
+    TransactionEventIngestConfig {
+        path: DEFAULT_TRANSACTION_EVENT_BATCH_PATH.to_string(),
+        max_batch_size: DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE,
+        max_event_bytes: DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES,
+        max_data_bytes: DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
+        max_request_bytes: DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
+    }
+}
+
+/// Builds an NDJSON batch of `count` valid events, each padded so the request
+/// approximates a full-size Vector payload.
+fn ndjson_batch(event_prefix: &str, count: usize, data_padding_len: usize) -> Vec<u8> {
+    let padding = "p".repeat(data_padding_len);
+    (0..count)
+        .map(|index| {
+            serde_json::to_string(&json!({
+                "schema_version": "transaction-event/v1",
+                "event_id": format!("{event_prefix}-{index}"),
+                "event_time": Utc::now(),
+                "producer": "base-builder",
+                "event_type": "BUILDER_ACCEPTED",
+                "network": "base-mainnet",
+                "tx_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+                "block_hash": null,
+                "block_number": 123,
+                "payload_id": "payload-1",
+                "request_id": "request-1",
+                "data": {
+                    "position": 1,
+                    "padding": padding,
+                }
+            }))
+            .unwrap()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .into_bytes()
+}
+
+async fn post_batch(
+    sink: PgTransactionEventSink,
+    body: Vec<u8>,
+) -> anyhow::Result<(StatusCode, Value)> {
+    let app = default_ingest_config().into_router(Arc::new(sink));
+    let request = Request::builder()
+        .method("POST")
+        .uri(DEFAULT_TRANSACTION_EVENT_BATCH_PATH)
+        .header("content-type", "application/x-ndjson")
+        .body(Body::from(body))?;
+    let response = app.oneshot(request).await?;
+    let status = response.status();
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    Ok((status, serde_json::from_slice(&body)?))
+}
+
+async fn count_events_with_prefix(pool: &PgPool, event_prefix: &str) -> anyhow::Result<i64> {
+    let count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM transaction_events WHERE event_id LIKE $1")
+            .bind(format!("{event_prefix}-%"))
+            .fetch_one(pool)
+            .await?;
+    Ok(count.0)
 }
 
 #[tokio::test]
@@ -306,7 +376,7 @@ async fn postgres_partition_migration_discards_pre_partition_rows() -> anyhow::R
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1], "legacy history is replaced by the baseline");
+    assert_eq!(versions, vec![1, 2], "legacy history is replaced by the new migrations");
     PgTransactionEventSink::connect(&harness.database_url, 1).await?.check_schema_ready().await?;
     harness.assert_schema_matches_snapshot().await?;
 
@@ -314,7 +384,7 @@ async fn postgres_partition_migration_discards_pre_partition_rows() -> anyhow::R
 }
 
 #[tokio::test]
-async fn postgres_fresh_database_only_runs_the_partitioned_baseline() -> anyhow::Result<()> {
+async fn postgres_fresh_database_runs_partitioned_migrations() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
     PgTransactionEventSink::migrate(&harness.database_url).await?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
@@ -323,7 +393,7 @@ async fn postgres_fresh_database_only_runs_the_partitioned_baseline() -> anyhow:
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1]);
+    assert_eq!(versions, vec![1, 2]);
 
     Ok(())
 }
@@ -370,7 +440,7 @@ async fn postgres_migrates_past_an_unrecorded_004_with_an_invalid_index() -> any
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1], "004 is never run, and legacy history is replaced");
+    assert_eq!(versions, vec![1, 2], "004 is never run, and legacy history is replaced");
     let (valid, partitioned): (bool, bool) = sqlx::query_as(
         "SELECT i.indisvalid, c.relkind = 'I' FROM pg_index i \
          JOIN pg_class c ON c.oid = i.indexrelid \
@@ -446,6 +516,105 @@ async fn postgres_schema_matches_committed_snapshot() -> anyhow::Result<()> {
     PgTransactionEventSink::migrate(&harness.database_url).await?;
 
     harness.assert_schema_matches_snapshot().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_ingested_at_index_recovers_and_covers_future_days() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+
+    let parent_valid: bool = sqlx::query_scalar(
+        "SELECT indisvalid FROM pg_index \
+         WHERE indexrelid = 'transaction_events_ingested_at_idx'::regclass",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert!(!parent_valid, "parent-only migration does not block on existing days");
+
+    let today = Utc::now().date_naive();
+    let during_build = today + chrono::Duration::days(4);
+    let created: bool = sqlx::query_scalar("SELECT transaction_events_create_partition('hot', $1)")
+        .bind(during_build)
+        .fetch_one(&pool)
+        .await?;
+    assert!(created);
+    let during_build_name =
+        format!("transaction_events_hot_{}_ingested_at_idx", during_build.format("%Y%m%d"));
+    let inherited: bool = sqlx::query_scalar(
+        "SELECT i.indisvalid FROM pg_index i WHERE i.indexrelid = to_regclass($1)",
+    )
+    .bind(format!("public.{during_build_name}"))
+    .fetch_one(&pool)
+    .await?;
+    assert!(inherited, "new days inherit the index even while the parent is invalid");
+
+    let leaf = format!("transaction_events_hot_{}", today.format("%Y%m%d"));
+    sqlx::query(&format!(
+        "INSERT INTO public.{leaf} \
+         (event_id, schema_version, event_time, event_date, retention_class, producer, event_type, data) \
+         VALUES ('index-a', 'transaction-event/v1', now(), $1, 'hot', 'base-builder', 'BUILDER_ACCEPTED', '{{}}'), \
+                ('index-b', 'transaction-event/v1', now(), $1, 'hot', 'base-builder', 'BUILDER_ACCEPTED', '{{}}')"
+    ))
+    .bind(today)
+    .execute(&pool)
+    .await?;
+
+    // A failed concurrent build leaves an INVALID index with the intended
+    // name. The index command must not silently skip it with IF NOT EXISTS.
+    let index_name = format!("{leaf}_ingested_at_idx");
+    let failed = sqlx::query(&format!(
+        "CREATE UNIQUE INDEX CONCURRENTLY {index_name} ON public.{leaf} (event_type)"
+    ))
+    .execute(&pool)
+    .await;
+    let err = failed.expect_err("duplicate event types must fail the unique build");
+    assert_eq!(err.as_database_error().and_then(|error| error.code()).as_deref(), Some("23505"));
+    let invalid: bool = sqlx::query_scalar(
+        "SELECT NOT indisvalid FROM pg_index WHERE indexrelid = to_regclass($1)",
+    )
+    .bind(format!("public.{index_name}"))
+    .fetch_one(&pool)
+    .await?;
+    assert!(invalid, "failed concurrent build left an invalid index");
+
+    let built = index_transaction_event_partitions(&harness.database_url).await?;
+    assert!(built > 0, "existing day partitions were indexed");
+    assert_eq!(index_transaction_event_partitions(&harness.database_url).await?, 0);
+
+    let index_valid: bool = sqlx::query_scalar(
+        "SELECT i.indisvalid AND a.amname = 'brin' \
+         FROM pg_index i \
+         JOIN pg_class c ON c.oid = i.indexrelid \
+         JOIN pg_am a ON a.oid = c.relam \
+         WHERE c.oid = 'transaction_events_ingested_at_idx'::regclass",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert!(index_valid, "all class and leaf indexes are attached and valid");
+
+    // Daily partition maintenance creates a table and ATTACHes it. The valid
+    // parent partitioned index must automatically install the new leaf index.
+    let future = today + chrono::Duration::days(5);
+    let created: bool = sqlx::query_scalar("SELECT transaction_events_create_partition('hot', $1)")
+        .bind(future)
+        .fetch_one(&pool)
+        .await?;
+    assert!(created);
+    let future_name = format!("transaction_events_hot_{}_ingested_at_idx", future.format("%Y%m%d"));
+    let future_valid: bool = sqlx::query_scalar(
+        "SELECT i.indisvalid AND a.amname = 'brin' \
+         FROM pg_index i \
+         JOIN pg_class c ON c.oid = i.indexrelid \
+         JOIN pg_am a ON a.oid = c.relam \
+         WHERE c.oid = to_regclass($1)",
+    )
+    .bind(format!("public.{future_name}"))
+    .fetch_one(&pool)
+    .await?;
+    assert!(future_valid, "new day automatically inherits the usable ingested_at index");
 
     Ok(())
 }
@@ -540,6 +709,101 @@ async fn postgres_sink_chunks_large_direct_inserts() -> anyhow::Result<()> {
             .fetch_one(&pool)
             .await?;
     assert_eq!(count.0, i64::try_from(event_count)?);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_http_ingest_accepts_1000_event_batch() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 2).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let event_prefix = unique_event_id();
+
+    // ~1 KiB per event so the batch exercises a realistic ~1 MiB Vector payload.
+    let body = ndjson_batch(&event_prefix, DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, 550);
+    assert!(body.len() > 512 * 1024, "expected a large batch, got {} bytes", body.len());
+
+    let (status, json) = post_batch(sink, body).await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["status"], "accepted");
+    assert_eq!(json["accepted"], 1000);
+    assert_eq!(json["duplicate"], 0);
+    assert_eq!(json["rejected"], 0);
+    assert_eq!(count_events_with_prefix(&pool, &event_prefix).await?, 1000);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn builder_rejection_journal_survives_http_ingest_and_rpc_query() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 2).await?;
+    sink.check_schema_ready().await?;
+
+    let event_id = unique_event_id();
+    let mut rejected = event_with_type(&event_id, "BUILDER_REJECTED");
+    rejected.data = json!({
+        "rejection_reason": "tx_execution_time_exceeded",
+        "tx_execution_time_us": 2000,
+        "tx_execution_time_limit_us": 1000,
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    let body = serde_json::to_vec(&rejected)?;
+
+    let (status, first) = post_batch(sink.clone(), body.clone()).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first["accepted"], 1);
+    assert_eq!(first["rejected"], 0);
+    let (status, retry) = post_batch(sink.clone(), body).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(retry["duplicate"], 1);
+
+    let rpc = AuditArchiverRpc::new(sink);
+    let by_hash = rpc
+        .get_transaction_events_by_hash(
+            "0x1111111111111111111111111111111111111111111111111111111111111111".into(),
+            None,
+        )
+        .await
+        .expect("Postgres-backed RPC lookup must work without S3");
+    assert_eq!(by_hash.len(), 1);
+    assert_eq!(by_hash[0].event.event_id, event_id);
+    assert_eq!(by_hash[0].event.data["rejection_reason"], "tx_execution_time_exceeded");
+
+    let rejections = rpc
+        .get_rejected_transaction_events(RejectedTransactionEventQuery {
+            limit: Some(10),
+            ..Default::default()
+        })
+        .await
+        .expect("rejected event RPC must read Postgres without S3");
+    assert_eq!(rejections.len(), 1);
+    assert_eq!(rejections[0].event.event_id, event_id);
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_http_ingest_rejects_1001_event_batch_without_writes() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 2).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let event_prefix = unique_event_id();
+
+    let body = ndjson_batch(&event_prefix, DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE + 1, 0);
+
+    let (status, json) = post_batch(sink, body).await?;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["status"], "rejected");
+    assert_eq!(json["results"][0]["reason"], "batch size exceeds maximum 1000");
+    assert_eq!(count_events_with_prefix(&pool, &event_prefix).await?, 0);
 
     Ok(())
 }

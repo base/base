@@ -16,6 +16,9 @@ pub use metrics::L2BlockParityMetrics;
 mod recent_txs;
 pub use recent_txs::{MAX_CHECK_RECENT_TXS_DEPTH, RecentTxSyncTarget};
 
+mod system_config;
+pub use system_config::{ISystemConfig, SystemConfigBatcher};
+
 mod source;
 pub use source::RpcPollingSource;
 

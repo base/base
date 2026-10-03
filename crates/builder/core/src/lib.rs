@@ -29,9 +29,6 @@ pub use base_execution_payload_builder::{
 };
 pub use traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds};
 
-mod rejected_tx_forwarder;
-pub use rejected_tx_forwarder::RejectedTxForwarder;
-
 // Internal-only helpers for emitting builder transaction events. The event surface
 // is shared via `base-observability-events`, while this module keeps
 // builder-specific payload construction private to the builder crate.

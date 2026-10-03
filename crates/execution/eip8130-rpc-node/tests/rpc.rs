@@ -9,14 +9,17 @@
 
 use std::{collections::BTreeMap, sync::Arc};
 
+use alloy_eips::Encodable2718;
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{Address, B256, U256, address, bytes};
+use alloy_primitives::{Address, B256, U256, address, bytes, hex};
 use alloy_rpc_client::RpcClient;
-use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
+use base_common_consensus::{Eip8130Constants, Eip8130Contracts, Predeploys};
+use base_common_evm::BaseTime;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
-use base_node_runner::test_utils::TestHarness;
+use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
+use base_protocol::BaseTimeUpdateTx;
 use base_test_utils::{Account, build_test_genesis_cobalt, build_test_genesis_everest};
 use serde_json::json;
 
@@ -304,5 +307,65 @@ async fn estimate_gas_for_eip8130_request_pre_everest_is_rejected() -> eyre::Res
     let err = result.expect_err("pre-Everest EIP-8130 estimate must error");
     let err_str = err.to_string();
     assert!(err_str.contains("-32602"), "expected INVALID_PARAMS (-32602), got: {err_str}");
+    Ok(())
+}
+
+/// Pending EIP-8130 estimates must observe the scheduled Denim successor's `BaseTime`
+/// milliseconds, and an executed pending block's own time once one exists.
+#[tokio::test]
+async fn estimate_gas_for_eip8130_request_observes_pending_denim_time() -> eyre::Result<()> {
+    // Genesis is block 0 at 1s with Denim active, so block n is scheduled at 1s + 200ms * n.
+    let (harness, client) = setup().await?;
+    let alice: Address = Account::Alice.address();
+    let guard = address!("0x00000000000000000000000000000000000000ad");
+    // Reverts unless `BaseTime.timestampMs()` equals the first calldata word.
+    let guard_code = format!(
+        "0x63{}60e01b600052602060006004600073{}5afa5060005160003514603a5760006000fd5b00",
+        hex::encode(BaseTime::TIMESTAMP_MS_SELECTOR),
+        hex::encode(Predeploys::BASE_TIME),
+    );
+    let estimate = async |timestamp_ms: u64, base_time_diff: Option<u64>| {
+        let mut overrides = json!({ (guard.to_string()): { "code": guard_code } });
+        if let Some(millis) = base_time_diff {
+            overrides[Predeploys::BASE_TIME.to_string()] = json!({
+                "stateDiff": { (B256::ZERO.to_string()): B256::from(U256::from(millis)) }
+            });
+        }
+        let request = json!({
+            "from": alice,
+            "calls": [[{ "to": guard, "data": format!("0x{timestamp_ms:064x}") }]]
+        });
+        client.request::<_, U256>("eth_estimateGas", (request, "pending", overrides)).await
+    };
+    let build_block = async |number: u64, millis_part: u16| {
+        let base_time = BaseTimeUpdateTx::new(millis_part)?.into_deposit_tx(number);
+        harness
+            .prepare_unsafe_block(vec![L1_BLOCK_INFO_DEPOSIT_TX, base_time.encoded_2718().into()])
+            .await
+    };
+
+    // Same-second successor of genesis, then second rollover after block 4.
+    for (latest, timestamp_ms) in [(0, 1_200), (4, 2_000)] {
+        while harness.latest_block().number < latest {
+            let number = harness.latest_block().number + 1;
+            let prepared = build_block(number, u16::try_from(number * 200)?).await?;
+            harness
+                .engine()
+                .update_forkchoice(prepared.parent_hash, prepared.new_block_hash, None)
+                .await?;
+            harness.wait_for_header(prepared.new_block_hash, prepared.new_block_number).await?;
+        }
+        assert!(estimate(timestamp_ms, None).await? > U256::ZERO);
+        let stale = estimate(timestamp_ms - 200, None).await;
+        assert!(stale.unwrap_err().to_string().contains("revert"), "must observe {timestamp_ms}");
+    }
+
+    // User state overrides take precedence over the forecast.
+    assert!(estimate(2_300, Some(300)).await? > U256::ZERO);
+
+    // An executed pending block is used as-is rather than advanced again.
+    build_block(5, 0).await?;
+    assert!(estimate(2_000, None).await? > U256::ZERO);
+    assert!(estimate(2_200, None).await.is_err());
     Ok(())
 }

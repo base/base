@@ -208,22 +208,20 @@ where
         Ok(Some((header.number(), header.timestamp())))
     }
 
-    /// Returns the maximum permitted expiry distance in full blocks for the block being built.
-    fn max_validity_expiry_blocks(&self, latest_timestamp: u64) -> u64 {
+    /// Returns the full-block interval, in milliseconds, of the block being built.
+    fn block_interval_millis(&self, latest_timestamp: u64) -> u64 {
         // The target build can be the first Denim block even though the latest committed header
         // is pre-Denim. Check both its parent timestamp and the next legacy block timestamp so
         // the window uses Denim's 200ms full-block cadence at that transition.
         let next_legacy_timestamp =
             latest_timestamp.saturating_add(LEGACY_BLOCK_INTERVAL_MILLIS.saturating_div(1_000));
-        let block_interval_millis =
-            if self.provider.chain_spec().is_denim_active_at_timestamp(latest_timestamp)
-                || self.provider.chain_spec().is_denim_active_at_timestamp(next_legacy_timestamp)
-            {
-                RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
-            } else {
-                LEGACY_BLOCK_INTERVAL_MILLIS
-            };
-        self.max_validity_expiry_secs.saturating_mul(1_000).div_ceil(block_interval_millis)
+        if self.provider.chain_spec().is_denim_active_at_timestamp(latest_timestamp)
+            || self.provider.chain_spec().is_denim_active_at_timestamp(next_legacy_timestamp)
+        {
+            RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
+        } else {
+            LEGACY_BLOCK_INTERVAL_MILLIS
+        }
     }
 }
 
@@ -328,7 +326,8 @@ where
                 ValidityPredicate::validate_block_expiry_bounds(
                     &options.validity,
                     latest_block.saturating_add(1),
-                    self.max_validity_expiry_blocks(latest_timestamp),
+                    self.max_validity_expiry_secs,
+                    self.block_interval_millis(latest_timestamp),
                 )
             }
             // Before genesis is committed there is no build target from which to measure the
@@ -336,6 +335,9 @@ where
             None => ValidityPredicate::validate_has_block_expiry(&options.validity),
         };
         expiry_validation.map_err(|error| {
+            // The returned message omits the local head; keep it in the log for diagnosing
+            // ingress latency.
+            debug!(error = ?error, "rejected validity transaction block expiry");
             ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), error.to_string(), None::<()>)
         })?;
 
@@ -535,13 +537,21 @@ mod tests {
         ]
     }
 
+    /// Every predicate variant accepted at public ingress.
+    fn ingress_predicate_variants() -> Vec<ValidityPredicate> {
+        all_predicate_variants()
+            .into_iter()
+            .filter(|predicate| !matches!(predicate, ValidityPredicate::Balance { .. }))
+            .collect()
+    }
+
     #[test]
-    fn max_validity_expiry_blocks_uses_the_active_full_block_cadence() {
+    fn block_interval_millis_uses_the_active_full_block_cadence() {
         let legacy = SendRawTransactionValidityApiImpl::new(
             pre_everest_provider(),
             test_transaction_sender(),
         );
-        assert_eq!(legacy.max_validity_expiry_blocks(0), 30);
+        assert_eq!(legacy.block_interval_millis(0), LEGACY_BLOCK_INTERVAL_MILLIS);
 
         let denim_provider = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::new(
@@ -552,7 +562,10 @@ mod tests {
             .with_genesis_block();
         let denim =
             SendRawTransactionValidityApiImpl::new(denim_provider, test_transaction_sender());
-        assert_eq!(denim.max_validity_expiry_blocks(0), 300);
+        assert_eq!(
+            denim.block_interval_millis(0),
+            RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
+        );
 
         let transition_provider = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::new(
@@ -563,7 +576,10 @@ mod tests {
             .with_genesis_block();
         let transition =
             SendRawTransactionValidityApiImpl::new(transition_provider, test_transaction_sender());
-        assert_eq!(transition.max_validity_expiry_blocks(0), 300);
+        assert_eq!(
+            transition.block_interval_millis(0),
+            RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
+        );
     }
 
     fn signed_eip1559(signer: &PrivateKeySigner, nonce: u64, priority_fee: u128) -> Bytes {
@@ -721,7 +737,7 @@ mod tests {
         let signer = PrivateKeySigner::random();
         let raw = signed_eip1559(&signer, 0, 1);
         let rpc = validity_rpc(everest_provider());
-        let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
+        let options = SendRawTransactionValidityOptions { validity: ingress_predicate_variants() };
 
         let tx_hash = rpc.send_raw_transaction_validity(raw, options).await.unwrap_or_else(|_| {
             capture.events().first().and_then(|event| event.tx_hash).expect(
@@ -741,7 +757,7 @@ mod tests {
         assert_eq!(events[0].data["rpc_method"], "base_sendRawTransactionValidity");
         assert_eq!(
             events[0].data["validity_predicates"],
-            serde_json::to_value(all_predicate_variants()).unwrap()
+            serde_json::to_value(ingress_predicate_variants()).unwrap()
         );
     }
 
@@ -822,7 +838,7 @@ mod tests {
     async fn proxies_validity_with_predicates_without_local_submission() {
         let sequencer = MockServer::start();
         let raw = Bytes::from_static(&[0x02]);
-        let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
+        let options = SendRawTransactionValidityOptions { validity: ingress_predicate_variants() };
         let expected_hash = TxHash::repeat_byte(0x42);
         let mock = sequencer.mock(|when, then| {
             when.method(POST).path("/").header("x-demo", "forwarded").json_body(json!({
@@ -893,7 +909,7 @@ mod tests {
             pre_everest_provider(),
             test_transaction_sender(),
         );
-        let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
+        let options = SendRawTransactionValidityOptions { validity: ingress_predicate_variants() };
 
         let error = rpc
             .send_raw_transaction_validity(raw, options)
@@ -913,7 +929,7 @@ mod tests {
         let signer = PrivateKeySigner::random();
         let raw = signed_eip1559(&signer, 0, 1);
         let rpc = validity_rpc(pre_everest_provider());
-        let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
+        let options = SendRawTransactionValidityOptions { validity: ingress_predicate_variants() };
 
         let error = rpc
             .send_raw_transaction_validity(raw, options)
@@ -1027,6 +1043,14 @@ mod tests {
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
         assert!(error.message().contains("expires too far in the future"));
+        assert!(
+            error.message().contains("maximum validity window of 60 seconds"),
+            "message should state the window: {error}"
+        );
+        assert!(
+            !error.message().contains("131"),
+            "message must not expose the head-derived maximum: {error}"
+        );
     }
 
     #[tokio::test]
@@ -1049,6 +1073,26 @@ mod tests {
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
         assert!(error.message().contains("outside its mask"));
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_validity_rejects_balance_predicate() {
+        let rpc =
+            SendRawTransactionValidityApiImpl::new(everest_provider(), test_transaction_sender());
+        let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
+        options.validity.push(ValidityPredicate::Balance {
+            address: Address::repeat_byte(0x11),
+            op: base_execution_txpool::ValidityOperator::GreaterThan,
+            value: U256::ZERO,
+        });
+
+        let error = rpc
+            .send_raw_transaction_validity(raw, options)
+            .await
+            .expect_err("balance predicates should be rejected at ingress");
+
+        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+        assert_eq!(error.message(), "balance predicate at index 2 is not supported");
     }
 
     #[tokio::test]
@@ -1178,6 +1222,10 @@ mod tests {
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
         assert!(error.message().contains("already expired"), "unexpected message: {error}");
+        assert!(
+            !error.message().contains("101"),
+            "message must not expose the local head: {error}"
+        );
     }
 
     #[tokio::test]

@@ -74,7 +74,8 @@ intrinsic_gas = AA_BASE_COST + tx_payload_cost + nonce_key_cost + value_transfer
 | Component | Source |
 |---|---|
 | `base` | `AA_BASE_COST` (15,000) |
-| `payload` | EIP-2028 data-availability cost (16/non-zero, 4/zero byte) over the EIP-2718 serialization of the signed transaction with an empty `payer_auth` |
+| `payload` | EIP-2028 data-availability cost (16/non-zero, 4/zero byte) over the EIP-2718 serialization of the signed transaction with an empty `payer_auth` — the *standard* rate, subject to the EIP-7623 calldata floor below |
+| `payload_floor` | EIP-7623 calldata floor over the same bytes: `TX_TOTAL_COST_FLOOR_PER_TOKEN` (10) per payload token instead of the standard 4, so a data-heavy transaction cannot post data availability more cheaply than a standard EIP-7623 transaction on the same chain (always `>= payload`) |
 | `nonce_key` | nonce-free `13,000`; otherwise first-use `22,100` / existing `5,000` (a cold SLOAD plus an SSTORE set or reset) |
 | `value_transfer` | `6,000` per call with `value > 0` and `to != sender` |
 | `bytecode` | per create entry: `32,000 + 200 · code_len` |
@@ -87,6 +88,27 @@ account creation when it runs, since existence is only known at dispatch.
 `sender_intrinsic` excludes `payer_auth` (payer authentication is metered on top
 of `gas_limit`), so `execution_gas_available(gas_limit) = gas_limit -
 sender_intrinsic`.
+
+### EIP-7623 calldata floor
+
+Following [EIP-7623](https://eips.ethereum.org/EIPS/eip-7623), the sender's
+metered gas is floored so a transaction that posts many bytes relative to its
+execution cannot drive the maximum block size back up. An 8130 transaction has
+no single `data` field — its bytes live in `account_changes`, `sender_auth`,
+`calls`, `metadata`, and `payer_auth` — so the floor is evaluated over the
+serialized transaction:
+
+```text
+sender_floor      = (sender_intrinsic - payload) + payload_floor
+sender_metered_gas = max(sender_intrinsic + execution_gas_used, sender_floor)
+```
+
+`sender_floor >= sender_intrinsic`, so a `gas_limit` below the floor is rejected
+at mempool acceptance and at inclusion, and settlement charges at least
+`sender_floor` for the sender portion (`payer_auth` is added on top and is not
+part of the floor). The `10`-per-token rate is normative structure: an L2-profile
+chain may reprice `TX_TOTAL_COST_FLOOR_PER_TOKEN` but must not set it below the
+standard `4` or drop the floor.
 
 ### Authenticator execution gas
 

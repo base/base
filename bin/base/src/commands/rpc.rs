@@ -67,6 +67,7 @@ impl RpcCommand {
         consensus_config.upgrade_signal = execution.standard.rollup_args.upgrade_signal.clone();
         let consensus_args = ConsensusNodeArgs::new(consensus_chain, consensus_config);
         let mut rollup_config = consensus_args.load_rollup_config()?;
+        Arc::make_mut(&mut execution_chain).block_time = Some(rollup_config.block_time);
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
             execution
