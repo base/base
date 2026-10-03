@@ -20,11 +20,13 @@ use std::{
 
 use alloy_primitives::U256;
 use base_common_rpc_types::BaseRpcTypes;
+use base_execution_chainspec::BaseChainSpec;
+use base_execution_evm::BaseNextBlockEnvAttributes;
 use eyre::WrapErr;
 pub use receipt::{BaseReceiptBuilder, ReceiptFieldsBuilder};
-use reth_chainspec::{EthereumHardforks, Hardforks};
+use reth_chainspec::{ChainSpecProvider, EthereumHardforks, Hardforks};
 use reth_evm::ConfigureEvm;
-use reth_node_api::{FullNodeComponents, FullNodeTypes, HeaderTy, NodeTypes};
+use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeTypes};
 use reth_node_builder::rpc::{EthApiBuilder, EthApiCtx};
 use reth_rpc::eth::core::EthApiInner;
 use reth_rpc_eth_api::{
@@ -32,7 +34,7 @@ use reth_rpc_eth_api::{
     RpcNodeCoreExt, RpcTypes,
     helpers::{
         EthApiSpec, EthFees, EthState, GetBlockAccessList, LoadFee, LoadPendingBlock, LoadState,
-        SpawnBlocking, Trace, pending_block::BuildPendingEnv,
+        SpawnBlocking, Trace,
     },
 };
 use reth_rpc_eth_types::{EthStateCache, FeeHistoryCache, GasPriceOracle};
@@ -259,6 +261,8 @@ where
 impl<N, Rpc> Trace for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
+    N::Evm: ConfigureEvm<NextBlockEnvCtx = BaseNextBlockEnvAttributes>,
+    N::Provider: ChainSpecProvider<ChainSpec = BaseChainSpec>,
     BaseEthApiError: FromEvmError<N::Evm>,
     Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError, Evm = N::Evm>,
 {
@@ -267,6 +271,8 @@ where
 impl<N, Rpc> GetBlockAccessList for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
+    N::Evm: ConfigureEvm<NextBlockEnvCtx = BaseNextBlockEnvAttributes>,
+    N::Provider: ChainSpecProvider<ChainSpec = BaseChainSpec>,
     BaseEthApiError: FromEvmError<N::Evm>,
     Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError, Evm = N::Evm>,
 {
@@ -378,9 +384,10 @@ impl<NetworkT> BaseEthApiBuilder<NetworkT> {
 impl<N, NetworkT> EthApiBuilder<N> for BaseEthApiBuilder<NetworkT>
 where
     N: FullNodeComponents<
-            Evm: ConfigureEvm<NextBlockEnvCtx: BuildPendingEnv<HeaderTy<N::Types>>>,
+            Evm: ConfigureEvm<NextBlockEnvCtx = BaseNextBlockEnvAttributes>,
             Types: NodeTypes<ChainSpec: Hardforks + EthereumHardforks>,
         >,
+    N::Provider: ChainSpecProvider<ChainSpec = BaseChainSpec>,
     NetworkT: RpcTypes,
     BaseRpcConvert<N, NetworkT>: RpcConvert<Network = NetworkT>,
     BaseEthApi<N, BaseRpcConvert<N, NetworkT>>:

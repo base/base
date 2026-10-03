@@ -28,11 +28,11 @@ mod shadow_funding;
 pub use shadow_funding::ShadowFunding;
 
 mod engine_request_coordinator;
-pub use engine_request_coordinator::SequencerEngineRequestCoordinator;
+pub use engine_request_coordinator::{ResetResponder, SequencerEngineRequestCoordinator};
 
 mod shadow_reconciliation;
 pub use shadow_reconciliation::{
-    CanonicalReconciliationInputs, CanonicalUnsafeCatchup, SequencerEngineState,
+    CanonicalReconciliationInputs, CanonicalUnsafeCatchup, SequencerEngineState, SequencerKind,
     ShadowReconciliationGate,
 };
 

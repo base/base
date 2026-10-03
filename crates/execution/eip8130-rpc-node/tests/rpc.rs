@@ -5,19 +5,22 @@
 //! (protocol-nonce delegation for `nonce_key == 0`, `INVALID_PARAMS` for the
 //! `NONCE_KEY_MAX` sentinel, and a real 2D-channel read) and the EIP-8130
 //! `eth_estimateGas` path, by exercising the full RPC stack against a test
-//! harness. Both the channel read and the estimate are gated on the Zenith fork.
+//! harness. Both the channel read and the estimate are gated on the Everest fork.
 
 use std::{collections::BTreeMap, sync::Arc};
 
+use alloy_eips::Encodable2718;
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{Address, B256, U256, address, bytes};
+use alloy_primitives::{Address, B256, U256, address, bytes, hex};
 use alloy_rpc_client::RpcClient;
-use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
+use base_common_consensus::{Eip8130Constants, Eip8130Contracts, Predeploys};
+use base_common_evm::BaseTime;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
-use base_node_runner::test_utils::TestHarness;
-use base_test_utils::{Account, build_test_genesis_cobalt, build_test_genesis_zenith};
+use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
+use base_protocol::BaseTimeUpdateTx;
+use base_test_utils::{Account, build_test_genesis_cobalt, build_test_genesis_everest};
 use serde_json::json;
 
 /// Launches a harness with the standalone EIP-8130 override registered over the
@@ -33,9 +36,9 @@ async fn setup_with(genesis: Genesis) -> eyre::Result<(TestHarness, RpcClient)> 
     Ok((harness, client))
 }
 
-/// Zenith-activated harness (the common case for EIP-8130 RPC reads).
+/// Everest-activated harness (the common case for EIP-8130 RPC reads).
 async fn setup() -> eyre::Result<(TestHarness, RpcClient)> {
-    setup_with(build_test_genesis_zenith()).await
+    setup_with(build_test_genesis_everest()).await
 }
 
 /// A hex (`0x`) authentication blob for an `eth_estimateGas` request: a 20-byte
@@ -92,7 +95,7 @@ async fn nonce_key_reads_seeded_channel_value() -> eyre::Result<()> {
 
     // Seed `nonces[alice][7] = 42` into the Nonce Manager precompile's storage.
     let slot = NonceManagerStorage::nonce_slot(alice, nonce_key).expect("non-protocol nonce key");
-    let mut genesis = build_test_genesis_zenith();
+    let mut genesis = build_test_genesis_everest();
     genesis.alloc.insert(
         NonceManagerStorage::ADDRESS,
         GenesisAccount {
@@ -114,18 +117,18 @@ async fn nonce_key_reads_seeded_channel_value() -> eyre::Result<()> {
     Ok(())
 }
 
-/// A non-zero `nonce_key` read before the Zenith fork must be rejected: EIP-8130
-/// RPC features are gated on Zenith, mirroring the txpool's pre-activation
+/// A non-zero `nonce_key` read before the Everest fork must be rejected: EIP-8130
+/// RPC features are gated on Everest, mirroring the txpool's pre-activation
 /// rejection of EIP-8130 transactions.
 #[tokio::test]
-async fn nonce_key_pre_zenith_is_rejected() -> eyre::Result<()> {
+async fn nonce_key_pre_everest_is_rejected() -> eyre::Result<()> {
     let (_harness, client) = setup_with(build_test_genesis_cobalt()).await?;
     let alice: Address = Account::Alice.address();
 
     let result: Result<U256, _> =
         client.request("eth_getTransactionCount", (alice, "latest", U256::from(7u64))).await;
 
-    let err = result.expect_err("pre-Zenith nonce_key read must error");
+    let err = result.expect_err("pre-Everest nonce_key read must error");
     let err_str = err.to_string();
     assert!(err_str.contains("-32602"), "expected INVALID_PARAMS (-32602), got: {err_str}");
     Ok(())
@@ -178,50 +181,37 @@ async fn estimate_gas_rejects_mismatched_from_and_sender() -> eyre::Result<()> {
     Ok(())
 }
 
-/// A supplied non-secp256k1 authentication blob must be priced into the
-/// estimate: a P-256 sender costs strictly more than the default-EOA secp256k1
-/// path (its authenticator execution gas is higher and its authentication
-/// payload is longer), and a longer `WebAuthn` blob costs more still.
+/// A supplied secp256k1 authentication blob is priced by its own bytes: a
+/// longer k1 blob costs more than a shorter one. P-256 and `WebAuthn` blobs are
+/// rejected, matching txpool admission, rather than priced.
 #[tokio::test]
 async fn estimate_gas_prices_the_supplied_authentication_blob() -> eyre::Result<()> {
     let (_harness, client) = setup().await?;
     let alice: Address = Account::Alice.address();
+    let estimate = |sender_auth: String| {
+        let client = client.clone();
+        async move {
+            client
+                .request::<_, U256>(
+                    "eth_estimateGas",
+                    (json!({ "from": alice, "calls": [], "senderAuth": sender_auth }), "latest"),
+                )
+                .await
+        }
+    };
 
-    let k1: U256 = client
-        .request("eth_estimateGas", (json!({ "from": alice, "calls": [] }), "latest"))
-        .await?;
-    let p256: U256 = client
-        .request(
-            "eth_estimateGas",
-            (
-                json!({
-                    "from": alice,
-                    "calls": [],
-                    "senderAuth": auth_blob(Eip8130Contracts::P256_AUTHENTICATOR, 128),
-                }),
-                "latest",
-            ),
-        )
-        .await?;
-    let webauthn: U256 = client
-        .request(
-            "eth_estimateGas",
-            (
-                json!({
-                    "from": alice,
-                    "calls": [],
-                    "senderAuth": auth_blob(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR, 1024),
-                }),
-                "latest",
-            ),
-        )
-        .await?;
+    let short = estimate(auth_blob(Eip8130Constants::K1_AUTHENTICATOR, 65)).await?;
+    let long = estimate(auth_blob(Eip8130Constants::K1_AUTHENTICATOR, 200)).await?;
+    assert!(long > short, "a longer k1 blob ({long}) must cost more than a shorter one ({short})");
 
-    assert!(p256 > k1, "P-256 auth ({p256}) must cost more than secp256k1 ({k1})");
-    assert!(
-        webauthn > p256,
-        "a larger WebAuthn payload ({webauthn}) must cost more than P-256 ({p256})"
-    );
+    for authenticator in
+        [Eip8130Contracts::P256_AUTHENTICATOR, Eip8130Contracts::WEBAUTHN_AUTHENTICATOR]
+    {
+        assert!(
+            estimate(auth_blob(authenticator, 128)).await.is_err(),
+            "a non-k1 sender authenticator ({authenticator}) must be rejected"
+        );
+    }
     Ok(())
 }
 
@@ -256,7 +246,7 @@ async fn estimate_gas_for_eip8130_request_with_reverting_call_fails() -> eyre::R
     let alice: Address = Account::Alice.address();
     // `PUSH1 0x00, PUSH1 0x00, REVERT` — always reverts with empty data.
     let revert_addr = address!("0x00000000000000000000000000000000000000fd");
-    let mut genesis = build_test_genesis_zenith();
+    let mut genesis = build_test_genesis_everest();
     genesis.alloc.insert(
         revert_addr,
         GenesisAccount { code: Some(bytes!("60006000fd")), ..Default::default() },
@@ -274,8 +264,7 @@ async fn estimate_gas_for_eip8130_request_with_reverting_call_fails() -> eyre::R
 
 /// An EIP-8130 `eth_estimateGas` request that names no account (neither `from`
 /// nor `sender`) must be rejected rather than silently simulated from the zero
-/// address: the sender identity drives actor resolution, policy lookup, and
-/// auto-delegation.
+/// address: the sender identity drives actor resolution and policy lookup.
 #[tokio::test]
 async fn estimate_gas_for_eip8130_request_without_account_is_rejected() -> eyre::Result<()> {
     let (_harness, client) = setup().await?;
@@ -305,18 +294,78 @@ async fn estimate_gas_for_plain_request_delegates() -> eyre::Result<()> {
     Ok(())
 }
 
-/// An EIP-8130 `eth_estimateGas` request before the Zenith fork must be
+/// An EIP-8130 `eth_estimateGas` request before the Everest fork must be
 /// rejected, matching the `nonce_key` read gate.
 #[tokio::test]
-async fn estimate_gas_for_eip8130_request_pre_zenith_is_rejected() -> eyre::Result<()> {
+async fn estimate_gas_for_eip8130_request_pre_everest_is_rejected() -> eyre::Result<()> {
     let (_harness, client) = setup_with(build_test_genesis_cobalt()).await?;
     let alice: Address = Account::Alice.address();
 
     let request = json!({ "from": alice, "calls": [] });
     let result: Result<U256, _> = client.request("eth_estimateGas", (request, "latest")).await;
 
-    let err = result.expect_err("pre-Zenith EIP-8130 estimate must error");
+    let err = result.expect_err("pre-Everest EIP-8130 estimate must error");
     let err_str = err.to_string();
     assert!(err_str.contains("-32602"), "expected INVALID_PARAMS (-32602), got: {err_str}");
+    Ok(())
+}
+
+/// Pending EIP-8130 estimates must observe the scheduled Denim successor's `BaseTime`
+/// milliseconds, and an executed pending block's own time once one exists.
+#[tokio::test]
+async fn estimate_gas_for_eip8130_request_observes_pending_denim_time() -> eyre::Result<()> {
+    // Genesis is block 0 at 1s with Denim active, so block n is scheduled at 1s + 200ms * n.
+    let (harness, client) = setup().await?;
+    let alice: Address = Account::Alice.address();
+    let guard = address!("0x00000000000000000000000000000000000000ad");
+    // Reverts unless `BaseTime.timestampMs()` equals the first calldata word.
+    let guard_code = format!(
+        "0x63{}60e01b600052602060006004600073{}5afa5060005160003514603a5760006000fd5b00",
+        hex::encode(BaseTime::TIMESTAMP_MS_SELECTOR),
+        hex::encode(Predeploys::BASE_TIME),
+    );
+    let estimate = async |timestamp_ms: u64, base_time_diff: Option<u64>| {
+        let mut overrides = json!({ (guard.to_string()): { "code": guard_code } });
+        if let Some(millis) = base_time_diff {
+            overrides[Predeploys::BASE_TIME.to_string()] = json!({
+                "stateDiff": { (B256::ZERO.to_string()): B256::from(U256::from(millis)) }
+            });
+        }
+        let request = json!({
+            "from": alice,
+            "calls": [[{ "to": guard, "data": format!("0x{timestamp_ms:064x}") }]]
+        });
+        client.request::<_, U256>("eth_estimateGas", (request, "pending", overrides)).await
+    };
+    let build_block = async |number: u64, millis_part: u16| {
+        let base_time = BaseTimeUpdateTx::new(millis_part)?.into_deposit_tx(number);
+        harness
+            .prepare_unsafe_block(vec![L1_BLOCK_INFO_DEPOSIT_TX, base_time.encoded_2718().into()])
+            .await
+    };
+
+    // Same-second successor of genesis, then second rollover after block 4.
+    for (latest, timestamp_ms) in [(0, 1_200), (4, 2_000)] {
+        while harness.latest_block().number < latest {
+            let number = harness.latest_block().number + 1;
+            let prepared = build_block(number, u16::try_from(number * 200)?).await?;
+            harness
+                .engine()
+                .update_forkchoice(prepared.parent_hash, prepared.new_block_hash, None)
+                .await?;
+            harness.wait_for_header(prepared.new_block_hash, prepared.new_block_number).await?;
+        }
+        assert!(estimate(timestamp_ms, None).await? > U256::ZERO);
+        let stale = estimate(timestamp_ms - 200, None).await;
+        assert!(stale.unwrap_err().to_string().contains("revert"), "must observe {timestamp_ms}");
+    }
+
+    // User state overrides take precedence over the forecast.
+    assert!(estimate(2_300, Some(300)).await? > U256::ZERO);
+
+    // An executed pending block is used as-is rather than advanced again.
+    build_block(5, 0).await?;
+    assert!(estimate(2_000, None).await? > U256::ZERO);
+    assert!(estimate(2_200, None).await.is_err());
     Ok(())
 }

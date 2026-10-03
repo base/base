@@ -18,8 +18,8 @@ use reth_rpc_eth_types::EthApiError;
 /// (protocol nonce, expiring-nonce sentinel, real 2D channel).
 ///
 /// **Fork-agnostic on purpose.** This helper does not check that the
-/// Zenith fork has activated. Callers must enforce that themselves
-/// (typically via [`crate::Eip8130ZenithGate`]) before invoking
+/// Everest fork has activated. Callers must enforce that themselves
+/// (typically via [`crate::Eip8130EverestGate`]) before invoking
 /// [`Self::read`].
 #[derive(Debug)]
 pub struct ChannelNonceReader;

@@ -1,142 +1,118 @@
-//! Integration tests for L1 and safe L2 head handling in [`BatchDriver`].
+//! Integration tests for safe L2 head handling in [`BatchDriver`].
 
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::time::Duration;
 
 use alloy_primitives::B256;
 use base_batcher_core::{
     BatchDriverError, DerivationStatus,
     test_utils::{
-        DriverFixture, ImmediateConfirmTxManager, Recorded, TrackingPipeline, TrackingSource,
+        BlockStub, DriverFixture, PipelineCall, ScriptedTxManager, TrackingPipeline, TrackingSource,
     },
 };
-use base_batcher_source::test_utils::ChannelL1HeadSource;
+use base_batcher_encoder::DerivationReconciliation;
 use base_protocol::BlockInfo;
 use base_runtime::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
 };
 
-fn safe_head(number: u64) -> BlockInfo {
-    BlockInfo { hash: B256::with_last_byte(number as u8), number, ..Default::default() }
-}
-
-/// When the L1 head source delivers a new head, the driver must call
-/// `advance_l1_head` on the pipeline with the new value.
-#[test]
-fn test_l1_head_source_advances_pipeline() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-
-        let (l1_source, l1_tx) = ChannelL1HeadSource::new();
-
-        let (driver, _handles) =
-            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-                .l1_head_source(l1_source)
-                .build();
-        let handle = ctx.spawn(driver.run());
-
-        // Send a new L1 head via the channel.
-        l1_tx.send(42).unwrap();
-        ctx.sleep(Duration::from_millis(50)).await;
-        ctx.cancel();
-
-        assert!(handle.await.unwrap().is_ok());
-        let r = recorded.lock().unwrap();
-        assert!(
-            r.l1_heads.contains(&42),
-            "advance_l1_head must be called with the source value, got {:?}",
-            r.l1_heads
-        );
-    });
-}
-
+/// A lower safe head, a different block at the same height and a safe head missing from the
+/// buffered chain each reset the pipeline and restart the source from the new safe head. The
+/// driver catches the first two itself and sends only the third through reconciliation.
 #[test]
 fn test_safe_head_conflicts_reset_pipeline_and_source() {
     Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_safe_head_match(false);
+        let pipeline =
+            TrackingPipeline::new().with_reconciliation(DerivationReconciliation::SafeHeadMismatch);
+        let recorded = pipeline.recorded();
         let (source, catchup_heads) = TrackingSource::new();
 
         let (driver, handles) =
-            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
                 .source(source)
-                .safe_head(safe_head(10))
+                .safe_head(BlockStub::info(10))
                 .build();
         let handle = ctx.spawn(driver.run());
         let status_tx = handles.derivation_status_tx;
 
-        let regressed = safe_head(5);
+        let regressed = BlockStub::info(5);
         let replacement =
             BlockInfo { hash: B256::repeat_byte(0xff), number: 5, ..Default::default() };
-        status_tx.send(DerivationStatus::from_safe_l2(regressed)).await.unwrap();
-        status_tx.send(DerivationStatus::from_safe_l2(replacement)).await.unwrap();
-        status_tx.send(DerivationStatus::from_safe_l2(safe_head(10))).await.unwrap();
+        for safe_l2 in [regressed, replacement, BlockStub::info(10)] {
+            status_tx
+                .send(DerivationStatus { safe_l2, current_l1: BlockStub::info(1) })
+                .await
+                .unwrap();
+        }
         ctx.sleep(Duration::from_millis(50)).await;
         ctx.cancel();
 
         assert!(handle.await.unwrap().is_ok());
-        let recorded = recorded.lock().unwrap();
-        assert_eq!(recorded.resets, 3);
-        assert_eq!(recorded.safe_numbers, vec![10]);
-        assert_eq!(*catchup_heads.lock().unwrap(), vec![regressed, replacement, safe_head(10)]);
+        assert_eq!(
+            recorded.lock().unwrap().calls,
+            [
+                PipelineCall::Reset,
+                PipelineCall::Reset,
+                PipelineCall::ReconcileDerivation { safe_l2: 10, current_l1: 1 },
+                PipelineCall::Reset,
+                PipelineCall::Flush,
+            ]
+        );
+        assert_eq!(*catchup_heads.lock().unwrap(), [regressed, replacement, BlockStub::info(10)]);
     });
 }
 
+/// When derivation moves past a confirmed channel without making its blocks safe, the driver
+/// resets the pipeline and restarts the source from the safe head, so those blocks are batched
+/// again.
 #[test]
-fn test_derivation_cursor_advance_replays_stalled_channel() {
+fn test_stalled_channel_resets_pipeline_and_source() {
     Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_derivation_stalled(true);
+        let pipeline =
+            TrackingPipeline::new().with_reconciliation(DerivationReconciliation::StalledChannel);
+        let recorded = pipeline.recorded();
         let (source, catchup_heads) = TrackingSource::new();
-        let safe_l2 = safe_head(10);
+        let safe_l2 = BlockStub::info(10);
 
         let (driver, handles) =
-            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
                 .source(source)
                 .safe_head(safe_l2)
                 .build();
         let handle = ctx.spawn(driver.run());
         let status_tx = handles.derivation_status_tx;
 
-        status_tx.send(DerivationStatus::new(safe_l2, safe_head(50))).await.unwrap();
+        status_tx
+            .send(DerivationStatus { safe_l2, current_l1: BlockStub::info(50) })
+            .await
+            .unwrap();
         ctx.sleep(Duration::from_millis(50)).await;
         ctx.cancel();
 
         assert!(handle.await.unwrap().is_ok());
-        let recorded = recorded.lock().unwrap();
-        assert_eq!(recorded.safe_numbers, vec![safe_l2.number]);
-        assert_eq!(recorded.resets, 1);
-        assert_eq!(*catchup_heads.lock().unwrap(), vec![safe_l2]);
+        // Reconciliation runs once, the reset follows, and the shutdown flush ends the log.
+        assert_eq!(
+            recorded.lock().unwrap().calls,
+            [
+                PipelineCall::ReconcileDerivation { safe_l2: safe_l2.number, current_l1: 50 },
+                PipelineCall::Reset,
+                PipelineCall::Flush,
+            ]
+        );
+        assert_eq!(*catchup_heads.lock().unwrap(), [safe_l2]);
     });
 }
 
+/// The driver fails when the derivation-status source stops, instead of batching on without
+/// ever learning the safe head again.
 #[test]
 fn test_derivation_status_sender_drop_is_fatal() {
     Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
         let (driver, handles) =
-            DriverFixture::new(ctx, pipeline, ImmediateConfirmTxManager { l1_block: 1 }).build();
+            DriverFixture::new(ctx, TrackingPipeline::new(), ScriptedTxManager::confirming_at(1))
+                .build();
         drop(handles);
 
         assert!(matches!(driver.run().await, Err(BatchDriverError::DerivationStatusSourceClosed)));
-    });
-}
-
-#[test]
-fn test_derivation_status_sender_drop_during_shutdown_is_clean() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let pipeline = TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default())));
-        let (driver, handles) =
-            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-                .build();
-
-        ctx.cancel();
-        drop(handles);
-        assert!(driver.run().await.is_ok());
     });
 }

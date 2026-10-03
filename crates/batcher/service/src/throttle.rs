@@ -7,6 +7,7 @@ use jsonrpsee::{
     http_client::{HttpClient, HttpClientBuilder},
     proc_macros::rpc,
 };
+use url::Url;
 
 /// Client-side jsonrpsee trait for the miner API extension.
 #[rpc(client, namespace = "miner")]
@@ -22,48 +23,18 @@ trait MinerApiExt {
 ///
 /// Connects to the standard (unauthenticated) HTTP RPC port. The `miner`
 /// namespace must be enabled on the target node (`--http.api=...,miner`).
-///
-/// Holds one `HttpClient` per configured L2 endpoint. On every call,
-/// endpoints are tried in order until one succeeds; a failure logs a warning
-/// and rotates to the next endpoint without failing the throttle request.
-/// This is the only RPC path with built-in per-call failover — other paths
-/// only fail over at connection time.
 #[derive(Debug)]
 pub struct RpcThrottleClient {
-    /// Per-endpoint clients in caller-supplied priority order.
-    clients: Vec<EndpointClient>,
-}
-
-#[derive(Debug)]
-struct EndpointClient {
-    /// The original URL, retained for log lines so operators can identify
-    /// which endpoint failed without indexing into the list externally.
-    url: String,
     client: HttpClient,
 }
 
 impl RpcThrottleClient {
-    /// Build an [`RpcThrottleClient`] targeting one or more URLs.
-    ///
-    /// Each URL produces an underlying `HttpClient`. URLs are tried in the
-    /// supplied order on every throttle call; the first that returns a
-    /// successful `miner_setMaxDASize` response wins. The list must be
-    /// non-empty.
-    pub fn new(urls: &[impl AsRef<str>]) -> eyre::Result<Self> {
-        if urls.is_empty() {
-            eyre::bail!("RpcThrottleClient requires at least one endpoint URL");
-        }
-        let clients = urls
-            .iter()
-            .map(|url| {
-                let url = url.as_ref();
-                HttpClientBuilder::default()
-                    .build(url)
-                    .map(|client| EndpointClient { url: url.to_string(), client })
-                    .map_err(|e| eyre::eyre!("failed to build throttle client for {url}: {e}"))
-            })
-            .collect::<eyre::Result<Vec<_>>>()?;
-        Ok(Self { clients })
+    /// Build an [`RpcThrottleClient`] targeting `url`.
+    pub fn new(url: &Url) -> eyre::Result<Self> {
+        let client = HttpClientBuilder::default()
+            .build(url.as_str())
+            .map_err(|e| eyre::eyre!("failed to build throttle client: {e}"))?;
+        Ok(Self { client })
     }
 }
 
@@ -74,38 +45,15 @@ impl ThrottleClient for RpcThrottleClient {
         max_block_size: u64,
     ) -> BoxFuture<'_, Result<(), Box<dyn std::error::Error + Send + Sync>>> {
         Box::pin(async move {
-            let mut last_err: Option<String> = None;
-            for endpoint in &self.clients {
-                match endpoint
-                    .client
-                    .set_max_da_size(U64::from(max_tx_size), U64::from(max_block_size))
-                    .await
-                {
-                    Ok(true) => return Ok(()),
-                    Ok(false) => {
-                        // The node accepted the call but rejected the limits.
-                        // Don't try the next endpoint: it would likely reject
-                        // them too, and we want the operator to see the
-                        // explicit "false" response instead of a transport
-                        // error from a fallback endpoint.
-                        return Err("miner_setMaxDASize returned false".into());
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            url = %endpoint.url,
-                            error = %e,
-                            "throttle endpoint failed, trying next"
-                        );
-                        last_err = Some(e.to_string());
-                    }
-                }
+            let accepted = self
+                .client
+                .set_max_da_size(U64::from(max_tx_size), U64::from(max_block_size))
+                .await?;
+            // A node that accepts the call but answers `false` refused the limits.
+            if !accepted {
+                return Err("miner_setMaxDASize returned false".into());
             }
-            Err(format!(
-                "all {} throttle endpoints failed; last error: {}",
-                self.clients.len(),
-                last_err.unwrap_or_else(|| "none".to_string()),
-            )
-            .into())
+            Ok(())
         })
     }
 }
@@ -120,27 +68,29 @@ mod tests {
         format!(r#"{{"jsonrpc":"2.0","id":0,"result":{result}}}"#)
     }
 
+    /// The limits go out as `miner_setMaxDASize` with the tx and block sizes as hex quantities.
     #[tokio::test]
     async fn set_max_da_size_sends_correct_request() {
         let server = MockServer::start_async().await;
         let mock = server
             .mock_async(|when, then| {
-                when.method(POST)
-                    .path("/")
-                    .json_body_includes(r#"{"method":"miner_setMaxDASize"}"#);
+                when.method(POST).path("/").json_body_includes(
+                    r#"{"method":"miner_setMaxDASize","params":["0x96","0x4e20"]}"#,
+                );
                 then.status(200)
                     .header("content-type", "application/json")
                     .body(json_rpc_response("true"));
             })
             .await;
 
-        let client = RpcThrottleClient::new(&[server.url("/")]).unwrap();
+        let client = RpcThrottleClient::new(&server.url("/").parse().unwrap()).unwrap();
         client.set_max_da_size(150, 20_000).await.unwrap();
         mock.assert_async().await;
     }
 
+    /// A node that answers `false` refused the limits, which is an error.
     #[tokio::test]
-    async fn set_max_da_size_false_return_is_error() {
+    async fn set_max_da_size_false_return_is_an_error() {
         let server = MockServer::start_async().await;
         server
             .mock_async(|when, then| {
@@ -151,57 +101,9 @@ mod tests {
             })
             .await;
 
-        let client = RpcThrottleClient::new(&[server.url("/")]).unwrap();
-        assert!(
-            client.set_max_da_size(150, 20_000).await.is_err(),
-            "false response must be treated as an error"
-        );
-    }
+        let client = RpcThrottleClient::new(&server.url("/").parse().unwrap()).unwrap();
+        let error = client.set_max_da_size(150, 20_000).await.unwrap_err();
 
-    #[tokio::test]
-    async fn set_max_da_size_transport_error_propagates() {
-        // Port 1 has no listener — connection will fail.
-        let client = RpcThrottleClient::new(&["http://127.0.0.1:1"]).unwrap();
-        assert!(
-            client.set_max_da_size(150, 20_000).await.is_err(),
-            "connection failure must propagate as error"
-        );
-    }
-
-    #[tokio::test]
-    async fn set_max_da_size_falls_over_to_second_endpoint() {
-        // First endpoint refuses connections; second endpoint accepts.
-        let server = MockServer::start_async().await;
-        server
-            .mock_async(|when, then| {
-                when.method(POST).path("/");
-                then.status(200)
-                    .header("content-type", "application/json")
-                    .body(json_rpc_response("true"));
-            })
-            .await;
-
-        let client = RpcThrottleClient::new(&["http://127.0.0.1:1", &server.url("/")]).unwrap();
-        client
-            .set_max_da_size(150, 20_000)
-            .await
-            .expect("failover from a dead first endpoint must succeed via the second");
-    }
-
-    #[tokio::test]
-    async fn set_max_da_size_all_endpoints_fail() {
-        let client = RpcThrottleClient::new(&["http://127.0.0.1:1", "http://127.0.0.1:2"]).unwrap();
-        let err = client.set_max_da_size(150, 20_000).await.unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("all 2 throttle endpoints failed"),
-            "error must list endpoint count, got: {msg}"
-        );
-    }
-
-    #[test]
-    fn new_rejects_empty_url_list() {
-        let urls: &[&str] = &[];
-        assert!(RpcThrottleClient::new(urls).is_err(), "empty endpoint list must be rejected");
+        assert_eq!(error.to_string(), "miner_setMaxDASize returned false");
     }
 }

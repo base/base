@@ -76,18 +76,6 @@ pub struct BuilderConfig {
     /// Transactions in this cache are skipped by the iterator without re-evaluation.
     pub rejection_cache: RejectionCache,
 
-    /// URL of the audit-archiver RPC endpoint for rejected transaction forwarding.
-    /// When set, rejected transactions will be forwarded to this endpoint.
-    pub audit_archiver_url: Option<String>,
-
-    /// Bounded channel capacity for rejected transaction forwarding.
-    /// When the channel is full, new rejected transactions are dropped.
-    pub rejected_tx_channel_size: usize,
-
-    /// Maximum number of rejected transactions accumulated per block before
-    /// further rejections are dropped. Prevents unbounded `ExecutionInfo` growth.
-    pub max_rejected_txs_per_block: usize,
-
     /// Whether to drop EIP-8130 transactions whose captured authorization
     /// predicates are positively stale before executing them.
     pub manifest_precheck_enabled: bool,
@@ -131,9 +119,6 @@ impl core::fmt::Debug for BuilderConfig {
             .field("predicate_bucket_ordered_threshold", &self.predicate_bucket_ordered_threshold)
             .field("metering_provider", &self.metering_provider)
             .field("rejection_cache_size", &self.rejection_cache.entry_count())
-            .field("audit_archiver_url", &self.audit_archiver_url)
-            .field("rejected_tx_channel_size", &self.rejected_tx_channel_size)
-            .field("max_rejected_txs_per_block", &self.max_rejected_txs_per_block)
             .field("manifest_precheck_enabled", &self.manifest_precheck_enabled)
             .field("state_provider_metrics", &self.state_provider_metrics)
             .finish()
@@ -160,9 +145,6 @@ impl Default for BuilderConfig {
             predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
             metering_provider: Arc::new(NoopMeteringProvider),
             rejection_cache: RejectionCache::default(),
-            audit_archiver_url: None,
-            rejected_tx_channel_size: 500,
-            max_rejected_txs_per_block: 500,
             manifest_precheck_enabled: true,
             state_provider_metrics: false,
         }

@@ -205,8 +205,6 @@ AUDIT_RPC_PORT=9100
 AUDIT_METRICS_PORT=9102
 
 # Transaction Observability Infrastructure Ports
-MINIO_API_PORT=7000
-MINIO_CONSOLE_PORT=7001
 TRANSACTION_EVENTS_POSTGRES_PORT=5434
 TRANSACTION_EVENTS_VECTOR_METRICS_PORT=8686
 TRANSACTION_EVENTS_VECTOR_IMAGE=timberio/vector:0.47.0-debian
@@ -234,9 +232,11 @@ L2_BASE_BERYL_BLOCK=21
 L2_BASE_COBALT_BLOCK=22
 # Base Denim activates at block 25 by default. Override with another non-negative block number.
 L2_BASE_DENIM_BLOCK=25
+# Optional: set to a non-negative block number to schedule Base Everest (EIP-8130) in devnet.
+# `just devnet up everest` and `just devnet up zenith` default this to 100.
+# Leave unset to avoid setting base.everest during genesis generation.
+# L2_BASE_EVEREST_BLOCK=100
 # Optional: set to a non-negative block number to schedule the genesis-only Base Zenith gate
 # used for future hardfork feature testing. `just devnet up zenith` defaults this to 100.
 # Leave unset to avoid setting base.zenith during genesis generation.
 # L2_BASE_ZENITH_BLOCK=100
-
-BUILDER_MAX_REJECTED_TXS_PER_BLOCK=20000

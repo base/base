@@ -21,7 +21,10 @@ use eyre::{Context, Result, bail, ensure, eyre};
 use tracing::{info, warn};
 use url::Url;
 
-use crate::{config::Config, metrics::Scrape};
+use crate::{
+    config::{Config, Scenario},
+    metrics::Scrape,
+};
 
 /// Wei granted to each throwaway account on the fork. Orders of magnitude more
 /// than a dispute costs, and worthless outside the pod.
@@ -130,18 +133,39 @@ impl ChallengerE2e {
         )
         .await?;
 
-        Self::stage_dual_proof(&config, &fork_url, &verifier, &provider, &driver, game_b).await?;
+        if config.scenario == Scenario::All {
+            Self::stage_dual_proof(&config, &fork_url, &verifier, &provider, &driver, game_b)
+                .await?;
+        }
 
         Self::release_challenger(&fork_url, &challenger)?;
         Self::await_first_scan(&config).await?;
 
         Self::assert_quiet_on_valid_games(&config).await?;
 
-        let path1 =
+        let (path1, checkpoint) =
             Self::run_path1(&config, &fork_url, &verifier, &provider, &driver, &challenger, game_a)
                 .await?;
         Self::assert_game_a_settled(&config, &verifier, &provider, &challenger, game_a, path1)
             .await?;
+        if config.scenario == Scenario::Path1Path2 {
+            ensure!(
+                matches!(path1, Path1Outcome::ZkChallenge),
+                "Path 2 dispute requires Path 1 to land as a ZK challenge"
+            );
+            Self::run_path2(
+                &config,
+                Self::fork_config(&config, &fork_url, &driver, game_a),
+                &verifier,
+                &provider,
+                &challenger,
+                game_a,
+                checkpoint,
+            )
+            .await?;
+            Self::assert_bystanders_untouched(&verifier, &bystanders).await?;
+            return Ok(());
+        }
         Self::run_path4(&config, &fork_url, &verifier, &provider, &driver, &challenger, game_b)
             .await?;
 
@@ -467,7 +491,7 @@ impl ChallengerE2e {
         driver: &PrivateKeySigner,
         challenger: &PrivateKeySigner,
         game: Candidate,
-    ) -> Result<Path1Outcome> {
+    ) -> Result<(Path1Outcome, Checkpoint)> {
         let fork_config = Self::fork_config(config, fork_url, driver, game);
         // Before the patch, not after. `Checkpoint::patch` mutates the game and
         // then reads it back several times; a challenger that scans during
@@ -485,7 +509,7 @@ impl ChallengerE2e {
             "corrupted intermediate output root; waiting for the challenger to dispute"
         );
 
-        Self::await_dispute(
+        let outcome = Self::await_dispute(
             config,
             verifier,
             provider,
@@ -494,7 +518,8 @@ impl ChallengerE2e {
             nonce,
             checkpoint.index + 1,
         )
-        .await
+        .await?;
+        Ok((outcome, checkpoint))
     }
 
     /// The challenger must leave game A alone once it has acted on it.
@@ -511,9 +536,8 @@ impl ChallengerE2e {
     /// legitimate challenge, or re-nullifying an already-nullified game, is
     /// invisible to the state comparison alone.
     ///
-    /// Path 2 *dispute* (fraudulent ZK against a correct TEE root) is not
-    /// staged: the real prover cannot produce a wrong-root proof the real
-    /// verifier accepts.
+    /// The `path1-path2` scenario restores the canonical root after this
+    /// window, turning the recorded challenge into Path 2's fraudulent case.
     async fn assert_game_a_settled(
         config: &Config,
         verifier: &AggregateVerifierContractClient,
@@ -561,6 +585,54 @@ impl ChallengerE2e {
         );
 
         info!(game = %game.address, claim, "the settle claim held");
+        Ok(())
+    }
+
+    /// Path 2 dispute: restore the correct TEE root underneath the recorded
+    /// Path 1 challenge, then require the challenger to nullify that challenge.
+    async fn run_path2(
+        config: &Config,
+        fork_config: ForkConfig,
+        verifier: &AggregateVerifierContractClient,
+        provider: &RootProvider,
+        challenger: &PrivateKeySigner,
+        game: Candidate,
+        checkpoint: Checkpoint,
+    ) -> Result<()> {
+        let nonce = provider.get_transaction_count(challenger.address()).await?;
+        checkpoint
+            .restore(&fork_config, verifier)
+            .await
+            .context("failed to restore the canonical root for Path 2")?;
+        info!(
+            game = %game.address,
+            challenged_index = checkpoint.index,
+            "restored the correct root; waiting for Path 2"
+        );
+
+        let state = Self::poll_until(
+            config,
+            config.dispute_timeout,
+            "the challenger to nullify the fraudulent ZK challenge",
+            || async {
+                let state = Self::read_game_state(verifier, game.address).await?;
+                Ok((state.zk_prover == Address::ZERO && state.countered_index == 0)
+                    .then_some(state))
+            },
+        )
+        .await?;
+        ensure!(
+            state.tee_prover != Address::ZERO,
+            "Path 2 cleared the TEE proof instead of the fraudulent ZK challenge"
+        );
+        Self::assert_challenger_acted(
+            provider,
+            challenger,
+            nonce,
+            "Path 2 fraudulent challenge nullified",
+        )
+        .await?;
+        info!(game = %game.address, "Path 2: fraudulent ZK challenge nullified");
         Ok(())
     }
 

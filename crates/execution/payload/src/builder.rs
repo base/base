@@ -255,10 +255,13 @@ where
     }
 
     /// Computes the witness for the payload.
+    ///
+    /// Stops early with [`BasePayloadBuilderError::Cancelled`] once `cancel` is cancelled.
     pub fn payload_witness(
         &self,
         parent: SealedHeader<N::BlockHeader>,
         attributes: Attrs::RpcPayloadAttributes,
+        cancel: CancelOnDrop,
     ) -> Result<ExecutionWitness, PayloadBuilderError>
     where
         Attrs: Attributes,
@@ -273,7 +276,7 @@ where
             builder_config: self.config.clone(),
             chain_spec: self.client.chain_spec(),
             config,
-            cancel: Default::default(),
+            cancel,
             best_payload: Default::default(),
         };
 
@@ -544,6 +547,10 @@ impl<Txs> Builder<'_, Txs> {
         Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = N::SignedTx>>,
         Attrs: Attributes<Transaction = N::SignedTx>,
     {
+        if ctx.cancel.is_cancelled() {
+            return Err(PayloadBuilderError::other(BasePayloadBuilderError::Cancelled));
+        }
+
         let mut db = State::builder()
             .with_database(StateProviderDatabase::new(&state_provider))
             .with_bundle_update()
@@ -555,6 +562,10 @@ impl<Txs> Builder<'_, Txs> {
         builder.apply_pre_execution_changes()?;
         ctx.execute_sequencer_transactions(&mut builder)?;
         builder.into_executor().apply_post_execution_changes()?;
+
+        if ctx.cancel.is_cancelled() {
+            return Err(PayloadBuilderError::other(BasePayloadBuilderError::Cancelled));
+        }
 
         if ctx.chain_spec.is_isthmus_active_at_timestamp(ctx.attributes().timestamp()) {
             // force load `L2ToL1MessagePasser.sol` so l2 withdrawals root can be computed even if
@@ -987,8 +998,7 @@ where
             }
 
             let has_validity_predicates = !tx.validity_predicates().is_empty();
-            let coinbase_tip =
-                tx.as_eip8130().and_then(|signed| CoinbaseTip::decode(signed.tx(), tx.sender()));
+            let coinbase_tip = tx.as_eip8130().and_then(|signed| CoinbaseTip::decode(signed.tx()));
             let has_coinbase_tip = coinbase_tip.is_some();
             if has_validity_predicates {
                 validity_consideration_index += 1;
@@ -2098,6 +2108,18 @@ mod tests {
             build_pool_payload(ctx, NoopPayloadTransactions::<BasePooledTransaction>::default()),
             BuildOutcomeKind::Cancelled
         ));
+    }
+
+    #[test]
+    fn cancelled_ctx_stops_witness() {
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        ctx.config.attributes.transactions = vec![sequencer_attribute_tx(&pool_transaction(0))];
+        drop(ctx.cancel.clone());
+
+        let err = Builder::new(|_| NoopPayloadTransactions::<BasePooledTransaction>::default())
+            .witness(test_state_provider(), NoopProvider::default(), &ctx)
+            .unwrap_err();
+        assert!(err.to_string().contains("cancelled"), "{err}");
     }
 
     #[derive(Debug)]

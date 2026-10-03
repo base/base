@@ -11,28 +11,18 @@ use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, TransactionInput, TransactionRequest};
 use base_common_consensus::{
     AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, Eip8130Constants, Eip8130Contracts,
-    TxDeposit,
+    Eip8130PayerSerde, TxDeposit,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::Transaction;
 
-/// An enshrined EIP-8130 authenticator an estimate can price as a flat leaf.
+/// Named EIP-8130 authenticator selectors.
 ///
-/// Estimation never verifies a signature: the scheme only selects which
-/// enshrined authenticator the intrinsic-gas schedule charges (the
-/// authenticator's execution gas plus the calldata cost of its authentication
-/// payload), and provides the default secp256k1 authorization used when a
-/// blob is absent.
-///
-/// This does **not** enumerate every authenticator selector a `sender_auth` /
-/// `payer_auth` blob's prefix may recognize — see
-/// [`base_common_consensus::Eip8130Contracts::DELEGATE_AUTHENTICATOR`], a
-/// recognized selector that is a structured 3-segment blob (delegate
-/// account + a nested leaf authenticator) rather than a flat leaf, so it
-/// can't be a variant here. Prefix recognition (`is_prefixed_auth` in
-/// `crate::reth`) checks the protocol's actual canonical authenticator set
-/// instead of this enum for that reason.
+/// [`Self::Secp256k1`] sizes the default authorization when a blob is absent.
+/// P256, `WebAuthn`, and the delegate authenticator are priced when the chain
+/// supports them; otherwise `eth_estimateGas` rejects them, matching txpool
+/// admission.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Eip8130AuthScheme {
@@ -77,11 +67,8 @@ impl Eip8130AuthScheme {
     /// `eip8130_auth_scheme_all_lists_every_variant` test for the
     /// compile-time guard that keeps this in sync with the enum.
     ///
-    /// This is *not* the full set of authenticator selectors a `sender_auth`
-    /// / `payer_auth` blob's prefix may recognize — see
-    /// [`base_common_consensus::Eip8130Contracts::DELEGATE_AUTHENTICATOR`],
-    /// which prefix recognition (`is_prefixed_auth` in `crate::reth`) checks
-    /// for separately since it isn't a flat leaf scheme.
+    /// The variants other than [`Self::Secp256k1`] are accepted only where the
+    /// chain supports them.
     pub const ALL: [Self; 3] = [Self::Secp256k1, Self::P256, Self::WebAuthn];
 }
 
@@ -113,23 +100,29 @@ pub struct Eip8130RequestFields {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_changes: Option<Vec<AccountChange>>,
     /// The phased call batches dispatched by the sender account.
+    ///
+    /// Alternatively, a single call can be given as the standard top-level
+    /// `to` / `value` / `data`. Setting both `calls` and any of those is
+    /// rejected as ambiguous.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub calls: Option<Vec<Vec<Call>>>,
-    /// Optional lower bound of the validity window (Unix milliseconds; `0` or
-    /// absent means no lower bound). Checked as `block.timestamp * 1000 >=
-    /// valid_after`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Optional lower bound of the validity window, in Unix seconds or
+    /// milliseconds (the unit is detected from the magnitude; `0` or absent
+    /// means no lower bound). Checked as `block.timestamp * 1000 >=` the
+    /// bound in milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub valid_after: Option<u64>,
-    /// Optional upper bound of the validity window (Unix milliseconds; `0` or
-    /// absent means no expiry). Required (non-zero) for nonce-free transactions.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Optional upper bound of the validity window, in Unix seconds or
+    /// milliseconds (the unit is detected from the magnitude; `0` or absent
+    /// means no expiry). Required (non-zero) for nonce-free transactions.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub valid_before: Option<u64>,
     /// Opaque, non-executed transaction metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Bytes>,
     /// The EIP-8130 sender account the batch dispatches from — the wire-level
-    /// `sender` identity that drives actor resolution, policy lookup, and
-    /// auto-delegation. Interchangeable with the standard `from`: the estimate
+    /// `sender` identity that drives actor resolution and policy lookup.
+    /// Interchangeable with the standard `from`: the estimate
     /// resolves the account as `sender` or `from`, and rejects a request where
     /// both are present but disagree, or where neither is set, as
     /// `INVALID_PARAMS`. A declared `sender` also selects the configured-account
@@ -146,10 +139,11 @@ pub struct Eip8130RequestFields {
     ///
     /// - A bare secp256k1 signature prices the default-EOA path: the account
     ///   authenticates with a k1 key, exactly as for a 1559 transaction.
-    /// - `authenticator(20) || data` prefixed with a recognized enshrined
-    ///   authenticator (k1, [`Eip8130AuthScheme::P256`] / `WebAuthn`, or
-    ///   [`base_common_consensus::Eip8130Contracts::DELEGATE_AUTHENTICATOR`])
+    /// - `authenticator(20) || data` prefixed with the native k1 authenticator
     ///   prices the configured-account path.
+    /// - A prefix that names P256, `WebAuthn`, or the delegate authenticator is
+    ///   priced when the chain supports it and rejected otherwise, matching
+    ///   txpool admission.
     ///
     /// An absent blob defaults by intent: a declared `sender` synthesizes a
     /// k1-prefixed configured-account authorization; a `from`-only request
@@ -159,18 +153,30 @@ pub struct Eip8130RequestFields {
     /// filler-byte stub of the right length); you need not sign first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_auth: Option<Bytes>,
-    /// Sponsoring payer account. When set, the estimate includes payer
+    /// Sponsoring payer account, or the zero address (also accepted as `"0x00"`)
+    /// for open payer mode. When set, the estimate includes payer
     /// authentication gas (metered on top of the gas limit, as in execution).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "Eip8130PayerSerde::deserialize"
+    )]
     pub payer: Option<Address>,
-    /// Raw payer authentication blob (`authenticator(20) || data`) whose shape
-    /// is priced when a `payer` is declared. Absent defaults to a representative
-    /// secp256k1 payer authorization. Unlike `sender_auth`, a supplied blob is
-    /// always the prefixed form and its leading 20 bytes must be a recognized
-    /// enshrined authenticator selector (k1, [`Eip8130AuthScheme::P256`] /
-    /// `WebAuthn`, or
-    /// [`base_common_consensus::Eip8130Contracts::DELEGATE_AUTHENTICATOR`]); an
-    /// unrecognized selector is rejected as `INVALID_PARAMS` rather than priced.
+    /// Raw payer authentication blob whose shape is priced when a `payer` is
+    /// declared.
+    ///
+    /// For a named payer this is `authenticator(20) || data`, and absent
+    /// defaults to a representative secp256k1 payer authorization. A supplied
+    /// blob's leading 20 bytes must name the native k1 authenticator or a
+    /// canonical authenticator the chain supports. Any other selector is
+    /// rejected as `INVALID_PARAMS` rather than priced, and a canonical one the
+    /// chain does not support is rejected by the simulation.
+    ///
+    /// In open payer mode this is the payer's raw 65-byte signature, from which
+    /// the payer is recovered. It is optional: before any payer has signed, an
+    /// absent (or unrecoverable) signature is priced as 65 bytes and the payer
+    /// is simulated as the placeholder address
+    /// `0x0000000000000000000000000000000000008130`, never as the sender.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer_auth: Option<Bytes>,
     /// Optional acting-actor hint for simulation. Estimation never recovers a

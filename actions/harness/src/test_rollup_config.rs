@@ -177,6 +177,14 @@ impl TestRollupConfigBuilder {
         self
     }
 
+    /// Sets the Everest activation timestamp.
+    ///
+    /// Everest is a standalone Base-specific fork, independent of the inherited fork cascade.
+    pub const fn with_everest_at(mut self, t: u64) -> Self {
+        self.config.upgrades.base.everest = Some(t);
+        self
+    }
+
     /// Sets the Zenith activation timestamp.
     ///
     /// Zenith is a standalone Base-specific fork, independent of the inherited fork cascade.

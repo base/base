@@ -78,7 +78,7 @@ Once `latest` tracks the chain tip, `eth_getProof` calls for every block within
 base-reth-node proofs prune \
   --datadir /path/to/reth-datadir \
   --proofs-history.storage-path /path/to/proofs-db \
-  --proofs-history.window 1296000
+  --proofs-history.window 6480000
 ```
 
 **Unwind** — recover from corruption by reverting to a specific block:
@@ -136,7 +136,7 @@ When the `metrics` feature is enabled, the proofs-history system exposes Prometh
 Per-operation `duration_seconds` histograms are recorded for: `store_account_branch`,
 `store_storage_branch`, `store_hashed_account`, `store_hashed_storage`,
 `trie_cursor_seek_exact`, `trie_cursor_seek`, `trie_cursor_next`, `trie_cursor_current`,
-`hashed_cursor_seek`, `hashed_cursor_next`.
+`hashed_cursor_seek`, `hashed_cursor_seek_exact`, `hashed_cursor_next`.
 
 ## Performance
 

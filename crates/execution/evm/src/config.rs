@@ -58,10 +58,12 @@ impl<H: alloy_consensus::BlockHeader> reth_rpc_eth_api::helpers::pending_block::
 {
     fn build_pending_env(
         parent: &SealedHeader<H>,
-        _block_overrides: Option<&alloy_rpc_types_eth::BlockOverrides>,
+        block_overrides: Option<&alloy_rpc_types_eth::BlockOverrides>,
     ) -> Self {
         Self {
-            timestamp: parent.timestamp().saturating_add(12),
+            timestamp: block_overrides
+                .and_then(|overrides| overrides.time)
+                .unwrap_or_else(|| parent.timestamp().saturating_add(12)),
             suggested_fee_recipient: parent.beneficiary(),
             prev_randao: B256::random(),
             gas_limit: parent.gas_limit(),
@@ -295,6 +297,59 @@ mod tests {
 
     fn test_evm_config() -> BaseEvmConfig {
         BaseEvmConfig::base(Arc::new(BaseChainSpec::mainnet()))
+    }
+
+    #[cfg(feature = "rpc")]
+    #[test]
+    fn pending_timestamp_override_selects_matching_fork_and_base_fee() {
+        use alloy_rpc_types_eth::BlockOverrides;
+        use reth_chainspec::{
+            BaseFeeParams, BaseFeeParamsKind, EthereumHardfork, ForkCondition, Hardfork,
+        };
+        use reth_primitives_traits::SealedHeader;
+        use reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv;
+
+        use super::BaseNextBlockEnvAttributes;
+
+        let mut chain_spec = BaseChainSpecBuilder::default()
+            .chain(0.into())
+            .genesis(Genesis::default())
+            .canyon_activated()
+            .with_fork(BaseUpgrade::Azul, ForkCondition::Timestamp(10))
+            .with_fork(EthereumHardfork::Osaka, ForkCondition::Timestamp(10))
+            .build();
+        chain_spec.inner.base_fee_params = BaseFeeParamsKind::Variable(
+            vec![
+                (EthereumHardfork::London.boxed(), BaseFeeParams::new(10, 2)),
+                (BaseUpgrade::Azul.boxed(), BaseFeeParams::new(50, 2)),
+            ]
+            .into(),
+        );
+        let config = BaseEvmConfig::base(Arc::new(chain_spec));
+        let parent = SealedHeader::seal_slow(Header {
+            timestamp: 1,
+            gas_limit: 20_000_000,
+            base_fee_per_gas: Some(1_000),
+            ..Default::default()
+        });
+
+        // An empty parent reduces the fee by 1/10 before Azul and 1/50 afterwards.
+        for (time, timestamp, upgrade, base_fee) in [
+            (Some(0), 0_u64, BaseUpgrade::Canyon, 900),
+            (Some(1), 1, BaseUpgrade::Canyon, 900),
+            (Some(9), 9, BaseUpgrade::Canyon, 900),
+            (Some(10), 10, BaseUpgrade::Azul, 980),
+            (Some(40), 40, BaseUpgrade::Azul, 980),
+            (None, 13, BaseUpgrade::Azul, 980),
+        ] {
+            let overrides = BlockOverrides { time, ..Default::default() };
+            let attributes =
+                BaseNextBlockEnvAttributes::build_pending_env(&parent, Some(&overrides));
+            let env = config.next_evm_env(&parent, &attributes).unwrap();
+            assert_eq!(env.block_env.timestamp, U256::from(timestamp), "override {time:?}");
+            assert_eq!(env.cfg_env.spec, BaseSpecId::new(upgrade), "override {time:?}");
+            assert_eq!(env.block_env.basefee, base_fee, "override {time:?}");
+        }
     }
 
     #[test]

@@ -16,9 +16,10 @@ use crate::L2BlockParityMetrics;
 type BaseRpcBlock = <Base as Network>::BlockResponse;
 
 /// Default maximum derived L2 blocks compared in one monitor pass.
-pub const DEFAULT_MAX_BLOCKS_PER_TICK: usize = 25;
+pub const DEFAULT_MAX_BLOCKS_PER_TICK: u64 = 25;
 
 /// Provider abstraction for derived L2 block parity checks.
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait L2BlockProvider: Send + Sync {
     /// Fetch the unsafe L2 head number from this provider.
@@ -129,22 +130,14 @@ pub struct L2BlockParityMonitorConfig {
     pub start_block: u64,
     /// Monitor polling interval.
     pub poll_interval: Duration,
-    /// Maximum number of blocks compared in one monitor pass.
-    pub max_blocks_per_tick: usize,
+    /// Maximum number of blocks compared in one monitor pass, greater than zero.
+    pub max_blocks_per_tick: u64,
 }
 
 impl L2BlockParityMonitorConfig {
     /// Creates a new monitor config with the default per-tick block cap.
     pub const fn new(start_block: u64, poll_interval: Duration) -> Self {
         Self { start_block, poll_interval, max_blocks_per_tick: DEFAULT_MAX_BLOCKS_PER_TICK }
-    }
-
-    /// Returns the validated per-tick block cap.
-    pub fn validated_max_blocks_per_tick(&self) -> eyre::Result<u64> {
-        if self.max_blocks_per_tick == 0 {
-            eyre::bail!("max_blocks_per_tick must be greater than 0");
-        }
-        Ok(self.max_blocks_per_tick as u64)
     }
 }
 
@@ -308,8 +301,8 @@ where
             return Ok(L2BlockParityStats::default());
         }
 
-        let max_blocks = self.config.validated_max_blocks_per_tick()?;
-        let last_block = common_unsafe.min(self.next_block.saturating_add(max_blocks - 1));
+        let last_block =
+            common_unsafe.min(self.next_block.saturating_add(self.config.max_blocks_per_tick - 1));
         let mut stats = L2BlockParityStats::default();
 
         for number in self.next_block..=last_block {
@@ -441,56 +434,22 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::{BTreeMap, BTreeSet},
-        sync::Arc,
-    };
-
-    use tokio::sync::Mutex;
+    use std::collections::BTreeMap;
 
     use super::*;
 
-    #[derive(Debug, Default)]
-    struct MockL2BlockProvider {
-        unsafe_head: u64,
-        safe_head: u64,
-        blocks: BTreeMap<u64, L2BlockSnapshot>,
-        fail_blocks: BTreeSet<u64>,
-    }
-
-    impl MockL2BlockProvider {
-        fn new(unsafe_head: u64, blocks: impl IntoIterator<Item = L2BlockSnapshot>) -> Self {
-            Self {
-                unsafe_head,
-                safe_head: unsafe_head,
-                blocks: blocks.into_iter().map(|block| (block.number, block)).collect(),
-                fail_blocks: BTreeSet::new(),
-            }
-        }
-
-        fn with_fail_blocks(mut self, fail_blocks: impl IntoIterator<Item = u64>) -> Self {
-            self.fail_blocks = fail_blocks.into_iter().collect();
-            self
-        }
-    }
-
-    #[async_trait]
-    impl L2BlockProvider for Arc<Mutex<MockL2BlockProvider>> {
-        async fn unsafe_block_number(&self) -> eyre::Result<u64> {
-            Ok(self.lock().await.unsafe_head)
-        }
-
-        async fn safe_block_number(&self) -> eyre::Result<u64> {
-            Ok(self.lock().await.safe_head)
-        }
-
-        async fn block_by_number(&self, number: u64) -> eyre::Result<Option<L2BlockSnapshot>> {
-            let provider = self.lock().await;
-            if provider.fail_blocks.contains(&number) {
-                eyre::bail!("mock fetch failed for block {number}");
-            }
-            Ok(provider.blocks.get(&number).cloned())
-        }
+    /// A provider whose unsafe and safe heads are `head`, serving `blocks`.
+    fn provider(
+        head: u64,
+        blocks: impl IntoIterator<Item = L2BlockSnapshot>,
+    ) -> MockL2BlockProvider {
+        let blocks: BTreeMap<_, _> =
+            blocks.into_iter().map(|block| (block.number, block)).collect();
+        let mut provider = MockL2BlockProvider::new();
+        provider.expect_unsafe_block_number().returning(move || Ok(head));
+        provider.expect_safe_block_number().returning(move || Ok(head));
+        provider.expect_block_by_number().returning(move |number| Ok(blocks.get(&number).cloned()));
+        provider
     }
 
     fn snapshot(number: u64, hash_byte: u8, tx_hashes: &[u8]) -> L2BlockSnapshot {
@@ -503,79 +462,68 @@ mod tests {
         }
     }
 
+    /// Blocks both nodes agree on count as matches, and the monitor moves past them.
     #[tokio::test]
     async fn process_once_records_matching_blocks() {
-        let sequencer = Arc::new(Mutex::new(MockL2BlockProvider::new(
-            2,
-            [snapshot(1, 1, &[10]), snapshot(2, 2, &[20])],
-        )));
-        let validator = Arc::new(Mutex::new(MockL2BlockProvider::new(
-            2,
-            [snapshot(1, 1, &[10]), snapshot(2, 2, &[20])],
-        )));
-        let config = L2BlockParityMonitorConfig {
-            start_block: 1,
-            max_blocks_per_tick: 10,
-            ..L2BlockParityMonitorConfig::new(1, Duration::from_secs(1))
-        };
-        let mut monitor = L2BlockParityMonitor::new(sequencer, validator, config);
+        let blocks = [snapshot(1, 1, &[10]), snapshot(2, 2, &[20])];
+        let config = L2BlockParityMonitorConfig::new(1, Duration::from_secs(1));
+        let mut monitor =
+            L2BlockParityMonitor::new(provider(2, blocks.clone()), provider(2, blocks), config);
 
         let stats = monitor.process_once().await.unwrap();
 
-        assert_eq!(stats.checked, 2);
-        assert_eq!(stats.matches, 2);
-        assert_eq!(stats.mismatches, 0);
+        assert_eq!(stats, L2BlockParityStats { checked: 2, matches: 2, ..Default::default() });
         assert_eq!(monitor.next_block, 3);
     }
 
+    /// A fetch error ends the pass but keeps the progress made before it, so the next pass resumes
+    /// at the block that failed.
     #[tokio::test]
     async fn process_once_keeps_progress_before_fetch_error() {
-        let sequencer = Arc::new(Mutex::new(MockL2BlockProvider::new(
-            3,
-            [snapshot(1, 1, &[10]), snapshot(2, 2, &[20]), snapshot(3, 3, &[30])],
-        )));
-        let validator = Arc::new(Mutex::new(
-            MockL2BlockProvider::new(
-                3,
-                [snapshot(1, 1, &[10]), snapshot(2, 2, &[20]), snapshot(3, 3, &[30])],
-            )
-            .with_fail_blocks([3]),
-        ));
-        let config = L2BlockParityMonitorConfig {
-            start_block: 1,
-            max_blocks_per_tick: 10,
-            ..L2BlockParityMonitorConfig::new(1, Duration::from_secs(1))
-        };
-        let mut monitor = L2BlockParityMonitor::new(sequencer, validator, config);
+        let blocks = [snapshot(1, 1, &[10]), snapshot(2, 2, &[20]), snapshot(3, 3, &[30])];
+        let mut validator = MockL2BlockProvider::new();
+        validator.expect_unsafe_block_number().returning(|| Ok(3));
+        validator.expect_safe_block_number().returning(|| Ok(3));
+        let served = blocks.clone();
+        validator.expect_block_by_number().returning(move |number| match number {
+            3 => Err(eyre::eyre!("block 3 unavailable")),
+            _ => Ok(served.iter().find(|block| block.number == number).cloned()),
+        });
+        let config = L2BlockParityMonitorConfig::new(1, Duration::from_secs(1));
+        let mut monitor = L2BlockParityMonitor::new(provider(3, blocks), validator, config);
 
         let stats = monitor.process_once().await.unwrap();
 
-        assert_eq!(stats.checked, 2);
-        assert_eq!(stats.matches, 2);
+        assert_eq!(stats, L2BlockParityStats { checked: 2, matches: 2, ..Default::default() });
         assert_eq!(monitor.next_block, 3);
     }
 
+    /// A block the two nodes disagree on counts as a mismatch, and the monitor moves past it.
     #[tokio::test]
     async fn process_once_records_mismatching_blocks() {
-        let sequencer = Arc::new(Mutex::new(MockL2BlockProvider::new(1, [snapshot(1, 1, &[10])])));
-        let validator = Arc::new(Mutex::new(MockL2BlockProvider::new(1, [snapshot(1, 2, &[11])])));
         let config = L2BlockParityMonitorConfig::new(1, Duration::from_secs(1));
-        let mut monitor = L2BlockParityMonitor::new(sequencer, validator, config);
+        let mut monitor = L2BlockParityMonitor::new(
+            provider(1, [snapshot(1, 1, &[10])]),
+            provider(1, [snapshot(1, 2, &[11])]),
+            config,
+        );
 
         let stats = monitor.process_once().await.unwrap();
 
-        assert_eq!(stats.checked, 1);
-        assert_eq!(stats.matches, 0);
-        assert_eq!(stats.mismatches, 1);
+        assert_eq!(stats, L2BlockParityStats { checked: 1, mismatches: 1, ..Default::default() });
         assert_eq!(monitor.next_block, 2);
     }
 
+    /// A block above the validator's unsafe head is not compared yet, so the monitor waits for it
+    /// instead of skipping it.
     #[tokio::test]
     async fn process_once_waits_for_validator_to_reach_next_block() {
-        let sequencer = Arc::new(Mutex::new(MockL2BlockProvider::new(5, [snapshot(5, 5, &[50])])));
-        let validator = Arc::new(Mutex::new(MockL2BlockProvider::new(3, [])));
         let config = L2BlockParityMonitorConfig::new(4, Duration::from_secs(1));
-        let mut monitor = L2BlockParityMonitor::new(sequencer, validator, config);
+        let mut monitor = L2BlockParityMonitor::new(
+            provider(5, [snapshot(5, 5, &[50])]),
+            provider(3, []),
+            config,
+        );
 
         let stats = monitor.process_once().await.unwrap();
 
@@ -583,37 +531,19 @@ mod tests {
         assert_eq!(monitor.next_block, 4);
     }
 
-    #[tokio::test]
-    async fn verification_backlog_counts_blocks_left_below_the_common_unsafe_head() {
-        let sequencer = Arc::new(Mutex::new(MockL2BlockProvider::new(9, [])));
-        let validator = Arc::new(Mutex::new(MockL2BlockProvider::new(9, [])));
+    /// The verification backlog counts the blocks from the cursor up to the common unsafe head, and
+    /// is zero while the validator is behind the cursor.
+    #[test]
+    fn verification_backlog_counts_blocks_left_below_the_common_unsafe_head() {
         let config = L2BlockParityMonitorConfig::new(7, Duration::from_secs(1));
-        let monitor = L2BlockParityMonitor::new(sequencer, validator, config);
+        let monitor = L2BlockParityMonitor::new(provider(9, []), provider(9, []), config);
 
         // Blocks 7, 8 and 9 are comparable and none has been compared yet.
         assert_eq!(monitor.verification_backlog(9), 3);
-        // Caught up: the cursor sits one past the common unsafe head.
+        // Once caught up, the cursor sits one past the common unsafe head.
         assert_eq!(monitor.verification_backlog(6), 0);
         // A common unsafe head below the cursor is a validator that has not caught up,
         // not backlog.
         assert_eq!(monitor.verification_backlog(2), 0);
-    }
-
-    #[tokio::test]
-    async fn process_once_rejects_zero_max_blocks_per_tick() {
-        let sequencer = Arc::new(Mutex::new(MockL2BlockProvider::new(1, [snapshot(1, 1, &[10])])));
-        let validator = Arc::new(Mutex::new(MockL2BlockProvider::new(1, [snapshot(1, 1, &[10])])));
-        let config = L2BlockParityMonitorConfig {
-            max_blocks_per_tick: 0,
-            ..L2BlockParityMonitorConfig::new(1, Duration::from_secs(1))
-        };
-        let mut monitor = L2BlockParityMonitor::new(sequencer, validator, config);
-
-        let err = monitor
-            .process_once()
-            .await
-            .expect_err("zero max_blocks_per_tick should fail validation");
-
-        assert!(err.to_string().contains("max_blocks_per_tick must be greater than 0"));
     }
 }
