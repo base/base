@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::Transaction;
 use alloy_primitives::{Address, TxHash};
 use base_execution_txpool::{BasePooledTx, ParkableBestTransactions};
 pub use reth_payload_util::NoopPayloadTransactions;
@@ -37,9 +36,6 @@ where
     Self::Transaction: PoolTransaction,
 {
     /// Parks and clears the current transaction, if any.
-    ///
-    /// Parking never fails: an iterator without lane-aware parking excludes the current
-    /// transaction's lane for the rest of this iterator instead.
     fn park_current(&mut self);
 
     /// Commits and clears the current transaction, if any.
@@ -59,68 +55,6 @@ where
     fn park_current(&mut self) {}
 
     fn mark_current_committed(&mut self) {}
-
-    fn promote(&mut self, _transaction_hash: TxHash) -> bool {
-        false
-    }
-
-    fn discard_parked(&mut self, _transaction_hash: TxHash) -> bool {
-        false
-    }
-}
-
-/// Adds parking lifecycle methods to a payload iterator without lane-aware parking.
-///
-/// Parking the current transaction excludes its lane for the rest of this iterator, as
-/// [`PayloadTransactions::mark_invalid`] does. The transaction stays in the pool and is
-/// reconsidered by the next iterator. Promotion and discarding are no-ops because nothing is ever
-/// held parked.
-#[derive(Debug, Clone)]
-pub struct NonParkablePayloadTransactions<I> {
-    inner: I,
-    current: Option<(Address, u64)>,
-}
-
-impl<I> NonParkablePayloadTransactions<I> {
-    /// Wraps a payload iterator without adding parking support.
-    pub const fn new(inner: I) -> Self {
-        Self { inner, current: None }
-    }
-}
-
-impl<I> PayloadTransactions for NonParkablePayloadTransactions<I>
-where
-    I: PayloadTransactions,
-    I::Transaction: PoolTransaction,
-{
-    type Transaction = I::Transaction;
-
-    fn next(&mut self, ctx: ()) -> Option<Self::Transaction> {
-        let transaction = self.inner.next(ctx)?;
-        self.current = Some((transaction.sender(), transaction.nonce()));
-        Some(transaction)
-    }
-
-    fn mark_invalid(&mut self, sender: Address, nonce: u64) {
-        self.current = None;
-        self.inner.mark_invalid(sender, nonce);
-    }
-}
-
-impl<I> ParkablePayloadTransactions for NonParkablePayloadTransactions<I>
-where
-    I: PayloadTransactions,
-    I::Transaction: PoolTransaction,
-{
-    fn park_current(&mut self) {
-        if let Some((sender, nonce)) = self.current.take() {
-            self.inner.mark_invalid(sender, nonce);
-        }
-    }
-
-    fn mark_current_committed(&mut self) {
-        self.current = None;
-    }
 
     fn promote(&mut self, _transaction_hash: TxHash) -> bool {
         false

@@ -155,52 +155,118 @@ where
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use alloy_consensus::Transaction;
-    use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
-    use alloy_primitives::Address;
-    use base_execution_payload_builder::NonParkablePayloadTransactions;
-    use reth_payload_util::{BestPayloadTransactions, PayloadTransactions};
+    use alloy_consensus::{SignableTransaction, Transaction, TxEip1559};
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{Address, Signature, TxHash, TxKind, U256};
+    use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
+    use base_execution_txpool::{BaseOrdering, BasePooledTransaction, ParkedBestTransactions};
+    use reth_payload_util::PayloadTransactions;
+    use reth_primitives_traits::Recovered;
     use reth_transaction_pool::{
-        CoinbaseTipOrdering, PoolTransaction,
+        PoolTransaction, TransactionOrigin, ValidPoolTransaction, identifier::TransactionId,
         pool::PendingPool,
-        test_utils::{MockTransaction, MockTransactionFactory},
     };
 
-    use crate::{BestFlashblocksTxs, ParkablePayloadTransactions, RejectionCache};
+    use crate::{
+        BestFlashblocksTxs, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
+        RejectionCache,
+    };
+
+    type Ordering = BaseOrdering<BasePooledTransaction>;
 
     fn test_rejection_cache() -> RejectionCache {
         RejectionCache::new(1000, Duration::from_secs(60))
     }
 
+    fn sender_address(sender: u64) -> Address {
+        Address::from_word(U256::from(sender + 1).into())
+    }
+
+    fn transaction(
+        sender: u64,
+        nonce: u64,
+        priority_fee: u128,
+    ) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
+        let tx = TxEip1559 {
+            chain_id: 1,
+            nonce,
+            gas_limit: 21_000,
+            max_fee_per_gas: priority_fee + 100,
+            max_priority_fee_per_gas: priority_fee,
+            to: TxKind::Call(Address::ZERO),
+            // Distinguishes otherwise identical transactions from different senders, which share
+            // the test signature.
+            value: U256::from(sender),
+            ..Default::default()
+        };
+        let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(Signature::test_signature()));
+        let encoded_length = envelope.encode_2718_len();
+        let transaction = BasePooledTransaction::new(
+            Recovered::new_unchecked(BaseTransactionSigned::from(envelope), sender_address(sender)),
+            encoded_length,
+        );
+        Arc::new(ValidPoolTransaction {
+            transaction_id: TransactionId::new(sender.into(), nonce),
+            transaction,
+            propagate: true,
+            timestamp: std::time::Instant::now(),
+            origin: TransactionOrigin::External,
+            authority_ids: None,
+        })
+    }
+
+    fn pending_pool(
+        transactions: &[Arc<ValidPoolTransaction<BasePooledTransaction>>],
+    ) -> PendingPool<Ordering> {
+        let mut pool = PendingPool::new(Ordering::coinbase_tip());
+        for transaction in transactions {
+            pool.add_transaction(Arc::clone(transaction), 0);
+        }
+        pool
+    }
+
+    /// Builds the production lane-parking iterator over a snapshot of `pool`.
+    fn parkable(
+        pool: &PendingPool<Ordering>,
+    ) -> ParkableBestPayloadTransactions<BasePooledTransaction> {
+        ParkableBestPayloadTransactions::new(Box::new(ParkedBestTransactions::new(
+            pool.best(),
+            Ordering::coinbase_tip(),
+            0,
+        )))
+    }
+
+    /// Drains `iterator`, marking each yielded transaction invalid for this scan only, and
+    /// returns the yielded hashes.
+    fn drain_without_including<I>(iterator: &mut I) -> Vec<TxHash>
+    where
+        I: PayloadTransactions<Transaction = BasePooledTransaction>,
+    {
+        std::iter::from_fn(|| {
+            let transaction = iterator.next(())?;
+            iterator.mark_invalid(transaction.sender(), transaction.nonce());
+            Some(*transaction.hash())
+        })
+        .collect()
+    }
+
     #[test]
     fn test_simple_case() {
-        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
-        let mut f = MockTransactionFactory::default();
+        let pool =
+            pending_pool(&[transaction(0, 0, 1), transaction(1, 0, 1), transaction(2, 0, 1)]);
 
-        // Add 3 regular transaction
-        let tx_1 = f.create_eip1559();
-        let tx_2 = f.create_eip1559();
-        let tx_3 = f.create_eip1559();
-        pool.add_transaction(Arc::new(tx_1), 0);
-        pool.add_transaction(Arc::new(tx_2), 0);
-        pool.add_transaction(Arc::new(tx_3), 0);
-
-        // Create iterator
-        let mut iterator = BestFlashblocksTxs::new(
-            NonParkablePayloadTransactions::new(BestPayloadTransactions::new(pool.best())),
-            test_rejection_cache(),
-        );
+        let mut iterator = BestFlashblocksTxs::new(parkable(&pool), test_rejection_cache());
         // ### First flashblock
-        iterator.refresh_iterator(NonParkablePayloadTransactions::new(
-            BestPayloadTransactions::new(pool.best()),
-        ));
+        iterator.refresh_iterator(parkable(&pool));
         // Accept first tx
         let tx1 = iterator.next(()).unwrap();
+        iterator.mark_current_committed();
         // Invalidate second tx
         let tx2 = iterator.next(()).unwrap();
         iterator.mark_invalid(tx2.sender(), tx2.nonce());
         // Accept third tx
         let tx3 = iterator.next(()).unwrap();
+        iterator.mark_current_committed();
         // Check that it's empty
         assert!(iterator.next(()).is_none(), "Iterator should be empty");
         // Mark transaction as committed
@@ -208,58 +274,95 @@ mod tests {
 
         // ### Second flashblock
         // It should not return txs 1 and 3, but should return 2
-        iterator.refresh_iterator(NonParkablePayloadTransactions::new(
-            BestPayloadTransactions::new(pool.best()),
-        ));
+        iterator.refresh_iterator(parkable(&pool));
         let tx2 = iterator.next(()).unwrap();
+        iterator.mark_current_committed();
         // Check that it's empty
         assert!(iterator.next(()).is_none(), "Iterator should be empty");
         // Mark transaction as committed
         iterator.mark_committed(&[*tx2.hash()]);
 
         // ### Third flashblock
-        iterator.refresh_iterator(NonParkablePayloadTransactions::new(
-            BestPayloadTransactions::new(pool.best()),
-        ));
+        iterator.refresh_iterator(parkable(&pool));
         // Check that it's empty
         assert!(iterator.next(()).is_none(), "Iterator should be empty");
     }
 
     #[test]
-    fn non_parkable_iterator_parks_by_skipping_the_lane_for_this_scan() {
-        let sender = Address::random();
-        let parked =
-            MockTransaction::eip1559().with_sender(sender).with_nonce(0).with_priority_fee(3);
-        let descendant =
-            MockTransaction::eip1559().with_sender(sender).with_nonce(1).with_priority_fee(2);
-        let other = MockTransaction::eip1559().with_priority_fee(1);
-        let parked_hash = *parked.hash();
-        let descendant_hash = *descendant.hash();
-        let other_hash = *other.hash();
-        let mut factory = MockTransactionFactory::default();
-        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
-        pool.add_transaction(Arc::new(factory.validated(parked)), 0);
-        pool.add_transaction(Arc::new(factory.validated(descendant)), 0);
-        pool.add_transaction(Arc::new(factory.validated(other)), 0);
-        let mut iterator = BestFlashblocksTxs::new(
-            NonParkablePayloadTransactions::new(BestPayloadTransactions::new(pool.best())),
-            test_rejection_cache(),
+    fn hashes_marked_committed_are_skipped_after_refresh() {
+        let committed = transaction(0, 0, 2);
+        let uncommitted = transaction(1, 0, 1);
+        let committed_hash = *committed.hash();
+        let uncommitted_hash = *uncommitted.hash();
+        let pool = pending_pool(&[committed, uncommitted]);
+        let mut iterator = BestFlashblocksTxs::new(parkable(&pool), test_rejection_cache());
+
+        iterator.mark_committed(&[committed_hash]);
+        iterator.refresh_iterator(parkable(&pool));
+
+        assert_eq!(drain_without_including(&mut iterator), vec![uncommitted_hash]);
+    }
+
+    /// Rejected transactions are skipped across flashblock boundaries within the same block.
+    #[test]
+    fn test_rejected_txs_persist_across_refresh() {
+        let tx_2 = transaction(1, 0, 1);
+        let tx_2_hash = *tx_2.hash();
+        let pool = pending_pool(&[transaction(0, 0, 1), tx_2, transaction(2, 0, 1)]);
+
+        let mut iterator = BestFlashblocksTxs::new(parkable(&pool), test_rejection_cache());
+
+        // FB1: none of the transactions are included, and the second is rejected permanently
+        assert_eq!(drain_without_including(&mut iterator).len(), 3);
+        iterator.mark_rejected(&[tx_2_hash]);
+
+        // FB2: refresh iterator — tx2 should still be skipped
+        iterator.refresh_iterator(parkable(&pool));
+        let seen_hashes = drain_without_including(&mut iterator);
+        assert!(!seen_hashes.contains(&tx_2_hash), "rejected tx should not reappear after refresh");
+        assert_eq!(seen_hashes.len(), 2, "only non-rejected txs should appear");
+    }
+
+    /// Rejected transactions in the shared cache are skipped by a new iterator instance
+    /// (simulating cross-block persistence).
+    #[test]
+    fn test_rejection_cache_persists_across_blocks() {
+        let tx_2 = transaction(1, 0, 1);
+        let tx_2_hash = *tx_2.hash();
+        let pool = pending_pool(&[transaction(0, 0, 1), tx_2]);
+
+        let cache = test_rejection_cache();
+
+        // Block 1: reject tx_2
+        let mut iter1 = BestFlashblocksTxs::new(parkable(&pool), cache.clone());
+        assert_eq!(drain_without_including(&mut iter1).len(), 2);
+        iter1.mark_rejected(&[tx_2_hash]);
+
+        // Block 2: new iterator, same cache — tx_2 should be skipped
+        let mut iter2 = BestFlashblocksTxs::new(parkable(&pool), cache);
+        let seen_hashes = drain_without_including(&mut iter2);
+        assert!(
+            !seen_hashes.contains(&tx_2_hash),
+            "tx rejected in block 1 should be skipped in block 2"
         );
+        assert_eq!(seen_hashes.len(), 1, "only non-rejected tx should appear");
+    }
 
-        assert_eq!(iterator.next(()).map(|tx| *tx.hash()), Some(parked_hash));
-        iterator.park_current();
-        let remaining: Vec<_> =
-            std::iter::from_fn(|| iterator.next(())).map(|tx| *tx.hash()).collect();
+    #[test]
+    fn rejection_cache_hit_excludes_nonce_descendants() {
+        let rejected = transaction(0, 0, 3);
+        let descendant = transaction(0, 1, 2);
+        let other = transaction(1, 0, 1);
+        let rejected_hash = *rejected.hash();
+        let other_hash = *other.hash();
+        let pool = pending_pool(&[rejected, descendant, other]);
+        let cache = test_rejection_cache();
+        cache.insert(rejected_hash);
+        let mut iterator = BestFlashblocksTxs::new(parkable(&pool), cache);
 
-        assert_eq!(remaining, vec![other_hash]);
+        let yielded_hashes = drain_without_including(&mut iterator);
 
-        iterator.refresh_iterator(NonParkablePayloadTransactions::new(
-            BestPayloadTransactions::new(pool.best()),
-        ));
-        let rescanned: Vec<_> =
-            std::iter::from_fn(|| iterator.next(())).map(|tx| *tx.hash()).collect();
-
-        assert_eq!(rescanned, vec![parked_hash, descendant_hash, other_hash]);
+        assert_eq!(yielded_hashes, vec![other_hash]);
     }
 
     /// This test simulates the nonce-chain gating fix across flashblock boundaries.
@@ -285,74 +388,38 @@ mod tests {
     /// and verifies that `TX_B` (100 gwei) is correctly ordered before `TX_C` (10 gwei).
     #[test]
     fn test_nonce_chain_gating_bug_across_flashblocks() {
-        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
-        let mut f = MockTransactionFactory::default();
-
-        let sender_a = Address::random();
-        let sender_b = Address::random();
-
-        let tx_a = MockTransaction::eip1559()
-            .with_sender(sender_a)
-            .with_nonce(0)
-            .with_priority_fee(1_000_000_000) // 1 gwei - LOW
-            .with_max_fee(100_000_000_000);
-
-        let tx_b = MockTransaction::eip1559()
-            .with_sender(sender_a)
-            .with_nonce(1)
-            .with_priority_fee(100_000_000_000) // 100 gwei - HIGH (depends on TX_A)
-            .with_max_fee(200_000_000_000);
-
-        let tx_c = MockTransaction::eip1559()
-            .with_sender(sender_b)
-            .with_nonce(0)
-            .with_priority_fee(10_000_000_000) // 10 gwei - MEDIUM
-            .with_max_fee(100_000_000_000);
-
-        pool.add_transaction(Arc::new(f.validated(tx_a.clone())), 0);
+        let tx_a = transaction(0, 0, 1_000_000_000); // 1 gwei - LOW
+        let tx_b = transaction(0, 1, 100_000_000_000); // 100 gwei - HIGH (depends on TX_A)
+        let tx_c = transaction(1, 0, 10_000_000_000); // 10 gwei - MEDIUM
+        let mut pool = pending_pool(&[Arc::clone(&tx_a)]);
 
         // === FLASHBLOCK 1 ===
-        let mut iterator = BestFlashblocksTxs::new(
-            NonParkablePayloadTransactions::new(BestPayloadTransactions::new(pool.best())),
-            test_rejection_cache(),
-        );
+        let mut iterator = BestFlashblocksTxs::new(parkable(&pool), test_rejection_cache());
 
         // Simulate: Flashblock 1 starts building
         // Start consuming txns from the txpool
         let first = iterator.next(()).unwrap();
-        assert_eq!(first.sender(), sender_a, "First should be TX_A (1 gwei)");
+        assert_eq!(*first.hash(), *tx_a.hash(), "First should be TX_A (1 gwei)");
+        iterator.mark_current_committed();
 
         // TX_B and TX_C arrive late, but we have already yielded lower-priority transactions
         // from the iterator, so these do not immediately get added to the best txns
-        pool.add_transaction(Arc::new(f.validated(tx_b.clone())), 0);
-        pool.add_transaction(Arc::new(f.validated(tx_c.clone())), 0);
-        assert_eq!(iterator.next(()), None);
+        pool.add_transaction(Arc::clone(&tx_b), 0);
+        pool.add_transaction(Arc::clone(&tx_c), 0);
+        assert!(iterator.next(()).is_none());
 
         // Simulate: flashblock 1 is complete after TX_A was executed
         iterator.mark_committed(&[*tx_a.hash()]);
         // Simulate pool.prune_transactions by recreating the pool without TX_A
-        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
-        pool.add_transaction(Arc::new(f.validated(tx_b)), 0);
-        pool.add_transaction(Arc::new(f.validated(tx_c)), 0);
+        let pool = pending_pool(&[Arc::clone(&tx_b), Arc::clone(&tx_c)]);
 
         // === FLASHBLOCK 2 ===
         // We refresh the iterator with the latest best transactions
-        iterator.refresh_iterator(NonParkablePayloadTransactions::new(
-            BestPayloadTransactions::new(pool.best()),
-        ));
+        iterator.refresh_iterator(parkable(&pool));
 
-        // Now, theoretically, TX_A has already been executed, so
-        // TX_B should be the best txn and TX_C the second best
-        // Expected: TX_B (100 gwei) first, TX_C (10 gwei) second
-        let fb2_first = iterator.next(()).unwrap();
-        let fb2_second = iterator.next(()).unwrap();
-
-        assert_eq!(fb2_first.sender(), sender_a);
-        assert_eq!(fb2_second.sender(), sender_b);
-        assert!(
-            fb2_second.effective_tip_per_gas(MIN_PROTOCOL_BASE_FEE)
-                < fb2_first.effective_tip_per_gas(MIN_PROTOCOL_BASE_FEE)
-        );
+        // TX_A has already been executed, so TX_B (100 gwei) is the best txn and TX_C
+        // (10 gwei) the second best
+        assert_eq!(drain_without_including(&mut iterator), vec![*tx_b.hash(), *tx_c.hash()]);
     }
 
     /// Reproduces the nonce-chain queuing bug caused by `prune_transactions`.
@@ -366,7 +433,7 @@ mod tests {
         use reth_execution_types::ChangedAccount;
         use reth_transaction_pool::{
             BestTransactionsAttributes, TransactionOrigin, TransactionPool, TransactionPoolExt,
-            test_utils::testing_pool,
+            test_utils::{MockTransaction, testing_pool},
         };
 
         let pool = testing_pool();
@@ -432,136 +499,19 @@ mod tests {
         assert_eq!(count, 3);
     }
 
-    /// Rejected transactions are skipped across flashblock boundaries within the same block.
-    #[test]
-    fn test_rejected_txs_persist_across_refresh() {
-        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
-        let mut f = MockTransactionFactory::default();
-
-        let tx_1 = f.create_eip1559();
-        let tx_2 = f.create_eip1559();
-        let tx_3 = f.create_eip1559();
-        let tx_2_hash = *tx_2.hash();
-        pool.add_transaction(Arc::new(tx_1), 0);
-        pool.add_transaction(Arc::new(tx_2), 0);
-        pool.add_transaction(Arc::new(tx_3), 0);
-
-        let mut iterator = BestFlashblocksTxs::new(
-            NonParkablePayloadTransactions::new(BestPayloadTransactions::new(pool.best())),
-            test_rejection_cache(),
-        );
-
-        // FB1: consume first tx, reject second permanently
-        let _tx1 = iterator.next(()).unwrap();
-        let _tx2 = iterator.next(()).unwrap();
-        iterator.mark_rejected(&[tx_2_hash]);
-        let _tx3 = iterator.next(()).unwrap();
-        assert!(iterator.next(()).is_none());
-
-        // FB2: refresh iterator — tx2 should still be skipped
-        iterator.refresh_iterator(NonParkablePayloadTransactions::new(
-            BestPayloadTransactions::new(pool.best()),
-        ));
-        let mut seen_hashes = Vec::new();
-        while let Some(tx) = iterator.next(()) {
-            seen_hashes.push(*tx.hash());
-        }
-        assert!(!seen_hashes.contains(&tx_2_hash), "rejected tx should not reappear after refresh");
-        assert_eq!(seen_hashes.len(), 2, "only non-rejected txs should appear");
-    }
-
-    /// Rejected transactions in the shared cache are skipped by a new iterator instance
-    /// (simulating cross-block persistence).
-    #[test]
-    fn test_rejection_cache_persists_across_blocks() {
-        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
-        let mut f = MockTransactionFactory::default();
-
-        let tx_1 = f.create_eip1559();
-        let tx_2 = f.create_eip1559();
-        let tx_2_hash = *tx_2.hash();
-        pool.add_transaction(Arc::new(tx_1), 0);
-        pool.add_transaction(Arc::new(tx_2), 0);
-
-        let cache = test_rejection_cache();
-
-        // Block 1: reject tx_2
-        let mut iter1 = BestFlashblocksTxs::new(
-            NonParkablePayloadTransactions::new(BestPayloadTransactions::new(pool.best())),
-            cache.clone(),
-        );
-        let _tx1 = iter1.next(()).unwrap();
-        let _tx2 = iter1.next(()).unwrap();
-        iter1.mark_rejected(&[tx_2_hash]);
-
-        // Block 2: new iterator, same cache — tx_2 should be skipped
-        let mut iter2 = BestFlashblocksTxs::new(
-            NonParkablePayloadTransactions::new(BestPayloadTransactions::new(pool.best())),
-            cache,
-        );
-        let mut seen_hashes = Vec::new();
-        while let Some(tx) = iter2.next(()) {
-            seen_hashes.push(*tx.hash());
-        }
-        assert!(
-            !seen_hashes.contains(&tx_2_hash),
-            "tx rejected in block 1 should be skipped in block 2"
-        );
-        assert_eq!(seen_hashes.len(), 1, "only non-rejected tx should appear");
-    }
-
-    #[test]
-    fn rejection_cache_hit_excludes_nonce_descendants() {
-        let sender = Address::random();
-        let other_sender = Address::random();
-        let rejected =
-            MockTransaction::eip1559().with_sender(sender).with_nonce(0).with_priority_fee(3);
-        let descendant =
-            MockTransaction::eip1559().with_sender(sender).with_nonce(1).with_priority_fee(2);
-        let other =
-            MockTransaction::eip1559().with_sender(other_sender).with_nonce(0).with_priority_fee(1);
-        let rejected_hash = *rejected.hash();
-        let other_hash = *other.hash();
-        let mut factory = MockTransactionFactory::default();
-        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
-        pool.add_transaction(Arc::new(factory.validated(rejected)), 0);
-        pool.add_transaction(Arc::new(factory.validated(descendant)), 0);
-        pool.add_transaction(Arc::new(factory.validated(other)), 0);
-        let cache = test_rejection_cache();
-        cache.insert(rejected_hash);
-        let mut iterator = BestFlashblocksTxs::new(
-            NonParkablePayloadTransactions::new(BestPayloadTransactions::new(pool.best())),
-            cache,
-        );
-
-        let yielded_hashes: Vec<_> =
-            std::iter::from_fn(|| iterator.next(())).map(|tx| *tx.hash()).collect();
-
-        assert_eq!(yielded_hashes, vec![other_hash]);
-    }
-
     /// A rejected transaction becomes eligible again after the cache TTL expires.
     #[test]
     fn test_rejected_tx_eligible_after_ttl_expiry() {
-        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
-        let mut f = MockTransactionFactory::default();
-
-        let tx_1 = f.create_eip1559();
-        let tx_2 = f.create_eip1559();
+        let tx_2 = transaction(1, 0, 1);
         let tx_2_hash = *tx_2.hash();
-        pool.add_transaction(Arc::new(tx_1), 0);
-        pool.add_transaction(Arc::new(tx_2), 0);
+        let pool = pending_pool(&[transaction(0, 0, 1), tx_2]);
 
         // TTL is short, 1ms
         let cache = RejectionCache::new(1000, Duration::from_millis(1));
 
         // Reject tx_2
-        let mut iter1 = BestFlashblocksTxs::new(
-            NonParkablePayloadTransactions::new(BestPayloadTransactions::new(pool.best())),
-            cache.clone(),
-        );
-        let _tx1 = iter1.next(()).unwrap();
-        let _tx2 = iter1.next(()).unwrap();
+        let mut iter1 = BestFlashblocksTxs::new(parkable(&pool), cache.clone());
+        assert_eq!(drain_without_including(&mut iter1).len(), 2);
         iter1.mark_rejected(&[tx_2_hash]);
 
         // Wait for TTL to expire and flush pending evictions
@@ -569,14 +519,8 @@ mod tests {
         cache.run_pending_tasks();
 
         // New iterator — tx_2 should be back
-        let mut iter2 = BestFlashblocksTxs::new(
-            NonParkablePayloadTransactions::new(BestPayloadTransactions::new(pool.best())),
-            cache,
-        );
-        let mut seen_hashes = Vec::new();
-        while let Some(tx) = iter2.next(()) {
-            seen_hashes.push(*tx.hash());
-        }
+        let mut iter2 = BestFlashblocksTxs::new(parkable(&pool), cache);
+        let seen_hashes = drain_without_including(&mut iter2);
         assert!(seen_hashes.contains(&tx_2_hash), "tx should be eligible again after TTL expiry");
         assert_eq!(seen_hashes.len(), 2, "both txs should appear");
     }
