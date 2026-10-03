@@ -34,18 +34,18 @@ Outside shadow mode, `base batcher` refuses to start unless its signer is the
 current `SystemConfig` batcher address, since derivation would ignore every
 batch it posts.
 
-A shadow deployment posts to a non-canonical inbox that an isolated parity
-validator derives its chain from. `--rollup-rpc-url` points at the validator's
-rollup node, whose rollup config names that inbox.
-`--dangerously-override-batch-inbox-address` names the shadow inbox, and the
-batcher refuses to start if the batch inbox of the rollup node's config is
-another one. The parity validator must accept the shadow inbox and signer,
-since derivation filters batches by both. `--parity-validator-l2-rpc-url`
-points at the validator's L2 RPC, whose derived blocks the batcher compares
-with the canonical sequencer's. The batcher refuses to start with only some of
-`--shadow-mode`, `--dangerously-override-batch-inbox-address` and
-`--parity-validator-l2-rpc-url`. `--l2-rpc-url` points at the canonical
-sequencer, to which the throttle would push its DA limits, so the batcher
-refuses to start in shadow mode without `--no-throttle`. Shadow deployments can
-use either the local `--private-key` signer or the production remote-signer
-path with `--signer-endpoint` and `--signer-address`.
+A shadow deployment (`--shadow.enabled`) posts to a non-canonical inbox, the
+shadow inbox, that an isolated parity validator derives its chain from.
+`--rollup-rpc-url` points at the validator's rollup node, whose rollup config
+names the shadow inbox. `--shadow.inbox` names it as well, and the batcher
+refuses to start if the batch inbox of the rollup node's config is another one.
+The parity validator must accept the shadow inbox and signer, since derivation
+filters batches by both. `--shadow.validator-l2-rpc` points at the
+validator's L2 RPC, whose derived blocks the batcher compares with the
+canonical sequencer's. The batcher refuses to start with only some of
+`--shadow.enabled`, `--shadow.inbox` and `--shadow.validator-l2-rpc`.
+`--l2-rpc-url` points at the canonical sequencer, to which the throttle would
+push its DA limits, so the batcher refuses to start in shadow mode without
+`--no-throttle`. Shadow deployments can use either the local `--private-key`
+signer or the production remote-signer path with `--signer-endpoint` and
+`--signer-address`.

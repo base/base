@@ -131,7 +131,7 @@ pub struct ShadowConfig {
     pub inbox: Address,
     /// L2 RPC endpoint of the parity validator, whose derived block hashes are compared with
     /// the sequencer's.
-    pub parity_validator_l2_rpc_url: Url,
+    pub validator_l2_rpc: Url,
 }
 
 impl ShadowConfig {
@@ -167,7 +167,7 @@ mod tests {
     fn validate_batch_inbox_requires_the_shadow_inbox() {
         let shadow = ShadowConfig {
             inbox: SHADOW_INBOX,
-            parity_validator_l2_rpc_url: "http://localhost:8545".parse().unwrap(),
+            validator_l2_rpc: "http://localhost:8545".parse().unwrap(),
         };
 
         shadow.validate_batch_inbox(SHADOW_INBOX).unwrap();

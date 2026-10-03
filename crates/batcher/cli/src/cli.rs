@@ -38,13 +38,6 @@ pub struct BatcherArgs {
     #[arg(long = "l1-ws-url", env = "BASE_BATCHER_L1_WS_URL")]
     pub l1_ws_url: Option<Url>,
 
-    /// Parity validator L2 RPC endpoint, whose derived block hashes are compared
-    /// with the sequencer's.
-    ///
-    /// Required with `--shadow-mode`.
-    #[arg(long = "parity-validator-l2-rpc-url", env = "BASE_BATCHER_PARITY_VALIDATOR_L2_RPC_URL")]
-    pub parity_validator_l2_rpc_url: Option<Url>,
-
     /// Rollup node RPC endpoint.
     ///
     /// The batcher reads the rollup config of this node and follows its
@@ -59,17 +52,21 @@ pub struct BatcherArgs {
     pub signer: SignerCli,
 
     /// Run as a shadow batcher.
-    #[arg(long = "shadow-mode", env = "BASE_BATCHER_SHADOW_MODE")]
-    pub shadow_mode: bool,
+    #[arg(long = "shadow.enabled", env = "BASE_BATCHER_SHADOW_ENABLED")]
+    pub shadow_enabled: bool,
 
     /// The shadow inbox, which must be the batch inbox of the `--rollup-rpc-url` node's config.
     ///
-    /// Required with `--shadow-mode`.
-    #[arg(
-        long = "dangerously-override-batch-inbox-address",
-        env = "BASE_BATCHER_DANGEROUSLY_OVERRIDE_BATCH_INBOX_ADDRESS"
-    )]
-    pub dangerously_override_batch_inbox_address: Option<Address>,
+    /// Required with `--shadow.enabled`.
+    #[arg(long = "shadow.inbox", env = "BASE_BATCHER_SHADOW_INBOX")]
+    pub shadow_inbox: Option<Address>,
+
+    /// Parity validator L2 RPC endpoint, whose derived block hashes are compared
+    /// with the sequencer's.
+    ///
+    /// Required with `--shadow.enabled`.
+    #[arg(long = "shadow.validator-l2-rpc", env = "BASE_BATCHER_SHADOW_VALIDATOR_L2_RPC")]
+    pub shadow_validator_l2_rpc: Option<Url>,
 
     /// L2 block polling interval in seconds.
     #[arg(long = "poll-interval", default_value = "1", env = "BASE_BATCHER_POLL_INTERVAL")]
@@ -169,7 +166,7 @@ pub struct BatcherArgs {
     /// Disable DA throttling.
     ///
     /// The batcher never pushes DA limits to the `--l2-rpc-url` endpoint, however large its DA
-    /// backlog grows. Required with `--shadow-mode`.
+    /// backlog grows. Required with `--shadow.enabled`.
     #[arg(long = "no-throttle", env = "BASE_BATCHER_NO_THROTTLE")]
     pub no_throttle: bool,
 
@@ -251,18 +248,14 @@ impl BatcherArgs {
     /// Convert CLI arguments into a [`BatcherConfig`].
     pub fn into_config(self, metrics_enabled: bool) -> eyre::Result<BatcherConfig> {
         // Shadow mode takes all three of its flags, and a canonical batcher none of them.
-        let shadow = match (
-            self.shadow_mode,
-            self.dangerously_override_batch_inbox_address,
-            self.parity_validator_l2_rpc_url,
-        ) {
-            (true, Some(inbox), Some(parity_validator_l2_rpc_url)) => {
-                Some(ShadowConfig { inbox, parity_validator_l2_rpc_url })
+        let shadow = match (self.shadow_enabled, self.shadow_inbox, self.shadow_validator_l2_rpc) {
+            (true, Some(inbox), Some(validator_l2_rpc)) => {
+                Some(ShadowConfig { inbox, validator_l2_rpc })
             }
             (false, None, None) => None,
             _ => eyre::bail!(
-                "--shadow-mode, --dangerously-override-batch-inbox-address and \
-                 --parity-validator-l2-rpc-url must be set together"
+                "--shadow.enabled, --shadow.inbox and --shadow.validator-l2-rpc \
+                 must be set together"
             ),
         };
 
@@ -396,19 +389,18 @@ mod tests {
     /// Any one or two of the three shadow flags are refused with the same message.
     #[test]
     fn into_config_requires_the_shadow_flags_together() {
-        let shadow_mode: &[&str] = &["--shadow-mode"];
-        let inbox: &[&str] = &[
-            "--dangerously-override-batch-inbox-address",
-            "0x1111111111111111111111111111111111111111",
-        ];
-        let parity_validator: &[&str] = &["--parity-validator-l2-rpc-url", "http://validator:9545"];
+        let shadow_enabled: &[&str] = &["--shadow.enabled"];
+        let shadow_inbox: &[&str] =
+            &["--shadow.inbox", "0x1111111111111111111111111111111111111111"];
+        let shadow_validator_l2_rpc: &[&str] =
+            &["--shadow.validator-l2-rpc", "http://validator:9545"];
         let incomplete = [
-            shadow_mode.to_vec(),
-            inbox.to_vec(),
-            parity_validator.to_vec(),
-            [shadow_mode, inbox].concat(),
-            [shadow_mode, parity_validator].concat(),
-            [inbox, parity_validator].concat(),
+            shadow_enabled.to_vec(),
+            shadow_inbox.to_vec(),
+            shadow_validator_l2_rpc.to_vec(),
+            [shadow_enabled, shadow_inbox].concat(),
+            [shadow_enabled, shadow_validator_l2_rpc].concat(),
+            [shadow_inbox, shadow_validator_l2_rpc].concat(),
         ];
 
         for flags in incomplete {
@@ -416,8 +408,8 @@ mod tests {
 
             assert_eq!(
                 error.to_string(),
-                "--shadow-mode, --dangerously-override-batch-inbox-address and \
-                 --parity-validator-l2-rpc-url must be set together",
+                "--shadow.enabled, --shadow.inbox and --shadow.validator-l2-rpc \
+                 must be set together",
                 "{flags:?}"
             );
         }
@@ -428,17 +420,17 @@ mod tests {
     #[test]
     fn into_config_builds_the_shadow_config() {
         let cli = parse_cli(&[
-            "--shadow-mode",
-            "--dangerously-override-batch-inbox-address",
+            "--shadow.enabled",
+            "--shadow.inbox",
             "0x1111111111111111111111111111111111111111",
-            "--parity-validator-l2-rpc-url",
+            "--shadow.validator-l2-rpc",
             "http://validator:9545",
             "--no-throttle",
         ]);
         let shadow = cli.into_config(false).unwrap().shadow.expect("a shadow config");
 
         assert_eq!(shadow.inbox, Address::repeat_byte(0x11));
-        assert_eq!(shadow.parity_validator_l2_rpc_url.as_str(), "http://validator:9545/");
+        assert_eq!(shadow.validator_l2_rpc.as_str(), "http://validator:9545/");
     }
 
     /// Without flags the batcher runs blobs at full blob frames and Brotli quality 9, starts

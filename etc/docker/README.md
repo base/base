@@ -88,12 +88,15 @@ infrastructure:
   mainnet's runtime config. `--txmgr.cell-proof-time=0` enables Fusaka cell
   proofs from genesis for the local L1 (chain ID 1337), which this version does
   not auto-detect.
-- **Shadow DA — `base-batcher`.** The Rust `base batcher` runs in `--shadow-mode`,
-  posting to `SHADOW_BATCH_INBOX_ADDRESS` from `SHADOW_BATCHER_ADDR` — a distinct,
-  funded dev account, so its L1 nonces never collide with the op-batcher's. It
-  follows the shadow validator's derivation through `--rollup-rpc-url` and compares
-  blocks with it through `--parity-validator-l2-rpc-url`. It runs with `--no-throttle`,
-  which shadow mode requires.
+- **Shadow DA — `base-batcher`.** The Rust `base batcher` runs in shadow mode
+  (`--shadow.enabled`), posting to `SHADOW_BATCH_INBOX_ADDRESS` from
+  `SHADOW_BATCHER_ADDR` — a distinct, funded dev account, so its L1 nonces never
+  collide with the op-batcher's. It follows the shadow validator's derivation
+  through `--rollup-rpc-url`, checks through `--shadow.inbox` that the batch
+  inbox of the validator's rollup config is `SHADOW_BATCH_INBOX_ADDRESS`, and
+  compares the validator's blocks with the builder's through
+  `--shadow.validator-l2-rpc`. It runs with `--no-throttle`, which shadow
+  mode requires.
 - **Shadow validator — `base-shadow-validator`.** A validator-mode `rpc` node
   that overrides the batch inbox and batcher sender
   (`--l1.dangerously-override-da-batch-inbox`,

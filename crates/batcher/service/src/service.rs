@@ -392,11 +392,11 @@ impl BatcherService {
         }
 
         let validator_provider = if let Some(shadow) = &self.config.shadow {
-            let provider = Self::rpc_retry("parity-validator-l2-rpc", retry, rpc_timeout, || {
+            let provider = Self::rpc_retry("shadow.validator-l2-rpc", retry, rpc_timeout, || {
                 ProviderBuilder::new()
                     .disable_recommended_fillers()
                     .network::<Base>()
-                    .connect(shadow.parity_validator_l2_rpc_url.as_str())
+                    .connect(shadow.validator_l2_rpc.as_str())
             })
             .await?;
             let provider: Arc<dyn Provider<Base> + Send + Sync> = Arc::new(provider);
@@ -758,7 +758,7 @@ mod tests {
         BatcherConfig {
             shadow: Some(ShadowConfig {
                 inbox: Address::ZERO,
-                parity_validator_l2_rpc_url: "http://127.0.0.1:1".parse().unwrap(),
+                validator_l2_rpc: "http://127.0.0.1:1".parse().unwrap(),
             }),
             throttle: Some(ThrottleConfig::default()),
             ..BatcherConfig::default()
@@ -859,7 +859,7 @@ mod tests {
         let config = BatcherConfig {
             shadow: Some(ShadowConfig {
                 inbox: BATCH_INBOX,
-                parity_validator_l2_rpc_url: server.url("/").parse().unwrap(),
+                validator_l2_rpc: server.url("/").parse().unwrap(),
             }),
             throttle: None,
             ..mocked_config(&server, Address::repeat_byte(0x51))
