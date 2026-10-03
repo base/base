@@ -396,8 +396,8 @@ services:
   # Shadow DA: the Rust base batcher runs in --shadow-mode alongside the
   # op-batcher, posting to SHADOW_BATCH_INBOX_ADDRESS from SHADOW_BATCHER_ADDR
   # (a distinct L1 sender, so its nonces never collide with the op-batcher's).
-  # It follows the derivation of base-shadow-validator, whose rollup node derives the
-  # shadow inbox, and compares its blocks with the builder's.
+  # It follows the derivation of base-shadow-validator, whose rollup node derives its
+  # chain from the shadow inbox, and compares its blocks with the builder's.
   base-batcher:
     image: base:local
     build:

@@ -294,10 +294,10 @@ impl BatcherService {
 
     /// Initialise all batcher components and return a [`ReadyBatcher`].
     ///
-    /// Requires a signer, connects to the L2 RPC, fetches the rollup config and checks that its
-    /// node derives the inbox the batcher posts to, connects to L1, checks outside shadow mode
-    /// that the signer is the batcher the L1 `SystemConfig` authorizes, and constructs the
-    /// driver. One-shot startup RPCs retry with exponential backoff until
+    /// Requires a signer, connects to the L2 RPC, fetches the rollup config, whose batch inbox
+    /// the batcher posts to and must be the shadow inbox in shadow mode, connects to L1, checks
+    /// outside shadow mode that the signer is the batcher the L1 `SystemConfig` authorizes, and
+    /// constructs the driver. One-shot startup RPCs retry with exponential backoff until
     /// [`BatcherConfig::wait_node_sync_timeout`]. Returns an error if any of those steps fail,
     /// before any background work is spawned.
     ///
@@ -336,12 +336,7 @@ impl BatcherService {
         if self.config.check_recent_txs_depth > 0 && !self.config.wait_node_sync {
             eyre::bail!("check_recent_txs_depth requires wait_node_sync");
         }
-        match (self.config.batch_inbox_override, self.config.parity_validator_l2_rpc_url.as_ref()) {
-            (None, Some(_)) => eyre::bail!("parity validator L2 RPC URL requires shadow mode"),
-            (Some(_), None) => eyre::bail!("shadow mode requires a parity validator L2 RPC URL"),
-            _ => {}
-        }
-        if self.config.batch_inbox_override.is_some() && self.config.throttle.is_some() {
+        if self.config.shadow.is_some() && self.config.throttle.is_some() {
             eyre::bail!(
                 "shadow mode requires the DA throttle to be disabled: the batcher would push its \
                  DA limits to the sequencer it reads blocks from"
@@ -385,19 +380,23 @@ impl BatcherService {
             })
             .await?,
         );
-        let batch_inbox = self.config.batch_inbox(rollup_config.batch_inbox_address)?;
-        if self.config.batch_inbox_override.is_some() {
+
+        // Post to the batch inbox of the rollup node's config, which must be the shadow inbox in
+        // shadow mode.
+        let batch_inbox = rollup_config.batch_inbox_address;
+        if let Some(shadow) = &self.config.shadow {
+            shadow.validate_batch_inbox(batch_inbox)?;
             warn!(inbox = %batch_inbox, "shadow mode, posting to the shadow batch inbox");
         } else {
             info!(inbox = %batch_inbox, "rollup config loaded");
         }
 
-        let validator_provider = if let Some(url) = &self.config.parity_validator_l2_rpc_url {
+        let validator_provider = if let Some(shadow) = &self.config.shadow {
             let provider = Self::rpc_retry("parity-validator-l2-rpc", retry, rpc_timeout, || {
                 ProviderBuilder::new()
                     .disable_recommended_fillers()
                     .network::<Base>()
-                    .connect(url.as_str())
+                    .connect(shadow.parity_validator_l2_rpc_url.as_str())
             })
             .await?;
             let provider: Arc<dyn Provider<Base> + Send + Sync> = Arc::new(provider);
@@ -416,7 +415,7 @@ impl BatcherService {
 
         // Derivation ignores batches from any other sender, so a wrong signer would only burn L1
         // fees. The shadow batcher posts with its own key on purpose.
-        if self.config.batch_inbox_override.is_none() {
+        if self.config.shadow.is_none() {
             let system_config = rollup_config.l1_system_config_address;
             let authorized = Self::rpc_retry("system-config-batcher", retry, rpc_timeout, || {
                 SystemConfigBatcher::fetch(&l1_provider, system_config)
@@ -638,12 +637,13 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+    use crate::ShadowConfig;
 
     /// The `SystemConfig` address of the mocked rollup config.
     const SYSTEM_CONFIG: Address = Address::repeat_byte(0x5c);
 
     /// The batch inbox of the mocked rollup config, which a shadow batcher following that rollup
-    /// node declares as its override.
+    /// node declares as its shadow inbox.
     const BATCH_INBOX: Address = Address::repeat_byte(0x1b);
 
     fn test_retry() -> RetryConfig {
@@ -754,21 +754,12 @@ mod tests {
         BatcherConfig { check_recent_txs_depth: 1, ..BatcherConfig::default() },
         "check_recent_txs_depth requires wait_node_sync"
     )]
-    #[case::shadow_without_parity_validator(
-        BatcherConfig { batch_inbox_override: Some(Address::ZERO), ..BatcherConfig::default() },
-        "shadow mode requires a parity validator L2 RPC URL"
-    )]
-    #[case::parity_validator_without_shadow(
-        BatcherConfig {
-            parity_validator_l2_rpc_url: Some("http://127.0.0.1:1".parse().unwrap()),
-            ..BatcherConfig::default()
-        },
-        "parity validator L2 RPC URL requires shadow mode"
-    )]
     #[case::shadow_with_throttle(
         BatcherConfig {
-            batch_inbox_override: Some(Address::ZERO),
-            parity_validator_l2_rpc_url: Some("http://127.0.0.1:1".parse().unwrap()),
+            shadow: Some(ShadowConfig {
+                inbox: Address::ZERO,
+                parity_validator_l2_rpc_url: "http://127.0.0.1:1".parse().unwrap(),
+            }),
             throttle: Some(ThrottleConfig::default()),
             ..BatcherConfig::default()
         },
@@ -866,8 +857,10 @@ mod tests {
         // Setup reads the L1 head right after the check, so a served read means setup got that far.
         let l1_head = mock_rpc(&server, r#"{"method":"eth_blockNumber"}"#, r#""0x1""#.into()).await;
         let config = BatcherConfig {
-            batch_inbox_override: Some(BATCH_INBOX),
-            parity_validator_l2_rpc_url: Some(server.url("/").parse().unwrap()),
+            shadow: Some(ShadowConfig {
+                inbox: BATCH_INBOX,
+                parity_validator_l2_rpc_url: server.url("/").parse().unwrap(),
+            }),
             throttle: None,
             ..mocked_config(&server, Address::repeat_byte(0x51))
         };
