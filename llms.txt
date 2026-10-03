@@ -137,7 +137,7 @@
 
 ## Crates: infra
 
-- [crates/infra/audit/README.md](crates/infra/audit/README.md): audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers schema snapshot regeneration and legacy migrations.
+- [crates/infra/audit/README.md](crates/infra/audit/README.md): Postgres transaction-event ingest/RPC, opt-in hourly HOT/WARM routing, forward-only BRIN transition, explicit index recovery, owned PG17 tests and immutable schema/rollout gates.
 - [crates/infra/basectl/README.md](crates/infra/basectl/README.md): basectl-cli: the basectl clap parser and commands (blocks, sync, txpool, peers, proofs, conductor), interactive monitor, flashblocks JSON-lines stream, Denim readiness checks, and pods view config.
 - [crates/infra/challenger-e2e/README.md](crates/infra/challenger-e2e/README.md): Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games, asserts valid games are left alone and Path 4 (plus Path 3 conditionally, Path 2 in a separate scenario) is disputed.
 - [crates/infra/load-tests/README.md](crates/infra/load-tests/README.md): Load-testing framework (base-load-tests lib, base-load-tester bin): just/cargo commands, YAML config, tx mixes (precompile, B-20, swap, validity). Use to run or configure devnet/sepolia load tests.

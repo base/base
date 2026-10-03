@@ -1,0 +1,554 @@
+-- Expand only. Applying this migration does not change partition granularity.
+-- Activation is a separate owner-only operation after ALL writers use targetless
+-- ON CONFLICT DO NOTHING and validated bound checks have been prepared.
+CREATE TABLE public.transaction_events_partition_policy (
+    singleton BOOLEAN PRIMARY KEY CHECK (singleton),
+    hourly_from DATE,
+    root_oid OID NOT NULL
+);
+INSERT INTO public.transaction_events_partition_policy VALUES (true, NULL, 'public.transaction_events'::regclass);
+REVOKE ALL ON public.transaction_events_partition_policy FROM PUBLIC;
+
+-- Persist only successful detach authority, not a deduplication registry.
+-- A canonical name is never permission to reuse, detach, or drop a relation.
+CREATE TABLE public.transaction_events_detached_partitions (
+    relation_oid OID PRIMARY KEY,
+    root_oid OID NOT NULL,
+    relation_name TEXT NOT NULL,
+    relation_owner OID NOT NULL,
+    relation_kind "char" NOT NULL,
+    retention_class TEXT NOT NULL,
+    bucket_start TIMESTAMPTZ NOT NULL,
+    bucket_end TIMESTAMPTZ NOT NULL,
+    members OID[] NOT NULL,
+    member_shape JSONB NOT NULL
+);
+REVOKE ALL ON public.transaction_events_detached_partitions FROM PUBLIC;
+
+CREATE FUNCTION public.transaction_events_validate_class(p_class TEXT)
+RETURNS OID LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, public SET datestyle = 'ISO, YMD' AS $$
+DECLARE root_id OID; class_id OID; owner_id OID;
+BEGIN
+    IF p_class IS NULL OR p_class NOT IN ('hot','warm','cold') THEN RAISE EXCEPTION 'invalid class'; END IF;
+    SELECT root_oid INTO root_id FROM public.transaction_events_partition_policy WHERE singleton;
+    IF root_id IS DISTINCT FROM to_regclass('public.transaction_events')::oid THEN RAISE EXCEPTION 'root OID changed'; END IF;
+    SELECT relowner INTO owner_id FROM pg_class WHERE oid=root_id AND relnamespace='public'::regnamespace AND relkind='p';
+    IF owner_id IS NULL OR NOT EXISTS(SELECT 1 FROM pg_partitioned_table p JOIN pg_attribute a ON a.attrelid=p.partrelid AND a.attname='retention_class' WHERE p.partrelid=root_id AND p.partstrat='l' AND p.partnatts=1 AND p.partattrs[0]=a.attnum AND p.partexprs IS NULL) THEN RAISE EXCEPTION 'invalid root'; END IF;
+    class_id := to_regclass(format('public.%I','transaction_events_'||p_class));
+    IF NOT EXISTS(SELECT 1 FROM pg_class c JOIN pg_inherits i ON i.inhrelid=c.oid JOIN pg_partitioned_table p ON p.partrelid=c.oid JOIN pg_attribute a ON a.attrelid=c.oid AND a.attname='event_date' WHERE c.oid=class_id AND c.relkind='p' AND c.relnamespace='public'::regnamespace AND c.relowner=owner_id AND i.inhparent=root_id AND pg_get_expr(c.relpartbound,c.oid)=format('FOR VALUES IN (%L)',p_class) AND p.partstrat='r' AND p.partnatts=1 AND p.partattrs[0]=a.attnum AND p.partexprs IS NULL) THEN RAISE EXCEPTION 'invalid class ancestry: %',p_class; END IF;
+    RETURN class_id;
+END $$;
+
+CREATE FUNCTION public.transaction_events_validate_day(p_class TEXT, p_day DATE)
+RETURNS OID LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, public SET datestyle = 'ISO, YMD' AS $$
+DECLARE parent_id OID; day_id OID; cutoff DATE; bounds TEXT[]; expected_kind "char";
+BEGIN
+    IF p_day IS NULL THEN RAISE EXCEPTION 'UTC day required'; END IF;
+    parent_id := public.transaction_events_validate_class(p_class);
+    SELECT hourly_from INTO cutoff FROM public.transaction_events_partition_policy WHERE singleton;
+    expected_kind := CASE WHEN p_class<>'cold' AND cutoff IS NOT NULL AND p_day>=cutoff THEN 'p' ELSE 'r' END;
+    day_id := to_regclass(format('public.%I','transaction_events_'||p_class||'_'||to_char(p_day,'YYYYMMDD')));
+    SELECT regexp_match(pg_get_expr(c.relpartbound,c.oid), '^FOR VALUES FROM \(''([^'']+)''\) TO \(''([^'']+)''\)$') INTO bounds FROM pg_class c JOIN pg_class parent ON parent.oid=parent_id JOIN pg_inherits i ON i.inhrelid=c.oid WHERE c.oid=day_id AND c.relkind=expected_kind AND c.relnamespace='public'::regnamespace AND c.relowner=parent.relowner AND i.inhparent=parent_id;
+    IF bounds IS NULL OR bounds[1]::date IS DISTINCT FROM p_day OR bounds[2]::date IS DISTINCT FROM p_day+1 THEN RAISE EXCEPTION 'invalid day ancestry/bounds: %/%',p_class,p_day; END IF;
+    IF expected_kind='p' AND NOT EXISTS(SELECT 1 FROM pg_partitioned_table p JOIN pg_attribute a ON a.attrelid=p.partrelid AND a.attname='event_time' WHERE p.partrelid=day_id AND p.partstrat='r' AND p.partnatts=1 AND p.partattrs[0]=a.attnum AND p.partexprs IS NULL) THEN RAISE EXCEPTION 'invalid hourly day key'; END IF;
+    IF expected_kind='r' AND NOT EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid=day_id AND i.indisprimary AND i.indisvalid AND i.indisready AND i.indnkeyatts=3 AND i.indnatts=3 AND i.indpred IS NULL AND i.indexprs IS NULL AND ARRAY(SELECT a.attname::text FROM unnest(i.indkey::smallint[]) WITH ORDINALITY k(num,pos) JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.num ORDER BY k.pos)=ARRAY['event_id','retention_class','event_date']) THEN RAISE EXCEPTION 'invalid daily primary key'; END IF;
+    IF expected_kind='p' AND EXISTS(SELECT 1 FROM pg_index WHERE indrelid=day_id AND indisprimary) THEN RAISE EXCEPTION 'unexpected hourly day primary key'; END IF;
+    RETURN day_id;
+END $$;
+
+CREATE FUNCTION public.transaction_events_validate_hour(p_class TEXT, p_hour TIMESTAMPTZ)
+RETURNS OID LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, public SET datestyle = 'ISO, YMD' SET TimeZone = 'UTC' AS $$
+DECLARE parent_id OID; hour_id OID; cutoff DATE; day_value DATE; bounds TEXT[];
+BEGIN
+    IF p_class IS NULL OR p_class NOT IN ('hot','warm') OR p_hour IS NULL OR p_hour <> date_trunc('hour',p_hour AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' THEN RAISE EXCEPTION 'HOT/WARM UTC hour required'; END IF;
+    day_value := (p_hour AT TIME ZONE 'UTC')::date;
+    SELECT hourly_from INTO cutoff FROM public.transaction_events_partition_policy WHERE singleton;
+    IF cutoff IS NULL OR day_value<cutoff THEN RAISE EXCEPTION 'hour outside active policy'; END IF;
+    parent_id := public.transaction_events_validate_day(p_class,day_value);
+    hour_id := to_regclass(format('public.%I','transaction_events_'||p_class||'_'||to_char(p_hour AT TIME ZONE 'UTC','YYYYMMDDHH24')));
+    SELECT regexp_match(pg_get_expr(c.relpartbound,c.oid), '^FOR VALUES FROM \(''([^'']+)''\) TO \(''([^'']+)''\)$') INTO bounds FROM pg_class c JOIN pg_class parent ON parent.oid=parent_id JOIN pg_inherits i ON i.inhrelid=c.oid WHERE c.oid=hour_id AND c.relkind='r' AND c.relnamespace='public'::regnamespace AND c.relowner=parent.relowner AND i.inhparent=parent_id;
+    IF bounds IS NULL OR bounds[1]::timestamptz IS DISTINCT FROM p_hour OR bounds[2]::timestamptz IS DISTINCT FROM p_hour+interval '1 hour' THEN RAISE EXCEPTION 'invalid hour ancestry/bounds: %/%',p_class,p_hour; END IF;
+    IF NOT EXISTS(SELECT 1 FROM pg_index i JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attname='event_id' WHERE i.indrelid=hour_id AND i.indisprimary AND i.indisvalid AND i.indisready AND i.indnkeyatts=1 AND i.indnatts=1 AND i.indkey[0]=a.attnum AND i.indpred IS NULL AND i.indexprs IS NULL) THEN RAISE EXCEPTION 'invalid hour primary key'; END IF;
+    RETURN hour_id;
+END $$;
+
+-- Exact retained member shape; only DETACH's top edge/bound is normalized.
+CREATE FUNCTION public.transaction_events_detached_members(p_oid OID)
+RETURNS JSONB LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public SET TimeZone = 'UTC' SET datestyle = 'ISO, YMD' AS $$
+    WITH tree AS (
+        SELECT relid::oid, parentrelid::oid FROM pg_partition_tree(p_oid::regclass)
+        UNION SELECT p_oid, NULL::oid
+    ), members AS (
+        SELECT DISTINCT ON (relid) relid, CASE WHEN relid=p_oid THEN NULL::oid ELSE parentrelid END AS parent
+        FROM tree ORDER BY relid, parentrelid NULLS FIRST
+    )
+    SELECT jsonb_agg(jsonb_build_object(
+        'oid',c.oid,'schema',c.relnamespace,'name',c.relname,'kind',c.relkind,'owner',c.relowner,'persistence',c.relpersistence,'access_method',c.relam,
+        'parent',m.parent,'partition',CASE WHEN c.oid=p_oid THEN false ELSE c.relispartition END,
+        'bound',CASE WHEN c.oid=p_oid THEN NULL ELSE pg_get_expr(c.relpartbound,c.oid) END,
+        'key',pg_get_partkeydef(c.oid),
+        'attributes',(SELECT jsonb_agg(jsonb_build_array(a.attnum,a.attname,a.atttypid,a.atttypmod,a.attnotnull,a.attidentity,a.attgenerated) ORDER BY a.attnum) FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped),
+        'constraints',(SELECT jsonb_agg(jsonb_build_array(k.oid,k.conname,k.contype,k.conkey,k.conindid,k.convalidated,k.connoinherit,pg_get_constraintdef(k.oid)) ORDER BY k.oid) FROM pg_constraint k WHERE k.conrelid=c.oid),
+        'primary_key',(SELECT jsonb_agg(jsonb_build_array(i.indexrelid,idx.relnamespace,idx.relname,idx.relkind,idx.relowner,i.indisvalid,i.indisready,i.indisunique,i.indnkeyatts,i.indnatts,i.indkey::text,pg_get_indexdef(i.indexrelid)) ORDER BY i.indexrelid) FROM pg_index i JOIN pg_class idx ON idx.oid=i.indexrelid WHERE i.indrelid=c.oid AND i.indisprimary)
+    ) ORDER BY c.oid) FROM members m JOIN pg_class c ON c.oid=m.relid;
+$$;
+
+CREATE FUNCTION public.transaction_events_validate_detached(p_name TEXT, p_class TEXT, p_start TIMESTAMPTZ, p_end TIMESTAMPTZ)
+RETURNS OID LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, public SET datestyle = 'ISO, YMD' AS $$
+DECLARE relation_id OID; root_id OID; owner_id OID; actual_members OID[];
+BEGIN
+    PERFORM public.transaction_events_validate_class(p_class);
+    SELECT root_oid INTO root_id FROM public.transaction_events_partition_policy WHERE singleton;
+    SELECT relowner INTO owner_id FROM pg_class WHERE oid=root_id;
+    relation_id := to_regclass(format('public.%I',p_name));
+    IF relation_id IS NULL THEN RAISE EXCEPTION 'missing detached relation'; END IF;
+    SELECT array_agg(relid::oid ORDER BY relid::oid) INTO actual_members FROM pg_partition_tree(relation_id::regclass);
+    -- Ordinary detached heaps are not partitioned; pg_partition_tree returns no rows.
+    actual_members := COALESCE(actual_members,ARRAY[relation_id]);
+    IF NOT EXISTS(SELECT 1 FROM public.transaction_events_detached_partitions d JOIN pg_class c ON c.oid=d.relation_oid WHERE c.oid=relation_id AND c.relnamespace='public'::regnamespace AND c.relname=p_name AND c.relowner=owner_id AND c.relowner=d.relation_owner AND c.relkind=d.relation_kind AND c.relkind IN ('r','p') AND NOT c.relispartition AND c.relpartbound IS NULL AND d.root_oid=root_id AND d.relation_name=p_name AND d.retention_class=p_class AND d.bucket_start=p_start AND d.bucket_end=p_end AND d.members=actual_members AND NOT EXISTS(SELECT 1 FROM pg_inherits i WHERE i.inhrelid=c.oid)) THEN RAISE EXCEPTION 'unproven detached relation: %',p_name; END IF;
+    IF EXISTS(SELECT 1 FROM pg_class WHERE oid=ANY(actual_members) AND (relowner<>owner_id OR relnamespace<>'public'::regnamespace OR relkind NOT IN ('r','p'))) THEN RAISE EXCEPTION 'detached members changed'; END IF;
+    IF NOT EXISTS(SELECT 1 FROM public.transaction_events_detached_partitions d WHERE d.relation_oid=relation_id AND d.member_shape=public.transaction_events_detached_members(relation_id)) THEN RAISE EXCEPTION 'detached member shape/topology changed'; END IF;
+    RETURN relation_id;
+END $$;
+
+-- Capture verified ancestry/bounds/OIDs in the SAME transaction as detach.
+-- Registry is private to the migration owner; runtime callers cannot forge it.
+CREATE FUNCTION public.transaction_events_record_detach(p_oid OID, p_class TEXT, p_start TIMESTAMPTZ, p_end TIMESTAMPTZ)
+RETURNS VOID LANGUAGE plpgsql SET search_path = pg_catalog, public SET TimeZone = 'UTC' SET datestyle = 'ISO, YMD' AS $$
+DECLARE member RECORD; keys TEXT[]; start_time TIMESTAMPTZ; guard TEXT;
+BEGIN
+    -- Callers hold the complete attached subtree locked and have checked its
+    -- canonical routing bounds. NOT VALID enforces every subsequent write without
+    -- a redundant heap scan: existing rows already obey the attached partition.
+    FOR member IN SELECT c.oid,c.relname FROM pg_class c WHERE c.relkind='r' AND c.oid IN (SELECT relid FROM pg_partition_tree(p_oid::regclass) UNION SELECT p_oid) LOOP
+        keys := CASE WHEN length(member.relname)=length('transaction_events_'||p_class||'_')+10 THEN ARRAY['event_id'] ELSE ARRAY['event_id','retention_class','event_date'] END;
+        IF NOT EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid=member.oid AND i.indisprimary AND i.indisvalid AND i.indisready AND i.indnkeyatts=cardinality(keys) AND i.indnatts=cardinality(keys) AND i.indpred IS NULL AND i.indexprs IS NULL AND ARRAY(SELECT a.attname::text FROM unnest(i.indkey::smallint[]) WITH ORDINALITY k(num,pos) JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.num ORDER BY k.pos)=keys) THEN RAISE EXCEPTION 'invalid detached member primary key'; END IF;
+        guard := format('retention_class = %L AND event_date = %L::date',p_class,(p_start AT TIME ZONE 'UTC')::date);
+        IF cardinality(keys)=1 THEN
+            start_time := to_timestamp(right(member.relname,10),'YYYYMMDDHH24');
+            guard := guard||format(' AND event_time >= %L::timestamptz AND event_time < %L::timestamptz',start_time,start_time+interval '1 hour');
+        END IF;
+        EXECUTE format('ALTER TABLE ONLY public.%I ADD CONSTRAINT audit_detached_bucket_guard CHECK (%s) NOT VALID',member.relname,guard);
+    END LOOP;
+    INSERT INTO public.transaction_events_detached_partitions
+    SELECT c.oid,p.root_oid,c.relname,c.relowner,c.relkind,p_class,p_start,p_end,
+        COALESCE((SELECT array_agg(relid::oid ORDER BY relid::oid) FROM pg_partition_tree(c.oid::regclass)),ARRAY[c.oid]),
+        public.transaction_events_detached_members(c.oid)
+    FROM pg_class c CROSS JOIN public.transaction_events_partition_policy p WHERE c.oid=p_oid AND p.singleton;
+END $$;
+
+ALTER FUNCTION public.transaction_events_create_partition(TEXT, DATE)
+    RENAME TO transaction_events_create_daily_partition;
+
+-- Preparation adds inherited CHECKs before activation. Daily maintenance must
+-- copy those checks too; defaults-only LIKE would fail ATTACH during that window.
+CREATE OR REPLACE FUNCTION public.transaction_events_create_daily_partition(p_class TEXT, p_day DATE)
+RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public SET datestyle = 'ISO, YMD' AS $$
+DECLARE parent_name TEXT; partition_name TEXT;
+BEGIN
+    IF p_class IS NULL OR p_class NOT IN ('hot','warm','cold') OR p_day IS NULL THEN
+        RAISE EXCEPTION 'valid transaction event class and UTC day required';
+    END IF;
+    parent_name := 'transaction_events_' || p_class;
+    partition_name := parent_name || '_' || to_char(p_day,'YYYYMMDD');
+    PERFORM public.transaction_events_validate_class(p_class);
+    IF to_regclass(format('public.%I',partition_name)) IS NOT NULL THEN
+        PERFORM public.transaction_events_validate_day(p_class,p_day);
+        RETURN false;
+    END IF;
+    EXECUTE format('CREATE TABLE public.%I (LIKE public.%I INCLUDING DEFAULTS INCLUDING CONSTRAINTS)',partition_name,parent_name);
+    EXECUTE format('ALTER TABLE public.%I ATTACH PARTITION public.%I FOR VALUES FROM (%L) TO (%L)',parent_name,partition_name,p_day,p_day+1);
+    RETURN true;
+END $$;
+
+CREATE FUNCTION public.transaction_events_create_partition(p_class TEXT, p_day DATE)
+RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public SET datestyle = 'ISO, YMD' SET TimeZone = 'UTC' AS $$
+DECLARE
+    cutoff DATE;
+    parent_name TEXT;
+    partition_name TEXT;
+    changed BOOLEAN;
+BEGIN
+    IF p_class IS NULL OR p_class NOT IN ('hot', 'warm', 'cold') OR p_day IS NULL THEN
+        RAISE EXCEPTION 'valid transaction event class and UTC day required';
+    END IF;
+    PERFORM public.transaction_events_validate_class(p_class);
+    SELECT hourly_from INTO cutoff FROM public.transaction_events_partition_policy WHERE singleton;
+    parent_name := 'transaction_events_' || p_class;
+    partition_name := parent_name || '_' || to_char(p_day, 'YYYYMMDD');
+    IF p_class = 'cold' OR cutoff IS NULL OR p_day < cutoff THEN
+        changed := public.transaction_events_create_daily_partition(p_class, p_day);
+        -- After root/class PK removal, old HOT/WARM days still dedupe by day.
+        IF changed AND p_class <> 'cold' AND cutoff IS NOT NULL THEN
+            EXECUTE format('ALTER TABLE public.%I ADD PRIMARY KEY (event_id, retention_class, event_date)', partition_name);
+        END IF;
+        RETURN changed;
+    END IF;
+    IF to_regclass(format('public.%I', partition_name)) IS NOT NULL THEN
+        PERFORM public.transaction_events_validate_day(p_class,p_day);
+        RETURN false;
+    END IF;
+    EXECUTE format('CREATE TABLE public.%I (LIKE public.%I INCLUDING DEFAULTS) PARTITION BY RANGE(event_time)', partition_name, parent_name);
+    EXECUTE format('ALTER TABLE public.%I ATTACH PARTITION public.%I FOR VALUES FROM (%L) TO (%L)', parent_name, partition_name, p_day, p_day+1);
+    RETURN true;
+END $$;
+
+-- Each hour is created independently under the normal retention lock/timeout.
+CREATE FUNCTION public.transaction_events_create_hour(p_class TEXT, p_hour TIMESTAMPTZ)
+RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public SET datestyle = 'ISO, YMD' SET TimeZone = 'UTC' AS $$
+DECLARE
+    cutoff DATE;
+    day_value DATE;
+    parent_name TEXT;
+    partition_name TEXT;
+BEGIN
+    IF p_class IS NULL OR p_class NOT IN ('hot','warm') OR p_hour IS NULL
+       OR p_hour <> date_trunc('hour', p_hour AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' THEN
+        RAISE EXCEPTION 'HOT/WARM and exact UTC hour required';
+    END IF;
+    day_value := (p_hour AT TIME ZONE 'UTC')::date;
+    SELECT hourly_from INTO cutoff FROM public.transaction_events_partition_policy WHERE singleton;
+    IF cutoff IS NULL OR day_value < cutoff THEN RETURN false; END IF;
+    parent_name := 'transaction_events_' || p_class || '_' || to_char(day_value,'YYYYMMDD');
+    partition_name := 'transaction_events_' || p_class || '_' || to_char(p_hour AT TIME ZONE 'UTC','YYYYMMDDHH24');
+    IF to_regclass(format('public.%I', partition_name)) IS NOT NULL THEN
+        PERFORM public.transaction_events_validate_hour(p_class,p_hour);
+        RETURN false;
+    END IF;
+    PERFORM public.transaction_events_create_partition(p_class, day_value);
+    PERFORM public.transaction_events_validate_day(p_class,day_value);
+    EXECUTE format('CREATE TABLE public.%I (LIKE public.transaction_events INCLUDING DEFAULTS, PRIMARY KEY(event_id))', partition_name);
+    EXECUTE format('ALTER TABLE public.%I ATTACH PARTITION public.%I FOR VALUES FROM (%L) TO (%L)', parent_name, partition_name, p_hour, p_hour+interval '1 hour');
+    RETURN true;
+END $$;
+
+CREATE FUNCTION public.transaction_events_detach_hour(p_class TEXT, p_hour TIMESTAMPTZ)
+RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public SET datestyle = 'ISO, YMD' SET TimeZone = 'UTC' AS $$
+DECLARE parent_name TEXT; partition_name TEXT;
+BEGIN
+    IF p_class IS NULL OR p_class NOT IN ('hot','warm') OR p_hour IS NULL
+       OR p_hour <> date_trunc('hour',p_hour AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' THEN
+        RAISE EXCEPTION 'HOT/WARM and exact UTC hour required';
+    END IF;
+    parent_name := 'transaction_events_' || p_class || '_' || to_char(p_hour AT TIME ZONE 'UTC','YYYYMMDD');
+    partition_name := 'transaction_events_' || p_class || '_' || to_char(p_hour AT TIME ZONE 'UTC','YYYYMMDDHH24');
+    IF to_regclass(format('public.%I',partition_name)) IS NULL THEN RETURN false; END IF;
+    -- Match Postgres/readers' parent-before-child lock order.
+    IF EXISTS(SELECT 1 FROM pg_inherits WHERE inhrelid=to_regclass(format('public.%I',partition_name))) THEN
+        PERFORM public.transaction_events_validate_hour(p_class,p_hour);
+        EXECUTE format('LOCK TABLE public.%I IN ACCESS EXCLUSIVE MODE',parent_name);
+    END IF;
+    EXECUTE format('LOCK TABLE public.%I IN ACCESS EXCLUSIVE MODE',partition_name);
+    IF NOT EXISTS(SELECT 1 FROM pg_inherits WHERE inhrelid=to_regclass(format('public.%I',partition_name))) THEN
+        PERFORM public.transaction_events_validate_detached(partition_name,p_class,p_hour,p_hour+interval '1 hour');
+        RETURN false;
+    END IF;
+    PERFORM public.transaction_events_record_detach(public.transaction_events_validate_hour(p_class,p_hour),p_class,p_hour,p_hour+interval '1 hour');
+    EXECUTE format('ALTER TABLE public.%I DETACH PARTITION public.%I', parent_name, partition_name);
+    RETURN true;
+END $$;
+
+CREATE FUNCTION public.transaction_events_drop_detached_hour(p_class TEXT, p_hour TIMESTAMPTZ)
+RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public SET datestyle = 'ISO, YMD' SET TimeZone = 'UTC' AS $$
+DECLARE partition_name TEXT; partition_oid REGCLASS;
+BEGIN
+    IF p_class IS NULL OR p_class NOT IN ('hot','warm') OR p_hour IS NULL
+       OR p_hour <> date_trunc('hour',p_hour AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' THEN
+        RAISE EXCEPTION 'HOT/WARM and exact UTC hour required';
+    END IF;
+    partition_name := 'transaction_events_' || p_class || '_' || to_char(p_hour AT TIME ZONE 'UTC','YYYYMMDDHH24');
+    partition_oid := to_regclass(format('public.%I',partition_name));
+    IF partition_oid IS NULL THEN RETURN false; END IF;
+    EXECUTE format('LOCK TABLE public.%I IN ACCESS EXCLUSIVE MODE',partition_name);
+    partition_oid := public.transaction_events_validate_detached(partition_name,p_class,p_hour,p_hour+interval '1 hour');
+    EXECUTE format('DROP TABLE public.%I',partition_name);
+    DELETE FROM public.transaction_events_detached_partitions WHERE relation_oid=partition_oid;
+    RETURN true;
+END $$;
+
+-- Day branches now contain hour children. Apply the same detach provenance
+-- requirement to the existing day interface without changing migrations 001–003.
+CREATE OR REPLACE FUNCTION public.transaction_events_detach_partition(p_class TEXT, p_day DATE)
+RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public SET datestyle = 'ISO, YMD' SET TimeZone = 'UTC' AS $$
+DECLARE partition_name TEXT; partition_id OID; child RECORD; start_time TIMESTAMPTZ;
+BEGIN
+    IF p_day IS NULL THEN RAISE EXCEPTION 'UTC day required'; END IF;
+    PERFORM public.transaction_events_validate_class(p_class);
+    partition_name := 'transaction_events_'||p_class||'_'||to_char(p_day,'YYYYMMDD');
+    partition_id := to_regclass(format('public.%I',partition_name));
+    IF partition_id IS NULL THEN RETURN false; END IF;
+    start_time := p_day::timestamp AT TIME ZONE 'UTC';
+    IF EXISTS(SELECT 1 FROM pg_inherits WHERE inhrelid=partition_id) THEN
+        PERFORM public.transaction_events_validate_day(p_class,p_day);
+        EXECUTE format('LOCK TABLE public.%I IN ACCESS EXCLUSIVE MODE','transaction_events_'||p_class);
+    END IF;
+    EXECUTE format('LOCK TABLE public.%I IN ACCESS EXCLUSIVE MODE',partition_name);
+    IF NOT EXISTS(SELECT 1 FROM pg_inherits WHERE inhrelid=partition_id) THEN
+        PERFORM public.transaction_events_validate_detached(partition_name,p_class,start_time,start_time+interval '24 hours');
+        RETURN false;
+    END IF;
+    partition_id := public.transaction_events_validate_day(p_class,p_day);
+    FOR child IN SELECT c.relname FROM pg_partition_tree(partition_id::regclass) t JOIN pg_class c ON c.oid=t.relid WHERE t.level>0 LOOP
+        IF child.relname !~ '^transaction_events_(hot|warm)_[0-9]{10}$' THEN RAISE EXCEPTION 'unexpected day child'; END IF;
+        PERFORM public.transaction_events_validate_hour(split_part(child.relname,'_',3),(to_date(left(right(child.relname,10),8),'YYYYMMDD')::timestamp AT TIME ZONE 'UTC')+make_interval(hours=>right(child.relname,2)::int));
+    END LOOP;
+    PERFORM public.transaction_events_record_detach(partition_id,p_class,start_time,start_time+interval '24 hours');
+    EXECUTE format('ALTER TABLE public.%I DETACH PARTITION public.%I','transaction_events_'||p_class,partition_name);
+    RETURN true;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.transaction_events_drop_detached_partition(p_class TEXT, p_day DATE)
+RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public SET datestyle = 'ISO, YMD' AS $$
+DECLARE partition_name TEXT; partition_id OID; start_time TIMESTAMPTZ;
+BEGIN
+    IF p_day IS NULL THEN RAISE EXCEPTION 'UTC day required'; END IF;
+    PERFORM public.transaction_events_validate_class(p_class);
+    partition_name := 'transaction_events_'||p_class||'_'||to_char(p_day,'YYYYMMDD');
+    partition_id := to_regclass(format('public.%I',partition_name));
+    IF partition_id IS NULL THEN RETURN false; END IF;
+    start_time := p_day::timestamp AT TIME ZONE 'UTC';
+    EXECUTE format('LOCK TABLE public.%I IN ACCESS EXCLUSIVE MODE',partition_name);
+    partition_id := public.transaction_events_validate_detached(partition_name,p_class,start_time,start_time+interval '24 hours');
+    EXECUTE format('DROP TABLE public.%I',partition_name);
+    DELETE FROM public.transaction_events_detached_partitions WHERE relation_oid=partition_id;
+    RETURN true;
+END $$;
+
+-- Exact generated CHECK proof is needed to avoid heap scans under activation's
+-- root lock. A forged constraint with the right name is not that proof.
+CREATE FUNCTION public.transaction_events_validate_preparation(p_class TEXT, p_day DATE DEFAULT NULL, p_validated BOOLEAN DEFAULT true)
+RETURNS OID LANGUAGE plpgsql STABLE SET search_path = pg_catalog, public SET datestyle = 'ISO, YMD' AS $$
+DECLARE relation_id OID; constraint_name TEXT; expected_expression TEXT;
+BEGIN
+    relation_id := public.transaction_events_validate_class(p_class);
+    constraint_name := 'hourly_class_bound';
+    expected_expression := format('(retention_class = %L::text)',p_class);
+    IF p_day IS NOT NULL THEN
+        relation_id := public.transaction_events_validate_day(p_class,p_day);
+        constraint_name := 'hourly_day_bound';
+        expected_expression := format('((retention_class = %L::text) AND (event_date >= %L::date) AND (event_date < %L::date))',p_class,to_char(p_day,'YYYY-MM-DD'),to_char(p_day+1,'YYYY-MM-DD'));
+    END IF;
+    IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid=relation_id AND conname=constraint_name AND contype='c' AND (NOT p_validated OR convalidated) AND pg_get_expr(conbin,conrelid)=expected_expression) THEN
+        RAISE EXCEPTION 'unexpected or unvalidated preparation CHECK: %/%',p_class,p_day;
+    END IF;
+    RETURN relation_id;
+END $$;
+
+-- Owner-only preparation. NOT VALID/VALIDATE is deliberately outside migrate up
+-- and activation: validation can read populated heaps. Run one relation per
+-- bounded transaction during an approved preparation window, days before T.
+CREATE FUNCTION public.transaction_events_prepare_hourly(p_class TEXT, p_day DATE DEFAULT NULL)
+RETURNS VOID LANGUAGE plpgsql SET search_path = pg_catalog, public SET datestyle = 'ISO, YMD' AS $$
+DECLARE relation_name TEXT; constraint_name TEXT; predicate TEXT; expected_parent TEXT;
+BEGIN
+    IF p_class IS NULL OR p_class NOT IN ('hot','warm','cold') THEN RAISE EXCEPTION 'invalid class'; END IF;
+    IF EXISTS (SELECT 1 FROM public.transaction_events_partition_policy WHERE hourly_from IS NOT NULL) THEN
+        RAISE EXCEPTION 'bound preparation is only supported before activation';
+    END IF;
+    relation_name := 'transaction_events_' || p_class;
+    expected_parent := 'transaction_events';
+    constraint_name := 'hourly_class_bound';
+    predicate := format('retention_class = %L',p_class);
+    IF p_day IS NOT NULL THEN
+        expected_parent := relation_name;
+        relation_name := relation_name || '_' || to_char(p_day,'YYYYMMDD');
+        constraint_name := 'hourly_day_bound';
+        predicate := predicate || format(' AND event_date >= %L::date AND event_date < %L::date',p_day,p_day+1);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_inherits WHERE inhrelid=to_regclass(format('public.%I',relation_name)) AND inhparent=to_regclass(format('public.%I',expected_parent))) THEN
+        RAISE EXCEPTION 'unexpected preparation relation: %',relation_name;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass(format('public.%I',relation_name)) AND conname=constraint_name) THEN
+        EXECUTE format('ALTER TABLE public.%I ADD CONSTRAINT %I CHECK (%s) NOT VALID',relation_name,constraint_name,predicate);
+    END IF;
+    PERFORM public.transaction_events_validate_preparation(p_class,p_day,false);
+    EXECUTE format('ALTER TABLE public.%I VALIDATE CONSTRAINT %I',relation_name,constraint_name);
+END $$;
+
+-- No grant to the runtime role. Caller must be the table owner. All steps are
+-- atomic: root readers never see detached history. No data copy/reset permitted.
+-- Canonical BRIN identity/definition/edges, independent of full backfill validity.
+-- Unattached invalid leaf indexes are retained for the explicit index command.
+CREATE FUNCTION public.transaction_events_validate_brin(p_table OID, p_parent OID DEFAULT NULL, p_valid BOOLEAN DEFAULT false)
+RETURNS OID LANGUAGE plpgsql STABLE SET search_path = pg_catalog, public AS $$
+DECLARE index_id OID; expected_name TEXT; table_kind "char"; owner_id OID;
+BEGIN
+    SELECT relname||'_ingested_at_idx',relkind,relowner INTO expected_name,table_kind,owner_id FROM pg_class WHERE oid=p_table AND relnamespace='public'::regnamespace AND relkind IN ('r','p');
+    index_id := to_regclass(format('public.%I',expected_name));
+    IF owner_id IS NULL OR NOT EXISTS(SELECT 1 FROM pg_index i JOIN pg_class idx ON idx.oid=i.indexrelid JOIN pg_am am ON am.oid=idx.relam JOIN pg_attribute a ON a.attrelid=p_table AND a.attname='ingested_at' JOIN pg_opclass op ON op.oid=i.indclass[0]
+        WHERE idx.oid=index_id AND idx.relnamespace='public'::regnamespace AND idx.relowner=owner_id AND idx.relkind=CASE WHEN table_kind='p' THEN 'I'::"char" ELSE 'i'::"char" END AND i.indrelid=p_table
+          AND (NOT p_valid OR i.indisvalid) AND (table_kind='p' OR p_parent IS NULL OR i.indisvalid) AND (table_kind='r' AND p_parent IS NULL AND NOT i.indisvalid OR i.indisready) AND NOT i.indisunique AND NOT i.indisprimary AND NOT i.indisexclusion
+          AND am.amname='brin' AND i.indnkeyatts=1 AND i.indnatts=1 AND i.indkey[0]=a.attnum AND i.indoption[0]=0 AND i.indcollation[0]=0 AND i.indpred IS NULL AND i.indexprs IS NULL
+          AND op.opcnamespace='pg_catalog'::regnamespace AND op.opcname='timestamptz_minmax_ops' AND idx.reloptions IS NULL
+          AND (p_parent IS NULL AND NOT EXISTS(SELECT 1 FROM pg_inherits WHERE inhrelid=idx.oid) OR p_parent IS NOT NULL AND (SELECT array_agg(inhparent) FROM pg_inherits WHERE inhrelid=idx.oid)=ARRAY[p_parent])) THEN
+        RAISE EXCEPTION 'unexpected canonical BRIN definition/ownership/edge: %',expected_name;
+    END IF;
+    IF EXISTS(SELECT 1 FROM pg_inherits e JOIN pg_index child ON child.indexrelid=e.inhrelid JOIN pg_class idx ON idx.oid=child.indexrelid JOIN pg_class tbl ON tbl.oid=child.indrelid WHERE e.inhparent=index_id AND (idx.oid IS DISTINCT FROM to_regclass(format('public.%I',tbl.relname||'_ingested_at_idx')) OR idx.relnamespace<>'public'::regnamespace OR tbl.relnamespace<>'public'::regnamespace OR idx.relowner<>tbl.relowner OR NOT EXISTS(SELECT 1 FROM pg_inherits t WHERE t.inhrelid=tbl.oid AND t.inhparent=p_table))) THEN
+        RAISE EXCEPTION 'unexpected canonical BRIN child edge: %',expected_name;
+    END IF;
+    RETURN index_id;
+END $$;
+
+CREATE FUNCTION public.transaction_events_activate_hourly(p_day DATE, p_bridge_ready BOOLEAN DEFAULT false)
+RETURNS VOID LANGUAGE plpgsql SET search_path = pg_catalog, public SET datestyle = 'ISO, YMD' AS $$
+DECLARE row_value RECORD; class_name TEXT; cutoff DATE; partition_day DATE; metadata_ids OID[]; read_indexes OID[]; attached_indexes OID[]; parent_id OID; index_id OID;
+BEGIN
+    IF NOT p_bridge_ready OR p_bridge_ready IS NULL THEN RAISE EXCEPTION 'all writers must use targetless ON CONFLICT before activation'; END IF;
+    -- Keep the existing 72-hour look-ahead/retry margin before hourly admission.
+    IF p_day IS NULL OR (p_day::timestamp AT TIME ZONE 'UTC') <= clock_timestamp()+interval '3 days 1 hour' THEN
+        RAISE EXCEPTION 'activation must be a future UTC day beyond admission and look-ahead';
+    END IF;
+    -- Caller holds sqlx's database-derived migration lock on a dedicated session.
+    -- Activation also serializes with retention; caller sets bounded timeouts.
+    PERFORM pg_advisory_xact_lock(744697762131337711);
+    LOCK TABLE public.transaction_events IN ACCESS EXCLUSIVE MODE;
+    SELECT hourly_from INTO cutoff FROM public.transaction_events_partition_policy WHERE singleton FOR UPDATE;
+    IF cutoff IS NOT NULL THEN
+        IF cutoff=p_day THEN RETURN; END IF;
+        RAISE EXCEPTION 'hourly policy already activated at %',cutoff;
+    END IF;
+    -- Full historical BRIN coverage is intentionally NOT a prerequisite.
+    FOR class_name IN SELECT unnest(ARRAY['hot','warm','cold']) LOOP
+        PERFORM public.transaction_events_validate_class(class_name);
+    END LOOP;
+    IF (SELECT count(*) FROM pg_inherits WHERE inhparent='public.transaction_events'::regclass)<>3 THEN RAISE EXCEPTION 'unexpected retention-class subtree'; END IF;
+    FOR row_value IN SELECT c.oid,c.relname FROM pg_partition_tree('public.transaction_events'::regclass) t JOIN pg_class c ON c.oid=t.relid WHERE t.level=2 LOOP
+        IF row_value.relname !~ '^transaction_events_(hot|warm|cold)_[0-9]{8}$' OR public.transaction_events_validate_day(split_part(row_value.relname,'_',3),to_date(right(row_value.relname,8),'YYYYMMDD')) IS DISTINCT FROM row_value.oid THEN RAISE EXCEPTION 'unexpected day name/OID ancestry'; END IF;
+    END LOOP;
+    -- The six valid baseline read-index trees are retained, not recreated.
+    -- Any incomplete/altered read tree could force a build during reattach.
+    FOR row_value IN SELECT * FROM (VALUES
+        ('transaction_events_tx_hash_event_time_idx','(tx_hash, event_time) WHERE (tx_hash IS NOT NULL)'),
+        ('transaction_events_block_number_event_time_idx','(block_number, event_time) WHERE (block_number IS NOT NULL)'),
+        ('transaction_events_block_hash_event_time_idx','(block_hash, event_time) WHERE (block_hash IS NOT NULL)'),
+        ('transaction_events_rejected_event_time_idx',$def$(event_type, event_time DESC) WHERE (event_type = ANY (ARRAY['SIMULATION_FAILED'::text, 'BUILDER_REJECTED'::text, 'BUILDER_EXPIRED'::text]))$def$),
+        ('transaction_events_bundle_hash_event_time_idx',$def$(((data ->> 'bundle_hash'::text)), event_time) WHERE (data ? 'bundle_hash'::text)$def$),
+        ('transaction_events_bundle_id_event_time_idx',$def$(((data ->> 'bundle_id'::text)), event_time) WHERE (data ? 'bundle_id'::text)$def$)
+    ) expected(name,definition) LOOP
+        index_id := to_regclass(format('public.%I',row_value.name));
+        IF index_id IS NULL OR pg_get_indexdef(index_id)<>format('CREATE INDEX %I ON ONLY public.transaction_events USING btree %s',row_value.name,row_value.definition) OR EXISTS(SELECT 1 FROM pg_inherits WHERE inhrelid=index_id) THEN
+            RAISE EXCEPTION 'unexpected baseline read index: %',row_value.name;
+        END IF;
+        IF EXISTS(SELECT 1 FROM pg_partition_tree('public.transaction_events'::regclass) t JOIN pg_class tbl ON tbl.oid=t.relid WHERE NOT EXISTS(
+            SELECT 1 FROM pg_partition_tree(index_id::regclass) x JOIN pg_index i ON i.indexrelid=x.relid JOIN pg_class idx ON idx.oid=i.indexrelid JOIN pg_index baseline ON baseline.indexrelid=index_id
+            WHERE i.indrelid=t.relid AND idx.relnamespace='public'::regnamespace AND idx.relowner=tbl.relowner AND idx.relkind=CASE WHEN tbl.relkind='p' THEN 'I'::"char" ELSE 'i'::"char" END AND idx.reloptions IS NULL AND i.indisvalid AND i.indisready AND NOT i.indisunique AND NOT i.indisexclusion AND NOT i.indisprimary
+              AND i.indkey=baseline.indkey AND i.indclass=baseline.indclass AND i.indcollation=baseline.indcollation AND i.indoption=baseline.indoption AND i.indnkeyatts=baseline.indnkeyatts AND i.indnatts=baseline.indnatts
+              AND pg_get_expr(i.indexprs,i.indrelid) IS NOT DISTINCT FROM pg_get_expr(baseline.indexprs,baseline.indrelid) AND pg_get_expr(i.indpred,i.indrelid) IS NOT DISTINCT FROM pg_get_expr(baseline.indpred,baseline.indrelid)
+              AND (t.parentrelid IS NULL AND x.parentrelid IS NULL OR EXISTS(SELECT 1 FROM pg_index parent WHERE parent.indexrelid=x.parentrelid AND parent.indrelid=t.parentrelid)))) THEN
+            RAISE EXCEPTION 'incomplete or altered baseline read tree: %',row_value.name;
+        END IF;
+        read_indexes := array_append(read_indexes,index_id);
+    END LOOP;
+    IF EXISTS(SELECT 1 FROM pg_index WHERE indrelid IN (SELECT relid FROM pg_partition_tree('public.transaction_events'::regclass)) AND indisunique AND NOT indisprimary) THEN
+        RAISE EXCEPTION 'additional unique-index inventory requires explicit owner migration';
+    END IF;
+    -- Refuse unsupported foreign keys/extra parent indexes before any detach.
+    IF EXISTS(SELECT 1 FROM pg_constraint WHERE contype='f' AND (conrelid IN (SELECT relid FROM pg_partition_tree('public.transaction_events'::regclass)) OR confrelid IN (SELECT relid FROM pg_partition_tree('public.transaction_events'::regclass)))) THEN
+        RAISE EXCEPTION 'foreign key inventory requires explicit owner migration';
+    END IF;
+    FOR row_value IN SELECT t.relid,t.parentrelid,c.relname,c.relkind FROM pg_partition_tree('public.transaction_events'::regclass) t JOIN pg_class c ON c.oid=t.relid LOOP
+        IF row_value.relkind='p' THEN
+            IF EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid=row_value.relid AND i.indexrelid NOT IN (to_regclass(format('public.%I',row_value.relname||'_pkey')),to_regclass(format('public.%I',row_value.relname||'_ingested_at_idx'))) AND NOT EXISTS(SELECT 1 FROM unnest(read_indexes) r CROSS JOIN LATERAL pg_partition_tree(r::regclass) x WHERE x.relid=i.indexrelid)) OR NOT EXISTS(SELECT 1 FROM pg_index i JOIN pg_class idx ON idx.oid=i.indexrelid JOIN pg_class tbl ON tbl.oid=i.indrelid WHERE i.indrelid=row_value.relid AND idx.oid=to_regclass(format('public.%I',row_value.relname||'_pkey')) AND idx.relkind='I' AND idx.relowner=tbl.relowner AND i.indisprimary AND i.indisvalid AND i.indisready AND i.indnkeyatts=3 AND i.indnatts=3 AND i.indexprs IS NULL AND i.indpred IS NULL AND ARRAY(SELECT a.attname::text FROM unnest(i.indkey::smallint[]) WITH ORDINALITY k(num,pos) JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.num ORDER BY k.pos)=ARRAY['event_id','retention_class','event_date']) THEN
+                RAISE EXCEPTION 'unexpected parent PK/index inventory: %',row_value.relname;
+            END IF;
+        END IF;
+        index_id := to_regclass(format('public.%I',row_value.relname||'_ingested_at_idx'));
+        IF row_value.relkind='p' OR index_id IS NOT NULL THEN
+            parent_id := CASE WHEN row_value.parentrelid IS NULL THEN NULL WHEN row_value.relkind='p' OR EXISTS(SELECT 1 FROM pg_inherits WHERE inhrelid=index_id) THEN to_regclass(format('public.%I',(SELECT relname FROM pg_class WHERE oid=row_value.parentrelid)||'_ingested_at_idx')) ELSE NULL END;
+            PERFORM public.transaction_events_validate_brin(row_value.relid,parent_id,false);
+        END IF;
+    END LOOP;
+    metadata_ids := ARRAY['public.transaction_events_ingested_at_idx'::regclass::oid,'public.transaction_events_hot_ingested_at_idx'::regclass::oid,'public.transaction_events_warm_ingested_at_idx'::regclass::oid];
+    SELECT array_agg(i.inhrelid) INTO attached_indexes FROM pg_inherits i WHERE i.inhparent=ANY(metadata_ids[2:3]);
+    FOR class_name IN SELECT unnest(ARRAY['hot','warm','cold']) LOOP
+        PERFORM public.transaction_events_validate_preparation(class_name,NULL,true);
+    END LOOP;
+    IF EXISTS (SELECT 1 FROM pg_class c WHERE c.relnamespace='public'::regnamespace
+        AND c.relname ~ '^transaction_events_(hot|warm)_[0-9]{8}$'
+        AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid=c.oid
+          AND i.inhparent=to_regclass('public.transaction_events_'||split_part(c.relname,'_',3)))) THEN
+        RAISE EXCEPTION 'clear detached day leftovers before activation';
+    END IF;
+    FOR row_value IN SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid=i.inhrelid WHERE i.inhparent IN ('public.transaction_events_hot'::regclass,'public.transaction_events_warm'::regclass) LOOP
+        IF row_value.relname !~ '^transaction_events_(hot|warm)_[0-9]{8}$' THEN RAISE EXCEPTION 'unexpected day: %',row_value.relname; END IF;
+        partition_day := to_date(right(row_value.relname,8),'YYYYMMDD');
+        IF partition_day >= p_day THEN
+            RAISE EXCEPTION 'cutover overlaps existing daily coverage; choose later T: %',row_value.relname;
+        END IF;
+        PERFORM public.transaction_events_validate_preparation(split_part(row_value.relname,'_',3),partition_day,true);
+    END LOOP;
+    FOR class_name IN SELECT unnest(ARRAY['hot','warm','cold']) LOOP
+        EXECUTE format('ALTER TABLE public.transaction_events DETACH PARTITION public.%I','transaction_events_'||class_name);
+    END LOOP;
+    FOR row_value IN SELECT c.relname,p.relname AS parent FROM pg_inherits i JOIN pg_class c ON c.oid=i.inhrelid JOIN pg_class p ON p.oid=i.inhparent WHERE i.inhparent IN ('public.transaction_events_hot'::regclass,'public.transaction_events_warm'::regclass) LOOP
+        EXECUTE format('ALTER TABLE public.%I DETACH PARTITION public.%I',row_value.parent,row_value.relname);
+    END LOOP;
+    -- The table detach has removed only index edges, not physical indexes.
+    -- Require the three captured canonical parents to be empty and unchanged.
+    FOR row_value IN SELECT c.oid,c.relname,c.relkind FROM pg_class c WHERE c.oid=ANY(metadata_ids) LOOP
+        IF row_value.relkind<>'I' OR EXISTS(SELECT 1 FROM pg_inherits WHERE inhparent=row_value.oid) OR public.transaction_events_validate_brin((SELECT indrelid FROM pg_index WHERE indexrelid=row_value.oid),NULL,false) IS DISTINCT FROM row_value.oid THEN
+            RAISE EXCEPTION 'metadata index is not the captured empty owned parent: %',row_value.relname;
+        END IF;
+    END LOOP;
+    IF (SELECT count(*) FROM pg_class WHERE oid=ANY(metadata_ids))<>3 THEN RAISE EXCEPTION 'captured metadata disappeared'; END IF;
+    DROP INDEX public.transaction_events_ingested_at_idx,public.transaction_events_hot_ingested_at_idx,public.transaction_events_warm_ingested_at_idx;
+    ALTER TABLE public.transaction_events_hot DROP CONSTRAINT transaction_events_hot_pkey;
+    ALTER TABLE public.transaction_events_warm DROP CONSTRAINT transaction_events_warm_pkey;
+    ALTER TABLE public.transaction_events DROP CONSTRAINT transaction_events_pkey;
+    -- Only known old day tables formerly owned by these parents are considered;
+    -- detached leftovers must have been cleared by maintenance before activation.
+    FOR row_value IN SELECT c.relname FROM pg_class c WHERE c.relnamespace='public'::regnamespace AND c.relkind='r' AND c.relname ~ '^transaction_events_(hot|warm)_[0-9]{8}$' ORDER BY c.relname LOOP
+        class_name := split_part(row_value.relname,'_',3);
+        partition_day := to_date(right(row_value.relname,8),'YYYYMMDD');
+        EXECUTE format('ALTER TABLE public.%I ATTACH PARTITION public.%I FOR VALUES FROM (%L) TO (%L)','transaction_events_'||class_name,row_value.relname,partition_day,partition_day+1);
+    END LOOP;
+    FOR class_name IN SELECT unnest(ARRAY['hot','warm','cold']) LOOP
+        EXECUTE format('ALTER TABLE public.transaction_events ATTACH PARTITION public.%I FOR VALUES IN (%L)','transaction_events_'||class_name,class_name);
+        -- The inherited class check is transition scaffolding. Root LIST bounds
+        -- already enforce it after attachment; remove the redundant CHECK.
+        EXECUTE format('ALTER TABLE public.%I DROP CONSTRAINT hourly_class_bound','transaction_events_'||class_name);
+    END LOOP;
+    -- ON ONLY rebuilds partitioned metadata, never a populated leaf. Preserve
+    -- every physical index and rebind only the edges recorded before detach.
+    CREATE INDEX transaction_events_ingested_at_idx ON ONLY public.transaction_events USING brin(ingested_at);
+    CREATE INDEX transaction_events_hot_ingested_at_idx ON ONLY public.transaction_events_hot USING brin(ingested_at);
+    CREATE INDEX transaction_events_warm_ingested_at_idx ON ONLY public.transaction_events_warm USING brin(ingested_at);
+    FOR row_value IN SELECT idx.relname,tbl.relname AS table_name FROM pg_index i JOIN pg_class idx ON idx.oid=i.indexrelid JOIN pg_class tbl ON tbl.oid=i.indrelid WHERE idx.oid=ANY(attached_indexes) LOOP
+        class_name := split_part(row_value.table_name,'_',3);
+        EXECUTE format('ALTER INDEX public.%I ATTACH PARTITION public.%I','transaction_events_'||class_name||'_ingested_at_idx',row_value.relname);
+    END LOOP;
+    FOR class_name IN SELECT unnest(ARRAY['hot','warm','cold']) LOOP
+        EXECUTE format('ALTER INDEX public.transaction_events_ingested_at_idx ATTACH PARTITION public.%I','transaction_events_'||class_name||'_ingested_at_idx');
+    END LOOP;
+    UPDATE public.transaction_events_partition_policy SET hourly_from=p_day WHERE singleton;
+    -- Maintenance fills the look-ahead before admission reaches T - 1h. No
+    -- production activation date is embedded in this migration.
+END $$;
+
+REVOKE ALL ON FUNCTION public.transaction_events_validate_brin(OID,OID,BOOLEAN) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.transaction_events_validate_preparation(TEXT,DATE,BOOLEAN) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.transaction_events_validate_class(TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.transaction_events_validate_day(TEXT,DATE) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.transaction_events_validate_hour(TEXT,TIMESTAMPTZ) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.transaction_events_detached_members(OID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.transaction_events_validate_detached(TEXT,TEXT,TIMESTAMPTZ,TIMESTAMPTZ) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.transaction_events_record_detach(OID,TEXT,TIMESTAMPTZ,TIMESTAMPTZ) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.transaction_events_create_partition(TEXT,DATE) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.transaction_events_create_hour(TEXT,TIMESTAMPTZ) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.transaction_events_detach_hour(TEXT,TIMESTAMPTZ) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.transaction_events_drop_detached_hour(TEXT,TIMESTAMPTZ) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.transaction_events_prepare_hourly(TEXT,DATE) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.transaction_events_activate_hourly(DATE,BOOLEAN) FROM PUBLIC;
+DO $$ BEGIN
+    IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='audit_archiver') THEN
+        REVOKE ALL ON FUNCTION public.transaction_events_create_daily_partition(TEXT,DATE) FROM audit_archiver;
+        GRANT SELECT ON public.transaction_events_partition_policy TO audit_archiver;
+        GRANT EXECUTE ON FUNCTION public.transaction_events_validate_class(TEXT) TO audit_archiver;
+        GRANT EXECUTE ON FUNCTION public.transaction_events_validate_day(TEXT,DATE) TO audit_archiver;
+        GRANT EXECUTE ON FUNCTION public.transaction_events_validate_hour(TEXT,TIMESTAMPTZ) TO audit_archiver;
+        GRANT EXECUTE ON FUNCTION public.transaction_events_create_partition(TEXT,DATE) TO audit_archiver;
+        GRANT EXECUTE ON FUNCTION public.transaction_events_create_hour(TEXT,TIMESTAMPTZ) TO audit_archiver;
+        GRANT EXECUTE ON FUNCTION public.transaction_events_detach_hour(TEXT,TIMESTAMPTZ) TO audit_archiver;
+        GRANT EXECUTE ON FUNCTION public.transaction_events_drop_detached_hour(TEXT,TIMESTAMPTZ) TO audit_archiver;
+    END IF;
+END $$;

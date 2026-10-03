@@ -34,7 +34,7 @@ use sqlx::{
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing::{error, info, warn};
 
-use crate::Metrics;
+use crate::{HourlyTransactionEventPartitions, Metrics};
 
 /// Default HTTP path used by Vector's HTTP output.
 pub const DEFAULT_TRANSACTION_EVENT_BATCH_PATH: &str = "/v1/transaction-events/batch";
@@ -387,9 +387,9 @@ impl EventTimeRejection {
 pub struct TransactionEventRetentionOutcome {
     /// Whether this replica held the retention lock and ran the pass.
     pub lock_acquired: bool,
-    /// Day partitions created in this pass.
+    /// Successful day/hour partition creation calls in this pass.
     pub partitions_created: u64,
-    /// Expired day partitions dropped in this pass.
+    /// Successful expired day/hour partition drop calls in this pass.
     pub partitions_dropped: u64,
     /// Partition DDL statements skipped after hitting the lock timeout.
     pub lock_timeouts: u64,
@@ -803,12 +803,15 @@ impl PgTransactionEventSink {
     }
 
     async fn refresh_partition_horizon(&self, now: DateTime<Utc>) {
-        let existing = match self.retention_pool.acquire().await {
-            Ok(mut conn) => list_day_partitions(&mut conn).await,
-            Err(err) => Err(err.into()),
-        };
-        match existing {
-            Ok(existing) => {
+        let coverage = async {
+            let mut conn = self.retention_pool.acquire().await?;
+            let existing = list_day_partitions(&mut conn).await?;
+            let hourly = HourlyTransactionEventPartitions::horizons(&mut conn, now).await?;
+            anyhow::Ok((existing, hourly))
+        }
+        .await;
+        match coverage {
+            Ok((existing, hourly)) => {
                 let attached: BTreeSet<DayPartition> = existing
                     .iter()
                     .filter(|partition| partition.attached)
@@ -818,8 +821,15 @@ impl PgTransactionEventSink {
                     Metrics::transaction_event_partition_horizon_seconds(class.as_str())
                         .set(partition_horizon_secs(now, class, &attached));
                 }
+                for (class, seconds) in hourly {
+                    Metrics::transaction_event_partition_horizon_seconds(class).set(seconds);
+                }
             }
             Err(err) => {
+                // Failed catalog/checkout probes cannot advertise healthy coverage.
+                for class in TransactionEventRetentionClass::ALL {
+                    Metrics::transaction_event_partition_horizon_seconds(class.as_str()).set(0.0);
+                }
                 warn!(error = %err, "failed to refresh transaction event partition horizon");
             }
         }
@@ -901,6 +911,9 @@ impl PgTransactionEventSink {
                 }
             }
 
+            HourlyTransactionEventPartitions::maintain(lock.conn(), now, config, &mut outcome)
+                .await?;
+
             Ok(outcome)
         }
         .await;
@@ -960,11 +973,10 @@ impl PgTransactionEventSink {
                         .push_bind(data);
                 },
             );
-            // The partitioned primary key adds retention_class and event_date:
-            // retries and same-day re-emissions of an event_id still conflict.
-            query_builder.push(
-                " ON CONFLICT (event_id, retention_class, event_date) DO NOTHING RETURNING event_id",
-            );
+            // Targetless inference also checks leaf-local unique indexes. This
+            // bridge works before activation (daily PK) and after it (hourly PK),
+            // without changing the root writer or granting direct-leaf INSERT.
+            query_builder.push(" ON CONFLICT DO NOTHING RETURNING event_id");
 
             let result = async {
                 let mut tx = self.pool.begin().await?;
@@ -1408,12 +1420,13 @@ fn partition_horizon_secs(
 }
 
 async fn list_day_partitions(conn: &mut sqlx::PgConnection) -> Result<Vec<ExistingPartition>> {
+    HourlyTransactionEventPartitions::validate_days(conn).await?;
     let rows: Vec<(String, bool)> = sqlx::query_as(
         "SELECT c.relname::text, c.relispartition \
          FROM pg_class c \
          JOIN pg_namespace n ON n.oid = c.relnamespace \
          WHERE n.nspname = 'public' \
-           AND c.relkind = 'r' \
+           AND c.relkind IN ('r', 'p') \
            AND c.relname ~ '^transaction_events_(hot|warm|cold)_[0-9]{8}$'",
     )
     .fetch_all(conn)

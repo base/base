@@ -427,8 +427,8 @@ summary = "Base txpool: BaseTransactionValidator (L1 data fee), BaseOrdering/Tim
 digest = "906eadac6b"
 
 ["crates/infra/audit/README.md"]
-summary = "audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers schema snapshot regeneration and legacy migrations."
-digest = "650b583c41"
+summary = "Postgres transaction-event ingest/RPC, opt-in hourly HOT/WARM routing, forward-only BRIN transition, explicit index recovery, owned PG17 tests and immutable schema/rollout gates."
+digest = "346340a44c"
 
 ["crates/infra/basectl/README.md"]
 summary = "basectl-cli: the basectl clap parser and commands (blocks, sync, txpool, peers, proofs, conductor), interactive monitor, flashblocks JSON-lines stream, Denim readiness checks, and pods view config."

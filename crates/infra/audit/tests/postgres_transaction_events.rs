@@ -7,6 +7,8 @@
 //!   cargo test -p audit-archiver-lib --test postgres_transaction_events -- --ignored
 //! ```
 
+pub mod common;
+
 use std::{
     path::PathBuf,
     sync::Arc,
@@ -56,15 +58,25 @@ const SCHEMA_SNAPSHOT_HEADER: &str = "-- Schema produced by crates/infra/audit/m
 struct PostgresHarness {
     port: u16,
     database_url: String,
-    container: testcontainers::ContainerAsync<Postgres>,
+    container: Option<testcontainers::ContainerAsync<Postgres>>,
+    owned: Option<common::OwnedPostgres>,
 }
 
 impl PostgresHarness {
     async fn new() -> anyhow::Result<Self> {
+        if std::env::var_os("TIPS_AUDIT_TEST_PG_BIN").is_some() {
+            let owned = common::OwnedPostgres::new().await?;
+            return Ok(Self {
+                port: owned.port,
+                database_url: owned.url.clone(),
+                container: None,
+                owned: Some(owned),
+            });
+        }
         let container = Postgres::default().with_tag(POSTGRES_TAG).start().await?;
         let port = container.get_host_port_ipv4(5432).await?;
         let database_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-        Ok(Self { port, database_url, container })
+        Ok(Self { port, database_url, container: Some(container), owned: None })
     }
 
     fn url_for(&self, user: &str, password: &str) -> String {
@@ -77,21 +89,28 @@ impl PostgresHarness {
     /// date. sqlx's history table and `pg_dump`'s version-specific preamble are
     /// excluded because they are not part of the audit schema.
     async fn schema_dump(&self) -> anyhow::Result<String> {
-        let mut result = self
-            .container
-            .exec(ExecCommand::new([
-                "pg_dump",
-                "--username=postgres",
-                "--dbname=postgres",
-                "--schema-only",
-                "--no-owner",
-                "--exclude-table=_sqlx_migrations",
-                "--exclude-table=transaction_events_*_2*",
-            ]))
-            .await?;
-        let stdout = String::from_utf8(result.stdout_to_vec().await?)?;
-        let stderr = String::from_utf8(result.stderr_to_vec().await?)?;
-        anyhow::ensure!(result.exit_code().await? == Some(0), "pg_dump failed: {stderr}");
+        let stdout = if let Some(owned) = &self.owned {
+            owned.schema_dump()?
+        } else {
+            let mut result = self
+                .container
+                .as_ref()
+                .expect("Docker or owned fixture required")
+                .exec(ExecCommand::new([
+                    "pg_dump",
+                    "--username=postgres",
+                    "--dbname=postgres",
+                    "--schema-only",
+                    "--no-owner",
+                    "--exclude-table=_sqlx_migrations",
+                    "--exclude-table=transaction_events_*_2*",
+                ]))
+                .await?;
+            let stdout = String::from_utf8(result.stdout_to_vec().await?)?;
+            let stderr = String::from_utf8(result.stderr_to_vec().await?)?;
+            anyhow::ensure!(result.exit_code().await? == Some(0), "pg_dump failed: {stderr}");
+            stdout
+        };
 
         let mut lines: Vec<&str> = Vec::new();
         for line in stdout.lines() {
@@ -376,7 +395,7 @@ async fn postgres_partition_migration_discards_pre_partition_rows() -> anyhow::R
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1, 2], "legacy history is replaced by the new migrations");
+    assert_eq!(versions, vec![1, 2, 3], "legacy history is replaced by the new migrations");
     PgTransactionEventSink::connect(&harness.database_url, 1).await?.check_schema_ready().await?;
     harness.assert_schema_matches_snapshot().await?;
 
@@ -393,7 +412,7 @@ async fn postgres_fresh_database_runs_partitioned_migrations() -> anyhow::Result
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1, 2]);
+    assert_eq!(versions, vec![1, 2, 3]);
 
     Ok(())
 }
@@ -440,7 +459,7 @@ async fn postgres_migrates_past_an_unrecorded_004_with_an_invalid_index() -> any
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1, 2], "004 is never run, and legacy history is replaced");
+    assert_eq!(versions, vec![1, 2, 3], "legacy004 is never run, and legacy history is replaced");
     let (valid, partitioned): (bool, bool) = sqlx::query_as(
         "SELECT i.indisvalid, c.relkind = 'I' FROM pg_index i \
          JOIN pg_class c ON c.oid = i.indexrelid \
@@ -579,6 +598,37 @@ async fn postgres_ingested_at_index_recovers_and_covers_future_days() -> anyhow:
     .fetch_one(&pool)
     .await?;
     assert!(invalid, "failed concurrent build left an invalid index");
+
+    // A canonical name is not permission to delete an unrelated index.
+    assert!(index_transaction_event_partitions(&harness.database_url).await.is_err());
+    let untouched: bool = sqlx::query_scalar(
+        "SELECT indisunique AND NOT indisvalid FROM pg_index WHERE indexrelid=to_regclass($1)",
+    )
+    .bind(format!("public.{index_name}"))
+    .fetch_one(&pool)
+    .await?;
+    assert!(untouched, "wrong-definition index remains untouched");
+    // Explicit fixture-owner cleanup, followed by a genuine interrupted BRIN build.
+    sqlx::query(&format!("DROP INDEX public.{index_name}")).execute(&pool).await?;
+    let blocker_pool =
+        PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let mut blocker = blocker_pool.begin().await?;
+    sqlx::query(&format!("INSERT INTO public.{leaf} (event_id,schema_version,event_time,event_date,retention_class,producer,event_type,data) VALUES ('index-blocker','transaction-event/v1',now(),$1,'hot','base-builder','BUILDER_ACCEPTED','{{}}')"))
+        .bind(today).execute(&mut *blocker).await?;
+    sqlx::query("SET lock_timeout='25ms'").execute(&pool).await?;
+    let interrupted = sqlx::query(&format!(
+        "CREATE INDEX CONCURRENTLY {index_name} ON public.{leaf} USING BRIN (ingested_at)"
+    ))
+    .execute(&pool)
+    .await
+    .expect_err("writer blocks concurrent BRIN completion");
+    assert_eq!(
+        interrupted.as_database_error().and_then(|error| error.code()).as_deref(),
+        Some("55P03")
+    );
+    sqlx::query("RESET lock_timeout").execute(&pool).await?;
+    blocker.rollback().await?;
+    blocker_pool.close().await;
 
     let built = index_transaction_event_partitions(&harness.database_url).await?;
     assert!(built > 0, "existing day partitions were indexed");
@@ -1179,7 +1229,15 @@ async fn postgres_insert_does_not_leak_lock_timeout() -> anyhow::Result<()> {
 #[tokio::test]
 #[ignore = "requires a running Postgres (set DATABASE_URL)"]
 async fn postgres_sink_persists_and_dedupes_by_event_id() {
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let owned = if std::env::var_os("TIPS_AUDIT_TEST_PG_BIN").is_some() {
+        Some(PostgresHarness::new().await.unwrap())
+    } else {
+        None
+    };
+    let database_url = owned
+        .as_ref()
+        .map(|harness| harness.database_url.clone())
+        .unwrap_or_else(|| std::env::var("DATABASE_URL").expect("DATABASE_URL must be set"));
     let event_id = unique_event_id();
     PgTransactionEventSink::migrate(&database_url).await.unwrap();
     let pool = PgPoolOptions::new().max_connections(2).connect(&database_url).await.unwrap();
