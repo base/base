@@ -94,7 +94,7 @@ Find a doc through the index below instead of grepping the tree. After adding, m
 
 - [crates/batcher/admin/README.md](crates/batcher/admin/README.md): Batcher admin JSON-RPC API: start, stop, flush, status, and DA throttle controller methods (admin_*), their behavior and error codes. Use when operating the batcher.
 - [crates/batcher/blobs/README.md](crates/batcher/blobs/README.md): base-blobs: EIP-4844 blob encoder and decoder for the batcher wire format (130,044 payload bytes per blob); excludes KZG commitments and submission.
-- [crates/batcher/cli/README.md](crates/batcher/cli/README.md): base-batcher-cli: arguments and startup for base batcher, including channel and DA config flags and shadow mode, where the batcher posts to a non-canonical inbox checked by a parity validator.
+- [crates/batcher/cli/README.md](crates/batcher/cli/README.md): base-batcher-cli: base batcher flags and startup, with sequencer endpoints and leader search, channel and DA config, and shadow mode posting to the inbox a parity validator derives its chain from.
 - [crates/batcher/comp/README.md](crates/batcher/comp/README.md): base-comp: incremental Brotli channel compression (CompressionStream, BrotliLevel) producing protocol-compatible channels; batch encoding and framing live in batcher-encoder.
 - [crates/batcher/core/README.md](crates/batcher/core/README.md): base-batcher-core: async BatchDriver, SubmissionQueue for L1 transactions, and the DA throttle subsystem (Off, Step, Linear) that limits sequencer DA via miner_setMaxDASize.
 - [crates/batcher/encoder/README.md](crates/batcher/encoder/README.md): base-batcher-encoder: synchronous, no-I/O encoder from L2 blocks to L1 submissions. Covers channel closing rules, blob framing, metric labels, and BatchEncoder usage.

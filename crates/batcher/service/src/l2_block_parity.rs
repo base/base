@@ -50,10 +50,14 @@ impl RpcL2BlockProvider {
 #[async_trait]
 impl L2BlockProvider for RpcL2BlockProvider {
     async fn unsafe_block_number(&self) -> eyre::Result<u64> {
-        self.provider
-            .get_block_number()
+        // The RPC proxy of a conductor serves `eth_getBlockByNumber` but not `eth_blockNumber`.
+        let block = self
+            .provider
+            .get_block_by_number(BlockNumberOrTag::Latest)
             .await
-            .map_err(|e| eyre::eyre!("failed to fetch unsafe L2 head number: {e}"))
+            .map_err(|e| eyre::eyre!("failed to fetch unsafe L2 head: {e}"))?
+            .ok_or_else(|| eyre::eyre!("unsafe L2 head unavailable"))?;
+        Ok(block.header.number)
     }
 
     async fn safe_block_number(&self) -> eyre::Result<u64> {

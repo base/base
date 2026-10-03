@@ -161,7 +161,7 @@ impl L2ClientConsensus {
 /// The startup order is:
 /// 1. Builder starts first (in-process EL)
 /// 2. Builder consensus node connects to builder's engine API (in-process CL, Sequencer mode)
-/// 3. Batcher connects to builder RPC and builder consensus RPC
+/// 3. Batcher connects to the builder consensus RPC, which forwards to the builder RPC
 /// 4. Client starts (in-process EL)
 /// 5. Client consensus node connects to client's engine API
 /// 6. Validator-mode client consensus connects to builder consensus via P2P
@@ -265,6 +265,8 @@ impl L2Stack {
             verifier_l1_confs: 0,
             shadow_blocks_per_cycle: None,
             upgrade_signal: config.upgrade_signal.clone(),
+            // The batcher reads the L2 blocks and pushes its DA limits through this consensus RPC.
+            execution_forwarding_endpoint: Some(builder.rpc_url()?),
         };
         let builder_consensus = InProcessConsensus::start(builder_consensus_config)
             .await
@@ -280,8 +282,7 @@ impl L2Stack {
             Some(
                 InProcessBatcher::start(InProcessBatcherConfig {
                     l1_rpc_url: l1_rpc_url.clone(),
-                    l2_rpc_url: builder.rpc_url()?,
-                    rollup_rpc_url: builder_consensus.rpc_url(),
+                    sequencer_url: builder_consensus.rpc_url(),
                     batcher_key: config.batcher_key,
                     force_batch_submission: config.force_batch_submission,
                 })
@@ -350,6 +351,7 @@ impl L2Stack {
                     verifier_l1_confs: config.verifier_l1_confs,
                     shadow_blocks_per_cycle: None,
                     upgrade_signal: config.upgrade_signal.clone(),
+                    execution_forwarding_endpoint: None,
                 };
                 let client_consensus = InProcessConsensus::start(client_consensus_config)
                     .await
@@ -436,8 +438,7 @@ impl L2Stack {
             batcher = Some(
                 InProcessBatcher::start(InProcessBatcherConfig {
                     l1_rpc_url: l1_rpc_url.clone(),
-                    l2_rpc_url: builder.rpc_url()?,
-                    rollup_rpc_url: builder_consensus.rpc_url(),
+                    sequencer_url: builder_consensus.rpc_url(),
                     batcher_key: config.batcher_key,
                     force_batch_submission: true,
                 })

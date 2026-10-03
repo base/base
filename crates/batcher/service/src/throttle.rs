@@ -104,8 +104,8 @@ impl ThrottlePusher {
             Ok(false) => warn!(block_builder = %self.origin, "block builder refused the DA limits"),
             Err(ClientError::Call(error)) if error.code() == METHOD_NOT_FOUND_CODE => {
                 eyre::bail!(
-                    "block builder {} does not serve miner_setMaxDASize, enable the miner API or \
-                     disable throttling: {error}",
+                    "block builder {} does not serve miner_setMaxDASize, required by the DA \
+                     throttle unless --no-throttle is set: {error}",
                     self.origin
                 );
             }

@@ -91,12 +91,15 @@ infrastructure:
 - **Shadow DA — `base-batcher`.** The Rust `base batcher` runs in shadow mode
   (`--shadow.enabled`), posting to `SHADOW_BATCH_INBOX_ADDRESS` from
   `SHADOW_BATCHER_ADDR` — a distinct, funded dev account, so its L1 nonces never
-  collide with the op-batcher's. It follows the shadow validator's derivation
-  through `--rollup-rpc-url`, checks through `--shadow.inbox` that the batch
-  inbox of the validator's rollup config is `SHADOW_BATCH_INBOX_ADDRESS`, and
-  compares the validator's blocks with the builder's through
-  `--shadow.validator-l2-rpc`. It runs with `--no-throttle`, which shadow
-  mode requires.
+  collide with the op-batcher's. It reads the blocks to submit through
+  `--sequencer-urls`: the consensus RPC of `base-builder`, which forwards the
+  block reads to its execution client, or the three conductors in the HA
+  devnet, among which it finds the leader. It follows the shadow validator's
+  derivation through `--shadow.validator-rollup-rpc`, checks through
+  `--shadow.inbox` that the batch inbox of the validator's rollup config is
+  `SHADOW_BATCH_INBOX_ADDRESS`, and compares the validator's blocks with the
+  leader sequencer's through `--shadow.validator-l2-rpc`. It runs with
+  `--no-throttle`, which shadow mode requires.
 - **Shadow validator — `base-shadow-validator`.** A validator-mode `rpc` node
   that overrides the batch inbox and batcher sender
   (`--l1.dangerously-override-da-batch-inbox`,

@@ -25,14 +25,14 @@ the collector address without that path.
 flags and `BASE_NODE_LOG_*` / `BASE_NODE_METRICS_*` variables (metrics port: 9090).
 L1 RPC uses `--l1-rpc-url` / `BASE_NODE_L1_ETH_RPC`;
 `--l1-eth-rpc` remains an alias. Other batcher settings use `BASE_BATCHER_*`,
-including `BASE_BATCHER_PRIVATE_KEY` and `BASE_BATCHER_ROLLUP_RPC_URL`.
+including `BASE_BATCHER_PRIVATE_KEY` and `BASE_BATCHER_SEQUENCER_URLS`.
 
 The batcher discovers chain configuration from its RPC endpoints, including the
-batch inbox and fork configuration from the rollup RPC. Top-level `--chain` /
-`BASE_CHAIN` selection is rejected.
+batch inbox and fork configuration from the rollup config of the node whose
+derivation it follows. Top-level `--chain` / `BASE_CHAIN` selection is rejected.
 
 ```text
-base batcher --l1-rpc-url <url> --l2-rpc-url <url> --rollup-rpc-url <url> --private-key <key>
+base batcher --l1-rpc-url <url> --sequencer-urls <url>[,<url>...] --private-key <key>
 ```
 
 The former standalone binary's `BATCHER_*` environment variables are replaced by
