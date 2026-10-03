@@ -32,6 +32,13 @@ use tokio::{
 use tower::ServiceBuilder;
 use tracing::{error, info};
 
+/// Delay before retrying partition maintenance after a failed or blocked pass.
+///
+/// A pod that starts before its network's migration fails its first pass. It
+/// should pick up the new schema, and report a truthful partition horizon,
+/// within a minute rather than a full retention interval.
+const PARTITION_MAINTENANCE_RETRY: Duration = Duration::from_secs(60);
+
 base_cli_utils::define_log_args!("TIPS_AUDIT");
 base_cli_utils::define_metrics_args!("TIPS_AUDIT", 9002);
 
@@ -292,14 +299,24 @@ async fn run_server(args: Args) -> Result<()> {
         .fallback_service(rpc_service);
 
     let http_listener = TcpListener::bind(rpc_addr).await?;
-    let http_server = axum::serve(http_listener, http_app);
+    // Kubernetes sends SIGTERM (after the preStop sleep) when it replaces a pod.
+    // The binary runs as PID 1, which ignores SIGTERM without a handler, so
+    // without this the old pod keeps answering kept-alive connections until
+    // SIGKILL. Graceful shutdown stops accepting, finishes in-flight requests,
+    // and closes idle keep-alive connections so clients reconnect to new pods.
+    let http_server = axum::serve(http_listener, http_app).with_graceful_shutdown(async {
+        let signal = shutdown_signal().await;
+        info!(signal, "audit archiver shutting down HTTP server");
+    });
     info!(rpc_addr = %rpc_addr, "Audit archiver HTTP server started");
 
     let retention_worker = run_retention_worker(retention_sink, retention_interval);
 
     tokio::select! {
         result = http_server => {
-            result.map_err(|e| anyhow::anyhow!("audit archiver HTTP server stopped unexpectedly: {e}"))
+            result.map_err(|e| anyhow::anyhow!("audit archiver HTTP server stopped unexpectedly: {e}"))?;
+            info!("audit archiver HTTP server stopped");
+            Ok(())
         }
         result = retention_worker => result,
     }
@@ -311,13 +328,15 @@ async fn run_retention_worker(
 ) -> Result<()> {
     // First tick is immediate so a new replica creates today's and upcoming
     // partitions without waiting a full interval. Skip missed ticks so a slow
-    // pass does not catch up.
+    // pass does not catch up. A failed pass, or one whose DDL hit a lock
+    // timeout, retries after PARTITION_MAINTENANCE_RETRY instead.
     let mut ticker = interval(retention_interval);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let retry_after = PARTITION_MAINTENANCE_RETRY.min(retention_interval);
 
     loop {
         ticker.tick().await;
-        match transaction_event_sink.maintain_partitions().await {
+        let retry = match transaction_event_sink.maintain_partitions().await {
             Ok(outcome)
                 if outcome.partitions_created > 0
                     || outcome.partitions_dropped > 0
@@ -329,14 +348,43 @@ async fn run_retention_worker(
                     lock_timeouts = outcome.lock_timeouts,
                     "transaction event partition maintenance changed partitions"
                 );
+                outcome.lock_timeouts > 0
             }
-            Ok(_) => {}
+            Ok(_) => false,
             Err(err) => {
                 Metrics::transaction_event_retention_failures().increment(1);
-                error!(error = %err, "transaction event partition maintenance failed");
+                error!(
+                    error = %err,
+                    retry_secs = retry_after.as_secs(),
+                    "transaction event partition maintenance failed"
+                );
+                true
             }
+        };
+        if retry {
+            ticker.reset_after(retry_after);
         }
     }
+}
+
+/// Waits for SIGTERM (Kubernetes pod shutdown) or SIGINT.
+#[cfg(unix)]
+async fn shutdown_signal() -> &'static str {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+    let mut sigint = signal(SignalKind::interrupt()).expect("failed to install SIGINT handler");
+    tokio::select! {
+        _ = sigterm.recv() => "SIGTERM",
+        _ = sigint.recv() => "SIGINT",
+    }
+}
+
+/// Waits for Ctrl-C on non-Unix targets.
+#[cfg(not(unix))]
+async fn shutdown_signal() -> &'static str {
+    let _ = tokio::signal::ctrl_c().await;
+    "ctrl_c"
 }
 
 fn health_router(transaction_event_sink: PgTransactionEventSink) -> axum::Router {
