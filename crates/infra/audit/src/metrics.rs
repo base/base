@@ -38,4 +38,40 @@ base_metrics::define_metrics! {
     transaction_event_partition_horizon_seconds: gauge,
     #[describe("Transaction observability partition maintenance failures")]
     transaction_event_retention_failures: counter,
+    #[describe("Managed migration result, independent of readiness")]
+    #[label(name = "state", default = ["running", "succeeded", "failed", "stopped"])]
+    migration_state: gauge,
+    #[describe("Managed migration lifecycle phase")]
+    #[label(name = "phase", default = ["starting", "waiting_for_lock", "schema", "reconciling", "validating", "idle", "stopping"])]
+    migration_phase: gauge,
+    #[describe("Embedded schema migrations committed and verified")]
+    migration_schema_ready: gauge,
+    #[describe("Migration supervisor and worker available")]
+    migration_worker_available: gauge,
+    #[describe("Every registered migration requirement validated")]
+    migration_complete: gauge,
+    #[describe("Exact owned backend cleanup verified for the current attempt")]
+    migration_cleanup_confirmed: gauge,
+    #[describe("Owned migration attempts started")]
+    migration_attempts_total: counter,
+    #[describe("Migration attempts with terminal failure")]
+    #[label(name = "phase", default = ["starting", "waiting_for_lock", "schema", "reconciling", "validating", "idle", "stopping"])]
+    migration_failures_total: counter,
+    #[describe("Day tables in the current reconciliation pass")]
+    migration_leaves_total: gauge,
+    #[describe("Day tables completed in the current reconciliation pass")]
+    migration_leaves_completed: gauge,
+    #[describe("Day indexes built by this process")]
+    migration_leaves_built: counter,
+    #[describe("Invalid unattached day indexes repaired by this process")]
+    migration_leaves_repaired: counter,
+    #[describe("Existing attached day indexes verified by this process")]
+    migration_leaves_skipped: counter,
+    #[describe("Unix seconds of last real migration progress")]
+    migration_last_progress_timestamp_seconds: gauge,
+    #[describe("Migration attempt duration in seconds")]
+    migration_duration_seconds: histogram,
+    #[describe("Owned database cancellation requests and verified outcomes")]
+    #[label(name = "outcome", default = ["requested", "confirmed", "unconfirmed"])]
+    migration_cancellation_total: counter,
 }

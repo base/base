@@ -103,6 +103,20 @@ BEGIN
 END;
 $$;
 
+CREATE TABLE public.audit_migration_identity (
+    singleton boolean NOT NULL,
+    target_token text NOT NULL,
+    CONSTRAINT audit_migration_identity_singleton_check CHECK (singleton)
+);
+
+CREATE TABLE public.audit_migration_runs (
+    generation character varying(128) NOT NULL,
+    target_id text NOT NULL,
+    fingerprint text NOT NULL,
+    record jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
 CREATE TABLE public.transaction_events (
     event_id text NOT NULL,
     schema_version text NOT NULL,
@@ -184,6 +198,12 @@ ALTER TABLE ONLY public.transaction_events ATTACH PARTITION public.transaction_e
 ALTER TABLE ONLY public.transaction_events ATTACH PARTITION public.transaction_events_hot FOR VALUES IN ('hot');
 
 ALTER TABLE ONLY public.transaction_events ATTACH PARTITION public.transaction_events_warm FOR VALUES IN ('warm');
+
+ALTER TABLE ONLY public.audit_migration_identity
+    ADD CONSTRAINT audit_migration_identity_pkey PRIMARY KEY (singleton);
+
+ALTER TABLE ONLY public.audit_migration_runs
+    ADD CONSTRAINT audit_migration_runs_pkey PRIMARY KEY (generation);
 
 ALTER TABLE ONLY public.transaction_events
     ADD CONSTRAINT transaction_events_pkey PRIMARY KEY (event_id, retention_class, event_date);

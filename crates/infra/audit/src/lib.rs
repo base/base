@@ -11,7 +11,33 @@ mod metrics;
 pub use metrics::Metrics;
 
 mod ingested_at_index;
-pub use ingested_at_index::index_transaction_event_partitions;
+pub use ingested_at_index::{TransactionEventIngestedAtIndex, index_transaction_event_partitions};
+
+mod migration;
+pub use migration::{AuditMigration, RequiredAuditWork};
+
+mod migration_status;
+pub use migration_status::{
+    MigrationError, MigrationPhase, MigrationReporter, MigrationState, MigrationStatus,
+};
+
+mod migration_session;
+pub use migration_session::{MigrationBackend, MigrationServer, MigrationSession};
+
+mod migration_store;
+pub use migration_store::{MigrationRecord, MigrationStore};
+
+mod migration_cache;
+pub use migration_cache::{MigrationCachePermit, MigrationCacheWrite, MigrationCacheWriter};
+
+mod migration_durable;
+pub use migration_durable::{MigrationDurable, MigrationDurableKey};
+
+mod managed_migration;
+pub use managed_migration::{ManagedMigration, ManagedMigrationConfig};
+
+mod migration_http;
+pub use migration_http::MigrationHttp;
 
 mod rpc;
 pub use rpc::{AuditArchiverApiServer, AuditArchiverRpc};

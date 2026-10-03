@@ -1,18 +1,18 @@
 //! Audit archiver binary entry point.
 
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use audit_archiver_lib::{
-    AuditArchiverApiServer, AuditArchiverRpc, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
+    AuditArchiverApiServer, AuditArchiverRpc, AuditMigration, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
     DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS, DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS,
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
     DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
     DEFAULT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS,
     DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS,
-    DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, Metrics, PgTransactionEventSink,
-    TransactionEventIngestConfig, TransactionEventRetentionConfig,
-    index_transaction_event_partitions,
+    DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, ManagedMigration, ManagedMigrationConfig,
+    Metrics, MigrationError, PgTransactionEventSink, TransactionEventIngestConfig,
+    TransactionEventRetentionConfig, index_transaction_event_partitions,
 };
 use axum::{
     BoxError,
@@ -56,7 +56,7 @@ struct HealthState {
     transaction_event_sink: PgTransactionEventSink,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     #[arg(value_enum, default_value_t = Command::Serve)]
@@ -64,6 +64,23 @@ struct Args {
 
     #[arg(value_enum)]
     migration_direction: Option<MigrationDirection>,
+
+    /// Serve migration health, status, and metrics in the foreground, including terminal results.
+    /// Only valid with `migrate up`; this does not serve transaction ingestion.
+    #[arg(long = "serve", env = "TIPS_AUDIT_MIGRATE_SERVE")]
+    migration_serve: bool,
+
+    /// Stable reviewed retry generation shared across pod replacements.
+    #[arg(long = "migration-generation", env = "TIPS_AUDIT_MIGRATION_GENERATION")]
+    migration_run_id: Option<String>,
+
+    /// Atomic state file on a writable same-pod volume.
+    #[arg(long, env = "TIPS_AUDIT_MIGRATION_STATE_PATH")]
+    migration_state_path: Option<PathBuf>,
+
+    /// Absolute owned Postgres cancellation budget, at most 30 seconds.
+    #[arg(long, env = "TIPS_AUDIT_MIGRATION_SHUTDOWN_TIMEOUT_SECS", default_value = "30")]
+    migration_shutdown_timeout_secs: u64,
 
     #[command(flatten)]
     log: LogArgs,
@@ -76,7 +93,7 @@ struct Args {
 
     /// Postgres connection URL for transaction observability events. Required
     /// when serving HTTP ingest and RPC queries.
-    #[arg(long, env = "TIPS_AUDIT_POSTGRES_URL")]
+    #[arg(long, env = "TIPS_AUDIT_POSTGRES_URL", hide_env_values = true)]
     postgres_url: Option<String>,
 
     /// Maximum Postgres connections used by the transaction-event ingest sink.
@@ -178,11 +195,44 @@ struct Args {
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
 
-    let args = Args::parse();
+    let args = match Args::try_parse() {
+        Ok(args) => args,
+        Err(error)
+            if matches!(
+                error.kind(),
+                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+            ) =>
+        {
+            error.exit()
+        }
+        Err(_) => return Err(MigrationError::Configuration.into()),
+    };
 
     LogConfig::from(args.log.clone())
         .init_tracing_subscriber()
         .expect("Failed to initialize tracing");
+
+    if args.migration_serve {
+        if !matches!(args.command, Command::Migrate)
+            || !matches!(args.migration_direction, Some(MigrationDirection::Up))
+        {
+            return Err(MigrationError::Configuration.into());
+        }
+        return ManagedMigration::run(ManagedMigrationConfig {
+            database_url: args.postgres_url.ok_or(MigrationError::Configuration)?,
+            address: SocketAddr::new(args.metrics.addr, args.metrics.port),
+            metrics_enabled: args.metrics.enabled,
+            metrics_interval_secs: args.metrics.interval,
+            run_id: args.migration_run_id.ok_or(MigrationError::Configuration)?,
+            state_path: args.migration_state_path.ok_or(MigrationError::Configuration)?,
+            shutdown_timeout: Duration::from_secs(args.migration_shutdown_timeout_secs),
+        })
+        .await
+        .map_err(Into::into);
+    }
+    if args.migration_run_id.is_some() || args.migration_state_path.is_some() {
+        return Err(MigrationError::Configuration.into());
+    }
 
     base_cli_utils::MetricsConfig::from(args.metrics.clone())
         .init()
@@ -218,7 +268,7 @@ async fn run_migrations(args: &Args) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("TIPS_AUDIT_POSTGRES_URL must be set for migrations"))?;
 
     info!("Running audit archiver Postgres migrations");
-    PgTransactionEventSink::migrate(postgres_url).await?;
+    AuditMigration::run(postgres_url).await.map_err(|error| MigrationError::database(&error))?;
     info!("Audit archiver Postgres migrations complete");
     Ok(())
 }
@@ -363,6 +413,33 @@ async fn readyz_handler(State(state): State<HealthState>) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn migration_serve_flag_is_distinct_from_ingestion_command() {
+        let migration =
+            Args::try_parse_from(["audit-archiver", "migrate", "up", "--serve"]).unwrap();
+        assert!(matches!(migration.command, Command::Migrate));
+        assert!(matches!(migration.migration_direction, Some(MigrationDirection::Up)));
+        assert!(migration.migration_serve);
+        let ingestion = Args::try_parse_from(["audit-archiver", "serve"]).unwrap();
+        assert!(matches!(ingestion.command, Command::Serve));
+        assert!(!ingestion.migration_serve);
+        assert!(Args::try_parse_from(["audit-archiver", "migrate", "up", "--managed"]).is_err());
+    }
+
+    #[test]
+    fn migration_serve_environment_and_help_match_public_contract() {
+        let command = Args::command();
+        let flag = command.get_arguments().find(|arg| arg.get_long() == Some("serve")).unwrap();
+        assert_eq!(flag.get_env(), Some(std::ffi::OsStr::new("TIPS_AUDIT_MIGRATE_SERVE")));
+        let help = Args::command().render_long_help().to_string();
+        assert!(help.contains("--serve"));
+        assert!(help.contains("TIPS_AUDIT_MIGRATE_SERVE"));
+        assert!(help.contains("foreground"));
+        assert!(!help.contains("--managed"));
+        assert!(!help.contains("TIPS_AUDIT_MIGRATE_MANAGED"));
+    }
 
     #[tokio::test]
     async fn serve_without_postgres_fails_before_accepting_events() {
