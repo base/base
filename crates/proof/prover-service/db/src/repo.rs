@@ -1,13 +1,14 @@
 use base_prover_service_protocol::{
-    ProofResult as ProtocolProofResult, SnarkPlonkProofResult, ZkBackend, ZkProofResult, ZkVm,
+    PROOF_REQUEST_CANCELLED_MESSAGE, ProofResult as ProtocolProofResult, SnarkPlonkProofResult,
+    ZkBackend, ZkProofResult, ZkVm,
 };
 use chrono::Utc;
 use sqlx::{PgPool, Result, Row};
 use uuid::Uuid;
 
 use crate::{
-    AbandonProofJob, AbandonProofOutcome, ApiProofType, ClaimAuth, ClaimProofJob,
-    CompleteClaimedProofJob, CreateProofRequest, CreateProofRequestError,
+    AbandonProofJob, AbandonProofOutcome, ApiProofType, CancelProofRequestOutcome, ClaimAuth,
+    ClaimProofJob, CompleteClaimedProofJob, CreateProofRequest, CreateProofRequestError,
     CreateProofRequestOutcome, CreateProofRequestValidationError, CreateProofSession,
     DeleteProofRequestOutcome, FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob,
     JobLockState, ProofJob, ProofJobStatus, ProofRequest, ProofRequestListItem, ProofRequestPage,
@@ -117,7 +118,7 @@ impl ProofRequestRepo {
             SELECT id, COALESCE(session_id, id::text) AS session_id,
                    request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
                    start_block_number, number_of_blocks_to_prove, sequence_window,
-                   proof_type, status, prover_address, l1_head,
+                   proof_type, status, error_message, prover_address, l1_head,
                    intermediate_root_interval, retry_count
             FROM proof_requests
             WHERE COALESCE(session_id, id::text) = $1
@@ -177,6 +178,12 @@ impl ProofRequestRepo {
                 Ok(CreateProofRequestOutcome::Replayed(existing_id))
             }
             ProofStatus::Failed => {
+                if row.get::<Option<&str>, _>("error_message")
+                    == Some(PROOF_REQUEST_CANCELLED_MESSAGE)
+                {
+                    tx.rollback().await?;
+                    return Ok(CreateProofRequestOutcome::Cancelled(existing_id));
+                }
                 if !retry_failed {
                     tx.rollback().await?;
                     return Ok(CreateProofRequestOutcome::RetryNotAllowed(existing_id));
@@ -243,6 +250,88 @@ impl ProofRequestRepo {
                 Ok(CreateProofRequestOutcome::Requeued(existing_id))
             }
         }
+    }
+
+    /// Cancel a non-terminal Cluster or Network proof request by public session id.
+    ///
+    /// The request is failed with [`PROOF_REQUEST_CANCELLED_MESSAGE`] and its worker
+    /// claim is cleared, so a late submit from the previous owner is rejected.
+    pub async fn cancel_proof_request_by_session_id(
+        &self,
+        session_id: &str,
+    ) -> Result<CancelProofRequestOutcome> {
+        let session_id = canonical_session_id(session_id)
+            .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
+        let mut tx = self.pool.begin().await?;
+
+        // `zk_backend` is NULL for TEE rows and for ZK rows written before
+        // migration 014, which the claim query treats as `cluster`.
+        let row = sqlx::query(
+            r#"
+            SELECT status, error_message,
+                   api_proof_type IS DISTINCT FROM 'tee'
+                       AND COALESCE(zk_backend, 'cluster') IN ('cluster', 'network')
+                       AS cancellable
+            FROM proof_requests
+            WHERE COALESCE(session_id, id::text) = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(&session_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let Some(row) = row else {
+            tx.rollback().await?;
+            return Ok(CancelProofRequestOutcome::NotFound);
+        };
+
+        if !row.get::<bool, _>("cancellable") {
+            tx.rollback().await?;
+            return Ok(CancelProofRequestOutcome::UnsupportedBackend);
+        }
+
+        let status_str: &str = row.get("status");
+        let status = ProofStatus::try_from(status_str).map_err(|e| {
+            sqlx::Error::Protocol(format!("Unknown proof status '{status_str}': {e}"))
+        })?;
+        if status == ProofStatus::Failed
+            && row.get::<Option<&str>, _>("error_message") == Some(PROOF_REQUEST_CANCELLED_MESSAGE)
+        {
+            tx.rollback().await?;
+            return Ok(CancelProofRequestOutcome::AlreadyCancelled);
+        }
+        if matches!(status, ProofStatus::Succeeded | ProofStatus::Failed) {
+            tx.rollback().await?;
+            return Ok(CancelProofRequestOutcome::AlreadyTerminal(status));
+        }
+
+        let columns = PROOF_JOB_RETURNING_COLUMNS;
+        let sql = format!(
+            r#"
+            UPDATE proof_requests
+            SET status = 'FAILED',
+                job_status = 'FAILED',
+                error_message = $2,
+                completed_at = NOW(),
+                worker_id = NULL,
+                lock_id = NULL,
+                lock_expires_at = NULL,
+                claimed_at = NULL,
+                last_heartbeat_at = NULL
+            WHERE COALESCE(session_id, id::text) = $1
+            RETURNING {columns}
+            "#
+        );
+        let row = sqlx::query(&sql)
+            .bind(&session_id)
+            .bind(PROOF_REQUEST_CANCELLED_MESSAGE)
+            .fetch_one(&mut *tx)
+            .await?;
+        let job = row_to_proof_job(&row)?;
+
+        tx.commit().await?;
+        Ok(CancelProofRequestOutcome::Cancelled(Box::new(job)))
     }
 
     /// Delete a terminal proof request by public session id.
@@ -1216,7 +1305,7 @@ impl ProofRequestRepo {
 
         let claim = sqlx::query(
             r#"
-            SELECT id, job_status, lock_id, worker_id, lock_expires_at
+            SELECT id, job_status, lock_id, worker_id, lock_expires_at, error_message
             FROM proof_requests
             WHERE COALESCE(session_id, id::text) = $1
             FOR UPDATE
@@ -1229,6 +1318,8 @@ impl ProofRequestRepo {
         let Some(claim) = claim else {
             return Ok(RecordSessionOutcome::NotFound);
         };
+        let cancelled =
+            claim.get::<Option<&str>, _>("error_message") == Some(PROOF_REQUEST_CANCELLED_MESSAGE);
 
         let proof_request_id: Uuid = claim.get("id");
         let job_status_str: &str = claim.get("job_status");
@@ -1251,6 +1342,7 @@ impl ProofRequestRepo {
             now,
         ) {
             ClaimAuth::Authorized => {}
+            ClaimAuth::Terminal if cancelled => return Ok(RecordSessionOutcome::Cancelled),
             ClaimAuth::Terminal => return Ok(RecordSessionOutcome::Terminal),
             ClaimAuth::NotClaimed => return Ok(RecordSessionOutcome::NotClaimed),
             ClaimAuth::StaleLock => return Ok(RecordSessionOutcome::StaleLock),
