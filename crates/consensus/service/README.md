@@ -133,6 +133,8 @@ The RPC actor wraps a `jsonrpsee` HTTP server and optionally a WebSocket server.
 
 `QueuedSequencerAdminAPIClient` implements the `SequencerAdminAPIClient` trait by sending `SequencerAdminQuery` messages with oneshot response channels. The sequencer actor services these in the high-priority admin arm of its `select!` loop.
 
+When `RpcBuilder::execution_forwarding_endpoint` is set, the `ExecutionForwarding` RPC middleware forwards every method the server does not serve to that HTTP endpoint of the execution client and returns its result or error as is.
+
 The RPC actor monitors the server handle for unexpected stops. If the server stops before the cancellation token fires it can restart up to a configured number of times. After exhausting restarts it cancels the root token, which brings down the entire service.
 
 ## Channel Wiring Summary
