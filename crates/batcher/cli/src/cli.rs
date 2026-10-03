@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_primitives::Address;
-use base_batcher_core::ThrottleConfig;
+use base_batcher_core::{ThrottleConfig, ThrottleStrategy};
 use base_batcher_service::{BatcherConfig, BatcherService, ShadowConfig};
 use base_cli_utils::RuntimeManager;
 use base_runtime::TokioRuntime;
@@ -159,14 +159,27 @@ pub struct BatcherArgs {
 
     /// DA backlog threshold in bytes at which throttling activates.
     ///
-    /// When the estimated unsubmitted DA backlog exceeds this value, the batcher
-    /// pushes lower DA limits to the `--sequencer-urls` endpoints.
+    /// Above it, `--throttle-strategy` sets how far the batcher lowers the DA limits it
+    /// pushes to the `--sequencer-urls` endpoints.
     #[arg(
         long = "throttle-threshold",
         default_value = "1000000",
         env = "BASE_BATCHER_THROTTLE_THRESHOLD"
     )]
     pub throttle_threshold: u64,
+
+    /// How the throttle intensity, from 0 (highest DA limits) to 1 (lowest), grows with
+    /// the DA backlog above `--throttle-threshold`.
+    ///
+    /// `off` never throttles but, unlike `--no-throttle`, keeps pushing the highest DA
+    /// limits to the `--sequencer-urls` endpoints, so `admin_setThrottleController` can
+    /// turn throttling on without a restart.
+    #[arg(
+        long = "throttle-strategy",
+        default_value = "linear",
+        env = "BASE_BATCHER_THROTTLE_STRATEGY"
+    )]
+    pub throttle_strategy: ThrottleStrategy,
 
     /// Disable DA throttling.
     ///
@@ -327,6 +340,7 @@ impl BatcherArgs {
                     ..Default::default()
                 })
             },
+            throttle_strategy: self.throttle_strategy,
             check_recent_txs_depth: self.check_recent_txs_depth,
             admin_addr: self.admin_port.map(|port| SocketAddr::new(self.admin_addr, port)),
             stopped: self.stopped,
@@ -465,8 +479,8 @@ mod tests {
         assert_eq!(shadow.validator_l2_rpc.as_str(), "http://validator:9545/");
     }
 
-    /// Without flags the batcher runs blobs at full blob frames and Brotli quality 9, starts
-    /// running and does not wait for the node to sync.
+    /// Without flags the batcher runs blobs at full blob frames and Brotli quality 9, throttles
+    /// with the linear strategy, starts running and does not wait for the node to sync.
     #[test]
     fn into_config_applies_the_defaults() {
         let cli = parse_cli(&[]);
@@ -474,6 +488,7 @@ mod tests {
 
         assert!(!config.stopped);
         assert!(!config.wait_node_sync);
+        assert_eq!(config.throttle_strategy, ThrottleStrategy::Linear);
 
         assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Blob);
         assert_eq!(
@@ -537,6 +552,8 @@ mod tests {
             "2",
             "--throttle-threshold",
             "500000",
+            "--throttle-strategy",
+            "quadratic",
             "--check-recent-txs-depth",
             "16",
             "--wait-node-sync-timeout",
@@ -565,6 +582,7 @@ mod tests {
         assert_eq!(config.tx_manager.resubmission_timeout, Duration::from_secs(30));
         assert_eq!(config.poll_interval, Duration::from_secs(2));
         assert_eq!(config.throttle.expect("the throttle is on").threshold_bytes, 500_000);
+        assert_eq!(config.throttle_strategy, ThrottleStrategy::Quadratic);
         assert_eq!(config.check_recent_txs_depth, 16);
         assert_eq!(config.wait_node_sync_timeout, Duration::from_secs(60));
         assert_eq!(config.admin_addr, Some(SocketAddr::new(IpAddr::from([0, 0, 0, 0]), 7000)));
@@ -588,11 +606,15 @@ mod tests {
         }
     }
 
-    /// The DA throttle is on unless `--no-throttle` is set.
+    /// The DA throttle is on unless `--no-throttle` is set, `--throttle-strategy off` included.
     #[test]
-    fn no_throttle_turns_the_da_throttle_off() {
+    fn only_no_throttle_disables_the_da_throttle() {
         assert!(parse_cli(&[]).into_config(false).unwrap().throttle.is_some());
         assert!(parse_cli(&["--no-throttle"]).into_config(false).unwrap().throttle.is_none());
+
+        let off = parse_cli(&["--throttle-strategy", "off"]).into_config(false).unwrap();
+        assert!(off.throttle.is_some());
+        assert_eq!(off.throttle_strategy, ThrottleStrategy::Off);
     }
 
     /// Throttling forces blobs unless `--no-force-blobs-when-throttling` is set.

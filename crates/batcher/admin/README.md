@@ -9,7 +9,7 @@ command is queued.
 | `admin_startBatcher` | Starts ingestion again from the safe L2 head. Does nothing if the batcher is already running. |
 | `admin_flushBatcher` | Closes the current channel so its frames become eligible for submission; it does not wait for L1 inclusion. Fails if the batcher is stopped. |
 | `admin_getBatcherStatus` | Returns `stopped`, `in_flight` and `da_backlog_bytes`. |
-| `admin_setThrottleController` | Replaces the DA throttle strategy and its full configuration. The new limits are pushed to the block builders. Fails with `-32602` if the configuration is invalid. |
+| `admin_setThrottleController` | Replaces the DA throttle strategy, `off`, `step`, `linear` or `quadratic`, and its full configuration. The new limits are pushed to the block builders unless the batcher runs with `--no-throttle`. Fails with `-32602` if the configuration is invalid. |
 | `admin_getThrottleController` | Returns the throttle strategy, its threshold and maximum intensity, and the current intensity and limits. |
 | `admin_setLogLevel` | Not supported yet; always fails with `-32601`. |
 

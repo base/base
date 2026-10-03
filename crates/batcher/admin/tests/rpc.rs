@@ -113,6 +113,26 @@ async fn stop_and_start_gate_the_flush() {
     assert_eq!(rpc.recorded.lock().unwrap().flushes(), 1);
 }
 
+/// `admin_setThrottleController` takes each throttle strategy by its lowercase name, `off`,
+/// `step`, `linear` or `quadratic`, applies that strategy to the backlog, and
+/// `admin_getThrottleController` reports it under the same name.
+#[tokio::test]
+async fn throttle_strategies_are_set_and_read_back_by_lowercase_name() {
+    let rpc = AdminRpc::start().await;
+
+    for (strategy, intensity) in
+        [("off", 0.0), ("step", 0.5), ("linear", 0.25), ("quadratic", 0.125)]
+    {
+        let params = rpc_params![strategy, throttle_config(0.5)];
+        let () = rpc.client.request("admin_setThrottleController", params).await.unwrap();
+
+        let info: Value =
+            rpc.client.request("admin_getThrottleController", rpc_params![]).await.unwrap();
+        assert_eq!(info["strategy"], strategy);
+        assert_eq!(info["current_intensity"], intensity);
+    }
+}
+
 /// The throttle controller is read back as set and applied to the backlog, its limits are
 /// published for the block builders, and an invalid config is refused as invalid params.
 #[tokio::test]

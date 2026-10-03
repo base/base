@@ -144,7 +144,7 @@ digest = "0cd289e19a"
 
 ["crates/batcher/admin/README.md"]
 summary = "Batcher admin JSON-RPC API: start, stop, flush, status, and DA throttle controller methods (admin_*), their behavior and error codes. Use when operating the batcher."
-digest = "5c08642d89"
+digest = "b58f08c435"
 
 ["crates/batcher/blobs/README.md"]
 summary = "base-blobs: EIP-4844 blob encoder and decoder for the batcher wire format (130,044 payload bytes per blob); excludes KZG commitments and submission."
@@ -152,15 +152,15 @@ digest = "d1525977c0"
 
 ["crates/batcher/cli/README.md"]
 summary = "base-batcher-cli: base batcher flags and startup, with sequencer endpoints and leader search, channel and DA config, and shadow mode posting to the inbox a parity validator derives its chain from."
-digest = "30a940cc09"
+digest = "3841ebb00a"
 
 ["crates/batcher/comp/README.md"]
 summary = "base-comp: incremental Brotli channel compression (CompressionStream, BrotliLevel) producing protocol-compatible channels; batch encoding and framing live in batcher-encoder."
 digest = "ce9421e523"
 
 ["crates/batcher/core/README.md"]
-summary = "base-batcher-core: async BatchDriver, SubmissionQueue for L1 transactions, and the DA throttle subsystem (Off, Step, Linear) that limits sequencer DA via miner_setMaxDASize."
-digest = "e5165c05ef"
+summary = "base-batcher-core: async BatchDriver, SubmissionQueue for L1 transactions, and the DA throttle (Off, Step, Linear, Quadratic strategies) that publishes the DA limits the block builders apply."
+digest = "e2b4bd478f"
 
 ["crates/batcher/encoder/README.md"]
 summary = "base-batcher-encoder: synchronous, no-I/O encoder from L2 blocks to L1 submissions. Covers channel closing rules, blob framing, metric labels, and BatchEncoder usage."
