@@ -32,7 +32,7 @@ pub use engine_request_coordinator::{ResetResponder, SequencerEngineRequestCoord
 
 mod shadow_reconciliation;
 pub use shadow_reconciliation::{
-    CanonicalReconciliationInputs, CanonicalUnsafeCatchup, SequencerEngineState,
+    CanonicalReconciliationInputs, CanonicalUnsafeCatchup, SequencerEngineState, SequencerKind,
     ShadowReconciliationGate,
 };
 
