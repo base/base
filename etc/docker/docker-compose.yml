@@ -422,6 +422,7 @@ services:
       - --shadow-mode
       - --dangerously-override-batch-inbox-address=${SHADOW_BATCH_INBOX_ADDRESS}
       - --parity-validator-l2-rpc-url=http://base-shadow-validator:${L2_SHADOW_HTTP_PORT}
+      - --no-throttle
       - --max-channel-duration=2
       - --poll-interval=1
       - --sub-safety-margin=0

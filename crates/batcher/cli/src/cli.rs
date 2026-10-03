@@ -62,6 +62,7 @@ pub struct BatcherArgs {
     ///
     /// Must be set together with `--dangerously-override-batch-inbox-address`, so a
     /// canonical deployment cannot turn into a shadow one by setting a single flag.
+    /// Requires `--no-throttle`.
     #[arg(long = "shadow-mode", env = "BASE_BATCHER_SHADOW_MODE")]
     pub shadow_mode: bool,
 
@@ -171,7 +172,8 @@ pub struct BatcherArgs {
 
     /// Disable DA throttling.
     ///
-    /// Pass this flag to submit batches at full rate regardless of DA backlog.
+    /// The batcher never pushes DA limits to the sequencer, however large its DA backlog grows.
+    /// Required with `--shadow-mode`.
     #[arg(long = "no-throttle", env = "BASE_BATCHER_NO_THROTTLE")]
     pub no_throttle: bool,
 
@@ -416,6 +418,7 @@ mod tests {
             "0x1111111111111111111111111111111111111111",
             "--parity-validator-l2-rpc-url",
             "http://validator:9545",
+            "--no-throttle",
         ]);
         let config = cli.into_config(false).expect("config should build");
 
