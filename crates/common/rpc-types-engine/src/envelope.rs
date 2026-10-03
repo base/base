@@ -621,14 +621,13 @@ mod tests {
         assert_eq!(hash.signature_message(chain_id), expected);
     }
 
-    #[test]
-    fn test_inner_payload_hash() {
-        arbtest::arbtest(|u| {
-            let inner = B256::from(u.arbitrary::<[u8; 32]>()?);
+    proptest::proptest! {
+        #[test]
+        fn test_inner_payload_hash(inner in proptest::prelude::any::<[u8; 32]>()) {
+            let inner = B256::from(inner);
             let hash = PayloadHash::from(inner.as_slice());
-            assert_eq!(hash.0, keccak256(inner.as_slice()));
-            Ok(())
-        });
+            proptest::prop_assert_eq!(hash.0, keccak256(inner.as_slice()));
+        }
     }
 
     #[test]

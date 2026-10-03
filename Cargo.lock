@@ -1400,15 +1400,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arbtest"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a3be567977128c0f71ad1462d9624ccda712193d124e944252f0c5789a06d46"
-dependencies = [
- "arbitrary",
-]
-
-[[package]]
 name = "arc-swap"
 version = "1.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3803,10 +3794,10 @@ dependencies = [
  "alloy-rpc-types-engine",
  "alloy-serde 2.4.1",
  "arbitrary",
- "arbtest",
  "base-common-consensus",
  "ethereum_ssz",
  "ethereum_ssz_derive",
+ "proptest",
  "reth-payload-primitives",
  "serde",
  "serde_json",
@@ -4128,7 +4119,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "arbitrary",
- "arbtest",
  "base-common-chains",
  "derive_more 2.1.1",
  "dirs 6.0.0",
@@ -4136,6 +4126,7 @@ dependencies = [
  "libp2p",
  "libp2p-identity",
  "multihash",
+ "proptest",
  "rstest",
  "secp256k1 0.30.0",
  "serde",
