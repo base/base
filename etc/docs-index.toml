@@ -679,8 +679,8 @@ summary = "Step-by-step guide to adding a network upgrade (Azul as example): Bas
 digest = "e87f3373b8"
 
 ["docs/transaction-events/README.md"]
-summary = "Spec for transaction-event/v1, the JSONL business event journal for transaction observability: config fields, envelope, event vocabulary, Vector to audit-archiver ingest, Postgres retention, examples."
-digest = "1089184709"
+summary = "Spec for transaction-event/v1, the Base transaction observability event journal: config fields, envelope, Postgres retention, event vocabulary, event ID guidance, and Vector to audit-archiver ingest."
+digest = "dba504011b"
 
 ["docs/transaction-events/tips-parity-checklist.md"]
 summary = "Checklist for verifying TIPS UI audit-archiver/Postgres responses match the S3-backed routes (block, txn, bundle, rejected) before switching TIPS_UI_QUERY_BACKEND=audit."

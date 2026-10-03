@@ -59,7 +59,7 @@ Find a doc through the index below instead of grepping the tree. After adding, m
 - [docs/guides/STANDALONE_PROVING.md](docs/guides/STANDALONE_PROVING.md): Guide to running the prover stack standalone (just prover up) with your own RPCs and a funded Succinct Prover Network key: ZK backends, range sizing, requester key, restart behavior, troubleshooting.
 - [docs/guides/TESTING.md](docs/guides/TESTING.md): Testing overview: what just ci and just pr run, the four tiers (unit, action, system, fuzz), other checks, the CI pipeline, and guidelines. Use to decide which command or test tier covers your change.
 - [docs/guides/UPGRADES.md](docs/guides/UPGRADES.md): Step-by-step guide to adding a network upgrade (Azul as example): BaseUpgrade enum, RollupConfig activation, timestamps, plus BaseSpecId and precompile routing if EVM rules change, and a checklist.
-- [docs/transaction-events/README.md](docs/transaction-events/README.md): Spec for transaction-event/v1, the JSONL business event journal for transaction observability: config fields, envelope, event vocabulary, Vector to audit-archiver ingest, Postgres retention, examples.
+- [docs/transaction-events/README.md](docs/transaction-events/README.md): Spec for transaction-event/v1, the Base transaction observability event journal: config fields, envelope, Postgres retention, event vocabulary, event ID guidance, and Vector to audit-archiver ingest.
 - [docs/transaction-events/tips-parity-checklist.md](docs/transaction-events/tips-parity-checklist.md): Checklist for verifying TIPS UI audit-archiver/Postgres responses match the S3-backed routes (block, txn, bundle, rejected) before switching TIPS_UI_QUERY_BACKEND=audit.
 
 ## Binaries
