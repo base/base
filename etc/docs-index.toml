@@ -680,7 +680,7 @@ digest = "e87f3373b8"
 
 ["docs/transaction-events/README.md"]
 summary = "Spec for transaction-event/v1, the Base transaction observability event journal: config fields, envelope, Postgres retention, event vocabulary, event ID guidance, and Vector to audit-archiver ingest."
-digest = "dba504011b"
+digest = "1fc074ef87"
 
 ["docs/transaction-events/tips-parity-checklist.md"]
 summary = "Checklist for verifying TIPS UI audit-archiver/Postgres responses match the S3-backed routes (block, txn, bundle, rejected) before switching TIPS_UI_QUERY_BACKEND=audit."

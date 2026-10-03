@@ -322,8 +322,13 @@ pending. These figures are estimated from source code, not measured.
 `getTransactionEventsByHash` returns events in ascending `event_time` order,
 with a default limit of 500 and a maximum of 2,000. For a transaction pending
 longer than about 110 seconds, the default limit can omit later lifecycle
-events such as inclusion. Request a higher limit, or query the inclusion block
-with `getTransactionEventsByBlockNumber` or `getTransactionEventsByBlockHash`.
+events such as inclusion. Requesting the maximum only postpones truncation, to
+about 7 minutes pending. `getTransactionEventsByBlockNumber` and
+`getTransactionEventsByBlockHash` have the same ascending order and limits,
+applied across every transaction in the block, so they can truncate busy
+blocks too. Neither is a complete-history workaround. Paging, per-type
+queries, a producer emission policy, or explicitly accepting the truncation
+risk is still an open decision before rollout.
 
 ## proxyd Examples
 
