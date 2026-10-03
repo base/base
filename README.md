@@ -46,6 +46,12 @@ NODE_TAG=v1.3.0 docker compose up
 
 See the [docs](https://docs.base.org/base-chain/node-operators/run-a-base-node) for hardware requirements, snapshots, Flashblocks, and historical proofs.
 
+## Local Development
+
+- `base-devnet light` runs a fresh single-node chain in one process, with no L1 and no Docker.
+- `just devnet up-single` runs a full devnet with an L1 in Docker.
+- See [Development Networks](docs/guides/DEVNETS.md) to choose between them and the snapshot devnet, and [Benchmarking](docs/guides/BENCHMARKING.md) for `base-bench`.
+
 ## Base Anvil Package
 
 Every push to `main` publishes patched `anvil` and `forge` binaries to GHCR

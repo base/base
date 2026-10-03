@@ -50,6 +50,7 @@ base-consensus-sources.workspace = true
 base-consensus-providers.workspace = true
 base-common-genesis.workspace = true
 base-common-chains.workspace = true
+base-common-consensus.workspace = true
 base-observability-events.workspace = true
 
 # reth
@@ -144,7 +145,6 @@ base-consensus-engine = { workspace = true, features = ["test-utils"] }
 alloy-json-rpc.workspace = true
 
 # base-alloy
-base-common-consensus.workspace = true
 base-common-flashblocks.workspace = true
 base-common-rpc-types-engine.workspace = true
 

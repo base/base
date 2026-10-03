@@ -1,12 +1,61 @@
 # `base-system-tests`
 
-System-test and development-network infrastructure for Base nodes. In addition to the fresh
-L1/L2 stack used by system tests, this crate can continue a Base mainnet execution snapshot with
-real builder and client execution and consensus components in one managed launcher process.
+System-test and development-network infrastructure for Base nodes. It provides two binaries:
 
-## Fresh devnet sequencer
+- `base-devnet` starts a development network and waits: `light` (fresh genesis, no L1), `fresh`
+  (the Docker devnet's builder and sequencer, which needs an L1), `snapshot` (a Base datadir, no
+  L1), and `shared-l1` (a CI L1 fixture).
+- `base-bench` starts a network, runs a load test against it, and writes results.
 
-The `fresh` mode runs the same in-process builder and sequencer stack used by system tests against
+See [Development Networks](../../docs/guides/DEVNETS.md) to choose between them and
+[Benchmarking](../../docs/guides/BENCHMARKING.md) for benchmark workflows.
+
+## Light devnet
+
+The `light` mode runs one in-process builder execution node and the standalone, L1-free sequencer
+from a freshly generated genesis. It needs no L1, beacon node, or Docker, and starts in seconds:
+
+```bash
+cargo run -p base-system-tests --bin base-devnet --no-default-features -- light \
+  --runtime-file /tmp/base-light-runtime.json
+```
+
+The chain is generated from the built-in dev chain configuration. The Anvil test accounts are
+prefunded, the `BaseTime` predeploy is installed, every fork through Cobalt is active at genesis, and
+Denim activates at the first block when `--block-interval 200ms` is selected. A synthetic L1 origin
+stands in for the absent L1. The genesis is stamped a few seconds in the future so the sequencer
+starts on the wall clock without a backlog.
+
+In another terminal:
+
+```bash
+RPC=$(jq -r .builder_rpc_url /tmp/base-light-runtime.json)
+cast chain-id --rpc-url "$RPC"
+cast block-number --rpc-url "$RPC"
+```
+
+The runtime JSON contains `status`, `chain_id`, `genesis_hash`, `block_interval_ms`,
+`block_gas_limit`, `builder_rpc_url`, `builder_ws_url`, `builder_flashblocks_url`,
+`builder_metrics_url`, and `datadir`. Dynamic ports are the default; `--stable-ports` binds the
+standard developer ports (builder HTTP on 7545) and fails if they are occupied.
+
+| Option | Default | Effect |
+|---|---|---|
+| `--block-interval` | `2s` | `200ms` uses `BaseTime` metadata and the standard payload service, without Flashblocks |
+| `--block-gas-limit` | 60 Mgas at 2s, 6 Mgas at 200ms | Gas limit of the generated chain |
+| `--prefund-address`, `--prefund-amount` | none, 1000 ETH | Mint ETH to an extra address in the first block |
+| `--datadir` | temporary, removed on exit | A directory that does not yet hold a database |
+| `--l2-genesis`, `--rollup-config` | generated | Use a custom genesis instead; it must be stamped within the last hour |
+| `--txpool-max-*` | 50,000 txs, 256 MB, 1,024 per sender | Transaction pool limits |
+
+Because there is no L1, safe and finalized heads do not advance, and there is no batcher or
+derivation. The chain is not restartable from `--datadir`. Use the Docker devnet when you need any of
+those.
+
+## Fresh devnet sequencer (Docker devnet builder)
+
+This is the mode the Docker devnet uses for its builder; it is not the [light devnet](#light-devnet)
+and cannot run without an L1. The `fresh` mode runs the same in-process builder and sequencer stack used by system tests against
 an already-running development L1. The Docker devnet supplies the generated L1/L2 genesis files,
 rollup configuration, L1 RPC endpoints, persistent builder datadir, and stable network ports:
 
@@ -24,7 +73,7 @@ node, L1, and setup services remain separate Compose services. The HA/conductor 
 to use the integrated `base sequencer` command because it requires multiple independently managed
 sequencers.
 
-## Snapshot devnet topology
+## Snapshot devnet
 
 The snapshot mode starts these real local network roles inside one managed launcher process:
 
@@ -142,59 +191,8 @@ the captured boundary differs.
 
 ## Run a snapshot benchmark
 
-## Run a quick local transfer benchmark
-
-For a no-configuration smoke benchmark, `base-bench` starts a fresh temporary
-local devnet, runs the default 60-second plain-transfer profile, prints its
-load-test summary, and shuts everything down:
-
-```bash
-just devnet bench
-```
-
-It needs Docker, but it needs neither a snapshot nor a funded key. The generated
-datadirs are temporary and are removed during shutdown. Use the explicit
-`base-bench snapshot` arguments below for reproducible snapshot benchmarks and
-report artifacts.
-
-## Run the fresh-devnet workload suite
-
-The checked-in fresh-devnet suite runs every workload on a distinct empty
-devnet, so token state, accounts, the transaction pool, and caches cannot leak
-between scenarios. It currently covers B-20 transfers (with the B-20 asset
-feature activated before setup), high-concurrency ETH transfers to new and existing recipients, and a
-50,000-round Blake2f precompile profile:
-
-```sh
-cargo run --release -p base-system-tests --bin base-bench -- local \
-  --workload-config etc/benchmarks/fresh-devnet.yml \
-  --output-dir results/fresh-devnet \
-  --client-version "base/$(git rev-parse --short HEAD)"
-```
-
-The command writes one native load-test sidecar per workload plus a top-level
-visualizer manifest:
-
-```text
-results/fresh-devnet/
-├── metadata.json
-├── suite-results.json
-├── fresh-devnet-b20-transfer/load-test-result.json
-├── fresh-devnet-eth-new/load-test-result.json
-├── fresh-devnet-eth-existing/load-test-result.json
-└── fresh-devnet-blake2f-50000/load-test-result.json
-```
-
-`metadata.json` and the load-test sidecars are directly consumable by the
-static visualizer in `base/benchmark`; link this output directory to that
-repository's ignored `output/` directory and run its normal production build.
-The opt-in Depot workflow runs this suite for trusted `base/base` pull requests
-with the `bench:tps` label. It publishes raw and visualizer artifacts and updates
-one advisory PR comment with the workload summaries.
-Swap workloads can opt into fresh-devnet contract provisioning with
-`deploy_devnet_swap_harness: true` on a workload entry. That mode deploys a
-fresh devnet USDC token plus Uniswap/Aerodrome router shims for each workload,
-then auto-wires swap and real-token setup addresses before execution.
+Fresh-devnet benchmarks (`just devnet bench` and the `etc/benchmarks/fresh-devnet.yml` workload
+suite) are described in [Benchmarking](../../docs/guides/BENCHMARKING.md).
 
 `base-bench snapshot` owns the process lifecycle around one load test: it generates an ephemeral
 funder, deposits funds to it in the first local descendant, replaces placeholder endpoints in the

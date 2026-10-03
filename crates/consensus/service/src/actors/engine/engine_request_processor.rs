@@ -603,12 +603,16 @@ where
     /// - At genesis: calls `engine.reset()` to FCU with all heads set to genesis.
     /// - Beyond genesis: probes the EL with reth's own safe/finalized labels so that
     ///   `el_sync_finished` can be set immediately, unblocking the initial derivation reset.
+    ///
+    /// A processor built with [`Self::new_skip_reset`] always takes the probing path, including
+    /// at genesis, because `engine.reset()` walks the L1 origin chain and the L1-free standalone
+    /// sequencer has no L1 to query.
     pub async fn bootstrap_active_sequencer(
         &mut self,
         head: Option<L2BlockInfo>,
         at_genesis: bool,
     ) {
-        if at_genesis {
+        if at_genesis && !self.skip_reset {
             match self.engine.reset(Arc::clone(&self.client), Arc::clone(&self.rollup)).await {
                 Ok(_) => {}
                 Err(err) => {
@@ -1260,6 +1264,64 @@ mod tests {
             .expect("state channel closed before el_sync_finished was set");
 
         // Drop sender to cleanly terminate the spawned task.
+        drop(req_tx);
+        let result = handle.await.expect("task panicked");
+        assert!(
+            matches!(result, Err(crate::EngineError::ChannelClosed)),
+            "expected ChannelClosed on clean shutdown, got {result:?}"
+        );
+    }
+
+    /// Verifies that a skip-reset (L1-free standalone) sequencer bootstrapping at genesis probes
+    /// the EL instead of calling `engine.reset()`, which would query an L1 that does not exist.
+    ///
+    /// The mock client has no L1 or L2-by-hash responses configured, so a regular genesis reset
+    /// could not complete; the probe only needs the latest block and a `Valid` forkchoice reply.
+    #[tokio::test]
+    async fn skip_reset_sequencer_bootstraps_at_genesis_without_resetting() {
+        let mut genesis = test_block_info(0);
+        genesis.block_info.timestamp = 0;
+        let cfg = Arc::new(RollupConfig {
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 0, hash: genesis.block_info.hash },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_config(Arc::clone(&cfg))
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, genesis)
+                .with_fork_choice_updated_v3_response(valid_fcu())
+                .build(),
+        );
+
+        let mut mock_derivation = MockEngineDerivationClient::new();
+        mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
+        mock_derivation.expect_notify_sync_completed().returning(|_| Ok(()));
+        // The initial post-sync reset is skipped but still notifies derivation.
+        mock_derivation.expect_send_signal().returning(|_| Ok(()));
+
+        let (state_tx, state_rx) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
+        let processor =
+            EngineProcessor::new_skip_reset(Arc::clone(&client), cfg, mock_derivation, engine);
+
+        let (req_tx, req_rx) = mpsc::channel(8);
+        let handle =
+            SequencerEngineRequestCoordinator::new(processor, false, None, false, unsafe_head_tx)
+                .start(req_rx);
+
+        state_rx
+            .clone()
+            .wait_for(|s| s.el_sync_finished)
+            .await
+            .expect("state channel closed before el_sync_finished was set");
+        assert_eq!(state_rx.borrow().sync_state.unsafe_head(), genesis);
+
         drop(req_tx);
         let result = handle.await.expect("task panicked");
         assert!(

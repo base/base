@@ -104,7 +104,9 @@ just devnet tests
 ```
 
 which runs `cargo nextest run -p base-system-tests` after building test contracts. See
-[`etc/systems/README.md`](../../etc/systems/README.md) for the crate itself.
+[`etc/systems/README.md`](../../etc/systems/README.md) for the crate itself and
+[Development Networks](DEVNETS.md) for how the networks it starts relate to the ones you can run
+by hand.
 
 System tests require Docker and are **not** run on every pull request (see
 [CI Pipeline](#ci-pipeline) below) because of their cost. They run as the required

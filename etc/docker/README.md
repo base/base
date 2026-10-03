@@ -1,6 +1,6 @@
 # `docker`
 
-This directory contains the Dockerfiles and Compose configuration for the **local devnet** and internal Rust services.
+This directory contains the Dockerfiles and Compose configuration for the **full local devnet** (an L1 plus L2 in Docker) and internal Rust services. If you do not need an L1, the [light devnet](../../docs/guides/DEVNETS.md#light-devnet) (`base-devnet light`) starts in seconds without Docker; [Development Networks](../../docs/guides/DEVNETS.md) compares all the options.
 
 The public operator image (`ghcr.io/base/node`) is the `base` target in `Dockerfile.rust-services`. It retains the unified binary, execution node, consensus node, and snapshotter for compatibility. Releases also publish single-binary images:
 
