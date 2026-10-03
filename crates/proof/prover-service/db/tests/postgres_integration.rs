@@ -1104,6 +1104,7 @@ async fn test_create_for_worker_queue_accepts_tee_requests() {
 async fn test_create_for_worker_queue_idempotent_for_legacy_null_backend() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
+    drain_claimable_compressed_jobs(&repo).await;
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
