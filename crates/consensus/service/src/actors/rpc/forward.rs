@@ -384,6 +384,12 @@ mod tests {
         module.register_method("eth_blockNumber", |_, _, _| "0x10").unwrap();
         module.register_method("eth_shadowed", |_, _, _| "upstream").unwrap();
         module
+            .register_async_method("eth_slow", |_, _, _| async {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                "late"
+            })
+            .unwrap();
+        module
             .register_method("eth_fail", |_, _, _| {
                 Err::<(), _>(ErrorObjectOwned::owned(3, "upstream failure", None::<()>))
             })
@@ -393,6 +399,13 @@ mod tests {
     }
 
     async fn front_server(upstream: SocketAddr) -> (SocketAddr, ServerHandle) {
+        front_server_with_timeout(upstream, Duration::from_secs(5)).await
+    }
+
+    async fn front_server_with_timeout(
+        upstream: SocketAddr,
+        http_timeout: Duration,
+    ) -> (SocketAddr, ServerHandle) {
         let mut module = RpcModule::new(());
         module.register_method("optimism_syncStatus", |_, _, _| "local").unwrap();
         module.register_method("admin_status", |_, _, _| "admin").unwrap();
@@ -404,7 +417,7 @@ mod tests {
             admin_persistence: None,
             ws_enabled: false,
             dev_enabled: false,
-            http_timeout: Duration::from_secs(5),
+            http_timeout,
             max_concurrent_requests: NonZeroUsize::new(16).expect("nonzero"),
             forward_unmatched_to: Some(Url::parse(&format!("http://{upstream}")).unwrap()),
         };
@@ -584,5 +597,24 @@ mod tests {
                 Err(ErrorCode::InternalError.code()),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn slow_upstream_times_out_as_a_json_rpc_error_not_an_http_timeout() {
+        let upstream = upstream_server().await;
+        let (front_addr, _front) =
+            front_server_with_timeout(upstream.addr, Duration::from_secs(1)).await;
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{front_addr}"))
+            .header("content-type", "application/json")
+            .body(r#"{"jsonrpc":"2.0","id":1,"method":"eth_slow"}"#)
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(body["error"]["code"], ErrorCode::InternalError.code());
     }
 }

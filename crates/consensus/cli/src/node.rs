@@ -560,7 +560,10 @@ impl ConsensusNodeArgs {
                 .clone()
                 .or_else(|| rpc_config.forward_unmatched_to.take())
                 .or_else(|| {
-                    standalone.then(|| Url::parse(DEFAULT_FORWARD_UPSTREAM).ok()).flatten()
+                    standalone.then(|| {
+                        Url::parse(DEFAULT_FORWARD_UPSTREAM)
+                            .expect("DEFAULT_FORWARD_UPSTREAM is a valid URL")
+                    })
                 });
         }
 

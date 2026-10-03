@@ -68,6 +68,12 @@ impl CancellableContext for RpcContext {
     }
 }
 
+/// Fraction of the server's HTTP timeout given to a forwarded upstream request.
+///
+/// It is below one so the upstream client times out first and the caller receives a JSON-RPC
+/// error, instead of racing the server's own timeout layer, which answers with a bare HTTP 408.
+const FORWARD_TIMEOUT_FRACTION: f32 = 0.8;
+
 /// Launches the jsonrpsee [`Server`].
 ///
 /// If the RPC server is disabled, this will return `Ok(None)`.
@@ -124,7 +130,13 @@ pub(crate) async fn bind_rpc_server(
             }
             !is_self
         })
-        .map(|upstream| ForwardUnmatchedLayer::new(upstream, &module, config.http_timeout))
+        .map(|upstream| {
+            ForwardUnmatchedLayer::new(
+                upstream,
+                &module,
+                config.http_timeout.mul_f32(FORWARD_TIMEOUT_FRACTION),
+            )
+        })
         .transpose()
         .map_err(|err| std::io::Error::other(format!("invalid upstream RPC endpoint: {err}")))?;
     let server = Server::builder()
