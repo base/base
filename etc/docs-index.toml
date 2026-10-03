@@ -239,8 +239,8 @@ summary = "Defines the alloy Network implementation for Base (Base type with Bas
 digest = "66133b4e24"
 
 ["crates/common/observability-events/README.md"]
-summary = "Producer-side transaction-event/v1 JSONL envelope and non-blocking writer for transaction audit journals, with field and privacy rules. Use when emitting transaction lifecycle events."
-digest = "3e17333f7d"
+summary = "Producer-side transaction-event/v1 JSONL envelope, non-blocking writer and event_id identity rules (EventOccurrence, process instance). Use when emitting transaction lifecycle events."
+digest = "7a4c6b3b3b"
 
 ["crates/common/precompile-macros/README.md"]
 summary = "Proc macros for native precompile storage: #[contract], #[namespace], #[derive(Storable)], and primitive/array impl generators. Use when defining precompile storage layouts (adapted from Tempo)."

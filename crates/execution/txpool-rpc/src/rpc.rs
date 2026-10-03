@@ -11,7 +11,7 @@ use base_execution_txpool::{
     ValidityPredicate, deserialize_bounded_predicates,
 };
 use base_observability_events::{
-    TransactionEventProducer, TransactionEventType, transaction_event,
+    EventOccurrence, TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use jsonrpsee::{
     core::{RpcResult, async_trait, client::ClientT},
@@ -369,6 +369,9 @@ where
             producer: TransactionEventProducer::BaseRethNode,
             event_type: TransactionEventType::TxpoolSendRawTransactionValidity,
             tx_hash: tx_hash,
+            // Each admission request is its own observation, even for a resubmitted
+            // transaction with the same or different predicates.
+            occurrence: EventOccurrence::next(),
             data: {
                 "rpc_method" => "base_sendRawTransactionValidity",
                 "validity_predicates" => &options.validity,
@@ -751,6 +754,49 @@ mod tests {
             events[0].data["validity_predicates"],
             serde_json::to_value(all_predicate_variants()).unwrap()
         );
+    }
+
+    /// Resubmitting one transaction is a new admission, even when only the predicates differ.
+    #[tokio::test]
+    async fn repeated_validity_admissions_of_one_transaction_emit_distinct_events() {
+        let capture = TransactionEventCapture::install();
+        let signer = PrivateKeySigner::random();
+        let raw = signed_eip1559(&signer, 0, 1);
+        let rpc = validity_rpc(everest_provider());
+        let all = all_predicate_variants();
+        // Every admission must carry a block-number expiry, so the narrower request keeps only it.
+        let expiry_only: Vec<_> = all
+            .iter()
+            .filter(|predicate| matches!(predicate, ValidityPredicate::BlockNumber { .. }))
+            .cloned()
+            .collect();
+
+        for validity in [all.clone(), expiry_only.clone(), expiry_only.clone()] {
+            let _ = rpc
+                .send_raw_transaction_validity(
+                    raw.clone(),
+                    SendRawTransactionValidityOptions { validity },
+                )
+                .await;
+        }
+
+        let events: Vec<_> = capture
+            .events()
+            .into_iter()
+            .filter(|event| {
+                event.event_type == TransactionEventType::TxpoolSendRawTransactionValidity
+            })
+            .collect();
+        assert_eq!(events.len(), 3);
+        assert!(events.iter().all(|event| event.tx_hash == events[0].tx_hash));
+        assert_eq!(events[0].data["validity_predicates"], serde_json::to_value(&all).unwrap());
+        assert_eq!(
+            events[1].data["validity_predicates"],
+            serde_json::to_value(&expiry_only).unwrap()
+        );
+        let ids: std::collections::HashSet<_> =
+            events.iter().map(|event| event.event_id.as_str()).collect();
+        assert_eq!(ids.len(), 3, "each admission must keep its own event ID");
     }
 
     #[tokio::test]

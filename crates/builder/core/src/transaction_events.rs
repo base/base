@@ -2,8 +2,8 @@
 
 use alloy_primitives::{B256, TxHash};
 use base_observability_events::{
-    GlobalTransactionEventWriter, TransactionEventEmitOutcome, TransactionEventProducer,
-    TransactionEventType, transaction_event,
+    EventOccurrence, GlobalTransactionEventWriter, TransactionEventEmitOutcome,
+    TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -450,6 +450,12 @@ pub(crate) const fn rejection_reason_code(err: &TxnExecutionError) -> &'static s
 
 /// Emits one builder transaction event if a sink is configured.
 ///
+/// Within one builder process, a payload job builds each flashblock index once, so payload ID,
+/// flashblock index, ordering position, event type and transaction identify one decision, and a
+/// repeated emission of that decision deduplicates. The event ID also carries the process
+/// instance, because another builder replica or a restarted builder can build the same payload ID
+/// and reach different decisions.
+///
 /// `data` is lazy so disabled writers skip hot-path payload construction.
 pub(crate) fn emit_builder_transaction_event<D, F>(
     ctx: BuilderTransactionEventContext,
@@ -475,6 +481,7 @@ pub(crate) fn emit_builder_transaction_event<D, F>(
         maybe_block_hash: ctx.block_hash,
         block_number: ctx.block_number,
         payload_id: ctx.payload_id,
+        process_instance: EventOccurrence::process_instance(),
         id: {
             "flashblock_index" => ctx.flashblock_index.map(|index| index.to_string()).unwrap_or_default(),
             "ordering_position" => ctx.ordering_position.map(|position| position.to_string()).unwrap_or_default(),
@@ -524,6 +531,7 @@ pub(crate) fn emit_builder_payload_event<D, F>(
         maybe_block_hash: ctx.block_hash,
         block_number: ctx.block_number,
         payload_id: ctx.payload_id,
+        process_instance: EventOccurrence::process_instance(),
         id: {
             "flashblock_index" => ctx.flashblock_index.map(|index| index.to_string()).unwrap_or_default(),
         },
@@ -572,6 +580,32 @@ mod tests {
             builder_mode: "flashblocks",
             source_queue: "txpool_best",
         }
+    }
+
+    /// Builder decisions stay deterministic within one process: emitting the same decision twice
+    /// yields one event ID, so it still deduplicates downstream.
+    #[test]
+    fn repeated_builder_decision_in_one_process_keeps_one_event_id() {
+        let capture = base_observability_events::TransactionEventCapture::install();
+        let tx_hash = TxHash::repeat_byte(0xc4);
+
+        for _ in 0..2 {
+            emit_builder_transaction_event(
+                context(),
+                TransactionEventType::BuilderConsidered,
+                tx_hash,
+                || BuilderIncludedEventData::new("test"),
+            );
+        }
+
+        let ids: Vec<_> = capture
+            .events()
+            .into_iter()
+            .filter(|event| event.tx_hash == Some(tx_hash))
+            .map(|event| event.event_id)
+            .collect();
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids[0], ids[1]);
     }
 
     #[test]
