@@ -5,7 +5,7 @@ set -e
 # Downloads release binaries from GitHub releases and installs them locally.
 
 # NOTE: If you change this script, increment the version below.
-BASEUP_INSTALLER_VERSION="0.1.9"
+BASEUP_INSTALLER_VERSION="0.1.10"
 
 BASEUP_REPO="${BASEUP_REPO:-base/base}"
 BASEUP_REPO_REF="${BASEUP_REPO_REF:-main}"
@@ -837,7 +837,7 @@ binary_up_to_date() {
     local installed_version
 
     [[ "$FORCE_INSTALL" -eq 0 ]] || return 1
-    [[ -f "$BIN_DIR/$binary_name" ]] || return 1
+    [[ -f "$BIN_DIR/$binary_name" && -x "$BIN_DIR/$binary_name" ]] || return 1
 
     installed_version="$(get_installed_version "$binary_name" "$target")" || return 1
     [[ "$installed_version" == "$version" ]]
