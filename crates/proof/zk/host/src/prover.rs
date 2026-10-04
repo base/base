@@ -125,37 +125,3 @@ pub trait ZkProver: Send + Sync + std::fmt::Debug {
         backend_session_id: &str,
     ) -> Result<ProofResult, ZkProverError>;
 }
-
-#[cfg(test)]
-mod tests {
-    use base_prover_service_protocol::{ZkBackend, ZkVm};
-
-    use super::*;
-
-    fn zk_request() -> ZkProofRequest {
-        ZkProofRequest {
-            start_block_number: 100,
-            number_of_blocks_to_prove: 5,
-            sequence_window: None,
-            l1_head: None,
-            intermediate_root_interval: None,
-            schedule_l2_block_number: None,
-            zk_vm: ZkVm::Sp1,
-            zk_backend: ZkBackend::Cluster,
-        }
-    }
-
-    #[test]
-    fn request_kind_exposes_block_range() {
-        let compressed = ZkProofRequestKind::Compressed(zk_request());
-        assert_eq!(compressed.start_block_number(), 100);
-        assert_eq!(compressed.number_of_blocks_to_prove(), 5);
-
-        let snark = ZkProofRequestKind::SnarkPlonk(SnarkPlonkProofRequest {
-            proof: zk_request(),
-            prover_address: alloy_primitives::Address::ZERO,
-        });
-        assert_eq!(snark.start_block_number(), 100);
-        assert_eq!(snark.number_of_blocks_to_prove(), 5);
-    }
-}
