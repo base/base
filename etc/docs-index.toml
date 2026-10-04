@@ -435,8 +435,8 @@ summary = "basectl-cli: the basectl clap parser and commands (blocks, sync, txpo
 digest = "1e4810a82c"
 
 ["crates/infra/challenger-e2e/README.md"]
-summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games, asserts valid games are left alone and Path 4 (plus Path 3 conditionally, Path 2 in a separate scenario) is disputed."
-digest = "92e79d0b74"
+summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games, asserts valid games are left alone and Path 4 (plus Path 3 and Path 2 in separate scenarios) is disputed."
+digest = "118deb12bf"
 
 ["crates/infra/load-tests/README.md"]
 summary = "Load-testing framework (base-load-tests lib, base-load-tester bin): just/cargo commands, YAML config, tx mixes (precompile, B-20, swap, validity). Use to run or configure devnet/sepolia load tests."
