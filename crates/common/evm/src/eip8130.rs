@@ -812,7 +812,14 @@ impl Eip8130Executor {
     {
         let tx = signed.tx();
         let nonce_key = tx.nonce_key;
-        let gas_limit = tx.gas_limit;
+        // EIP-7825: execution bounds `gas_limit` plus payer authentication by
+        // the per-transaction cap, so simulate at most the gas a real
+        // transaction could carry. The payer authentication ceiling is the
+        // worst case, so a submission at the returned estimate always fits.
+        let payer_auth_ceiling =
+            IntrinsicGas::max_payer_auth_cost(signed).map_err(BaseTransactionError::eip8130)?;
+        let gas_limit =
+            tx.gas_limit.min(ctx.cfg().tx_gas_limit_cap().saturating_sub(payer_auth_ceiling));
         let max_fee = tx.max_fee_per_gas;
         let max_priority = tx.max_priority_fee_per_gas;
         // Use the declared payer (sponsor) so the payer published to the
@@ -3528,6 +3535,48 @@ mod tests {
 
         let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
         assert!(err.to_string().contains("EIP-7825"), "got {err}");
+    }
+
+    /// Simulation never runs with more gas than a real transaction could carry:
+    /// `gas_limit` plus the payer authentication ceiling stays within the
+    /// EIP-7825 cap, so a sponsored estimate is always includable.
+    #[test]
+    fn simulation_gas_is_bounded_by_the_per_transaction_cap() {
+        let key = signing_key(0x9f);
+        let sender = eoa_address(&key);
+        let payer = address!("0x00000000000000000000000000000000000000b7");
+        // `JUMPDEST PUSH1 0 JUMP`: loops until it runs out of gas, so the
+        // simulation consumes its whole gas ceiling.
+        let looper = address!("0x00000000000000000000000000000000000000b8");
+        let mut evm = evm_with_accounts(U256::MAX >> 1, sender, &[(looper, bytes!("5b600056"))]);
+        let cap = evm.ctx().cfg.tx_gas_limit_cap();
+        let tx = TxEip8130 {
+            gas_limit: cap,
+            payer: Some(payer),
+            calls: vec![vec![Call { to: looper, value: U256::ZERO, data: Bytes::new() }]],
+            ..base_tx()
+        };
+        let mut payer_auth = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
+        payer_auth.extend_from_slice(&[0xab; 65]);
+        let signed = Eip8130Signed::new(tx, eoa_sig(&key, B256::ZERO), Bytes::from(payer_auth));
+        let payer_auth_ceiling = IntrinsicGas::max_payer_auth_cost(&signed).unwrap();
+        assert!(payer_auth_ceiling > 0);
+
+        let mut sim = into_base_tx(&signed);
+        sim.base.caller = sender;
+        if let Some(parts) = sim.eip8130.as_mut() {
+            parts.mode = Eip8130ExecutionMode::Simulate;
+        }
+        evm.ctx_mut().tx = sim;
+        let result = Eip8130Executor::simulate(&mut evm).expect("simulation runs");
+        assert!(!result.is_success(), "the loop exhausts the simulated gas");
+        // The reported gas includes the payer authentication metered on top of
+        // the simulated `gas_limit`.
+        assert!(
+            result.tx_gas_used() <= cap,
+            "simulated gas {} (with payer authentication {payer_auth_ceiling}) exceeds the cap {cap}",
+            result.tx_gas_used()
+        );
     }
 
     /// A nonce-free transaction must carry `nonce_sequence == 0` at inclusion,
