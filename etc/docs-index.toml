@@ -48,7 +48,7 @@ digest = "de5b6325d7"
 
 ["bin/audit-archiver/README.md"]
 summary = "audit-archiver service: ingests transaction-event NDJSON over HTTP into Postgres, serves JSON-RPC queries, partition retention classes, env vars, S3 removal rollout, and BRIN index step."
-digest = "b8d6f07e49"
+digest = "6942125a01"
 
 ["bin/base-telemetry/README.md"]
 summary = "base-telemetry backend: CLI and env config, per-IP rate limiting, and on-demand P2P reachability probes for execution-layer (enode) and consensus-layer (ENR or multiaddr) nodes."

@@ -23,8 +23,19 @@ const ATTACH_RETRY_INITIAL_DELAY: Duration = Duration::from_secs(5);
 /// Longest pause before retrying a deferred attach.
 const ATTACH_RETRY_MAX_DELAY: Duration = Duration::from_secs(60);
 
+/// `lock_timeout` for an ATTACH that completes its class index.
+///
+/// Completing a class index makes Postgres validate the root index too, which
+/// takes ACCESS EXCLUSIVE on the root table and root index. That attach takes
+/// the root table lock first; every insert and read queues behind the wait, so
+/// it is kept short.
+const ROOT_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// SQLSTATE `lock_not_available`, raised when `lock_timeout` expires.
 const LOCK_NOT_AVAILABLE: &str = "55P03";
+
+/// SQLSTATE `deadlock_detected`.
+const DEADLOCK_DETECTED: &str = "40P01";
 
 /// Builds BRIN indexes on populated day partitions without blocking inserts.
 ///
@@ -54,6 +65,12 @@ struct PendingAttach {
     leaf: String,
     class_index: String,
     name: String,
+}
+
+impl PendingAttach {
+    fn statement(&self) -> String {
+        format!("ALTER INDEX public.{} ATTACH PARTITION public.{}", self.class_index, self.name)
+    }
 }
 
 async fn index_partitions(conn: &mut sqlx::PgConnection) -> Result<usize> {
@@ -192,28 +209,91 @@ async fn index_partitions(conn: &mut sqlx::PgConnection) -> Result<usize> {
     bail!("transaction event ingested_at index is still invalid; retry after partition maintenance")
 }
 
-/// Attaches one leaf index, returning `false` if the lock wait timed out.
+/// Attaches one leaf index, returning `false` if a lock wait timed out or
+/// Postgres broke a deadlock by aborting the attach.
 async fn try_attach(conn: &mut sqlx::PgConnection, attach: &PendingAttach) -> Result<bool> {
-    let PendingAttach { leaf, class_index, name } = attach;
-    sqlx::query(&format!("SET lock_timeout = {}", ATTACH_LOCK_TIMEOUT.as_millis()))
-        .execute(&mut *conn)
-        .await?;
-    let result =
-        sqlx::query(&format!("ALTER INDEX public.{class_index} ATTACH PARTITION public.{name}"))
-            .execute(&mut *conn)
-            .await;
-    sqlx::query("SET lock_timeout = 0").execute(&mut *conn).await?;
+    let result = if completes_class_index(conn, &attach.class_index).await? {
+        attach_under_root_lock(conn, attach).await
+    } else {
+        attach_leaf(conn, attach).await
+    };
 
     match result {
-        Ok(_) => Ok(true),
+        Ok(()) => Ok(true),
         Err(err)
-            if err.as_database_error().and_then(|error| error.code()).as_deref()
-                == Some(LOCK_NOT_AVAILABLE) =>
+            if matches!(
+                err.as_database_error().and_then(|error| error.code()).as_deref(),
+                Some(LOCK_NOT_AVAILABLE | DEADLOCK_DETECTED)
+            ) =>
         {
             Ok(false)
         }
-        Err(err) => Err(err)
-            .with_context(|| format!("attaching index for transaction event day partition {leaf}")),
+        Err(err) => Err(err).with_context(|| {
+            format!("attaching index for transaction event day partition {}", attach.leaf)
+        }),
+    }
+}
+
+/// Whether attaching one more valid leaf index makes `class_index` valid.
+///
+/// The leaf being attached is the only one not yet counted, so this holds when
+/// every other partition of the class already has a valid attached index.
+async fn completes_class_index(conn: &mut sqlx::PgConnection, class_index: &str) -> Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT NOT i.indisvalid AND c.relispartition \
+           AND (SELECT count(*) FROM pg_inherits p \
+                JOIN pg_index leaf ON leaf.indexrelid = p.inhrelid \
+                WHERE p.inhparent = i.indexrelid AND leaf.indisvalid) \
+             = (SELECT count(*) FROM pg_inherits p WHERE p.inhparent = i.indrelid) - 1 \
+         FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid \
+         WHERE i.indexrelid = to_regclass($1)",
+    )
+    .bind(format!("public.{class_index}"))
+    .fetch_one(&mut *conn)
+    .await?)
+}
+
+async fn attach_leaf(
+    conn: &mut sqlx::PgConnection,
+    attach: &PendingAttach,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(&format!("SET lock_timeout = {}", ATTACH_LOCK_TIMEOUT.as_millis()))
+        .execute(&mut *conn)
+        .await?;
+    let result = sqlx::query(&attach.statement()).execute(&mut *conn).await;
+    sqlx::query("SET lock_timeout = 0").execute(&mut *conn).await?;
+    result.map(drop)
+}
+
+/// Attaches a leaf whose ATTACH also validates the root index.
+///
+/// Validating the root takes ACCESS EXCLUSIVE on the root index and table
+/// while the leaf index is already locked. Reads lock the root before any
+/// leaf, so a read already running on the root that then reaches this leaf
+/// would deadlock with the ATTACH. Locking the root table first, in the same
+/// order as reads, avoids that.
+async fn attach_under_root_lock(
+    conn: &mut sqlx::PgConnection,
+    attach: &PendingAttach,
+) -> Result<(), sqlx::Error> {
+    let mut tx = sqlx::Connection::begin(&mut *conn).await?;
+    let result = async {
+        sqlx::query(&format!("SET LOCAL lock_timeout = {}", ROOT_LOCK_TIMEOUT.as_millis()))
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("LOCK TABLE ONLY public.transaction_events IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(&attach.statement()).execute(&mut *tx).await?;
+        Ok(())
+    }
+    .await;
+    match result {
+        Ok(()) => tx.commit().await,
+        Err(err) => {
+            tx.rollback().await?;
+            Err(err)
+        }
     }
 }
 
@@ -306,9 +386,15 @@ mod tests {
             )
             .await?;
         }
-        // The first leaf in build order, so every later leaf is attached after
-        // its attach times out.
-        let blocked = &leaves[0];
+        // The first leaf in build order that is followed by another leaf of its
+        // class, so its first attempt uses ATTACH_LOCK_TIMEOUT and every later
+        // leaf is attached after that times out.
+        let class_of = |leaf: &str| leaf.rsplit_once('_').map(|(class, _)| class.to_owned());
+        let blocked = leaves
+            .windows(2)
+            .find(|pair| class_of(&pair[0]) == class_of(&pair[1]))
+            .map(|pair| &pair[0])
+            .context("migrations create a class with several day partitions")?;
 
         // Outlasts one ATTACH_LOCK_TIMEOUT but ends before the first retry
         // finishes waiting.
@@ -335,6 +421,103 @@ mod tests {
         index.await??;
         read.await?.context("the blocking read was not canceled")?;
         assert!(unattached_leaf_indexes(&pool).await?.is_empty());
+        let valid: bool = sqlx::query_scalar(
+            "SELECT indisvalid FROM pg_index \
+             WHERE indexrelid = 'transaction_events_ingested_at_idx'::regclass",
+        )
+        .fetch_one(&pool)
+        .await?;
+        assert!(valid, "the root index is valid once every leaf is attached");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn completing_attach_does_not_deadlock_with_reads() -> Result<()> {
+        let container = Postgres::default().with_tag("17-alpine").start().await?;
+        let port = container.get_host_port_ipv4(5432).await?;
+        let database_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+        PgTransactionEventSink::migrate(&database_url).await?;
+        let pool = PgPoolOptions::new().max_connections(4).connect(&database_url).await?;
+
+        let cold_leaves: Vec<String> = sqlx::query_scalar(
+            "SELECT c.relname::text FROM pg_inherits i \
+             JOIN pg_class c ON c.oid = i.inhrelid \
+             WHERE i.inhparent = 'public.transaction_events_cold'::regclass ORDER BY 1",
+        )
+        .fetch_all(&pool)
+        .await?;
+        let hot_leaf: String = sqlx::query_scalar(
+            "SELECT c.relname::text FROM pg_inherits i \
+             JOIN pg_class c ON c.oid = i.inhrelid \
+             WHERE i.inhparent = 'public.transaction_events_hot'::regclass ORDER BY 1 LIMIT 1",
+        )
+        .fetch_one(&pool)
+        .await?;
+        // Attaching this leaf makes the cold class index valid, which also
+        // validates the root index.
+        let completing = cold_leaves.last().context("migrations create cold partitions")?;
+        let day = hot_leaf.trim_start_matches("transaction_events_hot_");
+        // A literal date so the planner prunes to one day and locks only it.
+        let hot_day = format!("{}-{}-{}", &day[..4], &day[4..6], &day[6..]);
+
+        // A read in progress on the root table, as the API's reads are: it
+        // holds ACCESS SHARE on transaction_events and the day it pruned to.
+        let mut reader = pool.acquire().await?;
+        reader.execute("BEGIN").await?;
+        sqlx::query(&format!(
+            "SELECT count(*) FROM public.transaction_events \
+             WHERE retention_class = 'hot' AND event_date = DATE '{hot_day}'"
+        ))
+        .execute(&mut *reader)
+        .await?;
+
+        let index = tokio::spawn({
+            let database_url = database_url.clone();
+            async move { index_transaction_event_partitions(&database_url).await }
+        });
+
+        // Wait until the command is blocked on the root table or root index.
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            let waiting: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE NOT granted AND relation IN \
+                 ('public.transaction_events'::regclass, \
+                  'public.transaction_events_ingested_at_idx'::regclass))",
+            )
+            .fetch_one(&pool)
+            .await?;
+            if waiting {
+                break;
+            }
+            ensure!(!index.is_finished(), "index command finished before reaching the root lock");
+            ensure!(Instant::now() < deadline, "index command never waited on the root");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        let holds_leaf: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_locks \
+             WHERE relation = to_regclass($1) AND mode = 'AccessExclusiveLock' AND granted)",
+        )
+        .bind(format!("public.{completing}_ingested_at_idx"))
+        .fetch_one(&pool)
+        .await?;
+        assert!(!holds_leaf, "the command waits for the root without holding the leaf index");
+
+        // The same read now touches the completing leaf. If the command held
+        // that leaf's index while waiting for the root, this would deadlock.
+        let day = completing.trim_start_matches("transaction_events_cold_");
+        let cold_day = format!("{}-{}-{}", &day[..4], &day[4..6], &day[6..]);
+        sqlx::query(&format!(
+            "SELECT count(*) FROM public.transaction_events \
+             WHERE retention_class = 'cold' AND event_date = DATE '{cold_day}'"
+        ))
+        .execute(&mut *reader)
+        .await
+        .context("read during the completing attach")?;
+        reader.execute("COMMIT").await?;
+
+        index.await??;
         let valid: bool = sqlx::query_scalar(
             "SELECT indisvalid FROM pg_index \
              WHERE indexrelid = 'transaction_events_ingested_at_idx'::regclass",
