@@ -1419,39 +1419,60 @@ class SnapshotTests(unittest.TestCase):
             self.fork.wait_boundary()
         self.assertFalse(self.fork.manifest.get("boundary_validated"))
 
-    def test_rpc_wait_reports_before_polling_and_periodically_without_extending_deadline(self):
+    def test_execution_rpc_wait_has_no_deadline_and_keeps_reporting(self):
         self.fork.timeout = 60
-        for becomes_ready in (True, False):
-            with self.subTest(becomes_ready=becomes_ready):
+        for role, service in (("sequencer", "inspect-sequencer"), ("validator", "validator")):
+            with self.subTest(role=role):
                 attempts = 0
 
                 def request(*args):
                     nonlocal attempts
                     attempts += 1
                     self.assertTrue(output.called, "announce the wait before the first RPC request")
-                    if attempts == 3:
+                    if attempts == 4:
                         self.assertGreaterEqual(output.call_count, 2, "report again during a long wait")
-                        if becomes_ready:
-                            return "0x2105"
+                        return "0x2105"
                     raise devnet.Unavailable("provider-secret")
 
                 with patch.object(self.fork, "url", return_value="https://rpc.invalid/provider-secret"), \
                         patch.object(devnet, "rpc", side_effect=request), \
-                        patch.object(self.fork, "rpc_startup_status", return_value="inspect-sequencer: repairing history indexes"), \
-                        patch.object(devnet.time, "monotonic", side_effect=[0, 1, 31, 61]), \
+                        patch.object(self.fork, "containers", return_value=[container(service)]), \
+                        patch.object(self.fork, "rpc_startup_status", return_value=f"{service}: repairing history indexes"), \
+                        patch.object(devnet.time, "monotonic", side_effect=[0, 1, 31, 10801]), \
                         patch.object(devnet.time, "sleep"), patch("builtins.print") as output:
-                    if becomes_ready:
-                        self.fork.await_rpc("sequencer")
-                    else:
-                        with self.assertRaisesRegex(RuntimeError, "timed out: sequencer execution RPC"):
-                            self.fork.await_rpc("sequencer")
-                    self.assertEqual(attempts, 3)
-                    self.assertIn("sequencer execution RPC", str(output.call_args_list))
-                    self.assertIn("inspect-sequencer: repairing history indexes", str(output.call_args_list))
-                    self.assertIn("29s remaining", str(output.call_args_list))
+                    self.fork.await_rpc(role)
+                    self.assertEqual(attempts, 4)
+                    self.assertIn(f"{role} execution RPC", str(output.call_args_list))
+                    self.assertIn(f"{service}: repairing history indexes", str(output.call_args_list))
+                    self.assertIn("10801s elapsed", str(output.call_args_list))
+                    self.assertNotIn("remaining", str(output.call_args_list))
                     self.assertNotIn("provider-secret", str(output.call_args_list))
                     self.assertTrue(all(call.kwargs.get("flush") for call in output.call_args_list))
                     self.assertTrue(all(call.kwargs.get("file") is sys.stderr for call in output.call_args_list))
+
+    def test_execution_rpc_wait_fails_if_container_exits_or_disappears(self):
+        for service in ("inspect-sequencer", "sequencer"):
+            for records in ([container(service, running=False)], []):
+                with self.subTest(service=service, records=records):
+                    # A previously cached running container must not hide its exit.
+                    self.fork._containers = [container(service)]
+                    with patch.object(devnet, "run", side_effect=["container-id" if records else "", json.dumps(records)]), \
+                            patch.object(devnet, "rpc", side_effect=devnet.Unavailable("provider-secret")), \
+                            patch.object(devnet.time, "monotonic", side_effect=[0, 1]), \
+                            patch.object(devnet.time, "sleep") as sleep, patch("builtins.print"):
+                        with self.assertRaisesRegex(RuntimeError, "sequencer execution container exited or is missing"):
+                            self.fork.await_rpc("sequencer")
+                        sleep.assert_not_called()
+
+    def test_l1_rpc_wait_keeps_its_deadline(self):
+        self.fork.timeout = 60
+        with patch.object(self.fork, "containers", return_value=[container("l1")]), \
+                patch.object(devnet, "rpc", side_effect=devnet.Unavailable("provider-secret")), \
+                patch.object(devnet.time, "monotonic", side_effect=[0, 1, 61]), \
+                patch.object(devnet.time, "sleep"), patch("builtins.print") as output:
+            with self.assertRaisesRegex(RuntimeError, "timed out: l1 execution RPC"):
+                self.fork.await_rpc("l1")
+            self.assertIn("59s remaining", str(output.call_args_list))
 
     def test_rpc_startup_status_reports_current_container_history_work_without_raw_logs(self):
         record = container("inspect-sequencer")

@@ -139,7 +139,8 @@ def call(url, address, signature, *args, block="latest", upstream=False):
 def wait(description, check, timeout, poll_interval=1, progress=None, report_interval=30, diagnostics=None):
     """Polls `check` until truthy.
 
-    Without `progress`, `timeout` bounds the whole wait. With it, `timeout` bounds a stall: any
+    `timeout=None` waits without a deadline. Otherwise, without `progress`, `timeout` bounds the
+    whole wait. With it, `timeout` bounds a stall: any
     change in the first element of `progress()` restarts it, and the second element, which must
     not contain endpoints or keys, is printed every `report_interval` seconds. The description is
     printed before the first poll and, without `progress`, with the elapsed time at each report.
@@ -147,7 +148,8 @@ def wait(description, check, timeout, poll_interval=1, progress=None, report_int
     """
     print(f"waiting for {description}", file=sys.stderr, flush=True)
     started = time.monotonic()
-    deadline, next_report, state, message = started + timeout, started + report_interval, None, ""
+    deadline = None if timeout is None else started + timeout
+    next_report, state, message = started + report_interval, None, ""
     if diagnostics is not None:
         next_report = started
     while True:
@@ -158,15 +160,20 @@ def wait(description, check, timeout, poll_interval=1, progress=None, report_int
         if progress is not None:
             current, message = progress()
             if current != state:
-                state, deadline = current, now + timeout
+                state = current
+                if timeout is not None:
+                    deadline = now + timeout
         if now >= next_report:
             detail = message if progress is not None else f"{int(now - started)}s elapsed"
             if diagnostics is not None:
-                detail += f" ({max(0, int(deadline - now))}s remaining); {diagnostics()}"
+                if deadline is not None:
+                    detail += f" ({max(0, int(deadline - now))}s remaining)"
+                detail += f"; {diagnostics()}"
             print(f"waiting for {description}: {detail}", file=sys.stderr, flush=True)
             next_report = now + report_interval
         stalled = f" (no progress for {timeout}s; {message})" if progress is not None else ""
-        require(now < deadline, f"timed out: {description}{stalled}; data preserved, rerun start to resume")
+        require(deadline is None or now < deadline,
+                f"timed out: {description}{stalled}; data preserved, rerun start to resume")
         time.sleep(poll_interval)
 
 
@@ -660,8 +667,13 @@ class SnapshotFork:
                 return rpc(self.url(role), "eth_chainId")
             except Unavailable:
                 self._containers = None
+                require(self.running_services() & {role, "inspect-" + role},
+                        f"{role} execution container exited or is missing; inspect container logs; data preserved")
                 return False
-        wait(f"{role} execution RPC", ready, self.timeout, diagnostics=lambda: self.rpc_startup_status(role))
+        # Snapshot index repair can take hours before RPC is available. Only container failure or
+        # operator cancellation ends this wait; individual RPC and Docker calls remain bounded.
+        wait(f"{role} execution RPC", ready, None if role in ROLES else self.timeout,
+             diagnostics=lambda: self.rpc_startup_status(role))
 
     def inspect(self, discover=False):
         """Inspects both datadirs; with `discover`, the sequencer inspection also finds F."""
@@ -1262,7 +1274,8 @@ def main():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--dir", help="override the fork directory selected by setup")
     common.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
-                        help="seconds per readiness gate (default: %(default)s); derivation and catch-up gates fail only after "
+                        help="seconds per readiness gate except L2 execution RPC (default: %(default)s); "
+                             "snapshot repair waits without a deadline; derivation and catch-up gates fail only after "
                              "this long without head progress")
     commands = parser.add_subparsers(dest="command", required=True)
     prepare = commands.add_parser("setup", parents=[common], help="prepare or resume an experiment; completed steps are reused")

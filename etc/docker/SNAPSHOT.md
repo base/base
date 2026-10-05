@@ -93,16 +93,19 @@ place; a partial startup is stopped in dependency order before the existing reco
 snapshot inspection, RPC readiness, fork recovery, and enabling sequencing and batching. A bare
 `docker compose up` does not perform those steps. Startup prints stage messages and reports pending
 RPC waits on stderr after the first failed check and every 30 seconds thereafter, including elapsed
-time, time remaining, and the current container's latest recognized startup log. Reth may repair
+time and the current container's latest recognized startup log. Reth may repair
 snapshot indexes before exposing its RPC; the report shows repair batches, indexing progress, and
 the log timestamp rather than treating an unavailable RPC as proof of a hang. Only known stages
 and numeric fields are shown, not raw logs or credentials. Unknown log formats are reported as
-unrecognized; use `docker logs --follow <inspection-container>` for full details. The default
-two-hour RPC-readiness deadline still applies, even while indexes are being repaired.
-A readiness timeout stops the inspection nodes and other fork services before stopping L1; it
-preserves the downloaded snapshots, copied datadirs, and fork state. Unfinished repair work can
-repeat on restart. Rerun `up` after shutdown completes; do not redownload or recopy the data.
-Changing the default or `--timeout` only affects new invocations, not an already running launcher.
+unrecognized; use `docker logs --follow <inspection-container>` for full details. L2 execution RPC
+readiness has **no deadline**, even if repair progress logs are unchanged. It waits while the
+container runs, fails if the container exits or disappears, and can be canceled with Ctrl+C.
+Individual RPC and Docker calls remain bounded. L1 RPC and other readiness gates retain
+`--timeout`; catch-up waits indefinitely while heads keep advancing.
+Startup failure or cancellation stops the inspection nodes and other fork services before stopping
+L1; it preserves the downloaded snapshots, copied datadirs, and fork state. Unfinished repair work
+can repeat on restart. Rerun `up` after shutdown completes; do not redownload or recopy the data.
+Launcher changes and `--timeout` only affect new invocations, not an already running launcher.
 
 ## Prerequisites
 
@@ -248,8 +251,8 @@ with the same canonical hash at the next height, then waits for wall-time catch-
 `running` only after both; the batcher exiting at any point fails, even with code 0. Derivation,
 catch-up and batching print head/lag progress every 30 seconds and fail only after `--timeout`
 seconds (default 7200, or two hours) without head progress. Ordinary readiness gates have the
-same per-step budget; this is not a whole-run deadline. A failure preserves data and stops dependents before
-L1; rerun `start` to resume.
+same per-step budget, except L2 execution RPC readiness, which has no deadline; this is not a
+whole-run deadline. A failure preserves data and stops dependents before L1; rerun `start` to resume.
 `status` reports `degraded` when a started fork's L1, node or batcher container is not running.
 
 After successful startup, Denim is automatically scheduled at the earliest even timestamp allowed
@@ -262,7 +265,7 @@ and wall-clock countdown; "activation time reached" is not proof of node activat
 Some snapshots omit transaction-lookup or account/storage-history indexes. Reth rebuilds them
 before accepting forkchoice updates; this is local database recovery, not mainnet sync. Use an
 optimized Base build for large snapshots. Stage checkpoints may remain unchanged through a large
-indexing pass, so consult the node logs before diagnosing a stall after the two-hour wait. The launcher
+indexing pass, so consult the node logs before diagnosing a stall. The launcher
 does not shorten retention or prune extra history to skip this recovery. `status` remains usable
 while `start` is waiting and omits container command arguments containing credentials.
 
