@@ -764,7 +764,7 @@ where
 mod tests {
     use alloy_consensus::transaction::Recovered;
     use alloy_eips::Encodable2718;
-    use alloy_primitives::{Address, Bytes, keccak256, utils::Unit};
+    use alloy_primitives::{Address, B256, Bytes, keccak256, utils::Unit};
     use alloy_sol_types::{SolCall, SolValue};
     use base_bundles::{Bundle, ParsedBundle};
     use base_common_consensus::BaseTransactionSigned;
@@ -777,7 +777,7 @@ mod tests {
         Account, ContractFactory, DEVNET_CHAIN_ID, SimpleStorage, build_test_genesis,
     };
     use eyre::Context;
-    use reth_provider::StateProviderFactory;
+    use reth_provider::{StateProvider, StateProviderFactory};
     use reth_transaction_pool::test_utils::TransactionBuilder;
 
     use super::*;
@@ -788,6 +788,39 @@ mod tests {
         let bundle = Bundle { txs };
 
         ParsedBundle::try_from(bundle).map_err(|e| eyre::eyre!(e))
+    }
+
+    /// Builds the standard `setValue` storage-write transaction, fetches state
+    /// at `block_hash`, and returns the state provider together with the
+    /// transaction wrapped in a parsed single-transaction bundle.
+    fn storage_write_bundle(
+        harness: &TestHarness,
+        block_hash: B256,
+        contract_address: Address,
+    ) -> eyre::Result<(impl StateProvider, ParsedBundle)> {
+        let signed_tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(contract_address)
+            .gas_limit(100_000)
+            .max_fee_per_gas(MIN_BASEFEE as u128)
+            .max_priority_fee_per_gas(0)
+            .input(SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode())
+            .into_eip1559();
+
+        let tx = BaseTransactionSigned::Eip1559(
+            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(block_hash)
+            .context("getting state provider")?;
+
+        let parsed_bundle = create_parsed_bundle(vec![tx])?;
+
+        Ok((state_provider, parsed_bundle))
     }
 
     fn create_call_tx(
@@ -1042,27 +1075,8 @@ mod tests {
         let latest = harness.latest_block();
         let header = latest.sealed_header().clone();
 
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(contract_address)
-            .gas_limit(100_000)
-            .max_fee_per_gas(MIN_BASEFEE as u128)
-            .max_priority_fee_per_gas(0)
-            .input(SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode())
-            .into_eip1559();
-
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
-        );
-
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let parsed_bundle = create_parsed_bundle(vec![tx])?;
+        let (state_provider, parsed_bundle) =
+            storage_write_bundle(&harness, latest.hash(), contract_address)?;
 
         let output = meter_bundle(MeterBundleInput {
             state_provider,
@@ -1091,27 +1105,8 @@ mod tests {
         let latest = harness.latest_block();
         let header = latest.sealed_header().clone();
 
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(contract_address)
-            .gas_limit(100_000)
-            .max_fee_per_gas(MIN_BASEFEE as u128)
-            .max_priority_fee_per_gas(0)
-            .input(SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode())
-            .into_eip1559();
-
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
-        );
-
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let parsed_bundle = create_parsed_bundle(vec![tx])?;
+        let (state_provider, parsed_bundle) =
+            storage_write_bundle(&harness, latest.hash(), contract_address)?;
 
         let metered = MeteredOpcodes::parse(&["SSTORE".to_string(), "SLOAD".to_string()]).unwrap();
 
@@ -1598,27 +1593,8 @@ mod tests {
         let latest = harness.latest_block();
         let header = latest.sealed_header().clone();
 
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(contract_address)
-            .gas_limit(100_000)
-            .max_fee_per_gas(MIN_BASEFEE as u128)
-            .max_priority_fee_per_gas(0)
-            .input(SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode())
-            .into_eip1559();
-
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
-        );
-
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let parsed_bundle = create_parsed_bundle(vec![tx])?;
+        let (state_provider, parsed_bundle) =
+            storage_write_bundle(&harness, latest.hash(), contract_address)?;
 
         // Only request SSTORE — other opcodes like PUSH, ADD, etc. should be filtered out.
         let metered = MeteredOpcodes::parse(&["SSTORE".to_string()]).unwrap();
