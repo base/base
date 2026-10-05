@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::actors::{
     generator::{block_builder::PayloadVersion, seed::SEED_GENERATOR_BUILDER},
     network::mocks::{ForwardedUnsafeBlock, builder::TestNetworkBuilder},
@@ -89,6 +91,43 @@ async fn test_sequencer_network_propagation() -> anyhow::Result<()> {
         assert_eq!(block.parent_beacon_block_root, envelope.parent_beacon_block_root);
         assert_eq!(block.execution_payload, envelope.execution_payload);
     }
+
+    Ok(())
+}
+
+/// With discovery disabled, ignored bootnodes leave the discovery table empty while explicit
+/// libp2p dials still connect peers, serve P2P RPC queries, and carry signed payload gossip.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_sequencer_explicit_peer_without_discovery() -> anyhow::Result<()> {
+    let mut builder = TestNetworkBuilder::new().set_sequencer().without_discovery();
+
+    let sequencer_network = builder.build(vec![]).await;
+    let sequencer_enr = sequencer_network.peer_enr().await?;
+    let mut validator_network = builder.build(vec![sequencer_enr]).await;
+
+    assert!(validator_network.discovery_table().await?.is_empty());
+
+    validator_network.connect_to(&sequencer_network).await?;
+    validator_network.is_connected_to_with_retries(&sequencer_network).await?;
+    sequencer_network.is_connected_to_with_retries(&validator_network).await?;
+
+    let stats = validator_network.peer_stats().await?;
+    assert_eq!((stats.connected, stats.table), (1, 0));
+
+    let mut seed_generator = SEED_GENERATOR_BUILDER.next_generator();
+    let envelope = seed_generator.random_valid_payload(PayloadVersion::V1)?;
+    sequencer_network.inbound_data.gossip_payload_tx.send(envelope.clone()).await?;
+
+    let forwarded_block =
+        tokio::time::timeout(Duration::from_secs(10), validator_network.blocks_rx.recv())
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("No block received"))?;
+    let ForwardedUnsafeBlock::P2p(block) = forwarded_block else {
+        anyhow::bail!("P2P block was forwarded through the admin path");
+    };
+
+    assert_eq!(block.parent_beacon_block_root, envelope.parent_beacon_block_root);
+    assert_eq!(block.execution_payload, envelope.execution_payload);
 
     Ok(())
 }

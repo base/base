@@ -50,7 +50,9 @@ pub use docker::{
 };
 
 mod devnet_cli;
-pub use devnet_cli::{DevnetCli, DevnetCommand, SharedL1Args, SnapshotArgs, SnapshotRuntime};
+pub use devnet_cli::{
+    DevnetCli, DevnetCommand, InspectSnapshotArgs, SharedL1Args, SnapshotArgs, SnapshotRuntime,
+};
 
 mod host;
 pub use host::{host_address, with_host_port_if_needed};
@@ -72,7 +74,8 @@ pub use l2::{
     InProcessNodeRuntime, InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig,
     L2ClientConsensus, L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig,
     ShadowSequencer, ShadowSequencerConfig, ShadowSequencersConfig, SnapshotBoundary,
-    SnapshotL2Stack, SnapshotL2StackConfig, TestNodeRuntime,
+    SnapshotForkFinder, SnapshotForkSource, SnapshotInspection, SnapshotL2Stack,
+    SnapshotL2StackConfig, SnapshotLabeledBlock, TestNodeRuntime,
 };
 
 mod network;

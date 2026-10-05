@@ -7,7 +7,7 @@ use base_consensus_peers::{
 use derive_more::Debug;
 use discv5::{Config, Discv5, Enr, enr::NodeId};
 use tokio::{
-    sync::mpsc::{Sender, channel, error::TrySendError},
+    sync::mpsc::{Receiver, Sender, channel, error::TrySendError},
     time::{Duration, sleep},
 };
 
@@ -65,6 +65,12 @@ pub struct Discv5Driver {
     /// The frequency at which to remove random nodes from the discovery table.
     /// This is not enabled (`None`) by default.
     pub remove_interval: Option<Duration>,
+    /// Whether [`Discv5Driver::start`] starts the discv5 network service. Defaults to `true`.
+    ///
+    /// When `false`, the driver never binds its UDP socket, contacts bootnodes, loads or writes
+    /// the bootstore, or forwards ENRs to gossip; the returned [`Discv5Handler`] answers from
+    /// the local node record only.
+    pub enabled: bool,
 }
 
 impl Discv5Driver {
@@ -94,6 +100,7 @@ impl Discv5Driver {
             remove_interval: None,
             store_interval: Duration::from_secs(60),
             bootstore,
+            enabled: true,
         })
     }
 
@@ -163,13 +170,93 @@ impl Discv5Driver {
         store
     }
 
+    /// Answers a [`HandlerRequest`] from the given [`Discv5`] instance.
+    pub async fn handle_request(disc: &Discv5, request: HandlerRequest) {
+        match request {
+            HandlerRequest::Metrics(tx) => {
+                let metrics = disc.metrics();
+                if let Err(e) = tx.send(metrics) {
+                    warn!(target: "discovery", error = ?e, "Failed to send metrics");
+                }
+            }
+            HandlerRequest::PeerCount(tx) => {
+                let peers = disc.connected_peers();
+                if let Err(e) = tx.send(peers) {
+                    warn!(target: "discovery", error = ?e, "Failed to send peer count");
+                }
+            }
+            HandlerRequest::LocalEnr(tx) => {
+                if let Err(e) = tx.send(disc.local_enr()) {
+                    warn!(target: "discovery", error = ?e, "Failed to send local enr");
+                }
+            }
+            HandlerRequest::AddEnr(enr) => {
+                let _ = disc.add_enr(enr);
+            }
+            HandlerRequest::RequestEnr { out, addr } => {
+                let enr = disc.request_enr(addr).await;
+                if let Err(e) = out.send(enr) {
+                    warn!(target: "discovery", error = ?e, "Failed to send request enr");
+                }
+            }
+            HandlerRequest::TableEnrs(tx) => {
+                let enrs = disc.table_entries_enr();
+                if let Err(e) = tx.send(enrs) {
+                    warn!(target: "discovery", error = ?e, "Failed to send table enrs");
+                }
+            }
+            HandlerRequest::TableInfos(tx) => {
+                let infos = disc.table_entries();
+                if let Err(e) = tx.send(infos) {
+                    warn!(target: "discovery", error = ?e, "Failed to send table infos");
+                }
+            }
+            HandlerRequest::BanAddrs { addrs_to_ban, ban_duration } => {
+                let enrs = disc.table_entries_enr();
+
+                for enr in enrs {
+                    let Some(multi_addr) = PeerUtils::enr_to_multiaddr(&enr) else {
+                        continue;
+                    };
+
+                    if addrs_to_ban.contains(&multi_addr) {
+                        disc.ban_node(&enr.node_id(), Some(ban_duration));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Answers [`HandlerRequest`]s from a [`Discv5`] instance that is never started.
+    ///
+    /// An unstarted [`Discv5`] has no socket, so network requests fail with
+    /// [`discv5::RequestError::ServiceNotStarted`] while identity and table queries are answered
+    /// from local state. Holding `_enr_sender` keeps the gossip layer's ENR receiver pending
+    /// rather than closed. Returns once every [`Discv5Handler`] is dropped.
+    pub async fn serve_local(
+        disc: Discv5,
+        mut requests: Receiver<HandlerRequest>,
+        _enr_sender: Sender<Enr>,
+    ) {
+        info!(target: "discovery", "Discv5 disabled, serving local node metadata only");
+        while let Some(request) = requests.recv().await {
+            Self::handle_request(&disc, request).await;
+        }
+    }
+
     /// Spawns a new [`Discv5`] discovery service in a new tokio task.
     ///
-    /// Returns a [`Discv5Handler`] to communicate with the spawned task.
-    pub fn start(mut self) -> (Discv5Handler, tokio::sync::mpsc::Receiver<Enr>) {
+    /// Returns a [`Discv5Handler`] to communicate with the spawned task. If the driver is not
+    /// [`enabled`](Self::enabled), the task only serves local metadata.
+    pub fn start(mut self) -> (Discv5Handler, Receiver<Enr>) {
         let chain_id = self.chain_id;
         let (req_sender, mut req_recv) = channel::<HandlerRequest>(1024);
         let (enr_sender, enr_recv) = channel::<Enr>(1024);
+
+        if !self.enabled {
+            tokio::spawn(Self::serve_local(self.disc, req_recv, enr_sender));
+            return (Discv5Handler::new(chain_id, req_sender), enr_recv);
+        }
 
         tokio::spawn(async move {
             let remove = self.remove_interval.is_some();
@@ -227,60 +314,7 @@ impl Discv5Driver {
                 tokio::select! {
                     msg = req_recv.recv() => {
                         match msg {
-                            Some(msg) => match msg {
-                                HandlerRequest::Metrics(tx) => {
-                                    let metrics = self.disc.metrics();
-                                    if let Err(e) = tx.send(metrics) {
-                                        warn!(target: "discovery", error = ?e, "Failed to send metrics");
-                                    }
-                                }
-                                HandlerRequest::PeerCount(tx) => {
-                                    let peers = self.disc.connected_peers();
-                                    if let Err(e) = tx.send(peers) {
-                                        warn!(target: "discovery", error = ?e, "Failed to send peer count");
-                                    }
-                                }
-                                HandlerRequest::LocalEnr(tx) => {
-                                    let enr = self.disc.local_enr().clone();
-                                    if let Err(e) = tx.send(enr.clone()) {
-                                        warn!(target: "discovery", error = ?e, "Failed to send local enr");
-                                    }
-                                }
-                                HandlerRequest::AddEnr(enr) => {
-                                    let _ = self.disc.add_enr(enr);
-                                }
-                                HandlerRequest::RequestEnr{out, addr} => {
-                                    let enr = self.disc.request_enr(addr).await;
-                                    if let Err(e) = out.send(enr) {
-                                        warn!(target: "discovery", error = ?e, "Failed to send request enr");
-                                    }
-                                }
-                                HandlerRequest::TableEnrs(tx) => {
-                                    let enrs = self.disc.table_entries_enr();
-                                    if let Err(e) = tx.send(enrs) {
-                                        warn!(target: "discovery", error = ?e, "Failed to send table enrs");
-                                    }
-                                },
-                                HandlerRequest::TableInfos(tx) => {
-                                    let infos = self.disc.table_entries();
-                                    if let Err(e) = tx.send(infos) {
-                                        warn!(target: "discovery", error = ?e, "Failed to send table infos");
-                                    }
-                                },
-                                HandlerRequest::BanAddrs{addrs_to_ban, ban_duration} => {
-                                    let enrs = self.disc.table_entries_enr();
-
-                                    for enr in enrs {
-                                        let Some(multi_addr) = PeerUtils::enr_to_multiaddr(&enr) else {
-                                            continue;
-                                        };
-
-                                        if addrs_to_ban.contains(&multi_addr) {
-                                            self.disc.ban_node(&enr.node_id(), Some(ban_duration));
-                                        }
-                                    }
-                                },
-                            }
+                            Some(msg) => Self::handle_request(&self.disc, msg).await,
                             None => {
                                 trace!(target: "discovery", "Receiver `None` peer enr");
                             }
@@ -439,6 +473,51 @@ mod tests {
         .expect("Failed to build discovery service");
         let (handle, _) = discovery.start();
         assert_eq!(handle.chain_id, ChainConfig::sepolia().chain_id);
+    }
+
+    /// Only an enabled driver takes the discovery UDP port; a disabled one keeps answering
+    /// local queries, fails network requests without I/O, and closes its ENR channel only once
+    /// every handler is dropped.
+    #[tokio::test]
+    async fn test_disabled_discv5_driver_serves_local_metadata_without_udp() {
+        const CHAIN_ID: u64 = 0xdead_beef;
+
+        let start = |enabled: bool| {
+            let port =
+                std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+            let CombinedKey::Secp256k1(secret_key) = CombinedKey::generate_secp256k1() else {
+                unreachable!()
+            };
+            let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
+            let driver = Discv5Driver::builder(
+                LocalNode::new(secret_key, ip, port, port),
+                CHAIN_ID,
+                ConfigBuilder::new(SocketAddr::new(ip, port).into()).build(),
+            )
+            .with_enabled(enabled)
+            .build()
+            .expect("Failed to build discovery service");
+            let (handler, enr_recv) = driver.start();
+            (port, handler, enr_recv)
+        };
+
+        let (enabled_port, enabled, _enabled_recv) = start(true);
+        enabled.local_enr().await.expect("enabled discovery should start");
+        assert!(std::net::UdpSocket::bind(("127.0.0.1", enabled_port)).is_err());
+
+        let (port, handler, mut enr_recv) = start(false);
+        let local_enr = handler.local_enr().await.expect("local ENR should be served");
+        assert!(EnrValidation::validate(&local_enr, CHAIN_ID).is_valid());
+        assert_eq!(handler.peer_count().await.unwrap(), 0);
+        assert!(handler.table_enrs().await.unwrap().is_empty());
+        let request = handler.request_enr(format!("/ip4/127.0.0.1/udp/{port}").parse().unwrap());
+        assert!(matches!(request.await.unwrap(), Err(discv5::RequestError::ServiceNotStarted)));
+        assert!(std::net::UdpSocket::bind(("127.0.0.1", port)).is_ok());
+        assert!(enr_recv.try_recv().is_err_and(|e| e == mpsc::error::TryRecvError::Empty));
+
+        drop(handler);
+        let closed = tokio::time::timeout(Duration::from_secs(5), enr_recv.recv()).await;
+        assert_eq!(closed, Ok(None), "local service should stop once handlers are dropped");
     }
 
     #[tokio::test]

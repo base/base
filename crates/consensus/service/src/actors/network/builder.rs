@@ -44,6 +44,7 @@ impl From<NetworkConfig> for NetworkBuilder {
             config.gossip_signer,
         )
         .with_enr_update(config.enr_update)
+        .with_discovery_enabled(config.discovery_enabled)
         .with_discovery_randomize(config.discovery_randomize)
         .with_bootstore(config.bootstore)
         .with_bootnodes(config.bootnodes)
@@ -89,6 +90,13 @@ impl NetworkBuilder {
     /// Sets the ENR update flag for the [`NetworkBuilder`].
     pub fn with_enr_update(self, enr_update: bool) -> Self {
         Self { enr_update, ..self }
+    }
+
+    /// Sets whether the discv5 network service runs. See [`Discv5Driver::enabled`].
+    ///
+    /// [`Discv5Driver::enabled`]: base_consensus_disc::Discv5Driver::enabled
+    pub fn with_discovery_enabled(self, enabled: bool) -> Self {
+        Self { discovery: self.discovery.with_enabled(enabled), ..self }
     }
 
     /// Sets the configuration for the connection gater.

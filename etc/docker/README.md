@@ -2,6 +2,9 @@
 
 This directory contains the Dockerfiles and Compose configuration for the **local devnet** and internal Rust services.
 
+For isolated, non-destructive lifecycle commands using approved mainnet snapshot copies, see
+[the experimental snapshot devnet](SNAPSHOT.md). It does not use the fresh-genesis recipes below.
+
 The public operator image (`ghcr.io/base/node`) is the `base` target in `Dockerfile.rust-services`. It retains the unified binary, execution node, consensus node, and snapshotter for compatibility. Releases also publish single-binary images:
 
 | Image | Bake target | Entrypoint |

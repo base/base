@@ -8,7 +8,7 @@ use alloy_provider::{Provider, RootProvider};
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_common_network::Base;
 use base_protocol::{L1BlockInfoTx, L2BlockInfo, to_system_config};
-use eyre::{OptionExt, Result, WrapErr, ensure};
+use eyre::{OptionExt, Result, WrapErr, ensure, eyre};
 use url::Url;
 
 use crate::DevnetSnapshotHead;
@@ -27,11 +27,15 @@ pub struct SnapshotBoundary {
 }
 
 impl SnapshotBoundary {
-    /// Reads and validates snapshot boundary metadata over the builder's public RPC.
+    /// Reads and validates snapshot metadata for the block at `tag` over a public RPC.
+    ///
+    /// Fails when the block is missing or lacks a real L1-info deposit, such as a pruned body or
+    /// the genesis block, rather than synthesizing metadata.
     pub async fn read(
         rpc_url: Url,
         rollup_config: Arc<RollupConfig>,
         expected_chain_id: u64,
+        tag: BlockNumberOrTag,
         expected_head: Option<DevnetSnapshotHead>,
     ) -> Result<Self> {
         let provider = RootProvider::<Base>::new_http(rpc_url);
@@ -43,11 +47,11 @@ impl SnapshotBoundary {
         );
 
         let block = provider
-            .get_block_by_number(BlockNumberOrTag::Latest)
+            .get_block_by_number(tag)
             .full()
             .await
-            .wrap_err("failed to read snapshot head")?
-            .ok_or_eyre("snapshot execution node has no latest block")?
+            .wrap_err_with(|| format!("failed to read snapshot {tag} block"))?
+            .ok_or_else(|| eyre!("snapshot execution node has no {tag} block"))?
             .map_header(|header| header.into_inner())
             .into_consensus()
             .map_transactions(|transaction| transaction.inner.inner.into_inner());

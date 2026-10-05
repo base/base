@@ -25,6 +25,7 @@ pub(crate) struct TestNetworkBuilder {
     chain_id: u64,
     unsafe_block_signer: Address,
     custom_keypair: Option<Keypair>,
+    discovery_enabled: bool,
 }
 
 impl TestNetworkBuilder {
@@ -35,7 +36,19 @@ impl TestNetworkBuilder {
     pub(crate) fn new() -> Self {
         let chain_id = rand::rng().next_u64();
 
-        Self { chain_id, unsafe_block_signer: Address::ZERO, custom_keypair: None }
+        Self {
+            chain_id,
+            unsafe_block_signer: Address::ZERO,
+            custom_keypair: None,
+            discovery_enabled: true,
+        }
+    }
+
+    /// Disables discv5 for every network built afterwards. Such networks listen for gossip on
+    /// loopback only, so their advertised listen address can be dialed explicitly.
+    pub(crate) const fn without_discovery(mut self) -> Self {
+        self.discovery_enabled = false;
+        self
     }
 
     /// Sets a sequencer keypair for the network.
@@ -68,7 +81,11 @@ impl TestNetworkBuilder {
         let local_node_key = k256::ecdsa::SigningKey::from_bytes(&secp256k1_key.into())
         .map_err(|e| anyhow::anyhow!("Impossible to convert keypair to k256 signing key. This is a bug since we only support secp256k1 keys: {e}")).unwrap();
 
-        let node_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let node_addr = if self.discovery_enabled {
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+        } else {
+            IpAddr::V4(Ipv4Addr::LOCALHOST)
+        };
 
         let discovery_config = ConfigBuilder::new(ListenConfig::from_ip(node_addr, 0))
             // Only allow loopback addresses.
@@ -95,7 +112,8 @@ impl TestNetworkBuilder {
             discovery_config,
             Some(BlockSigner::Local(local_node_key.into())),
         )
-        .with_bootnodes(bootnodes.into_iter().map(Into::into).collect::<Vec<BootNode>>().into());
+        .with_bootnodes(bootnodes.into_iter().map(Into::into).collect::<Vec<BootNode>>().into())
+        .with_discovery_enabled(self.discovery_enabled);
 
         let (blocks_tx, blocks_rx) = mpsc::channel(1024);
         let (inbound_data, actor) = NetworkActor::new(

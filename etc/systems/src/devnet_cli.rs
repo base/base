@@ -1,15 +1,18 @@
 //! Command-line launcher for development networks.
 
-use std::{num::NonZeroU64, path::PathBuf};
+use std::{num::NonZeroU64, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256};
+use base_common_genesis::RollupConfig;
 use clap::{Args, Parser, Subcommand};
-use eyre::{Result, WrapErr};
+use eyre::{Result, WrapErr, ensure};
 use serde::Serialize;
+use url::Url;
 
 use crate::{
-    DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund, DevnetSnapshotHead, SharedL1,
-    SnapshotChainConfig, SnapshotL2Stack, SystemTestStackBuilder,
+    DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund, DevnetSnapshotHead,
+    ResolvedSnapshotChain, SharedL1, SnapshotChainConfig, SnapshotForkFinder, SnapshotForkSource,
+    SnapshotInspection, SnapshotL2Stack, SystemTestStackBuilder,
 };
 
 /// Local Base development network launcher.
@@ -28,6 +31,32 @@ pub enum DevnetCommand {
     Snapshot(SnapshotArgs),
     /// Start a CI-scoped shared L1 and write its runtime manifest.
     SharedL1(SharedL1Args),
+    /// Print a snapshot source node's validated latest, safe, and finalized heads, and optionally
+    /// the L1 fork block that derives its unsafe tail, as JSON.
+    InspectSnapshot(InspectSnapshotArgs),
+}
+
+/// Arguments for read-only inspection of a snapshot source node over RPC.
+#[derive(Debug, Args)]
+pub struct InspectSnapshotArgs {
+    /// Execution JSON-RPC URL of the snapshot source node.
+    #[arg(long)]
+    pub rpc_url: Url,
+    /// Built-in Base chain name or path to a Base genesis JSON file.
+    #[arg(long, default_value = "mainnet")]
+    pub chain: String,
+    /// Effective rollup config, including locally scheduled upgrades, for decoding the heads.
+    /// Its chain and genesis identity must match the selected chain.
+    #[arg(long)]
+    pub rollup_config: Option<PathBuf>,
+    /// Also report as `fork` the canonical finalized L1 block that derives the unsafe tail.
+    /// Reads upstream L1 URLs only from `SNAPSHOT_UPSTREAM_EXECUTION` and
+    /// `SNAPSHOT_UPSTREAM_BEACON`.
+    #[arg(long)]
+    pub find_fork: bool,
+    /// Deadline in seconds for fork discovery.
+    #[arg(long, default_value_t = 600)]
+    pub timeout: u64,
 }
 
 /// Arguments for a CI-scoped shared L1 fixture.
@@ -115,6 +144,7 @@ impl DevnetCli {
         match self.command {
             DevnetCommand::Snapshot(args) => args.run().await,
             DevnetCommand::SharedL1(args) => args.run().await,
+            DevnetCommand::InspectSnapshot(args) => args.run().await,
         }
     }
 }
@@ -127,6 +157,48 @@ impl SharedL1Args {
         println!("shared L1 ready: {}", self.runtime_file.display());
         tokio::signal::ctrl_c().await.wrap_err("failed to listen for Ctrl-C")?;
         stack.shutdown().await
+    }
+}
+
+impl InspectSnapshotArgs {
+    /// Resolves the chain and applies an explicit inspection schedule without changing identity.
+    pub fn resolved_chain(&self) -> Result<ResolvedSnapshotChain> {
+        let mut chain = SnapshotChainConfig {
+            chain: self.chain.clone(),
+            rollup_config: self.rollup_config.clone(),
+        }
+        .resolve()?;
+        if let Some(path) = &self.rollup_config {
+            let config: RollupConfig = serde_json::from_slice(&std::fs::read(path)?)?;
+            ensure!(
+                config.l2_chain_id.id() == chain.l2_chain_id
+                    && config.l1_chain_id == chain.l1_chain_id
+                    && config.genesis == chain.rollup_config.genesis,
+                "inspection config changes chain or genesis identity"
+            );
+            chain.rollup_config = Arc::new(config);
+        }
+        Ok(chain)
+    }
+
+    /// Prints exactly one JSON object describing the node's labeled heads, plus `fork` when
+    /// requested, to stdout.
+    pub async fn run(self) -> Result<()> {
+        let chain = self.resolved_chain()?;
+        let source = self.find_fork.then(SnapshotForkSource::from_env).transpose()?;
+        let mut inspection =
+            SnapshotInspection::read(self.rpc_url.clone(), chain.rollup_config, chain.l2_chain_id)
+                .await?;
+        if let Some(source) = source {
+            let finder = SnapshotForkFinder {
+                rpc_url: self.rpc_url,
+                source,
+                timeout: Duration::from_secs(self.timeout),
+            };
+            inspection.fork = Some(finder.find(&inspection).await?);
+        }
+        println!("{}", serde_json::to_string(&inspection)?);
+        Ok(())
     }
 }
 
@@ -254,5 +326,83 @@ mod tests {
             panic!("expected snapshot command")
         };
         assert_eq!(args.block_gas_limit.map(NonZeroU64::get), Some(12_000_000_000));
+    }
+
+    #[test]
+    fn parses_inspect_snapshot_command() {
+        let cli = DevnetCli::try_parse_from([
+            "base-devnet",
+            "inspect-snapshot",
+            "--rpc-url",
+            "http://127.0.0.1:8545",
+        ])
+        .unwrap();
+
+        let DevnetCommand::InspectSnapshot(args) = cli.command else {
+            panic!("expected inspect-snapshot command")
+        };
+        assert_eq!(args.rpc_url.as_str(), "http://127.0.0.1:8545/");
+        assert_eq!(args.chain, "mainnet");
+        assert!(args.rollup_config.is_none());
+        assert!(!args.find_fork);
+
+        let cli = DevnetCli::try_parse_from([
+            "base-devnet",
+            "inspect-snapshot",
+            "--rpc-url",
+            "http://node:8545",
+            "--chain",
+            "/tmp/genesis.json",
+            "--rollup-config",
+            "/tmp/rollup.json",
+            "--find-fork",
+            "--timeout",
+            "90",
+        ])
+        .unwrap();
+        let DevnetCommand::InspectSnapshot(args) = cli.command else {
+            panic!("expected inspect-snapshot command")
+        };
+        assert_eq!(args.chain, "/tmp/genesis.json");
+        assert_eq!(args.rollup_config.unwrap().to_str(), Some("/tmp/rollup.json"));
+        assert!(args.find_fork);
+        assert_eq!(args.timeout, 90);
+    }
+
+    #[test]
+    fn inspection_uses_local_schedule_without_changing_genesis() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let args = super::InspectSnapshotArgs {
+            rpc_url: "http://127.0.0.1:8545".parse().unwrap(),
+            chain: "mainnet".to_string(),
+            rollup_config: None,
+            find_fork: false,
+            timeout: 600,
+        };
+        let mut config = (*args.resolved_chain().unwrap().rollup_config).clone();
+        config.upgrades.base.denim = Some(2_000_000_000);
+        std::fs::write(file.path(), serde_json::to_vec(&config).unwrap()).unwrap();
+        let args = super::InspectSnapshotArgs { rollup_config: Some(file.path().into()), ..args };
+        assert_eq!(
+            args.resolved_chain().unwrap().rollup_config.upgrades.base.denim,
+            Some(2_000_000_000)
+        );
+        config.genesis.l2_time += 1;
+        std::fs::write(file.path(), serde_json::to_vec(&config).unwrap()).unwrap();
+        assert!(args.resolved_chain().is_err());
+    }
+
+    #[test]
+    fn rejects_inspect_snapshot_without_valid_rpc_url() {
+        assert!(DevnetCli::try_parse_from(["base-devnet", "inspect-snapshot"]).is_err());
+        assert!(
+            DevnetCli::try_parse_from([
+                "base-devnet",
+                "inspect-snapshot",
+                "--rpc-url",
+                "not a url"
+            ])
+            .is_err()
+        );
     }
 }

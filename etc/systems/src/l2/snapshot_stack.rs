@@ -5,6 +5,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use alloy_eips::BlockNumberOrTag;
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_rpc_types_eth::SyncStatus as EthSyncStatus;
@@ -118,6 +119,7 @@ impl SnapshotL2Stack {
             builder.rpc_url()?,
             Arc::clone(&canonical_rollup_config),
             chain.l2_chain_id,
+            BlockNumberOrTag::Latest,
             config.snapshot.expected_head,
         )
         .await
@@ -424,6 +426,7 @@ impl SnapshotL2Stack {
             self.builder.rpc_url()?,
             Arc::clone(&self.rollup_config),
             self.chain_id,
+            BlockNumberOrTag::Latest,
             None,
         )
         .await

@@ -1,0 +1,162 @@
+# Standalone project: never combine with the fresh-genesis devnet Compose files.
+# Docker ignores published ports for internal-only networks, so only L1 publishes one. The launcher
+# reaches L2 RPCs (EL 8545, CL 9545) at each container's internal-network IP from the Docker host.
+x-node: &node
+  image: ${SNAPSHOT_BASE_IMAGE:?}
+  user: ${SNAPSHOT_UID:?}:${SNAPSHOT_GID:?}
+  environment:
+    HOME: /state
+  entrypoint: [/app/base]
+  networks: [private]
+  stop_grace_period: 2m
+
+x-inspection: &inspection
+  <<: *node
+  profiles: [inspect]
+  entrypoint: [/app/base-reth-node]
+  command:
+    - node
+    - --chain=base
+    - --datadir=/data
+    - --disable-discovery
+    - --no-persist-peers
+    - --max-outbound-peers=0
+    - --max-inbound-peers=0
+    - --http
+    - --http.addr=0.0.0.0
+    - --http.api=eth
+
+services:
+  l1:
+    image: ${SNAPSHOT_ANVIL_IMAGE:?}
+    user: ${SNAPSHOT_UID:?}:${SNAPSHOT_GID:?}
+    entrypoint: [/usr/local/bin/anvil]
+    environment:
+      HOME: /state
+    command:
+      - --host=0.0.0.0
+      - --fork-url=${SNAPSHOT_L1_RPC:?}
+      - --fork-beacon-url=${SNAPSHOT_BEACON:?}
+      - --fork-block-number=${SNAPSHOT_FORK_BLOCK:?}
+      - --no-mining
+      - --state=/state/anvil.json
+      - --state-interval=30
+      - --preserve-historical-states
+      - --slots-in-an-epoch=${SNAPSHOT_EPOCH_SLOTS:?}
+    volumes:
+      - ${SNAPSHOT_DIR:?}/l1:/state
+    ports:
+      - 127.0.0.1:${SNAPSHOT_L1_PORT:?}:8545
+    networks: [private, upstream]
+    stop_grace_period: 2m
+
+  inspect-sequencer:
+    <<: *inspection
+    volumes:
+      - ${SNAPSHOT_SEQUENCER_DATADIR:?}:/data
+      - ${SNAPSHOT_DIR:?}/sequencer:/state
+
+  inspect-validator:
+    <<: *inspection
+    volumes:
+      - ${SNAPSHOT_VALIDATOR_DATADIR:?}:/data
+      - ${SNAPSHOT_DIR:?}/validator:/state
+
+  sequencer:
+    <<: *node
+    command:
+      - --chain=mainnet
+      - sequencer
+      - --datadir=/data
+      - --disable-discovery
+      - --no-persist-peers
+      - --max-outbound-peers=0
+      - --max-inbound-peers=0
+      - --http
+      - --http.addr=0.0.0.0
+      # The batcher's DA throttling calls miner_setMaxDASize here; the validator needs no miner API.
+      - --http.api=eth,net,web3,debug,miner
+      - --l1-eth-rpc=http://l1:8545
+      - --l1-beacon=http://l1:8545
+      - --l1-slot-duration-override=${SNAPSHOT_SLOT_SECONDS:?}
+      - --l2-config-file=/config/rollup.json
+      - --rpc.addr=0.0.0.0
+      - --rpc.port=9545
+      - --rpc.enable-admin
+      - --checkpoint.path=/state/checkpoint.redb
+      - --safedb.path=/state/safe.redb
+      - --p2p.no-discovery
+      - --p2p.no-bootstore
+      - --p2p.priv.path=/state/p2p.key
+      - --p2p.sequencer.key=${SNAPSHOT_SIGNER_KEY:?}
+      - --sequencer.stopped
+      - --builder.payload-builder-cutover
+      - --upgrade-signal.contract=${SNAPSHOT_PROTOCOL_VERSIONS:?}
+      - --upgrade-signal.mode=runtime-admin
+      - --upgrade-signal.l1-block-tag=latest
+    volumes:
+      - ${SNAPSHOT_SEQUENCER_DATADIR:?}:/data
+      - ${SNAPSHOT_DIR:?}/sequencer:/state
+      - ${SNAPSHOT_DIR:?}/config:/config:ro
+
+  validator:
+    <<: *node
+    # A pure RPC validator waits for fresh gossip before probing EL sync. A permanently stopped
+    # sequencer probes the snapshot immediately and derives independently without producing blocks.
+    command:
+      - --chain=mainnet
+      - sequencer
+      - --sequencer.stopped
+      - --p2p.sequencer.key=${SNAPSHOT_SIGNER_KEY:?}
+      - --datadir=/data
+      - --disable-discovery
+      - --no-persist-peers
+      - --max-outbound-peers=0
+      - --max-inbound-peers=0
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.api=eth,net,web3,debug
+      - --l1-eth-rpc=http://l1:8545
+      - --l1-beacon=http://l1:8545
+      - --l1-slot-duration-override=${SNAPSHOT_SLOT_SECONDS:?}
+      - --l2-config-file=/config/rollup.json
+      - --rpc.addr=0.0.0.0
+      - --rpc.port=9545
+      - --rpc.enable-admin
+      - --checkpoint.path=/state/checkpoint.redb
+      - --safedb.path=/state/safe.redb
+      - --p2p.no-discovery
+      - --p2p.no-bootstore
+      - --p2p.priv.path=/state/p2p.key
+      - --upgrade-signal.contract=${SNAPSHOT_PROTOCOL_VERSIONS:?}
+      - --upgrade-signal.mode=runtime-admin
+      - --upgrade-signal.l1-block-tag=latest
+    volumes:
+      - ${SNAPSHOT_VALIDATOR_DATADIR:?}:/data
+      - ${SNAPSHOT_DIR:?}/validator:/state
+      - ${SNAPSHOT_DIR:?}/config:/config:ro
+
+  batcher:
+    image: ${SNAPSHOT_BATCHER_IMAGE:?}
+    entrypoint: [/bin/op-batcher]
+    command:
+      - --l1-eth-rpc=http://l1:8545
+      - --l2-eth-rpc=http://sequencer:8545
+      - --rollup-rpc=http://sequencer:9545
+      - --private-key=${SNAPSHOT_BATCHER_KEY:?}
+      - --batch-type=0
+      - --data-availability-type=blobs
+      - --compression-algo=brotli
+      - --max-channel-duration=2
+      - --poll-interval=1s
+      - --num-confirmations=1
+      - --max-pending-tx=1
+    networks: [private]
+    stop_signal: SIGTERM
+    stop_grace_period: 2m
+
+networks:
+  private:
+    internal: true
+  # Only Anvil can reach historical upstreams. No L2 service joins this network.
+  upstream: {}

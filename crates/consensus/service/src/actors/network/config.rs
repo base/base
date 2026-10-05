@@ -14,6 +14,9 @@ use tokio::time::Duration;
 /// Configuration for the P2P stack.
 #[derive(Debug, Clone)]
 pub struct NetworkConfig {
+    /// Whether discv5 discovery runs. When disabled, peers are only reached through explicit
+    /// libp2p dials, and P2P RPC discovery queries are answered from the local node record.
+    pub discovery_enabled: bool,
     /// Discovery Config.
     pub discovery_config: discv5::Config,
     /// The local node's advertised address to external peers.
@@ -85,6 +88,7 @@ impl NetworkConfig {
     ) -> Self {
         Self {
             rollup_config,
+            discovery_enabled: true,
             discovery_config: discv5::ConfigBuilder::new((&discovery_listen).into()).build(),
             discovery_address: discovery_listen,
             discovery_interval: Self::DEFAULT_DISCOVERY_INTERVAL,
