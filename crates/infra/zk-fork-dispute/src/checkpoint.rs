@@ -75,7 +75,7 @@ impl Checkpoint {
             Self::from_roots(starting_block, interval, index, &roots, roots[root_index])?;
         let canonical = config.output_root_at_block(checkpoint.target_block()).await?;
         let mut patched_root = canonical;
-        *patched_root.0.last_mut().expect("B256 is non-empty") ^= 1;
+        *patched_root.0.last_mut().ok_or_else(|| eyre!("B256 has no bytes to patch"))? ^= 1;
         if patched_root == canonical {
             bail!("failed to derive a patched root distinct from canonical {canonical}");
         }
@@ -521,7 +521,7 @@ impl AnvilPatch {
                 continue;
             }
             let bytes = value.to_be_bytes::<32>();
-            let stored_type = u32::from_be_bytes(bytes[..4].try_into().expect("4-byte game type"));
+            let stored_type = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
             let stored_game = Address::from_slice(&bytes[12..]);
             if stored_type == game_type && stored_game == game_address {
                 return Ok((mapping_slot, B256::from_slice(&bytes)));
