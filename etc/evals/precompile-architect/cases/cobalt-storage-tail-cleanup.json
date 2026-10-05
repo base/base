@@ -1,0 +1,120 @@
+{
+  "id": "cobalt-storage-tail-cleanup",
+  "category": "gas_semantics",
+  "polarity": "positive",
+  "split": "dev",
+  "source": "historical",
+  "base_commit": "56ba7fdc3461fcdf3a8af0a0a7fdec39c2582599",
+  "reference_commit": "f39d4d201fb27679e7cd87b35d2528e37b993714",
+  "ticket": "When a dynamic storage value such as a string shrinks, precompile storage leaves stale tail chunks behind. Clear those chunks on shrink, for every precompile. Beryl blocks must replay with identical storage writes and gas.",
+  "fork_state": {
+    "as_of": "2026-07-24",
+    "mainnet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "fork_gate",
+    "activation_fork": "Cobalt",
+    "versions": {
+      "create": [],
+      "modify": [],
+      "frozen": []
+    },
+    "files": {
+      "create": [],
+      "modify": [
+        "crates/common/precompile-storage/src/evm.rs",
+        "crates/common/precompile-storage/src/hashmap.rs",
+        "crates/common/precompile-storage/src/lib.rs",
+        "crates/common/precompile-storage/src/packing.rs",
+        "crates/common/precompile-storage/src/provider.rs",
+        "crates/common/precompile-storage/src/storage_ctx.rs",
+        "crates/common/precompile-storage/src/types/bytes_like.rs",
+        "crates/common/precompile-storage/src/types/slot.rs",
+        "crates/common/precompile-storage/src/types/vec.rs",
+        "crates/common/precompiles/src/activation/precompile.rs",
+        "crates/common/precompiles/src/b20_asset/precompile.rs",
+        "crates/common/precompiles/src/b20_factory/precompile.rs",
+        "crates/common/precompiles/src/b20_stablecoin/precompile.rs",
+        "crates/common/precompiles/src/lib.rs",
+        "crates/common/precompiles/src/macros.rs",
+        "crates/common/precompiles/src/policy/precompile.rs",
+        "crates/common/precompiles/src/provider.rs",
+        "crates/common/precompiles/src/spec.rs"
+      ],
+      "must_not_modify": []
+    },
+    "symmetric_modules": [],
+    "surfaces": {
+      "gas": true,
+      "revert_bytes": false,
+      "storage": true,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "shrinking a dynamic value clears tail slots under Cobalt storage features",
+        "tails stay untouched under Legacy features"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompile-storage/src/provider.rs",
+      "crates/common/precompile-storage/src/types/bytes_like.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompile-storage/src/**",
+      "crates/common/precompiles/src/*/precompile.rs",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/src/macros.rs",
+      "crates/common/precompiles/src/provider.rs",
+      "crates/common/precompiles/src/spec.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "storage_layer_gate",
+      "check": "The plan gates the cleanup in the storage layer by fork rather than in each precompile's logic version.",
+      "critical": false
+    },
+    {
+      "id": "legacy_identical",
+      "check": "The plan keeps Beryl writes and gas identical.",
+      "critical": true
+    }
+  ],
+  "notes": "Cross-cutting fork gate through storage features. Positive gas/storage case where a gate is required."
+}

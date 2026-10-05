@@ -1,0 +1,119 @@
+{
+  "id": "cobalt-tristate-announce-decode",
+  "category": "revert_bytes",
+  "polarity": "positive",
+  "split": "dev",
+  "source": "historical",
+  "base_commit": "60539c67edc44d2ce00dc244bbdb4b5431eb3126",
+  "reference_commit": "a80a17d901b78828305bd87fa6c49c549c434c5c",
+  "ticket": "A recognized but malformed announce payload still falls through to the owned decoder's expensive diagnostic. Bound the cost of malformed announce calls on Cobalt with a fixed-size error, without changing what Beryl returns.",
+  "fork_state": {
+    "as_of": "2026-09-08",
+    "mainnet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "fork_gate",
+    "activation_fork": "Cobalt",
+    "versions": {
+      "create": [],
+      "modify": [],
+      "frozen": [
+        "V1"
+      ]
+    },
+    "files": {
+      "create": [],
+      "modify": [
+        "crates/common/precompiles/src/b20_asset/dispatch.rs",
+        "crates/common/precompiles/tests/b20_asset_v1_golden.rs",
+        "crates/common/precompiles/tests/b20_asset_v2_golden.rs"
+      ],
+      "must_not_modify": [
+        "crates/common/precompiles/src/b20_asset/logic/v1.rs"
+      ]
+    },
+    "symmetric_modules": [
+      "b20_asset"
+    ],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": true,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "V1 golden: malformed announce matches the owned decoder",
+        "V2 golden: fixed-size error"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/src/b20_asset/dispatch.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [
+      {
+        "reason": "The dispatch branch can be described as editing unshipped V2 behavior in place.",
+        "approach": "edit_in_place",
+        "versions": {
+          "create": [],
+          "modify": [
+            "V2"
+          ],
+          "frozen": [
+            "V1"
+          ]
+        }
+      }
+    ],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "v1_bytes_frozen",
+      "check": "The plan keeps V1 revert bytes unchanged.",
+      "critical": true
+    },
+    {
+      "id": "both_forks_tested",
+      "check": "The plan pins both Beryl and Cobalt behavior in tests.",
+      "critical": false
+    }
+  ],
+  "notes": "The version split lives in dispatch."
+}

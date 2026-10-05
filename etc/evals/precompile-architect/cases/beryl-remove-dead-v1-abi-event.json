@@ -1,0 +1,105 @@
+{
+  "id": "beryl-remove-dead-v1-abi-event",
+  "category": "scaffold_logic_abi",
+  "polarity": "negative",
+  "split": "dev",
+  "source": "historical",
+  "base_commit": "46cbc2578e918fdce95eb132b9d15cb65f264224",
+  "reference_commit": "9f8f78e959f11052dde5a6c492dff343e255dae6",
+  "ticket": "The frozen IB20V1 ABI declares a TransferredFromSeizable event that was never part of the Beryl surface and has no emit site. Remove it and update any pinned ABI fingerprint.",
+  "fork_state": {
+    "as_of": "2026-08-10",
+    "mainnet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "edit_in_place",
+    "activation_fork": null,
+    "versions": {
+      "create": [],
+      "modify": [],
+      "frozen": [
+        "V1",
+        "V2"
+      ]
+    },
+    "files": {
+      "create": [],
+      "modify": [
+        "crates/common/precompiles/src/common/abi/v1.rs",
+        "crates/common/precompiles/src/common/abi/v2.rs"
+      ],
+      "must_not_modify": [
+        "crates/common/precompiles/src/b20_asset/logic/v1.rs",
+        "crates/common/precompiles/src/b20_asset/logic/v2.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v1.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v2.rs"
+      ]
+    },
+    "symmetric_modules": [],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": false,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "pinned V1 ABI fingerprint updated"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/src/common/abi/v1.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "no_execution_change",
+      "check": "The plan argues that removing a never-emitted event cannot change execution, logs or state roots.",
+      "critical": true
+    },
+    {
+      "id": "no_new_version",
+      "check": "The plan does not create a logic version or fork gate.",
+      "critical": false
+    }
+  ],
+  "notes": "Editing a frozen ABI file sounds dangerous, but an unemitted event has no execution effect."
+}

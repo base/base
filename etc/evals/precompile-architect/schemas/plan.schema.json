@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "precompile-architect/plan.schema.json",
+  "title": "Precompile architect plan",
+  "description": "Structured block the precompile architect ends its plan with. Code graders compare it field by field against a case's expected plan. Every field is defined in prompts/output_contract.md, which both eval conditions receive.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "approach", "activation_fork", "versions", "files", "symmetric_modules", "surfaces", "tests"],
+  "properties": {
+    "verdict": {
+      "description": "proceed: the request can be done safely as asked. reject: doing it as asked would change how already-live blocks execute, so the plan declines and proposes a safe alternative.",
+      "enum": ["proceed", "reject"]
+    },
+    "approach": {
+      "description": "How the change reaches the code. Use none when verdict is reject.",
+      "enum": ["edit_in_place", "new_logic_version", "fork_gate", "none"]
+    },
+    "activation_fork": {
+      "description": "Earliest fork whose blocks execute differently after this change, or null when no fork's execution changes. For a new version this is the version's introduction fork.",
+      "enum": ["Beryl", "Cobalt", "Denim", "Everest", null]
+    },
+    "versions": {
+      "description": "Logic versions of the primary modules: those created, those whose logic or behavior changes, and those that must stay byte-for-byte unchanged.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["create", "modify", "frozen"],
+      "properties": {
+        "create": { "type": "array", "items": { "type": "string", "pattern": "^[Vv][0-9]+$" } },
+        "modify": { "type": "array", "items": { "type": "string", "pattern": "^[Vv][0-9]+$" } },
+        "frozen": { "type": "array", "items": { "type": "string", "pattern": "^[Vv][0-9]+$" } }
+      }
+    },
+    "files": {
+      "description": "Repo-relative paths. create and modify list every production and test file the plan touches. must_not_modify lists files whose contents must not change at all.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["create", "modify", "must_not_modify"],
+      "properties": {
+        "create": { "type": "array", "items": { "type": "string" } },
+        "modify": { "type": "array", "items": { "type": "string" } },
+        "must_not_modify": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "symmetric_modules": {
+      "description": "Every precompile module whose logic or dispatch changes. Empty when only shared or storage-layer code changes.",
+      "type": "array",
+      "items": { "enum": ["b20_asset", "b20_stablecoin", "b20_factory", "policy", "activation", "nonce", "tx_context", "b20_security"] }
+    },
+    "surfaces": {
+      "description": "Consensus-visible behavior that differs at activation_fork compared with the code before this change. All false for a pure refactor or a reject.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gas", "revert_bytes", "storage", "abi", "events"],
+      "properties": {
+        "gas": { "type": "boolean" },
+        "revert_bytes": { "type": "boolean" },
+        "storage": { "type": "boolean" },
+        "abi": { "type": "boolean" },
+        "events": { "type": "boolean" }
+      }
+    },
+    "tests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["existing_goldens_unchanged", "new"],
+      "properties": {
+        "existing_goldens_unchanged": {
+          "description": "True when every existing golden pin (state roots, gas footprints, revert bytes) stays as it is.",
+          "type": "boolean"
+        },
+        "new": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "precompile-architect/case.schema.json",
+  "title": "Precompile architect eval case",
+  "description": "One eval task. The architect sees only base_commit, ticket and fork_state. Everything else is for graders.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "category",
+    "polarity",
+    "split",
+    "source",
+    "base_commit",
+    "reference_commit",
+    "ticket",
+    "fork_state",
+    "expected",
+    "grading",
+    "rubric",
+    "notes"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "category": {
+      "enum": [
+        "scaffold_logic",
+        "scaffold_logic_abi",
+        "deprecate_old",
+        "gas_semantics",
+        "revert_bytes",
+        "old_fork_change"
+      ]
+    },
+    "polarity": {
+      "description": "positive: the category's move is correct. negative: a near miss where making that move is wrong.",
+      "enum": [
+        "positive",
+        "negative"
+      ]
+    },
+    "split": {
+      "description": "dev cases may be read while writing the skill. holdout cases are only scored at the end.",
+      "enum": [
+        "dev",
+        "holdout"
+      ]
+    },
+    "source": {
+      "description": "historical: expected files come from the merged diff. synthetic: hand-written at the latest commit.",
+      "enum": [
+        "historical",
+        "synthetic"
+      ]
+    },
+    "base_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "reference_commit": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "ticket": {
+      "description": "The request as a ticket would phrase it. Must state everything the grader checks that a careful engineer could not infer from the repository, and must not hint at the verdict or approach.",
+      "type": "string"
+    },
+    "fork_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "as_of",
+        "mainnet",
+        "sepolia",
+        "zeronet"
+      ],
+      "properties": {
+        "as_of": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "mainnet": {
+          "$ref": "#/$defs/network"
+        },
+        "sepolia": {
+          "$ref": "#/$defs/network"
+        },
+        "zeronet": {
+          "$ref": "#/$defs/network"
+        }
+      }
+    },
+    "expected": {
+      "$ref": "plan.schema.json"
+    },
+    "grading": {
+      "description": "Per-case grader configuration.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "critical_files",
+        "allowed_extra_files",
+        "alternatives",
+        "graded_surfaces"
+      ],
+      "properties": {
+        "critical_files": {
+          "description": "Files a correct plan must touch. Recall is measured only on these, so incidental plumbing in the reference diff never costs points.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowed_extra_files": {
+          "description": "Glob patterns a plan may touch beyond expected files without a precision penalty.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "graded_surfaces": {
+          "description": "Surface flags scored for partial credit. All five unless a flag is debatable under the labelling convention.",
+          "type": "array",
+          "items": {
+            "enum": [
+              "gas",
+              "revert_bytes",
+              "storage",
+              "abi",
+              "events"
+            ]
+          }
+        },
+        "alternatives": {
+          "description": "Other answers experts would also accept. Each entry overrides some of approach, activation_fork and versions from expected; the exact-match checks pass when the plan matches expected or any alternative on all of those fields.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "approach": {
+                "enum": [
+                  "edit_in_place",
+                  "new_logic_version",
+                  "fork_gate",
+                  "none"
+                ]
+              },
+              "activation_fork": {
+                "enum": [
+                  "Beryl",
+                  "Cobalt",
+                  "Denim",
+                  "Everest",
+                  null
+                ]
+              },
+              "versions": {
+                "$ref": "plan.schema.json#/properties/versions"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason"
+            ]
+          }
+        }
+      }
+    },
+    "rubric": {
+      "description": "Yes-or-no reasoning checks, each scored by an isolated judge call that may answer unknown. Critical items must be yes for the trial to pass; supporting items feed partial credit.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "check",
+          "critical"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "check": {
+            "type": "string"
+          },
+          "critical": {
+            "description": "True for decision-defining items. A critical item answered no or unknown fails the trial.",
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "live",
+        "scheduled"
+      ],
+      "properties": {
+        "live": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "Beryl",
+              "Cobalt",
+              "Denim",
+              "Everest"
+            ]
+          }
+        },
+        "scheduled": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "Beryl",
+              "Cobalt",
+              "Denim",
+              "Everest"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

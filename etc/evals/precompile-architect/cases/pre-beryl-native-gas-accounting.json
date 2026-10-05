@@ -1,0 +1,99 @@
+{
+  "id": "pre-beryl-native-gas-accounting",
+  "category": "gas_semantics",
+  "polarity": "positive",
+  "split": "holdout",
+  "source": "historical",
+  "base_commit": "6355256ddcf733e913f145536f53f05b34696a12",
+  "reference_commit": "ff28a3efc555af15d87c95ec7a5d0dcca5ed7479",
+  "ticket": "Native precompile storage access is charged a flat cost. Charge EIP-2929 warm and cold access costs, EIP-2200 SSTORE costs and EIP-3529 refunds for native precompile storage, the way the EVM charges contracts. Put the accounting where every precompile benefits.",
+  "fork_state": {
+    "as_of": "2026-05-20",
+    "mainnet": {
+      "live": [],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "edit_in_place",
+    "activation_fork": "Beryl",
+    "versions": {
+      "create": [],
+      "modify": [],
+      "frozen": []
+    },
+    "files": {
+      "create": [],
+      "modify": [
+        "crates/common/precompile-storage/src/error.rs",
+        "crates/common/precompile-storage/src/evm.rs",
+        "crates/common/precompile-storage/src/hashmap.rs",
+        "crates/common/precompile-storage/src/provider.rs",
+        "crates/common/precompile-storage/src/storage_ctx.rs",
+        "crates/common/precompiles/src/macros.rs"
+      ],
+      "must_not_modify": []
+    },
+    "symmetric_modules": [],
+    "surfaces": {
+      "gas": true,
+      "revert_bytes": false,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "cold and warm sload costs",
+        "sstore costs and refunds"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompile-storage/src/evm.rs",
+      "crates/common/precompile-storage/src/provider.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompile-storage/src/**",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/src/macros.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "provider_layer",
+      "check": "The plan puts gas accounting in the storage provider layer rather than in each precompile.",
+      "critical": false
+    },
+    {
+      "id": "nothing_live",
+      "check": "The plan recognizes no network runs these precompiles yet, so the gas schedule can change without a fork gate.",
+      "critical": true
+    }
+  ],
+  "notes": "A sweeping gas change. Pre-Beryl, so in-place is correct."
+}

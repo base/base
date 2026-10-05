@@ -1,0 +1,103 @@
+{
+  "id": "zeronet-factory-keccak-metering",
+  "category": "gas_semantics",
+  "polarity": "positive",
+  "split": "dev",
+  "source": "historical",
+  "base_commit": "75b96fb21dd7cc9c94efbfbebb3259eba8673349",
+  "reference_commit": "90296bcf0a23fa8c44d04dbfcc5d8afd8d3d762b",
+  "ticket": "The B-20 factory derives token addresses with keccak256 in dispatch but charges no gas for the hashing. Meter that keccak work through the storage provider so every provider counts it. Zeronet is a pre-production network that is reset as needed; the team does not preserve zeronet execution.",
+  "fork_state": {
+    "as_of": "2026-06-10",
+    "mainnet": {
+      "live": [],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "edit_in_place",
+    "activation_fork": "Beryl",
+    "versions": {
+      "create": [],
+      "modify": [],
+      "frozen": []
+    },
+    "files": {
+      "create": [],
+      "modify": [
+        "crates/common/precompile-storage/src/evm.rs",
+        "crates/common/precompile-storage/src/hashmap.rs",
+        "crates/common/precompile-storage/src/provider.rs",
+        "crates/common/precompile-storage/src/storage_ctx.rs",
+        "crates/common/precompiles/src/b20_factory/dispatch.rs",
+        "crates/common/precompiles/src/b20_factory/storage.rs",
+        "crates/common/precompiles/src/b20_factory/variant.rs"
+      ],
+      "must_not_modify": []
+    },
+    "symmetric_modules": [
+      "b20_factory"
+    ],
+    "surfaces": {
+      "gas": true,
+      "revert_bytes": false,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "address derivation charges keccak gas"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/src/b20_factory/dispatch.rs",
+      "crates/common/precompile-storage/src/provider.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompile-storage/src/**",
+      "crates/common/precompiles/src/b20_factory/**",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [
+      {
+        "reason": "A fork gate is safe, just unnecessary.",
+        "approach": "fork_gate"
+      }
+    ],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "zeronet_reasoning",
+      "check": "The plan reasons about Beryl being live only on zeronet and concludes an in-place change is acceptable because zeronet execution is not preserved.",
+      "critical": true
+    }
+  ],
+  "notes": "The ticket states zeronet execution is not preserved so the task is unambiguous."
+}

@@ -1,0 +1,122 @@
+{
+  "id": "beryl-remove-superseded-capability-traits",
+  "category": "deprecate_old",
+  "polarity": "positive",
+  "split": "dev",
+  "source": "historical",
+  "base_commit": "95e8e6c9c8bcb61589447e76ce180b39f86b5045",
+  "reference_commit": "9f962a529e55f287a744484788cccf96267e5c94",
+  "ticket": "The common capability traits Transferable, Mintable, Burnable, Pausable, Configurable, Permittable and RoleManaged predate the versioned logic and have no production callers. Remove them, keep anything still used, and keep every frozen version's production code unchanged.",
+  "fork_state": {
+    "as_of": "2026-07-30",
+    "mainnet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "edit_in_place",
+    "activation_fork": null,
+    "versions": {
+      "create": [],
+      "modify": [],
+      "frozen": [
+        "V1",
+        "V2"
+      ]
+    },
+    "files": {
+      "create": [
+        "crates/common/precompiles/src/common/ops/permit.rs"
+      ],
+      "modify": [
+        "crates/common/precompiles/src/b20_asset/logic/v1.rs",
+        "crates/common/precompiles/src/b20_asset/logic/v2.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v1.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v2.rs",
+        "crates/common/precompiles/src/common/mod.rs",
+        "crates/common/precompiles/src/common/ops/burnable.rs",
+        "crates/common/precompiles/src/common/ops/configurable.rs",
+        "crates/common/precompiles/src/common/ops/guards.rs",
+        "crates/common/precompiles/src/common/ops/mintable.rs",
+        "crates/common/precompiles/src/common/ops/mod.rs",
+        "crates/common/precompiles/src/common/ops/pausable.rs",
+        "crates/common/precompiles/src/common/ops/permittable.rs",
+        "crates/common/precompiles/src/common/ops/roles.rs",
+        "crates/common/precompiles/src/common/ops/transferable.rs",
+        "crates/common/precompiles/src/common/test_utils.rs",
+        "crates/common/precompiles/src/lib.rs"
+      ],
+      "must_not_modify": []
+    },
+    "symmetric_modules": [],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": false,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "each version pins its own EIP-712 domain typehash"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/src/common/ops/transferable.rs",
+      "crates/common/precompiles/src/common/ops/mintable.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "caller_audit",
+      "check": "The plan verifies there are no production callers before deleting.",
+      "critical": false
+    },
+    {
+      "id": "keep_live_shared",
+      "check": "The plan keeps shared code that is still used, such as guards, role ids and permit helpers.",
+      "critical": false
+    },
+    {
+      "id": "frozen_prod_untouched",
+      "check": "The plan limits any edit to a frozen logic file to its test module.",
+      "critical": true
+    }
+  ],
+  "notes": "Frozen logic files change only in test modules, which validate_cases.py enforces."
+}

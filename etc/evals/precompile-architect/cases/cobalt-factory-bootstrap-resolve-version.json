@@ -1,0 +1,102 @@
+{
+  "id": "cobalt-factory-bootstrap-resolve-version",
+  "category": "old_fork_change",
+  "polarity": "positive",
+  "split": "dev",
+  "source": "historical",
+  "base_commit": "f419c2a592d1003fe10c3a51269d2e2f3df48cf7",
+  "reference_commit": "b2bf3cfa40744d2c77607a9570df29393d2f782e",
+  "ticket": "FactoryV1 routes createB20 init calls through token V1 regardless of fork, so a Cobalt bootstrap init call that depends on a V2-only policy scope reverts and rolls back createB20. Fix it so init calls run against the token version active at the block's fork.",
+  "fork_state": {
+    "as_of": "2026-08-21",
+    "mainnet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "edit_in_place",
+    "activation_fork": "Cobalt",
+    "versions": {
+      "create": [],
+      "modify": [
+        "V1"
+      ],
+      "frozen": []
+    },
+    "files": {
+      "create": [],
+      "modify": [
+        "crates/common/precompiles/src/b20_factory/logic/v1.rs",
+        "crates/common/precompiles/tests/b20_factory_v1_golden.rs"
+      ],
+      "must_not_modify": []
+    },
+    "symmetric_modules": [
+      "b20_factory"
+    ],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": true,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "seize-scope init call succeeds at Cobalt",
+        "same call still reverts at Beryl"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/src/b20_factory/logic/v1.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "beryl_unchanged",
+      "check": "The plan argues Beryl output is unchanged because the active token version at Beryl is still V1.",
+      "critical": true
+    },
+    {
+      "id": "paired_tests",
+      "check": "The plan tests Beryl and Cobalt with otherwise identical inputs.",
+      "critical": false
+    }
+  ],
+  "notes": "Editing live FactoryV1 is correct because it resolves to the same token version at Beryl. At Cobalt, createB20 calls that reverted now succeed. Under the convention that is a revert-bytes change only, because storage and events flags count only calls that succeed both before and after."
+}

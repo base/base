@@ -1,0 +1,113 @@
+{
+  "id": "cobalt-scaffold-policy-v2",
+  "category": "scaffold_logic",
+  "polarity": "positive",
+  "split": "dev",
+  "source": "historical",
+  "base_commit": "de11aa52e99ad869218cb902d03bd95cb478226b",
+  "reference_commit": "2c99c12cce795cfd4134979f07380ed16170fdce",
+  "ticket": "Cobalt will add composite policies to the policy registry. Prepare the policy registry so Cobalt-era changes can land without affecting Beryl execution. This ticket must not change any behavior.",
+  "fork_state": {
+    "as_of": "2026-07-24",
+    "mainnet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "new_logic_version",
+    "activation_fork": "Cobalt",
+    "versions": {
+      "create": [
+        "V2"
+      ],
+      "modify": [],
+      "frozen": [
+        "V1"
+      ]
+    },
+    "files": {
+      "create": [
+        "crates/common/precompiles/src/policy/logic/v2.rs",
+        "crates/common/precompiles/tests/b20_policy_v2_golden.rs"
+      ],
+      "modify": [
+        "crates/common/precompiles/src/lib.rs",
+        "crates/common/precompiles/src/policy/logic/mod.rs",
+        "crates/common/precompiles/src/policy/mod.rs",
+        "crates/common/precompiles/src/policy/versions.rs",
+        "crates/common/precompiles/tests/b20_policy_v1_golden.rs"
+      ],
+      "must_not_modify": [
+        "crates/common/precompiles/src/policy/logic/v1.rs"
+      ]
+    },
+    "symmetric_modules": [
+      "policy"
+    ],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": false,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "policy V2 golden at Cobalt reproduces V1",
+        "Cobalt resolves to V2 and Beryl to V1"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/src/policy/logic/v2.rs",
+      "crates/common/precompiles/src/policy/versions.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "copy_of_v1",
+      "check": "The plan makes V2 a behavior-identical copy of V1.",
+      "critical": true
+    },
+    {
+      "id": "v1_frozen_reason",
+      "check": "The plan explains V1 must not change because Beryl is live.",
+      "critical": false
+    }
+  ],
+  "notes": "The V1 golden edit only drops a line asserting Cobalt resolves to V1; pinned roots are unchanged."
+}

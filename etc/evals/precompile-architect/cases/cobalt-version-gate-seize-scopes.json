@@ -1,0 +1,126 @@
+{
+  "id": "cobalt-version-gate-seize-scopes",
+  "category": "old_fork_change",
+  "polarity": "positive",
+  "split": "dev",
+  "source": "historical",
+  "base_commit": "37ab691f89307fb29e647f878b9868825dbdf037",
+  "reference_commit": "26ca32b5802bdab6fcf9273ab47565a7fc784cec",
+  "ticket": "Seize policy scopes were added for Cobalt, but on Beryl tokens updatePolicy and policyId now accept SEIZE_HOLDER_POLICY and SEIZE_RECEIVER_POLICY instead of reverting UnsupportedPolicyType. The base-std v1.0.0 reference, which is what Beryl tokens executed, rejects them. Fix this for asset and stablecoin.",
+  "fork_state": {
+    "as_of": "2026-08-06",
+    "mainnet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "edit_in_place",
+    "activation_fork": "Beryl",
+    "versions": {
+      "create": [],
+      "modify": [
+        "V1",
+        "V2"
+      ],
+      "frozen": []
+    },
+    "files": {
+      "create": [],
+      "modify": [
+        "crates/common/precompiles/src/b20_asset/logic/v1.rs",
+        "crates/common/precompiles/src/b20_asset/logic/v2.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v1.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v2.rs",
+        "crates/common/precompiles/tests/b20_asset_v1_golden.rs",
+        "crates/common/precompiles/tests/b20_stablecoin_v1_golden.rs"
+      ],
+      "must_not_modify": [
+        "crates/common/precompiles/src/common/policy_type.rs"
+      ]
+    },
+    "symmetric_modules": [
+      "b20_asset",
+      "b20_stablecoin"
+    ],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": true,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "V1 golden: updatePolicy and policyId reject seize scopes"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/src/b20_asset/logic/v1.rs",
+      "crates/common/precompiles/src/b20_stablecoin/logic/v1.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [
+      {
+        "reason": "Editing only V1 is equally correct; V2 already accepts the seize scopes, so moving its scope list is optional.",
+        "versions": {
+          "create": [],
+          "modify": [
+            "V1"
+          ],
+          "frozen": []
+        }
+      }
+    ],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "root_cause_shared",
+      "check": "The plan identifies the shared, unversioned policy-type lookup as the root cause.",
+      "critical": false
+    },
+    {
+      "id": "restore_framing",
+      "check": "The plan frames the V1 edit as restoring the behavior Beryl tokens actually executed.",
+      "critical": true
+    },
+    {
+      "id": "both_modules",
+      "check": "The plan fixes asset and stablecoin symmetrically.",
+      "critical": true
+    }
+  ],
+  "notes": "Editing live V1 is correct: the shared enum leaked Cobalt scopes into V1 after Beryl shipped. activation_fork is Beryl because the current code at Beryl changes. The setter path now reverts, which is a revert-bytes change only."
+}

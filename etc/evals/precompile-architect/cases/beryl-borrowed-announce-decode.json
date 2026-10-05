@@ -1,0 +1,103 @@
+{
+  "id": "beryl-borrowed-announce-decode",
+  "category": "revert_bytes",
+  "polarity": "negative",
+  "split": "dev",
+  "source": "historical",
+  "base_commit": "bd22a30df686609adbb1f46e9d0fba1403e60532",
+  "reference_commit": "d6069d2ac052dd49059a985f3576a520ac053b7c",
+  "ticket": "announce(bytes[],string,string,string) decodes into owned buffers, and an aliased payload makes it allocate tens of megabytes per call, a liveness DoS on live Beryl networks. Fix the allocation without changing which inputs are accepted or the bytes any call returns.",
+  "fork_state": {
+    "as_of": "2026-08-28",
+    "mainnet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "edit_in_place",
+    "activation_fork": null,
+    "versions": {
+      "create": [],
+      "modify": [],
+      "frozen": [
+        "V1"
+      ]
+    },
+    "files": {
+      "create": [],
+      "modify": [
+        "crates/common/precompiles/src/b20_asset/dispatch.rs",
+        "crates/common/precompiles/src/b20_asset/versions.rs"
+      ],
+      "must_not_modify": [
+        "crates/common/precompiles/src/b20_asset/logic/v1.rs"
+      ]
+    },
+    "symmetric_modules": [
+      "b20_asset"
+    ],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": false,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "borrowed decode accepts a call iff the owned decoder does"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/src/b20_asset/dispatch.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "byte_identical",
+      "check": "The plan keeps the accept set and revert bytes identical so it is safe on live Beryl without a fork gate.",
+      "critical": true
+    },
+    {
+      "id": "no_metering",
+      "check": "The plan avoids size caps or new metering on Beryl because they would change consensus.",
+      "critical": false
+    }
+  ],
+  "notes": "The correct plan changes no revert bytes."
+}

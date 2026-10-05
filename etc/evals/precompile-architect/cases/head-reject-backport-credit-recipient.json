@@ -1,0 +1,109 @@
+{
+  "id": "head-reject-backport-credit-recipient",
+  "category": "old_fork_change",
+  "polarity": "negative",
+  "split": "dev",
+  "source": "synthetic",
+  "base_commit": "fa0f64d32012efa9b0934bfe1dd074a4aed329c7",
+  "reference_commit": null,
+  "ticket": "Tokens on mainnet can still be sent to their own address and the balance is stuck, because the Denim fix applies only from Denim. Apply the same token-as-recipient rejection to the existing V1 and V2 asset and stablecoin logic so mainnet users are protected now.",
+  "fork_state": {
+    "as_of": "2026-10-02",
+    "mainnet": {
+      "live": [
+        "Beryl",
+        "Cobalt"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl",
+        "Cobalt"
+      ],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "reject",
+    "approach": "none",
+    "activation_fork": null,
+    "versions": {
+      "create": [],
+      "modify": [],
+      "frozen": [
+        "V1",
+        "V2"
+      ]
+    },
+    "files": {
+      "create": [],
+      "modify": [],
+      "must_not_modify": [
+        "crates/common/precompiles/src/b20_asset/logic/v1.rs",
+        "crates/common/precompiles/src/b20_asset/logic/v2.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v1.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v2.rs",
+        "crates/common/precompiles/tests/b20_asset_v1_golden.rs",
+        "crates/common/precompiles/tests/b20_asset_v2_golden.rs",
+        "crates/common/precompiles/tests/b20_stablecoin_v1_golden.rs",
+        "crates/common/precompiles/tests/b20_stablecoin_v2_golden.rs"
+      ]
+    },
+    "symmetric_modules": [],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": false,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": []
+    }
+  },
+  "grading": {
+    "critical_files": [],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "no_partial_edit",
+      "check": "The plan does not propose editing V1 or V2, even partially or behind a flag.",
+      "critical": true
+    },
+    {
+      "id": "explains_replay",
+      "check": "The plan explains that changing V1 or V2 changes how already-produced blocks execute.",
+      "critical": true
+    },
+    {
+      "id": "safe_alternative",
+      "check": "The plan proposes a consensus-safe alternative, such as activating the change at a future fork.",
+      "critical": false
+    }
+  ],
+  "notes": "Beryl and Cobalt are live on mainnet. The only safe answer is to decline."
+}

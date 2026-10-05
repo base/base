@@ -1,0 +1,123 @@
+{
+  "id": "cobalt-scaffold-asset-v2-erc8056-surface",
+  "category": "scaffold_logic_abi",
+  "polarity": "positive",
+  "split": "dev",
+  "source": "historical",
+  "base_commit": "156872832ae89fe7314f5dc42ce1011ac4695a82",
+  "reference_commit": "64c1402ba88c7d8c045099faa865e414ede09843",
+  "ticket": "Cobalt adds the ERC-8056 scheduled UI multiplier to the asset token: new view and setter selectors, errors, events, and storage for a pending multiplier. Scaffold the Cobalt asset version with that wire and storage surface; the behavior itself lands in a later ticket. Beryl execution must be unchanged, including what the new selectors return on Beryl.",
+  "fork_state": {
+    "as_of": "2026-07-24",
+    "mainnet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "new_logic_version",
+    "activation_fork": "Cobalt",
+    "versions": {
+      "create": [
+        "V2"
+      ],
+      "modify": [],
+      "frozen": [
+        "V1"
+      ]
+    },
+    "files": {
+      "create": [
+        "crates/common/precompiles/src/b20_asset/logic/v2.rs"
+      ],
+      "modify": [
+        "crates/common/precompile-macros/src/accounting.rs",
+        "crates/common/precompiles/src/b20_asset/abi.rs",
+        "crates/common/precompiles/src/b20_asset/accounting.rs",
+        "crates/common/precompiles/src/b20_asset/dispatch.rs",
+        "crates/common/precompiles/src/b20_asset/logic/interface.rs",
+        "crates/common/precompiles/src/b20_asset/logic/mod.rs",
+        "crates/common/precompiles/src/b20_asset/mod.rs",
+        "crates/common/precompiles/src/b20_asset/storage.rs",
+        "crates/common/precompiles/src/b20_asset/versions.rs",
+        "crates/common/precompiles/src/common/test_utils.rs",
+        "crates/common/precompiles/src/lib.rs",
+        "crates/common/precompiles/tests/b20_asset_v1_golden.rs"
+      ],
+      "must_not_modify": [
+        "crates/common/precompiles/src/b20_asset/logic/v1.rs"
+      ]
+    },
+    "symmetric_modules": [
+      "b20_asset"
+    ],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": false,
+      "storage": true,
+      "abi": true,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "new selectors revert on V1 as unknown selectors",
+        "Cobalt resolves to V2"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/src/b20_asset/logic/v2.rs",
+      "crates/common/precompiles/src/b20_asset/versions.rs",
+      "crates/common/precompiles/src/b20_asset/abi.rs",
+      "crates/common/precompiles/src/b20_asset/storage.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompile-macros/src/**",
+      "crates/common/precompiles/src/b20_asset/**",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "append_only_storage",
+      "check": "The plan appends new storage fields without moving existing slots.",
+      "critical": false
+    },
+    {
+      "id": "frozen_selector_default",
+      "check": "The plan makes the new selectors revert on V1 exactly as an unknown selector did before.",
+      "critical": true
+    }
+  ],
+  "notes": "Logic, ABI and storage scaffold. The new selectors still revert at Cobalt after this change, so revert bytes and emitted events are unchanged; new event definitions count under abi."
+}
