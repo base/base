@@ -957,47 +957,6 @@ pub fn canonical_session_id(session_id: &str) -> Result<String, CreateProofReque
         .unwrap_or_else(|_| session_id.to_owned()))
 }
 
-/// Parameters for creating a new proof session
-#[derive(Debug, Clone)]
-pub struct CreateProofSession {
-    /// Parent proof request identifier.
-    pub proof_request_id: Uuid,
-    /// Whether this is a STARK or SNARK session.
-    pub session_type: SessionType,
-    /// Backend-assigned session identifier.
-    pub backend_session_id: String,
-    /// Backend-specific metadata (JSON).
-    pub metadata: Option<serde_json::Value>,
-}
-
-/// Parameters for updating a proof session status
-#[derive(Debug, Clone)]
-pub struct UpdateProofSession {
-    /// Backend-assigned session identifier to look up.
-    pub backend_session_id: String,
-    /// New session status.
-    pub status: SessionStatus,
-    /// Error message, if the session failed.
-    pub error_message: Option<String>,
-    /// Updated backend metadata (JSON).
-    pub metadata: Option<serde_json::Value>,
-}
-
-/// Parameters for updating a proof request with receipt
-#[derive(Debug, Clone)]
-pub struct UpdateReceipt {
-    /// Proof request identifier.
-    pub id: Uuid,
-    /// Raw STARK receipt bytes.
-    pub stark_receipt: Option<Vec<u8>>,
-    /// Raw SNARK receipt bytes.
-    pub snark_receipt: Option<Vec<u8>>,
-    /// New proof status.
-    pub status: ProofStatus,
-    /// Error message, if the proof failed.
-    pub error_message: Option<String>,
-}
-
 /// Parameters for claiming the next available worker proof job.
 #[derive(Debug, Clone)]
 pub struct ClaimProofJob {
