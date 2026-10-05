@@ -149,8 +149,7 @@ for as long as they run. Each attach waits up to 30 seconds for its lock; new
 queries that touch that day queue behind it meanwhile. If the wait times out,
 the command moves on to the remaining days, then retries the deferred
 attaches with exponential backoff (5s doubling to 60s between attempts) for
-up to an hour before failing. It never
-cancels other sessions' queries.
+up to an hour before failing. It never cancels other sessions' queries.
 
 Monitor Postgres storage, read I/O, and ingest
 latency during the build. Do not run two index jobs against the same database;
