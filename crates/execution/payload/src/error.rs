@@ -20,4 +20,7 @@ pub enum BasePayloadBuilderError {
     /// Thrown when a blob transaction is included in a sequencer's block.
     #[error("blob transaction included in sequencer block")]
     BlobTransactionRejected,
+    /// Thrown when the DA footprint scalar is missing while building a Jovian block.
+    #[error("DA footprint scalar must be defined for Jovian blocks")]
+    DaFootprintScalarMissing,
 }

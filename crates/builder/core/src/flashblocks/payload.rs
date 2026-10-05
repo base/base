@@ -1216,7 +1216,7 @@ where
     // create the block header
     let transactions_root = proofs::calculate_transaction_root(&info.executed_transactions);
 
-    let (excess_blob_gas, blob_gas_used) = ctx.blob_fields(info);
+    let (excess_blob_gas, blob_gas_used) = ctx.blob_fields(info)?;
     let extra_data = ctx.extra_data()?;
 
     let header = Header {
@@ -1464,7 +1464,7 @@ mod tests {
     fn build_block_empty_no_state_root() {
         let chain_spec = minimal_chain_spec();
         let parent = genesis_header();
-        let ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
+        let ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent)).expect("valid test builder context");
 
         let db = StateProviderDatabase::new(NoopProvider::default());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
@@ -1502,7 +1502,7 @@ mod tests {
     fn build_block_empty_with_state_root() {
         let chain_spec = minimal_chain_spec();
         let parent = genesis_header();
-        let ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
+        let ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent)).expect("valid test builder context");
 
         let db = StateProviderDatabase::new(NoopProvider::default());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
@@ -1540,7 +1540,7 @@ mod tests {
     fn build_block_rejects_block_number_mismatch() {
         let chain_spec = minimal_chain_spec();
         let parent = genesis_header();
-        let mut ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
+        let mut ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent)).expect("valid test builder context");
 
         // Tamper with the EVM block number so it disagrees with parent + 1.
         // parent.number is 0, so the expected block number is 1.
@@ -1577,7 +1577,7 @@ mod tests {
     fn build_block_rejects_missing_beacon_block_root() {
         let chain_spec = minimal_chain_spec();
         let parent = genesis_header();
-        let mut ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
+        let mut ctx = BasePayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent)).expect("valid test builder context");
 
         // Clear the parent beacon block root that for_test() sets.
         ctx.config.attributes.payload_attributes.parent_beacon_block_root = None;
