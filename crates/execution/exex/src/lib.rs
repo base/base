@@ -967,78 +967,37 @@ mod tests {
 
     #[tokio::test]
     async fn handle_notification_chain_reverted() {
-        // RocksDB proofs storage
-        let dir = tempdir_path();
-        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
+        for (scenario, stored_tip) in [("within stored blocks", 10), ("beyond stored blocks", 5)] {
+            // RocksDB proofs storage
+            let dir = tempdir_path();
+            let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+            let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
-        init_storage(proofs.clone());
-        store_blocks(1, 10, &proofs);
+            init_storage(proofs.clone());
+            store_blocks(1, stored_tip, &proofs);
 
-        let (ctx, _handle) =
-            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
+            let (ctx, _handle) =
+                reth_exex_test_utils::test_exex_context().await.expect("exex test context");
 
-        let exex = build_test_exex(ctx, proofs.clone());
+            let exex = build_test_exex(ctx, proofs.clone());
 
-        let sync_target = SyncTarget::new();
+            let sync_target = SyncTarget::new();
 
-        // Now the tip is 10, and we want to revert from block 9..10
-        let old_chain = Arc::new(mk_chain_with_updates(9, 10, None));
+            let old_chain = Arc::new(mk_chain_with_updates(9, 10, None));
+            let notif = ExExNotification::ChainReverted { old: old_chain };
 
-        // Notification: chain reverted 9..10
-        let notif = ExExNotification::ChainReverted { old: old_chain };
+            exex.handle_notification(notif, &sync_target).expect("handle chain reverted");
 
-        exex.handle_notification(notif, &sync_target).expect("handle chain reverted");
+            let state = sync_target.take_state().expect("should have pending state");
+            assert!(matches!(
+                state,
+                SyncTargetState::Revert { revert_to }
+                    if revert_to.block.number == 9
+            ));
 
-        // Should have Revert state
-        let state = sync_target.take_state().expect("should have pending state");
-        assert!(matches!(
-            state,
-            SyncTargetState::Revert { revert_to }
-            if revert_to.block.number == 9
-        ));
-
-        // Storage unchanged (sync loop handles the actual revert)
-        let latest = proofs.get_latest_block_number().expect("get latest block").expect("ok").0;
-        assert_eq!(latest, 10);
-    }
-
-    #[tokio::test]
-    async fn handle_notification_chain_reverted_beyond_stored_blocks() {
-        // RocksDB proofs storage
-        let dir = tempdir_path();
-        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
-
-        init_storage(proofs.clone());
-        store_blocks(1, 5, &proofs);
-
-        let (ctx, _handle) =
-            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
-
-        let exex = build_test_exex(ctx, proofs.clone());
-
-        let sync_target = SyncTarget::new();
-
-        // Now the tip is 5, and we want to revert from block 9..10
-        let old_chain = Arc::new(mk_chain_with_updates(9, 10, None));
-
-        // Notification: chain reverted 9..10
-        let notif = ExExNotification::ChainReverted { old: old_chain };
-
-        exex.handle_notification(notif, &sync_target).expect("handle chain reverted");
-
-        // State is set; sync loop will detect revert is beyond stored blocks
-        let state = sync_target.take_state().expect("should have pending state");
-        assert!(matches!(
-            state,
-            SyncTargetState::Revert { revert_to }
-            if revert_to.block.number == 9
-        ));
-
-        // Storage unchanged
-        let latest = proofs.get_latest_block_number().expect("get latest block").expect("ok").0;
-        assert_eq!(latest, 5);
+            let latest = proofs.get_latest_block_number().expect("get latest block").expect("ok").0;
+            assert_eq!(latest, stored_tip, "{scenario}");
+        }
     }
 
     #[tokio::test]
