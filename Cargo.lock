@@ -3013,6 +3013,7 @@ dependencies = [
  "reth-revm",
  "reth-transaction-pool",
  "reth-trie-common",
+ "rstest",
  "serde_json",
  "tempfile",
  "thiserror 2.0.19",
