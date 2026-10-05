@@ -18,7 +18,8 @@ they age out: high-volume proxy and builder-decision events default to 3 days,
 ingress and forwarding events default to 7 days, and failures, drops,
 inclusion, and flashblock events default to 30 days. Ingest rejects events
 whose `event_time` is already outside its window or more than an hour in the
-future. `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` uses the same warm window as
+future. A retried `event_id` dedupes only within the same UTC hour of its
+`event_time`. `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` uses the same warm window as
 `TXPOOL_SEND_RAW_TRANSACTION`. `BUILDER_DEFERRED` and `BUILDER_EXPIRED` use the
 same hot window as the other per-attempt builder decisions; deferral can fire
 once per flashblock for a parked validity transaction.

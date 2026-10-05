@@ -3,7 +3,9 @@
 Accepts transaction observability events over HTTP, stores them in Postgres,
 and serves Postgres-backed transaction event queries over JSON-RPC.
 `TIPS_AUDIT_POSTGRES_URL` is required to serve; startup fails if the Postgres
-schema is not ready. This S3 removal needs no new database migration.
+schema is not ready, which includes migration `003_transaction_events_v2.sql`;
+run `migrate up` before rolling out this release. This S3 removal needs no new
+database migration.
 If still on the pre-partition schema, `migrate up` resets the table and deletes
 its old rows: export them or agree on retention before running that migration.
 
@@ -59,10 +61,49 @@ just devnet tx-observability-smoke
 
 ## Transaction event retention
 
-`transaction_events` is partitioned by retention class (`hot`, `warm`,
-`cold`), then by UTC day of `event_time`. Retention drops whole day partitions
-instead of deleting rows, so expiry creates no dead tuples, index bloat, or
-vacuum work, and each day's indexes stay small enough to cache.
+Ingest writes `transaction_events_v2`, which is partitioned by retention class
+(`hot`, `warm`, `cold`), then by UTC day of `event_time`. Retention drops whole
+day partitions instead of deleting rows, so expiry creates no dead tuples,
+index bloat, or vacuum work.
+
+The primary key is `(event_hour, retention_class, event_id)`, where
+`event_hour` is the UTC hour of `event_time`. Leading with the hour keeps
+inserts in the current hour's key range instead of spreading them across the
+whole day's index. A retried or re-emitted `event_id` dedupes only within the
+same UTC hour of `event_time`; a re-emission in another hour stores a second
+row. `event_id` uses `COLLATE "C"`. `tx_hash` and `block_hash` are stored as
+32-byte `BYTEA`, and read APIs return them as `0x` lowercase hex.
+
+### Legacy tree and cutover
+
+Migration `003_transaction_events_v2.sql` creates the v2 tree beside the
+earlier `transaction_events` tree and does not copy rows. During a rolling
+deploy, pods on the previous release keep inserting into `transaction_events`
+while new pods insert into `transaction_events_v2`. Read APIs query both
+trees, so rows from either release stay visible.
+
+Maintenance creates no new legacy day partitions. It drops legacy days on the
+same retention schedule as v2 days, so the legacy tree is empty once its last
+seeded day ages out: up to the cold window (30 days by default) plus the
+three seeded look-ahead days. A later migration can then drop it.
+
+An event retried across the cutover can be stored once in each tree. The
+bundle query collapses such pairs by `event_id`; the other queries return both
+rows.
+
+Rolling back to the previous release is safe for writes, but that release
+reads only `transaction_events`, so rows written to the v2 tree are hidden
+from its read APIs until the next roll forward.
+
+`transaction_events_all` is a view over both trees in the legacy column
+layout: `event_date` instead of `event_hour`, and hashes as `0x` hex text.
+Consumers that read the table directly, such as incremental warehouse
+extraction, must switch to the view when this migration ships, and their role
+needs `SELECT` on it. Rows ingested before the switch are still selected by an
+`ingested_at` watermark afterward, so a delayed switch delays extraction
+without losing rows, as long as it happens before those rows age out. Filter
+the view by `ingested_at` or `event_time`; hash and `event_id` predicates on
+the view cannot use the v2 indexes.
 
 Classes: hot (high-volume proxy and builder-decision events), warm (ingress,
 simulation success, txpool-forward), and cold (failures, drops, inclusion,
@@ -79,15 +120,16 @@ later passes wait the retention interval, skipping missed ticks.
 
 Each pass, for each class:
 
-- creates missing day partitions from the start of the retention window
+- creates missing v2 day partitions from the start of the retention window
   through three days after today, so ingest keeps working for three days if
   maintenance stops
-- drops day partitions that are entirely older than the retention window plus
-  a one-hour grace period
+- drops day partitions in either tree that are entirely older than the
+  retention window plus a one-hour grace period
 
-The runtime role does not own the table, so partition DDL goes through
-`SECURITY DEFINER` functions created by the baseline migration
-(`001_transaction_events_partitioned.sql`) and executable only by
+The runtime role does not own the tables, so partition DDL goes through
+`SECURITY DEFINER` functions created by
+`001_transaction_events_partitioned.sql` (legacy tree) and
+`003_transaction_events_v2.sql` (v2 tree), executable only by
 `audit_archiver`. Create uses `CREATE TABLE` + `ATTACH PARTITION`, which only
 takes a `SHARE UPDATE EXCLUSIVE` lock on the class partition. Drop detaches
 first (a brief `ACCESS EXCLUSIVE` lock on the class partition, which queues
@@ -104,7 +146,7 @@ partition, and one bad timestamp would otherwise fail the whole insert batch.
 Rejected events count toward `transaction_events_outside_retention_window`.
 
 Watch `transaction_event_partition_horizon_seconds`, which every replica
-refreshes from the catalog each pass, net of the one-hour future skew (alert
+refreshes from the v2 tree's catalog entries each pass, net of the one-hour future skew (alert
 well before it reaches zero), `transaction_event_partitions_created`,
 `transaction_event_partitions_dropped`,
 `transaction_event_partition_lock_timeouts`, and
@@ -119,6 +161,11 @@ well before it reaches zero), `transaction_event_partitions_created`,
 - `TIPS_AUDIT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS` (default `5000`): Postgres `lock_timeout` per partition create, detach, or drop
 
 ## Incremental warehouse extraction index
+
+Migration `003_transaction_events_v2.sql` builds the v2 tree's
+`ingested_at` BRIN index directly, because the tree is empty when it is
+created; v2 day partitions get the index when they attach. The rest of this
+section applies only to the legacy tree.
 
 Migration `002_transaction_events_ingested_at_index.sql` registers a BRIN index
 on the partitioned `transaction_events` table and its hot/warm/cold parents.

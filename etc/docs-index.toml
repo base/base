@@ -47,8 +47,8 @@ summary = "base-acceptance CLI entry point for the acceptance system: lists subc
 digest = "de5b6325d7"
 
 ["bin/audit-archiver/README.md"]
-summary = "audit-archiver service: ingests transaction-event NDJSON over HTTP into Postgres, serves JSON-RPC queries, partition retention classes, env vars, S3 removal rollout, and BRIN index step."
-digest = "6942125a01"
+summary = "audit-archiver service: NDJSON ingest into Postgres, JSON-RPC queries, retention classes, transaction_events_v2 cutover and legacy drain, transaction_events_all ETL view, env vars, BRIN index step."
+digest = "8b0663757a"
 
 ["bin/base-telemetry/README.md"]
 summary = "base-telemetry backend: CLI and env config, per-IP rate limiting, and on-demand P2P reachability probes for execution-layer (enode) and consensus-layer (ENR or multiaddr) nodes."
@@ -144,7 +144,7 @@ digest = "0cd289e19a"
 
 ["crates/batcher/admin/README.md"]
 summary = "Batcher admin JSON-RPC API: start, stop, flush, status, and DA throttle controller methods (admin_*), their behavior and error codes. Use when operating the batcher."
-digest = "5c08642d89"
+digest = "557b8b8f0c"
 
 ["crates/batcher/blobs/README.md"]
 summary = "base-blobs: EIP-4844 blob encoder and decoder for the batcher wire format (130,044 payload bytes per blob); excludes KZG commitments and submission."
@@ -160,7 +160,7 @@ digest = "ce9421e523"
 
 ["crates/batcher/core/README.md"]
 summary = "base-batcher-core: async BatchDriver, SubmissionQueue for L1 transactions, and the DA throttle subsystem (Off, Step, Linear) that limits sequencer DA via miner_setMaxDASize."
-digest = "e5165c05ef"
+digest = "fdc7f66087"
 
 ["crates/batcher/encoder/README.md"]
 summary = "base-batcher-encoder: synchronous, no-I/O encoder from L2 blocks to L1 submissions. Covers channel closing rules, blob framing, metric labels, and BatchEncoder usage."
@@ -427,8 +427,8 @@ summary = "Base txpool: BaseTransactionValidator (L1 data fee), BaseOrdering/Tim
 digest = "906eadac6b"
 
 ["crates/infra/audit/README.md"]
-summary = "audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers schema snapshot regeneration and legacy migrations."
-digest = "650b583c41"
+summary = "audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; lists migrations 001-003 and covers schema snapshot regeneration."
+digest = "13d7075520"
 
 ["crates/infra/basectl/README.md"]
 summary = "basectl-cli: the basectl clap parser and commands (blocks, sync, txpool, peers, proofs, conductor), interactive monitor, flashblocks JSON-lines stream, Denim readiness checks, and pods view config."
@@ -440,7 +440,7 @@ digest = "118deb12bf"
 
 ["crates/infra/load-tests/README.md"]
 summary = "Load-testing framework (base-load-tests lib, base-load-tester bin): just/cargo commands, YAML config, tx mixes (precompile, B-20, swap, validity). Use to run or configure devnet/sepolia load tests."
-digest = "74e01ef24a"
+digest = "b49396d306"
 
 ["crates/infra/roxy/README.md"]
 summary = "Scaffold-only Rust JSON-RPC reverse proxy meant to replace the ProxyD fork; currently just a listen-address flag plus /healthz and /readyz probes, no proxying yet."
@@ -680,7 +680,7 @@ digest = "e87f3373b8"
 
 ["docs/transaction-events/README.md"]
 summary = "Spec for transaction-event/v1, the JSONL business event journal for transaction observability: config fields, envelope, event vocabulary, Vector to audit-archiver ingest, Postgres retention, examples."
-digest = "b25f947064"
+digest = "69daac72e4"
 
 ["docs/transaction-events/tips-parity-checklist.md"]
 summary = "Checklist for verifying TIPS UI audit-archiver/Postgres responses match the S3-backed routes (block, txn, bundle, rejected) before switching TIPS_UI_QUERY_BACKEND=audit."

@@ -18,7 +18,7 @@ use audit_archiver_lib::{
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
     DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
     MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE, PgTransactionEventSink, RejectedTransactionEventQuery,
-    TransactionEventIngestConfig, TransactionEventRetentionConfig,
+    TransactionEventIngestConfig, TransactionEventRecord, TransactionEventRetentionConfig,
     TransactionEventSchemaReadinessError, TransactionEventSink, index_transaction_event_partitions,
 };
 use axum::{
@@ -26,7 +26,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use base_observability_events::TransactionEvent;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use sqlx::{Executor, PgPool, migrate::Migrator, postgres::PgPoolOptions};
 use testcontainers::{ImageExt, core::ExecCommand, runners::AsyncRunner};
@@ -37,11 +37,31 @@ use tower::ServiceExt;
 /// Postgres 11, which lacks the partitioning features the schema relies on.
 const POSTGRES_TAG: &str = "17-alpine";
 
-/// Hot class partitions for one UTC day, as created by the baseline migration.
+/// Hot class day partitions of the v2 tree, which ingest writes.
 const HOT_PARTITIONS_SQL: &str = "SELECT c.relname::text FROM pg_inherits i \
      JOIN pg_class c ON c.oid = i.inhrelid \
-     WHERE i.inhparent = 'transaction_events_hot'::regclass \
+     WHERE i.inhparent = 'transaction_events_v2_hot'::regclass \
      ORDER BY c.relname";
+
+/// Day partitions of the legacy tree, across all classes.
+const LEGACY_PARTITIONS_SQL: &str = "SELECT c.relname::text FROM pg_inherits i \
+     JOIN pg_class c ON c.oid = i.inhrelid \
+     WHERE i.inhparent IN ('transaction_events_hot'::regclass, \
+         'transaction_events_warm'::regclass, 'transaction_events_cold'::regclass) \
+     ORDER BY c.relname";
+
+/// Transaction hash shared by legacy and v2 rows in read-through tests.
+const SHARED_TX_HASH: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+/// Block hash shared by legacy and v2 rows in read-through tests.
+const SHARED_BLOCK_HASH: &str =
+    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+/// Block number shared by legacy and v2 rows in read-through tests.
+const SHARED_BLOCK_NUMBER: u64 = 456;
+
+/// Bundle hash shared by legacy and v2 rows in read-through tests.
+const SHARED_BUNDLE_HASH: &str = "0xbundle-shared";
 
 /// Committed schema that the migrations must produce, from any starting state.
 const SCHEMA_SNAPSHOT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/schema.sql");
@@ -169,13 +189,15 @@ fn utc_today_at(hour: u32, minute: u32, second: u32) -> chrono::DateTime<Utc> {
 
 async fn cleanup(pool: &PgPool, event_id: &str) {
     let _ = pool
-        .execute(sqlx::query("DELETE FROM transaction_events WHERE event_id = $1").bind(event_id))
+        .execute(
+            sqlx::query("DELETE FROM transaction_events_v2 WHERE event_id = $1").bind(event_id),
+        )
         .await;
 }
 
 async fn event_ids_like(pool: &PgPool, prefix: &str) -> anyhow::Result<Vec<String>> {
     Ok(sqlx::query_scalar(
-        "SELECT event_id FROM transaction_events WHERE event_id LIKE $1 ORDER BY event_id",
+        "SELECT event_id FROM transaction_events_v2 WHERE event_id LIKE $1 ORDER BY event_id",
     )
     .bind(format!("{prefix}-%"))
     .fetch_all(pool)
@@ -184,6 +206,41 @@ async fn event_ids_like(pool: &PgPool, prefix: &str) -> anyhow::Result<Vec<Strin
 
 async fn hot_partitions(pool: &PgPool) -> anyhow::Result<Vec<String>> {
     Ok(sqlx::query_scalar(HOT_PARTITIONS_SQL).fetch_all(pool).await?)
+}
+
+async fn legacy_partitions(pool: &PgPool) -> anyhow::Result<Vec<String>> {
+    Ok(sqlx::query_scalar(LEGACY_PARTITIONS_SQL).fetch_all(pool).await?)
+}
+
+/// Inserts one row into the legacy tree as the previous release wrote it,
+/// with the shared hashes and block number. The transaction hash is stored in
+/// uppercase hex, as some early legacy rows were.
+async fn insert_legacy_row(
+    pool: &PgPool,
+    event_id: &str,
+    event_type: &str,
+    retention_class: &str,
+    event_time: DateTime<Utc>,
+    data: Value,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "INSERT INTO transaction_events \
+         (event_id, schema_version, event_time, event_date, retention_class, producer, \
+          event_type, network, tx_hash, block_hash, block_number, data) \
+         VALUES ($1, 'transaction-event/v1', $2, ($2 AT TIME ZONE 'UTC')::date, $3, \
+                 'base-builder', $4, 'base-mainnet', $5, $6, $7, $8)",
+    )
+    .bind(event_id)
+    .bind(event_time)
+    .bind(retention_class)
+    .bind(event_type)
+    .bind(format!("0x{}", SHARED_TX_HASH[2..].to_ascii_uppercase()))
+    .bind(SHARED_BLOCK_HASH)
+    .bind(i64::try_from(SHARED_BLOCK_NUMBER)?)
+    .bind(data)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 /// Writes the legacy pre-partition migrations up to and including
@@ -262,7 +319,7 @@ async fn post_batch(
 
 async fn count_events_with_prefix(pool: &PgPool, event_prefix: &str) -> anyhow::Result<i64> {
     let count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM transaction_events WHERE event_id LIKE $1")
+        sqlx::query_as("SELECT COUNT(*) FROM transaction_events_v2 WHERE event_id LIKE $1")
             .bind(format!("{event_prefix}-%"))
             .fetch_one(pool)
             .await?;
@@ -300,7 +357,7 @@ async fn transaction_events_unready_when_migration_version_is_missing() -> anyho
             required_version
         } if required_version == expected_version
     ));
-    assert!(err.to_string().contains("001_transaction_events_partitioned.sql"));
+    assert!(err.to_string().contains("003_transaction_events_v2.sql"));
 
     Ok(())
 }
@@ -309,13 +366,13 @@ async fn transaction_events_unready_when_migration_version_is_missing() -> anyho
 fn transaction_events_migration_version_matches_sqlx_migration_metadata() -> anyhow::Result<()> {
     assert_eq!(
         PgTransactionEventSink::required_migration_version().map_err(anyhow::Error::msg)?,
-        1,
-        "001_transaction_events_partitioned.sql should resolve to sqlx migration version 1"
+        3,
+        "003_transaction_events_v2.sql should resolve to sqlx migration version 3"
     );
     Ok(())
 }
 
-/// Legacy 001 also recorded version 1, so readiness must check the checksum.
+/// Legacy 003 also recorded version 3, so readiness must check the checksum.
 #[tokio::test]
 async fn transaction_events_unready_on_pre_partition_schema() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
@@ -376,7 +433,7 @@ async fn postgres_partition_migration_discards_pre_partition_rows() -> anyhow::R
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1, 2], "legacy history is replaced by the new migrations");
+    assert_eq!(versions, vec![1, 2, 3], "legacy history is replaced by the new migrations");
     PgTransactionEventSink::connect(&harness.database_url, 1).await?.check_schema_ready().await?;
     harness.assert_schema_matches_snapshot().await?;
 
@@ -393,7 +450,7 @@ async fn postgres_fresh_database_runs_partitioned_migrations() -> anyhow::Result
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1, 2]);
+    assert_eq!(versions, vec![1, 2, 3]);
 
     Ok(())
 }
@@ -440,7 +497,7 @@ async fn postgres_migrates_past_an_unrecorded_004_with_an_invalid_index() -> any
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1, 2], "004 is never run, and legacy history is replaced");
+    assert_eq!(versions, vec![1, 2, 3], "004 is never run, and legacy history is replaced");
     let (valid, partitioned): (bool, bool) = sqlx::query_as(
         "SELECT i.indisvalid, c.relkind = 'I' FROM pg_index i \
          JOIN pg_class c ON c.oid = i.indexrelid \
@@ -625,26 +682,36 @@ async fn postgres_schema_is_partitioned_by_class_then_day() -> anyhow::Result<()
     PgTransactionEventSink::migrate(&harness.database_url).await?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
 
-    let class_partitions: Vec<String> = sqlx::query_scalar(
-        "SELECT c.relname::text FROM pg_inherits i \
-         JOIN pg_class c ON c.oid = i.inhrelid \
-         WHERE i.inhparent = 'transaction_events'::regclass \
-         ORDER BY c.relname",
-    )
-    .fetch_all(&pool)
-    .await?;
+    let class_partitions = |parent: &'static str| {
+        sqlx::query_scalar::<_, String>(
+            "SELECT c.relname::text FROM pg_inherits i \
+             JOIN pg_class c ON c.oid = i.inhrelid \
+             WHERE i.inhparent = $1::regclass \
+             ORDER BY c.relname",
+        )
+        .bind(parent)
+        .fetch_all(&pool)
+    };
     assert_eq!(
-        class_partitions,
+        class_partitions("transaction_events").await?,
         vec!["transaction_events_cold", "transaction_events_hot", "transaction_events_warm"]
     );
+    assert_eq!(
+        class_partitions("transaction_events_v2").await?,
+        vec![
+            "transaction_events_v2_cold",
+            "transaction_events_v2_hot",
+            "transaction_events_v2_warm"
+        ]
+    );
 
-    // The baseline migration seeds each default retention window (hot is 3 days)
+    // The v2 migration seeds each default retention window (hot is 3 days)
     // through three days ahead.
     let today = Utc::now().date_naive();
     let expected: Vec<String> = (-3..=3)
         .map(|offset| {
             format!(
-                "transaction_events_hot_{}",
+                "transaction_events_v2_hot_{}",
                 (today + chrono::Duration::days(offset)).format("%Y%m%d")
             )
         })
@@ -673,17 +740,22 @@ async fn postgres_rejected_index_includes_builder_expired() -> anyhow::Result<()
     PgTransactionEventSink::migrate(&harness.database_url).await?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
 
-    let indexdef: String = sqlx::query_scalar(
+    let indexdefs: Vec<String> = sqlx::query_scalar(
         "SELECT indexdef FROM pg_indexes \
          WHERE schemaname = 'public' \
-           AND indexname = 'transaction_events_rejected_event_time_idx'",
+           AND indexname IN \
+               ('transaction_events_rejected_event_time_idx', \
+                'transaction_events_v2_rejected_event_time_idx')",
     )
-    .fetch_one(&pool)
+    .fetch_all(&pool)
     .await?;
-    assert!(
-        indexdef.contains("BUILDER_EXPIRED"),
-        "rejected index should include BUILDER_EXPIRED: {indexdef}"
-    );
+    assert_eq!(indexdefs.len(), 2, "both trees have the rejected index");
+    for indexdef in indexdefs {
+        assert!(
+            indexdef.contains("BUILDER_EXPIRED"),
+            "rejected index should include BUILDER_EXPIRED: {indexdef}"
+        );
+    }
 
     Ok(())
 }
@@ -704,7 +776,7 @@ async fn postgres_sink_chunks_large_direct_inserts() -> anyhow::Result<()> {
     assert_eq!(outcome.inserted_event_ids.len(), event_count);
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
     let count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM transaction_events WHERE event_id LIKE $1")
+        sqlx::query_as("SELECT COUNT(*) FROM transaction_events_v2 WHERE event_id LIKE $1")
             .bind(format!("{event_prefix}-%"))
             .fetch_one(&pool)
             .await?;
@@ -826,30 +898,25 @@ async fn postgres_sink_dedupes_retried_events_and_routes_by_class() -> anyhow::R
     let retry = sink.insert_events(&events).await?;
     assert!(retry.inserted_event_ids.is_empty(), "retried events must conflict");
 
-    let mut same_day = events[0].clone();
-    same_day.event_time = utc_today_at(0, 0, 10);
-    let mut later_same_day = same_day.clone();
-    later_same_day.event_time = utc_today_at(0, 0, 20);
-    let mut next_day = same_day.clone();
-    next_day.event_id = format!("{}-reemitted", unique_event_id());
-    next_day.event_time = utc_today_at(0, 0, 10) - chrono::Duration::days(1);
-    let mut reemitted = next_day.clone();
-    reemitted.event_time = utc_today_at(0, 0, 10);
-    assert_eq!(
-        sink.insert_events(&[same_day]).await?.inserted_event_ids.len(),
-        0,
-        "an event_id already stored today dedupes regardless of event_time"
+    let mut first_in_hour = event(&format!("{}-reemitted", unique_event_id()));
+    first_in_hour.event_time = utc_today_at(0, 0, 10);
+    let mut later_same_hour = first_in_hour.clone();
+    later_same_hour.event_time = utc_today_at(0, 59, 50);
+    let mut next_hour = first_in_hour.clone();
+    next_hour.event_time = utc_today_at(1, 0, 10);
+    assert_eq!(sink.insert_events(&[first_in_hour]).await?.inserted_event_ids.len(), 1);
+    assert!(
+        sink.insert_events(&[later_same_hour]).await?.inserted_event_ids.is_empty(),
+        "an event_id already stored this UTC hour dedupes regardless of event_time"
     );
-    assert!(sink.insert_events(&[later_same_day]).await?.inserted_event_ids.is_empty());
-    assert_eq!(sink.insert_events(&[next_day]).await?.inserted_event_ids.len(), 1);
     assert_eq!(
-        sink.insert_events(&[reemitted]).await?.inserted_event_ids.len(),
+        sink.insert_events(&[next_hour]).await?.inserted_event_ids.len(),
         1,
-        "dedupe is per UTC day, so a re-emission on another day stores a row"
+        "dedupe is per UTC hour, so a re-emission in another hour stores a row"
     );
 
     let classes: Vec<(String, String)> = sqlx::query_as(
-        "SELECT event_id, tableoid::regclass::text FROM transaction_events \
+        "SELECT event_id, tableoid::regclass::text FROM transaction_events_v2 \
          WHERE event_id LIKE $1 ORDER BY event_id",
     )
     .bind(format!("{event_prefix}-%"))
@@ -859,9 +926,9 @@ async fn postgres_sink_dedupes_retried_events_and_routes_by_class() -> anyhow::R
     assert_eq!(
         classes,
         vec![
-            (format!("{event_prefix}-cold"), format!("transaction_events_cold_{today}")),
-            (format!("{event_prefix}-hot"), format!("transaction_events_hot_{today}")),
-            (format!("{event_prefix}-warm"), format!("transaction_events_warm_{today}")),
+            (format!("{event_prefix}-cold"), format!("transaction_events_v2_cold_{today}")),
+            (format!("{event_prefix}-hot"), format!("transaction_events_v2_hot_{today}")),
+            (format!("{event_prefix}-warm"), format!("transaction_events_v2_warm_{today}")),
         ]
     );
 
@@ -921,13 +988,45 @@ async fn postgres_maintenance_backfills_window_and_drops_expired_days() -> anyho
     let later = sink.maintain_partitions_at(now + chrono::Duration::days(5)).await?;
     assert!(later.partitions_dropped > 0);
     assert_eq!(event_ids_like(&pool, &event_prefix).await?, vec![format!("{event_prefix}-warm")]);
-    let today_hot = format!("transaction_events_hot_{}", now.date_naive().format("%Y%m%d"));
+    let today_hot = format!("transaction_events_v2_hot_{}", now.date_naive().format("%Y%m%d"));
     assert!(!hot_partitions(&pool).await?.contains(&today_hot));
     let leftover: Option<String> = sqlx::query_scalar("SELECT to_regclass($1)::text")
         .bind(&today_hot)
         .fetch_one(&pool)
         .await?;
     assert_eq!(leftover, None, "dropped partitions are not left detached");
+
+    Ok(())
+}
+
+/// The legacy tree gets no new days, and its seeded days drop on the same
+/// schedule as v2 days, so it empties without a manual cleanup.
+#[tokio::test]
+async fn postgres_maintenance_drains_legacy_tree_without_creating_days() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let now = Utc::now();
+    insert_legacy_row(&pool, &unique_event_id(), "BUILDER_ACCEPTED", "hot", now, json!({})).await?;
+    let seeded = legacy_partitions(&pool).await?;
+    assert!(!seeded.is_empty(), "001 seeds legacy day partitions");
+
+    sink.maintain_partitions_at(now + chrono::Duration::days(1)).await?;
+    let after_one_day = legacy_partitions(&pool).await?;
+    assert!(
+        after_one_day.iter().all(|name| seeded.contains(name)),
+        "maintenance does not create legacy days"
+    );
+
+    // Past the 30-day cold window, every seeded legacy day has aged out.
+    sink.maintain_partitions_at(now + chrono::Duration::days(40)).await?;
+    assert!(legacy_partitions(&pool).await?.is_empty());
+    let legacy_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM transaction_events").fetch_one(&pool).await?;
+    assert_eq!(legacy_rows, 0);
+    sink.check_schema_ready().await?;
+    assert!(sink.events_by_block_number(SHARED_BLOCK_NUMBER, 10).await?.is_empty());
 
     Ok(())
 }
@@ -940,7 +1039,7 @@ async fn postgres_maintenance_drops_leftover_detached_partitions() -> anyhow::Re
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
     let ahead = Utc::now().date_naive() + chrono::Duration::days(3);
     let detached: bool =
-        sqlx::query_scalar("SELECT transaction_events_detach_partition('hot', $1)")
+        sqlx::query_scalar("SELECT transaction_events_v2_detach_partition('hot', $1)")
             .bind(ahead)
             .fetch_one(&pool)
             .await?;
@@ -949,7 +1048,7 @@ async fn postgres_maintenance_drops_leftover_detached_partitions() -> anyhow::Re
     let outcome = sink.maintain_partitions().await?;
 
     assert!(outcome.partitions_dropped >= 1, "leftover detached table is dropped");
-    let name = format!("transaction_events_hot_{}", ahead.format("%Y%m%d"));
+    let name = format!("transaction_events_v2_hot_{}", ahead.format("%Y%m%d"));
     assert!(
         hot_partitions(&pool).await?.contains(&name),
         "the in-window day is recreated as an attached partition"
@@ -974,7 +1073,7 @@ async fn postgres_maintenance_skips_ddl_that_hits_lock_timeout() -> anyhow::Resu
     // A long-running reader of the hot class blocks DETACH's ACCESS
     // EXCLUSIVE lock but not ATTACH's SHARE UPDATE EXCLUSIVE lock.
     let mut reader = pool.begin().await?;
-    sqlx::query("LOCK TABLE transaction_events_hot IN ACCESS SHARE MODE")
+    sqlx::query("LOCK TABLE transaction_events_v2_hot IN ACCESS SHARE MODE")
         .execute(&mut *reader)
         .await?;
     let before = hot_partitions(&pool).await?;
@@ -1098,7 +1197,7 @@ async fn postgres_runtime_role_maintains_partitions_through_definer_functions() 
 
     let runtime = PgPoolOptions::new().max_connections(1).connect(&runtime_url).await?;
     let partition = format!(
-        "transaction_events_hot_{}",
+        "transaction_events_v2_hot_{}",
         (Utc::now().date_naive() + chrono::Duration::days(3)).format("%Y%m%d")
     );
     let direct_drop = runtime.execute(format!("DROP TABLE {partition}").as_str()).await;
@@ -1108,10 +1207,14 @@ async fn postgres_runtime_role_maintains_partitions_through_definer_functions() 
         .max_connections(1)
         .connect(&harness.url_for("unrelated", "unrelated"))
         .await?;
-    let call = sqlx::query("SELECT transaction_events_detach_partition('hot', current_date)")
-        .execute(&unrelated)
-        .await;
-    assert!(call.is_err(), "partition functions are not executable by PUBLIC");
+    for function in
+        ["transaction_events_detach_partition", "transaction_events_v2_detach_partition"]
+    {
+        let call = sqlx::query(&format!("SELECT {function}('hot', current_date)"))
+            .execute(&unrelated)
+            .await;
+        assert!(call.is_err(), "{function} is not executable by PUBLIC");
+    }
 
     Ok(())
 }
@@ -1127,15 +1230,14 @@ async fn postgres_insert_fails_fast_when_conflicting_row_is_locked() -> anyhow::
 
     let mut held = pool.begin().await?;
     sqlx::query(
-        "INSERT INTO transaction_events \
-         (event_id, schema_version, event_time, event_date, retention_class, producer, \
+        "INSERT INTO transaction_events_v2 \
+         (event_id, schema_version, event_time, event_hour, retention_class, producer, \
           event_type, network, data) \
-         VALUES ($1, 'transaction-event/v1', $2, $3, 'hot', 'base-builder', \
-                 'BUILDER_ACCEPTED', 'base-mainnet', '{}'::jsonb)",
+         VALUES ($1, 'transaction-event/v1', $2, date_trunc('hour', $2, 'UTC'), 'hot', \
+                 'base-builder', 'BUILDER_ACCEPTED', 'base-mainnet', '{}'::jsonb)",
     )
     .bind(&event_id)
     .bind(pending.event_time)
-    .bind(pending.event_time.date_naive())
     .execute(&mut *held)
     .await?;
 
@@ -1195,7 +1297,7 @@ async fn postgres_sink_persists_and_dedupes_by_event_id() {
     assert!(second.inserted_event_ids.is_empty());
 
     let count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM transaction_events WHERE event_id = $1")
+        sqlx::query_as("SELECT COUNT(*) FROM transaction_events_v2 WHERE event_id = $1")
             .bind(&event_id)
             .fetch_one(&pool)
             .await
@@ -1235,28 +1337,184 @@ async fn postgres_query_finds_events_by_normalized_tx_hash() -> anyhow::Result<(
     Ok(())
 }
 
+/// Rows written to the legacy tree by the previous release stay readable
+/// through every query API until they age out.
 #[tokio::test]
-async fn postgres_query_finds_legacy_uppercase_tx_hash_rows() -> anyhow::Result<()> {
+async fn postgres_queries_read_through_legacy_rows() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
     PgTransactionEventSink::migrate(&harness.database_url).await?;
     let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
-    let event_id = unique_event_id();
-    sink.insert_events(&[event(&event_id)]).await?;
-    sqlx::query("UPDATE transaction_events SET tx_hash = $1 WHERE event_id = $2")
-        .bind("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-        .bind(&event_id)
-        .execute(&pool)
-        .await?;
+    let prefix = unique_event_id();
+    let now = Utc::now();
+    let legacy_accepted = format!("{prefix}-a-legacy-accepted");
+    let legacy_failed = format!("{prefix}-b-legacy-failed");
+    let v2_rejected = format!("{prefix}-c-v2-rejected");
 
-    let records = sink
-        .events_by_transaction_hash(
-            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            10,
+    insert_legacy_row(
+        &pool,
+        &legacy_accepted,
+        "BUILDER_ACCEPTED",
+        "hot",
+        now - chrono::Duration::seconds(20),
+        json!({ "bundle_hash": SHARED_BUNDLE_HASH }),
+    )
+    .await?;
+    insert_legacy_row(
+        &pool,
+        &legacy_failed,
+        "SIMULATION_FAILED",
+        "cold",
+        now - chrono::Duration::seconds(10),
+        json!({}),
+    )
+    .await?;
+    let mut current = event_with_type(&v2_rejected, "BUILDER_REJECTED");
+    current.event_time = now;
+    current.tx_hash = Some(SHARED_TX_HASH.parse()?);
+    current.block_hash = Some(SHARED_BLOCK_HASH.parse()?);
+    current.block_number = Some(SHARED_BLOCK_NUMBER);
+    current.data.insert("bundle_hash".to_string(), json!(SHARED_BUNDLE_HASH));
+    sink.insert_events(&[current]).await?;
+
+    let ids = |records: Vec<TransactionEventRecord>| {
+        records.into_iter().map(|record| record.event.event_id).collect::<Vec<_>>()
+    };
+    let oldest_first = vec![legacy_accepted.clone(), legacy_failed.clone(), v2_rejected.clone()];
+
+    let by_tx_hash = sink.events_by_transaction_hash(SHARED_TX_HASH, 10).await?;
+    let expected_hash = Some(SHARED_TX_HASH.parse()?);
+    assert!(by_tx_hash.iter().all(|record| record.event.tx_hash == expected_hash));
+    assert_eq!(ids(by_tx_hash), oldest_first);
+    assert_eq!(
+        ids(sink.events_by_transaction_hash(&SHARED_TX_HASH.to_ascii_uppercase(), 10).await?),
+        oldest_first
+    );
+    assert_eq!(
+        ids(sink.events_by_transaction_hash(SHARED_TX_HASH, 2).await?),
+        vec![legacy_accepted.clone(), legacy_failed.clone()],
+        "the limit applies to the union of both trees"
+    );
+    assert_eq!(
+        ids(sink.events_by_block_hash(&SHARED_BLOCK_HASH.to_ascii_uppercase(), 10).await?),
+        oldest_first
+    );
+    assert_eq!(ids(sink.events_by_block_number(SHARED_BLOCK_NUMBER, 10).await?), oldest_first);
+    assert_eq!(
+        ids(sink.events_by_bundle(SHARED_BUNDLE_HASH, 10).await?),
+        vec![legacy_accepted.clone(), v2_rejected.clone()]
+    );
+    assert_eq!(
+        ids(sink
+            .rejected_transaction_events(RejectedTransactionEventQuery {
+                from_block: Some(SHARED_BLOCK_NUMBER),
+                ..Default::default()
+            })
+            .await?),
+        vec![v2_rejected, legacy_failed]
+    );
+
+    Ok(())
+}
+
+/// ETL reads `transaction_events_all` with the legacy column names and types.
+#[tokio::test]
+async fn postgres_all_view_presents_both_trees_in_legacy_layout() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let prefix = unique_event_id();
+    let legacy_id = format!("{prefix}-legacy");
+    let v2_id = format!("{prefix}-v2");
+    insert_legacy_row(&pool, &legacy_id, "BUILDER_ACCEPTED", "hot", Utc::now(), json!({})).await?;
+    let mut current = event(&v2_id);
+    current.tx_hash = Some(SHARED_TX_HASH.parse()?);
+    current.block_hash = Some(SHARED_BLOCK_HASH.parse()?);
+    sink.insert_events(&[current]).await?;
+
+    let columns = |relation: &'static str| {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT column_name::text, data_type::text FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = $1 ORDER BY ordinal_position",
         )
-        .await?;
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].event.event_id, event_id);
+        .bind(relation)
+        .fetch_all(&pool)
+    };
+    assert_eq!(columns("transaction_events_all").await?, columns("transaction_events").await?);
+
+    let rows: Vec<(String, Option<String>, Option<String>, bool)> = sqlx::query_as(
+        "SELECT event_id, tx_hash, block_hash, event_date = (event_time AT TIME ZONE 'UTC')::date \
+         FROM transaction_events_all WHERE event_id LIKE $1 ORDER BY event_id",
+    )
+    .bind(format!("{prefix}-%"))
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(
+        rows,
+        vec![
+            (
+                legacy_id,
+                Some(format!("0x{}", SHARED_TX_HASH[2..].to_ascii_uppercase())),
+                Some(SHARED_BLOCK_HASH.to_string()),
+                true
+            ),
+            (v2_id, Some(SHARED_TX_HASH.to_string()), Some(SHARED_BLOCK_HASH.to_string()), true),
+        ]
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_v2_keys_lead_with_event_hour_and_store_binary_hashes() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+
+    let key: Vec<String> = sqlx::query_scalar(
+        "SELECT a.attname::text FROM pg_index i \
+         CROSS JOIN LATERAL unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord) \
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum \
+         WHERE i.indrelid = 'transaction_events_v2'::regclass AND i.indisprimary \
+         ORDER BY k.ord",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(key, vec!["event_hour", "retention_class", "event_id"]);
+
+    let columns: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT a.attname::text, format_type(a.atttypid, a.atttypmod), c.collname::text \
+         FROM pg_attribute a LEFT JOIN pg_collation c ON c.oid = a.attcollation \
+         WHERE a.attrelid = 'transaction_events_v2'::regclass \
+           AND a.attname IN ('event_id', 'tx_hash', 'block_hash') \
+         ORDER BY a.attname",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(
+        columns,
+        vec![
+            ("block_hash".to_string(), "bytea".to_string(), None),
+            ("event_id".to_string(), "text".to_string(), Some("C".to_string())),
+            ("tx_hash".to_string(), "bytea".to_string(), None),
+        ]
+    );
+
+    // The CHECK keeps event_hour consistent with event_time for writers that
+    // bypass audit-archiver.
+    let mismatched = sqlx::query(
+        "INSERT INTO transaction_events_v2 \
+         (event_id, schema_version, event_time, event_hour, retention_class, producer, \
+          event_type, data) \
+         VALUES ('mismatched', 'transaction-event/v1', now(), \
+                 date_trunc('hour', now(), 'UTC') + interval '1 hour', 'hot', 'base-builder', \
+                 'BUILDER_ACCEPTED', '{}'::jsonb)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap_err();
+    assert_eq!(mismatched.as_database_error().and_then(|err| err.code()).as_deref(), Some("23514"));
 
     Ok(())
 }

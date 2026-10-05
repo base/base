@@ -9,11 +9,14 @@ idempotently in Postgres, and provides JSON-RPC queries by transaction, block,
 bundle, and rejection. Postgres schema readiness is checked before the
 `audit-archiver` binary starts serving; see the binary README for the
 S3 removal and rollout prerequisites.
-```
 
 ## Postgres schema
 
-`migrations/` holds the transaction event schema. `schema.sql` is a committed
+`migrations/` holds the transaction event schema. `001` creates the legacy
+`transaction_events` tree, `002` registers its `ingested_at` BRIN index, and
+`003` creates `transaction_events_v2`, which ingest writes, plus the
+`transaction_events_all` view over both trees. See the `audit-archiver`
+README for the cutover and legacy drain. `schema.sql` is a committed
 `pg_dump` of the schema those migrations produce, without dated day partitions.
 The Postgres integration tests fail if a fresh or upgraded database differs
 from it. After changing a migration, regenerate the snapshot and review the
