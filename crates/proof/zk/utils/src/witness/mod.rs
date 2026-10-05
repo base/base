@@ -6,7 +6,7 @@ pub mod preimage_store;
 
 use std::{fmt::Debug, sync::Arc};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use kzg_rs::{Blob, Bytes48};
 use preimage_store::PreimageStore;
@@ -30,7 +30,7 @@ pub trait WitnessData: Sized {
 
         println!("cycle-tracker-report-start: oracle-verify");
         // Check the preimages in the witness are valid.
-        owned_preimage_store.check_preimages().expect("Failed to validate preimages");
+        owned_preimage_store.check_preimages().context("Failed to validate preimages")?;
         println!("cycle-tracker-report-end: oracle-verify");
 
         // Create an Arc of the preimage store.
