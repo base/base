@@ -279,4 +279,11 @@ BEGIN
         GRANT EXECUTE ON FUNCTION transaction_events_v2_drop_detached_partition(TEXT, DATE)
             TO audit_archiver;
     END IF;
+
+    -- DataPilot extracts to the warehouse as a read-only role. SELECT on the
+    -- parent covers every leaf read through it, so leaves get no grants.
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'datapilot') THEN
+        GRANT SELECT ON transaction_events_v2 TO datapilot;
+        GRANT SELECT ON transaction_events_all TO datapilot;
+    END IF;
 END $$;

@@ -668,5 +668,7 @@ GRANT ALL ON FUNCTION public.transaction_events_v2_drop_detached_partition(p_cla
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.transaction_events TO audit_archiver;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.transaction_events_v2 TO audit_archiver;
+GRANT SELECT ON TABLE public.transaction_events_v2 TO datapilot;
 
 GRANT SELECT ON TABLE public.transaction_events_all TO audit_archiver;
+GRANT SELECT ON TABLE public.transaction_events_all TO datapilot;

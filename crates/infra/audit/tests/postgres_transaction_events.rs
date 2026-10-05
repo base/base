@@ -146,10 +146,12 @@ impl PostgresHarness {
         Ok(())
     }
 
-    /// Creates the runtime role, so the migrations' grants appear in the schema.
-    async fn create_runtime_role(&self) -> anyhow::Result<()> {
+    /// Creates the runtime and extraction roles, so the migrations' grants
+    /// appear in the schema.
+    async fn create_grantee_roles(&self) -> anyhow::Result<()> {
         let pool = PgPoolOptions::new().max_connections(1).connect(&self.database_url).await?;
         pool.execute("CREATE ROLE audit_archiver NOLOGIN").await?;
+        pool.execute("CREATE ROLE datapilot NOLOGIN").await?;
         Ok(())
     }
 }
@@ -412,7 +414,7 @@ async fn transaction_events_ready_after_required_migration() -> anyhow::Result<(
 #[tokio::test]
 async fn postgres_partition_migration_discards_pre_partition_rows() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
-    harness.create_runtime_role().await?;
+    harness.create_grantee_roles().await?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
     Migrator::new(legacy_migrations_through(4)?).await?.run(&pool).await?;
     sqlx::query(
@@ -446,6 +448,13 @@ async fn postgres_fresh_database_runs_partitioned_migrations() -> anyhow::Result
     PgTransactionEventSink::migrate(&harness.database_url).await?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
 
+    let grantees: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_roles WHERE rolname IN ('audit_archiver', 'datapilot')",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(grantees, 0, "migrations apply when the granted roles do not exist");
+
     let versions: Vec<i64> =
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
@@ -462,7 +471,7 @@ async fn postgres_fresh_database_runs_partitioned_migrations() -> anyhow::Result
 #[tokio::test]
 async fn postgres_migrates_past_an_unrecorded_004_with_an_invalid_index() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
-    harness.create_runtime_role().await?;
+    harness.create_grantee_roles().await?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
     Migrator::new(legacy_migrations_through(3)?).await?.run(&pool).await?;
     sqlx::query(
@@ -569,7 +578,7 @@ async fn postgres_migrate_refuses_to_reset_unrecognized_history() -> anyhow::Res
 #[tokio::test]
 async fn postgres_schema_matches_committed_snapshot() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
-    harness.create_runtime_role().await?;
+    harness.create_grantee_roles().await?;
     PgTransactionEventSink::migrate(&harness.database_url).await?;
 
     harness.assert_schema_matches_snapshot().await?;
@@ -1215,6 +1224,43 @@ async fn postgres_runtime_role_maintains_partitions_through_definer_functions() 
             .await;
         assert!(call.is_err(), "{function} is not executable by PUBLIC");
     }
+
+    Ok(())
+}
+
+/// The `datapilot` warehouse extraction role is read-only: it reads the v2
+/// parent and the view, with no leaf or write privileges.
+#[tokio::test]
+async fn postgres_datapilot_role_reads_v2_parent_and_view() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    let admin = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    admin.execute("CREATE ROLE datapilot LOGIN PASSWORD 'datapilot'").await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let event_id = unique_event_id();
+    sink.insert_events(&[event(&event_id)]).await?;
+
+    let datapilot = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&harness.url_for("datapilot", "datapilot"))
+        .await?;
+    for relation in ["transaction_events_v2", "transaction_events_all"] {
+        let count: i64 =
+            sqlx::query_scalar(&format!("SELECT count(*) FROM {relation} WHERE event_id = $1"))
+                .bind(&event_id)
+                .fetch_one(&datapilot)
+                .await?;
+        assert_eq!(count, 1, "datapilot reads {relation}");
+    }
+
+    let leaf = format!("transaction_events_v2_hot_{}", Utc::now().date_naive().format("%Y%m%d"));
+    let leaf_read = datapilot.execute(format!("SELECT 1 FROM {leaf} LIMIT 1").as_str()).await;
+    assert!(leaf_read.is_err(), "datapilot has no grant on leaf partitions");
+    let delete = sqlx::query("DELETE FROM transaction_events_v2 WHERE event_id = $1")
+        .bind(&event_id)
+        .execute(&datapilot)
+        .await;
+    assert!(delete.is_err(), "datapilot is read-only");
 
     Ok(())
 }

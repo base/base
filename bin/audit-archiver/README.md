@@ -98,12 +98,14 @@ from its read APIs until the next roll forward.
 `transaction_events_all` is a view over both trees in the legacy column
 layout: `event_date` instead of `event_hour`, and hashes as `0x` hex text.
 Consumers that read the table directly, such as incremental warehouse
-extraction, must switch to the view when this migration ships, and their role
-needs `SELECT` on it. Rows ingested before the switch are still selected by an
-`ingested_at` watermark afterward, so a delayed switch delays extraction
-without losing rows, as long as it happens before those rows age out. Filter
-the view by `ingested_at` or `event_time`; hash and `event_id` predicates on
-the view cannot use the v2 indexes.
+extraction, must move to the v2 tree or the view before the writer cutover.
+Migration 003 grants `SELECT` on `transaction_events_v2` and
+`transaction_events_all` to the `datapilot` extraction role when that role
+exists; it grants nothing on leaf partitions. Rows ingested before a switch are
+still selected by an `ingested_at` watermark afterward, so a delayed switch
+delays extraction without losing rows, as long as it happens before those rows
+age out. Filter the view by `ingested_at` or `event_time`; hash and `event_id`
+predicates on the view cannot use the v2 indexes.
 
 Classes: hot (high-volume proxy and builder-decision events), warm (ingress,
 simulation success, txpool-forward), and cold (failures, drops, inclusion,
