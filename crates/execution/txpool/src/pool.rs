@@ -185,19 +185,6 @@ where
         self
     }
 
-    /// Sets the operator-allowlisted EIP-8130 payers (see
-    /// [`MempoolGuard::with_allowlisted_payers`]). Call after
-    /// [`Self::with_guard_limits`] and before sharing the pool.
-    #[must_use]
-    pub fn with_allowlisted_payers(self, payers: impl IntoIterator<Item = Address>) -> Self {
-        {
-            let mut guard = self.guard.write();
-            let current = core::mem::replace(&mut *guard, MempoolGuard::unlimited());
-            *guard = current.with_allowlisted_payers(payers);
-        }
-        self
-    }
-
     /// Builds guard admission metadata carried by a validated EIP-8130 transaction.
     pub fn admission_for(transaction: &T) -> Option<Admission> {
         transaction.as_eip8130()?;
@@ -210,6 +197,7 @@ where
             sender_locked: class.sender_locked,
             payer_locked: class.payer_locked,
             payer_trusted: class.payer_trusted,
+            payer_allowlisted: class.payer_allowlisted,
             payer_balance: class.payer_balance,
             max_cost: class.max_cost,
             priority: transaction.priority_fee_or_price(),
@@ -1883,6 +1871,7 @@ mod tests {
             sender_locked: false,
             payer_locked: false,
             payer_trusted: false,
+            payer_allowlisted: false,
             payer_balance: U256::from(1_000_000),
             max_cost: U256::from(1_000),
         });
@@ -2527,6 +2516,7 @@ mod tests {
             sender_locked: false,
             payer_locked: true,
             payer_trusted: false,
+            payer_allowlisted: false,
             payer_balance: U256::from(1_000),
             max_cost: U256::from(1_000),
         });

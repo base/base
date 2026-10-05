@@ -15,7 +15,7 @@
 
 use std::collections::HashMap;
 
-use alloy_primitives::{Address, TxHash, U256, map::AddressSet};
+use alloy_primitives::{Address, TxHash, U256};
 
 use crate::{InflightCounters, InvalidationIndex, InvalidationKey, PayerBook, WatchSet};
 
@@ -95,6 +95,9 @@ pub struct LimitClass {
     pub payer_locked: bool,
     /// Whether the payer is balance-bounded (locked + trusted bytecode).
     pub payer_trusted: bool,
+    /// Whether the payer is operator-allowlisted (count-limited at its own cap
+    /// and balance-bounded through a payer book).
+    pub payer_allowlisted: bool,
     /// The payer's state balance, used to seed a balance-bounded payer book.
     pub payer_balance: U256,
     /// The maximum cost this transaction can charge the payer.
@@ -120,6 +123,9 @@ pub struct Admission {
     /// Whether the payer is balance-bounded (locked + trusted bytecode ⇒ the
     /// payer dimension is limited by balance rather than a count).
     pub payer_trusted: bool,
+    /// Whether the payer is operator-allowlisted (⇒ counted at
+    /// [`GuardLimits::allowlisted_payment_limit`] and also balance-bounded).
+    pub payer_allowlisted: bool,
     /// The payer's current balance, used to seed a balance-bounded payer book.
     pub payer_balance: U256,
     /// The maximum cost this transaction can charge the payer.
@@ -163,7 +169,6 @@ pub struct MempoolGuard {
     payer_books: HashMap<Address, PayerBook>,
     records: HashMap<TxHash, AdmissionRecord>,
     limits: GuardLimits,
-    allowlisted_payers: AddressSet,
 }
 
 impl MempoolGuard {
@@ -190,28 +195,16 @@ impl MempoolGuard {
             payer_books: HashMap::new(),
             records: HashMap::new(),
             limits,
-            allowlisted_payers: AddressSet::default(),
         }
-    }
-
-    /// Sets the operator-allowlisted payers. An allowlisted payer that is not
-    /// already trusted is limited to [`GuardLimits::allowlisted_payment_limit`]
-    /// inflight payments *and* bounded by its balance through a payer book: its
-    /// balance can still move, so the count caps the exposure while the book
-    /// tracks it against canonical balance updates.
-    #[must_use]
-    pub fn with_allowlisted_payers(mut self, payers: impl IntoIterator<Item = Address>) -> Self {
-        self.allowlisted_payers = payers.into_iter().collect();
-        self
     }
 
     /// How a payer's payments are bounded: `(booked, count_limit)`. Trusted
     /// payers are book-only (no count); allowlisted payers use both; every
     /// other payer is count-limited.
-    fn payment_bounds(&self, admission: &Admission) -> (bool, Option<u32>) {
+    const fn payment_bounds(&self, admission: &Admission) -> (bool, Option<u32>) {
         if admission.payer_trusted {
             (true, None)
-        } else if self.allowlisted_payers.contains(&admission.payer) {
+        } else if admission.payer_allowlisted {
             (true, Some(self.limits.allowlisted_payment_limit))
         } else {
             (false, Some(self.limits.payment_limit))
@@ -593,6 +586,7 @@ mod tests {
             sender_locked: false,
             payer_locked: false,
             payer_trusted: false,
+            payer_allowlisted: false,
             payer_balance: U256::from(1_000_000u64),
             max_cost: U256::from(max_cost),
             priority: 1,
@@ -697,10 +691,11 @@ mod tests {
     fn allowlisted_payer_is_bounded_by_count_and_balance() {
         let payer = addr(9);
         let limits = GuardLimits { allowlisted_payment_limit: 20, ..GuardLimits::default() };
-        let mut guard = MempoolGuard::new(limits).with_allowlisted_payers([payer]);
+        let mut guard = MempoolGuard::new(limits);
         let make = |h: u8, cost: u64| Admission {
             payer,
             payer_locked: true,
+            payer_allowlisted: true,
             payer_balance: U256::from(1_000u64),
             max_cost: U256::from(cost),
             ..self_pay(h, addr(h + 1), cost)
@@ -742,14 +737,14 @@ mod tests {
             ..self_pay(h, addr(h + 1), cost)
         };
 
-        // 6 sponsored txs of cost 15 = 90 ≤ 100: all admitted, beating the
-        // count limit of 4 because the payer is balance-bounded.
-        for i in 0..6u8 {
-            assert!(guard.try_admit(make(i, 15)).is_ok());
+        // 20 sponsored txs of cost 5 = 100 ≤ 100: all admitted, past the
+        // payment count limit because the payer is balance-bounded.
+        for i in 0..20u8 {
+            assert!(guard.try_admit(make(i, 5)).is_ok());
         }
-        // The 7th (total 105) exceeds the balance.
-        assert_eq!(guard.try_admit(make(6, 15)), Err(LimitRejection::PayerBalance));
-        assert_eq!(guard.len(), 6);
+        // The 21st (total 105) exceeds the balance.
+        assert_eq!(guard.try_admit(make(20, 5)), Err(LimitRejection::PayerBalance));
+        assert_eq!(guard.len(), 20);
     }
 
     #[test]
@@ -985,10 +980,11 @@ mod tests {
     fn insert_forced_allowlisted_replacement_overshooting_balance_falls_back_to_count_path() {
         let payer = addr(9);
         let limits = GuardLimits { allowlisted_payment_limit: 2, ..GuardLimits::default() };
-        let mut guard = MempoolGuard::new(limits).with_allowlisted_payers([payer]);
+        let mut guard = MempoolGuard::new(limits);
         let make = |h: u8, cost: u64| Admission {
             payer,
             payer_locked: true,
+            payer_allowlisted: true,
             payer_balance: U256::from(100u64),
             max_cost: U256::from(cost),
             watch_set: WatchSet::new().watch(InvalidationKey::Balance(payer)),

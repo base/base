@@ -1013,6 +1013,7 @@ where
                         .with_additional_trusted_delegation_targets(
                             additional_trusted_delegation_targets.clone(),
                         )
+                        .with_allowlisted_payers(allowlisted_payers.iter().copied())
                 });
 
         let mut final_pool_config = pool_config_overrides.apply(ctx.pool_config());
@@ -1025,9 +1026,8 @@ where
             final_pool_config.clone(),
         );
         let allowlisted_payer_count = allowlisted_payers.len();
-        let transaction_pool = BaseTransactionPool::new(transaction_pool, ordering)
-            .with_guard_limits(guard_limits)
-            .with_allowlisted_payers(allowlisted_payers);
+        let transaction_pool =
+            BaseTransactionPool::new(transaction_pool, ordering).with_guard_limits(guard_limits);
         spawn_maintenance_tasks(ctx, transaction_pool.clone(), &final_pool_config)?;
         let state_diff_events = BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
         ctx.task_executor().spawn_critical_task(

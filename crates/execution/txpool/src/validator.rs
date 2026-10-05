@@ -95,6 +95,7 @@ struct Eip8130ValidationState {
     sender_locked: bool,
     payer_locked: bool,
     payer_trusted: bool,
+    payer_allowlisted: bool,
     payer_max_cost: U256,
     /// Authorization reads and predicates used for build-time revalidation.
     manifest: WatchManifest,
@@ -682,6 +683,9 @@ pub struct BaseTransactionValidator<Client, Tx, Evm> {
     /// implementations. Precomputed so classification is an O(1) code-hash lookup
     /// with no code fetch or bytecode parsing.
     trusted_proxy_code_hashes: Arc<HashSet<B256>>,
+    /// Operator-allowlisted payers: count-limited at their own cap and
+    /// balance-bounded through a payer book.
+    allowlisted_payers: Arc<AddressSet>,
     limit_class_cache: Arc<RwLock<LimitClassCache>>,
     limit_class_cache_generation: Arc<AtomicU64>,
 }
@@ -750,6 +754,16 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
         }
     }
 
+    /// Sets the operator-allowlisted payers. An allowlisted payer that is not
+    /// trusted is limited to [`crate::GuardLimits::allowlisted_payment_limit`]
+    /// inflight payments and also balance-bounded through a payer book: its
+    /// balance can still move, so the count caps the exposure while the book
+    /// tracks it against canonical balance updates.
+    #[must_use]
+    pub fn with_allowlisted_payers(self, payers: impl IntoIterator<Item = Address>) -> Self {
+        Self { allowlisted_payers: Arc::new(payers.into_iter().collect()), ..self }
+    }
+
     /// Returns the cache generation used to close validation/invalidation races.
     pub fn limit_class_cache_generation(&self) -> u64 {
         self.limit_class_cache_generation.load(Ordering::Acquire)
@@ -775,19 +789,22 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
                 }
             }
             // A balance change is not part of the cached classification, but it
-            // seeds a trusted payer's `PayerBook` on first admission.
-            // `on_balance_changed` only corrects payers that already have a book;
-            // a trusted payer with no book yet would otherwise seed it from the
-            // (now stale) validation snapshot. Advance the generation so an
-            // admission whose validation predates this diff re-validates against
-            // the fresh balance.
+            // seeds a booked (trusted or allowlisted) payer's `PayerBook` on
+            // first admission. `on_balance_changed` only corrects payers that
+            // already have a book; a booked payer with no book yet would
+            // otherwise seed it from the (now stale) validation snapshot.
+            // Advance the generation so an admission whose validation predates
+            // this diff re-validates against the fresh balance.
             //
-            // Restricted to *known-trusted* payers: only they use the balance
-            // book, and a trusted payer with a pending transaction was just
-            // classified into the cache during that validation. Ordinary balance
-            // churn — the vast majority, and unrelated to any book — must not
-            // advance the generation and bounce unrelated admissions.
-            if diff.balance.is_some() && cache.is_trusted_cached(diff.address) {
+            // Restricted to payers that use a book: known-trusted payers (a
+            // trusted payer with a pending transaction was just classified into
+            // the cache during that validation) and allowlisted payers. Ordinary
+            // balance churn — the vast majority, and unrelated to any book —
+            // must not advance the generation and bounce unrelated admissions.
+            if diff.balance.is_some()
+                && (cache.is_trusted_cached(diff.address)
+                    || self.allowlisted_payers.contains(&diff.address))
+            {
                 changed = true;
             }
         }
@@ -841,6 +858,7 @@ where
             require_l1_data_gas_fee: true,
             trusted_delegation_targets: Arc::new(trusted_delegation_targets),
             trusted_proxy_code_hashes: Arc::new(trusted_proxy_code_hashes),
+            allowlisted_payers: Arc::default(),
             limit_class_cache: Arc::default(),
             limit_class_cache_generation: Arc::default(),
         }
@@ -936,6 +954,7 @@ where
                 sender_locked: state.sender_locked,
                 payer_locked: state.payer_locked,
                 payer_trusted: state.payer_trusted,
+                payer_allowlisted: state.payer_allowlisted,
                 payer_balance: state.payer_balance,
                 max_cost: state.payer_max_cost,
             });
@@ -1303,6 +1322,7 @@ where
             sender_locked: sender_locked || !keystore,
             payer_locked: payer_locked || !keystore,
             payer_trusted,
+            payer_allowlisted: self.allowlisted_payers.contains(&payer),
             payer_max_cost,
             manifest,
         })
@@ -2372,6 +2392,44 @@ mod tests {
             code_changed: false,
             changed_slots: Vec::new(),
         }
+    }
+
+    /// An allowlisted payer also seeds a balance book on first admission, so
+    /// its balance change advances the generation like a trusted payer's: an
+    /// admission validated against the old balance re-validates instead of
+    /// seeding a stale book.
+    #[test]
+    fn allowlisted_payer_balance_diff_advances_classification_generation() {
+        let allowlisted = Address::repeat_byte(7);
+        let validator = build_test_validator().with_allowlisted_payers([allowlisted]);
+        let before = validator.limit_class_cache_generation();
+        validator.invalidate_limit_class_cache(&[balance_diff(Address::repeat_byte(8), 1)]);
+        assert_eq!(validator.limit_class_cache_generation(), before);
+        validator.invalidate_limit_class_cache(&[balance_diff(allowlisted, 1)]);
+        assert!(validator.limit_class_cache_generation() > before);
+    }
+
+    /// Validation classifies an allowlisted payer so admission can count and
+    /// book it.
+    #[test]
+    fn validation_classifies_allowlisted_payers() {
+        let signer = PrivateKeySigner::random();
+        let sender = signer.address();
+        let tx = TxEip8130 { gas_limit: 100_000, ..minimal_valid_eoa_tx() };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let funded = ExtendedAccount::new(0, U256::from(1_000_000_000_000u64));
+
+        let ordinary = build_test_validator_with_account(sender, funded.clone())
+            .validate_eip8130_full(&signed)
+            .unwrap();
+        assert!(!ordinary.payer_allowlisted);
+        let allowlisted = build_test_validator_with_account(sender, funded)
+            .with_allowlisted_payers([sender])
+            .validate_eip8130_full(&signed)
+            .unwrap();
+        assert!(allowlisted.payer_allowlisted, "the self-paying sender is its own payer");
     }
 
     #[test]
