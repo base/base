@@ -25,12 +25,12 @@ async fn can_sync() -> eyre::Result<()> {
     let tip_index: usize = tip - 1;
     let reorg_depth = 2;
 
-    // On first node, create a chain up to block number 90a
+    // On first node, create a canonical chain of `tip` blocks.
     let canonical_payload_chain = advance_chain(tip, &mut first_node, Arc::clone(&wallet)).await?;
     let canonical_chain =
         canonical_payload_chain.iter().map(|p| p.block().hash()).collect::<Vec<_>>();
 
-    // On second node, sync optimistically up to block number 88a
+    // On second node, sync optimistically up to block `tip - reorg_depth - 1`.
     second_node.update_optimistic_forkchoice(canonical_chain[tip_index - reorg_depth - 1]).await?;
     second_node
         .wait_block(
@@ -47,27 +47,31 @@ async fn can_sync() -> eyre::Result<()> {
         .await?;
     second_node.canonical_stream.next().await.unwrap();
 
-    // Trigger backfill sync until block 80
+    // Trigger backfill sync on third node up to block `tip - 10`.
     third_node
         .update_forkchoice(canonical_chain[tip_index - 10], canonical_chain[tip_index - 10])
         .await?;
     third_node.wait_block((tip - 10) as u64, canonical_chain[tip_index - 10], true).await?;
-    // Trigger live sync to block 90
+    // Trigger live sync on third node up to block `tip`.
     third_node.update_optimistic_forkchoice(canonical_chain[tip_index]).await?;
     third_node.wait_block(tip as u64, canonical_chain[tip_index], false).await?;
 
-    //  On second node, create a side chain: 88a -> 89b -> 90b
+    // On second node (currently at block `tip - reorg_depth`), create a side chain of
+    // `reorg_depth` blocks that forks off the canonical chain at that block.
+    // Rewind the shared wallet nonce and use first_node's timestamp so the side chain's
+    // payload attributes line up with the canonical chain's.
     wallet.lock().await.inner_nonce -= reorg_depth as u64;
-    second_node.payload.timestamp = first_node.payload.timestamp - reorg_depth as u64; // TODO: probably want to make it node agnostic
+    second_node.payload.timestamp = first_node.payload.timestamp - reorg_depth as u64;
     let side_payload_chain =
         advance_chain(reorg_depth, &mut second_node, Arc::clone(&wallet)).await?;
     let side_chain = side_payload_chain.iter().map(|p| p.block().hash()).collect::<Vec<_>>();
 
-    // Creates fork chain by submitting 89b payload.
+    // Creates fork chain by submitting the first side-chain payload.
     // By returning Valid here, the consensus node will finally return a finalized hash
-    let _ = third_node.submit_payload(side_payload_chain[0].clone()).await;
+    third_node.submit_payload(side_payload_chain[0].clone()).await?;
 
-    // It will issue a pipeline reorg to 88a, and then make 89b canonical AND finalized.
+    // It will issue a pipeline reorg to block `tip - reorg_depth`, and then make the first
+    // side-chain block canonical AND finalized.
     third_node.update_forkchoice(side_chain[0], side_chain[0]).await?;
 
     // Make sure we have the updated block
