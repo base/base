@@ -17,8 +17,7 @@
 -- audit-archiver writes only to this tree. The legacy tree keeps its name so
 -- pods still running the previous release can insert during a rolling
 -- deploy. It receives no new day partitions and drains as its existing days
--- age out of retention. Readers query both trees until then;
--- transaction_events_all presents both in the legacy column layout.
+-- age out of retention. Readers query both trees until then.
 
 -- Postgres requires unique constraints to include every partition key, so the
 -- primary key is (event_hour, retention_class, event_id). retention_class is
@@ -225,53 +224,10 @@ BEGIN
     END LOOP;
 END $$;
 
--- Both trees in the legacy column layout, for consumers such as incremental
--- ETL that select by ingested_at. Predicates on ingested_at reach each tree's
--- BRIN index. Hash and event_id predicates on this view cannot use the v2
--- indexes because the view converts those columns; audit-archiver queries
--- the trees directly.
-CREATE VIEW transaction_events_all AS
-SELECT
-    event_id,
-    schema_version,
-    event_time,
-    event_date,
-    ingested_at,
-    retention_class,
-    producer,
-    event_type,
-    network,
-    tx_hash,
-    block_hash,
-    block_number,
-    payload_id,
-    request_id,
-    data
-FROM transaction_events
-UNION ALL
-SELECT
-    event_id COLLATE "default",
-    schema_version,
-    event_time,
-    (event_hour AT TIME ZONE 'UTC')::date,
-    ingested_at,
-    retention_class,
-    producer,
-    event_type,
-    network,
-    '0x' || encode(tx_hash, 'hex'),
-    '0x' || encode(block_hash, 'hex'),
-    block_number,
-    payload_id,
-    request_id,
-    data
-FROM transaction_events_v2;
-
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'audit_archiver') THEN
         GRANT SELECT, INSERT, UPDATE, DELETE ON transaction_events_v2 TO audit_archiver;
-        GRANT SELECT ON transaction_events_all TO audit_archiver;
         GRANT EXECUTE ON FUNCTION transaction_events_v2_create_partition(TEXT, DATE)
             TO audit_archiver;
         GRANT EXECUTE ON FUNCTION transaction_events_v2_detach_partition(TEXT, DATE)
@@ -284,6 +240,5 @@ BEGIN
     -- parent covers every leaf read through it, so leaves get no grants.
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'datapilot') THEN
         GRANT SELECT ON transaction_events_v2 TO datapilot;
-        GRANT SELECT ON transaction_events_all TO datapilot;
     END IF;
 END $$;

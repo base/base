@@ -1229,9 +1229,10 @@ async fn postgres_runtime_role_maintains_partitions_through_definer_functions() 
 }
 
 /// The `datapilot` warehouse extraction role is read-only: it reads the v2
-/// parent and the view, with no leaf or write privileges.
+/// parent, including rows stored in its leaf partitions, with no direct leaf
+/// or write privileges.
 #[tokio::test]
-async fn postgres_datapilot_role_reads_v2_parent_and_view() -> anyhow::Result<()> {
+async fn postgres_datapilot_role_reads_v2_parent() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
     let admin = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
     admin.execute("CREATE ROLE datapilot LOGIN PASSWORD 'datapilot'").await?;
@@ -1244,16 +1245,22 @@ async fn postgres_datapilot_role_reads_v2_parent_and_view() -> anyhow::Result<()
         .max_connections(1)
         .connect(&harness.url_for("datapilot", "datapilot"))
         .await?;
-    for relation in ["transaction_events_v2", "transaction_events_all"] {
-        let count: i64 =
-            sqlx::query_scalar(&format!("SELECT count(*) FROM {relation} WHERE event_id = $1"))
-                .bind(&event_id)
-                .fetch_one(&datapilot)
-                .await?;
-        assert_eq!(count, 1, "datapilot reads {relation}");
-    }
-
     let leaf = format!("transaction_events_v2_hot_{}", Utc::now().date_naive().format("%Y%m%d"));
+    let stored_in: String = sqlx::query_scalar(
+        "SELECT tableoid::regclass::text FROM transaction_events_v2 WHERE event_id = $1",
+    )
+    .bind(&event_id)
+    .fetch_one(&admin)
+    .await?;
+    assert_eq!(stored_in, leaf);
+
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM transaction_events_v2 WHERE event_id = $1")
+            .bind(&event_id)
+            .fetch_one(&datapilot)
+            .await?;
+    assert_eq!(count, 1, "datapilot reads leaf rows through the v2 parent");
+
     let leaf_read = datapilot.execute(format!("SELECT 1 FROM {leaf} LIMIT 1").as_str()).await;
     assert!(leaf_read.is_err(), "datapilot has no grant on leaf partitions");
     let delete = sqlx::query("DELETE FROM transaction_events_v2 WHERE event_id = $1")
@@ -1458,55 +1465,6 @@ async fn postgres_queries_read_through_legacy_rows() -> anyhow::Result<()> {
             })
             .await?),
         vec![v2_rejected, legacy_failed]
-    );
-
-    Ok(())
-}
-
-/// ETL reads `transaction_events_all` with the legacy column names and types.
-#[tokio::test]
-async fn postgres_all_view_presents_both_trees_in_legacy_layout() -> anyhow::Result<()> {
-    let harness = PostgresHarness::new().await?;
-    PgTransactionEventSink::migrate(&harness.database_url).await?;
-    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
-    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
-    let prefix = unique_event_id();
-    let legacy_id = format!("{prefix}-legacy");
-    let v2_id = format!("{prefix}-v2");
-    insert_legacy_row(&pool, &legacy_id, "BUILDER_ACCEPTED", "hot", Utc::now(), json!({})).await?;
-    let mut current = event(&v2_id);
-    current.tx_hash = Some(SHARED_TX_HASH.parse()?);
-    current.block_hash = Some(SHARED_BLOCK_HASH.parse()?);
-    sink.insert_events(&[current]).await?;
-
-    let columns = |relation: &'static str| {
-        sqlx::query_as::<_, (String, String)>(
-            "SELECT column_name::text, data_type::text FROM information_schema.columns \
-             WHERE table_schema = 'public' AND table_name = $1 ORDER BY ordinal_position",
-        )
-        .bind(relation)
-        .fetch_all(&pool)
-    };
-    assert_eq!(columns("transaction_events_all").await?, columns("transaction_events").await?);
-
-    let rows: Vec<(String, Option<String>, Option<String>, bool)> = sqlx::query_as(
-        "SELECT event_id, tx_hash, block_hash, event_date = (event_time AT TIME ZONE 'UTC')::date \
-         FROM transaction_events_all WHERE event_id LIKE $1 ORDER BY event_id",
-    )
-    .bind(format!("{prefix}-%"))
-    .fetch_all(&pool)
-    .await?;
-    assert_eq!(
-        rows,
-        vec![
-            (
-                legacy_id,
-                Some(format!("0x{}", SHARED_TX_HASH[2..].to_ascii_uppercase())),
-                Some(SHARED_BLOCK_HASH.to_string()),
-                true
-            ),
-            (v2_id, Some(SHARED_TX_HASH.to_string()), Some(SHARED_BLOCK_HASH.to_string()), true),
-        ]
     );
 
     Ok(())

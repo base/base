@@ -223,63 +223,6 @@ CREATE TABLE public.transaction_events (
 )
 PARTITION BY LIST (retention_class);
 
-CREATE TABLE public.transaction_events_v2 (
-    event_id text NOT NULL COLLATE pg_catalog."C",
-    schema_version text NOT NULL,
-    event_time timestamp with time zone NOT NULL,
-    event_hour timestamp with time zone NOT NULL,
-    ingested_at timestamp with time zone DEFAULT now() NOT NULL,
-    retention_class text NOT NULL,
-    producer text NOT NULL,
-    event_type text NOT NULL,
-    network text,
-    tx_hash bytea,
-    block_hash bytea,
-    block_number bigint,
-    payload_id text,
-    request_id text,
-    data jsonb NOT NULL,
-    CONSTRAINT transaction_events_v2_block_hash_check CHECK ((octet_length(block_hash) = 32)),
-    CONSTRAINT transaction_events_v2_event_hour_check CHECK ((event_hour = date_trunc('hour'::text, event_time, 'UTC'::text))),
-    CONSTRAINT transaction_events_v2_tx_hash_check CHECK ((octet_length(tx_hash) = 32))
-)
-PARTITION BY LIST (retention_class);
-
-CREATE VIEW public.transaction_events_all AS
- SELECT transaction_events.event_id,
-    transaction_events.schema_version,
-    transaction_events.event_time,
-    transaction_events.event_date,
-    transaction_events.ingested_at,
-    transaction_events.retention_class,
-    transaction_events.producer,
-    transaction_events.event_type,
-    transaction_events.network,
-    transaction_events.tx_hash,
-    transaction_events.block_hash,
-    transaction_events.block_number,
-    transaction_events.payload_id,
-    transaction_events.request_id,
-    transaction_events.data
-   FROM public.transaction_events
-UNION ALL
- SELECT (transaction_events_v2.event_id COLLATE "default") AS event_id,
-    transaction_events_v2.schema_version,
-    transaction_events_v2.event_time,
-    ((transaction_events_v2.event_hour AT TIME ZONE 'UTC'::text))::date AS event_date,
-    transaction_events_v2.ingested_at,
-    transaction_events_v2.retention_class,
-    transaction_events_v2.producer,
-    transaction_events_v2.event_type,
-    transaction_events_v2.network,
-    ('0x'::text || encode(transaction_events_v2.tx_hash, 'hex'::text)) AS tx_hash,
-    ('0x'::text || encode(transaction_events_v2.block_hash, 'hex'::text)) AS block_hash,
-    transaction_events_v2.block_number,
-    transaction_events_v2.payload_id,
-    transaction_events_v2.request_id,
-    transaction_events_v2.data
-   FROM public.transaction_events_v2;
-
 CREATE TABLE public.transaction_events_cold (
     event_id text NOT NULL,
     schema_version text NOT NULL,
@@ -317,6 +260,28 @@ CREATE TABLE public.transaction_events_hot (
     data jsonb NOT NULL
 )
 PARTITION BY RANGE (event_date);
+
+CREATE TABLE public.transaction_events_v2 (
+    event_id text NOT NULL COLLATE pg_catalog."C",
+    schema_version text NOT NULL,
+    event_time timestamp with time zone NOT NULL,
+    event_hour timestamp with time zone NOT NULL,
+    ingested_at timestamp with time zone DEFAULT now() NOT NULL,
+    retention_class text NOT NULL,
+    producer text NOT NULL,
+    event_type text NOT NULL,
+    network text,
+    tx_hash bytea,
+    block_hash bytea,
+    block_number bigint,
+    payload_id text,
+    request_id text,
+    data jsonb NOT NULL,
+    CONSTRAINT transaction_events_v2_block_hash_check CHECK ((octet_length(block_hash) = 32)),
+    CONSTRAINT transaction_events_v2_event_hour_check CHECK ((event_hour = date_trunc('hour'::text, event_time, 'UTC'::text))),
+    CONSTRAINT transaction_events_v2_tx_hash_check CHECK ((octet_length(tx_hash) = 32))
+)
+PARTITION BY LIST (retention_class);
 
 CREATE TABLE public.transaction_events_v2_cold (
     event_id text NOT NULL COLLATE pg_catalog."C",
@@ -669,6 +634,3 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.transaction_events TO audit_ar
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.transaction_events_v2 TO audit_archiver;
 GRANT SELECT ON TABLE public.transaction_events_v2 TO datapilot;
-
-GRANT SELECT ON TABLE public.transaction_events_all TO audit_archiver;
-GRANT SELECT ON TABLE public.transaction_events_all TO datapilot;

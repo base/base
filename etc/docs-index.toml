@@ -47,8 +47,8 @@ summary = "base-acceptance CLI entry point for the acceptance system: lists subc
 digest = "de5b6325d7"
 
 ["bin/audit-archiver/README.md"]
-summary = "audit-archiver service: NDJSON ingest into Postgres, JSON-RPC queries, retention classes, transaction_events_v2 cutover and legacy drain, transaction_events_all ETL view, env vars, BRIN index step."
-digest = "9d3c55fd9d"
+summary = "audit-archiver service: NDJSON ingest into Postgres, JSON-RPC queries, retention classes, transaction_events_v2 cutover, legacy drain and warehouse extraction grant, env vars, BRIN index step."
+digest = "6c19a32555"
 
 ["bin/base-telemetry/README.md"]
 summary = "base-telemetry backend: CLI and env config, per-IP rate limiting, and on-demand P2P reachability probes for execution-layer (enode) and consensus-layer (ENR or multiaddr) nodes."
@@ -428,7 +428,7 @@ digest = "906eadac6b"
 
 ["crates/infra/audit/README.md"]
 summary = "audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; lists migrations 001-003 and covers schema snapshot regeneration."
-digest = "13d7075520"
+digest = "62742be11c"
 
 ["crates/infra/basectl/README.md"]
 summary = "basectl-cli: the basectl clap parser and commands (blocks, sync, txpool, peers, proofs, conductor), interactive monitor, flashblocks JSON-lines stream, Denim readiness checks, and pods view config."

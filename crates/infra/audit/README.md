@@ -14,8 +14,7 @@ S3 removal and rollout prerequisites.
 
 `migrations/` holds the transaction event schema. `001` creates the legacy
 `transaction_events` tree, `002` registers its `ingested_at` BRIN index, and
-`003` creates `transaction_events_v2`, which ingest writes, plus the
-`transaction_events_all` view over both trees. See the `audit-archiver`
+`003` creates `transaction_events_v2`, which ingest writes. See the `audit-archiver`
 README for the cutover and legacy drain. `schema.sql` is a committed
 `pg_dump` of the schema those migrations produce, without dated day partitions.
 The Postgres integration tests fail if a fresh or upgraded database differs
