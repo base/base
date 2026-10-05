@@ -5695,9 +5695,7 @@ name = "base-proof-zk-backend"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.4.1",
- "alloy-contract",
  "alloy-primitives",
- "alloy-sol-types",
  "anyhow",
  "async-trait",
  "backoff",

@@ -32,7 +32,6 @@ use sp1_sdk::{
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use super::utils::{ClusterArtifactStore, ClusterProofConfig};
 use crate::succinct::{
     L1HeadSource, OpSuccinctWitnessProvider, SuccinctRpcConfig, SuccinctZkProverBuildError,
     SuccinctZkProverBuilder, WitnessParams,
@@ -103,6 +102,39 @@ impl std::fmt::Debug for ClusterZkProverConfig {
             .field("aggregation_cycle_limit", &self.aggregation_cycle_limit)
             .field("aggregation_gas_limit", &self.aggregation_gas_limit)
             .finish_non_exhaustive()
+    }
+}
+
+/// Artifact storage backend for cluster proofs.
+#[derive(Clone)]
+pub enum ClusterArtifactStore {
+    /// Redis-backed storage.
+    Redis(sp1_cluster_artifact::redis::RedisArtifactClient),
+    /// S3-backed storage.
+    S3(sp1_cluster_artifact::s3::S3ArtifactClient),
+}
+
+impl std::fmt::Debug for ClusterArtifactStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClusterArtifactStore").finish_non_exhaustive()
+    }
+}
+
+/// Configuration for cluster-based SP1 proving.
+pub struct ClusterProofConfig {
+    /// Cluster RPC endpoint.
+    pub cluster_rpc: String,
+    /// Artifact storage backend.
+    pub artifact_store: ClusterArtifactStore,
+    /// The raw `ArtifactStoreConfig` used to construct per-call `ProofRequestConfig`.
+    pub artifact_store_config: sp1_cluster_utils::ArtifactStoreConfig,
+    /// Cached gRPC client for polling only. `create_request()` constructs its own internally.
+    pub service_client: ClusterServiceClient,
+}
+
+impl std::fmt::Debug for ClusterProofConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClusterProofConfig").finish_non_exhaustive()
     }
 }
 
