@@ -213,12 +213,23 @@ incoming one. `base_insertValidatedTransaction` uses
 
 Forwarding:
 
+- `TXPOOL_BUILDER_CONSUMED`
 - `TXPOOL_BUILDER_FORWARD_ATTEMPT`
-- `TXPOOL_BUILDER_FORWARD_SUCCESS`
+- `TXPOOL_BUILDER_FORWARD_SUCCESS` (retired)
 - `TXPOOL_BUILDER_FORWARD_FAILURE`
 - `TXPOOL_BUILDER_FORWARD_DROPPED`
 - `TXPOOL_VALIDATED_INSERT_ACCEPTED`
 - `TXPOOL_VALIDATED_INSERT_REJECTED`
+
+A mempool node forwards each pending transaction to every configured builder,
+and forwards it again every `--tx-forwarding-resend-after-ms` while it stays
+pending. `TXPOOL_BUILDER_CONSUMED` is emitted per destination each time a
+transaction is queued for forwarding, and its event ID includes the builder
+URL. `TXPOOL_BUILDER_FORWARD_ATTEMPT` is emitted only for RPC retries
+(`data.attempt` >= 1); the first attempt is implied by `CONSUMED`. Successful
+delivery is recorded by the receiving builder as
+`TXPOOL_VALIDATED_INSERT_ACCEPTED`, whose event ID includes the builder host, so
+the mempool node no longer emits `TXPOOL_BUILDER_FORWARD_SUCCESS`.
 
 `TXPOOL_BUILDER_FORWARD_DROPPED` is emitted only for transaction-scoped drops
 where the forwarding task still knows the `tx_hash`, such as final RPC failure
