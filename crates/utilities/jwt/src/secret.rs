@@ -103,9 +103,11 @@ impl JwtSecretReader {
 #[cfg(all(test, unix))]
 mod tests {
     use std::{
-        env, fs,
+        env,
+        error::Error,
+        fs,
         os::unix::fs::PermissionsExt,
-        sync::Mutex,
+        sync::{Mutex, PoisonError},
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -114,37 +116,31 @@ mod tests {
     static CWD_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn default_jwt_secret_creates_file_with_owner_only_permissions() {
-        let _guard = CWD_LOCK.lock().unwrap();
-        let original_dir = env::current_dir().expect("should read current directory");
-        let test_dir = unique_temp_dir();
+    fn default_jwt_secret_creates_file_with_owner_only_permissions() -> Result<(), Box<dyn Error>> {
+        let _guard = CWD_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let original_dir = env::current_dir()?;
+        let test_dir = unique_temp_dir()?;
 
-        env::set_current_dir(&test_dir).expect("should enter test directory");
+        env::set_current_dir(&test_dir)?;
         let secret = JwtSecretReader::default_jwt_secret("l2_jwt.hex");
-        env::set_current_dir(original_dir).expect("should restore original directory");
+        env::set_current_dir(original_dir)?;
 
-        let secret = secret.expect("should create jwt secret");
+        let secret = secret?;
         let secret_path = test_dir.join("l2_jwt.hex");
-        let mode = fs::metadata(&secret_path)
-            .expect("should read jwt secret metadata")
-            .permissions()
-            .mode()
-            & 0o777;
-        let content = fs::read_to_string(&secret_path).expect("should read jwt secret file");
+        let mode = fs::metadata(&secret_path)?.permissions().mode() & 0o777;
+        let content = fs::read_to_string(&secret_path)?;
 
         assert_eq!(mode, 0o600);
         assert_eq!(content, alloy_primitives::hex::encode(secret.as_bytes()));
 
-        fs::remove_dir_all(test_dir).expect("should remove test directory");
+        fs::remove_dir_all(test_dir)?;
+        Ok(())
     }
 
-    fn unique_temp_dir() -> std::path::PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time should be after unix epoch")
-            .as_nanos();
+    fn unique_temp_dir() -> Result<std::path::PathBuf, Box<dyn Error>> {
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
         let path = env::temp_dir().join(format!("base-jwt-{}-{nanos}", std::process::id()));
-        fs::create_dir(&path).expect("should create test directory");
-        path
+        fs::create_dir(&path)?;
+        Ok(path)
     }
 }
