@@ -2,7 +2,7 @@
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use audit_archiver_lib::{
     AuditArchiver, AuditArchiverApiServer, AuditArchiverRpc, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
     DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS, DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS,
@@ -245,11 +245,11 @@ async fn main() -> Result<()> {
 
     LogConfig::from(args.log.clone())
         .init_tracing_subscriber()
-        .expect("Failed to initialize tracing");
+        .map_err(|error| anyhow::anyhow!("failed to initialize tracing: {error}"))?;
 
     base_cli_utils::MetricsConfig::from(args.metrics.clone())
         .init()
-        .expect("Failed to install Prometheus exporter");
+        .context("failed to install Prometheus exporter")?;
 
     if matches!(args.command, Command::Migrate) {
         run_migrations(&args).await?;
