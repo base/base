@@ -56,7 +56,12 @@ impl NetworkTransactionBuilder<Base> for BaseTransactionRequest {
             return Err(TransactionBuilderError::InvalidTransactionRequest(tx_type, missing)
                 .into_unbuilt(self));
         }
-        Ok(self.build_typed_tx().expect("checked by missing_keys"))
+        self.build_typed_tx().map_err(|request| {
+            TransactionBuilderError::<Base>::custom(std::io::Error::other(
+                "failed to build typed transaction",
+            ))
+            .into_unbuilt(request)
+        })
     }
 
     async fn build<W: alloy_network::NetworkWallet<Base>>(
