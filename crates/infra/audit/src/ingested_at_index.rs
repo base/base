@@ -1,8 +1,49 @@
 //! Online, resumable indexing of existing transaction-event day partitions.
 
+use std::time::{Duration, Instant};
+
 use anyhow::{Context, Result, bail, ensure};
 use sqlx::{migrate::Migrate, postgres::PgPoolOptions};
 use tracing::{info, warn};
+
+/// Default Postgres `lock_timeout` for one leaf index ATTACH, in milliseconds.
+pub const DEFAULT_TRANSACTION_EVENT_INDEX_ATTACH_LOCK_TIMEOUT_MS: u64 = 5_000;
+
+/// Default time spent retrying attaches that hit their lock timeout, in seconds.
+pub const DEFAULT_TRANSACTION_EVENT_INDEX_ATTACH_RETRY_SECS: u64 = 3_600;
+
+/// Pause between ATTACH retries, so reads queued behind the last one can run.
+const ATTACH_RETRY_DELAY: Duration = Duration::from_secs(5);
+
+/// SQLSTATE `lock_not_available`, raised when `lock_timeout` expires.
+const LOCK_NOT_AVAILABLE: &str = "55P03";
+
+/// Settings for [`index_transaction_event_partitions`].
+#[derive(Debug, Clone)]
+pub struct TransactionEventIndexConfig {
+    /// `lock_timeout` for one leaf index ATTACH.
+    ///
+    /// ATTACH takes an ACCESS EXCLUSIVE lock on the leaf index. Reads that do
+    /// not prune by `event_date` hold ACCESS SHARE on every leaf index for
+    /// their whole run, and new ones queue behind a waiting ATTACH, so keep
+    /// this short. Inserts only lock the day they write to.
+    pub attach_lock_timeout: Duration,
+    /// Total time spent retrying attaches that hit `attach_lock_timeout`.
+    pub attach_retry_budget: Duration,
+}
+
+impl Default for TransactionEventIndexConfig {
+    fn default() -> Self {
+        Self {
+            attach_lock_timeout: Duration::from_millis(
+                DEFAULT_TRANSACTION_EVENT_INDEX_ATTACH_LOCK_TIMEOUT_MS,
+            ),
+            attach_retry_budget: Duration::from_secs(
+                DEFAULT_TRANSACTION_EVENT_INDEX_ATTACH_RETRY_SECS,
+            ),
+        }
+    }
+}
 
 /// Builds BRIN indexes on populated day partitions without blocking inserts.
 ///
@@ -12,18 +53,35 @@ use tracing::{info, warn};
 /// migration lock prevents two operators from building the same leaf. Failed
 /// concurrent builds leave an invalid index; a later invocation drops and
 /// rebuilds that leaf before resuming.
-pub async fn index_transaction_event_partitions(database_url: &str) -> Result<usize> {
+///
+/// An ATTACH that hits its lock timeout does not stop the run: remaining
+/// leaves are built first, then pending attaches are retried until
+/// `attach_retry_budget` runs out.
+pub async fn index_transaction_event_partitions(
+    database_url: &str,
+    config: &TransactionEventIndexConfig,
+) -> Result<usize> {
     let pool = PgPoolOptions::new().max_connections(1).connect(database_url).await?;
     let mut conn = pool.acquire().await?;
     conn.lock().await?;
-    let result = index_partitions(&mut conn).await;
+    let result = index_partitions(&mut conn, config).await;
     if let Err(err) = conn.unlock().await {
         warn!(error = %err, "failed to release transaction event index migration lock");
     }
     result
 }
 
-async fn index_partitions(conn: &mut sqlx::PgConnection) -> Result<usize> {
+/// A built leaf index that still needs to be attached to its class index.
+struct PendingAttach {
+    leaf: String,
+    class_index: String,
+    name: String,
+}
+
+async fn index_partitions(
+    conn: &mut sqlx::PgConnection,
+    config: &TransactionEventIndexConfig,
+) -> Result<usize> {
     let ready: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM _sqlx_migrations WHERE version = 2 AND success) \
          AND to_regclass('public.transaction_events_ingested_at_idx') IS NOT NULL",
@@ -57,6 +115,7 @@ async fn index_partitions(conn: &mut sqlx::PgConnection) -> Result<usize> {
         .fetch_all(&mut *conn)
         .await?;
 
+        let mut pending = Vec::new();
         for (class, leaf) in leaves {
             let day = leaf.strip_prefix(&format!("{class}_")).unwrap_or_default();
             ensure!(
@@ -110,16 +169,35 @@ async fn index_partitions(conn: &mut sqlx::PgConnection) -> Result<usize> {
                 info!(%leaf, "built transaction event day ingested_at index");
             }
 
-            sqlx::query("SET lock_timeout = '5s'").execute(&mut *conn).await?;
-            sqlx::query(&format!(
-                "ALTER INDEX public.{class_index} ATTACH PARTITION public.{name}"
-            ))
-            .execute(&mut *conn)
-            .await
-            .with_context(|| {
-                format!("attaching index for transaction event day partition {leaf}")
-            })?;
-            sqlx::query("SET lock_timeout = 0").execute(&mut *conn).await?;
+            let attach = PendingAttach { leaf, class_index, name };
+            if !try_attach(conn, config, &attach).await? {
+                warn!(leaf = %attach.leaf, "deferring transaction event day index attach");
+                pending.push(attach);
+            }
+        }
+
+        let deadline = Instant::now() + config.attach_retry_budget;
+        while !pending.is_empty() {
+            if Instant::now() >= deadline {
+                let leaves: Vec<_> = pending.iter().map(|attach| attach.leaf.as_str()).collect();
+                bail!(
+                    "attaching transaction event day indexes timed out on {}; retry the index \
+                     command",
+                    leaves.join(", ")
+                );
+            }
+            let mut still_pending = Vec::new();
+            for attach in pending {
+                // Pause before every attempt, not every round: back-to-back
+                // waits would keep unpruned reads queued almost continuously.
+                tokio::time::sleep(ATTACH_RETRY_DELAY).await;
+                if try_attach(conn, config, &attach).await? {
+                    info!(leaf = %attach.leaf, "attached deferred transaction event day index");
+                } else {
+                    still_pending.push(attach);
+                }
+            }
+            pending = still_pending;
         }
 
         let valid: bool = sqlx::query_scalar(
@@ -135,4 +213,33 @@ async fn index_partitions(conn: &mut sqlx::PgConnection) -> Result<usize> {
     }
 
     bail!("transaction event ingested_at index is still invalid; retry after partition maintenance")
+}
+
+/// Attaches one leaf index, returning `false` if the lock wait timed out.
+async fn try_attach(
+    conn: &mut sqlx::PgConnection,
+    config: &TransactionEventIndexConfig,
+    attach: &PendingAttach,
+) -> Result<bool> {
+    let PendingAttach { leaf, class_index, name } = attach;
+    sqlx::query(&format!("SET lock_timeout = {}", config.attach_lock_timeout.as_millis()))
+        .execute(&mut *conn)
+        .await?;
+    let result =
+        sqlx::query(&format!("ALTER INDEX public.{class_index} ATTACH PARTITION public.{name}"))
+            .execute(&mut *conn)
+            .await;
+    sqlx::query("SET lock_timeout = 0").execute(&mut *conn).await?;
+
+    match result {
+        Ok(_) => Ok(true),
+        Err(err)
+            if err.as_database_error().and_then(|error| error.code()).as_deref()
+                == Some(LOCK_NOT_AVAILABLE) =>
+        {
+            Ok(false)
+        }
+        Err(err) => Err(err)
+            .with_context(|| format!("attaching index for transaction event day partition {leaf}")),
+    }
 }

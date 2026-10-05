@@ -11,7 +11,11 @@ mod metrics;
 pub use metrics::Metrics;
 
 mod ingested_at_index;
-pub use ingested_at_index::index_transaction_event_partitions;
+pub use ingested_at_index::{
+    DEFAULT_TRANSACTION_EVENT_INDEX_ATTACH_LOCK_TIMEOUT_MS,
+    DEFAULT_TRANSACTION_EVENT_INDEX_ATTACH_RETRY_SECS, TransactionEventIndexConfig,
+    index_transaction_event_partitions,
+};
 
 mod rpc;
 pub use rpc::{AuditArchiverApiServer, AuditArchiverRpc};

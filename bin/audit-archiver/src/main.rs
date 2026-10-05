@@ -6,12 +6,14 @@ use anyhow::Result;
 use audit_archiver_lib::{
     AuditArchiverApiServer, AuditArchiverRpc, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
     DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS, DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS,
-    DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
-    DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
+    DEFAULT_TRANSACTION_EVENT_INDEX_ATTACH_LOCK_TIMEOUT_MS,
+    DEFAULT_TRANSACTION_EVENT_INDEX_ATTACH_RETRY_SECS, DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE,
+    DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES,
+    DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
     DEFAULT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS,
     DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS,
     DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, Metrics, PgTransactionEventSink,
-    TransactionEventIngestConfig, TransactionEventRetentionConfig,
+    TransactionEventIndexConfig, TransactionEventIngestConfig, TransactionEventRetentionConfig,
     index_transaction_event_partitions,
 };
 use axum::{
@@ -133,6 +135,24 @@ struct Args {
     )]
     transaction_event_partition_lock_timeout_ms: u64,
 
+    /// Postgres `lock_timeout` for one leaf index ATTACH during `index`, in
+    /// milliseconds.
+    #[arg(
+        long,
+        env = "TIPS_AUDIT_INDEX_ATTACH_LOCK_TIMEOUT_MS",
+        default_value_t = DEFAULT_TRANSACTION_EVENT_INDEX_ATTACH_LOCK_TIMEOUT_MS
+    )]
+    index_attach_lock_timeout_ms: u64,
+
+    /// Seconds `index` keeps retrying leaf index attaches that hit their lock
+    /// timeout before failing.
+    #[arg(
+        long,
+        env = "TIPS_AUDIT_INDEX_ATTACH_RETRY_SECS",
+        default_value_t = DEFAULT_TRANSACTION_EVENT_INDEX_ATTACH_RETRY_SECS
+    )]
+    index_attach_retry_secs: u64,
+
     /// HTTP path for Vector transaction-event batch ingest.
     #[arg(
         long,
@@ -199,7 +219,11 @@ async fn main() -> Result<()> {
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("TIPS_AUDIT_POSTGRES_URL must be set for index"))?;
         info!("Building transaction event ingested_at indexes on day partitions");
-        let created = index_transaction_event_partitions(postgres_url).await?;
+        let config = TransactionEventIndexConfig {
+            attach_lock_timeout: Duration::from_millis(args.index_attach_lock_timeout_ms),
+            attach_retry_budget: Duration::from_secs(args.index_attach_retry_secs),
+        };
+        let created = index_transaction_event_partitions(postgres_url, &config).await?;
         info!(created, "transaction event ingested_at indexes are ready");
         return Ok(());
     }
