@@ -24,7 +24,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[3]
 COMPOSE = ROOT / "etc/docker/docker-compose.snapshot.yml"
-DEFAULT_TIMEOUT = 1800
+DEFAULT_TIMEOUT = 7200
 DEFAULT_DOWNLOAD_CONCURRENCY = 16
 SNAPSHOT_INDEX = "https://chain.base.org/api/snapshots"
 PROTOCOL_VERSIONS = "0x7480Afc8D99a5c645c247dB5A1e4a4f440e6e095"
@@ -136,17 +136,20 @@ def call(url, address, signature, *args, block="latest", upstream=False):
     return json.loads(run("cast", "abi-decode", "--json", signature, encoded))[0]
 
 
-def wait(description, check, timeout, poll_interval=1, progress=None, report_interval=30):
+def wait(description, check, timeout, poll_interval=1, progress=None, report_interval=30, diagnostics=None):
     """Polls `check` until truthy.
 
     Without `progress`, `timeout` bounds the whole wait. With it, `timeout` bounds a stall: any
     change in the first element of `progress()` restarts it, and the second element, which must
     not contain endpoints or keys, is printed every `report_interval` seconds. The description is
     printed before the first poll and, without `progress`, with the elapsed time at each report.
+    Optional `diagnostics` describes the first failed poll and each report, without extending waits.
     """
     print(f"waiting for {description}", file=sys.stderr, flush=True)
     started = time.monotonic()
     deadline, next_report, state, message = started + timeout, started + report_interval, None, ""
+    if diagnostics is not None:
+        next_report = started
     while True:
         result = check()
         if result:
@@ -158,6 +161,8 @@ def wait(description, check, timeout, poll_interval=1, progress=None, report_int
                 state, deadline = current, now + timeout
         if now >= next_report:
             detail = message if progress is not None else f"{int(now - started)}s elapsed"
+            if diagnostics is not None:
+                detail += f" ({max(0, int(deadline - now))}s remaining); {diagnostics()}"
             print(f"waiting for {description}: {detail}", file=sys.stderr, flush=True)
             next_report = now + report_interval
         stalled = f" (no progress for {timeout}s; {message})" if progress is not None else ""
@@ -605,6 +610,50 @@ class SnapshotFork:
     def running(self):
         return bool(self.compose("--profile", "inspect", "ps", "--status", "running", "--quiet"))
 
+    def rpc_startup_status(self, role):
+        """Summarizes current-run startup logs using only known stages and numeric progress fields."""
+        service = role
+        try:
+            matches = [item for item in self.containers()
+                       if item["Config"]["Labels"]["com.docker.compose.service"] in (role, "inspect-" + role)]
+            matches = [item for item in matches if item["State"]["Running"]] or matches
+            if len(matches) != 1:
+                return f"{role}: no unique container found; check snapshot status"
+            item = matches[0]
+            service = item["Config"]["Labels"]["com.docker.compose.service"]
+            if not item["State"]["Running"]:
+                return f"{service}: exited (code {item['State']['ExitCode']}); inspect container logs"
+            if role == "l1":
+                return "l1: container running, Anvil RPC not ready"
+            result = subprocess.run(
+                ["docker", "logs", "--since", item["State"]["StartedAt"], "--tail", "50", item["Id"]],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=True, timeout=5)
+            stages = {
+                "StoragesHistory:": "repairing storage-history indexes",
+                "AccountsHistory:": "repairing account-history indexes",
+                "Collecting indices": "rebuilding history indexes",
+                "Writing indices": "writing history indexes",
+                "Healing static file inconsistencies": "repairing snapshot consistency",
+                "Opening database": "opening snapshot database",
+            }
+            # Never forward raw logs: provider URLs, keys, or tokens may appear even on progress lines.
+            for line in reversed(re.sub(r"\x1b\[[0-9;]*m", "", result.stdout).splitlines()):
+                stage = next((label for marker, label in stages.items() if marker in line), None)
+                if stage is None:
+                    continue
+                fields = dict(re.findall(
+                    r"\b(batch_num|total_batches|batch_start|batch_end|current_block|processed_blocks|progress|checkpoint|target)="
+                    r"(\d+(?:\.\d+)?%?)", line))
+                if "batch_num" in fields and "total_batches" in fields:
+                    stage += f"; batch {fields.pop('batch_num')}/{fields.pop('total_batches')} started"
+                if fields:
+                    stage += "; " + ", ".join(f"{key}={value}" for key, value in fields.items())
+                timestamp = re.match(r"\d{4}-\d{2}-\d{2}T[\d:.]+Z", line)
+                return f"{service}: last startup log" + (f" {timestamp[0]}" if timestamp else "") + f": {stage}"
+            return f"{service}: container running; no recognized startup progress in recent logs"
+        except (RuntimeError, OSError, subprocess.SubprocessError):
+            return f"{service}: startup logs unavailable; still waiting for RPC"
+
     def await_rpc(self, role):
         def ready():
             try:
@@ -612,7 +661,7 @@ class SnapshotFork:
             except Unavailable:
                 self._containers = None
                 return False
-        wait(f"{role} execution RPC", ready, self.timeout)
+        wait(f"{role} execution RPC", ready, self.timeout, diagnostics=lambda: self.rpc_startup_status(role))
 
     def inspect(self, discover=False):
         """Inspects both datadirs; with `discover`, the sequencer inspection also finds F."""
@@ -1213,7 +1262,7 @@ def main():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--dir", help="override the fork directory selected by setup")
     common.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
-                        help="seconds per readiness gate (default: 1800); derivation and catch-up gates fail only after "
+                        help="seconds per readiness gate (default: %(default)s); derivation and catch-up gates fail only after "
                              "this long without head progress")
     commands = parser.add_subparsers(dest="command", required=True)
     prepare = commands.add_parser("setup", parents=[common], help="prepare or resume an experiment; completed steps are reused")

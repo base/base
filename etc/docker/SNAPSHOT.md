@@ -8,7 +8,7 @@ the existing `base snapshot download` command in the pinned Base image.
 
 Snapshot is a native Just submodule with one recipe per task. Run `just devnet snapshot` to list
 commands, or `just devnet snapshot setup --help` for a task's options. Put flags after the task:
-`just devnet snapshot up --dir /srv/forks/base-test --timeout 1800`.
+`just devnet snapshot up --dir /srv/forks/base-test --timeout 7200`.
 `start` aliases `up`; `stop` aliases `down`. Neither invokes fresh-genesis cleanup.
 The recipes share Python code for RPC calls, manifests and locking.
 
@@ -92,9 +92,17 @@ place; a partial startup is stopped in dependency order before the existing reco
 `up` runs containers through `docker-compose.snapshot.yml`; the Python launcher coordinates
 snapshot inspection, RPC readiness, fork recovery, and enabling sequencing and batching. A bare
 `docker compose up` does not perform those steps. Startup prints stage messages and reports pending
-RPC waits every 30 seconds on stderr. Reth may repair snapshot indexes before exposing its RPC;
-use `docker logs --follow <inspection-container>` to see that progress. The default 30-minute
-RPC-readiness deadline still applies, even while indexes are being repaired.
+RPC waits on stderr after the first failed check and every 30 seconds thereafter, including elapsed
+time, time remaining, and the current container's latest recognized startup log. Reth may repair
+snapshot indexes before exposing its RPC; the report shows repair batches, indexing progress, and
+the log timestamp rather than treating an unavailable RPC as proof of a hang. Only known stages
+and numeric fields are shown, not raw logs or credentials. Unknown log formats are reported as
+unrecognized; use `docker logs --follow <inspection-container>` for full details. The default
+two-hour RPC-readiness deadline still applies, even while indexes are being repaired.
+A readiness timeout stops the inspection nodes and other fork services before stopping L1; it
+preserves the downloaded snapshots, copied datadirs, and fork state. Unfinished repair work can
+repeat on restart. Rerun `up` after shutdown completes; do not redownload or recopy the data.
+Changing the default or `--timeout` only affects new invocations, not an already running launcher.
 
 ## Prerequisites
 
@@ -239,7 +247,7 @@ sequencing windows. Start first requires both safe heads to pass the highest pre
 with the same canonical hash at the next height, then waits for wall-time catch-up, and reports
 `running` only after both; the batcher exiting at any point fails, even with code 0. Derivation,
 catch-up and batching print head/lag progress every 30 seconds and fail only after `--timeout`
-seconds (default 1800, or 30 minutes) without head progress. Ordinary readiness gates have the
+seconds (default 7200, or two hours) without head progress. Ordinary readiness gates have the
 same per-step budget; this is not a whole-run deadline. A failure preserves data and stops dependents before
 L1; rerun `start` to resume.
 `status` reports `degraded` when a started fork's L1, node or batcher container is not running.
@@ -254,7 +262,7 @@ and wall-clock countdown; "activation time reached" is not proof of node activat
 Some snapshots omit transaction-lookup or account/storage-history indexes. Reth rebuilds them
 before accepting forkchoice updates; this is local database recovery, not mainnet sync. Use an
 optimized Base build for large snapshots. Stage checkpoints may remain unchanged through a large
-indexing pass, so consult the node logs before diagnosing a stall after the 30-minute wait. The launcher
+indexing pass, so consult the node logs before diagnosing a stall after the two-hour wait. The launcher
 does not shorten retention or prune extra history to skip this recovery. `status` remains usable
 while `start` is waiting and omits container command arguments containing credentials.
 
@@ -283,7 +291,7 @@ and origin advancement, and writes `verification.json`. Startup's matching newly
 gate is sufficient for scheduling; the full verifier is no longer a separate scheduling prerequisite.
 Scheduling uses the real contract's one-hour notice/freeze rules; it retains the global minimum
 version and all historical entries, and waits for the integrated nodes' readers to observe Denim.
-No time warp or activation bypass is used. The activation-window wait uses the 30-minute timeout
+No time warp or activation bypass is used. The activation-window wait uses the two-hour timeout
 as a stall budget while L2 heads advance, so a healthy chain can wait through the one-hour notice.
 Start qualification before activation; it fails if the transaction generator
 misses any required pre-activation/activation/sibling/whole-second block. It checks 200ms cadence,

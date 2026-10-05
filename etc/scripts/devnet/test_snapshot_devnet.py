@@ -132,14 +132,15 @@ class SnapshotTests(unittest.TestCase):
                 devnet.main()
                 fork = lifecycle.call_args.args[0]
                 self.assertEqual(fork.directory, self.fork.directory)
-                self.assertEqual(fork.timeout, 1800)
+                self.assertEqual(fork.timeout, 7200)
                 self.assertEqual(fork.endpoint("execution"), "https://rpc.invalid/secret-key")
         with patch.object(sys, "argv", ["verify"]), patch.object(verification, "verify") as verify:
             verification.main()
             self.assertEqual(verify.call_args.args[0].directory, self.fork.directory)
-            self.assertEqual(verify.call_args.args[0].timeout, 1800)
+            self.assertEqual(verify.call_args.args[0].timeout, 7200)
         devnet.write_json(self.fork.directory / "keys.json", {"signer": "0x1", "batcher": "0x2"})
         fork = devnet.SnapshotFork(self.fork.directory)
+        self.assertEqual(fork.timeout, 7200)
         self.assertEqual(fork.compose_env()["SNAPSHOT_BEACON"], "https://rpc.invalid/secret-key")
 
     def test_setup_refuses_existing_data_and_wrong_chain_without_downloads(self):
@@ -1436,6 +1437,7 @@ class SnapshotTests(unittest.TestCase):
 
                 with patch.object(self.fork, "url", return_value="https://rpc.invalid/provider-secret"), \
                         patch.object(devnet, "rpc", side_effect=request), \
+                        patch.object(self.fork, "rpc_startup_status", return_value="inspect-sequencer: repairing history indexes"), \
                         patch.object(devnet.time, "monotonic", side_effect=[0, 1, 31, 61]), \
                         patch.object(devnet.time, "sleep"), patch("builtins.print") as output:
                     if becomes_ready:
@@ -1445,9 +1447,56 @@ class SnapshotTests(unittest.TestCase):
                             self.fork.await_rpc("sequencer")
                     self.assertEqual(attempts, 3)
                     self.assertIn("sequencer execution RPC", str(output.call_args_list))
+                    self.assertIn("inspect-sequencer: repairing history indexes", str(output.call_args_list))
+                    self.assertIn("29s remaining", str(output.call_args_list))
                     self.assertNotIn("provider-secret", str(output.call_args_list))
                     self.assertTrue(all(call.kwargs.get("flush") for call in output.call_args_list))
                     self.assertTrue(all(call.kwargs.get("file") is sys.stderr for call in output.call_args_list))
+
+    def test_rpc_startup_status_reports_current_container_history_work_without_raw_logs(self):
+        record = container("inspect-sequencer")
+        record["Id"] = "sequencer-container"
+        record["State"]["StartedAt"] = "2026-10-05T22:51:20Z"
+        logs = (
+            "2026-10-05T22:51:24Z INFO StoragesHistory: healing via changesets checkpoint=50945326\n"
+            "2026-10-05T22:56:03Z INFO StoragesHistory: unwinding batch "
+            "\x1b[3mbatch_num\x1b[0m=8 total_batches=124 batch_start=51015327 batch_end=51025326 "
+            "upstream=https://secret.invalid/key token=provider-secret\n"
+            "unrelated log with another-secret\n")
+        with patch.object(self.fork, "containers", return_value=[container("validator"), record]) as containers, \
+                patch.object(devnet.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout=logs)) as read:
+            message = self.fork.rpc_startup_status("sequencer")
+            self.assertIn("inspect-sequencer", message)
+            self.assertIn("repairing storage-history indexes", message)
+            self.assertIn("batch 8/124", message)
+            self.assertIn("51015327", message)
+            self.assertIn("51025326", message)
+            self.assertIn("2026-10-05T22:56:03Z", message)
+            self.assertNotIn("secret", message)
+            self.assertNotIn("\x1b", message)
+            args = read.call_args.args[0]
+            self.assertEqual(args[args.index("--since") + 1], record["State"]["StartedAt"])
+            self.assertIn(record["Id"], args)
+            self.assertEqual(read.call_args.kwargs["stderr"], subprocess.STDOUT)
+            self.assertLessEqual(read.call_args.kwargs["timeout"], 5)
+
+            containers.return_value.append(container("sequencer", running=False))
+            self.assertIn("batch 8/124", self.fork.rpc_startup_status("sequencer"))
+            containers.return_value.pop()
+            read.return_value.stdout += "2026-10-05T22:57:00Z INFO Collecting indices processed_blocks=21385 current_block=50966711\n"
+            message = self.fork.rpc_startup_status("sequencer")
+            self.assertIn("rebuilding history indexes", message)
+            self.assertIn("50966711", message)
+            self.assertNotIn("batch 8/124", message)
+
+            read.return_value.stdout = "unrecognized output with provider-secret\n"
+            self.assertIn("no recognized startup progress", self.fork.rpc_startup_status("sequencer"))
+            read.side_effect = subprocess.TimeoutExpired("docker", 5)
+            self.assertIn("logs unavailable", self.fork.rpc_startup_status("sequencer"))
+            record["State"].update(Running=False, ExitCode=137)
+            read.reset_mock()
+            self.assertIn("exited (code 137)", self.fork.rpc_startup_status("sequencer"))
+            read.assert_not_called()
 
     def test_compose_reports_service_actions_without_credentials_or_raw_output(self):
         with patch.object(self.fork, "compose_env", return_value={"SNAPSHOT_L1_RPC": "provider-secret"}), \
