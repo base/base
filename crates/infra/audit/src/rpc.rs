@@ -7,10 +7,15 @@ use tracing::error;
 
 use crate::{
     DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT, PgTransactionEventSink, RejectedTransactionEventQuery,
-    TransactionEventRecord,
+    TransactionEventList, TransactionEventRecord,
 };
 
 /// RPC trait for the audit archiver.
+///
+/// Each read method has a `V2` form that returns a [`TransactionEventList`]
+/// with the same events and a `truncated` flag that is true when more events
+/// matched than the limit allowed. The original methods return the bare event
+/// array and are kept for existing clients.
 #[rpc(server, namespace = "base")]
 pub trait AuditArchiverApi {
     /// Returns Postgres-backed transaction event history for one transaction hash.
@@ -51,6 +56,50 @@ pub trait AuditArchiverApi {
         &self,
         query: RejectedTransactionEventQuery,
     ) -> RpcResult<Vec<TransactionEventRecord>>;
+
+    /// Returns transaction event history for one transaction hash, and whether
+    /// it was truncated.
+    #[method(name = "getTransactionEventsByHashV2")]
+    async fn get_transaction_events_by_hash_v2(
+        &self,
+        tx_hash: String,
+        limit: Option<i64>,
+    ) -> RpcResult<TransactionEventList>;
+
+    /// Returns transaction/block event history for one block number, and
+    /// whether it was truncated.
+    #[method(name = "getTransactionEventsByBlockNumberV2")]
+    async fn get_transaction_events_by_block_number_v2(
+        &self,
+        block_number: u64,
+        limit: Option<i64>,
+    ) -> RpcResult<TransactionEventList>;
+
+    /// Returns transaction/block event history for one block hash, and whether
+    /// it was truncated.
+    #[method(name = "getTransactionEventsByBlockHashV2")]
+    async fn get_transaction_events_by_block_hash_v2(
+        &self,
+        block_hash: String,
+        limit: Option<i64>,
+    ) -> RpcResult<TransactionEventList>;
+
+    /// Returns transaction event history for one bundle UUID or hash, and
+    /// whether it was truncated.
+    #[method(name = "getTransactionEventsByBundleV2")]
+    async fn get_transaction_events_by_bundle_v2(
+        &self,
+        bundle_key: String,
+        limit: Option<i64>,
+    ) -> RpcResult<TransactionEventList>;
+
+    /// Returns rejected transaction events by block/time range, and whether
+    /// they were truncated.
+    #[method(name = "getRejectedTransactionEventsV2")]
+    async fn get_rejected_transaction_events_v2(
+        &self,
+        query: RejectedTransactionEventQuery,
+    ) -> RpcResult<TransactionEventList>;
 }
 
 /// RPC handler for audit archiver requests.
@@ -73,6 +122,45 @@ impl AuditArchiverApiServer for AuditArchiverRpc {
         tx_hash: String,
         limit: Option<i64>,
     ) -> RpcResult<Vec<TransactionEventRecord>> {
+        Ok(self.get_transaction_events_by_hash_v2(tx_hash, limit).await?.events)
+    }
+
+    async fn get_transaction_events_by_block_number(
+        &self,
+        block_number: u64,
+        limit: Option<i64>,
+    ) -> RpcResult<Vec<TransactionEventRecord>> {
+        Ok(self.get_transaction_events_by_block_number_v2(block_number, limit).await?.events)
+    }
+
+    async fn get_transaction_events_by_block_hash(
+        &self,
+        block_hash: String,
+        limit: Option<i64>,
+    ) -> RpcResult<Vec<TransactionEventRecord>> {
+        Ok(self.get_transaction_events_by_block_hash_v2(block_hash, limit).await?.events)
+    }
+
+    async fn get_transaction_events_by_bundle(
+        &self,
+        bundle_key: String,
+        limit: Option<i64>,
+    ) -> RpcResult<Vec<TransactionEventRecord>> {
+        Ok(self.get_transaction_events_by_bundle_v2(bundle_key, limit).await?.events)
+    }
+
+    async fn get_rejected_transaction_events(
+        &self,
+        query: RejectedTransactionEventQuery,
+    ) -> RpcResult<Vec<TransactionEventRecord>> {
+        Ok(self.get_rejected_transaction_events_v2(query).await?.events)
+    }
+
+    async fn get_transaction_events_by_hash_v2(
+        &self,
+        tx_hash: String,
+        limit: Option<i64>,
+    ) -> RpcResult<TransactionEventList> {
         self.transaction_events
             .events_by_transaction_hash(
                 &tx_hash,
@@ -82,11 +170,11 @@ impl AuditArchiverApiServer for AuditArchiverRpc {
             .map_err(internal_rpc_error)
     }
 
-    async fn get_transaction_events_by_block_number(
+    async fn get_transaction_events_by_block_number_v2(
         &self,
         block_number: u64,
         limit: Option<i64>,
-    ) -> RpcResult<Vec<TransactionEventRecord>> {
+    ) -> RpcResult<TransactionEventList> {
         self.transaction_events
             .events_by_block_number(
                 block_number,
@@ -96,11 +184,11 @@ impl AuditArchiverApiServer for AuditArchiverRpc {
             .map_err(internal_rpc_error)
     }
 
-    async fn get_transaction_events_by_block_hash(
+    async fn get_transaction_events_by_block_hash_v2(
         &self,
         block_hash: String,
         limit: Option<i64>,
-    ) -> RpcResult<Vec<TransactionEventRecord>> {
+    ) -> RpcResult<TransactionEventList> {
         self.transaction_events
             .events_by_block_hash(
                 &block_hash,
@@ -110,21 +198,21 @@ impl AuditArchiverApiServer for AuditArchiverRpc {
             .map_err(internal_rpc_error)
     }
 
-    async fn get_transaction_events_by_bundle(
+    async fn get_transaction_events_by_bundle_v2(
         &self,
         bundle_key: String,
         limit: Option<i64>,
-    ) -> RpcResult<Vec<TransactionEventRecord>> {
+    ) -> RpcResult<TransactionEventList> {
         self.transaction_events
             .events_by_bundle(&bundle_key, limit.unwrap_or(DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT))
             .await
             .map_err(internal_rpc_error)
     }
 
-    async fn get_rejected_transaction_events(
+    async fn get_rejected_transaction_events_v2(
         &self,
         query: RejectedTransactionEventQuery,
-    ) -> RpcResult<Vec<TransactionEventRecord>> {
+    ) -> RpcResult<TransactionEventList> {
         self.transaction_events.rejected_transaction_events(query).await.map_err(internal_rpc_error)
     }
 }

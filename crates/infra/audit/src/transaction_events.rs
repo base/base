@@ -507,6 +507,26 @@ pub struct TransactionEventRecord {
     pub ingested_at: DateTime<Utc>,
 }
 
+/// Transaction events returned by a truncation-aware read API.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransactionEventList {
+    /// Matching events, in the same order as the array read APIs.
+    pub events: Vec<TransactionEventRecord>,
+    /// True when more matching events exist beyond the requested limit.
+    pub truncated: bool,
+}
+
+impl TransactionEventList {
+    /// Builds a list from rows fetched with `limit + 1`, so the extra row only
+    /// signals truncation and is dropped.
+    pub fn from_overfetch(mut events: Vec<TransactionEventRecord>, limit: i64) -> Self {
+        let limit = usize::try_from(limit).unwrap_or(0);
+        let truncated = events.len() > limit;
+        events.truncate(limit);
+        Self { events, truncated }
+    }
+}
+
 /// Query selector for rejected transaction events.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -999,12 +1019,13 @@ impl PgTransactionEventSink {
         }
     }
 
-    /// Returns events for one transaction hash sorted by event time.
+    /// Returns up to `limit` events for one transaction hash, oldest first, and
+    /// whether more matched.
     pub async fn events_by_transaction_hash(
         &self,
         tx_hash: &str,
         limit: i64,
-    ) -> Result<Vec<TransactionEventRecord>> {
+    ) -> Result<TransactionEventList> {
         let limit = normalize_limit(limit);
         let lookup_keys = hex_lookup_keys(tx_hash);
         let rows = sqlx::query(
@@ -1016,18 +1037,20 @@ impl PgTransactionEventSink {
              LIMIT $2",
         )
         .bind(&lookup_keys)
-        .bind(limit)
+        .bind(limit + 1)
         .fetch_all(&self.pool)
         .await?;
-        rows.into_iter().map(record_from_row).collect()
+        let events = rows.into_iter().map(record_from_row).collect::<Result<_>>()?;
+        Ok(TransactionEventList::from_overfetch(events, limit))
     }
 
-    /// Returns events for one block number sorted by event time.
+    /// Returns up to `limit` events for one block number, oldest first, and
+    /// whether more matched.
     pub async fn events_by_block_number(
         &self,
         block_number: u64,
         limit: i64,
-    ) -> Result<Vec<TransactionEventRecord>> {
+    ) -> Result<TransactionEventList> {
         let block_number = i64::try_from(block_number)?;
         let limit = normalize_limit(limit);
         let rows = sqlx::query(
@@ -1039,18 +1062,20 @@ impl PgTransactionEventSink {
              LIMIT $2",
         )
         .bind(block_number)
-        .bind(limit)
+        .bind(limit + 1)
         .fetch_all(&self.pool)
         .await?;
-        rows.into_iter().map(record_from_row).collect()
+        let events = rows.into_iter().map(record_from_row).collect::<Result<_>>()?;
+        Ok(TransactionEventList::from_overfetch(events, limit))
     }
 
-    /// Returns events for one block hash sorted by event time.
+    /// Returns up to `limit` events for one block hash, oldest first, and
+    /// whether more matched.
     pub async fn events_by_block_hash(
         &self,
         block_hash: &str,
         limit: i64,
-    ) -> Result<Vec<TransactionEventRecord>> {
+    ) -> Result<TransactionEventList> {
         let limit = normalize_limit(limit);
         let lookup_keys = hex_lookup_keys(block_hash);
         let rows = sqlx::query(
@@ -1062,18 +1087,20 @@ impl PgTransactionEventSink {
              LIMIT $2",
         )
         .bind(&lookup_keys)
-        .bind(limit)
+        .bind(limit + 1)
         .fetch_all(&self.pool)
         .await?;
-        rows.into_iter().map(record_from_row).collect()
+        let events = rows.into_iter().map(record_from_row).collect::<Result<_>>()?;
+        Ok(TransactionEventList::from_overfetch(events, limit))
     }
 
-    /// Returns events for one bundle UUID or bundle hash sorted by event time.
+    /// Returns up to `limit` events for one bundle UUID or bundle hash, oldest
+    /// first, and whether more matched.
     pub async fn events_by_bundle(
         &self,
         bundle_key: &str,
         limit: i64,
-    ) -> Result<Vec<TransactionEventRecord>> {
+    ) -> Result<TransactionEventList> {
         let limit = normalize_limit(limit);
         let rows = sqlx::query(
             "WITH bundle_events AS ( \
@@ -1097,13 +1124,15 @@ impl PgTransactionEventSink {
              LIMIT $2",
         )
         .bind(bundle_key)
-        .bind(limit)
+        .bind(limit + 1)
         .fetch_all(&self.pool)
         .await?;
-        rows.into_iter().map(record_from_row).collect()
+        let events = rows.into_iter().map(record_from_row).collect::<Result<_>>()?;
+        Ok(TransactionEventList::from_overfetch(events, limit))
     }
 
-    /// Returns rejected transaction events sorted newest first for list views.
+    /// Returns up to `limit` rejected transaction events, newest first for list
+    /// views, and whether more matched.
     ///
     /// Optional filters are omitted from SQL when unset so Postgres can use
     /// `transaction_events_rejected_event_time_idx` for a bounded `LIMIT`
@@ -1114,7 +1143,7 @@ impl PgTransactionEventSink {
     pub async fn rejected_transaction_events(
         &self,
         query: RejectedTransactionEventQuery,
-    ) -> Result<Vec<TransactionEventRecord>> {
+    ) -> Result<TransactionEventList> {
         let limit = normalize_limit(query.limit.unwrap_or(DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT));
         let from_block = query.from_block.map(i64::try_from).transpose()?;
         let to_block = query.to_block.map(i64::try_from).transpose()?;
@@ -1140,10 +1169,11 @@ impl PgTransactionEventSink {
         // event_id is a tie-break only. The partial index is (event_type, event_time DESC);
         // LIMIT lists still use that leading column. ingested_at is omitted so the
         // planner does not drop the index for a three-column sort.
-        query_builder.push(" ORDER BY event_time DESC, event_id DESC LIMIT ").push_bind(limit);
+        query_builder.push(" ORDER BY event_time DESC, event_id DESC LIMIT ").push_bind(limit + 1);
 
         let rows = query_builder.build().fetch_all(&self.pool).await?;
-        rows.into_iter().map(record_from_row).collect()
+        let events = rows.into_iter().map(record_from_row).collect::<Result<_>>()?;
+        Ok(TransactionEventList::from_overfetch(events, limit))
     }
 }
 
@@ -2018,6 +2048,28 @@ mod tests {
     fn raw_event(value: Value) -> RawTransactionEvent {
         let byte_len = serde_json::to_string(&value).unwrap().len();
         RawTransactionEvent { value, byte_len }
+    }
+
+    #[test]
+    fn overfetched_rows_mark_the_list_truncated() {
+        let records: Vec<TransactionEventRecord> = (0..3)
+            .map(|index| TransactionEventRecord {
+                event: serde_json::from_value(event(&format!("event-{index}"))).unwrap(),
+                ingested_at: Utc::now(),
+            })
+            .collect();
+
+        let exact = TransactionEventList::from_overfetch(records.clone(), 3);
+        assert!(!exact.truncated);
+        assert_eq!(exact.events, records);
+
+        let cut = TransactionEventList::from_overfetch(records.clone(), 2);
+        assert!(cut.truncated);
+        assert_eq!(cut.events, records[..2]);
+
+        let empty = TransactionEventList::from_overfetch(Vec::new(), 2);
+        assert!(!empty.truncated);
+        assert!(empty.events.is_empty());
     }
 
     #[test]

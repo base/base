@@ -141,6 +141,16 @@ For local Vector health, alert or inspect `component_discarded_events_total`.
 `parse_transaction_events` drops malformed JSONL lines, and
 `validate_transaction_events` drops parsed events with unsafe `data` keys.
 
+## Reading Events
+
+`audit-archiver` serves stored events over JSON-RPC by transaction hash, block
+number, block hash, bundle, and rejection range. Each read returns at most the
+requested limit (default 500, maximum 2,000). Clients that must know whether a
+result was cut off should call the `V2` methods, such as
+`base_getTransactionEventsByHashV2`, which return `{ "events": [...],
+"truncated": true | false }`. The original methods return a bare array. See
+the `audit-archiver-lib` README for the full method list.
+
 ## Producer Values
 
 - `base-reth-node`

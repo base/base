@@ -30,7 +30,7 @@ pub use transaction_events::{
     PgTransactionEventSink, RejectedTransactionEventQuery, TRANSACTION_EVENT_PARTITION_DAYS_AHEAD,
     TransactionEventBatchResponse, TransactionEventBatchStatus, TransactionEventIngestConfig,
     TransactionEventInsertOutcome, TransactionEventItemResult, TransactionEventItemStatus,
-    TransactionEventRecord, TransactionEventRetentionClass, TransactionEventRetentionConfig,
-    TransactionEventRetentionOutcome, TransactionEventSchemaReadinessError, TransactionEventSink,
-    TransactionEventStorageError,
+    TransactionEventList, TransactionEventRecord, TransactionEventRetentionClass,
+    TransactionEventRetentionConfig, TransactionEventRetentionOutcome,
+    TransactionEventSchemaReadinessError, TransactionEventSink, TransactionEventStorageError,
 };

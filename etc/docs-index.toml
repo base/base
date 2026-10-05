@@ -427,8 +427,8 @@ summary = "Base txpool: BaseTransactionValidator (L1 data fee), BaseOrdering/Tim
 digest = "906eadac6b"
 
 ["crates/infra/audit/README.md"]
-summary = "audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers schema snapshot regeneration and legacy migrations."
-digest = "650b583c41"
+summary = "audit-archiver-lib: idempotent Postgres ingest of transaction-event/v1 batches, JSON-RPC read methods and truncation-aware V2 forms, schema snapshot regeneration, legacy migrations."
+digest = "ba1c41db31"
 
 ["crates/infra/basectl/README.md"]
 summary = "basectl-cli: the basectl clap parser and commands (blocks, sync, txpool, peers, proofs, conductor), interactive monitor, flashblocks JSON-lines stream, Denim readiness checks, and pods view config."
@@ -679,8 +679,8 @@ summary = "Step-by-step guide to adding a network upgrade (Azul as example): Bas
 digest = "e87f3373b8"
 
 ["docs/transaction-events/README.md"]
-summary = "Spec for transaction-event/v1, the JSONL business event journal for transaction observability: config fields, envelope, event vocabulary, Vector to audit-archiver ingest, Postgres retention, examples."
-digest = "e1240243d9"
+summary = "Spec for transaction-event/v1, the JSONL business event journal for transaction observability: config fields, envelope, event vocabulary, Vector ingest, retention, reading events, examples."
+digest = "431b8fdc30"
 
 ["docs/transaction-events/tips-parity-checklist.md"]
 summary = "Checklist for verifying TIPS UI audit-archiver/Postgres responses match the S3-backed routes (block, txn, bundle, rejected) before switching TIPS_UI_QUERY_BACKEND=audit."

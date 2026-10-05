@@ -17,7 +17,8 @@ use audit_archiver_lib::{
     AuditArchiverApiServer, AuditArchiverRpc, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
     DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
-    MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE, PgTransactionEventSink, RejectedTransactionEventQuery,
+    DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT, MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE,
+    MAX_TRANSACTION_EVENT_QUERY_LIMIT, PgTransactionEventSink, RejectedTransactionEventQuery,
     TransactionEventIngestConfig, TransactionEventRetentionConfig,
     TransactionEventSchemaReadinessError, TransactionEventSink, index_transaction_event_partitions,
 };
@@ -27,6 +28,7 @@ use axum::{
 };
 use base_observability_events::TransactionEvent;
 use chrono::Utc;
+use jsonrpsee::RpcModule;
 use serde_json::{Value, json};
 use sqlx::{Executor, PgPool, migrate::Migrator, postgres::PgPoolOptions};
 use testcontainers::{ImageExt, core::ExecCommand, runners::AsyncRunner};
@@ -161,6 +163,32 @@ fn event_with_type(event_id: &str, event_type: &str) -> TransactionEvent {
         }
     }))
     .unwrap()
+}
+
+/// Sends one JSON-RPC request and returns its `result`, failing on an error
+/// response.
+async fn rpc_result(
+    rpc: &RpcModule<AuditArchiverRpc>,
+    method: &str,
+    params: Value,
+) -> anyhow::Result<Value> {
+    let request =
+        json!({ "jsonrpc": "2.0", "method": method, "params": params, "id": 1 }).to_string();
+    let (response, _subscriptions) = rpc.raw_json_request(&request, 1).await?;
+    let response: Value = serde_json::from_str(response.get())?;
+    response.get("result").cloned().ok_or_else(|| anyhow::anyhow!("{method} failed: {response}"))
+}
+
+fn event_ids(events: &Value) -> Vec<String> {
+    events
+        .as_array()
+        .map(|events| {
+            events
+                .iter()
+                .map(|event| event["event_id"].as_str().unwrap_or_default().to_owned())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn utc_today_at(hour: u32, minute: u32, second: u32) -> chrono::DateTime<Utc> {
@@ -1091,7 +1119,7 @@ async fn postgres_runtime_role_maintains_partitions_through_definer_functions() 
 
     let event_id = unique_event_id();
     sink.insert_events(&[event(&event_id)]).await?;
-    assert_eq!(sink.events_by_block_number(123, 10).await?.len(), 1);
+    assert_eq!(sink.events_by_block_number(123, 10).await?.events.len(), 1);
 
     let later = sink.maintain_partitions_at(Utc::now() + chrono::Duration::days(5)).await?;
     assert!(later.partitions_dropped > 0, "runtime role can drop expired partitions");
@@ -1218,17 +1246,18 @@ async fn postgres_query_finds_events_by_normalized_tx_hash() -> anyhow::Result<(
             "0x1111111111111111111111111111111111111111111111111111111111111111",
             10,
         )
-        .await?;
+        .await?
+        .events;
     assert_eq!(lowercase.len(), 1);
     assert_eq!(lowercase[0].event.event_id, event_id);
 
     let mixed_case_hash =
         "0x1111111111111111111111111111111111111111111111111111111111111111".to_ascii_uppercase();
-    let mixed_case = sink.events_by_transaction_hash(&mixed_case_hash, 10).await?;
+    let mixed_case = sink.events_by_transaction_hash(&mixed_case_hash, 10).await?.events;
     assert_eq!(mixed_case.len(), 1);
     assert_eq!(mixed_case[0].event.event_id, event_id);
 
-    let block_events = sink.events_by_block_number(123, 10).await?;
+    let block_events = sink.events_by_block_number(123, 10).await?.events;
     assert_eq!(block_events.len(), 1);
     assert_eq!(block_events[0].event.event_id, event_id);
 
@@ -1254,7 +1283,8 @@ async fn postgres_query_finds_legacy_uppercase_tx_hash_rows() -> anyhow::Result<
             "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             10,
         )
-        .await?;
+        .await?
+        .events;
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].event.event_id, event_id);
 
@@ -1280,10 +1310,148 @@ async fn postgres_rejected_query_returns_bounded_newest_first() -> anyhow::Resul
             limit: Some(1),
             ..Default::default()
         })
-        .await?;
+        .await?
+        .events;
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].event.event_id, format!("{event_prefix}-new"));
     assert_eq!(records[0].event.event_type.to_string(), "BUILDER_REJECTED");
+
+    let records = sink
+        .rejected_transaction_events(RejectedTransactionEventQuery {
+            limit: Some(2),
+            ..Default::default()
+        })
+        .await?;
+    assert_eq!(records.events.len(), 2);
+    assert!(!records.truncated, "exactly two rejected events match");
+
+    Ok(())
+}
+
+/// The `V2` read methods return `{events, truncated}`; the original methods
+/// keep returning the same events as a bare array.
+#[tokio::test]
+async fn postgres_v2_read_methods_report_truncation() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let prefix = unique_event_id();
+    let tx_hash = format!("0x{:064x}", 0xa1_u64);
+    let block_hash = format!("0x{:064x}", 0xb1_u64);
+    let bundle_hash = format!("0x{:064x}", 0xc1_u64);
+    let block_number = 900_001_u64;
+    let rejected_block = 900_002_u64;
+    let start = Utc::now() - chrono::Duration::minutes(1);
+
+    let mut events = Vec::new();
+    for index in 0..3 {
+        let mut current = event(&format!("{prefix}-{index}"));
+        current.event_time = start + chrono::Duration::seconds(index);
+        current.tx_hash = Some(tx_hash.parse()?);
+        current.block_hash = Some(block_hash.parse()?);
+        current.block_number = Some(block_number);
+        current.data = json!({ "bundle_hash": bundle_hash }).as_object().unwrap().clone();
+        events.push(current);
+
+        let mut rejected =
+            event_with_type(&format!("{prefix}-rejected-{index}"), "SIMULATION_FAILED");
+        rejected.event_time = start + chrono::Duration::seconds(index);
+        rejected.tx_hash = None;
+        rejected.block_number = Some(rejected_block);
+        events.push(rejected);
+    }
+    sink.insert_events(&events).await?;
+    let rpc = AuditArchiverRpc::new(sink).into_rpc();
+    let oldest_first: Vec<String> = (0..3).map(|index| format!("{prefix}-{index}")).collect();
+
+    let keyed = [
+        ("getTransactionEventsByHash", json!(tx_hash)),
+        ("getTransactionEventsByBlockNumber", json!(block_number)),
+        ("getTransactionEventsByBlockHash", json!(block_hash)),
+        ("getTransactionEventsByBundle", json!(bundle_hash)),
+    ];
+    for (method, key) in keyed {
+        let exact = rpc_result(&rpc, &format!("base_{method}V2"), json!([key, 3])).await?;
+        assert_eq!(exact["truncated"], false, "{method}V2 at exactly the limit");
+        assert_eq!(event_ids(&exact["events"]), oldest_first, "{method}V2 order");
+
+        let cut = rpc_result(&rpc, &format!("base_{method}V2"), json!([key, 2])).await?;
+        assert_eq!(cut["truncated"], true, "{method}V2 with one more row than the limit");
+        assert_eq!(event_ids(&cut["events"]), oldest_first[..2], "{method}V2 keeps the oldest");
+
+        let legacy = rpc_result(&rpc, &format!("base_{method}"), json!([key, 2])).await?;
+        assert!(legacy.is_array(), "{method} still returns a bare array");
+        assert_eq!(legacy, cut["events"], "{method} returns the same events as {method}V2");
+    }
+
+    let missing = format!("0x{:064x}", 0xdead_u64);
+    let empty = rpc_result(&rpc, "base_getTransactionEventsByHashV2", json!([missing, 10])).await?;
+    assert_eq!(empty, json!({ "events": [], "truncated": false }));
+    let empty = rpc_result(&rpc, "base_getTransactionEventsByHash", json!([missing, 10])).await?;
+    assert_eq!(empty, json!([]));
+
+    let rejected_query = |limit: i64| json!([{ "fromBlock": rejected_block, "toBlock": rejected_block, "limit": limit }]);
+    let newest_first: Vec<String> =
+        (0..3).rev().map(|index| format!("{prefix}-rejected-{index}")).collect();
+    let exact = rpc_result(&rpc, "base_getRejectedTransactionEventsV2", rejected_query(3)).await?;
+    assert_eq!(exact["truncated"], false);
+    assert_eq!(event_ids(&exact["events"]), newest_first);
+    let cut = rpc_result(&rpc, "base_getRejectedTransactionEventsV2", rejected_query(2)).await?;
+    assert_eq!(cut["truncated"], true);
+    assert_eq!(event_ids(&cut["events"]), newest_first[..2], "rejected keeps the newest");
+    let legacy = rpc_result(&rpc, "base_getRejectedTransactionEvents", rejected_query(2)).await?;
+    assert_eq!(legacy, cut["events"]);
+
+    Ok(())
+}
+
+/// Limits above the maximum are clamped to it, and the clamped list still
+/// reports that more events matched.
+#[tokio::test]
+async fn postgres_v2_read_methods_clamp_to_maximum_limit() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let prefix = unique_event_id();
+    let block_number = 900_003_u64;
+    let maximum = usize::try_from(MAX_TRANSACTION_EVENT_QUERY_LIMIT)?;
+    let default = usize::try_from(DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT)?;
+    let start = Utc::now() - chrono::Duration::minutes(5);
+    let events: Vec<TransactionEvent> = (0..=maximum)
+        .map(|index| {
+            let mut current = event(&format!("{prefix}-{index:05}"));
+            current.event_time =
+                start + chrono::Duration::milliseconds(i64::try_from(index).unwrap());
+            current.block_number = Some(block_number);
+            current
+        })
+        .collect();
+    sink.insert_events(&events).await?;
+    let rpc = AuditArchiverRpc::new(sink).into_rpc();
+
+    let clamped = rpc_result(
+        &rpc,
+        "base_getTransactionEventsByBlockNumberV2",
+        json!([block_number, MAX_TRANSACTION_EVENT_QUERY_LIMIT + 1_000]),
+    )
+    .await?;
+    assert_eq!(clamped["truncated"], true);
+    let ids = event_ids(&clamped["events"]);
+    assert_eq!(ids.len(), maximum);
+    assert_eq!(ids.last(), Some(&format!("{prefix}-{:05}", maximum - 1)));
+
+    let defaulted =
+        rpc_result(&rpc, "base_getTransactionEventsByBlockNumberV2", json!([block_number])).await?;
+    assert_eq!(defaulted["truncated"], true);
+    assert_eq!(event_ids(&defaulted["events"]).len(), default);
+
+    let legacy = rpc_result(
+        &rpc,
+        "base_getTransactionEventsByBlockNumber",
+        json!([block_number, MAX_TRANSACTION_EVENT_QUERY_LIMIT + 1_000]),
+    )
+    .await?;
+    assert_eq!(legacy.as_array().map(Vec::len), Some(maximum));
 
     Ok(())
 }
