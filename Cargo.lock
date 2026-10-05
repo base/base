@@ -5219,6 +5219,7 @@ dependencies = [
  "alloy-primitives",
  "proc-macro2",
  "quote",
+ "rstest",
  "syn 2.0.119",
 ]
 

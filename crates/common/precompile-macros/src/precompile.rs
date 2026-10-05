@@ -207,6 +207,7 @@ fn precompile_name(ident: &Ident) -> String {
 mod tests {
     use proc_macro2::TokenStream as TokenStream2;
     use quote::quote;
+    use rstest::rstest;
 
     use super::{PrecompileConfig, expand_impl};
 
@@ -225,22 +226,29 @@ mod tests {
         );
     }
 
-    #[test]
-    fn config_rejects_unknown_options() {
-        let err = parse_config(quote! { instal }).err().unwrap();
+    #[rstest]
+    #[case::unknown_option(
+        quote! { instal },
+        "expected `id`, `storage`, `macro_path`, `args`, `install`, or `storage_features`"
+    )]
+    #[case::positional_storage(
+        quote! { CustomStorage<'_> },
+        "expected `id`, `storage`, `macro_path`, `args`, `install`, or `storage_features`"
+    )]
+    #[case::duplicate_install(quote! { install, install }, "duplicate `install` option")]
+    #[case::duplicate_empty_args(quote! { args(), args() }, "duplicate `args` option")]
+    #[case::duplicate_args_after_empty(quote! { args(), args(x: u8) }, "duplicate `args` option")]
+    #[case::duplicate_storage_features(
+        quote! {
+            storage_features = A,
+            storage_features = B,
+        },
+        "duplicate `storage_features` option"
+    )]
+    fn config_rejects_invalid_options(#[case] tokens: TokenStream2, #[case] expected: &str) {
+        let err = parse_config(tokens).err().unwrap();
 
-        assert!(err.to_string().contains(
-            "expected `id`, `storage`, `macro_path`, `args`, `install`, or `storage_features`"
-        ));
-    }
-
-    #[test]
-    fn config_rejects_positional_storage() {
-        let err = parse_config(quote! { CustomStorage<'_> }).err().unwrap();
-
-        assert!(err.to_string().contains(
-            "expected `id`, `storage`, `macro_path`, `args`, `install`, or `storage_features`"
-        ));
+        assert!(err.to_string().contains(expected), "expected {expected:?}, got: {err}");
     }
 
     #[test]
@@ -284,27 +292,6 @@ mod tests {
     }
 
     #[test]
-    fn config_rejects_duplicate_install() {
-        let err = parse_config(quote! { install, install }).err().unwrap();
-
-        assert!(err.to_string().contains("duplicate `install` option"));
-    }
-
-    #[test]
-    fn config_rejects_duplicate_empty_args() {
-        let err = parse_config(quote! { args(), args() }).err().unwrap();
-
-        assert!(err.to_string().contains("duplicate `args` option"));
-    }
-
-    #[test]
-    fn config_rejects_duplicate_args_where_first_is_empty() {
-        let err = parse_config(quote! { args(), args(x: u8) }).err().unwrap();
-
-        assert!(err.to_string().contains("duplicate `args` option"));
-    }
-
-    #[test]
     fn config_accepts_storage_features() {
         let config = parse_config(quote! {
             install,
@@ -314,18 +301,6 @@ mod tests {
 
         assert!(config.install);
         assert!(config.storage_features.is_some());
-    }
-
-    #[test]
-    fn config_rejects_duplicate_storage_features() {
-        let err = parse_config(quote! {
-            storage_features = A,
-            storage_features = B,
-        })
-        .err()
-        .unwrap();
-
-        assert!(err.to_string().contains("duplicate `storage_features` option"));
     }
 
     #[test]

@@ -22,4 +22,5 @@ quote.workspace = true
 proc-macro2.workspace = true
 
 [dev-dependencies]
+rstest.workspace = true
 alloy-primitives.workspace = true
