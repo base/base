@@ -250,6 +250,12 @@ impl Eip8130Executor {
         }
 
         let spec = ctx.cfg().spec();
+        // Consensus-critical: the EIP-8130 transaction type exists only from
+        // Everest. Every ingress path gates it, but a block delivered by the
+        // Engine API or P2P reaches execution directly.
+        if !spec.is_enabled_in(BaseUpgrade::Everest) {
+            return Err(Self::not_active_error().into());
+        }
         // Consensus-critical: a clamped timestamp would silently shift the expiry
         // validation in the authorizer and nonce validator, so reject rather than
         // saturate. Block timestamps never approach `u64::MAX` in practice.
@@ -447,6 +453,9 @@ impl Eip8130Executor {
             })?;
 
         let ctx = evm.ctx_mut();
+        if !ctx.cfg().spec().is_enabled_in(BaseUpgrade::Everest) {
+            return Err(Self::not_active_error().into());
+        }
         let from = ctx.tx().base.caller;
         // Estimation skips authorization (no signature is verified), but it must
         // still apply account changes exactly as consensus would so the post-change
@@ -970,6 +979,7 @@ impl Eip8130Executor {
         let gas_limit = tx.gas_limit;
         let max_fee = tx.max_fee_per_gas;
         let max_priority = tx.max_priority_fee_per_gas;
+        let tx_gas_limit_cap = ctx.cfg().tx_gas_limit_cap();
         // Validity bounds are normalized to Unix milliseconds (seconds bounds are
         // scaled by 1000 per EIP-8130 Timestamp Normalization); `0` stays `0`
         // (disabled). The nonce-free replay ring records this normalized upper
@@ -1109,6 +1119,14 @@ impl Eip8130Executor {
                     .with_revoke_discount_slots(applied_tx.revoke_discount_slots),
                 gas_limit,
             )?;
+            // EIP-7825: the transaction may consume `gas_limit` plus the payer
+            // authentication metered on top of it, and that total is bounded by
+            // the per-transaction gas cap (from Azul).
+            if FeeCheck::max_chargeable_gas(gas_limit, intrinsic.payer_auth) > tx_gas_limit_cap {
+                return Err(BaseTransactionError::eip8130(
+                    "transaction gas exceeds the EIP-7825 per-transaction cap",
+                ));
+            }
 
             // 5. Fee caps and payer balance.
             FeeCheck::validate_fees(max_fee, max_priority, base_fee)
@@ -1851,6 +1869,11 @@ impl Eip8130Executor {
 
     /// ABI-encodes the `ActorPolicyViolation(bytes32 actorId, address target)`
     /// protocol revert: the 4-byte selector followed by the two 32-byte words.
+    /// The rejection for an EIP-8130 transaction under a spec before Everest.
+    fn not_active_error() -> BaseTransactionError {
+        BaseTransactionError::eip8130("EIP-8130 transactions are not active before Everest")
+    }
+
     fn actor_policy_violation_data(actor_id: B256, target: Address) -> Bytes {
         // `keccak256(b"ActorPolicyViolation(bytes32,address)")[..4]`, hardcoded to
         // avoid hashing on every policy-gate revert. The
@@ -1995,7 +2018,7 @@ mod tests {
         Context::base()
             .with_db(db)
             .with_cfg(
-                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus))
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Everest))
                     .with_chain_id(CHAIN_ID),
             )
             .with_block(BlockEnv {
@@ -2517,7 +2540,7 @@ mod tests {
         Context::base()
             .with_db(db)
             .with_cfg(
-                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus))
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Everest))
                     .with_chain_id(CHAIN_ID),
             )
             .with_block(BlockEnv {
@@ -3058,7 +3081,7 @@ mod tests {
         let mut evm = Context::base()
             .with_db(db)
             .with_cfg(
-                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus))
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Everest))
                     .with_chain_id(CHAIN_ID),
             )
             .with_block(BlockEnv {
@@ -3471,6 +3494,61 @@ mod tests {
         }
     }
 
+    /// EIP-8130 exists only from Everest: a block before it cannot include or
+    /// simulate one, whatever path delivered the transaction.
+    #[test]
+    fn eip8130_is_rejected_before_everest() {
+        let key = signing_key(0x9c);
+        let sender = eoa_address(&key);
+        let signed = eoa_signed(base_tx(), &key);
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+        evm.ctx_mut().cfg.spec = BaseSpecId::new(BaseUpgrade::Denim);
+
+        let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
+        assert!(err.to_string().contains("not active before Everest"), "got {err}");
+
+        let mut sim = into_base_tx(&signed);
+        sim.base.caller = sender;
+        if let Some(parts) = sim.eip8130.as_mut() {
+            parts.mode = Eip8130ExecutionMode::Simulate;
+        }
+        evm.ctx_mut().tx = sim;
+        let err = Eip8130Executor::simulate(&mut evm).unwrap_err();
+        assert!(err.to_string().contains("not active before Everest"), "got {err}");
+    }
+
+    /// EIP-7825 bounds the gas an EIP-8130 transaction can consume.
+    #[test]
+    fn gas_above_the_per_transaction_cap_is_rejected() {
+        let key = signing_key(0x9d);
+        let sender = eoa_address(&key);
+        let mut evm = evm_with(U256::MAX >> 1, sender);
+        let cap = evm.ctx().cfg.tx_gas_limit_cap();
+        let signed = eoa_signed(TxEip8130 { gas_limit: cap + 1, ..base_tx() }, &key);
+
+        let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
+        assert!(err.to_string().contains("EIP-7825"), "got {err}");
+    }
+
+    /// A nonce-free transaction must carry `nonce_sequence == 0` at inclusion,
+    /// not only at pool admission.
+    #[test]
+    fn nonce_free_with_nonzero_sequence_is_rejected_at_inclusion() {
+        let key = signing_key(0x9e);
+        let sender = eoa_address(&key);
+        let tx = TxEip8130 {
+            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+            nonce_sequence: 1,
+            valid_before: NOW * 1_000 + 20_000,
+            ..base_tx()
+        };
+        let signed = eoa_signed(tx, &key);
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+
+        let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
+        assert!(err.to_string().contains("nonce-free transaction has nonce sequence"), "got {err}");
+    }
+
     #[test]
     fn actor_policy_violation_data_is_abi_encoded() {
         let actor_id = B256::repeat_byte(0xab);
@@ -3740,7 +3818,7 @@ mod tests {
         let mut evm = Context::base()
             .with_db(db)
             .with_cfg(
-                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus))
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Everest))
                     .with_chain_id(CHAIN_ID),
             )
             .with_block(BlockEnv {

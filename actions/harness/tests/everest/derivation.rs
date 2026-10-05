@@ -46,15 +46,18 @@ async fn eip8130_batch_is_dropped_before_everest() {
     let mut builder = h.create_l2_sequencer(l1_chain);
 
     // Build three pre-Everest L2 blocks. Blocks 1-2 carry a normal user tx; block
-    // 3 (ts = 6) carries an EIP-8130 transaction whose batch the verifier must
-    // drop because Everest is not active until ts = 8.
+    // 3 (ts = 6) is batched with an EIP-8130 transaction the verifier must drop
+    // because Everest is not active until ts = 8. Execution rejects EIP-8130
+    // before Everest, so the sequencer cannot build such a block; the
+    // transaction is appended to block 3's body only for batching, standing in
+    // for a misbehaving sequencer.
     let mut eip8130_block_hash = B256::ZERO;
     let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg);
     for i in 1u64..=3 {
         if i == 3 {
-            let tx = EverestTestEnv::eip8130_user_tx(chain_id, 0);
-            let block = builder.build_next_block_with_transactions(vec![tx]).await;
+            let mut block = builder.build_next_block_with_transactions(Vec::new()).await;
             eip8130_block_hash = block.header.hash_slow();
+            block.body.transactions.push(EverestTestEnv::eip8130_user_tx(chain_id, 0));
             batcher.push_block(block);
         } else {
             batcher.push_block(builder.build_next_block_with_single_transaction().await);
