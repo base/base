@@ -12,6 +12,9 @@ use lru::LruCache;
 use reth_primitives_traits::BlockBody as _;
 use reth_storage_api::{BlockReader, errors::ProviderError};
 
+/// Number of blocks whose `BaseTime` timestamps are retained.
+const BASE_TIME_CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(256).unwrap();
+
 /// Cache of validated `BaseTime` timestamps keyed by block hash.
 #[derive(Clone, Debug)]
 pub struct BaseTimeCache {
@@ -20,11 +23,7 @@ pub struct BaseTimeCache {
 
 impl Default for BaseTimeCache {
     fn default() -> Self {
-        Self {
-            timestamps: Arc::new(Mutex::new(LruCache::new(
-                NonZeroUsize::new(256).unwrap_or(NonZeroUsize::MIN),
-            ))),
-        }
+        Self { timestamps: Arc::new(Mutex::new(LruCache::new(BASE_TIME_CACHE_CAPACITY))) }
     }
 }
 
