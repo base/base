@@ -41,12 +41,6 @@ pub enum ValidityPredicateError {
         /// Maximum number of predicates permitted.
         max: usize,
     },
-    /// The submission carried a [`ValidityPredicate::Balance`] predicate.
-    #[error("balance predicate at index {index} is not supported")]
-    BalanceUnsupported {
-        /// Position of the offending predicate within the batch.
-        index: usize,
-    },
     /// A storage predicate's comparison value has bits set outside its mask.
     ///
     /// Because the loaded storage value is masked before comparison, bits set in
@@ -266,9 +260,8 @@ impl ValidityPredicate {
 
     /// Validates a batch of predicates submitted at ingress.
     ///
-    /// Rejects an empty batch, a batch larger than `max`, any
-    /// [`Self::Balance`] predicate, and any predicate whose parameters are
-    /// internally inconsistent.
+    /// Rejects an empty batch, a batch larger than `max`, and any predicate
+    /// whose parameters are internally inconsistent.
     pub fn validate_batch(predicates: &[Self], max: usize) -> Result<(), ValidityPredicateError> {
         if predicates.is_empty() {
             return Err(ValidityPredicateError::Empty);
@@ -277,9 +270,6 @@ impl ValidityPredicate {
             return Err(ValidityPredicateError::TooMany { count: predicates.len(), max });
         }
         for (index, predicate) in predicates.iter().enumerate() {
-            if matches!(predicate, Self::Balance { .. }) {
-                return Err(ValidityPredicateError::BalanceUnsupported { index });
-            }
             predicate.validate_params(index)?;
         }
         Ok(())
@@ -1271,9 +1261,10 @@ mod tests {
     #[test]
     fn validate_batch_rejects_unsatisfiable_flashblock_index_reporting_its_index() {
         let predicates = vec![
-            ValidityPredicate::BlockNumber {
-                op: ValidityOperator::LessThanOrEqual,
-                value: U256::from(10),
+            ValidityPredicate::Balance {
+                address: Address::repeat_byte(0x11),
+                op: ValidityOperator::GreaterThanOrEqual,
+                value: U256::from(1),
             },
             ValidityPredicate::FlashblockIndex { op: ValidityOperator::Equal, value: U256::ZERO },
         ];
@@ -1294,8 +1285,11 @@ mod tests {
 
     #[test]
     fn validate_batch_rejects_too_many() {
-        let predicate =
-            ValidityPredicate::BlockNumber { op: ValidityOperator::Equal, value: U256::ZERO };
+        let predicate = ValidityPredicate::Balance {
+            address: Address::ZERO,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
         let predicates = vec![predicate; DEFAULT_MAX_VALIDITY_PREDICATES + 1];
 
         assert_eq!(
@@ -1310,9 +1304,10 @@ mod tests {
     #[test]
     fn validate_batch_accepts_valid_predicates() {
         let predicates = vec![
-            ValidityPredicate::BlockNumber {
-                op: ValidityOperator::LessThanOrEqual,
-                value: U256::from(10),
+            ValidityPredicate::Balance {
+                address: Address::repeat_byte(0x11),
+                op: ValidityOperator::GreaterThanOrEqual,
+                value: U256::from(1),
             },
             ValidityPredicate::Storage {
                 address: Address::repeat_byte(0x22),
@@ -1331,9 +1326,10 @@ mod tests {
 
     #[test]
     fn validate_batch_rejects_malformed_predicate_reporting_its_index() {
-        let valid = ValidityPredicate::BlockNumber {
-            op: ValidityOperator::LessThanOrEqual,
-            value: U256::from(10),
+        let valid = ValidityPredicate::Balance {
+            address: Address::repeat_byte(0x11),
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
         };
         let malformed = ValidityPredicate::Storage {
             address: Address::repeat_byte(0x22),
@@ -1348,56 +1344,6 @@ mod tests {
             ValidityPredicate::validate_batch(&predicates, DEFAULT_MAX_VALIDITY_PREDICATES),
             Err(ValidityPredicateError::StorageValueOutsideMask { index: 1 })
         );
-    }
-
-    #[test]
-    fn validate_batch_rejects_balance_predicate_reporting_its_index() {
-        let predicates = vec![
-            ValidityPredicate::BlockNumber {
-                op: ValidityOperator::LessThanOrEqual,
-                value: U256::from(10),
-            },
-            ValidityPredicate::Balance {
-                address: Address::repeat_byte(0x11),
-                op: ValidityOperator::GreaterThanOrEqual,
-                value: U256::from(1),
-            },
-        ];
-
-        assert_eq!(
-            ValidityPredicate::validate_batch(&predicates, DEFAULT_MAX_VALIDITY_PREDICATES),
-            Err(ValidityPredicateError::BalanceUnsupported { index: 1 })
-        );
-    }
-
-    #[test]
-    fn apply_accepts_balance_predicate() {
-        let signed: BaseTransactionSigned = TxDeposit {
-            source_hash: Default::default(),
-            from: Address::ZERO,
-            to: TxKind::Create,
-            mint: 0,
-            value: U256::ZERO,
-            gas_limit: 21_000,
-            is_system_transaction: false,
-            input: Default::default(),
-        }
-        .into();
-        let encoded_length = signed.encode_2718_len();
-        let transaction = BasePooledTransaction::new(
-            Recovered::new_unchecked(signed, Address::ZERO),
-            encoded_length,
-        );
-        let expected = vec![ValidityPredicate::Balance {
-            address: Address::repeat_byte(0x11),
-            op: ValidityOperator::GreaterThan,
-            value: U256::ZERO,
-        }];
-        let extension = TransactionValidity { validity: expected.clone() };
-
-        let transaction = extension.apply(transaction).unwrap();
-
-        assert_eq!(transaction.validity_predicates(), expected);
     }
 
     #[test]

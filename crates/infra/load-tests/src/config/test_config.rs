@@ -1433,9 +1433,10 @@ flashblocks_ws: ws://localhost:7111
 validity:
   ratio: 0.25
   predicates:
-    - type: flashblock_index
+    - type: balance
+      address: sender
       op: ">="
-      value: "1"
+      value: "0"
     - type: storage
       address: "0x1234567890123456789012345678901234567890"
       slot:
@@ -1465,11 +1466,11 @@ validity:
         let yaml = include_str!("../../examples/validity-devnet.yaml");
         let config = TestConfig::from_yaml(yaml).expect("validity-devnet.yaml must parse");
         assert_eq!(config.validity.ratio, 0.5);
-        assert_eq!(config.validity.predicates.len(), 1);
+        assert_eq!(config.validity.predicates.len(), 2);
 
         let load_config = config.to_load_config(Some(1337)).expect("must lower to LoadConfig");
         assert_eq!(load_config.validity_ratio, 0.5);
-        assert_eq!(load_config.validity_predicates.len(), 1);
+        assert_eq!(load_config.validity_predicates.len(), 2);
     }
 
     #[test]
@@ -1480,9 +1481,9 @@ flashblocks_ws: ws://localhost:7111
 validity:
   ratio: 1.5
   predicates:
-    - type: flashblock_index
+    - type: balance
       op: ">="
-      value: "1"
+      value: "0"
 "#;
         let err = TestConfig::from_yaml(yaml).unwrap_err();
         assert!(err.to_string().contains("validity.ratio"));

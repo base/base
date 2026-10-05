@@ -67,11 +67,16 @@ transactions:
 validity:
   ratio: 0.5
   predicates:
-    # Always-satisfiable baseline: an upper bound ten blocks past the current
-    # height supplies the block-number expiry that ingress requires while
-    # keeping these transactions includable, so they exercise the full
-    # ingress -> forward -> build predicate-evaluation path without gating
-    # inclusion. Swap in the gating examples below to test parking/eviction.
+    # Always-satisfiable baseline: the sender's balance is non-negative and an
+    # upper bound ten blocks past the current height supplies the block-number
+    # expiry that ingress requires, so these transactions stay includable and
+    # exercise the full ingress -> forward -> build predicate-evaluation path
+    # without gating inclusion. Swap in the gating examples below to test
+    # parking/eviction.
+    - type: balance
+      address: sender # sender | recipient | 0x-literal
+      op: ">="
+      value: "0"
     - type: block_number
       op: "<="
       offset: "10"
