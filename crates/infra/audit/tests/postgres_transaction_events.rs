@@ -18,7 +18,7 @@ use audit_archiver_lib::{
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
     DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
     MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE, PgTransactionEventSink, RejectedTransactionEventQuery,
-    TransactionEventIndexConfig, TransactionEventIngestConfig, TransactionEventRetentionConfig,
+    TransactionEventIngestConfig, TransactionEventRetentionConfig,
     TransactionEventSchemaReadinessError, TransactionEventSink, index_transaction_event_partitions,
 };
 use axum::{
@@ -580,20 +580,9 @@ async fn postgres_ingested_at_index_recovers_and_covers_future_days() -> anyhow:
     .await?;
     assert!(invalid, "failed concurrent build left an invalid index");
 
-    let built = index_transaction_event_partitions(
-        &harness.database_url,
-        &TransactionEventIndexConfig::default(),
-    )
-    .await?;
+    let built = index_transaction_event_partitions(&harness.database_url).await?;
     assert!(built > 0, "existing day partitions were indexed");
-    assert_eq!(
-        index_transaction_event_partitions(
-            &harness.database_url,
-            &TransactionEventIndexConfig::default()
-        )
-        .await?,
-        0
-    );
+    assert_eq!(index_transaction_event_partitions(&harness.database_url).await?, 0);
 
     let index_valid: bool = sqlx::query_scalar(
         "SELECT i.indisvalid AND a.amname = 'brin' \
@@ -626,125 +615,6 @@ async fn postgres_ingested_at_index_recovers_and_covers_future_days() -> anyhow:
     .fetch_one(&pool)
     .await?;
     assert!(future_valid, "new day automatically inherits the usable ingested_at index");
-
-    Ok(())
-}
-
-/// Starts a read that holds ACCESS SHARE on `leaf`'s indexes until it is
-/// canceled or `sleep_secs` pass, and waits until it holds them.
-async fn start_read_on(
-    pool: &PgPool,
-    leaf: &str,
-    sleep_secs: u32,
-) -> anyhow::Result<tokio::task::JoinHandle<Result<(), sqlx::Error>>> {
-    let reader = pool.clone();
-    let query = format!(
-        "SELECT pg_sleep({sleep_secs}), \
-         (SELECT count(*) FROM public.{leaf} WHERE tx_hash = 'blocking-read')"
-    );
-    let read = tokio::spawn(async move { sqlx::query(&query).execute(&reader).await.map(|_| ()) });
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let locked: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM pg_locks l \
-             JOIN pg_stat_activity a ON a.pid = l.pid \
-             WHERE a.query LIKE 'SELECT pg_sleep(%' AND l.relation = to_regclass($1))",
-        )
-        .bind(format!("public.{leaf}_ingested_at_idx"))
-        .fetch_one(pool)
-        .await?;
-        if locked {
-            return Ok(read);
-        }
-        anyhow::ensure!(Instant::now() < deadline, "read never locked {leaf}'s indexes");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
-/// Leaf indexes not yet attached to their class index.
-async fn unattached_leaf_indexes(pool: &PgPool) -> anyhow::Result<Vec<String>> {
-    Ok(sqlx::query_scalar(
-        "SELECT c.relname::text FROM pg_class c \
-         WHERE c.relkind = 'i' AND c.relname LIKE 'transaction_events_%_ingested_at_idx' \
-           AND c.relname NOT IN ('transaction_events_hot_ingested_at_idx', \
-               'transaction_events_warm_ingested_at_idx', 'transaction_events_cold_ingested_at_idx') \
-           AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid) \
-         ORDER BY 1",
-    )
-    .fetch_all(pool)
-    .await?)
-}
-
-#[tokio::test]
-async fn postgres_ingested_at_index_defers_attach_blocked_by_long_read() -> anyhow::Result<()> {
-    let harness = PostgresHarness::new().await?;
-    PgTransactionEventSink::migrate(&harness.database_url).await?;
-    let pool = PgPoolOptions::new().max_connections(4).connect(&harness.database_url).await?;
-
-    // Build the missing leaf indexes up front so the command only attaches.
-    // CREATE INDEX CONCURRENTLY would otherwise wait out the blocking read.
-    let leaves: Vec<String> = sqlx::query_scalar(
-        "SELECT c.relname::text FROM pg_inherits i \
-         JOIN pg_class c ON c.oid = i.inhrelid \
-         JOIN pg_class p ON p.oid = i.inhparent \
-         WHERE p.relname IN \
-             ('transaction_events_hot', 'transaction_events_warm', 'transaction_events_cold') \
-           AND to_regclass('public.' || c.relname || '_ingested_at_idx') IS NULL \
-         ORDER BY 1",
-    )
-    .fetch_all(&pool)
-    .await?;
-    assert!(leaves.len() > 1, "migrations leave several day partitions to index");
-    for leaf in &leaves {
-        pool.execute(
-            format!(
-                "CREATE INDEX {leaf}_ingested_at_idx ON public.{leaf} USING brin (ingested_at)"
-            )
-            .as_str(),
-        )
-        .await?;
-    }
-    // The first leaf in build order, so every later leaf is attached after it.
-    let blocked = &leaves[0];
-
-    let read = start_read_on(&pool, blocked, 60).await?;
-    let short_budget = TransactionEventIndexConfig {
-        attach_lock_timeout: Duration::from_millis(200),
-        attach_retry_budget: Duration::from_secs(1),
-    };
-    let err = index_transaction_event_partitions(&harness.database_url, &short_budget)
-        .await
-        .expect_err("a read that outlasts the retry budget blocks its leaf's attach");
-    assert!(err.to_string().contains(blocked.as_str()), "error names the blocked leaf: {err:#}");
-    assert_eq!(
-        unattached_leaf_indexes(&pool).await?,
-        vec![format!("{blocked}_ingested_at_idx")],
-        "every other leaf was attached despite the blocked one"
-    );
-    assert!(!read.is_finished(), "the blocking read was not canceled");
-    pool.execute(
-        "SELECT pg_cancel_backend(pid) FROM pg_stat_activity \
-                  WHERE query LIKE 'SELECT pg_sleep(%'",
-    )
-    .await?;
-    assert!(read.await?.is_err());
-
-    // A read that ends within the retry budget only delays the attach.
-    let read = start_read_on(&pool, blocked, 3).await?;
-    let config = TransactionEventIndexConfig {
-        attach_lock_timeout: Duration::from_millis(200),
-        attach_retry_budget: Duration::from_secs(60),
-    };
-    index_transaction_event_partitions(&harness.database_url, &config).await?;
-    read.await??;
-    assert!(unattached_leaf_indexes(&pool).await?.is_empty());
-    let valid: bool = sqlx::query_scalar(
-        "SELECT indisvalid FROM pg_index \
-         WHERE indexrelid = 'transaction_events_ingested_at_idx'::regclass",
-    )
-    .fetch_one(&pool)
-    .await?;
-    assert!(valid, "the root index is valid once every leaf is attached");
 
     Ok(())
 }
