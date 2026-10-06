@@ -718,6 +718,7 @@ mod tests {
     use reth_trie::{
         ComputedTrieData, HashedPostStateSorted, LazyTrieData, updates::TrieUpdatesSorted,
     };
+    use rstest::rstest;
 
     use super::*;
 
@@ -847,198 +848,116 @@ mod tests {
         assert!(matches!(state, SyncTargetState::SyncUpTo { to: 1 }));
     }
 
-    #[tokio::test]
-    async fn handle_notification_chain_committed_caches_already_stored_blocks() {
-        // RocksDB proofs storage
-        let dir = tempdir_path();
-        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
-
-        init_storage(proofs.clone());
-
-        // Pre-store blocks 1..5 so storage is at block 5
-        store_blocks(1, 5, &proofs);
-
-        let (ctx, _handle) =
-            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
-
-        let exex = build_test_exex(ctx, proofs.clone());
-
-        let sync_target = SyncTarget::new();
-
-        // Handle notification for block 5 which is already stored - still caches
-        let new_chain = Arc::new(mk_chain_with_updates(5, 5, Some(hash_for_num(10))));
-        let notif = ExExNotification::ChainCommitted { new: new_chain };
-        exex.handle_notification(notif, &sync_target).expect("handle chain commit");
-
-        // State is set (sync loop will see latest >= target and skip)
-        let state = sync_target.take_state().expect("should have pending state");
-        assert!(matches!(state, SyncTargetState::SyncUpTo { to: 5 }));
-
-        // Storage is unchanged (notification handler doesn't write to storage)
-        let latest = proofs.get_latest_block_number().expect("get latest block").expect("ok");
-        assert_eq!(latest.0, 5);
-        assert_eq!(latest.1, hash_for_num(5));
+    enum ChainNotification {
+        Committed { new: (u64, u64) },
+        Reorged { old: (u64, u64), new: (u64, u64) },
+        Reverted { old: (u64, u64) },
     }
 
+    #[derive(Debug, Clone, Copy)]
+    enum ExpectedState {
+        SyncUpTo(u64),
+        RevertThenSync { revert_to: u64, sync_to: u64 },
+        Revert { revert_to: u64 },
+    }
+
+    #[rstest]
+    #[case::committed_caches_already_stored_blocks(
+        5,
+        ChainNotification::Committed { new: (5, 5) },
+        ExpectedState::SyncUpTo(5)
+    )]
+    #[case::reorged(
+        10,
+        ChainNotification::Reorged { old: (6, 10), new: (6, 12) },
+        ExpectedState::RevertThenSync { revert_to: 6, sync_to: 12 }
+    )]
+    #[case::reorged_beyond_stored_blocks(
+        10,
+        ChainNotification::Reorged { old: (12, 15), new: (12, 20) },
+        ExpectedState::RevertThenSync { revert_to: 12, sync_to: 20 }
+    )]
+    #[case::reverted(
+        10,
+        ChainNotification::Reverted { old: (9, 10) },
+        ExpectedState::Revert { revert_to: 9 }
+    )]
+    #[case::reverted_beyond_stored_blocks(
+        5,
+        ChainNotification::Reverted { old: (9, 10) },
+        ExpectedState::Revert { revert_to: 9 }
+    )]
     #[tokio::test]
-    async fn handle_notification_chain_reorged() {
-        // RocksDB proofs storage
+    async fn handle_notification_updates_sync_target_without_writing_storage(
+        #[case] stored_to: u64,
+        #[case] notification: ChainNotification,
+        #[case] expected: ExpectedState,
+    ) {
         let dir = tempdir_path();
         let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
         let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         init_storage(proofs.clone());
-        store_blocks(1, 10, &proofs);
+        store_blocks(1, stored_to, &proofs);
 
         let (ctx, _handle) =
             reth_exex_test_utils::test_exex_context().await.expect("exex test context");
-
         let exex = build_test_exex(ctx, proofs.clone());
-
         let sync_target = SyncTarget::new();
 
-        // Now the tip is 10, and we want to reorg from block 6..12
-        let old_chain = Arc::new(mk_chain_with_updates(6, 10, None));
-        let new_chain = Arc::new(mk_chain_with_updates(6, 12, None));
+        let (notif, new_blocks) = match notification {
+            ChainNotification::Committed { new } => (
+                ExExNotification::ChainCommitted {
+                    new: Arc::new(mk_chain_with_updates(new.0, new.1, None)),
+                },
+                Some(new),
+            ),
+            ChainNotification::Reorged { old, new } => (
+                ExExNotification::ChainReorged {
+                    old: Arc::new(mk_chain_with_updates(old.0, old.1, None)),
+                    new: Arc::new(mk_chain_with_updates(new.0, new.1, None)),
+                },
+                Some(new),
+            ),
+            ChainNotification::Reverted { old } => (
+                ExExNotification::ChainReverted {
+                    old: Arc::new(mk_chain_with_updates(old.0, old.1, None)),
+                },
+                None,
+            ),
+        };
 
-        // Notification: chain reorged 6..12
-        let notif = ExExNotification::ChainReorged { new: new_chain, old: old_chain };
+        exex.handle_notification(notif, &sync_target).expect("handle notification");
 
-        exex.handle_notification(notif, &sync_target).expect("handle chain re-orged");
-
-        // Should have RevertThenSync state
         let state = sync_target.take_state().expect("should have pending state");
-        assert!(matches!(
-            state,
-            SyncTargetState::RevertThenSync { revert_to, sync_to: 12 }
-            if revert_to.block.number == 6
-        ));
-
-        // New chain blocks should be cached
-        for n in 6..=12 {
-            assert!(sync_target.take(n).is_some(), "block {n} should be cached");
+        match (expected, state) {
+            (ExpectedState::SyncUpTo(to), SyncTargetState::SyncUpTo { to: actual }) => {
+                assert_eq!(actual, to);
+            }
+            (
+                ExpectedState::RevertThenSync { revert_to, sync_to },
+                SyncTargetState::RevertThenSync { revert_to: actual_revert, sync_to: actual_sync },
+            ) => {
+                assert_eq!(actual_revert.block.number, revert_to);
+                assert_eq!(actual_sync, sync_to);
+            }
+            (
+                ExpectedState::Revert { revert_to },
+                SyncTargetState::Revert { revert_to: actual },
+            ) => {
+                assert_eq!(actual.block.number, revert_to);
+            }
+            (expected, state) => panic!("unexpected state: expected {expected:?}, got {state:?}"),
         }
 
-        // Storage unchanged (sync loop handles the actual revert)
-        let latest = proofs.get_latest_block_number().expect("get latest block").expect("ok").0;
-        assert_eq!(latest, 10);
-    }
+        if let Some((from, to)) = new_blocks {
+            for n in from..=to {
+                assert!(sync_target.take(n).is_some(), "block {n} should be cached");
+            }
+        }
 
-    #[tokio::test]
-    async fn handle_notification_chain_reorged_beyond_stored_blocks() {
-        // RocksDB proofs storage
-        let dir = tempdir_path();
-        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
-
-        init_storage(proofs.clone());
-        store_blocks(1, 10, &proofs);
-
-        let (ctx, _handle) =
-            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
-
-        let exex = build_test_exex(ctx, proofs.clone());
-
-        let sync_target = SyncTarget::new();
-
-        // Now the tip is 10, and we want to reorg from block 12..15
-        // Both chains share the same fork block (block 11)
-        let old_chain = Arc::new(mk_chain_with_updates(12, 15, None));
-        let new_chain = Arc::new(mk_chain_with_updates(12, 20, None));
-
-        // Notification: chain reorged 12..20
-        let notif = ExExNotification::ChainReorged { new: new_chain, old: old_chain };
-
-        exex.handle_notification(notif, &sync_target).expect("handle chain re-orged");
-
-        // State is set; sync loop will detect revert is beyond stored blocks
-        let state = sync_target.take_state().expect("should have pending state");
-        assert!(matches!(
-            state,
-            SyncTargetState::RevertThenSync { revert_to, sync_to: 20 }
-            if revert_to.block.number == 12
-        ));
-
-        // Storage unchanged
-        let latest = proofs.get_latest_block_number().expect("get latest block").expect("ok").0;
-        assert_eq!(latest, 10);
-    }
-
-    #[tokio::test]
-    async fn handle_notification_chain_reverted() {
-        // RocksDB proofs storage
-        let dir = tempdir_path();
-        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
-
-        init_storage(proofs.clone());
-        store_blocks(1, 10, &proofs);
-
-        let (ctx, _handle) =
-            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
-
-        let exex = build_test_exex(ctx, proofs.clone());
-
-        let sync_target = SyncTarget::new();
-
-        // Now the tip is 10, and we want to revert from block 9..10
-        let old_chain = Arc::new(mk_chain_with_updates(9, 10, None));
-
-        // Notification: chain reverted 9..10
-        let notif = ExExNotification::ChainReverted { old: old_chain };
-
-        exex.handle_notification(notif, &sync_target).expect("handle chain reverted");
-
-        // Should have Revert state
-        let state = sync_target.take_state().expect("should have pending state");
-        assert!(matches!(
-            state,
-            SyncTargetState::Revert { revert_to }
-            if revert_to.block.number == 9
-        ));
-
-        // Storage unchanged (sync loop handles the actual revert)
-        let latest = proofs.get_latest_block_number().expect("get latest block").expect("ok").0;
-        assert_eq!(latest, 10);
-    }
-
-    #[tokio::test]
-    async fn handle_notification_chain_reverted_beyond_stored_blocks() {
-        // RocksDB proofs storage
-        let dir = tempdir_path();
-        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
-
-        init_storage(proofs.clone());
-        store_blocks(1, 5, &proofs);
-
-        let (ctx, _handle) =
-            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
-
-        let exex = build_test_exex(ctx, proofs.clone());
-
-        let sync_target = SyncTarget::new();
-
-        // Now the tip is 5, and we want to revert from block 9..10
-        let old_chain = Arc::new(mk_chain_with_updates(9, 10, None));
-
-        // Notification: chain reverted 9..10
-        let notif = ExExNotification::ChainReverted { old: old_chain };
-
-        exex.handle_notification(notif, &sync_target).expect("handle chain reverted");
-
-        // State is set; sync loop will detect revert is beyond stored blocks
-        let state = sync_target.take_state().expect("should have pending state");
-        assert!(matches!(
-            state,
-            SyncTargetState::Revert { revert_to }
-            if revert_to.block.number == 9
-        ));
-
-        // Storage unchanged
-        let latest = proofs.get_latest_block_number().expect("get latest block").expect("ok").0;
-        assert_eq!(latest, 5);
+        let latest = proofs.get_latest_block_number().expect("get latest block").expect("ok");
+        assert_eq!(latest, (stored_to, hash_for_num(stored_to)));
     }
 
     #[tokio::test]
