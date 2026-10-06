@@ -10,6 +10,7 @@ use base_builder_core::{
         setup_test_instance_with_builder_config, setup_test_instance_with_node_config,
     },
 };
+use rstest::rstest;
 
 /// Verify that pre-Base-Azul flashblock metadata contains `new_account_balances`
 /// and `receipts` (but no `access_list`).
@@ -195,148 +196,84 @@ async fn test_state_root_computed_on_finalize() -> eyre::Result<()> {
     flashblocks_listener.stop().await
 }
 
+#[rstest]
+#[case::smoke_dynamic_base(
+    BuilderConfig::for_tests().with_block_time_ms(2000),
+    true,
+    &[None; 10],
+    6,
+    110
+)]
+#[case::smoke_dynamic_one_second_blocks(
+    BuilderConfig::for_tests().with_block_time_ms(1000),
+    true,
+    &[None; 10],
+    6,
+    60
+)]
+#[case::smoke_classic_one_second_blocks(
+    BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks_leeway_time_ms(50),
+    false,
+    &[None; 10],
+    6,
+    60
+)]
+#[case::smoke_classic_base(
+    BuilderConfig::for_tests().with_block_time_ms(2000).with_flashblocks_leeway_time_ms(50),
+    true,
+    &[None; 10],
+    6,
+    110
+)]
+#[case::dynamic_one_second_blocks_with_lag(
+    BuilderConfig::for_tests().with_block_time_ms(1000),
+    true,
+    &[Some(0), Some(100), Some(200), Some(300), Some(400), Some(500), Some(600), Some(700), Some(800)],
+    6,
+    34
+)]
+#[case::dynamic_with_full_block_lag(
+    BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks_leeway_time_ms(0),
+    true,
+    &[Some(999)],
+    1,
+    1
+)]
 #[tokio::test]
-async fn smoke_dynamic_base() -> eyre::Result<()> {
-    let config = BuilderConfig::for_tests().with_block_time_ms(2000);
+async fn flashblock_counts(
+    #[case] config: BuilderConfig,
+    #[case] use_current_timestamp: bool,
+    #[case] timestamp_lags_ms: &[Option<u64>],
+    #[case] expected_transactions_per_block: usize,
+    #[case] expected_flashblocks: usize,
+) -> eyre::Result<()> {
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
 
-    // We align our block timestamps with current unix timestamp
-    for _ in 0..10 {
-        for _ in 0..5 {
-            // send a valid transaction
-            let _ = driver.create_transaction().random_valid_transfer().send().await?;
-        }
-        let block = driver.build_new_block_with_current_timestamp(None).await?;
-        assert_eq!(block.transactions.len(), 6, "Got: {:?}", block.transactions); // 5 normal txn + deposit
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-
-    let flashblocks = flashblocks_listener.get_flashblocks();
-    assert_eq!(110, flashblocks.len());
-
-    flashblocks_listener.stop().await
-}
-
-#[tokio::test]
-async fn smoke_dynamic_one_second_blocks() -> eyre::Result<()> {
-    let config = BuilderConfig::for_tests().with_block_time_ms(1000);
-    let rbuilder = setup_test_instance_with_builder_config(config).await?;
-    let driver = rbuilder.driver().await?;
-    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
-
-    // We align our block timestamps with current unix timestamp
-    for _ in 0..10 {
-        for _ in 0..5 {
-            // send a valid transaction
-            let _ = driver.create_transaction().random_valid_transfer().send().await?;
-        }
-        let block = driver.build_new_block_with_current_timestamp(None).await?;
-        assert_eq!(block.transactions.len(), 6, "Got: {:?}", block.transactions); // 5 normal txn + deposit
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-
-    let flashblocks = flashblocks_listener.get_flashblocks();
-    assert_eq!(60, flashblocks.len());
-
-    flashblocks_listener.stop().await
-}
-
-#[tokio::test]
-async fn smoke_classic_one_second_blocks() -> eyre::Result<()> {
-    let config =
-        BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks_leeway_time_ms(50);
-    let rbuilder = setup_test_instance_with_builder_config(config).await?;
-    let driver = rbuilder.driver().await?;
-    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
-
-    // We align our block timestamps with current unix timestamp
-    for _ in 0..10 {
-        for _ in 0..5 {
-            // send a valid transaction
-            let _ = driver.create_transaction().random_valid_transfer().send().await?;
-        }
-        let block = driver.build_new_block().await?;
-        assert_eq!(block.transactions.len(), 6, "Got: {:?}", block.transactions); // 5 normal txn + deposit
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-
-    let flashblocks = flashblocks_listener.get_flashblocks();
-    assert_eq!(60, flashblocks.len());
-
-    flashblocks_listener.stop().await
-}
-
-#[tokio::test]
-async fn smoke_classic_base() -> eyre::Result<()> {
-    let config =
-        BuilderConfig::for_tests().with_block_time_ms(2000).with_flashblocks_leeway_time_ms(50);
-    let rbuilder = setup_test_instance_with_builder_config(config).await?;
-    let driver = rbuilder.driver().await?;
-    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
-
-    for _ in 0..10 {
+    for &lag_ms in timestamp_lags_ms {
         for _ in 0..5 {
             let _ = driver.create_transaction().random_valid_transfer().send().await?;
         }
-        // Use current timestamp to prevent payload expiration with 2s block time
-        let block = driver.build_new_block_with_current_timestamp(None).await?;
-        assert_eq!(block.transactions.len(), 6, "Got: {:?}", block.transactions); // 5 normal txn + deposit
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-
-    let flashblocks = flashblocks_listener.get_flashblocks();
-    assert_eq!(110, flashblocks.len());
-
-    flashblocks_listener.stop().await
-}
-
-#[tokio::test]
-async fn dynamic_one_second_blocks_with_lag() -> eyre::Result<()> {
-    let config = BuilderConfig::for_tests().with_block_time_ms(1000);
-    let rbuilder = setup_test_instance_with_builder_config(config).await?;
-    let driver = rbuilder.driver().await?;
-    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
-
-    // We align our block timestamps with current unix timestamp
-    for i in 0..9 {
-        for _ in 0..5 {
-            // send a valid transaction
-            let _ = driver.create_transaction().random_valid_transfer().send().await?;
+        let block = if use_current_timestamp {
+            let lag = lag_ms.map(Duration::from_millis);
+            driver.build_new_block_with_current_timestamp(lag).await?
+        } else {
+            driver.build_new_block().await?
+        };
+        assert_eq!(
+            block.transactions.len(),
+            expected_transactions_per_block,
+            "Got: {:#?}",
+            block.transactions
+        );
+        if timestamp_lags_ms.len() > 1 {
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
-        let block = driver
-            .build_new_block_with_current_timestamp(Some(Duration::from_millis(i * 100)))
-            .await?;
-        assert_eq!(block.transactions.len(), 6, "Got: {:#?}", block.transactions); // 5 normal txn + deposit
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
     let flashblocks = flashblocks_listener.get_flashblocks();
-    assert_eq!(34, flashblocks.len());
-
-    flashblocks_listener.stop().await
-}
-
-#[tokio::test]
-async fn dynamic_with_full_block_lag() -> eyre::Result<()> {
-    let config =
-        BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks_leeway_time_ms(0);
-    let rbuilder = setup_test_instance_with_builder_config(config).await?;
-    let driver = rbuilder.driver().await?;
-    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
-
-    for _ in 0..5 {
-        // send a valid transaction
-        let _ = driver.create_transaction().random_valid_transfer().send().await?;
-    }
-    let block =
-        driver.build_new_block_with_current_timestamp(Some(Duration::from_millis(999))).await?;
-    // We could only produce block with deposits because of short time frame
-    assert_eq!(block.transactions.len(), 1);
-
-    let flashblocks = flashblocks_listener.get_flashblocks();
-    assert_eq!(1, flashblocks.len());
+    assert_eq!(expected_flashblocks, flashblocks.len());
 
     flashblocks_listener.stop().await
 }
