@@ -91,12 +91,12 @@ class SnapshotTests(unittest.TestCase):
                   "port": port, **{role + "_image": role + ":local" for role in ("base", "anvil", "batcher")}}
         return {**config, **changes}
 
-    def kill_while_writing(self, path):
+    def kill_while_writing(self, path, write_json=devnet.write_json):
         """Leaves what write_json leaves when its process is killed after writing, before the rename."""
         child = os.fork()
         if child == 0:
             with patch.object(devnet.os, "fsync", side_effect=lambda _: os._exit(9)):
-                devnet.write_json(path, {"interrupted": True})
+                write_json(path, {"interrupted": True})
             os._exit(1)
         self.assertEqual(os.waitstatus_to_exitcode(os.waitpid(child, 0)[1]), 9)
         self.assertFalse(path.exists())
@@ -614,6 +614,8 @@ class SnapshotTests(unittest.TestCase):
         config = self.preparation()
         config_path = self.root / "input.json"
         devnet.write_json(config_path, config)
+        # Setup interrupted before initialization leaves only its private endpoints.
+        devnet.write_json(self.fork.directory / "upstreams.json", {"execution": "https://rpc.invalid/key"})
         initial = snapshot()
         initial["rollup_config"]["l1_system_config_address"] = "0x" + "1" * 40
         discovered = {"number": 100, "hash": "0xf", "timestamp": 1240, "parentHash": "0xe"}
@@ -1310,20 +1312,25 @@ class SnapshotTests(unittest.TestCase):
                 patch.object(devnet, "rpc", return_value="0x1"), \
                 patch.object(devnet, "request_json", side_effect=[{"data": {"genesis_time": "1000"}},
                                                                  {"data": {"SECONDS_PER_SLOT": "12"}}]), \
-                patch("builtins.print") as output:
+                patch.object(devnet, "setup_command") as command, patch("builtins.print") as output:
             devnet.main()
+            command.assert_not_called()
         self.assertEqual(devnet.configured_directory(), self.fork.directory)
         self.assertEqual((self.fork.directory / "manifest.json").read_bytes(), before)
         self.assertEqual((self.fork.directory / "upstreams.json").stat().st_mode & 0o777, 0o600)
         self.assertNotIn("secret-key", devnet.setup_path().read_text() + str(output.call_args_list))
+        for variable in ("TEST_EXECUTION_URL", "TEST_BEACON_URL", "ETH_L1_RPC"):
+            os.environ.pop(variable, None)
         (devnet.setup_path().parent / "l1.env").unlink()
         with patch.object(sys, "argv", ["launcher", "setup"]), \
+                patch("builtins.input", side_effect=AssertionError("saved directory must not prompt")), \
                 patch.object(devnet.getpass, "getpass", side_effect=AssertionError("saved endpoint must not prompt")), \
                 patch.object(devnet, "rpc", return_value="0x1") as rpc, \
                 patch.object(devnet, "request_json", return_value={"data": {"genesis_time": "1000", "SECONDS_PER_SLOT": "12"}}), \
-                patch("builtins.print"):
+                patch.object(devnet, "prepare_snapshot") as prepare, patch("builtins.print"):
             devnet.main()
             rpc.assert_called_once_with("https://rpc.invalid/secret-key", "eth_chainId", upstream=True)
+            prepare.assert_not_called()
         for action, method in (("up", "start"), ("down", "stop")):
             with self.subTest(action=action), patch.object(sys, "argv", ["launcher", action]), \
                     patch.object(devnet.SnapshotFork, method, autospec=True) as lifecycle:
@@ -1336,19 +1343,63 @@ class SnapshotTests(unittest.TestCase):
         fork = devnet.SnapshotFork(self.fork.directory)
         self.assertEqual(fork.compose_env()["SNAPSHOT_BEACON"], "https://rpc.invalid/secret-key")
 
-    def test_setup_selects_only_initialized_forks(self):
-        for phase in (None, "inspecting"):
-            with self.subTest(phase=phase), \
-                    patch.object(sys, "argv", ["launcher", "setup", "--dir", str(self.fork.directory)]), \
-                    patch.object(devnet, "rpc") as rpc:
-                if phase:
-                    self.fork.manifest["phase"] = phase
-                    self.fork.save()
-                with self.assertRaisesRegex(RuntimeError, "initialized"):
-                    devnet.main()
-                rpc.assert_not_called()
+    def test_setup_dir_resumes_only_recorded_initialization(self):
+        with patch.object(sys, "argv", ["launcher", "setup", "--dir", str(self.fork.directory)]), \
+                patch.object(devnet, "rpc") as rpc:
+            with self.assertRaisesRegex(RuntimeError, "requires an initialized fork; use --workdir"):
+                devnet.main()
+            rpc.assert_not_called()
         self.assertFalse(devnet.setup_path().exists())
         self.assertFalse((self.fork.directory / "upstreams.json").exists())
+        self.fork.manifest["phase"] = "inspecting"
+        for setup_input in (None, {"sequencer_datadir": "/builder"}):
+            with self.subTest(setup_input=setup_input), \
+                    patch.object(sys, "argv", ["launcher", "setup", "--dir", str(self.fork.directory)]), \
+                    patch.object(devnet.getpass, "getpass", return_value="https://rpc.invalid/key"), \
+                    patch.object(devnet, "rpc", return_value="0x1"), \
+                    patch.object(devnet, "request_json", return_value={"data": {"genesis_time": "1000", "SECONDS_PER_SLOT": "12"}}), \
+                    patch.object(devnet, "prepare_snapshot") as prepare, \
+                    patch.object(devnet.SnapshotFork, "initialize") as initialize, patch("builtins.print"):
+                if setup_input:
+                    self.fork.manifest["setup_input"] = setup_input
+                self.fork.save()
+                if setup_input:
+                    devnet.main()
+                    initialize.assert_called_once_with(setup_input, allow_write=True)
+                    self.assertEqual(json.loads(devnet.setup_path().read_text()), {"directory": str(self.fork.directory)})
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "use init with the original input config"):
+                        devnet.main()
+                    initialize.assert_not_called()
+                prepare.assert_not_called()
+
+    def test_setup_rejects_ambiguous_or_unsupported_selection_and_rereads_manifest_under_lock(self):
+        for options, change, error in ((["--workdir", str(self.root / "new")], {}, "choose either"),
+                                       ([], {"version": 1}, "unsupported snapshot manifest"),
+                                       ([], {"phase": "retired"}, "unsupported snapshot manifest")):
+            with self.subTest(change=change, error=error), patch.object(devnet, "rpc") as rpc, \
+                    patch.object(sys, "argv", ["launcher", "setup", "--dir", str(self.fork.directory), *options]):
+                devnet.write_json(self.fork.directory / "manifest.json", {**manifest(), **change})
+                with self.assertRaisesRegex(RuntimeError, error):
+                    devnet.main()
+                rpc.assert_not_called()
+        self.assertEqual(sorted(path.name for path in self.root.iterdir()), ["fork"])
+        work = self.root / "work"
+        flock = fcntl.flock
+
+        def concurrent_init(lock, operation):
+            # Another setup finished initialization after this one first read the fork.
+            flock(lock, operation)
+            devnet.write_json(work / "fork/manifest.json", manifest())
+
+        with patch.object(sys, "argv", ["launcher", "setup", "--workdir", str(work)]), \
+                patch.object(devnet.getpass, "getpass", return_value="https://rpc.invalid/key"), \
+                patch.object(devnet, "rpc", return_value="0x1"), \
+                patch.object(devnet, "request_json", return_value={"data": {"genesis_time": "1000", "SECONDS_PER_SLOT": "12"}}), \
+                patch.object(devnet.fcntl, "flock", side_effect=concurrent_init), \
+                patch.object(devnet, "prepare_snapshot") as prepare, patch("builtins.print"):
+            devnet.main()
+            prepare.assert_not_called()
 
     def test_setup_validates_saved_endpoints_without_prompting_for_replacements(self):
         self.fork.save()
@@ -1361,9 +1412,11 @@ class SnapshotTests(unittest.TestCase):
                     patch.object(sys, "argv", ["launcher", "setup", "--dir", str(self.fork.directory)]), \
                     patch.object(devnet.getpass, "getpass", side_effect=AssertionError("configured endpoints must not prompt")), \
                     patch.object(devnet, "rpc", side_effect=chain if isinstance(chain, Exception) else lambda *a, **k: chain), \
-                    patch.object(devnet, "request_json", return_value=metadata):
+                    patch.object(devnet, "request_json", return_value=metadata), \
+                    patch.object(devnet, "setup_command") as command:
                 with self.assertRaises(RuntimeError):
                     devnet.main()
+                command.assert_not_called()
         self.assertFalse(devnet.setup_path().exists())
 
     def test_setup_beacon_requests_extend_the_endpoint_path_before_its_query(self):
@@ -1415,12 +1468,484 @@ class SnapshotTests(unittest.TestCase):
                 patch.object(sys, "argv", ["launcher", "setup", "--dir", str(self.fork.directory)]), \
                 patch.object(devnet.getpass, "getpass", return_value="https://rpc.invalid/key"), \
                 patch.object(devnet, "rpc", return_value="0x1"), \
-                patch.object(devnet, "request_json", return_value={"data": {"genesis_time": "1000", "SECONDS_PER_SLOT": "12"}}):
+                patch.object(devnet, "request_json", return_value={"data": {"genesis_time": "1000", "SECONDS_PER_SLOT": "12"}}), \
+                patch.object(devnet, "prepare_snapshot") as prepare:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             with self.assertRaises(BlockingIOError):
                 devnet.main()
+            prepare.assert_not_called()
         self.assertFalse((self.fork.directory / "upstreams.json").exists())
         self.assertFalse(devnet.setup_path().exists())
+
+    def test_setup_refuses_existing_data_and_wrong_chain_without_downloads(self):
+        for directory, chain, error in ((self.root, "0x1", "unused working directory"),
+                                        (self.root / "new", "0xa", "Ethereum mainnet")):
+            with self.subTest(directory=directory), \
+                    patch.object(sys, "argv", ["launcher", "setup", "--workdir", str(directory)]), \
+                    patch.object(devnet.getpass, "getpass", return_value="https://rpc.invalid/key"), \
+                    patch.object(devnet, "rpc", return_value=chain), \
+                    patch.object(devnet, "setup_command") as command:
+                with self.assertRaisesRegex(RuntimeError, error):
+                    devnet.main()
+                command.assert_not_called()
+                self.assertFalse(devnet.setup_path().exists())
+        self.assertFalse((self.root / "new").exists())
+
+    def test_setup_rejects_nonpositive_download_concurrency_before_prompting(self):
+        for concurrency in ("0", "-1"):
+            with self.subTest(concurrency=concurrency), \
+                    patch.object(sys, "argv", ["launcher", "setup", "--download-concurrency", concurrency]), \
+                    patch("builtins.input") as prompt, patch.object(devnet, "setup_command") as command:
+                with self.assertRaisesRegex(RuntimeError, "download concurrency must be positive"):
+                    devnet.main()
+                prompt.assert_not_called()
+                command.assert_not_called()
+
+    @unittest.skipUnless(shutil.which("rsync"), "requires rsync, but copies only temporary data")
+    def test_setup_prompts_for_new_workdir_and_records_pending_work_before_preparing(self):
+        home = self.root / "home with spaces"
+        for failed in (None, "download", "copy"):
+            with self.subTest(failed=failed):
+                work = self.root / f"{failed} experiment" if failed else home / "data/snapshot-devnet"
+                commands = []
+                image = "sha256:" + "b" * 64
+
+                def command(*args, lock_fd):
+                    commands.append(args)
+                    if args[:2] == ("docker", "run"):
+                        self.assertEqual(args[args.index("--download-concurrency") + 1], "32" if failed else "16")
+                        (work / "builder/db").mkdir(parents=True)
+                        (work / "builder/db/mdbx.dat").write_bytes(b"snapshot-state")
+                        if failed == "download":
+                            raise RuntimeError("download interrupted")
+                    elif args[0] == "rsync":
+                        if failed == "copy":
+                            (work / "validator/db").mkdir(parents=True)
+                            (work / "validator/db/mdbx.dat").write_bytes(b"partial")
+                            raise RuntimeError("copy interrupted")
+                        subprocess.run(args, check=True, capture_output=True)
+
+                def initialize(fork, config, allow_write):
+                    fork.manifest = manifest()
+                    fork.manifest["upstreams"] = {"execution": "SNAPSHOT_UPSTREAM_EXECUTION",
+                                                  "beacon": "SNAPSHOT_UPSTREAM_BEACON"}
+                    self.assertEqual(fork.endpoint("execution"), "https://rpc.invalid/new-key")
+                    self.assertEqual(fork.endpoint("beacon"), "https://beacon.invalid/key")
+                    self.assertEqual({config[role + "_image"] for role in ("base", "anvil", "batcher")}, {image})
+                    fork.save()
+
+                options = ["--workdir", str(work), "--download-concurrency", "32"] if failed else []
+                with patch.object(sys, "argv", ["launcher", "setup", *options]), \
+                        patch.object(Path, "home", return_value=home), patch("builtins.input", return_value=""), \
+                        patch.object(devnet.getpass, "getpass", return_value="https://beacon.invalid/key") as prompt, \
+                        patch.dict(os.environ, {"SNAPSHOT_UPSTREAM_EXECUTION": "https://rpc.invalid/new-key",
+                                                "SNAPSHOT_UPSTREAM_BEACON": ""}), \
+                        patch.object(devnet, "rpc", return_value="0x1"), \
+                        patch.object(devnet, "request_json", side_effect=[devnet.Unavailable("no Beacon API"),
+                            {"data": {"genesis_time": "1000"}}, {"data": {"SECONDS_PER_SLOT": "12"}},
+                            [{"chainId": 8453, "block": 123, "metadataUrl": "https://snapshot.invalid/123/manifest.json"}],
+                            {"chain_id": 8453, "block": 123}]), \
+                        patch.object(devnet.shutil, "which", return_value="/usr/bin/tool"), \
+                        patch.object(devnet, "run", return_value=image), \
+                        patch.object(devnet, "setup_command", side_effect=command), \
+                        patch.object(devnet.SnapshotFork, "initialize", autospec=True, side_effect=initialize) as init, \
+                        patch("builtins.print"):
+                    if failed:
+                        saved = json.loads(devnet.setup_path().read_text())["directory"]
+                        with self.assertRaisesRegex(RuntimeError, f"{failed} interrupted"):
+                            devnet.main()
+                        init.assert_not_called()
+                        self.assertEqual(json.loads(devnet.setup_path().read_text()),
+                                         {"directory": saved, "pending_directory": str(work / "fork")})
+                        if failed == "copy":
+                            self.assertEqual((work / "validator/db/mdbx.dat").read_bytes(), b"partial")
+                        else:
+                            self.assertFalse((work / "validator").exists())
+                    else:
+                        devnet.main()
+                        self.assertEqual(devnet.configured_directory(), work / "fork")
+                        init.assert_called_once()
+                    self.assertEqual(sum(args[:2] == ("docker", "run") for args in commands), 1)
+                    prompt.assert_called_once()
+                    self.assertEqual((work / "builder/db/mdbx.dat").read_bytes(), b"snapshot-state")
+                    self.assertEqual(json.loads((work / "fork/upstreams.json").read_text()),
+                                     {"execution": "https://rpc.invalid/new-key", "beacon": "https://beacon.invalid/key"})
+                    persisted = (work / "input.json").read_text() + (work / "setup.json").read_text() + devnet.setup_path().read_text()
+                    self.assertNotIn(".invalid", persisted)
+
+    @unittest.skipUnless(shutil.which("rsync"), "requires rsync, but copies only temporary data")
+    def test_setup_resumes_saved_workdir_and_completed_setup_does_no_preparation(self):
+        phases = ("build", "inspector", "download", "copy", "initialize")
+        for failure in phases[1:]:
+            with self.subTest(failure=failure):
+                work = self.root / failure
+                calls, fetched = [], []
+
+                def step(phase):
+                    calls.append(phase)
+                    if phase == failure and calls.count(phase) == 1:
+                        raise KeyboardInterrupt()
+
+                def command(*args, lock_fd):
+                    step({"cargo": "inspector", "rsync": "copy"}.get(args[0]) or {"buildx": "build", "run": "download"}[args[1]])
+                    if args[:2] == ("docker", "run"):
+                        (work / "builder/db").mkdir(parents=True)
+                        (work / "builder/db/mdbx.dat").write_bytes(b"snapshot")
+                    elif args[0] == "rsync":
+                        subprocess.run(args, check=True, capture_output=True)
+
+                def initialize(fork, config, allow_write):
+                    fork.manifest = {**manifest(), "phase": "inspecting", "setup_input": config}
+                    # Initialization reads the endpoints setup saved, not exported variables.
+                    self.assertEqual(fork.endpoint("execution"), "https://rpc.invalid/key")
+                    fork.save()
+                    step("initialize")
+                    fork.manifest["phase"] = "prepared"
+                    fork.save()
+
+                environment = dict(os.environ)
+                with patch.object(sys, "argv", ["launcher", "setup", "--workdir", str(work)]), \
+                        patch.object(devnet.getpass, "getpass", return_value="https://rpc.invalid/key") as prompt, \
+                        patch.object(devnet, "rpc", return_value="0x1"), \
+                        patch("builtins.input", side_effect=AssertionError("resume must remember its workdir")), \
+                        self.preparing(command, initialize, fetched):
+                    with self.assertRaises(KeyboardInterrupt):
+                        devnet.main()
+                    self.assertEqual(json.loads(devnet.setup_path().read_text())["pending_directory"], str(work / "fork"))
+                    with patch.object(sys, "argv", ["launcher", "setup"]):
+                        devnet.main()
+                        before = list(calls)
+                        devnet.main()
+                        self.assertEqual(calls, before, "completed setup must do no preparation")
+                    prompt.assert_called_once()
+                self.assertEqual(calls, [phase for phase in phases for _ in range(2 if phase == failure else 1)])
+                self.assertEqual(fetched.count(devnet.SNAPSHOT_INDEX), 1)
+                self.assertEqual(json.loads(devnet.setup_path().read_text()), {"directory": str(work / "fork")})
+                self.assertEqual(dict(os.environ), environment, "setup must not export credentials")
+
+    def test_setup_resumes_after_its_first_journal_write_was_interrupted(self):
+        work, commands, write_json = self.root / "work", [], devnet.write_json
+
+        def journal(path, value):
+            if path.name == "setup.json":
+                self.kill_while_writing(path, write_json)
+                raise RuntimeError("killed")  # The launcher died during its first journal write.
+            write_json(path, value)
+
+        def command(*args, lock_fd):
+            commands.append(args)
+            raise RuntimeError("build interrupted")
+
+        def setup(*options):
+            with patch.object(sys, "argv", ["launcher", "setup", *options]), \
+                    patch.object(devnet.getpass, "getpass", return_value="https://rpc.invalid/key"), \
+                    patch.object(devnet, "rpc", return_value="0x1"), self.preparing(command, None, []):
+                devnet.main()
+
+        with patch.object(devnet, "write_json", side_effect=journal), self.assertRaisesRegex(RuntimeError, "killed"):
+            setup("--workdir", str(work))
+        leftovers = sorted(entry.name for entry in work.iterdir())
+        self.assertEqual((len(leftovers), leftovers[0]), (2, "fork"))
+        with self.assertRaisesRegex(RuntimeError, "build interrupted"):
+            setup()
+        self.assertEqual(json.loads((work / "setup.json").read_text())["phase"], "build")
+        self.assertEqual(commands[0][:3], ("docker", "buildx", "bake"))
+        # Unrecognized files in a remembered workdir are still never adopted.
+        (work / "setup.json").unlink()
+        (work / "notes.txt").write_text("unrelated")
+        with self.assertRaisesRegex(RuntimeError, "unused working directory"):
+            setup()
+        self.assertEqual(len(commands), 1)
+        self.assertEqual((work / "notes.txt").read_text(), "unrelated")
+
+    def test_setup_resumes_after_its_first_credentials_write_was_interrupted(self):
+        commands, write_json = [], devnet.write_json
+
+        def credentials(path, value):
+            if path.name == "upstreams.json":
+                self.kill_while_writing(path, write_json)
+                raise RuntimeError("killed")  # The very first launcher died while saving the endpoints.
+            write_json(path, value)
+
+        def command(*args, lock_fd):
+            commands.append(args)
+            raise RuntimeError("build interrupted")
+
+        def setup(*options):
+            with patch.object(sys, "argv", ["launcher", "setup", *options]), \
+                    patch.object(devnet.getpass, "getpass", return_value="https://rpc.invalid/key"), \
+                    patch.object(devnet, "rpc", return_value="0x1"), \
+                    patch("builtins.input", side_effect=AssertionError("retry must remember its workdir")), \
+                    self.preparing(command, None, []):
+                devnet.main()
+
+        for retry in ([], ["--workdir"]):
+            with self.subTest(retry=retry):
+                work = self.root / ("explicit" if retry else "remembered")
+                devnet.setup_path().unlink(missing_ok=True)
+                with patch.object(devnet, "write_json", side_effect=credentials), \
+                        self.assertRaisesRegex(RuntimeError, "killed"):
+                    setup("--workdir", str(work))
+                leftovers = sorted(entry.name for entry in (work / "fork").iterdir())
+                self.assertEqual((len(leftovers), leftovers[0]), (2, ".lock"))
+                with self.assertRaisesRegex(RuntimeError, "build interrupted"):
+                    setup(*retry, *([str(work)] if retry else []))
+                self.assertEqual(json.loads(devnet.setup_path().read_text()), {"pending_directory": str(work / "fork")})
+                self.assertEqual(json.loads((work / "fork/upstreams.json").read_text())["execution"],
+                                 "https://rpc.invalid/key")
+                self.assertEqual(sorted(entry.name for entry in (work / "fork").iterdir()),
+                                 sorted([*leftovers, "upstreams.json"]))
+        self.assertEqual(len(commands), 2)
+
+        # Killed after creating the fork's lock, before recording the pending setup.
+        work = self.root / "pristine"
+        (work / "fork").mkdir(parents=True)
+        (work / "fork/.lock").touch()
+        devnet.setup_path().unlink()
+        with self.assertRaisesRegex(RuntimeError, "build interrupted"):
+            setup("--workdir", str(work))
+        self.assertEqual(json.loads(devnet.setup_path().read_text()), {"pending_directory": str(work / "fork")})
+        self.assertEqual(len(commands), 3)
+
+        # Unrecognized files beside or inside an unrecorded fork directory are never adopted.
+        for unknown in ("notes.txt", "fork/notes.txt"):
+            with self.subTest(unknown=unknown):
+                work = self.root / ("unknown-" + unknown.replace("/", "-"))
+                (work / "fork").mkdir(parents=True)
+                (work / "fork/.lock").touch()
+                (work / unknown).write_text("unrelated")
+                devnet.setup_path().unlink(missing_ok=True)
+                with self.assertRaisesRegex(RuntimeError, "unused working directory"):
+                    setup("--workdir", str(work))
+                self.assertEqual((work / unknown).read_text(), "unrelated")
+                self.assertEqual(sorted(path.relative_to(work).as_posix() for path in work.rglob("*")),
+                                 sorted({"fork", "fork/.lock", unknown}))
+                self.assertFalse(devnet.setup_path().exists())
+        self.assertEqual(len(commands), 3)
+
+    def test_init_adopts_a_fork_whose_setup_credentials_write_was_interrupted(self):
+        work, write_json = self.root / "work", devnet.write_json
+        fork = work / "fork"
+
+        def credentials(path, value):
+            if path.name == "upstreams.json":
+                self.kill_while_writing(path, write_json)
+                raise RuntimeError("killed")  # The launcher died while saving the endpoints.
+            write_json(path, value)
+
+        def command(*args, lock_fd):
+            raise RuntimeError("build interrupted")
+
+        def setup():
+            with patch.object(sys, "argv", ["launcher", "setup", "--workdir", str(work)]), \
+                    patch.object(devnet.getpass, "getpass", return_value="https://rpc.invalid/key"), \
+                    patch.object(devnet, "rpc", return_value="0x1"), self.preparing(command, None, []):
+                devnet.main()
+
+        with self.assertRaisesRegex(RuntimeError, "build interrupted"):
+            setup()
+        (fork / "upstreams.json").unlink()
+        with patch.object(devnet, "write_json", side_effect=credentials), self.assertRaisesRegex(RuntimeError, "killed"):
+            setup()
+        with self.assertRaisesRegex(RuntimeError, "build interrupted"):
+            setup()
+        self.assertEqual(json.loads((fork / "upstreams.json").read_text())["execution"], "https://rpc.invalid/key")
+        # Older launchers wrote every file through one fixed temporary name.
+        (fork / "upstreams.json.tmp").write_text("{}")
+        leftovers = sorted(entry.name for entry in fork.iterdir())
+        self.assertEqual(len(leftovers), 4)
+        config_path, config = self.root / "input.json", self.preparation()
+        devnet.write_json(config_path, config)
+
+        def init():
+            with patch.object(sys, "argv", ["launcher", "init", "--dir", str(fork), "--config", str(config_path),
+                                           "--allow-write"]), \
+                    patch.object(devnet.SnapshotFork, "initialize") as initialize:
+                devnet.main()
+            return initialize
+
+        init().assert_called_once_with(config, True)
+        # Only recognized interrupted writes are adopted; other temporary files are never removed.
+        (fork / "notes.tmp").write_text("unrelated")
+        with self.assertRaisesRegex(RuntimeError, "unrecognized data"):
+            init()
+        self.assertEqual(sorted(entry.name for entry in fork.iterdir()), sorted([*leftovers, "notes.tmp"]))
+
+    def test_setup_resumes_legacy_initialization_without_recopying(self):
+        image = "sha256:" + "b" * 64
+        devnet.setup_path().parent.mkdir(parents=True)
+        for name in ("changed", "legacy"):
+            with self.subTest(name=name):
+                work = self.root / name
+                builder, validator = self.datadir(f"{name}/builder"), self.datadir(f"{name}/validator")
+                config = {"sequencer_datadir": str(builder), "validator_datadir": str(validator),
+                          "port": 19545, **{role + "_image": image for role in ("base", "anvil", "batcher")}}
+                fork = devnet.SnapshotFork(work / "fork")
+                fork.directory.mkdir()
+                fork.manifest = {**manifest(), "phase": "inspecting", "setup_input": config}
+                fork.save()
+                # Older setups saved this input and remembered the working directory, but kept no journal.
+                devnet.write_json(work / "input.json",
+                                  {**config, "validator_datadir": str(builder)} if name == "changed" else config)
+                devnet.write_json(devnet.setup_path(), {"directory": str(work)})
+
+                def initialize(fork, saved, allow_write):
+                    self.assertEqual(saved, config)
+                    fork.manifest["phase"] = "prepared"
+                    fork.save()
+
+                with patch.object(sys, "argv", ["launcher", "setup"]), \
+                        patch("builtins.input", side_effect=AssertionError("initialized data must not be recopied")), \
+                        patch.object(devnet.getpass, "getpass", return_value="https://rpc.invalid/key"), \
+                        patch.object(devnet, "rpc", return_value="0x1"), \
+                        patch.object(devnet, "request_json", return_value={"data": {"genesis_time": "1000", "SECONDS_PER_SLOT": "12"}}), \
+                        patch.object(devnet.shutil, "which", return_value="/usr/bin/tool"), \
+                        patch.object(devnet, "setup_command", side_effect=AssertionError("must not build, download or copy")), \
+                        patch.object(devnet.SnapshotFork, "initialize", autospec=True, side_effect=initialize) as init, \
+                        patch("builtins.print"):
+                    if name == "changed":
+                        with self.assertRaisesRegex(RuntimeError, "input changed"):
+                            devnet.main()
+                        init.assert_not_called()
+                        self.assertFalse((work / "setup.json").exists())
+                        continue
+                    devnet.main()
+                    init.assert_called_once()
+                self.assertEqual(json.loads((work / "setup.json").read_text())["phase"], "initialize")
+                self.assertEqual(devnet.configured_directory(), work / "fork")
+                self.assertEqual((validator / "db/mdbx.dat").read_bytes(), b"untouched")
+
+    def test_setup_resume_rejects_image_options_that_differ_from_its_journal(self):
+        work, commands = self.root / "work", []
+
+        def command(*args, lock_fd):
+            commands.append(args)
+            raise RuntimeError("build interrupted")  # Each run stops at its first build.
+
+        def setup(*options, directory=("--workdir", str(work))):
+            with patch.object(sys, "argv", ["launcher", "setup", *directory, *options]), \
+                    patch.object(devnet.getpass, "getpass", return_value="https://rpc.invalid/key"), \
+                    patch.object(devnet, "rpc", return_value="0x1"), self.preparing(command, None, []):
+                devnet.main()
+
+        with self.assertRaisesRegex(RuntimeError, "build interrupted"):
+            setup("--anvil-image", "anvil:custom")
+        journal = json.loads((work / "setup.json").read_text())
+        self.assertEqual(journal["images"], {**devnet.DEFAULT_IMAGES, "anvil": "anvil:custom"})
+        for options in (["--anvil-image", "anvil:other"], ["--batcher-image", "op-batcher:other"],
+                        ["--anvil-image", devnet.DEFAULT_IMAGES["anvil"]]):
+            with self.subTest(options=options), self.assertRaisesRegex(RuntimeError, "image options"):
+                setup(*options)
+        self.assertEqual(len(commands), 1)
+        for options in ([], ["--anvil-image", "anvil:custom"], ["--batcher-image", devnet.DEFAULT_IMAGES["batcher"]]):
+            with self.subTest(options=options), self.assertRaisesRegex(RuntimeError, "build interrupted"):
+                setup(*options)
+        self.assertEqual(len(commands), 4)
+        self.assertEqual(json.loads((work / "setup.json").read_text()), journal)
+        # Journals written before tags were recorded resume without options but cannot verify any.
+        devnet.write_json(work / "setup.json", {key: value for key, value in journal.items() if key != "requested_images"})
+        with self.assertRaisesRegex(RuntimeError, "build interrupted"):
+            setup()
+        with self.assertRaisesRegex(RuntimeError, "image options"):
+            setup("--anvil-image", "anvil:custom")
+        self.fork.save()
+        with self.assertRaisesRegex(RuntimeError, "image options"):
+            setup("--anvil-image", "anvil:custom", directory=("--dir", str(self.fork.directory)))
+        self.assertEqual(len(commands), 5)
+
+    def test_completed_setup_rejects_image_options_that_differ_from_its_pins(self):
+        work, image = self.root / "work", "sha256:" + "b" * 64
+        config = {"sequencer_datadir": str(work / "builder"), "validator_datadir": str(work / "validator"),
+                  "port": 19545, **{role + "_image": image for role in devnet.DEFAULT_IMAGES}}
+        requested = {"anvil": "anvil:custom", "batcher": "op-batcher:custom"}
+        journal = {"version": 1, "phase": "initialize", "download_container": "unused",
+                   "images": {role: image for role in devnet.DEFAULT_IMAGES}, "requested_images": requested}
+        fork = devnet.SnapshotFork(work / "fork")
+        fork.directory.mkdir(parents=True)
+        fork.manifest = {**manifest(), "setup_input": config}
+        fork.save()
+        devnet.write_json(fork.directory / "upstreams.json", {"execution": "https://rpc.invalid/key",
+                                                              "beacon": "https://rpc.invalid/key"})
+        devnet.write_json(work / "input.json", config)
+        changed = ["--anvil-image", "anvil:other", "--batcher-image", "op-batcher:other"]
+        matching = ["--anvil-image", "anvil:custom", "--batcher-image", "op-batcher:custom"]
+
+        def setup(*options):
+            saved = {path: path.read_bytes() for path in (work / "setup.json", work / "input.json",
+                                                          fork.directory / "manifest.json", fork.directory / "upstreams.json")
+                     if path.exists()}
+            with patch.object(sys, "argv", ["launcher", "setup", "--workdir", str(work), *options]), \
+                    patch.object(devnet.getpass, "getpass", side_effect=AssertionError("saved endpoints must not prompt")), \
+                    patch.object(devnet, "rpc", return_value="0x1"), \
+                    patch.object(devnet, "request_json", return_value={"data": {"genesis_time": "1000", "SECONDS_PER_SLOT": "12"}}), \
+                    patch.object(devnet.shutil, "which", return_value="/usr/bin/tool"), \
+                    patch.object(devnet, "run", side_effect=AssertionError("must not inspect or pull images")), \
+                    patch.object(devnet, "setup_command", side_effect=AssertionError("must not build, download or copy")), \
+                    patch.object(devnet.SnapshotFork, "initialize", side_effect=AssertionError("must not reinitialize")), \
+                    patch("builtins.print"):
+                try:
+                    devnet.main()
+                finally:
+                    self.assertEqual({path: path.read_bytes() for path in saved}, saved, "pins must not change")
+
+        for recorded in ("requested", "legacy journal", "no journal"):
+            with self.subTest(recorded=recorded):
+                if recorded == "no journal":
+                    (work / "setup.json").unlink()
+                else:
+                    devnet.write_json(work / "setup.json", journal if recorded == "requested" else
+                                      {key: value for key, value in journal.items() if key != "requested_images"})
+                devnet.setup_path().unlink(missing_ok=True)
+                # Unknown provenance cannot verify any explicit option.
+                with self.assertRaisesRegex(RuntimeError, "image options"):
+                    setup(*changed)
+                self.assertFalse(devnet.setup_path().exists())
+                if recorded != "requested":
+                    with self.assertRaisesRegex(RuntimeError, "image options"):
+                        setup(*matching)
+                for options in ([], matching) if recorded == "requested" else ([],):
+                    setup(*options)
+                    self.assertEqual(devnet.configured_directory(), fork.directory)
+
+    @unittest.skipUnless(shutil.which("rsync"), "requires rsync, but copies only temporary data")
+    def test_setup_adopts_legacy_download_only_with_confirmation_and_never_redownloads(self):
+        work = self.root / "legacy"
+        builder = self.datadir("legacy/builder")
+        (builder / "reth.toml").write_text("# generated by downloader")
+        image = "sha256:" + "b" * 64
+        config = {"sequencer_datadir": str(builder), "validator_datadir": str(work / "validator"),
+                  "port": 19545, **{role + "_image": image for role in ("base", "anvil", "batcher")}}
+        devnet.write_json(work / "input.json", config)
+        devnet.setup_path().parent.mkdir(parents=True)
+        devnet.write_json(devnet.setup_path(), {"directory": str(work)})
+
+        def command(*args, lock_fd):
+            self.assertEqual(args[0], "rsync", "adoption must not rebuild or invoke the downloader")
+            subprocess.run(args, check=True, capture_output=True)
+
+        def initialize(fork, saved, allow_write):
+            self.assertEqual(saved, config)
+            self.assertEqual((work / "validator/db/mdbx.dat").read_bytes(), b"untouched")
+            fork.manifest = manifest()
+            fork.save()
+
+        with patch.object(sys, "argv", ["launcher", "setup"]), \
+                patch.object(Path, "home", return_value=self.root / "home"), \
+                patch.object(devnet.getpass, "getpass", return_value="https://rpc.invalid/key"), \
+                patch.object(devnet, "rpc", return_value="0x1"), \
+                patch.object(devnet, "request_json", side_effect=lambda url, path: {
+                    "data": {"genesis_time": "1000", "SECONDS_PER_SLOT": "12"}}), \
+                patch.object(devnet, "setup_command", side_effect=command) as commands, \
+                patch.object(devnet.SnapshotFork, "initialize", autospec=True, side_effect=initialize), \
+                patch("builtins.print"):
+            with patch("builtins.input", return_value=""):
+                with self.assertRaisesRegex(RuntimeError, "not confirmed"):
+                    devnet.main()
+            commands.assert_not_called()
+            with patch("builtins.input", return_value="y"):
+                devnet.main()
+            commands.assert_called_once()
+        self.assertEqual(devnet.configured_directory(), work / "fork")
 
     def test_setup_builds_missing_defaults_pulls_remote_and_preserves_custom_images(self):
         image_id = "sha256:" + "f" * 64
@@ -1466,8 +1991,10 @@ class SnapshotTests(unittest.TestCase):
     @contextlib.contextmanager
     def preparing(self, command, initialize, fetched):
         """Mocked tools; later snapshot index reads offer a newer snapshot than the first."""
-        def metadata(url):
+        def metadata(url, path=None):
             fetched.append(url)
+            if path is not None:
+                return {"data": {"genesis_time": "1000", "SECONDS_PER_SLOT": "12"}}
             if url == devnet.SNAPSHOT_INDEX:
                 block = 122 + fetched.count(url)
                 return [{"chainId": "8453", "block": str(block), "metadataUrl": f"https://snapshot.invalid/{block}/manifest.json"},
@@ -1616,7 +2143,7 @@ class SnapshotTests(unittest.TestCase):
         image = "sha256:" + "e" * 64
         images = {role: image for role in ("base", "anvil", "batcher")}
         journal = {"version": 1, "phase": "copy", "images": images, "download_container": "snapshot-download-x"}
-        args = Mock(anvil_image=devnet.DEFAULT_IMAGES["anvil"], batcher_image=devnet.DEFAULT_IMAGES["batcher"])
+        args = Mock(anvil_image=None, batcher_image=None)
         cases = {
             "unknown phase": ({**journal, "phase": "verify"}, True, "unsupported snapshot setup journal"),
             "future journal": ({**journal, "version": 2}, True, "unsupported snapshot setup journal"),
@@ -1731,7 +2258,7 @@ child.send_signal(signal.SIGTERM)
 sys.exit(child.wait() or 1)
 """)
         (shims / "rsync").chmod(0o700)
-        args = Mock(anvil_image="sha256:" + "e" * 64, batcher_image="sha256:" + "e" * 64)
+        args = Mock(anvil_image=None, batcher_image=None)
         with tempfile.TemporaryFile() as lock, patch.dict(os.environ, {"PATH": f"{shims}:{os.environ['PATH']}"}), \
                 patch.object(devnet.SnapshotFork, "initialize") as initialize, patch("builtins.print") as output:
             with self.assertRaisesRegex(RuntimeError, "setup command failed"):
