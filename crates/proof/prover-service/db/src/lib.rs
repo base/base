@@ -14,8 +14,8 @@ pub use models::{
     DeleteProofRequestOutcome, DerivedProofRequestFields, FailExpiredProofJobs, HeartbeatOutcome,
     HeartbeatProofJob, JobLockState, ProofJob, ProofJobStatus, ProofRequest, ProofRequestListItem,
     ProofRequestPage, ProofSession, ProofStatus, ProofType, RecordSessionOutcome, RetryOutcome,
-    SessionStatus, SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession, UpdateReceipt,
-    WorkerSessionUpsert, ZkVmKind, canonical_session_id,
+    SessionStatus, SessionType, SubmitProofOutcome, TeeKind, WorkerSessionUpsert, ZkVmKind,
+    canonical_session_id,
 };
 
 mod repo;

@@ -973,34 +973,6 @@ pub struct CreateProofSession {
     pub metadata: Option<serde_json::Value>,
 }
 
-/// Parameters for updating a proof session status
-#[derive(Debug, Clone)]
-pub struct UpdateProofSession {
-    /// Backend-assigned session identifier to look up.
-    pub backend_session_id: String,
-    /// New session status.
-    pub status: SessionStatus,
-    /// Error message, if the session failed.
-    pub error_message: Option<String>,
-    /// Updated backend metadata (JSON).
-    pub metadata: Option<serde_json::Value>,
-}
-
-/// Parameters for updating a proof request with receipt
-#[derive(Debug, Clone)]
-pub struct UpdateReceipt {
-    /// Proof request identifier.
-    pub id: Uuid,
-    /// Raw STARK receipt bytes.
-    pub stark_receipt: Option<Vec<u8>>,
-    /// Raw SNARK receipt bytes.
-    pub snark_receipt: Option<Vec<u8>>,
-    /// New proof status.
-    pub status: ProofStatus,
-    /// Error message, if the proof failed.
-    pub error_message: Option<String>,
-}
-
 /// Parameters for claiming the next available worker proof job.
 #[derive(Debug, Clone)]
 pub struct ClaimProofJob {
