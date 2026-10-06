@@ -10,7 +10,7 @@ use alloy_consensus::{
     Block, BlockBody, Header,
     transaction::{Recovered, SignerRecoverable},
 };
-use alloy_eips::{BlockNumberOrTag, Decodable2718};
+use alloy_eips::BlockNumberOrTag;
 use alloy_network::TransactionResponse;
 use alloy_primitives::{Address, BlockNumber};
 use alloy_rpc_types_eth::state::StateOverride;
@@ -30,7 +30,8 @@ use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
 use crate::{
     AssembledBlock, BlockAssembler, ExecutionError, FlashblockCache, PendingBlocks,
-    PendingBlocksBuilder, PendingStateBuilder, ProviderError, Result, StateProcessorError,
+    PendingBlocksBuilder, PendingStateBuilder, ProtocolError, ProviderError, Result,
+    StateProcessorError,
     metrics::Metrics,
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
@@ -121,21 +122,16 @@ where
         self.canonical_tip().map_or(notified, |best| notified.max(best))
     }
 
-    /// Returns `true` when `pending_blocks` is anchored within `max_depth` blocks of canonical
-    /// height `best`.
+    /// Returns `true` when `pending_blocks`' tip is within `max_depth` of canonical height `best`.
     ///
-    /// Consumers execute against [`PendingBlocks::canonical_block_number`], so an overlay
-    /// anchored far behind the tip makes them walk historical state. The distance is measured
-    /// from the earliest pending block so that this bound is the one
-    /// [`CanonicalBlockReconciler`] already applies, which means the reconciler never builds a
-    /// snapshot that this check then throws away. The anchor itself is the block below that, so
-    /// it may sit up to `max_depth + 1` blocks behind `best`.
-    fn is_anchored_near(&self, pending_blocks: &PendingBlocks, best: BlockNumber) -> bool {
-        best.saturating_sub(pending_blocks.earliest_block_number()) <= self.max_depth
+    /// Measured from latest, not earliest. [`PendingBlocksBuilder::from_previous`] freezes the
+    /// earliest header, so `best - earliest` is snapshot width; the reconciler rebuilds that.
+    fn is_tip_near(&self, pending_blocks: &PendingBlocks, best: BlockNumber) -> bool {
+        best.saturating_sub(pending_blocks.latest_block_number()) <= self.max_depth
     }
 
-    /// Returns `true` when `pending_blocks` is usable as live pending state, meaning it is
-    /// anchored near the tip and still extends past it.
+    /// Returns `true` when `pending_blocks` is usable as live pending state, meaning its tip
+    /// is still near the canonical tip and still extends past it.
     ///
     /// This deliberately compares heights only. Detecting that the anchor itself was reorged
     /// out means comparing its hash against canonical history, which is a statement about
@@ -147,11 +143,11 @@ where
     fn extends_canonical_tip(&self, pending_blocks: &PendingBlocks) -> bool {
         let Some(best) = self.canonical_tip() else { return true };
 
-        if !self.is_anchored_near(pending_blocks, best) {
+        if !self.is_tip_near(pending_blocks, best) {
             debug!(
-                message = "pending snapshot anchored too far behind canonical tip, dropping",
+                message = "pending snapshot tip too far behind canonical tip, dropping",
                 canonical_tip = best,
-                earliest_pending_block = pending_blocks.earliest_block_number(),
+                latest_pending_block = pending_blocks.latest_block_number(),
                 max_depth = self.max_depth,
             );
             return false;
@@ -169,7 +165,7 @@ where
         true
     }
 
-    /// Returns the published snapshot, dropping it first if it is stranded too far behind the
+    /// Returns the published snapshot, dropping it first if its tip is too far behind the
     /// canonical tip to become usable again.
     ///
     /// `FlashblocksState` drops stranded overlays as canonical notifications arrive, which is
@@ -183,14 +179,13 @@ where
         let pending_blocks = self.pending_blocks.load_full()?;
 
         let Some(best) = self.canonical_tip() else { return Some(pending_blocks) };
-        if self.is_anchored_near(&pending_blocks, best) {
+        if self.is_tip_near(&pending_blocks, best) {
             return Some(pending_blocks);
         }
 
         debug!(
-            message = "pending snapshot anchored too far behind canonical tip, dropping",
+            message = "pending snapshot tip too far behind canonical tip, dropping",
             canonical_tip = best,
-            earliest_pending_block = pending_blocks.earliest_block_number(),
             latest_pending_block = pending_blocks.latest_block_number(),
             max_depth = self.max_depth,
         );
@@ -580,8 +575,8 @@ where
         let latest_block_l1_block_info = prev_pending_blocks.latest_block_l1_block_info().clone();
         let latest_flashblock_tx_start = prev_pending_blocks.pending_transaction_count();
 
-        let mut live_state = self.lock_live_state();
-        let Some(LivePendingState { mut db, state_overrides }) = live_state.take() else {
+        let live_state = self.lock_live_state().take();
+        let Some(LivePendingState { mut db, state_overrides }) = live_state else {
             warn!(
                 message = "live pending state unavailable, falling back to full rebuild",
                 block_number = flashblock.metadata.block_number,
@@ -592,7 +587,6 @@ where
             flashblocks.push(flashblock.clone());
             return self.build_pending_state(Some(Arc::clone(prev_pending_blocks)), &flashblocks);
         };
-        drop(live_state);
 
         let latest_header = prev_pending_blocks.latest_header();
         let mut latest_block_flashblocks = prev_pending_blocks.latest_block_flashblocks();
@@ -623,7 +617,9 @@ where
                     .diff
                     .transactions
                     .iter()
-                    .map(|tx| BaseTxEnvelope::decode_2718_exact(tx.as_ref()))
+                    .map(|tx| {
+                        base_common_consensus::decode_2718_canonical::<BaseTxEnvelope>(tx.as_ref())
+                    })
                     .collect::<std::result::Result<_, _>>()
                     .map_err(|e| ExecutionError::BlockConversion(e.to_string()))?,
                 ..Default::default()
@@ -720,8 +716,8 @@ where
             return Err(StateProcessorError::MissingFirstFlashblock);
         };
 
-        let mut live_state = self.lock_live_state();
-        let Some(LivePendingState { mut db, state_overrides }) = live_state.take() else {
+        let live_state = self.lock_live_state().take();
+        let Some(LivePendingState { mut db, state_overrides }) = live_state else {
             warn!(
                 message = "live pending state unavailable, falling back to full rebuild",
                 block_number = flashblock.metadata.block_number,
@@ -732,7 +728,6 @@ where
             flashblocks.push(flashblock.clone());
             return self.build_pending_state(Some(Arc::clone(prev_pending_blocks)), &flashblocks);
         };
-        drop(live_state);
 
         let previous_header = prev_pending_blocks.latest_header();
         let current_block = BlockAssembler::assemble(std::slice::from_ref(flashblock))?;
@@ -850,8 +845,12 @@ where
                 .push(flashblock.clone());
         }
 
-        let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
-        let canonical_block = earliest_block_number - 1;
+        let Some((&earliest_block_number, _)) = flashblocks_per_block.first_key_value() else {
+            self.clear_live_state();
+            return Ok(None);
+        };
+        let canonical_block =
+            earliest_block_number.checked_sub(1).ok_or(ProtocolError::GenesisFlashblock)?;
         let mut last_block_header = self
             .client
             .header_by_number(canonical_block)
@@ -994,5 +993,185 @@ where
         }
 
         self.publish_pending_blocks(pending_blocks_builder, db, state_overrides)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::mpsc as std_mpsc, thread, time::Duration};
+
+    use alloy_consensus::{Header, Sealed};
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{B256, Bytes, TxKind, U256, hex};
+    use alloy_rpc_types_engine::PayloadId;
+    use base_common_consensus::{BasePrimitives, TxDeposit};
+    use base_common_flashblocks::{
+        ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Metadata,
+    };
+    use base_execution_chainspec::BaseChainSpec;
+    use reth_provider::test_utils::MockEthProvider;
+    use rstest::rstest;
+    use tokio::sync::{broadcast, mpsc};
+
+    use super::*;
+
+    #[rstest]
+    #[case::same_block(1, 1)]
+    #[case::next_block(2, 0)]
+    fn flashblock_rebuilds_unavailable_live_state(#[case] block_number: u64, #[case] index: u64) {
+        let client =
+            MockEthProvider::<BasePrimitives>::new().with_chain_spec(BaseChainSpec::mainnet());
+        client.add_header(
+            B256::ZERO,
+            Header { gas_limit: 30_000_000, base_fee_per_gas: Some(1), ..Default::default() },
+        );
+        let mut l1_attributes = hex!("015d8eb9").to_vec();
+        l1_attributes.resize(4 + 32 * 8, 0);
+        let deposit = TxDeposit {
+            to: TxKind::Call(Address::ZERO),
+            gas_limit: 100_000,
+            input: Bytes::from(l1_attributes),
+            ..Default::default()
+        };
+        let first = Flashblock {
+            payload_id: PayloadId::default(),
+            index: 0,
+            base: Some(ExecutionPayloadBaseV1 {
+                block_number: 1,
+                gas_limit: 30_000_000,
+                base_fee_per_gas: U256::from(1),
+                ..Default::default()
+            }),
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                transactions: vec![BaseTxEnvelope::from(deposit.clone()).encoded_2718().into()],
+                ..Default::default()
+            },
+            metadata: Metadata::new(1),
+        };
+        let incoming = Flashblock {
+            index,
+            base: (index == 0).then(|| ExecutionPayloadBaseV1 {
+                block_number,
+                timestamp: 2,
+                ..first.base.clone().unwrap()
+            }),
+            diff: if index == 0 {
+                ExecutionPayloadFlashblockDeltaV1 {
+                    transactions: vec![
+                        BaseTxEnvelope::from(TxDeposit {
+                            source_hash: B256::repeat_byte(1),
+                            ..deposit
+                        })
+                        .encoded_2718()
+                        .into(),
+                    ],
+                    ..Default::default()
+                }
+            } else {
+                ExecutionPayloadFlashblockDeltaV1::default()
+            },
+            metadata: Metadata::new(block_number),
+            payload_id: first.payload_id,
+        };
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_header(BlockAssembler::assemble(std::slice::from_ref(&first)).unwrap().header);
+        builder.with_flashblocks([first.clone()]);
+        let pending = Arc::new(ArcSwapOption::from(Some(Arc::new(builder.build().unwrap()))));
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (sender, _) = broadcast::channel(1);
+        let processor =
+            StateProcessor::new(client, Arc::clone(&pending), 3, Arc::new(Mutex::new(rx)), sender);
+        tx.send(StateUpdate::Flashblock(incoming.clone())).unwrap();
+        drop(tx);
+
+        let (completed_tx, completed_rx) = std_mpsc::channel();
+        let worker = thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(processor.start());
+            completed_tx.send(()).unwrap();
+        });
+        completed_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("flashblock rebuild must finish without deadlocking");
+        worker.join().unwrap();
+
+        let rebuilt = pending.load_full().expect("rebuilt pending state must be published");
+        assert_eq!(rebuilt.latest_block_number(), block_number);
+        assert_eq!(rebuilt.latest_flashblock_index(), index);
+        assert_eq!(rebuilt.get_flashblocks(), vec![first, incoming]);
+        assert_eq!(rebuilt.pending_transaction_count(), block_number as usize);
+    }
+
+    #[rstest]
+    #[case::caught_up(1)]
+    #[case::empty_after_depth_filter(3)]
+    #[tokio::test]
+    async fn canonical_update_clears_exhausted_pending(#[case] latest_header: u64) {
+        let client =
+            MockEthProvider::<BasePrimitives>::new().with_chain_spec(BaseChainSpec::mainnet());
+        // Keep provider tip at genesis so this queued canonical notification exercises
+        // reconciliation rather than the independent stale-snapshot eviction guard.
+        client.add_header(B256::ZERO, Header::default());
+        let flashblock = Flashblock {
+            payload_id: PayloadId::default(),
+            index: 0,
+            base: Some(ExecutionPayloadBaseV1 { block_number: 1, ..Default::default() }),
+            diff: ExecutionPayloadFlashblockDeltaV1::default(),
+            metadata: Metadata::new(1),
+        };
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_flashblocks([flashblock]);
+        builder.with_header(Sealed::new_unchecked(
+            Header { number: 1, ..Default::default() },
+            B256::ZERO,
+        ));
+        builder.with_header(Sealed::new_unchecked(
+            Header { number: latest_header, ..Default::default() },
+            B256::ZERO,
+        ));
+        // The depth case deliberately seeds inconsistent header/flashblock heights.
+        // Consistent snapshots with no remaining flashblocks select CatchUp first.
+        let pending = Arc::new(ArcSwapOption::from(Some(Arc::new(builder.build().unwrap()))));
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (sender, _) = broadcast::channel(1);
+        let processor =
+            StateProcessor::new(client, Arc::clone(&pending), 0, Arc::new(Mutex::new(rx)), sender);
+        tx.send(StateUpdate::Canonical(RecoveredBlock::new_unhashed(
+            Block {
+                header: Header { number: 2, ..Default::default() },
+                body: BlockBody::default(),
+            },
+            Vec::new(),
+        )))
+        .unwrap();
+        drop(tx);
+        processor.start().await;
+        assert!(pending.load_full().is_none());
+    }
+
+    #[tokio::test]
+    async fn genesis_update_without_known_canonical_tip_does_not_panic() {
+        // With no headers, the provider reports an unknown tip, so the normal
+        // superseded-payload filter cannot reject block zero before rebuilding.
+        let client =
+            MockEthProvider::<BasePrimitives>::new().with_chain_spec(BaseChainSpec::mainnet());
+        let pending = Arc::new(ArcSwapOption::empty());
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (sender, _) = broadcast::channel(1);
+        let processor =
+            StateProcessor::new(client, Arc::clone(&pending), 3, Arc::new(Mutex::new(rx)), sender);
+        tx.send(StateUpdate::Flashblock(Flashblock {
+            payload_id: PayloadId::default(),
+            index: 0,
+            base: Some(ExecutionPayloadBaseV1::default()),
+            diff: ExecutionPayloadFlashblockDeltaV1::default(),
+            metadata: Metadata::new(0),
+        }))
+        .unwrap();
+        drop(tx);
+        processor.start().await;
+        assert!(pending.load_full().is_none());
     }
 }

@@ -79,9 +79,6 @@ pub trait BatchPipeline: Send {
     /// Next L1 transaction, if any. Each call assigns a new [`SubmissionId`].
     fn next_submission(&mut self) -> Option<BatchSubmission>;
 
-    /// Whether [`next_submission`](Self::next_submission) would return `Some`.
-    fn has_ready_submission(&self) -> bool;
-
     /// Record L1 inclusion. Does not prune; [`reconcile_derivation`](Self::reconcile_derivation) does.
     ///
     /// Confirmed channels remain buffered so reconciliation can detect stalled derivation.
@@ -98,18 +95,21 @@ pub trait BatchPipeline: Send {
     /// Does not advance the tracked L1 head.
     fn flush(&mut self) -> Result<(), StepError>;
 
-    /// Drop buffered encoding state. Discard in-flight tracking first.
+    /// Drop buffered encoding state.
+    ///
+    /// Ids issued before the reset are never reused; a later [`confirm`](Self::confirm) or
+    /// [`requeue`](Self::requeue) of one is ignored.
     fn reset(&mut self);
 
     /// Prune blocks at or below `safe_l2`.
     ///
     /// [`DerivationReconciliation::SafeHeadMismatch`] if the head is not on the buffered chain.
-    /// [`DerivationReconciliation::StalledChannel`] if `current_l1` (derivation cursor) passed a fully
-    /// confirmed channel whose tail is not yet safe. `None` skips that check.
+    /// [`DerivationReconciliation::StalledChannel`] if `current_l1`, the L1 block derivation is
+    /// processing, passed a fully confirmed channel whose tail is not yet safe.
     fn reconcile_derivation(
         &mut self,
         safe_l2: BlockInfo,
-        current_l1: Option<u64>,
+        current_l1: u64,
     ) -> DerivationReconciliation;
 
     /// Estimated DA bytes still awaiting confirmation.

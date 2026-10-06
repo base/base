@@ -15,7 +15,6 @@ use reth_revm::{
 };
 use reth_trie::{
     StateRoot, StorageRoot,
-    hashed_cursor::HashedCursor,
     proof::{self, Proof},
     witness::TrieWitness,
 };
@@ -27,6 +26,7 @@ use reth_trie_common::{
 
 use crate::{
     BaseProofsStorage, BaseProofsStorageError, BaseProofsStore,
+    metrics::{StateMetrics, StateSeekKind},
     proof::{
         DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
         DatabaseTrieWitness,
@@ -92,13 +92,19 @@ impl<'a, Storage: BaseProofsStore + Clone> BaseProofsStateProviderRef<'a, Storag
         hashed_key: B256,
     ) -> ProviderResult<Option<StorageValue>> {
         let tx = self.ensure_tx()?;
-        Ok(self
-            .storage
-            .storage_hashed_cursor_with_tx(&tx, keccak256(address.0), self.block_number)
-            .map_err(Into::<ProviderError>::into)?
-            .seek(hashed_key)
-            .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, val)| (key == hashed_key).then_some(val)))
+        let hashed_address = keccak256(address.0);
+        Ok(StateMetrics::record_seek(
+            StateSeekKind::Storage,
+            || {
+                self.storage.hashed_storage_with_tx(
+                    &tx,
+                    hashed_address,
+                    hashed_key,
+                    self.block_number,
+                )
+            },
+            Option::is_some,
+        )?)
     }
 }
 
@@ -235,13 +241,11 @@ impl<'a, Storage: BaseProofsStore> AccountReader for BaseProofsStateProviderRef<
     fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
         let hashed_key = keccak256(address.0);
         let tx = self.ensure_tx()?;
-        Ok(self
-            .storage
-            .account_hashed_cursor_with_tx(&tx, self.block_number)
-            .map_err(Into::<ProviderError>::into)?
-            .seek(hashed_key)
-            .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, account)| (key == hashed_key).then_some(account)))
+        Ok(StateMetrics::record_seek(
+            StateSeekKind::Account,
+            || self.storage.hashed_account_with_tx(&tx, hashed_key, self.block_number),
+            Option::is_some,
+        )?)
     }
 }
 

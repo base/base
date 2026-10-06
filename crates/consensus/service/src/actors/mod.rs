@@ -25,7 +25,8 @@ pub use engine::{
 mod rpc;
 pub(crate) use rpc::launch_rpc_server;
 pub use rpc::{
-    QueuedEngineRpcClient, QueuedSequencerAdminAPIClient, RpcActor, RpcActorError, RpcContext,
+    ExecutionForwarding, ExecutionForwardingLayer, ForwardedParams, QueuedEngineRpcClient,
+    QueuedSequencerAdminAPIClient, RpcActor, RpcActorError, RpcContext,
 };
 
 mod derivation;
@@ -63,11 +64,12 @@ pub use sequencer::{
     Conductor, ConductorClient, ConductorError, DelayedL1OriginSelectorProvider, L1OriginSelector,
     L1OriginSelectorError, L1OriginSelectorProvider, OriginSelector, PayloadBuilder, PayloadSealer,
     PendingStopSender, PoolActivation, PrefetchedChainProvider, PrefetchedChainProviderError,
-    PreparedL1Origin, QueuedSequencerEngineClient, RecoveryModeGuard, ScheduledTicker, SealState,
-    SealStepError, SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery,
-    SequencerConfig, SequencerEngineClient, SequencerEngineRequestCoordinator,
-    SequencerEngineState, ShadowCycle, ShadowFunding, ShadowReconciliationGate,
-    ShadowReconciliationTask, ShadowSequencingState, UnsealedPayloadHandle,
+    PreparedL1Origin, QueuedSequencerEngineClient, RecoveryModeGuard, ResetResponder,
+    ScheduledTicker, SealState, SealStepError, SealStepOutcome, SequencerActor,
+    SequencerActorError, SequencerAdminQuery, SequencerConfig, SequencerEngineClient,
+    SequencerEngineRequestCoordinator, SequencerEngineState, SequencerKind, ShadowCycle,
+    ShadowFunding, ShadowReconciliationGate, ShadowReconciliationTask, ShadowSequencingState,
+    UnsealedPayloadHandle,
 };
 #[cfg(test)]
 pub use sequencer::{MockConductor, MockOriginSelector, MockSequencerEngineClient};

@@ -36,6 +36,7 @@ pub trait EngineRpcClient: Debug + Send + Sync + Clone {
 }
 
 /// Client trait wrapping RPC implementation for the Sequencer admin endpoints.
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait SequencerAdminAPIClient: Send + Sync + Debug {
     /// Check if the sequencer is active.

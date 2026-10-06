@@ -3,11 +3,12 @@
 use jsonrpsee::proc_macros::rpc;
 
 use crate::{
-    DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetNextProofRequest, GetNextProofResponse,
-    GetProofRequest, GetProofResponse, GetProofSessionRequest, GetProofSessionResponse,
-    HeartbeatRequest, HeartbeatResponse, ListProofsRequest, ListProofsResponse,
-    ProveBlockRangeRequest, ProveBlockRangeResponse, RecordProofSessionRequest,
-    RecordProofSessionResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
+    AbandonProofRequest, AbandonProofResponse, DeleteProofRequest, DeleteProofsByTeeSignerRequest,
+    GetNextProofRequest, GetNextProofResponse, GetProofRequest, GetProofResponse,
+    GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest, HeartbeatResponse,
+    ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
+    RecordProofSessionRequest, RecordProofSessionResponse, WorkerSubmitProofRequest,
+    WorkerSubmitProofResponse,
 };
 
 #[cfg_attr(
@@ -87,6 +88,13 @@ pub trait ProverWorkerApi {
         &self,
         request: HeartbeatRequest,
     ) -> jsonrpsee::core::RpcResult<HeartbeatResponse>;
+
+    /// Abandon a worker-owned proof job after generation fails.
+    #[method(name = "abandonProof")]
+    async fn abandon_proof(
+        &self,
+        request: AbandonProofRequest,
+    ) -> jsonrpsee::core::RpcResult<AbandonProofResponse>;
 
     /// Submit a proof result for a proof job.
     #[method(name = "submitProof")]

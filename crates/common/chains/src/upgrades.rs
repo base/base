@@ -86,6 +86,13 @@ pub trait Upgrades: EthereumHardforks {
         self.fork_condition(BaseUpgrade::Denim).active_at_timestamp(timestamp)
     }
 
+    /// Returns `true` if [`Everest`](BaseUpgrade::Everest) is active at given block timestamp.
+    /// Everest is unscheduled by default, so this returns `false` until an activation time is
+    /// configured via genesis or the L1 upgrade signal.
+    fn is_everest_active_at_timestamp(&self, timestamp: u64) -> bool {
+        self.fork_condition(BaseUpgrade::Everest).active_at_timestamp(timestamp)
+    }
+
     /// Returns `true` if the [`Zenith`](BaseUpgrade::Zenith) gate is active at the given block
     /// timestamp. Zenith is the permanently unscheduled gate for future hardfork feature
     /// testing: it is never contract-backed, so it can only be activated through genesis
@@ -147,6 +154,10 @@ impl Upgrades for RollupConfig {
                 .upgrade_activation_timestamp(BaseUpgrade::Denim)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
+            BaseUpgrade::Everest => self
+                .upgrade_activation_timestamp(BaseUpgrade::Everest)
+                .map(ForkCondition::Timestamp)
+                .unwrap_or(ForkCondition::Never),
             // Zenith is the genesis-only gate for future hardfork feature testing: the runtime
             // registry drops Zenith writes, so only a genesis-configured timestamp can appear
             // here.
@@ -164,6 +175,7 @@ impl Upgrades for RollupConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::BaseUpgradeExt;
 
     #[test]
     fn rollup_config_upgrade_activation_cascade() {
@@ -239,5 +251,16 @@ mod tests {
         assert_eq!(cfg.fork_condition(BaseUpgrade::Zenith), ForkCondition::Timestamp(ACTIVATION));
         assert!(!cfg.is_zenith_active_at_timestamp(ACTIVATION - 1));
         assert!(cfg.is_zenith_active_at_timestamp(ACTIVATION));
+    }
+
+    #[test]
+    fn active_zenith_is_the_execution_upgrade() {
+        const ACTIVATION: u64 = 42;
+        let mut cfg = RollupConfig::default();
+        cfg.upgrades.base.everest = Some(0);
+        cfg.upgrades.base.zenith = Some(ACTIVATION);
+
+        assert_eq!(BaseUpgrade::from_timestamp(cfg.clone(), ACTIVATION - 1), BaseUpgrade::Everest);
+        assert_eq!(BaseUpgrade::from_timestamp(cfg, ACTIVATION), BaseUpgrade::Zenith);
     }
 }

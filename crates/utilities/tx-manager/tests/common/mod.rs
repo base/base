@@ -4,9 +4,10 @@
 //! binary uses every item.
 #![allow(dead_code, unreachable_pub)]
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::SignableTransaction;
+use alloy_eips::BlockNumberOrTag;
 use alloy_network::{EthereumWallet, TxSigner};
 use alloy_node_bindings::Anvil;
 use alloy_primitives::{Address, B256, Bytes, Signature, U256};
@@ -21,7 +22,12 @@ pub const SAFE_ABORT_DEPTH: u64 = 3;
 /// Spawns an Anvil instance and returns the provider, default wallet, and
 /// instance handle.
 pub fn setup_anvil() -> (RootProvider, EthereumWallet, alloy_node_bindings::AnvilInstance) {
-    let anvil = Anvil::new().spawn();
+    spawn_anvil(Anvil::new())
+}
+
+/// Spawns `anvil` and returns the provider, default wallet, and instance handle.
+fn spawn_anvil(anvil: Anvil) -> (RootProvider, EthereumWallet, alloy_node_bindings::AnvilInstance) {
+    let anvil = anvil.spawn();
     let provider = RootProvider::new_http(anvil.endpoint_url());
     let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
     let wallet = EthereumWallet::from(signer);
@@ -33,6 +39,25 @@ pub async fn setup_with_config(
     config: TxManagerConfig,
 ) -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
     let (provider, wallet, anvil) = setup_anvil();
+    setup_manager(provider, wallet, anvil, config).await
+}
+
+/// Creates a [`SimpleTxManager`] backed by a fresh Anvil instance with automine off, so
+/// transactions stay in the mempool until [`mine_block`].
+pub async fn setup_without_automine(
+    config: TxManagerConfig,
+) -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
+    let (provider, wallet, anvil) = spawn_anvil(Anvil::new().arg("--no-mining"));
+    setup_manager(provider, wallet, anvil, config).await
+}
+
+/// Creates a [`SimpleTxManager`] over `provider`, signing with `wallet`.
+async fn setup_manager(
+    provider: RootProvider,
+    wallet: EthereumWallet,
+    anvil: alloy_node_bindings::AnvilInstance,
+    config: TxManagerConfig,
+) -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
     let manager = SimpleTxManager::from_wallet(
         provider,
         wallet,
@@ -43,6 +68,31 @@ pub async fn setup_with_config(
     .await
     .expect("should create manager");
     (manager, anvil)
+}
+
+/// Waits until the first transaction of `sender` is in the mempool, since `send_async`
+/// returns before it publishes.
+pub async fn wait_for_publication(provider: &RootProvider, sender: Address) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while provider.get_transaction_count(sender).pending().await.expect("tx count") == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the transaction should reach the mempool within 5 s");
+}
+
+/// Returns the only transaction in Anvil's mempool.
+pub async fn pending_transaction(provider: &RootProvider) -> alloy_rpc_types_eth::Transaction {
+    let block = provider
+        .get_block_by_number(BlockNumberOrTag::Pending)
+        .full()
+        .await
+        .expect("should fetch the pending block")
+        .expect("anvil serves a pending block");
+    let transactions = block.transactions.into_transactions_vec();
+    let [transaction] = transactions.try_into().expect("one transaction in the mempool");
+    transaction
 }
 
 /// Force-mine a block on Anvil so receipts are committed before queries.

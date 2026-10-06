@@ -81,6 +81,7 @@ mod tests {
             transaction: ValidatedTransaction {
                 sender: Address::repeat_byte(0x11),
                 raw: Bytes::from_static(&[0x02, 0x03]),
+                metering: None,
                 extensions: NoExtensions {},
             },
             tx_hash,

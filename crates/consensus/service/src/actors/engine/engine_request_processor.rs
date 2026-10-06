@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
+use base_common_consensus::BaseTxEnvelope;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
@@ -9,7 +10,7 @@ use base_consensus_engine::{
     EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask, ForkchoiceCheckpointLabel,
     ForkchoiceCheckpointReader, InsertTask, InsertTaskResult, NoopForkchoiceCheckpointReader,
 };
-use base_protocol::L2BlockInfo;
+use base_protocol::{BaseTimeUpdateTx, L2BlockInfo};
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::{
@@ -455,6 +456,24 @@ where
 
     /// Handles an unsafe payload supplied through the admin API.
     pub fn handle_admin_unsafe_l2_block(&mut self, envelope: BaseExecutionPayloadEnvelope) {
+        // Admin injection bypasses gossip validation. Leave conversion errors to InsertTask,
+        // but drop invalid schedules at ingress just as the gossip handler does.
+        if let Ok(block) = envelope.execution_payload.clone().try_into_block::<BaseTxEnvelope>()
+            && let Err(error) = BaseTimeUpdateTx::validate_block_timestamp(
+                &self.rollup,
+                &block.body.transactions,
+                block.header.number,
+                block.header.timestamp,
+            )
+        {
+            warn!(
+                target: "engine",
+                %error,
+                block_number = block.header.number,
+                "Dropping admin payload with invalid BaseTime schedule"
+            );
+            return;
+        }
         self.handle_external_unsafe_l2_block(envelope);
     }
 
@@ -654,14 +673,40 @@ where
             }
         }
     }
+
+    /// Re-probes the execution layer while a sequencer is waiting for EL sync to complete.
+    pub async fn probe_sequencer_el_sync(&mut self, active_sequencer: bool) {
+        if self.engine.state().el_sync_finished {
+            return;
+        }
+
+        let head = match self.client.l2_block_info_by_label(BlockNumberOrTag::Latest).await {
+            Ok(Some(head)) => head,
+            Ok(None) => {
+                debug!(target: "engine", "Sequencer EL sync probe skipped: latest head unavailable");
+                return;
+            }
+            Err(err) => {
+                warn!(target: "engine", error = %err, "Sequencer EL sync probe failed to query latest head");
+                return;
+            }
+        };
+        let at_genesis = head.block_info.hash == self.rollup.genesis.l2.hash;
+
+        if active_sequencer {
+            self.bootstrap_active_sequencer(Some(head), at_genesis).await;
+        } else {
+            self.bootstrap_conductor_follower(Some(head)).await;
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
     use alloy_consensus::transaction::Recovered;
-    use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag, NumHash, eip2718::Encodable2718};
+    use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag, eip2718::Encodable2718};
     use alloy_primitives::{Address, B256, Bloom, Sealed, U256};
     use alloy_rpc_types_engine::{
         ExecutionPayloadV1, ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
@@ -686,15 +731,16 @@ mod tests {
             test_engine_client_builder,
         },
     };
-    use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
+    use base_protocol::{BaseTimeUpdateTx, BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
     use rstest::rstest;
     use tokio::sync::{mpsc, watch};
 
     use crate::{
         BuildRequest, EngineActorRequest, EngineClientError, EngineProcessor,
-        EngineRequestReceiver, MockConductor, NodeMode, NoopCheckpointWriter, ResetRequest,
-        SequencerEngineRequestCoordinator, SequencerEngineState, ShadowReconciliationGate,
-        ValidatorEngineRequestHandler, actors::engine::client::MockEngineDerivationClient,
+        EngineRequestReceiver, MockConductor, NodeMode, NodeOperatingMode, NoopCheckpointWriter,
+        ResetRequest, SequencerEngineRequestCoordinator, SequencerEngineState,
+        ShadowReconciliationGate, ValidatorEngineRequestHandler,
+        actors::engine::client::MockEngineDerivationClient,
     };
 
     /// Test-only [`ForkchoiceCheckpointReader`] that returns pre-seeded safe/finalized heads.
@@ -810,6 +856,187 @@ mod tests {
         let engine = Engine::new(initial_state, state_tx, queue_tx);
 
         (EngineProcessor::new(client, config, derivation_client, engine), queue_rx)
+    }
+
+    #[rstest]
+    #[case::wrong_second(3, Some(200), false)]
+    #[case::wrong_slot(2, Some(400), false)]
+    #[case::missing_metadata(2, None, false)]
+    #[case::valid(2, Some(200), true)]
+    #[tokio::test]
+    async fn admin_payload_schedule_is_checked_before_enqueue(
+        #[case] timestamp: u64,
+        #[case] millis: Option<u16>,
+        #[case] valid: bool,
+    ) {
+        let config = RollupConfig {
+            block_time: 2,
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { denim: Some(2), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let unsafe_head = l2_head(1, B256::with_last_byte(1));
+        let mut envelope = unsafe_payload(2, unsafe_head.block_info.hash, B256::with_last_byte(2));
+        let BaseExecutionPayload::V1(payload) = &mut envelope.execution_payload else {
+            unreachable!();
+        };
+        payload.timestamp = timestamp;
+        payload.transactions = vec![l1_info_deposit_tx_bytes().into()];
+        if let Some(millis) = millis {
+            payload.transactions.push(
+                BaseTxEnvelope::from(BaseTimeUpdateTx::new(millis).unwrap().into_deposit_tx(2))
+                    .encoded_2718()
+                    .into(),
+            );
+        }
+
+        if !valid {
+            let (mut local, _) = unsafe_payload_processor(true, unsafe_head, None, config.clone());
+            local.handle_local_unsafe_l2_block(envelope.clone(), None);
+            let error = local.engine.drain().await.unwrap_err();
+            assert_eq!(error.severity(), EngineTaskErrorSeverity::Critical);
+            assert!(local.client.last_new_payload_v2().await.is_none());
+        }
+
+        let (mut admin, queue_rx) = unsafe_payload_processor(true, unsafe_head, None, config);
+        admin.client.set_new_payload_v2_response(valid_fcu().payload_status).await;
+        admin.client.set_fork_choice_updated_v3_response(valid_fcu()).await;
+        admin.handle_admin_unsafe_l2_block(envelope);
+        assert_eq!(*queue_rx.borrow(), usize::from(valid));
+        admin.engine.drain().await.unwrap();
+        assert_eq!(admin.client.last_new_payload_v2().await.is_some(), valid);
+        assert_eq!(
+            admin.engine_state().sync_state.unsafe_head().block_info.number,
+            if valid { 2 } else { 1 }
+        );
+    }
+
+    #[rstest]
+    #[case::conductor_follower(false, true)]
+    #[case::shadow_follower(true, false)]
+    #[tokio::test]
+    async fn admin_payload_advances_catching_up_conductor_only_when_not_shadow(
+        #[case] shadow: bool,
+        #[case] should_advance: bool,
+    ) {
+        let parent = L2BlockInfo {
+            block_info: BlockInfo {
+                number: 10,
+                hash: B256::with_last_byte(10),
+                timestamp: 9,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut child = unsafe_payload_with_l1_info(11, parent.block_info.hash, B256::ZERO);
+        let child_hash =
+            child.execution_payload.clone().try_into_block::<BaseTxEnvelope>().unwrap().hash_slow();
+        if let BaseExecutionPayload::V1(payload) = &mut child.execution_payload {
+            payload.block_hash = child_hash;
+        }
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, parent)
+                .with_block_info_by_tag(BlockNumberOrTag::Safe, parent)
+                .with_block_info_by_tag(BlockNumberOrTag::Finalized, parent)
+                .with_new_payload_v2_response(PayloadStatus {
+                    status: PayloadStatusEnum::Valid,
+                    latest_valid_hash: Some(child_hash),
+                })
+                .with_fork_choice_updated_v3_response(valid_fcu())
+                .build(),
+        );
+        let mut derivation = MockEngineDerivationClient::new();
+        derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
+        derivation.expect_notify_sync_completed().returning(|_| Ok(()));
+        let initial_state = TestEngineStateBuilder::new()
+            .with_unsafe_head(parent)
+            .with_safe_head(parent)
+            .with_finalized_head(parent)
+            .with_el_sync_finished(true)
+            .build();
+        let (state_tx, _) = watch::channel(initial_state);
+        let (queue_tx, _) = watch::channel(0usize);
+        let processor = EngineProcessor::new(
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            derivation,
+            Engine::new(initial_state, state_tx, queue_tx),
+        );
+        let (unsafe_head_tx, mut unsafe_head_rx) = watch::channel(L2BlockInfo::default());
+        let (request_tx, request_rx) = mpsc::channel(4);
+        let mut coordinator = SequencerEngineRequestCoordinator::new(
+            processor,
+            if shadow {
+                NodeOperatingMode::ShadowSequencer { blocks_per_cycle: std::num::NonZeroU64::MIN }
+            } else {
+                NodeOperatingMode::Sequencer
+            },
+            None,
+            shadow,
+            unsafe_head_tx,
+        );
+        *coordinator.sequencer_state_mut() =
+            SequencerEngineState::CatchingUp { catchup: Default::default() };
+        let handle = coordinator.start(request_rx);
+
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            unsafe_head_rx.wait_for(|head| *head == parent),
+        )
+        .await
+        .expect("timed out waiting for coordinator bootstrap")
+        .expect("unsafe head watch closed during bootstrap");
+        request_tx
+            .send(EngineActorRequest::ProcessAdminUnsafeL2BlockRequest(Box::new(child)))
+            .await
+            .expect("failed to send admin payload");
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        request_tx
+            .send(EngineActorRequest::PrepareSequencerStart {
+                expected_hash: parent.block_info.hash,
+                result_tx,
+            })
+            .await
+            .expect("failed to send barrier request");
+        let barrier = tokio::time::timeout(Duration::from_secs(1), result_rx.recv())
+            .await
+            .expect("timed out waiting for barrier response")
+            .expect("barrier response channel closed");
+
+        if should_advance {
+            assert_eq!(unsafe_head_rx.borrow().block_info.number, 11);
+            assert_eq!(unsafe_head_rx.borrow().block_info.hash, child_hash);
+            assert!(client.last_new_payload_v2().await.is_some());
+            assert!(matches!(barrier, Err(EngineClientError::RequestError(_))));
+
+            let (result_tx, mut result_rx) = mpsc::channel(1);
+            request_tx
+                .send(EngineActorRequest::PrepareSequencerStart {
+                    expected_hash: child_hash,
+                    result_tx,
+                })
+                .await
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(1), result_rx.recv())
+                .await
+                .unwrap()
+                .unwrap()
+                .expect("takeover must accept the inserted committed head");
+        } else {
+            barrier.expect("shadow preparation must accept the unchanged head");
+            assert_eq!(*unsafe_head_rx.borrow(), parent);
+            assert!(client.last_new_payload_v2().await.is_none());
+        }
+
+        drop(request_tx);
+        let result = tokio::time::timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("timed out shutting down coordinator")
+            .expect("coordinator task panicked");
+        assert!(matches!(result, Err(crate::EngineError::ChannelClosed)));
     }
 
     #[rstest]
@@ -1029,9 +1256,14 @@ mod tests {
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
-        let handle =
-            SequencerEngineRequestCoordinator::new(processor, false, None, false, unsafe_head_tx)
-                .start(req_rx);
+        let handle = SequencerEngineRequestCoordinator::new(
+            processor,
+            NodeOperatingMode::Sequencer,
+            None,
+            false,
+            unsafe_head_tx,
+        )
+        .start(req_rx);
 
         // probe_el_sync calls state_sender.send_replace with el_sync_finished=true during
         // the bootstrap, before the main loop starts. wait_for resolves as soon as the watch
@@ -1091,9 +1323,14 @@ mod tests {
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
-        let handle =
-            SequencerEngineRequestCoordinator::new(processor, false, None, false, unsafe_head_tx)
-                .start(req_rx);
+        let handle = SequencerEngineRequestCoordinator::new(
+            processor,
+            NodeOperatingMode::Sequencer,
+            None,
+            false,
+            unsafe_head_tx,
+        )
+        .start(req_rx);
 
         // In the Syncing path, seed_state sets unsafe_head to reth's reported latest block.
         // Wait for that state to be published before sending the Reset.
@@ -1171,7 +1408,7 @@ mod tests {
         let (req_tx, req_rx) = mpsc::channel(8);
         let handle = SequencerEngineRequestCoordinator::new(
             processor,
-            false,
+            NodeOperatingMode::Sequencer,
             Some(Arc::new(mock_conductor)),
             false,
             unsafe_head_tx,
@@ -1246,7 +1483,7 @@ mod tests {
         let (req_tx, req_rx) = mpsc::channel(8);
         let handle = SequencerEngineRequestCoordinator::new(
             processor,
-            true,
+            NodeOperatingMode::ShadowSequencer { blocks_per_cycle: std::num::NonZeroU64::MIN },
             Some(Arc::new(mock_conductor)),
             false,
             unsafe_head_tx,
@@ -1278,10 +1515,7 @@ mod tests {
             },
             ..Default::default()
         });
-        let genesis_l2_info = L2BlockInfo {
-            block_info: BlockInfo { hash: genesis_hash, ..Default::default() },
-            ..Default::default()
-        };
+        let genesis_l2_info = L2BlockInfo::from_l2_genesis(&cfg.genesis);
         let build_fcu =
             ForkchoiceUpdated { payload_id: Some(PayloadId::new([1; 8])), ..valid_fcu() };
         let client = Arc::new(
@@ -1310,8 +1544,13 @@ mod tests {
         let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
         let processor = EngineProcessor::new(Arc::clone(&client), cfg, mock_derivation, engine);
         let (req_tx, req_rx) = mpsc::channel(8);
-        let mut handler =
-            SequencerEngineRequestCoordinator::new(processor, true, None, false, unsafe_head_tx);
+        let mut handler = SequencerEngineRequestCoordinator::new(
+            processor,
+            NodeOperatingMode::ShadowSequencer { blocks_per_cycle: std::num::NonZeroU64::MIN },
+            None,
+            false,
+            unsafe_head_tx,
+        );
         *handler.sequencer_state_mut() = SequencerEngineState::ShadowActive(Box::new(
             ShadowReconciliationGate::new(genesis_l2_info),
         ));
@@ -1400,8 +1639,13 @@ mod tests {
             EngineProcessor::new(client, Arc::new(RollupConfig::default()), derivation, engine);
         let (unsafe_head_tx, _) = watch::channel(private_unsafe);
         let (request_tx, request_rx) = mpsc::channel(8);
-        let mut coordinator =
-            SequencerEngineRequestCoordinator::new(processor, true, None, false, unsafe_head_tx);
+        let mut coordinator = SequencerEngineRequestCoordinator::new(
+            processor,
+            NodeOperatingMode::ShadowSequencer { blocks_per_cycle: std::num::NonZeroU64::MIN },
+            None,
+            false,
+            unsafe_head_tx,
+        );
         *coordinator.sequencer_state_mut() =
             SequencerEngineState::ShadowActive(Box::new(ShadowReconciliationGate::new(anchor)));
         let mut handle = coordinator.start(request_rx);
@@ -1633,16 +1877,7 @@ mod tests {
             ..Default::default()
         });
 
-        let genesis_l2_info = L2BlockInfo {
-            block_info: BlockInfo {
-                hash: genesis_hash,
-                number: 0,
-                parent_hash: B256::ZERO,
-                timestamp: 0,
-            },
-            l1_origin: NumHash { number: 0, hash: B256::ZERO },
-            seq_num: 0,
-        };
+        let genesis_l2_info = L2BlockInfo::from_l2_genesis(&cfg.genesis);
 
         // On unfixed main, engine.reset() queries: Finalized L2 block, Latest L2 block,
         // the L1 origin of the unsafe head (hash B256::ZERO), FCU v3, then L1 block 0
