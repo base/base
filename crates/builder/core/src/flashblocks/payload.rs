@@ -289,6 +289,7 @@ where
         )
         .into_provider();
         let db = StateProviderDatabase::new(state_provider);
+        BuilderMetrics::payload_setup_duration().record(block_build_start_time.elapsed());
 
         // 1. execute the pre steps and seal an early block with that
         let sequencer_tx_start_time = Instant::now();
@@ -306,6 +307,7 @@ where
 
         let skip_flashblocks_building = ctx.attributes().no_tx_pool || flashblocks_per_block == 0;
 
+        let fallback_start = Instant::now();
         let prev_flashblock_id = self.previous_flashblock_id();
         let (payload, fb_payload, state_diff) = build_block(
             &mut state,
@@ -360,6 +362,8 @@ where
             BuilderMetrics::payload_num_tx_gauge().set(info.executed_transactions.len() as f64);
         }
 
+        BuilderMetrics::fallback_payload_duration().record(fallback_start.elapsed());
+
         // fcu just arrived late, not syncing
         if flashblocks_per_block == 0 && !ctx.attributes().no_tx_pool {
             error!(
@@ -395,6 +399,7 @@ where
             flashblocks_interval = self.config.flashblocks_interval.as_millis(),
         );
 
+        let iterator_setup_start = Instant::now();
         let gas_per_batch = ctx.block_gas_limit() / flashblocks_per_block;
         let da_per_batch = ctx
             .builder_config
@@ -466,6 +471,7 @@ where
 
         // Highest executed nonce per sender, updated incrementally per flashblock.
         let mut executed_sender_nonces: HashMap<Address, u64> = HashMap::default();
+        BuilderMetrics::payload_iterator_setup_duration().record(iterator_setup_start.elapsed());
 
         // Process flashblocks in a blocking loop
         let result = loop {
@@ -971,6 +977,7 @@ where
         self.emit_final_inclusion_events(ctx, &final_payload);
 
         let elapsed = start_time.elapsed();
+        BuilderMetrics::payload_finalize_duration().record(elapsed);
         info!(
             target: "payload_builder",
             block_number = ctx.block_number(),
