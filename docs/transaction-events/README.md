@@ -211,12 +211,22 @@ incoming one. `base_insertValidatedTransaction` uses
 
 Forwarding:
 
+- `TXPOOL_BUILDER_CONSUMED`
 - `TXPOOL_BUILDER_FORWARD_ATTEMPT`
 - `TXPOOL_BUILDER_FORWARD_SUCCESS`
 - `TXPOOL_BUILDER_FORWARD_FAILURE`
 - `TXPOOL_BUILDER_FORWARD_DROPPED`
 - `TXPOOL_VALIDATED_INSERT_ACCEPTED`
 - `TXPOOL_VALIDATED_INSERT_REJECTED`
+
+`TXPOOL_BUILDER_CONSUMED` is emitted by the forwarding reader once it has taken
+a transaction from the pool's best-transactions iterator and queued it for the
+builder forwarder. Transactions sent within the last `data.resend_after_ms` are
+skipped without an event; after that window a still-pending transaction is
+queued again and emits a new event. `iterator_index` (in both `id` and `data`)
+is the transaction's position in the current iterator pass and restarts at 0
+each pass. `data` also carries `source`, `target`, and `builder_url`. It uses
+the warm retention class.
 
 `TXPOOL_BUILDER_FORWARD_DROPPED` is emitted only for transaction-scoped drops
 where the forwarding task still knows the `tx_hash`, such as final RPC failure
