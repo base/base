@@ -1419,6 +1419,134 @@ class SnapshotTests(unittest.TestCase):
         self.assertFalse((self.fork.directory / "upstreams.json").exists())
         self.assertFalse(devnet.setup_path().exists())
 
+    def test_setup_builds_missing_defaults_pulls_remote_and_preserves_custom_images(self):
+        image_id = "sha256:" + "f" * 64
+        for source in ("cached", "missing", "remote", "custom", "pinned"):
+            with self.subTest(source=source):
+                work = self.root / source
+                work.mkdir()
+                args = Mock(anvil_image="base-anvil:snapshot-24ec5e47", batcher_image="op-batcher:local")
+                if source in ("remote", "custom", "pinned"):
+                    args.anvil_image = {"remote": "ghcr.io/example/anvil:custom", "custom": "anvil:custom",
+                                        "pinned": image_id}[source]
+                commands = []
+
+                def command(*command, lock_fd):
+                    self.assertEqual(lock_fd, lock.fileno())
+                    if command[0] == "cargo":
+                        raise RuntimeError("inspector interrupted")
+                    commands.append(command)
+
+                def docker(*command):
+                    if len(command) == 4 and source in ("missing", "custom"):
+                        raise RuntimeError("image missing")
+                    return image_id
+
+                with tempfile.TemporaryFile() as lock, \
+                        patch.object(devnet.shutil, "which", return_value="/usr/bin/tool"), \
+                        patch.object(devnet, "run", side_effect=docker), \
+                        patch.object(devnet, "setup_command", side_effect=command), patch("builtins.print"):
+                    with self.assertRaisesRegex(RuntimeError, "image missing" if source == "custom" else "inspector interrupted"):
+                        devnet.prepare_snapshot(args, work, lock)
+                self.assertEqual(commands[0][:3], ("docker", "buildx", "bake"))
+                if source == "missing":
+                    self.assertEqual(commands[1], ("just", "devnet", "snapshot", "build-anvil"))
+                    self.assertEqual(commands[2][:4], ("docker", "build", "-f", "etc/docker/Dockerfile.op-batcher"))
+                elif source == "remote":
+                    self.assertEqual(commands[1], ("docker", "pull", "ghcr.io/example/anvil:custom"))
+                else:
+                    self.assertEqual(len(commands), 1)
+                images = json.loads((work / "setup.json").read_text())["images"]
+                self.assertEqual(images["base"], image_id)
+                self.assertEqual(images["anvil"], "anvil:custom" if source == "custom" else image_id)
+
+    def test_setup_build_journal_never_repeats_completed_steps_and_rejects_unknown_phases(self):
+        work = self.root / "work"
+        work.mkdir()
+        args = Mock(anvil_image=devnet.DEFAULT_IMAGES["anvil"], batcher_image=devnet.DEFAULT_IMAGES["batcher"])
+        calls = []
+
+        def command(*command, lock_fd):
+            calls.append(command[0] if command[0] == "cargo" else command[:3])
+            if calls == [("docker", "buildx", "bake"), "cargo"]:
+                raise KeyboardInterrupt()
+
+        with tempfile.TemporaryFile() as lock, \
+                patch.object(devnet.shutil, "which", return_value="/usr/bin/docker"), \
+                patch.object(devnet, "run", return_value="sha256:" + "e" * 64), \
+                patch.object(devnet, "setup_command", side_effect=command), patch("builtins.print"):
+            with self.assertRaises(KeyboardInterrupt):
+                devnet.prepare_snapshot(args, work, lock)
+            devnet.prepare_snapshot(args, work, lock)
+            devnet.prepare_snapshot(args, work, lock)
+            self.assertEqual(calls, [("docker", "buildx", "bake"), "cargo", "cargo"])
+            completed = (work / "setup.json").read_bytes()
+            for name, change in (("download", {"phase": "download"}), ("copy", {"phase": "copy"}),
+                                 ("future version", {"version": 2})):
+                with self.subTest(journal=name):
+                    devnet.write_json(work / "setup.json", {**json.loads(completed), **change})
+                    with self.assertRaisesRegex(RuntimeError, "unsupported snapshot setup journal"):
+                        devnet.prepare_snapshot(args, work, lock)
+            self.assertEqual(len(calls), 3)
+
+    def test_concurrent_setups_each_pin_their_own_base_build(self):
+        # Checkouts share Docker's tag namespace; a build finishing later must not replace another's pin.
+        tags, builds = {}, []
+        inspector = self.root / "base-devnet"
+        inspector.touch()
+
+        def command(*command, lock_fd):
+            if command[:3] == ("docker", "buildx", "bake"):
+                settings = [command[index + 1] for index, arg in enumerate(command) if arg == "--set"]
+                build = f"sha256:{len(builds) + 1:064x}"
+                builds.append(build)
+                tags.update(dict.fromkeys([setting.removeprefix("base.tags=") for setting in settings
+                                           if setting.startswith("base.tags=")] or ["base:local"], build))
+                if len(builds) == 1:
+                    prepare(second)  # Another checkout builds before this one inspects its result.
+
+        def docker(*command, **_):
+            return tags[command[-1]] if command[-1] in tags else "sha256:" + "e" * 64
+
+        def prepare(work):
+            work.mkdir()
+            devnet.prepare_snapshot(Mock(anvil_image=devnet.DEFAULT_IMAGES["anvil"],
+                                         batcher_image=devnet.DEFAULT_IMAGES["batcher"]), work, lock)
+
+        first, second = self.root / "first", self.root / "second"
+        with tempfile.TemporaryFile() as lock, patch.dict(os.environ, {"BASE_SNAPSHOT_INSPECTOR": str(inspector)}), \
+                patch.object(devnet.shutil, "which", return_value="/usr/bin/docker"), \
+                patch.object(devnet, "run", side_effect=docker), \
+                patch.object(devnet, "setup_command", side_effect=command), patch("builtins.print"):
+            prepare(first)
+        self.assertEqual([json.loads((work / "setup.json").read_text())["images"]["base"] for work in (first, second)],
+                         builds)
+
+    def test_setup_builds_the_inspector_where_the_launcher_runs_it(self):
+        # An inherited CARGO_TARGET_DIR would otherwise leave a stale or unrelated default inspector.
+        work, calls = self.root / "work", []
+        work.mkdir()
+        with tempfile.TemporaryFile() as lock, patch.dict(os.environ, {"CARGO_TARGET_DIR": str(self.root / "elsewhere")}), \
+                patch.object(devnet.shutil, "which", return_value="/usr/bin/docker"), \
+                patch.object(devnet, "run", return_value="sha256:" + "e" * 64), \
+                patch.object(devnet, "setup_command", side_effect=lambda *command, lock_fd: calls.append(command)), \
+                patch("builtins.print"):
+            os.environ.pop("BASE_SNAPSHOT_INSPECTOR", None)
+            devnet.prepare_snapshot(Mock(anvil_image=devnet.DEFAULT_IMAGES["anvil"],
+                                         batcher_image=devnet.DEFAULT_IMAGES["batcher"]), work, lock)
+        cargo = next(command for command in calls if command[0] == "cargo")
+        self.assertEqual(cargo[cargo.index("--target-dir") + 1], "target")
+
+    def test_setup_commands_inherit_the_fork_lock(self):
+        with self.assertRaises(TypeError):
+            devnet.setup_command(sys.executable, "-c", "pass")  # Every setup command must inherit the lock.
+        with open(self.fork.directory / ".lock", "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            devnet.setup_command(
+                sys.executable, "-c",
+                "import os, sys; assert os.fstat(int(sys.argv[1])).st_ino == int(sys.argv[2])",
+                str(lock.fileno()), str(os.fstat(lock.fileno()).st_ino), lock_fd=lock.fileno())
+
     def test_first_start_runs_every_gate_in_order_before_sequencing_and_catch_up(self):
         calls = []
         with self.starting(), patch.multiple(self.fork, wait_checkpoints=DEFAULT, wait_boundary=DEFAULT,
@@ -2165,7 +2293,7 @@ class SnapshotTests(unittest.TestCase):
             with self.subTest(args=args):
                 result = subprocess.run(["just", *args], cwd=devnet.ROOT, capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                for command in ("setup", "init", "up", "down", "status", "reset", "schedule-denim", "test"):
+                for command in ("setup", "init", "up", "down", "status", "reset", "schedule-denim", "test", "build-anvil"):
                     self.assertIn(command, result.stdout)
                 for command in ("deposit", "verify"):
                     self.assertNotIn(command, result.stdout)

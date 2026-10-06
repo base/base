@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import secrets
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -26,6 +27,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[3]
 COMPOSE = ROOT / "etc/docker/docker-compose.snapshot.yml"
 DEFAULT_TIMEOUT = 7200
+DEFAULT_IMAGES = {"base": "base:local", "anvil": "base-anvil:snapshot-24ec5e47", "batcher": "op-batcher:local"}
 PROTOCOL_VERSIONS = "0x7480Afc8D99a5c645c247dB5A1e4a4f440e6e095"
 IMPLEMENTATION_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
 DENIM_ID = 13
@@ -216,6 +218,63 @@ def configured_directory(directory=None):
     require((directory / "manifest.json").is_file(),
             "saved snapshot directory is unavailable; run just devnet snapshot setup again")
     return directory
+
+
+def setup_command(*args, lock_fd):
+    # Builds can exceed the node-readiness timeout. Stream their progress rather than retaining
+    # potentially hours of output; none of these commands contains RPC credentials.
+    # A surviving child must retain the lock if its launcher is killed.
+    require(subprocess.call(list(map(str, args)), cwd=ROOT, pass_fds=(lock_fd,)) == 0,
+            "snapshot setup command failed; completed steps preserved")
+
+
+def prepare_snapshot(args, work, lock):
+    """Builds or obtains the experiment images and inspector under the fork lock, journaling each one."""
+    journal = work / "setup.json"
+    state = json.loads(journal.read_text()) if journal.exists() else None
+    if state is None:
+        state = {"version": 1, "phase": "build",
+                 "images": {**DEFAULT_IMAGES, "anvil": args.anvil_image, "batcher": args.batcher_image}}
+        write_json(journal, state)
+    require(state["version"] == 1 and state["phase"] == "build", "unsupported snapshot setup journal; data preserved")
+    require(shutil.which("docker"), "setup requires Docker")
+    images = state["images"]
+    # Checkouts share Docker's tags; a unique one keeps another build from replacing this one before inspection.
+    base_tag = "base:snapshot-setup-" + secrets.token_hex(6)
+    builds = {
+        "base": ("docker", "buildx", "bake", "-f", "etc/docker/docker-bake.hcl", "base",
+                 "--set", "base.args.PROFILE=release", "--set", "base.tags=" + base_tag, "--load"),
+        "anvil": ("just", "devnet", "snapshot", "build-anvil"),
+        "batcher": ("docker", "build", "-f", "etc/docker/Dockerfile.op-batcher", "-t", DEFAULT_IMAGES["batcher"], "."),
+    }
+    for role, image in images.items():
+        if image.startswith("sha256:"):
+            continue
+        command = None
+        if role == "base":
+            print("Building Base from the current checkout (including local changes).", flush=True)
+            command, image = builds[role], base_tag
+        elif image.startswith("ghcr.io/"):
+            command = ("docker", "pull", image)
+        else:
+            try:
+                run("docker", "image", "inspect", image)
+            except RuntimeError:
+                if image != DEFAULT_IMAGES[role]:
+                    raise
+                command = builds[role]
+        if command is not None:
+            setup_command(*command, lock_fd=lock.fileno())
+        images[role] = run("docker", "image", "inspect", "--format", "{{.Id}}", image)
+        write_json(journal, state)
+    if "BASE_SNAPSHOT_INSPECTOR" in os.environ:
+        require(Path(os.environ["BASE_SNAPSHOT_INSPECTOR"]).is_file(), "configured snapshot inspector does not exist")
+    elif not state.get("inspector_built"):
+        # The launcher runs target/debug/base-devnet; an inherited CARGO_TARGET_DIR must not redirect the build.
+        setup_command("cargo", "build", "--locked", "-p", "base-system-tests", "--bin", "base-devnet",
+                      "--target-dir", "target", lock_fd=lock.fileno())
+        state["inspector_built"] = True
+        write_json(journal, state)
 
 
 def setup(args):

@@ -12,6 +12,7 @@ fresh-genesis devnet with destructive cleanup. Run commands below from the repos
 - Two independent, writable copies of the same Base mainnet snapshot (Reth datadirs). Copy only
   stopped databases; hard links, symlinked aliases and nested paths are rejected.
 - Local Base, fork-aware Anvil and op-batcher images. Init pins their image IDs.
+  `just devnet snapshot build-anvil` builds the pinned Anvil revision as `base-anvil:snapshot-24ec5e47`.
 - An Ethereum mainnet archive RPC and a Beacon API with historical blobs covering the snapshot's
   derivation history. They can share one URL. **No Base RPC is required.**
 - The snapshot inspector, built with `cargo build --locked -p base-system-tests --bin base-devnet`,
