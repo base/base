@@ -10,7 +10,7 @@ import statistics
 WORKLOADS = ("transfer-legacy", "transfer-azul", "storage-legacy", "storage-azul")
 ACTIVE = "base_builder_active_block_build_duration"
 WALL = "base_builder_block_build_wall_duration"
-# Two-sided 95% Student-t critical values; exact small-sample table, conservative 1.96 limit.
+# Rounded small-sample Student-t critical values; add 0.001 below to round conservatively upward.
 T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365,
        8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145,
        15: 2.131, 16: 2.120, 17: 2.110, 18: 2.101, 19: 2.093, 20: 2.086,
@@ -54,6 +54,13 @@ def compare(baseline, candidate):
             for sample in (left, right):
                 if len(sample["timings"][ACTIVE]) != 1 or len(sample["timings"][WALL]) != 1:
                     raise ValueError("each block must have exactly one active/wall observation")
+                if sample.get("published_flashblocks") != 6 or sample.get("observations", {}).get(ACTIVE) != 1:
+                    raise ValueError("missing flashblocks or noncanonical observation count")
+                if sample["observations"].get(WALL) != 1:
+                    raise ValueError("expected one complete wall-clock observation")
+                durations = [sample["timings"][metric][0] for metric in (ACTIVE, WALL)]
+                if not all(math.isfinite(value) and value > 0 for value in durations) or durations[0] > durations[1]:
+                    raise ValueError("invalid pipeline duration")
         b = summarize(before, (baseline / name.replace(".json", ".log")).read_text())
         o = summarize(after, (candidate / name.replace(".json", ".log")).read_text())
         runs.append({"name": name, "baseline": b, "candidate": o, "reduction_percent": 100 * (1 - o["mean_ms"] / b["mean_ms"])})
@@ -76,7 +83,7 @@ def compare(baseline, candidate):
             raise ValueError("incomplete workload pair")
         reductions.append(100 * (1 - statistics.mean(pair["candidate"]) / statistics.mean(pair["baseline"])))
     df = len(reductions) - 1
-    critical = next((T95[k] for k in sorted(T95, reverse=True) if k <= df), 12.706)
+    critical = next((T95[k] for k in sorted(T95, reverse=True) if k <= df), 12.706) + 0.001
     uncertainty = critical * statistics.stdev(reductions) / math.sqrt(len(reductions))
     center = statistics.mean(reductions)
     baseline_ms = statistics.mean(run["baseline"]["mean_ms"] for run in runs)

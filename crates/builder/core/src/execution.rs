@@ -5,9 +5,13 @@
 use core::fmt::Debug;
 
 use ExecutionMeteringLimitExceeded::TransactionExecutionTime;
-use alloy_primitives::{Address, U256};
+use alloy_consensus::{TxReceipt, proofs};
+use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom};
+use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
 use base_common_evm::BaseTransactionError;
+use base_execution_chainspec::BaseChainSpec;
+use base_execution_consensus::calculate_receipt_root_no_memo;
 use derive_more::Display;
 use thiserror::Error;
 
@@ -194,6 +198,23 @@ pub enum TxnOutcome {
     RevertedAndExcluded,
 }
 
+/// Header commitments to the append-only executed transaction and receipt lists.
+#[derive(Debug, Clone, Copy)]
+pub struct BlockRoots {
+    /// Number of transactions covered by the transaction root.
+    pub transaction_count: usize,
+    /// Number of receipts covered by the receipt root and bloom.
+    pub receipt_count: usize,
+    /// Historical Regolith receipt encoding omits the deposit nonce until Canyon.
+    pub strip_deposit_nonce: bool,
+    /// Ordered transaction trie root.
+    pub transactions_root: B256,
+    /// Ordered receipt trie root.
+    pub receipts_root: B256,
+    /// Combined receipt log bloom.
+    pub logs_bloom: Bloom,
+}
+
 /// Execution information specific to flashblocks.
 ///
 /// Tracks the last consumed flashblock index for progressive block construction.
@@ -201,6 +222,8 @@ pub enum TxnOutcome {
 pub struct FlashblocksExecutionInfo {
     /// Index of the last consumed flashblock
     pub(crate) last_flashblock_index: usize,
+    /// Cached commitments for the current payload; invalidated when either list grows.
+    pub block_roots: Option<BlockRoots>,
 }
 
 /// Accumulated execution state for the current block being built.
@@ -231,6 +254,32 @@ pub struct ExecutionInfo {
 }
 
 impl ExecutionInfo {
+    /// Reuse header commitments while no transactions or receipts have been appended.
+    ///
+    /// Execution lists are append-only during a payload job. Callers replacing existing entries
+    /// must clear `extra.block_roots`. Fork-dependent deposit encoding is part of the cache key.
+    pub fn block_roots(&mut self, chain_spec: &BaseChainSpec, timestamp: u64) -> BlockRoots {
+        let strip_deposit_nonce = chain_spec.is_regolith_active_at_timestamp(timestamp)
+            && !chain_spec.is_canyon_active_at_timestamp(timestamp);
+        if let Some(roots) = self.extra.block_roots
+            && roots.transaction_count == self.executed_transactions.len()
+            && roots.receipt_count == self.receipts.len()
+            && roots.strip_deposit_nonce == strip_deposit_nonce
+        {
+            return roots;
+        }
+        let roots = BlockRoots {
+            transaction_count: self.executed_transactions.len(),
+            receipt_count: self.receipts.len(),
+            strip_deposit_nonce,
+            transactions_root: proofs::calculate_transaction_root(&self.executed_transactions),
+            receipts_root: calculate_receipt_root_no_memo(&self.receipts, chain_spec, timestamp),
+            logs_bloom: logs_bloom(self.receipts.iter().flat_map(|receipt| receipt.logs())),
+        };
+        self.extra.block_roots = Some(roots);
+        roots
+    }
+
     /// Create a new instance with allocated slots.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -334,6 +383,76 @@ impl ExecutionInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::{builder_signer, sign_base_tx};
+    use alloy_consensus::{Receipt, TxEip1559};
+    use alloy_primitives::{Bytes, Log};
+    use base_common_consensus::{BaseTypedTransaction, DepositReceipt};
+    use base_common_evm::BaseUpgrade;
+
+    #[test]
+    fn block_roots_follow_appended_transactions_and_receipt_logs() {
+        let chain_spec = BaseChainSpec::sepolia();
+        let timestamp = u64::MAX;
+        let mut info = ExecutionInfo::default();
+        let empty = info.block_roots(&chain_spec, timestamp);
+        for nonce in 0..2 {
+            let transaction = sign_base_tx(
+                &builder_signer(),
+                BaseTypedTransaction::Eip1559(TxEip1559 { nonce, ..Default::default() }),
+            )
+            .unwrap()
+            .into_inner();
+            info.executed_transactions.push(transaction);
+            info.receipts.push(BaseReceipt::Eip1559(Receipt {
+                status: true.into(),
+                cumulative_gas_used: (nonce + 1) * 21_000,
+                logs: vec![Log::new_unchecked(
+                    Address::with_last_byte(nonce as u8 + 1),
+                    vec![],
+                    Bytes::new(),
+                )],
+            }));
+            let roots = info.block_roots(&chain_spec, timestamp);
+            assert_eq!(
+                roots.transactions_root,
+                proofs::calculate_transaction_root(&info.executed_transactions)
+            );
+            assert_eq!(
+                roots.receipts_root,
+                calculate_receipt_root_no_memo(&info.receipts, &chain_spec, timestamp)
+            );
+            assert_eq!(
+                roots.logs_bloom,
+                logs_bloom(info.receipts.iter().flat_map(|receipt| receipt.logs()))
+            );
+            assert_ne!(roots.transactions_root, empty.transactions_root);
+            assert_ne!(roots.logs_bloom, empty.logs_bloom);
+            let unchanged = info.block_roots(&chain_spec, timestamp);
+            assert_eq!(unchanged.transactions_root, roots.transactions_root);
+            assert_eq!(unchanged.receipts_root, roots.receipts_root);
+            assert_eq!(unchanged.logs_bloom, roots.logs_bloom);
+        }
+    }
+
+    #[test]
+    fn block_roots_preserve_regolith_and_canyon_deposit_encoding() {
+        let mut chain_spec = BaseChainSpec::sepolia();
+        chain_spec.set_hardfork_activation_timestamp(BaseUpgrade::Regolith, 10);
+        chain_spec.set_hardfork_activation_timestamp(BaseUpgrade::Canyon, 20);
+        let mut info = ExecutionInfo::default();
+        info.receipts.push(BaseReceipt::Deposit(DepositReceipt {
+            inner: Receipt { status: true.into(), cumulative_gas_used: 21_000, logs: vec![] },
+            deposit_nonce: Some(5),
+            deposit_receipt_version: None,
+        }));
+        let bedrock = info.block_roots(&chain_spec, 9).receipts_root;
+        let regolith = info.block_roots(&chain_spec, 10).receipts_root;
+        let canyon = info.block_roots(&chain_spec, 20).receipts_root;
+        assert_ne!(bedrock, regolith);
+        assert_eq!(bedrock, canyon);
+        assert_eq!(regolith, calculate_receipt_root_no_memo(&info.receipts, &chain_spec, 10));
+        assert_eq!(canyon, calculate_receipt_root_no_memo(&info.receipts, &chain_spec, 20));
+    }
 
     /// Helper to create default limits with block gas limit set
     fn default_limits() -> ResourceLimits {
