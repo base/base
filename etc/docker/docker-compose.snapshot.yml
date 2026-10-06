@@ -85,7 +85,6 @@ services:
       - --rpc.enable-admin
       - --checkpoint.path=/state/checkpoint.redb
       - --safedb.path=/state/safe.redb
-      - --p2p.no-discovery
       - --p2p.no-bootstore
       - --p2p.priv.path=/state/p2p.key
       - --p2p.sequencer.key=${SNAPSHOT_SIGNER_KEY:?}
@@ -125,7 +124,6 @@ services:
       - --rpc.enable-admin
       - --checkpoint.path=/state/checkpoint.redb
       - --safedb.path=/state/safe.redb
-      - --p2p.no-discovery
       - --p2p.no-bootstore
       - --p2p.priv.path=/state/p2p.key
       - --upgrade-signal.contract=${SNAPSHOT_PROTOCOL_VERSIONS:?}

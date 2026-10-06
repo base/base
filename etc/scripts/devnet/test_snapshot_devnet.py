@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import DEFAULT, patch
+from unittest.mock import DEFAULT, Mock, patch
 
 import snapshot_devnet as devnet
 import snapshot_verify as verification
@@ -138,6 +138,7 @@ class SnapshotTests(unittest.TestCase):
             verification.main()
             self.assertEqual(verify.call_args.args[0].directory, self.fork.directory)
             self.assertEqual(verify.call_args.args[0].timeout, 7200)
+            self.assertEqual(len(verify.call_args.args), 1)
         devnet.write_json(self.fork.directory / "keys.json", {"signer": "0x1", "batcher": "0x2"})
         fork = devnet.SnapshotFork(self.fork.directory)
         self.assertEqual(fork.timeout, 7200)
@@ -528,6 +529,9 @@ class SnapshotTests(unittest.TestCase):
                 self.assertIn("usage:", result.stdout)
                 if command == "setup":
                     self.assertNotIn("--base-image", result.stdout)
+                if command == "verify":
+                    for flag in ("--denim", "--restart", "--interrupt"):
+                        self.assertNotIn(flag, result.stdout)
                 self.assertFalse((self.root / "fork with spaces").exists())
         result = subprocess.run(
             ["just", "devnet", "snapshot", "status", "--dir", str(self.root / "fork with spaces"), "--timeout", "1"],
@@ -999,7 +1003,6 @@ class SnapshotTests(unittest.TestCase):
                 stored = devnet.SnapshotFork(self.fork.directory).manifest
                 self.assertEqual(stored["denim_timestamp"], expected)
                 self.assertNotIn("pending_denim_timestamp", stored)
-                self.assertNotIn("baseline_verified", stored)
                 output = "\n".join(fake["printed"])
                 self.assertIn(f"{notice}s notice", output)
                 self.assertIn(f"Activation in {expected - int(now)}s", output)
@@ -1564,7 +1567,7 @@ class SnapshotTests(unittest.TestCase):
                 self.assertNotIn(".devnet", volume["source"])
         for name in ("sequencer", "validator"):
             command = config["services"][name]["command"]
-            self.assertIn("--p2p.no-discovery", command)
+            self.assertNotIn("--p2p.no-discovery", command)
             self.assertIn("--no-persist-peers", command)
             self.assertIn("--l1-slot-duration-override=12", command)
             self.assertNotIn("--rollup.sequencer", " ".join(command))
@@ -1578,6 +1581,97 @@ class SnapshotTests(unittest.TestCase):
 
 
 class QualificationTests(unittest.TestCase):
+    def test_default_verify_exercises_denim_clean_restart_and_interrupted_recovery(self):
+        before, window = self.window()
+        headers = {124: before, **dict(enumerate(window, 125))}
+        for height in (123, 132, 133, 134, 135):
+            headers[height] = {"hash": str(height), "timestamp": hex(990 if height == 123 else 1002)}
+        for height, header in headers.items():
+            header.update(number=hex(height), stateRoot=f"root-{height}")
+        for missing_window_transaction in (False, True):
+            with self.subTest(missing_window_transaction=missing_window_transaction), tempfile.TemporaryDirectory() as directory:
+                fork = Mock(spec=devnet.SnapshotFork)
+                fork.directory, fork.timeout = Path(directory), 1
+                fork.manifest = {**manifest(), "phase": "running", "denim_timestamp": 1000,
+                                 "initial": [{"latest": {"block_info": {"number": 123}},
+                                              "rollup_config": {"genesis": {"l2_time": 0}, "block_time": 2}}]}
+                fork.url.side_effect = lambda role: role
+                fork.sync_status.return_value = {"unsafe_l2": {"l1origin": {"number": 10}},
+                                                 "safe_l2": {"number": 122, "l1origin": {"number": 100}}}
+                receipts = [{"blockNumber": hex(height), "blockHash": header["hash"]}
+                            for height, header in sorted(headers.items())
+                            if not (missing_window_transaction and height == 127)]
+
+                def rpc(url, method, *args):
+                    if method == "admin_sequencerActive":
+                        return False
+                    if method == "eth_getBalance":
+                        return hex(10**18)
+                    if method == "eth_blockNumber":
+                        return hex(150 if url == "l1" else 132)
+                    if method == "eth_getBlockByNumber":
+                        return {"timestamp": hex(900)} if args[0] == "latest" else headers[int(args[0], 16)]
+                    self.fail(f"unexpected RPC: {method}")
+
+                with patch.object(verification, "rpc", side_effect=rpc), \
+                        patch.object(verification, "transact", side_effect=receipts), \
+                        patch.object(verification, "derived", side_effect=lambda f, h: headers[h]) as derived, \
+                        patch.object(verification, "local_blobs", return_value=[{"path": "blob"}]), \
+                        patch.object(verification, "wait_denim_window") as denim, \
+                        patch.object(verification, "assert_retained") as retained, patch("builtins.print"):
+                    if missing_window_transaction:
+                        with self.assertRaisesRegex(RuntimeError, "missed an activation-window block"):
+                            verification.verify(fork)
+                        self.assertFalse((fork.directory / "verification.json").exists())
+                        continue
+                    verification.verify(fork)
+                report = json.loads((fork.directory / "verification.json").read_text())
+                self.assertEqual(report["receipts"], receipts)
+                self.assertEqual(report["activation_block_timestamp"], 1000)
+                self.assertEqual(report["blobs"], [{"path": "blob"}])
+                self.assertEqual({c.args[1] for c in derived.call_args_list},
+                                 {123, 124, 125, 126, 127, 128, 129, 130, 131, 133, 134, 135})
+                denim.assert_called_once_with(fork, 1000)
+                self.assertEqual(fork.start.call_count, 4)
+                self.assertEqual(fork.stop.call_count, 3)
+                self.assertEqual(retained.call_count, 4)
+                self.assertEqual([c.args for c in fork.compose.call_args_list], [
+                    ("stop", "batcher"), ("stop", "batcher"),
+                    ("kill", "--signal", "SIGKILL", "sequencer", "validator"), ("stop", "l1")])
+                fork.peers.assert_not_called()
+
+    def test_verify_rejects_missed_denim_window_before_deposit_or_restart(self):
+        fork = Mock(spec=devnet.SnapshotFork)
+        fork.manifest = {"phase": "running", "denim_timestamp": 1000,
+                         "initial": [{"rollup_config": {"genesis": {"l2_time": 0}, "block_time": 2}}]}
+        fork.deposit.side_effect = AssertionError("must check activation before depositing")
+        for timestamp in (998, 1005):
+            with self.subTest(timestamp=timestamp), \
+                    patch.object(verification, "rpc", side_effect=[False, {"timestamp": hex(timestamp)}]):
+                with self.assertRaisesRegex(RuntimeError, "before Denim activation"):
+                    verification.verify(fork)
+        fork.deposit.assert_not_called()
+        fork.stop.assert_not_called()
+
+    def test_derivation_waits_for_safe_head_even_when_unsafe_has_advanced(self):
+        fork = Mock(spec=devnet.SnapshotFork)
+        fork.timeout = 1
+        fork.url.side_effect = lambda role: role
+        fork.sync_status.side_effect = [
+            {"safe_l2": {"number": 123}, "unsafe_l2": {"number": 130}},
+            {"safe_l2": {"number": 124}, "unsafe_l2": {"number": 130}},
+        ]
+        header = {"number": "0x7c", "hash": "canonical", "stateRoot": "root"}
+
+        def rpc(url, method, height, full):
+            self.assertEqual(fork.sync_status.call_count, 2, "unsafe gossip is not proof of derivation")
+            self.assertEqual((method, height, full), ("eth_getBlockByNumber", "0x7c", False))
+            return header
+
+        with patch.object(verification, "rpc", side_effect=rpc), \
+                patch.object(devnet.time, "sleep"), patch("builtins.print"):
+            self.assertEqual(verification.derived(fork, 124), header)
+
     def test_denim_activation_uses_genesis_slot_parity_not_absolute_even_seconds(self):
         config = {"genesis": {"l2_time": 101}, "block_time": 2}
         for scheduled, first_block in ((100, 101), (101, 101), (1000, 1001), (1001, 1001), (1002, 1003)):
@@ -1637,9 +1731,7 @@ class QualificationTests(unittest.TestCase):
 
     @unittest.skipUnless(os.environ.get("BASE_SNAPSHOT_FORK_DIR"), "opt-in real snapshot fork qualification")
     def test_live_snapshot_fork(self):
-        command = [sys.executable, str(Path(verification.__file__)), "--dir", os.environ["BASE_SNAPSHOT_FORK_DIR"], "--restart"]
-        if os.environ.get("BASE_SNAPSHOT_TEST_DENIM") == "1":
-            command += ["--denim"]
+        command = [sys.executable, str(Path(verification.__file__)), "--dir", os.environ["BASE_SNAPSHOT_FORK_DIR"]]
         subprocess.run(command, check=True)
 
 

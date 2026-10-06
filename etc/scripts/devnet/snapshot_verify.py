@@ -128,108 +128,103 @@ def wait_denim_window(fork, timestamp):
             "verification started too late to exercise the final pre-Denim block")
 
 
-def verify(fork, restart=False, denim=False, interrupt=False):
+def verify(fork):
     require(fork.manifest["phase"] == "running", "start the prepared fork first")
     fork.assert_local_l1()
     fork.validate_restored_contracts()
     require(not rpc(fork.url("validator-cl"), "admin_sequencerActive"),
             "validator must derive independently with sequencing stopped")
+    fork.schedule_denim()
+    timestamp = denim_activation_time(fork.manifest["initial"][0]["rollup_config"], fork.manifest["denim_timestamp"])
+    require(number(rpc(fork.url("sequencer"), "eth_getBlockByNumber", "latest", False)["timestamp"]) < timestamp - 2,
+            "full verification must start before Denim activation; the transaction window has passed, "
+            "use a fresh fork to exercise the transition")
+    print("Verifying deposits, safe derivation and local batch blobs.", flush=True)
     fork.deposit(10**18)
     user = fork.manifest["accounts"]["user"]
     wait("real L1 deposit reaching L2", lambda: number(rpc(fork.url("sequencer"), "eth_getBalance", user, "latest")) > 0, fork.timeout)
-    # No unsafe gossip or EL peers can deliver the test transaction to the validator.
-    fork.peers(connect=False)
+    # Keep normal gossip connected. Only L1 derivation can promote the transaction's block to safe.
     report = {"blocks": [], "receipts": [], "blobs": []}
-    try:
-        initial_origin = fork.sync_status("sequencer")["unsafe_l2"]["l1origin"]["number"]
-        first_l1 = number(rpc(fork.url("l1"), "eth_blockNumber")) + 1
+    initial_origin = fork.sync_status("sequencer")["unsafe_l2"]["l1origin"]["number"]
+    first_l1 = number(rpc(fork.url("l1"), "eth_blockNumber")) + 1
+    receipt = transact(fork)
+    report["receipts"].append(receipt)
+    report["blocks"].append(derived(fork, number(receipt["blockNumber"])))
+    last_l1 = number(rpc(fork.url("l1"), "eth_blockNumber"))
+    report["blobs"] = local_blobs(fork, first_l1, last_l1)
+    wait("L1 origins crossing two simulated epochs",
+         lambda: fork.sync_status("validator")["safe_l2"]["l1origin"]["number"] >= initial_origin + 2 * fork.manifest["epoch_slots"],
+         fork.timeout)
+    print("Verifying clean restart before Denim.", flush=True)
+    fork.stop()
+    fork.start()
+    assert_retained(fork, report)
+
+    print("Verifying transactions across Denim activation.", flush=True)
+    wait_denim_window(fork, timestamp)
+    deadline = time.monotonic() + fork.timeout
+    while True:
+        require(time.monotonic() < deadline, "Denim transaction window timed out")
         receipt = transact(fork)
         report["receipts"].append(receipt)
-        report["blocks"].append(derived(fork, number(receipt["blockNumber"])))
-        last_l1 = number(rpc(fork.url("l1"), "eth_blockNumber"))
-        report["blobs"] = local_blobs(fork, first_l1, last_l1)
-        wait("L1 origins crossing two simulated epochs",
-             lambda: fork.sync_status("validator")["safe_l2"]["l1origin"]["number"] >= initial_origin + 2 * fork.manifest["epoch_slots"],
-             fork.timeout)
-        fork.manifest["baseline_verified"] = report["blocks"][0]
-        fork.save()
-        if restart:
+        if number(block(fork, "sequencer", number(receipt["blockNumber"]))["timestamp"]) >= timestamp + 2:
+            break
+    low = fork.manifest["initial"][0]["latest"]["block_info"]["number"]
+    high = number(rpc(fork.url("sequencer"), "eth_blockNumber"))
+    while low < high:
+        middle = (low + high) // 2
+        if number(block(fork, "sequencer", middle)["timestamp"]) < timestamp:
+            low = middle + 1
+        else:
+            high = middle
+    activation = low
+    before = block(fork, "sequencer", activation - 1, True)
+    window = [block(fork, "sequencer", activation + index, True) for index in range(7)]
+    check_denim_window(before, window, timestamp)
+    exercised = {receipt["blockHash"] for receipt in report["receipts"]}
+    for header in [before, *window]:
+        require(header["hash"] in exercised,
+                "transaction generator missed an activation-window block; qualification incomplete")
+        report["blocks"].append(derived(fork, number(header["number"])))
+    receipt = transact(fork)
+    report["receipts"].append(receipt)
+    report["blocks"].append(derived(fork, number(receipt["blockNumber"])))
+    report["denim_timestamp"] = fork.manifest["denim_timestamp"]
+    report["activation_block_timestamp"] = timestamp
+    report["blobs"] = local_blobs(fork, first_l1, number(rpc(fork.url("l1"), "eth_blockNumber")))
+    print("Verifying clean restart after Denim.", flush=True)
+    fork.stop()
+    fork.start()
+    assert_retained(fork, report)
+
+    for interrupt in (False, True):
+        print("Verifying interrupted recovery." if interrupt else "Verifying clean recovery of an unbatched transaction.",
+              flush=True)
+        # Leave a transaction included in unsafe L2 but not yet batched. Resume must
+        # reconstruct batching from the safe head rather than depend on a process queue.
+        fork.compose("stop", "batcher")
+        receipt = transact(fork)
+        require(fork.sync_status("validator")["safe_l2"]["number"] < number(receipt["blockNumber"]),
+                "pending-batch fixture unexpectedly became safe")
+        if interrupt:
+            # Only the dedicated project's containers; no host process or other devnet.
+            fork.compose("kill", "--signal", "SIGKILL", "sequencer", "validator")
+            fork.compose("stop", "l1")
+        else:
             fork.stop()
-            fork.start()
-            fork.peers(connect=False)
-            assert_retained(fork, report)
-        if denim:
-            timestamp = fork.manifest.get("denim_timestamp")
-            require(timestamp is not None, "schedule Denim first")
-            timestamp = denim_activation_time(fork.manifest["initial"][0]["rollup_config"], timestamp)
-            wait_denim_window(fork, timestamp)
-            deadline = time.monotonic() + fork.timeout
-            while True:
-                require(time.monotonic() < deadline, "Denim transaction window timed out")
-                receipt = transact(fork)
-                report["receipts"].append(receipt)
-                if number(block(fork, "sequencer", number(receipt["blockNumber"]))["timestamp"]) >= timestamp + 2:
-                    break
-            low = fork.manifest["initial"][0]["latest"]["block_info"]["number"]
-            high = number(rpc(fork.url("sequencer"), "eth_blockNumber"))
-            while low < high:
-                middle = (low + high) // 2
-                if number(block(fork, "sequencer", middle)["timestamp"]) < timestamp:
-                    low = middle + 1
-                else:
-                    high = middle
-            activation = low
-            before = block(fork, "sequencer", activation - 1, True)
-            window = [block(fork, "sequencer", activation + index, True) for index in range(7)]
-            check_denim_window(before, window, timestamp)
-            exercised = {receipt["blockHash"] for receipt in report["receipts"]}
-            for header in [before, *window]:
-                require(header["hash"] in exercised,
-                        "transaction generator missed an activation-window block; qualification incomplete")
-                report["blocks"].append(derived(fork, number(header["number"])))
-            receipt = transact(fork)
-            report["receipts"].append(receipt)
-            report["blocks"].append(derived(fork, number(receipt["blockNumber"])))
-            report["denim_timestamp"] = fork.manifest["denim_timestamp"]
-            report["activation_block_timestamp"] = timestamp
-            report["blobs"] = local_blobs(fork, first_l1, number(rpc(fork.url("l1"), "eth_blockNumber")))
-            if restart:
-                fork.stop()
-                fork.start()
-                fork.peers(connect=False)
-                assert_retained(fork, report)
-        if restart or interrupt:
-            # Leave a transaction included in unsafe L2 but not yet batched. Resume must
-            # reconstruct batching from the safe head rather than depend on a process queue.
-            fork.compose("stop", "batcher")
-            receipt = transact(fork)
-            require(fork.sync_status("validator")["safe_l2"]["number"] < number(receipt["blockNumber"]),
-                    "pending-batch fixture unexpectedly became safe")
-            if interrupt:
-                # Only the dedicated project's containers; no host process or other devnet.
-                fork.compose("kill", "--signal", "SIGKILL", "sequencer", "validator")
-                fork.compose("stop", "l1")
-            else:
-                fork.stop()
-            fork.start()
-            fork.peers(connect=False)
-            report["receipts"].append(receipt)
-            report["blocks"].append(derived(fork, number(receipt["blockNumber"])))
-            assert_retained(fork, report)
-        write_json(fork.directory / "verification.json", report)
-        print("Verified independent safe derivation, local blobs and requested restart/activation cases.")
-    finally:
-        if fork.consensus_ready("sequencer") and fork.consensus_ready("validator"):
-            fork.peers()
+        fork.start()
+        report["receipts"].append(receipt)
+        report["blocks"].append(derived(fork, number(receipt["blockNumber"])))
+        assert_retained(fork, report)
+    write_json(fork.directory / "verification.json", report)
+    print("Verified safe derivation, local blobs, Denim activation, clean restarts and interrupted recovery.")
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="Verify the full snapshot devnet: sends transactions, "
+                                     "checks Denim activation, restarts services and kills L2 containers to test recovery.")
     parser.add_argument("--dir", help="override the fork directory selected by setup")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    parser.add_argument("--restart", action="store_true")
-    parser.add_argument("--denim", action="store_true")
-    parser.add_argument("--interrupt", action="store_true", help="kill only the local L2 processes with an unbatched transaction")
     args = parser.parse_args()
     args.dir = configured_directory(args.dir)
     fork = SnapshotFork(args.dir, args.timeout)
@@ -238,7 +233,7 @@ def main():
     with open(fork.directory / ".lock", "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         fork = SnapshotFork(args.dir, args.timeout)
-        verify(fork, args.restart, args.denim, args.interrupt)
+        verify(fork)
 
 
 if __name__ == "__main__":

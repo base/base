@@ -994,16 +994,13 @@ class SnapshotFork:
 
         wait("nodes re-deriving recorded safe/finalized checkpoints", recovered, self.timeout, progress=progress)
 
-    def peers(self, connect=True):
+    def peers(self):
         infos = {role: rpc(self.url(role + "-cl"), "opp2p_self") for role in ROLES}
         for role, other in (("sequencer", "validator"), ("validator", "sequencer")):
-            if connect:
-                # Gossip stays on the internal network; resolve the peer's address there explicitly.
-                _, ip = private_address(self.manifest["project"], (other,), self.containers())
-                address = f"/ip4/{ip}/tcp/{GOSSIP_PORT}/p2p/{infos[other]['peerID']}"
-                rpc(self.url(role + "-cl"), "opp2p_connectPeer", address)
-            else:
-                rpc(self.url(role + "-cl"), "opp2p_disconnectPeer", infos[other]["peerID"])
+            # Gossip stays on the internal network; resolve the peer's address there explicitly.
+            _, ip = private_address(self.manifest["project"], (other,), self.containers())
+            address = f"/ip4/{ip}/tcp/{GOSSIP_PORT}/p2p/{infos[other]['peerID']}"
+            rpc(self.url(role + "-cl"), "opp2p_connectPeer", address)
 
     def require_batcher(self):
         self._containers = None

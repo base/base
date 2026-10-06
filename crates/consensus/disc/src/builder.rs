@@ -92,8 +92,6 @@ pub struct Discv5Builder {
     store_interval: Option<Duration>,
     /// Whether or not to forward the initial set of valid ENRs to the gossip layer.
     forward: bool,
-    /// Whether to start the discv5 network service.
-    enabled: bool,
 }
 
 impl Discv5Builder {
@@ -109,7 +107,6 @@ impl Discv5Builder {
             bootnodes: BootNodes::default(),
             store_interval: None,
             forward: true,
-            enabled: true,
         }
     }
 
@@ -167,12 +164,6 @@ impl Discv5Builder {
         self
     }
 
-    /// Sets whether the discv5 network service is started. See [`Discv5Driver::enabled`].
-    pub const fn with_enabled(mut self, enabled: bool) -> Self {
-        self.enabled = enabled;
-        self
-    }
-
     /// Builds a [`Discv5Driver`].
     pub fn build(self) -> Result<Discv5Driver, Discv5BuilderError> {
         let chain_id = self.chain_id;
@@ -193,7 +184,6 @@ impl Discv5Builder {
         driver.store_interval = self.store_interval.unwrap_or(Duration::from_secs(60));
         driver.forward = self.forward;
         driver.remove_interval = self.randomize;
-        driver.enabled = self.enabled;
         Ok(driver)
     }
 }

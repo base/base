@@ -4,10 +4,9 @@ use std::{str::FromStr, time::Duration};
 
 use backon::{ExponentialBuilder, Retryable};
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
-use base_consensus_gossip::{P2pRpcRequest, PeerDump, PeerInfo, PeerStats};
+use base_consensus_gossip::{P2pRpcRequest, PeerDump, PeerInfo};
 use base_consensus_node::{NetworkActorError, NetworkInboundData};
 use discv5::Enr;
-use libp2p::Multiaddr;
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
@@ -40,8 +39,6 @@ pub(crate) enum TestNetworkError {
     InvalidEnr(String),
     #[error("Peer not connected")]
     PeerNotConnected,
-    #[error("Peer info missing a dialable listen address")]
-    PeerInfoMissingAddress,
 }
 
 impl TestNetwork {
@@ -58,43 +55,6 @@ impl TestNetwork {
         let info = peer_info_rx.await?;
 
         Ok(info)
-    }
-
-    pub(super) async fn discovery_table(&self) -> Result<Vec<String>, TestNetworkError> {
-        let (table_tx, table_rx) = oneshot::channel();
-        self.inbound_data
-            .p2p_rpc
-            .send(P2pRpcRequest::DiscoveryTable(table_tx))
-            .await
-            .map_err(|_| TestNetworkError::P2pReceiverClosed)?;
-        Ok(table_rx.await?)
-    }
-
-    pub(super) async fn peer_stats(&self) -> Result<PeerStats, TestNetworkError> {
-        let (stats_tx, stats_rx) = oneshot::channel();
-        self.inbound_data
-            .p2p_rpc
-            .send(P2pRpcRequest::PeerStats(stats_tx))
-            .await
-            .map_err(|_| TestNetworkError::P2pReceiverClosed)?;
-        Ok(stats_rx.await?)
-    }
-
-    /// Explicitly dials `other` through its advertised loopback libp2p listen address.
-    pub(super) async fn connect_to(&self, other: &Self) -> Result<(), TestNetworkError> {
-        let address = other
-            .peer_info()
-            .await?
-            .addresses
-            .into_iter()
-            .filter_map(|address| address.parse::<Multiaddr>().ok())
-            .find(|address| address.to_string().starts_with("/ip4/127.0.0.1/"))
-            .ok_or(TestNetworkError::PeerInfoMissingAddress)?;
-        self.inbound_data
-            .p2p_rpc
-            .send(P2pRpcRequest::ConnectPeer { address })
-            .await
-            .map_err(|_| TestNetworkError::P2pReceiverClosed)
     }
 
     pub(super) async fn peers(&self) -> Result<PeerDump, TestNetworkError> {

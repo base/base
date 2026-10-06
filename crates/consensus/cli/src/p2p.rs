@@ -391,21 +391,20 @@ pub enum P2PConfigError {
 }
 
 impl P2PArgs {
-    fn check_ports_inner(ip_addr: IpAddr, tcp_port: u16, udp_port: Option<u16>) -> Result<()> {
+    fn check_ports_inner(ip_addr: IpAddr, tcp_port: u16, udp_port: u16) -> Result<()> {
         if tcp_port == 0 {
             return Ok(());
         }
-        if udp_port == Some(0) {
+        if udp_port == 0 {
             return Ok(());
         }
         let tcp_socket = std::net::TcpListener::bind((ip_addr, tcp_port));
-        let udp_socket =
-            udp_port.map(|udp_port| (udp_port, std::net::UdpSocket::bind((ip_addr, udp_port))));
+        let udp_socket = std::net::UdpSocket::bind((ip_addr, udp_port));
         if let Err(e) = tcp_socket {
             error!(target: "p2p::flags", tcp_port, error = %e, "Error binding TCP socket");
             eyre::bail!("Error binding TCP socket on port {tcp_port}: {e}");
         }
-        if let Some((udp_port, Err(e))) = udp_socket {
+        if let Err(e) = udp_socket {
             error!(target: "p2p::flags", udp_port, error = %e, "Error binding UDP socket");
             eyre::bail!("Error binding UDP socket on port {udp_port}: {e}");
         }
@@ -415,16 +414,14 @@ impl P2PArgs {
 
     /// Checks if the listen ports are available on the system.
     ///
-    /// If either of the ports are `0`, this check is skipped. The UDP port is not checked when
-    /// discovery is disabled, since nothing binds it.
+    /// If either of the ports are `0`, this check is skipped.
     ///
     /// ## Errors
     ///
     /// - If the TCP port is already in use.
-    /// - If discovery is enabled and the UDP port is already in use.
+    /// - If the UDP port is already in use.
     pub fn check_ports(&self) -> Result<()> {
-        let udp_port = (!self.no_discovery).then_some(self.listen_udp_port);
-        Self::check_ports_inner(self.listen_ip, self.listen_tcp_port, udp_port)
+        Self::check_ports_inner(self.listen_ip, self.listen_tcp_port, self.listen_udp_port)
     }
 
     /// Returns the private key as specified in the raw cli flag or via file path.
@@ -728,7 +725,6 @@ impl P2PArgs {
             };
 
         Ok(NetworkConfig {
-            discovery_enabled: !self.no_discovery,
             discovery_config,
             discovery_interval: Duration::from_secs(self.discovery_interval),
             discovery_address,
@@ -1362,140 +1358,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(config.gater_config.pending_dial_timeout, Duration::from_secs(45));
-    }
-
-    #[test]
-    fn test_p2p_check_ports_ignores_udp_only_without_discovery() {
-        let occupied_udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        let udp_port = occupied_udp.local_addr().unwrap().port().to_string();
-        let tcp_port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port()
-            .to_string();
-        let ports = [
-            "test",
-            "--p2p.listen.ip",
-            "127.0.0.1",
-            "--p2p.listen.tcp",
-            &tcp_port,
-            "--p2p.listen.udp",
-            &udp_port,
-        ];
-
-        let err = MockCommand::parse_from(ports).p2p.check_ports().unwrap_err().to_string();
-        assert!(err.contains("UDP"), "unexpected error: {err}");
-
-        let no_discovery = MockCommand::parse_from(ports.into_iter().chain(["--p2p.no-discovery"]));
-        no_discovery.p2p.check_ports().expect("UDP port is unused without discovery");
-
-        let _occupied_tcp =
-            std::net::TcpListener::bind(("127.0.0.1", tcp_port.parse().unwrap())).unwrap();
-        let err = no_discovery.p2p.check_ports().unwrap_err().to_string();
-        assert!(err.contains("TCP"), "unexpected error: {err}");
-    }
-
-    /// `--p2p.no-discovery` must reach the runtime: a Base mainnet chain-ID node started with an
-    /// occupied discovery UDP port, a cached bootstore and an explicit enode bootnode keeps
-    /// serving local identity queries without binding UDP, contacting bootnodes, forwarding
-    /// peers to gossip, or touching the bootstore.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_p2p_no_discovery_propagates_to_runtime() {
-        const BASE_MAINNET_CHAIN_ID: u64 = 8453;
-        const PEER_KEY: [u8; 32] = [1; 32];
-
-        let occupied_udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        let udp_port = occupied_udp.local_addr().unwrap().port();
-
-        // Stands in for an explicit enode bootnode; enabled discovery would request its ENR.
-        let enode_target = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        enode_target.set_nonblocking(true).unwrap();
-        let enode = format!(
-            "enode://ca2774c3c401325850b2477fd7d0f27911efbf79b1e8b335066516e2bd8c4c9e0ba9696a94b1cb030a88eac582305ff55e905e64fb77fe0edcd70a4e5296d3ec@{}",
-            enode_target.local_addr().unwrap()
-        );
-
-        let cached_peer = LocalNode::new(
-            k256::ecdsa::SigningKey::from_bytes(&PEER_KEY.into()).unwrap(),
-            IpAddr::from([127, 0, 0, 1]),
-            1,
-            1,
-        )
-        .build_enr(BASE_MAINNET_CHAIN_ID)
-        .unwrap();
-        let bootstore_dir = tempfile::tempdir().unwrap();
-        let bootstore = bootstore_dir.path().join("bootstore.json");
-        std::fs::write(&bootstore, serde_json::to_vec(&[&cached_peer]).unwrap()).unwrap();
-        let cached_contents = std::fs::read(&bootstore).unwrap();
-
-        let udp_port = udp_port.to_string();
-        let args = MockCommand::parse_from([
-            "test",
-            "--p2p.no-discovery",
-            "--p2p.listen.ip",
-            "127.0.0.1",
-            "--p2p.listen.tcp",
-            "0",
-            "--p2p.listen.udp",
-            &udp_port,
-            "--p2p.discovery.interval",
-            "1",
-            "--p2p.bootstore",
-            bootstore.to_str().unwrap(),
-            "--p2p.bootnodes",
-            &enode,
-        ]);
-        let rollup_config = RollupConfig {
-            l2_chain_id: alloy_chains::Chain::from_id(BASE_MAINNET_CHAIN_ID),
-            block_time: 2,
-            ..Default::default()
-        };
-        let config = args
-            .p2p
-            .config(
-                &rollup_config,
-                BASE_MAINNET_CHAIN_ID,
-                None,
-                L1_RPC_TIMEOUT,
-                Some(Address::ZERO),
-            )
-            .await
-            .unwrap();
-        let mut handler = base_consensus_node::NetworkBuilder::from(config)
-            .build()
-            .unwrap()
-            .start()
-            .await
-            .unwrap();
-
-        let local_enr = tokio::time::timeout(Duration::from_secs(5), handler.discovery.local_enr())
-            .await
-            .expect("local ENR query should be answered")
-            .expect("discovery handler should stay alive");
-        assert!(
-            base_consensus_peers::EnrValidation::validate(&local_enr, BASE_MAINNET_CHAIN_ID)
-                .is_valid()
-        );
-        assert_ne!(local_enr.tcp4(), Some(0), "ENR should advertise the bound gossip port");
-
-        let table = tokio::time::timeout(Duration::from_secs(5), handler.discovery.table_enrs())
-            .await
-            .expect("table query should be answered")
-            .expect("discovery handler should stay alive");
-        assert!(table.is_empty(), "no bootnode or cached peer may enter the table: {table:?}");
-
-        let forwarded =
-            tokio::time::timeout(Duration::from_secs(3), handler.enr_receiver.recv()).await;
-        assert!(forwarded.is_err(), "the ENR channel must stay open and silent, got {forwarded:?}");
-
-        let mut buf = [0u8; 2048];
-        let contacted = enode_target.recv_from(&mut buf);
-        assert!(
-            contacted.as_ref().is_err_and(|e| e.kind() == std::io::ErrorKind::WouldBlock),
-            "explicit bootnode must not be contacted: {contacted:?}"
-        );
-        assert_eq!(std::fs::read(&bootstore).unwrap(), cached_contents);
     }
 
     #[test]

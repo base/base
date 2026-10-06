@@ -40,7 +40,7 @@ schedule-denim *args:
 deposit *args:
     python3 etc/scripts/devnet/snapshot_devnet.py deposit "$@"
 
-# Verify independent derivation and optional Denim/restart cases
+# Verify derivation, Denim, restarts and interrupted recovery (disruptive; start before Denim)
 verify *args:
     python3 etc/scripts/devnet/snapshot_verify.py "$@"
 
