@@ -127,8 +127,8 @@ def request_json(url, body=None, *, path=None):
 def rpc(url, method, *params, upstream=False):
     require(not upstream or method in READ_METHODS, "refusing an upstream write")
     response = request_json(url, {"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
-    if "error" in response:
-        raise Unavailable(f"{method} failed (provider error redacted)")
+    if not isinstance(response, dict) or "error" in response or "result" not in response:
+        raise Unavailable(f"{method} failed (provider response redacted)")
     return response["result"]
 
 
