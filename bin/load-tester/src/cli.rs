@@ -9,7 +9,7 @@ use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
 use base_cli_utils::RuntimeManager;
 use base_load_tests::{
-    AccountPool, BaselineError, DEFAULT_MAX_GAS_PRICE, FundedAccount, LoadRunner, LoadTestDisplay,
+    AccountPool, DEFAULT_MAX_GAS_PRICE, FundedAccount, LoadRunner, LoadTestDisplay,
     LoadTestDisplayConfig, LoadTestRunHooks, LoadTestRunOptions, MetricsSummary, QueryProvider,
     ReceiptCoverage, Result as LoadResult, RpcProviders, RpcResultExt, TestConfig,
     create_wallet_provider,
@@ -511,14 +511,12 @@ async fn rescue_batch(
         .iter()
         .map(|a| {
             let client = client.clone();
-            let address = a.address;
             async move {
-                let balance = client
-                    .get_balance(address)
+                client
+                    .get_balance(a.address)
                     .block_id(BlockNumberOrTag::Pending.into())
                     .await
-                    .rpc("get pending balance")?;
-                Ok::<_, BaselineError>((address, balance))
+                    .rpc("get pending balance")
             }
         })
         .collect();
@@ -529,7 +527,7 @@ async fn rescue_batch(
     let mut to_drain: Vec<(&FundedAccount, U256)> = Vec::new();
     for (result, account) in balance_results.into_iter().zip(accounts.accounts().iter()) {
         pb.inc(1);
-        let (_, balance) = result?;
+        let balance = result?;
         if balance > params.drain_gas_cost {
             to_drain.push((account, balance));
         }
@@ -552,19 +550,12 @@ async fn rescue_batch(
     let drain_futs: Vec<_> = to_drain
         .iter()
         .map(|&(account, balance)| {
-            let rpc_url = params.rpc_url.clone();
-            let funder_address = params.funder_address;
-            let chain_id = params.chain_id;
-            let max_fee = params.max_fee;
-            let max_priority_fee = params.max_priority_fee;
-            let drain_gas_cost = params.drain_gas_cost;
-            let drain_gas_limit = params.drain_gas_limit;
             let signer = account.signer.clone();
             let address = account.address;
             async move {
-                let send_amount = balance.saturating_sub(drain_gas_cost);
+                let send_amount = balance.saturating_sub(params.drain_gas_cost);
                 let wallet = EthereumWallet::from(signer);
-                let provider = create_wallet_provider(rpc_url, wallet);
+                let provider = create_wallet_provider(params.rpc_url.clone(), wallet);
                 let nonce = provider
                     .get_transaction_count(address)
                     .pending()
@@ -572,13 +563,13 @@ async fn rescue_batch(
                     .rpc("get pending transaction count")?;
 
                 let tx = TransactionRequest::default()
-                    .with_to(funder_address)
+                    .with_to(params.funder_address)
                     .with_value(send_amount)
                     .with_nonce(nonce)
-                    .with_chain_id(chain_id)
-                    .with_gas_limit(drain_gas_limit as u64)
-                    .with_max_fee_per_gas(max_fee)
-                    .with_max_priority_fee_per_gas(max_priority_fee);
+                    .with_chain_id(params.chain_id)
+                    .with_gas_limit(params.drain_gas_limit as u64)
+                    .with_max_fee_per_gas(params.max_fee)
+                    .with_max_priority_fee_per_gas(params.max_priority_fee);
 
                 match provider.send_transaction(tx).await {
                     Ok(pending) => {

@@ -62,7 +62,8 @@ impl Eip8130Contracts {
     // Account implementations (init code embeds `ACCOUNT_CONFIG`)
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// Default wallet implementation, used as the target of default EOA delegation.
+    /// Canonical wallet implementation. An EOA uses it only through an explicit
+    /// delegation entry; code-less senders are never delegated implicitly.
     pub const DEFAULT_ACCOUNT: Address = address!("0x81309c54D6Bc190FbBc0FA9f296ea4C6A539ADEf");
 
     /// Per-contract mined CREATE2 salt for [`Self::DEFAULT_ACCOUNT`].

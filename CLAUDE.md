@@ -19,6 +19,7 @@
 
 ## Documentation and Lints
 
+- Find docs through [llms.txt](llms.txt) (one-line summary per doc) rather than grepping the tree. After adding, moving, deleting, or editing any Markdown doc, follow `.agents/skills/update-docs-index/SKILL.md`; CI fails on a stale index.
 - Use `#![doc = include_str!("../README.md")]` for crate documentation in `lib.rs`; never use `//!` comments there.
 - Begin every `mod.rs` file with a `//!` module doc comment describing its contents.
 - Do not suppress Clippy warnings with `#![allow(missing_docs)]` or other allow-lints. Fix the underlying issue.
@@ -78,3 +79,14 @@ let bal = wallet.account.balance();
   - The double needs one call log ordered across multiple trait methods.
   - Tests must mutate scripted responses while calls are in flight.
 - Document the specific reason for a hand-rolled fake in its module doc comment. Examples live in `crates/consensus/service/src/test_utils/fake_engine_client.rs`, `fake_l1.rs`, and `fake_gossip.rs`.
+
+## Recurring Review Expectations
+
+- Keep changes scoped; split unrelated refactors and remove code and dependencies your change makes unused.
+- Reuse existing types, APIs, and fixtures; add abstractions or configuration only for concrete supported use cases.
+- Prefer domain types and named constants over magic strings and numbers; name values by their meaning and units.
+- Keep modules and actor loops focused; put state-specific logic on the type that owns it.
+- Document contracts and non-obvious reasons, not code narration or change history; keep docs consistent with behavior.
+- Preserve historical fork behavior and parity across execution paths; test both old and new fork behavior.
+- Avoid unnecessary I/O, cloning, and allocation on hot paths; benchmark production code when claiming performance gains.
+- Make async lifetimes explicit: bound waits, distinguish retryable from terminal errors, and clean up tasks on failure and shutdown.

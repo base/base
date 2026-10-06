@@ -307,7 +307,7 @@ mod tests {
     use libp2p::Multiaddr;
 
     use super::*;
-    use crate::NodeMode;
+    use crate::NodeOperatingMode;
 
     fn test_builder(l2_url: Url) -> RollupNodeBuilder {
         let rollup_config = RollupConfig::default();
@@ -327,7 +327,7 @@ mod tests {
             l2_jwt_secret: JwtSecret::random(),
             l1_url: Url::parse("http://127.0.0.1:8545").unwrap(),
             l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
-            mode: NodeMode::Validator,
+            mode: NodeOperatingMode::Validator,
         };
         let discovery_listen = LocalNode::new(
             SigningKey::from_bytes((&[7_u8; 32]).into()).unwrap(),

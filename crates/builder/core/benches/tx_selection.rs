@@ -244,10 +244,11 @@ fn run_predicate_selection(pool: &Pool, db: &mut InMemoryDB) -> usize {
             &context,
         )
         .expect("in-memory reads cannot fail");
-        if let Some(blocking_predicate) = blocking_predicate {
+        if let Some((blocking_predicate_index, _)) = blocking_predicate {
             let transaction_hash = *transaction.hash();
+            let predicate = transaction.validity_predicates()[blocking_predicate_index].clone();
             assert!(best.park_current());
-            predicate_index.park(transaction_hash, transaction, blocking_predicate);
+            predicate_index.park(transaction_hash, transaction, predicate);
             continue;
         }
 
@@ -311,12 +312,20 @@ fn predicate_index_benches(c: &mut Criterion) {
     for parked_transactions in [1_000, 10_000, 100_000] {
         for shared_state in [false, true] {
             let shared_address = address(TRANSACTION_COUNTS[TRANSACTION_COUNTS.len() - 1]);
-            let mut index = ParkedPredicateIndex::default();
+            let mut index = ParkedPredicateIndex::new(if shared_state { 32 } else { usize::MAX });
             for transaction_index in 0..parked_transactions {
                 let transaction_hash: B256 = U256::from(transaction_index + 1).into();
                 let predicate_address =
                     if shared_state { shared_address } else { address(transaction_index) };
-                index.park(transaction_hash, (), ValidityPredicateKey::Balance(predicate_address));
+                index.park(
+                    transaction_hash,
+                    (),
+                    ValidityPredicate::Balance {
+                        address: predicate_address,
+                        op: ValidityOperator::GreaterThanOrEqual,
+                        value: U256::MAX,
+                    },
+                );
             }
 
             let changed_address = if shared_state { shared_address } else { address(0) };
@@ -337,5 +346,168 @@ fn predicate_index_benches(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, selection_benches, predicate_benches, predicate_index_benches);
+criterion_group!(
+    benches,
+    selection_benches,
+    predicate_benches,
+    predicate_index_benches,
+    predicate_index_threshold_benches,
+    predicate_index_lifecycle_benches,
+    predicate_index_population_benches,
+    predicate_index_crossing_benches
+);
 criterion_main!(benches);
+
+// Kept separate so `cargo bench -p base-builder-core --bench tx_selection --
+// predicate_index_threshold --sample-size 10` completes quickly.
+fn predicate_index_threshold_benches(c: &mut Criterion) {
+    let mut group = c.benchmark_group("tx_selection/predicate_index_threshold");
+    group.sample_size(10);
+    let watched_address = address(999_999);
+
+    for (name, threshold, parked_transactions) in [
+        ("flat/shallow", usize::MAX, 16),
+        ("hybrid/shallow", 32, 16),
+        ("ordered/shallow", 1, 16),
+        ("flat/hot_deep", usize::MAX, 2_048),
+        ("hybrid/hot_deep", 32, 2_048),
+        ("ordered/hot_deep", 1, 2_048),
+    ] {
+        let mut index = ParkedPredicateIndex::new(threshold);
+        for transaction_index in 0..parked_transactions {
+            let transaction_hash: B256 = U256::from(transaction_index + 1).into();
+            index.park(
+                transaction_hash,
+                (),
+                ValidityPredicate::Balance {
+                    address: watched_address,
+                    op: ValidityOperator::GreaterThanOrEqual,
+                    value: U256::MAX,
+                },
+            );
+        }
+        let mut changed_account = Account::default();
+        changed_account.info.balance = U256::ONE;
+        let changed_state = EvmState::from_iter([(watched_address, changed_account)]);
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                let effects = index.affected_by_state(&changed_state);
+                let expected = usize::from(parked_transactions < threshold) * parked_transactions;
+                assert_eq!(effects.affected_transactions.len(), expected);
+                black_box(effects);
+            });
+        });
+    }
+    group.finish();
+}
+
+// Kept separate so `cargo bench -p base-builder-core --bench tx_selection --
+// predicate_index_population --sample-size 10` completes quickly.
+fn predicate_index_population_benches(c: &mut Criterion) {
+    let mut group = c.benchmark_group("tx_selection/predicate_index_population");
+    group.sample_size(10);
+
+    for parked_transactions in [100, 500, 1_000] {
+        group.bench_function(format!("distinct_shallow/entries={parked_transactions}"), |b| {
+            b.iter(|| {
+                let mut index = ParkedPredicateIndex::new(32);
+                for transaction_index in 0..parked_transactions {
+                    let transaction_hash: B256 = U256::from(transaction_index + 1).into();
+                    index.park(
+                        transaction_hash,
+                        (),
+                        ValidityPredicate::Balance {
+                            address: address(transaction_index),
+                            op: ValidityOperator::GreaterThanOrEqual,
+                            value: U256::MAX,
+                        },
+                    );
+                }
+                assert!(!index.is_empty());
+                black_box(index);
+            });
+        });
+    }
+    group.finish();
+}
+
+// Kept separate so `cargo bench -p base-builder-core --bench tx_selection --
+// predicate_index_crossing --sample-size 10` completes quickly.
+fn predicate_index_crossing_benches(c: &mut Criterion) {
+    const PARKED_TRANSACTIONS: usize = 2_048;
+
+    let mut group = c.benchmark_group("tx_selection/predicate_index_crossing");
+    group.sample_size(10);
+    let watched_address = address(777_777);
+    let mut changed_account = Account::default();
+    changed_account.info.balance = U256::from(PARKED_TRANSACTIONS);
+    let changed_state = EvmState::from_iter([(watched_address, changed_account)]);
+
+    for (name, threshold) in [
+        ("flat/all_thresholds", usize::MAX),
+        ("hybrid/all_thresholds", 32),
+        ("ordered/all_thresholds", 1),
+    ] {
+        let mut index = ParkedPredicateIndex::new(threshold);
+        for transaction_index in 0..PARKED_TRANSACTIONS {
+            let transaction_hash: B256 = U256::from(transaction_index + 1).into();
+            index.park(
+                transaction_hash,
+                (),
+                ValidityPredicate::Balance {
+                    address: watched_address,
+                    op: ValidityOperator::GreaterThanOrEqual,
+                    value: U256::from(transaction_index + 1),
+                },
+            );
+        }
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                let effects = index.affected_by_state(&changed_state);
+                assert_eq!(effects.affected_transactions.len(), PARKED_TRANSACTIONS);
+                black_box(effects);
+            });
+        });
+    }
+    group.finish();
+}
+
+// Includes bucket construction and parking so tiny-bucket conversion overhead is visible.
+fn predicate_index_lifecycle_benches(c: &mut Criterion) {
+    let mut group = c.benchmark_group("tx_selection/predicate_index_lifecycle");
+    group.sample_size(10);
+    let watched_address = address(888_888);
+    let mut changed_account = Account::default();
+    changed_account.info.balance = U256::ONE;
+    let changed_state = EvmState::from_iter([(watched_address, changed_account)]);
+
+    for (name, threshold, parked_transactions) in [
+        ("flat/one", usize::MAX, 1),
+        ("ordered/one", 1, 1),
+        ("flat/four", usize::MAX, 4),
+        ("ordered/four", 1, 4),
+    ] {
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                let mut index = ParkedPredicateIndex::new(threshold);
+                for transaction_index in 0..parked_transactions {
+                    let transaction_hash: B256 = U256::from(transaction_index + 1).into();
+                    index.park(
+                        transaction_hash,
+                        (),
+                        ValidityPredicate::Balance {
+                            address: watched_address,
+                            op: ValidityOperator::GreaterThanOrEqual,
+                            value: U256::MAX,
+                        },
+                    );
+                }
+                let effects = index.affected_by_state(&changed_state);
+                let expected = usize::from(parked_transactions < threshold) * parked_transactions;
+                assert_eq!(effects.affected_transactions.len(), expected);
+                black_box(effects);
+            });
+        });
+    }
+    group.finish();
+}

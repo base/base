@@ -28,6 +28,7 @@ reth-storage-api.workspace = true
 reth-transaction-pool.workspace = true
 reth-primitives-traits.workspace = true
 
+base-bundles.workspace = true
 base-common-flz.workspace = true
 base-common-chains.workspace = true
 base-common-evm.workspace = true
@@ -51,6 +52,7 @@ c-kzg.workspace = true
 revm.workspace = true
 futures.workspace = true
 tracing.workspace = true
+hostname.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
 derive_more.workspace = true
@@ -75,6 +77,7 @@ tokio = { workspace = true, features = ["time", "rt-multi-thread", "macros"] }
 default = [ "metrics" ]
 metrics = [
 	"base-common-evm/metrics",
+	"base-common-precompiles/metrics",
 	"base-metrics/metrics",
 	"base-observability-events/metrics",
 	"dep:metrics",

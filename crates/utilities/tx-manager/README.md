@@ -13,8 +13,7 @@ confirmation.
 
 ### Core types
 
-- **`TxManager`** — trait defining the public API (`send`, `send_async`, `cancel_tx`,
-  `sender_address`).
+- **`TxManager`** — trait defining the public API (`send`, `send_async`, `sender_address`).
 - **`SimpleTxManager`** — default `TxManager` implementation. Handles gas estimation,
   nonce management, signing, submission with fee bumps, and receipt polling.
 - **`TxCandidate`** — input to the send pipeline (calldata, recipient, gas limit, value,

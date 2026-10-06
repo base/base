@@ -28,6 +28,7 @@ alloy-sol-types.workspace = true
 base-precompile-macros.workspace = true
 base-precompile-storage.workspace = true
 base-common-precompiles.workspace = true
+base-common-eip8130 = { workspace = true, default-features = false }
 base-common-consensus = { workspace = true, default-features = false, features = ["k256"] }
 
 # revm

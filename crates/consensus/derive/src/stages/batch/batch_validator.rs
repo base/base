@@ -1,6 +1,6 @@
 //! Contains the [`BatchValidator`] stage.
 
-use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
@@ -12,7 +12,10 @@ use super::NextBatchProvider;
 use crate::{
     Metrics,
     errors::{PipelineError, PipelineErrorKind, ResetError},
-    traits::{AttributesProvider, L2ChainProvider, OriginAdvancer, OriginProvider, StageReset},
+    traits::{
+        AttributesProvider, BatchValidationProviderDerive, L2ChainProvider, OriginAdvancer,
+        OriginProvider, StageReset,
+    },
     types::PipelineResult,
 };
 
@@ -148,6 +151,8 @@ where
         let force_empty_batches = expiry_epoch <= stage_origin.number;
         let first_of_epoch = epoch.number == parent.l1_origin.number + 1;
         let next_timestamp = self.cfg.l2_block_timestamp(parent.block_info.number + 1);
+        let same_second = self.cfg.is_denim_active(next_timestamp)
+            && next_timestamp == parent.block_info.timestamp;
 
         // If the sequencer window did not expire,
         // there is still room to receive batches for the current epoch.
@@ -164,9 +169,9 @@ where
         let next_epoch = self.l1_blocks[1];
 
         // Fill with empty L2 blocks of the same epoch until we meet the time of the next L1 origin,
-        // to preserve that L2 time >= L1 time. If this is the first block of the epoch, always
-        // generate a batch to ensure that we at least have one batch per epoch.
-        if next_timestamp < next_epoch.timestamp || first_of_epoch {
+        // to preserve that L2 time >= L1 time. Finish a Denim whole second on its current origin.
+        // If this is the first block of the epoch, always generate at least one batch per epoch.
+        if next_timestamp < next_epoch.timestamp || first_of_epoch || same_second {
             info!(target: "batch_validator", epoch_number = epoch.number, "Generating empty batch for epoch");
             return Ok(SingleBatch {
                 parent_hash: parent.block_info.hash,
@@ -251,19 +256,18 @@ where
             && next_batch.parent_hash != parent.block_info.hash;
         if needs_ancestry_check {
             let same_second_blocks = 1_000 / RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS;
-            let first = parent.block_info.number.saturating_sub(same_second_blocks);
+            let first = parent
+                .block_info
+                .number
+                .saturating_sub(same_second_blocks)
+                .max(self.cfg.genesis.l2.number);
+            // Heights bound the window; parent hashes anchor the walk to this safe head's fork.
+            let mut ancestor_hash = parent.block_info.parent_hash;
             for number in (first..parent.block_info.number).rev() {
                 if self.cfg.l2_block_timestamp(number.saturating_add(1)) != next_batch.timestamp {
                     break;
                 }
-                let ancestor = match self.provider.l2_block_info_by_number(number).await {
-                    Ok(ancestor) => ancestor,
-                    Err(error) => {
-                        self.pending_batch = Some((next_batch, inclusion_block));
-                        return Err(PipelineError::Provider(error.to_string()).temp());
-                    }
-                };
-                if ancestor.block_info.hash == next_batch.parent_hash {
+                if ancestor_hash == next_batch.parent_hash {
                     debug!(
                         target: "batch_validator",
                         batch_parent = %next_batch.parent_hash,
@@ -273,6 +277,23 @@ where
                     );
                     return Err(PipelineError::NotEnoughData.temp());
                 }
+                if number == first || self.cfg.l2_block_timestamp(number) != next_batch.timestamp {
+                    break;
+                }
+                let ancestor = match self.provider.l2_block_info_by_hash(ancestor_hash).await {
+                    Ok(ancestor) => ancestor,
+                    Err(error) => {
+                        let kind =
+                            <F as BatchValidationProviderDerive>::provider_error_into_pipeline_error(
+                                error,
+                            );
+                        if matches!(kind, PipelineErrorKind::Temporary(_)) {
+                            self.pending_batch = Some((next_batch, inclusion_block));
+                        }
+                        return Err(kind);
+                    }
+                };
+                ancestor_hash = ancestor.block_info.parent_hash;
             }
         }
 
@@ -366,19 +387,62 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloc::{sync::Arc, vec, vec::Vec};
+    use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 
-    use alloy_eips::BlockNumHash;
+    use alloy_eips::{BlockId, BlockNumHash};
     use alloy_primitives::B256;
+    use async_trait::async_trait;
+    use base_common_consensus::BaseBlock;
     use base_common_genesis::{BaseUpgradeConfig, RollupConfig, SystemConfig, UpgradeConfig};
-    use base_protocol::{Batch, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch};
+    use base_protocol::{
+        Batch, BatchValidationProvider, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch,
+    };
     use tracing::Level;
 
     use crate::{
-        AttributesProvider, BatchValidator, NextBatchProvider, OriginAdvancer, PipelineError,
-        PipelineErrorKind, PipelineResult, ResetError, StageReset,
+        AttributesProvider, BatchValidator, L2ChainProvider, NextBatchProvider, OriginAdvancer,
+        PipelineError, PipelineErrorKind, PipelineResult, ResetError, StageReset,
         test_utils::{TestL2ChainProvider, TestNextBatchProvider},
     };
+
+    #[derive(Debug, Default, Clone, Copy)]
+    struct ResettingL2ChainProvider;
+
+    #[async_trait]
+    impl BatchValidationProvider for ResettingL2ChainProvider {
+        type Error = ResetError;
+
+        async fn l2_block_info_by_number(
+            &mut self,
+            number: u64,
+        ) -> Result<L2BlockInfo, Self::Error> {
+            Err(ResetError::BlockNotFound(BlockId::Number(number.into())))
+        }
+
+        async fn l2_block_info_by_hash(
+            &mut self,
+            hash: alloy_primitives::B256,
+        ) -> Result<L2BlockInfo, Self::Error> {
+            Err(ResetError::BlockNotFound(hash.into()))
+        }
+
+        async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, Self::Error> {
+            Err(ResetError::BlockNotFound(BlockId::Number(number.into())))
+        }
+    }
+
+    #[async_trait]
+    impl L2ChainProvider for ResettingL2ChainProvider {
+        type Error = ResetError;
+
+        async fn system_config_by_l2_hash(
+            &mut self,
+            hash: alloy_primitives::B256,
+            _: Arc<RollupConfig>,
+        ) -> Result<SystemConfig, <Self as L2ChainProvider>::Error> {
+            Err(ResetError::BlockNotFound(BlockId::Hash(hash.into())))
+        }
+    }
 
     #[tokio::test]
     async fn test_batch_validator_origin_behind_eof() {
@@ -689,12 +753,141 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_denim_validator_ancestry_ignores_other_fork_at_same_height() {
+        let origin = BlockInfo { number: 1, hash: B256::repeat_byte(0x11), ..Default::default() };
+        let cfg = Arc::new(RollupConfig {
+            block_time: 2,
+            upgrades: UpgradeConfig {
+                holocene_time: Some(0),
+                base: BaseUpgradeConfig { denim: Some(0), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let parent = L2BlockInfo {
+            block_info: BlockInfo {
+                number: 3,
+                hash: B256::with_last_byte(0x43),
+                parent_hash: B256::with_last_byte(0x42),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let other_fork = L2BlockInfo {
+            block_info: BlockInfo {
+                number: 1,
+                hash: B256::with_last_byte(0xaa),
+                parent_hash: B256::with_last_byte(0x40),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut flushed = Vec::new();
+        for different_number_view in [false, true] {
+            for batch_parent in
+                [other_fork.block_info.hash, B256::with_last_byte(0x41), B256::with_last_byte(0x40)]
+            {
+                let mut blocks: Vec<_> = (0..parent.block_info.number)
+                    .map(|number| L2BlockInfo {
+                        block_info: BlockInfo {
+                            number,
+                            hash: B256::with_last_byte(0x40 + number as u8),
+                            parent_hash: B256::with_last_byte(0x3f + number as u8),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    })
+                    .collect();
+                // By-number reads select the first entry; hash reads identify the exact fork.
+                if different_number_view {
+                    blocks.insert(0, other_fork);
+                }
+                let batch = SingleBatch {
+                    parent_hash: batch_parent,
+                    epoch_num: origin.number,
+                    epoch_hash: origin.hash,
+                    timestamp: cfg.l2_block_timestamp(parent.block_info.number + 1),
+                    ..Default::default()
+                };
+                let mut prev = TestNextBatchProvider::new(vec![Ok(Batch::Single(batch))]);
+                prev.origin = Some(origin);
+                let provider = TestL2ChainProvider { blocks, ..Default::default() };
+                let mut bv = BatchValidator::new(Arc::clone(&cfg), prev, provider);
+                bv.origin = Some(origin);
+                bv.l1_blocks = vec![origin, origin];
+
+                assert_eq!(
+                    bv.next_batch(parent).await.unwrap_err(),
+                    PipelineError::NotEnoughData.temp()
+                );
+                flushed.push(bv.prev.flushed);
+            }
+        }
+        // Flush unrelated parents and skip real ancestors, even when the by-number view disagrees.
+        assert_eq!(flushed, vec![true, false, false, true, false, false]);
+    }
+
+    #[tokio::test]
+    async fn test_denim_validator_ancestry_stops_at_genesis_and_second_boundary() {
+        let origin = BlockInfo { number: 1, hash: B256::repeat_byte(0x11), ..Default::default() };
+        for genesis_number in [0, 10] {
+            let mut cfg = RollupConfig {
+                block_time: 2,
+                upgrades: UpgradeConfig {
+                    holocene_time: Some(0),
+                    base: BaseUpgradeConfig { denim: Some(0), ..Default::default() },
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            cfg.genesis.l2.number = genesis_number;
+            let cfg = Arc::new(cfg);
+            for (offset, expected_flush) in [(0, true), (1, false), (4, true), (5, false)] {
+                let number = genesis_number + offset;
+                let parent = L2BlockInfo {
+                    block_info: BlockInfo {
+                        number,
+                        hash: B256::repeat_byte(0x33),
+                        parent_hash: B256::repeat_byte(0x22),
+                        timestamp: cfg.l2_block_timestamp(number),
+                    },
+                    ..Default::default()
+                };
+                let batch = SingleBatch {
+                    parent_hash: parent.block_info.parent_hash,
+                    epoch_num: origin.number,
+                    epoch_hash: origin.hash,
+                    timestamp: cfg.l2_block_timestamp(number + 1),
+                    ..Default::default()
+                };
+                let mut prev = TestNextBatchProvider::new(vec![Ok(Batch::Single(batch))]);
+                prev.origin = Some(origin);
+                // The immediate parent link suffices; no ancestor lookup should be needed.
+                let mut bv =
+                    BatchValidator::new(Arc::clone(&cfg), prev, TestL2ChainProvider::default());
+                bv.origin = Some(origin);
+                bv.l1_blocks = vec![origin, origin];
+
+                assert_eq!(
+                    bv.next_batch(parent).await.unwrap_err(),
+                    PipelineError::NotEnoughData.temp()
+                );
+                assert_eq!(
+                    bv.prev.flushed, expected_flush,
+                    "genesis={genesis_number}, offset={offset}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn test_denim_validator_retries_then_flushes_unknown_parent() {
         let origin = BlockInfo { number: 1, hash: B256::repeat_byte(0x11), ..Default::default() };
         let parent = L2BlockInfo {
             block_info: BlockInfo {
                 number: 3,
                 hash: B256::repeat_byte(0x33),
+                parent_hash: B256::with_last_byte(2),
                 ..Default::default()
             },
             l1_origin: BlockNumHash { number: 0, ..Default::default() },
@@ -733,6 +926,7 @@ mod tests {
                 block_info: BlockInfo {
                     number,
                     hash: B256::with_last_byte(number as u8),
+                    parent_hash: B256::with_last_byte(number.saturating_sub(1) as u8),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -741,5 +935,46 @@ mod tests {
         assert_eq!(bv.next_batch(parent).await.unwrap_err(), PipelineError::NotEnoughData.temp());
         assert!(bv.pending_batch.is_none());
         assert!(bv.prev.flushed);
+    }
+
+    #[tokio::test]
+    async fn test_denim_validator_does_not_retry_reset_class_ancestry_error() {
+        let origin = BlockInfo { number: 1, hash: B256::repeat_byte(0x11), ..Default::default() };
+        let parent = L2BlockInfo {
+            block_info: BlockInfo {
+                number: 3,
+                hash: B256::repeat_byte(0x33),
+                parent_hash: B256::with_last_byte(2),
+                ..Default::default()
+            },
+            l1_origin: BlockNumHash { number: 0, ..Default::default() },
+            ..Default::default()
+        };
+        let batch = SingleBatch {
+            parent_hash: B256::repeat_byte(0xff),
+            epoch_num: origin.number,
+            epoch_hash: origin.hash,
+            ..Default::default()
+        };
+        let mut prev = TestNextBatchProvider::new(vec![Ok(Batch::Single(batch))]);
+        prev.origin = Some(origin);
+        let cfg = Arc::new(RollupConfig {
+            block_time: 2,
+            upgrades: UpgradeConfig {
+                holocene_time: Some(0),
+                base: BaseUpgradeConfig { denim: Some(0), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let mut bv = BatchValidator::new(cfg, prev, ResettingL2ChainProvider);
+        bv.origin = Some(origin);
+        bv.l1_blocks = vec![origin, origin];
+
+        assert_eq!(
+            bv.next_batch(parent).await.unwrap_err(),
+            ResetError::BlockNotFound(BlockId::Hash(B256::with_last_byte(2).into())).reset()
+        );
+        assert!(bv.pending_batch.is_none());
     }
 }

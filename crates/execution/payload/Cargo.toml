@@ -16,6 +16,7 @@ workspace = true
 reth-evm.workspace = true
 reth-chainspec.workspace = true
 reth-storage-api.workspace = true
+reth-engine-tree.workspace = true
 reth-payload-util.workspace = true
 reth-trie-parallel.workspace = true
 reth-execution-types.workspace = true

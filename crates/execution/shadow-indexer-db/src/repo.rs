@@ -42,10 +42,10 @@ type BlockHeader = <BaseBlock as reth_primitives_traits::Block>::Header;
 pub struct ShadowSummaryRow {
     /// Persisted block number.
     pub number: i64,
-    /// Raw shadow block hash.
-    pub hash: Vec<u8>,
-    /// Replacement (canonical) block hash after reorg.
-    pub canonical_hash: Option<Vec<u8>>,
+    /// Shadow block hash, as `0x`-prefixed lowercase hex.
+    pub hash: String,
+    /// Replacement (canonical) block hash after reorg, as `0x`-prefixed lowercase hex.
+    pub canonical_hash: Option<String>,
     /// Writer-stamped builder version.
     pub builder_version: String,
     /// Block header extracted from the payload.
@@ -178,7 +178,7 @@ impl ShadowBlockRepo {
         let result = query(
             "UPDATE shadow_blocks AS unresolved \
              SET canonical_hash = canonical.hash, updated_at = now() \
-             FROM UNNEST($1::BIGINT[], $2::BYTEA[]) AS canonical(number, hash) \
+             FROM UNNEST($1::BIGINT[], $2::TEXT[]) AS canonical(number, hash) \
              WHERE unresolved.number = canonical.number \
                AND unresolved.hash <> canonical.hash \
                AND unresolved.canonical_hash IS NULL",
@@ -196,13 +196,13 @@ impl ShadowBlockRepo {
     /// a height appearing twice in a flush must collapse to the last hash before binding.
     fn dedupe_canonical_last_write_wins(
         canonical: &[&ShadowCanonicalRef],
-    ) -> (Vec<i64>, Vec<Vec<u8>>) {
-        let mut by_number: HashMap<i64, &[u8]> = HashMap::with_capacity(canonical.len());
+    ) -> (Vec<i64>, Vec<String>) {
+        let mut by_number: HashMap<i64, &str> = HashMap::with_capacity(canonical.len());
         for entry in canonical {
-            by_number.insert(entry.number, entry.hash.as_slice());
+            by_number.insert(entry.number, entry.hash.as_str());
         }
 
-        by_number.into_iter().map(|(number, hash)| (number, hash.to_vec())).unzip()
+        by_number.into_iter().map(|(number, hash)| (number, hash.to_owned())).unzip()
     }
 
     /// Postgres cannot upsert one key twice; retain its final state within each run.
@@ -295,7 +295,7 @@ impl ShadowBlockRepo {
     /// Returns an error when the query fails.
     pub async fn list_reorged_by_canonical(
         &self,
-        canonical_hash: &[u8],
+        canonical_hash: &str,
     ) -> Result<Vec<ShadowSummaryRow>> {
         let rows = query_as::<_, ShadowSummaryRow>(
             "SELECT number, hash, canonical_hash, \
@@ -322,7 +322,7 @@ impl ShadowBlockRepo {
     /// Returns an error when the query fails.
     pub async fn list_reorged_by_canonicals(
         &self,
-        canonical_hashes: &[Vec<u8>],
+        canonical_hashes: &[String],
     ) -> Result<Vec<ShadowSummaryRow>> {
         if canonical_hashes.is_empty() {
             return Ok(Vec::new());
@@ -351,7 +351,7 @@ impl ShadowBlockRepo {
     ///
     /// # Errors
     /// Returns an error when the query fails.
-    pub async fn get_by_block_hash(&self, hash: &[u8]) -> Result<Option<ShadowBlockRow>> {
+    pub async fn get_by_block_hash(&self, hash: &str) -> Result<Option<ShadowBlockRow>> {
         let row = query_as::<_, ShadowBlockRow>(
             "SELECT number, hash, canonical_hash, created_at, updated_at, payload \
              FROM shadow_blocks \
@@ -371,7 +371,7 @@ impl ShadowBlockRepo {
     ///
     /// # Errors
     /// Returns an error when the query fails.
-    pub async fn get_summary_by_block_hash(&self, hash: &[u8]) -> Result<Option<ShadowSummaryRow>> {
+    pub async fn get_summary_by_block_hash(&self, hash: &str) -> Result<Option<ShadowSummaryRow>> {
         let row = query_as::<_, ShadowSummaryRow>(
             "SELECT number, hash, canonical_hash, \
              payload->>'builder_version' AS builder_version, \
@@ -399,10 +399,10 @@ mod tests {
     use super::*;
     use crate::ShadowBlockPayload;
 
-    fn sample_row(number: i64, hash: &[u8], canonical_hash: Option<Vec<u8>>) -> ShadowBlockRow {
+    fn sample_row(number: i64, hash: &str, canonical_hash: Option<String>) -> ShadowBlockRow {
         ShadowBlockRow {
             number,
-            hash: hash.to_vec(),
+            hash: hash.to_owned(),
             canonical_hash,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -417,9 +417,9 @@ mod tests {
     #[test]
     fn dedupe_collapses_duplicate_number_to_last_write() {
         let rows = [
-            sample_row(1, &[0xaa], None),
-            sample_row(2, &[0xbb], None),
-            sample_row(1, &[0xaa], Some(vec![0xcc])),
+            sample_row(1, "0xaa", None),
+            sample_row(2, "0xbb", None),
+            sample_row(1, "0xaa", Some("0xcc".to_owned())),
         ];
         let borrowed: Vec<&ShadowBlockRow> = rows.iter().collect();
 
@@ -427,26 +427,30 @@ mod tests {
 
         assert_eq!(deduped.len(), 2);
         let kept = deduped.iter().find(|row| row.number == 1).expect("duplicated key survives");
-        assert_eq!(kept.canonical_hash, Some(vec![0xcc]), "duplicate key keeps the last write");
+        assert_eq!(
+            kept.canonical_hash,
+            Some("0xcc".to_owned()),
+            "duplicate key keeps the last write"
+        );
     }
 
     #[test]
     fn dedupe_collapses_same_number_with_distinct_hash() {
-        let rows = [sample_row(1, &[0xaa], None), sample_row(1, &[0xbb], None)];
+        let rows = [sample_row(1, "0xaa", None), sample_row(1, "0xbb", None)];
         let borrowed: Vec<&ShadowBlockRow> = rows.iter().collect();
 
         let deduped = ShadowBlockRepo::dedupe_last_write_wins(&borrowed);
 
         assert_eq!(deduped.len(), 1, "a height keys one row regardless of hash");
-        assert_eq!(deduped[0].hash, [0xbb], "the later candidate at a height wins");
+        assert_eq!(deduped[0].hash, "0xbb", "the later candidate at a height wins");
     }
 
     #[test]
     fn dedupe_canonical_collapses_repeated_height_to_last_hash() {
         let entries = [
-            ShadowCanonicalRef { number: 5, hash: vec![0x01] },
-            ShadowCanonicalRef { number: 6, hash: vec![0x02] },
-            ShadowCanonicalRef { number: 5, hash: vec![0x03] },
+            ShadowCanonicalRef { number: 5, hash: "0x01".to_owned() },
+            ShadowCanonicalRef { number: 6, hash: "0x02".to_owned() },
+            ShadowCanonicalRef { number: 5, hash: "0x03".to_owned() },
         ];
         let canonical: Vec<&ShadowCanonicalRef> = entries.iter().collect();
 
@@ -454,12 +458,12 @@ mod tests {
 
         let mut pairs: Vec<_> = numbers.into_iter().zip(hashes).collect();
         pairs.sort_by_key(|(number, _)| *number);
-        assert_eq!(pairs, vec![(5, vec![0x03]), (6, vec![0x02])]);
+        assert_eq!(pairs, vec![(5, "0x03".to_owned()), (6, "0x02".to_owned())]);
     }
 
     #[test]
     fn payload_json_paths_expose_header_and_transactions() {
-        let payload = sample_row(1, &[0xaa], None).payload;
+        let payload = sample_row(1, "0xaa", None).payload;
         let value = serde_json::to_value(&payload).expect("payload to json");
 
         let header_value = json_path(&value, &["block", "block", "header", "header"]);
