@@ -7,7 +7,7 @@ use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_node::{
-    EngineConfig, FollowNode, FollowNodeConfig, L1Config, NodeMode, RemoteL2Client,
+    EngineConfig, FollowNode, FollowNodeConfig, L1Config, NodeOperatingMode, RemoteL2Client,
 };
 use base_consensus_providers::{L1RpcProvider, OnlineBeaconClient};
 use base_consensus_rpc::RpcBuilder;
@@ -310,7 +310,7 @@ impl ConsensusFollowNodeArgs {
             l2_jwt_secret: jwt_secret,
             l1_url: self.config.l1_rpc_args.l1_eth_rpc.clone(),
             l1_rpc_timeout: self.config.l1_rpc_args.l1_rpc_timeout,
-            mode: NodeMode::Validator,
+            mode: NodeOperatingMode::Validator,
         };
         let engine_client =
             Arc::new(engine_config.build_engine_client().await.map_err(|e| eyre::eyre!(e))?);

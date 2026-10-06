@@ -1,12 +1,16 @@
 //! Test [`UnsafeBlockSource`] and [`L1HeadSource`] implementations.
+//!
+//! Hand-rolled rather than mocked because `next` parks forever, which `mockall` expectations
+//! cannot express.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+};
 
 use async_trait::async_trait;
 use base_batcher_source::{L1HeadSource, L2BlockEvent, UnsafeBlockSource};
 use base_protocol::BlockInfo;
-
-use crate::test_utils::BlockStub;
 
 /// [`UnsafeBlockSource`] that parks the select arm forever.
 ///
@@ -23,59 +27,39 @@ impl UnsafeBlockSource for PendingSource {
     }
 }
 
-/// [`UnsafeBlockSource`] that records sequential catchup requests and otherwise parks.
+/// [`UnsafeBlockSource`] that delivers its queued events, then parks, and records sequential
+/// catchup requests.
 #[derive(Debug)]
 pub struct TrackingSource {
+    events: VecDeque<L2BlockEvent>,
     catchup_heads: Arc<Mutex<Vec<BlockInfo>>>,
 }
 
 impl TrackingSource {
-    /// Create a source and its shared catchup call log.
+    /// Create a source with no events and its shared catchup call log.
     pub fn new() -> (Self, Arc<Mutex<Vec<BlockInfo>>>) {
         let catchup_heads = Arc::new(Mutex::new(Vec::new()));
-        (Self { catchup_heads: Arc::clone(&catchup_heads) }, catchup_heads)
+        (Self { events: VecDeque::new(), catchup_heads: Arc::clone(&catchup_heads) }, catchup_heads)
+    }
+
+    /// Queue `events`, delivered in order before the source parks.
+    pub fn with_events(mut self, events: impl IntoIterator<Item = L2BlockEvent>) -> Self {
+        self.events.extend(events);
+        self
     }
 }
 
 #[async_trait]
 impl UnsafeBlockSource for TrackingSource {
     async fn next(&mut self) -> L2BlockEvent {
-        std::future::pending().await
+        match self.events.pop_front() {
+            Some(event) => event,
+            None => std::future::pending().await,
+        }
     }
 
     fn reset_catchup(&mut self, safe_head: BlockInfo) {
         self.catchup_heads.lock().unwrap().push(safe_head);
-    }
-}
-
-/// [`UnsafeBlockSource`] that delivers exactly one block, numbered 1, then parks forever.
-#[derive(Debug)]
-pub struct OneBlockSource {
-    delivered: bool,
-}
-
-impl OneBlockSource {
-    /// Create a new source that has not yet delivered its block.
-    pub const fn new() -> Self {
-        Self { delivered: false }
-    }
-}
-
-impl Default for OneBlockSource {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl UnsafeBlockSource for OneBlockSource {
-    async fn next(&mut self) -> L2BlockEvent {
-        if !self.delivered {
-            self.delivered = true;
-            L2BlockEvent::Block(Box::new(BlockStub::with_number(1)))
-        } else {
-            std::future::pending().await
-        }
     }
 }
 

@@ -46,24 +46,48 @@ pub struct Eip8130Signed {
     sender_auth: Bytes,
     /// Payer authentication payload, or empty for self-pay.
     ///
-    /// When `tx.payer.is_some()` this carries the payer's authorization,
-    /// formatted as `authenticator(20) || authenticator_data` and validated against
-    /// [`TxEip8130::payer_signature_hash`] (with the resolved sender substituted).
+    /// When `tx.payer.is_some()` this carries the payer's authorization over
+    /// [`TxEip8130::payer_signature_hash`] (with the resolved sender
+    /// substituted):
+    ///
+    /// - Open payer mode: a raw 65-byte `r || s || v` signature, from which the
+    ///   payer is recovered.
+    /// - Named payer: `authenticator(20) || authenticator_data`.
+    ///
     /// When `tx.payer.is_none()` this is empty.
     payer_auth: Bytes,
     /// Cached EIP-2718 transaction hash (`keccak256(encode_2718(self))`).
     hash: B256,
 }
 
+/// JSON is flat, like every other transaction type: the [`TxEip8130`] fields
+/// sit at the top level beside `senderAuth` and `payerAuth`. Serialization also
+/// emits the standard single-call fields generic tooling reads, as a
+/// transaction with no single recipient: `to: null`, `value: "0x0"`, and
+/// `input: "0x"`. The calls themselves are in `calls`.
 #[cfg(feature = "serde")]
 mod serde_impl {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+    use alloy_primitives::{Address, U256};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     use super::{Bytes, Eip8130Signed, TxEip8130};
 
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Eip8130SignedJson<'a> {
+        #[serde(flatten)]
+        tx: &'a TxEip8130,
+        sender_auth: &'a Bytes,
+        payer_auth: &'a Bytes,
+        to: Option<Address>,
+        value: U256,
+        input: Bytes,
+    }
+
+    #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Eip8130SignedRepr {
+        #[serde(flatten)]
         tx: TxEip8130,
         sender_auth: Bytes,
         payer_auth: Bytes,
@@ -74,10 +98,13 @@ mod serde_impl {
         where
             S: Serializer,
         {
-            Eip8130SignedRepr {
-                tx: self.tx.clone(),
-                sender_auth: self.sender_auth.clone(),
-                payer_auth: self.payer_auth.clone(),
+            Eip8130SignedJson {
+                tx: &self.tx,
+                sender_auth: &self.sender_auth,
+                payer_auth: &self.payer_auth,
+                to: None,
+                value: U256::ZERO,
+                input: Bytes::new(),
             }
             .serialize(serializer)
         }
@@ -88,7 +115,7 @@ mod serde_impl {
         where
             D: Deserializer<'de>,
         {
-            let repr = Eip8130SignedRepr::deserialize(deserializer).map_err(de::Error::custom)?;
+            let repr = Eip8130SignedRepr::deserialize(deserializer)?;
             Ok(Self::new(repr.tx, repr.sender_auth, repr.payer_auth))
         }
     }
@@ -236,20 +263,29 @@ impl Eip8130Signed {
     /// Validates the validity-window admission rules for nonce-bearing and
     /// nonce-free transactions against a single caller-supplied `now` value.
     ///
-    /// `now`, `valid_after`, and `valid_before` are all Unix timestamps in
-    /// **milliseconds**; callers pass `block.timestamp * 1000` (or an equivalent
-    /// millisecond wall clock) so the comparison matches the EIP's on-chain
-    /// `block.timestamp * 1000` evaluation. Txpool passes in one head-block
-    /// snapshot so both branches see the same value even if the tip updates
-    /// concurrently.
+    /// `now` is a Unix timestamp in **milliseconds**; callers pass
+    /// `block.timestamp * 1000` (or an equivalent millisecond wall clock) so the
+    /// comparison matches the EIP's on-chain `block.timestamp * 1000` evaluation.
+    /// Txpool passes in one head-block snapshot so both branches see the same
+    /// value even if the tip updates concurrently.
+    ///
+    /// The transaction's `valid_after`/`valid_before` may be supplied in seconds
+    /// or milliseconds; both are normalized to milliseconds here (via
+    /// [`TxEip8130::valid_after_ms`]/[`TxEip8130::valid_before_ms`]) before being
+    /// compared against `now`, matching the consensus inclusion window.
     pub fn validate_timestamp(&self, now: u64) -> Result<(), Eip8130TimestampError> {
         let tx = self.tx();
+        // Normalized to milliseconds (seconds bounds are scaled by 1000); `0`
+        // stays `0` (disabled), so the "is this bound set?" checks below are
+        // unaffected by normalization.
+        let valid_after = tx.valid_after_ms();
+        let valid_before = tx.valid_before_ms();
         if tx.nonce_key == Eip8130Constants::NONCE_KEY_MAX {
             // Structural precondition first (independent of `now`).
-            if tx.nonce_sequence != 0 || tx.valid_before == 0 {
+            if tx.nonce_sequence != 0 || valid_before == 0 {
                 return Err(Eip8130TimestampError::NonceFreeMalformed);
             }
-            if tx.valid_after != 0 && now < tx.valid_after {
+            if valid_after != 0 && now < valid_after {
                 return Err(Eip8130TimestampError::NotYetValid);
             }
             // Exclusive on purpose: nonce-free replay protection is the
@@ -260,21 +296,20 @@ impl Eip8130Signed {
             // boundary would only fail later in the ring. This is stricter than
             // the inclusive validity-window upper bound applied to nonce-bearing
             // transactions below.
-            if tx.valid_before <= now {
+            if valid_before <= now {
                 return Err(Eip8130TimestampError::NonceFreeExpired);
             }
-            if tx.valid_before > now.saturating_add(Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW)
-            {
+            if valid_before > now.saturating_add(Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW) {
                 return Err(Eip8130TimestampError::NonceFreeExpiryTooFar);
             }
         } else {
-            if tx.valid_after != 0 && now < tx.valid_after {
+            if valid_after != 0 && now < valid_after {
                 return Err(Eip8130TimestampError::NotYetValid);
             }
             // Inclusive upper bound (matches the execution-path check and the EIP):
             // a transaction at exactly `valid_before` is still valid, so reject
             // only once `now` is strictly past it.
-            if tx.valid_before != 0 && now > tx.valid_before {
+            if valid_before != 0 && now > valid_before {
                 return Err(Eip8130TimestampError::Expired);
             }
         }
@@ -355,6 +390,59 @@ impl Eip8130Signed {
         self.recover_eoa_sender_unchecked()?.ok_or_else(alloy_consensus::crypto::RecoveryError::new)
     }
 
+    /// Recovers a signer from a raw 65-byte `r || s || v` blob over `hash`.
+    ///
+    /// Requires `v in {27, 28}` and EIP-2 low-`s`. This is the single checked
+    /// recovery for a raw k1 blob: open-payer resolution and
+    /// `RecoveredActorId::recover_k1` both go through it.
+    #[cfg(feature = "k256")]
+    pub fn recover_raw_k1(
+        hash: B256,
+        raw: &[u8],
+    ) -> Result<Address, alloy_consensus::crypto::RecoveryError> {
+        let signature = Self::parse_raw_k1_signature(raw)?;
+        alloy_consensus::crypto::secp256k1::recover_signer(&signature, hash)
+    }
+
+    /// The account that pays gas: `resolved_sender` for self-pay, the named
+    /// payer for sponsored pay, and the recovered signer in open payer mode.
+    ///
+    /// Returns [`RecoveryError`] when an open-mode `payer_auth` does not
+    /// recover. Included transactions have already passed payer verification,
+    /// so callers must handle that error instead of guessing what a missing
+    /// payer means.
+    ///
+    /// [`RecoveryError`]: alloy_consensus::crypto::RecoveryError
+    #[cfg(feature = "k256")]
+    pub fn resolved_payer(
+        &self,
+        resolved_sender: Address,
+    ) -> Result<Address, alloy_consensus::crypto::RecoveryError> {
+        match self.tx.payer {
+            None => Ok(resolved_sender),
+            Some(_) if self.tx.is_open_payer() => Self::recover_raw_k1(
+                self.tx.payer_signature_hash(resolved_sender),
+                self.payer_auth.as_ref(),
+            ),
+            Some(payer) => Ok(payer),
+        }
+    }
+
+    /// Parses a raw `r || s || v` secp256k1 signature, requiring exactly 65
+    /// bytes and `v in {27, 28}`. The auth blob is not covered by the hash it
+    /// signs, so accepting the alternative `v in {0, 1}` encoding would let a
+    /// relayer mint a second transaction hash for the same signer.
+    #[cfg(feature = "k256")]
+    fn parse_raw_k1_signature(
+        raw: &[u8],
+    ) -> Result<alloy_primitives::Signature, alloy_consensus::crypto::RecoveryError> {
+        if raw.len() != 65 || !matches!(raw[64], 27 | 28) {
+            return Err(alloy_consensus::crypto::RecoveryError::new());
+        }
+        alloy_primitives::Signature::try_from(raw)
+            .map_err(|_| alloy_consensus::crypto::RecoveryError::new())
+    }
+
     #[cfg(feature = "k256")]
     fn recover_eoa_sender_with(
         &self,
@@ -366,22 +454,9 @@ impl Eip8130Signed {
         if self.tx.sender.is_some() {
             return Ok(None);
         }
-        // Canonical-encoding guard: the EOA `sender_auth` must be exactly a
-        // 65-byte `r || s || v` blob with `v` in 'Electrum' notation
-        // (`v in {27, 28}`). `sender_auth` cannot be covered by
-        // `sender_signature_hash` (a signature cannot sign over itself), so if we
-        // accepted the alternative `v in {0, 1}` encoding any relayer could flip
-        // that byte to mint a second, equally valid transaction hash for the same
-        // signer without the key (txid malleability). `alloy`'s parser normalizes
-        // `{0, 1, 27, 28}` all to the same parity, so we reject the non-canonical
-        // forms here before parsing, matching the k1 authenticator's strict
+        // Canonical-encoding guard, matching the k1 authenticator's strict
         // `v in {27, 28}` check in `RecoveredActorId::recover_k1`.
-        let raw = self.sender_auth.as_ref();
-        if raw.len() != 65 || !matches!(raw[64], 27 | 28) {
-            return Err(alloy_consensus::crypto::RecoveryError::new());
-        }
-        let signature = alloy_primitives::Signature::try_from(raw)
-            .map_err(|_| alloy_consensus::crypto::RecoveryError::new())?;
+        let signature = Self::parse_raw_k1_signature(self.sender_auth.as_ref())?;
         let hash = self.tx.sender_signature_hash();
         recover(&signature, hash).map(Some)
     }
@@ -401,6 +476,139 @@ impl Eip8130Signed {
         self.tx.rlp_encode_fields(out);
         self.sender_auth.encode(out);
         self.payer_auth.encode(out);
+    }
+
+    /// EIP-2718 encoding with `payer_auth` replaced by the empty string: the
+    /// bytes `tx_payload_cost` bills to the sender.
+    #[must_use]
+    pub fn encoded_2718_without_payer_auth(&self) -> Vec<u8> {
+        let empty = Bytes::new();
+        let payload_length =
+            self.tx.rlp_encoded_fields_length() + self.sender_auth.length() + empty.length();
+        let mut out = Vec::with_capacity(1 + length_of_length(payload_length) + payload_length);
+        out.put_u8(Eip8130Constants::EIP8130_TX_TYPE);
+        Header { list: true, payload_length }.encode(&mut out);
+        self.tx.rlp_encode_fields(&mut out);
+        self.sender_auth.encode(&mut out);
+        empty.encode(&mut out);
+        out
+    }
+
+    /// Folds `fold_byte` over the sender-billed EIP-2718 encoding: this
+    /// transaction with `payer_auth` replaced by the empty string.
+    ///
+    /// When `encoded_2718` is this transaction's network encoding, the fold
+    /// rewrites only the list header and the `payer_auth` suffix. The
+    /// transaction body is not re-serialized. A mismatched `encoded_2718`
+    /// falls back to [`Self::encoded_2718_without_payer_auth`].
+    pub fn fold_sender_billed_bytes<T>(
+        &self,
+        encoded_2718: &[u8],
+        init: T,
+        mut fold_byte: impl FnMut(T, u8) -> T,
+    ) -> T {
+        if self.payer_auth.is_empty() {
+            return encoded_2718.iter().copied().fold(init, fold_byte);
+        }
+        match self.try_fold_sender_billed(encoded_2718, init, &mut fold_byte) {
+            Ok(total) => total,
+            Err(init) => {
+                self.encoded_2718_without_payer_auth().iter().copied().fold(init, fold_byte)
+            }
+        }
+    }
+
+    /// Sender-billed fold of a verified EIP-2718 encoding. `Err(init)` when
+    /// `encoded_2718` is not this transaction, so the caller can fall back
+    /// without dropping the accumulator.
+    fn try_fold_sender_billed<T>(
+        &self,
+        encoded_2718: &[u8],
+        init: T,
+        fold_byte: &mut impl FnMut(T, u8) -> T,
+    ) -> Result<T, T> {
+        let Some((type_byte, header_buf, header_len, body)) =
+            self.sender_billed_parts(encoded_2718)
+        else {
+            return Err(init);
+        };
+
+        let mut total = fold_byte(init, type_byte);
+        for &byte in &header_buf[..header_len] {
+            total = fold_byte(total, byte);
+        }
+        for &byte in body {
+            total = fold_byte(total, byte);
+        }
+        Ok(fold_byte(total, 0x80))
+    }
+
+    /// Header rewrite and body slice for the sender-billed encoding.
+    /// `None` when `encoded_2718` is not this transaction.
+    fn sender_billed_parts<'a>(
+        &self,
+        encoded_2718: &'a [u8],
+    ) -> Option<(u8, [u8; 9], usize, &'a [u8])> {
+        let (&type_byte, rest) = encoded_2718.split_first()?;
+        if type_byte != Eip8130Constants::EIP8130_TX_TYPE {
+            return None;
+        }
+        let mut payload = rest;
+        let header = Header::decode(&mut payload).ok()?;
+        if !header.list || payload.len() != header.payload_length {
+            return None;
+        }
+        let payer_len = self.payer_auth.length();
+        if payload.len() < payer_len {
+            return None;
+        }
+        let (body, payer_suffix) = payload.split_at(payload.len() - payer_len);
+        if !Self::is_rlp_bytes(self.payer_auth.as_ref(), payer_suffix) {
+            return None;
+        }
+        // Empty `payer_auth` is the one-byte RLP string `0x80`.
+        let new_payload_len = body.len().checked_add(1)?;
+        let mut header_buf = [0u8; 9];
+        let remaining = {
+            let mut cursor: &mut [u8] = &mut header_buf;
+            Header { list: true, payload_length: new_payload_len }.encode(&mut cursor);
+            cursor.len()
+        };
+        let header_len = header_buf.len() - remaining;
+        Some((type_byte, header_buf, header_len, body))
+    }
+
+    /// Whether `encoded` is the canonical RLP string for `raw`.
+    fn is_rlp_bytes(raw: &[u8], encoded: &[u8]) -> bool {
+        if raw.is_empty() {
+            return encoded == [0x80];
+        }
+        if raw.len() == 1 && raw[0] < 0x80 {
+            return encoded == raw;
+        }
+        if raw.len() < 56 {
+            let Ok(len) = u8::try_from(raw.len()) else {
+                return false;
+            };
+            return encoded.len() == raw.len() + 1
+                && encoded[0] == 0x80 + len
+                && &encoded[1..] == raw;
+        }
+        let len_of_len = raw.len().to_be_bytes().iter().skip_while(|&&byte| byte == 0).count();
+        if encoded.len() != 1 + len_of_len + raw.len() {
+            return false;
+        }
+        let Ok(len_of_len_byte) = u8::try_from(len_of_len) else {
+            return false;
+        };
+        if encoded[0] != 0xb7 + len_of_len_byte {
+            return false;
+        }
+        let mut declared = 0usize;
+        for &byte in &encoded[1..1 + len_of_len] {
+            declared = declared.saturating_mul(256).saturating_add(usize::from(byte));
+        }
+        declared == raw.len() && &encoded[1 + len_of_len..] == raw
     }
 
     fn rlp_encoded_signed_length(&self) -> usize {
@@ -784,7 +992,12 @@ mod tests {
 
     #[test]
     fn timestamp_validation_covers_channel_and_nonce_free_rules() {
-        let now = 1_000;
+        // Millisecond-scale reference clock: all bounds here are already
+        // milliseconds (>= TIMESTAMP_MS_THRESHOLD), so normalization is a no-op
+        // and these assertions exercise the raw window comparisons. Seconds
+        // normalization is covered separately by
+        // `seconds_denominated_bounds_are_normalized_to_milliseconds`.
+        let now = 1_700_000_000_000;
         let mut tx = sample_signed(false).into_tx();
         // Nonce-bearing upper bound is inclusive: valid at `now == valid_before`,
         // expired only once `now` is strictly past it.
@@ -825,6 +1038,55 @@ mod tests {
         assert_eq!(
             Eip8130Signed::new(tx, Bytes::new(), Bytes::new()).validate_timestamp(now),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn seconds_denominated_bounds_are_normalized_to_milliseconds() {
+        // `now` is milliseconds (block.timestamp * 1000). The transaction bounds
+        // are supplied in *seconds* and must be interpreted identically to their
+        // millisecond equivalents (EIP-8130 Timestamp Normalization).
+        let now_secs = 1_700_000_000u64;
+        let now_ms = now_secs * 1_000;
+        let mut tx = sample_signed(false).into_tx();
+
+        // Nonce-bearing: a seconds `valid_before` one second in the future is
+        // still valid; one second in the past is expired.
+        tx.valid_after = 0;
+        tx.valid_before = now_secs + 1;
+        assert_eq!(
+            Eip8130Signed::new(tx.clone(), Bytes::new(), Bytes::new()).validate_timestamp(now_ms),
+            Ok(())
+        );
+        tx.valid_before = now_secs - 1;
+        assert_eq!(
+            Eip8130Signed::new(tx.clone(), Bytes::new(), Bytes::new()).validate_timestamp(now_ms),
+            Err(Eip8130TimestampError::Expired)
+        );
+
+        // A seconds `valid_after` in the future gates activation (not treated as
+        // already-active, which was the pre-normalization footgun).
+        tx.valid_before = 0;
+        tx.valid_after = now_secs + 1;
+        assert_eq!(
+            Eip8130Signed::new(tx.clone(), Bytes::new(), Bytes::new()).validate_timestamp(now_ms),
+            Err(Eip8130TimestampError::NotYetValid)
+        );
+
+        // Nonce-free: a seconds `valid_before` inside the expiry window (20 s)
+        // is admitted; the normalized ms value is compared against the ms window.
+        tx.valid_after = 0;
+        tx.nonce_key = Eip8130Constants::NONCE_KEY_MAX;
+        tx.nonce_sequence = 0;
+        tx.valid_before = now_secs + 10; // +10 s == +10_000 ms, within the 20_000 ms window
+        assert_eq!(
+            Eip8130Signed::new(tx.clone(), Bytes::new(), Bytes::new()).validate_timestamp(now_ms),
+            Ok(())
+        );
+        tx.valid_before = now_secs - 1; // already elapsed
+        assert_eq!(
+            Eip8130Signed::new(tx, Bytes::new(), Bytes::new()).validate_timestamp(now_ms),
+            Err(Eip8130TimestampError::NonceFreeExpired)
         );
     }
 

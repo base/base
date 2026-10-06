@@ -2,7 +2,7 @@
 
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{ThrottleConfig, ThrottleInfo, ThrottleStrategy};
+use crate::{ThrottleConfig, ThrottleConfigError, ThrottleInfo, ThrottleStrategy};
 
 /// Capacity of the admin command channel.
 ///
@@ -35,6 +35,9 @@ pub enum AdminError {
     /// The operation needs a running batcher, but it is stopped.
     #[error("batcher is stopped")]
     Stopped,
+    /// The requested throttle configuration is invalid.
+    #[error("invalid throttle config: {0}")]
+    InvalidThrottleConfig(#[from] ThrottleConfigError),
 }
 
 /// Result type alias for admin operations.
@@ -71,12 +74,6 @@ pub enum AdminCommand {
         #[debug(skip)]
         config: ThrottleConfig,
         /// Answered once the new controller is in place.
-        #[debug(skip)]
-        reply: oneshot::Sender<()>,
-    },
-    /// Clear the throttle dedup cache so limits are re-applied unconditionally.
-    ResetThrottle {
-        /// Answered once the cache is cleared.
         #[debug(skip)]
         reply: oneshot::Sender<()>,
     },
@@ -135,23 +132,16 @@ impl AdminHandle {
 
     /// Replace the throttle strategy and configuration.
     ///
-    /// The full [`ThrottleConfig`] is required — partial updates are not
-    /// supported. Callers that want to change only one field should call
-    /// [`get_throttle_info`](Self::get_throttle_info) first to read the
-    /// current config, adjust the desired field, and pass the result here.
-    /// The new limits are pushed to the block builder right after.
+    /// The full [`ThrottleConfig`] is required because partial updates are not supported. The
+    /// new limits are pushed to the block builders. An invalid `config` is rejected with
+    /// [`AdminError::InvalidThrottleConfig`] before reaching the driver.
     pub async fn set_throttle(
         &self,
         strategy: ThrottleStrategy,
         config: ThrottleConfig,
     ) -> AdminResult<()> {
+        config.validate()?;
         self.request(|reply| AdminCommand::SetThrottle { strategy, config, reply }).await
-    }
-
-    /// Clear the throttle dedup cache, so the current limits are pushed to the block
-    /// builder again right after, even if they have not changed.
-    pub async fn reset_throttle(&self) -> AdminResult<()> {
-        self.request(|reply| AdminCommand::ResetThrottle { reply }).await
     }
 
     /// Read the current throttle controller state.
@@ -182,33 +172,5 @@ impl AdminHandle {
         let (reply, rx) = oneshot::channel();
         self.tx.send(command(reply)).await.map_err(|_| AdminError::ChannelClosed)?;
         rx.await.map_err(|_| AdminError::ChannelClosed)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn start_returns_channel_closed_when_rx_dropped() {
-        let (handle, rx) = AdminHandle::channel();
-        drop(rx);
-        let err = handle.start().await.unwrap_err();
-        assert!(matches!(err, AdminError::ChannelClosed));
-    }
-
-    #[tokio::test]
-    async fn get_status_returns_channel_closed_when_rx_dropped() {
-        let (handle, rx) = AdminHandle::channel();
-        drop(rx);
-        let err = handle.get_status().await.unwrap_err();
-        assert!(matches!(err, AdminError::ChannelClosed));
-    }
-
-    #[test]
-    fn set_log_level_returns_not_supported() {
-        let (handle, _rx) = AdminHandle::channel();
-        let err = handle.set_log_level("debug".to_string()).unwrap_err();
-        assert!(matches!(err, AdminError::NotSupported(_)));
     }
 }

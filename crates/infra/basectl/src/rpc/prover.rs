@@ -244,7 +244,6 @@ impl ProofProposeRequest {
                         number_of_blocks_to_prove: self.num_blocks,
                         sequence_window: None,
                         l1_head: Some(self.l1_head),
-                        intermediate_root_interval: Some(self.intermediate_root_interval),
                         schedule_l2_block_number: None,
                         zk_vm: ZkVm::Sp1,
                         zk_backend: self.zk_backend,
@@ -687,7 +686,6 @@ mod tests {
                 assert_eq!(snark.proof.number_of_blocks_to_prove, 1000);
                 assert_eq!(snark.proof.sequence_window, None);
                 assert_eq!(snark.proof.l1_head, Some(B256::repeat_byte(0x22)));
-                assert_eq!(snark.proof.intermediate_root_interval, Some(100));
                 assert_eq!(snark.proof.zk_vm, ZkVm::Sp1);
                 assert_eq!(snark.proof.zk_backend, ZkBackend::Network);
             }

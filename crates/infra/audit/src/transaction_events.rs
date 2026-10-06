@@ -17,7 +17,7 @@ use axum::{
     routing::post,
 };
 use base_observability_events::{TransactionEvent, TransactionEventProducer, TransactionEventType};
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use chrono::{DateTime, Duration, DurationRound, NaiveDate, Utc};
 use serde::{
     Deserialize, Serialize,
     de::{
@@ -27,12 +27,12 @@ use serde::{
 };
 use serde_json::Value;
 use sqlx::{
-    Connection, PgConnection, PgPool, QueryBuilder, Row,
-    migrate::{Migrate, Migration, Migrator},
+    Connection, PgPool, QueryBuilder, Row,
+    migrate::{Migration, Migrator},
     postgres::PgPoolOptions,
 };
 use tower_http::limit::RequestBodyLimitLayer;
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 
 use crate::Metrics;
 
@@ -40,7 +40,11 @@ use crate::Metrics;
 pub const DEFAULT_TRANSACTION_EVENT_BATCH_PATH: &str = "/v1/transaction-events/batch";
 
 /// Default maximum number of events accepted in one HTTP request.
-pub const DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE: usize = 500;
+///
+/// Matches Vector's `max_events: 1000` (`etc/docker/transaction-events-vector.yaml`)
+/// so a full Vector batch is accepted instead of rejected with HTTP 400 and
+/// permanently dropped.
+pub const DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE: usize = 1000;
 
 /// Default maximum serialized JSON bytes for a single event.
 pub const DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES: usize = 256 * 1024;
@@ -54,7 +58,8 @@ pub const DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES: usize = 8 * 1024 * 1024;
 /// Maximum events inserted in one Postgres statement.
 ///
 /// Each row uses 14 bind parameters, so this stays below Postgres' 65,535 bind
-/// parameter limit (4,000 x 14 = 56,000).
+/// parameter limit (4,000 x 14 = 56,000). A full 1,000-event HTTP batch
+/// inserts in a single statement (14,000 parameters).
 pub const MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE: usize = 4_000;
 
 /// Session `lock_timeout` applied to each persist INSERT.
@@ -469,14 +474,8 @@ pub struct TransactionEventInsertOutcome {
 pub const DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT: i64 = 500;
 /// Hard maximum query result count for read APIs.
 pub const MAX_TRANSACTION_EVENT_QUERY_LIMIT: i64 = 2_000;
-const REQUIRED_TRANSACTION_EVENT_MIGRATION_DESCRIPTION: &str = "transaction events partitioned";
+const REQUIRED_TRANSACTION_EVENT_MIGRATION_DESCRIPTION: &str = "transaction events v2";
 static TRANSACTION_EVENT_MIGRATOR: Migrator = sqlx::migrate!("./migrations");
-
-/// Pre-partition migrations 001-004, which the partitioned baseline replaced.
-///
-/// They are embedded only so their recorded `_sqlx_migrations` rows can be
-/// recognized by version and checksum and reset. They are never applied.
-static LEGACY_TRANSACTION_EVENT_MIGRATOR: Migrator = sqlx::migrate!("./legacy_migrations");
 
 /// Migration that creates the transaction event storage schema.
 fn required_transaction_event_migration() -> Result<&'static Migration, &'static str> {
@@ -484,7 +483,7 @@ fn required_transaction_event_migration() -> Result<&'static Migration, &'static
         migration.description.as_ref() == REQUIRED_TRANSACTION_EVENT_MIGRATION_DESCRIPTION
     });
     let migration = matching_migrations.next().ok_or(
-        "transaction event migration 001_transaction_events_partitioned.sql must be embedded in audit migrator",
+        "transaction event migration 003_transaction_events_v2.sql must be embedded in audit migrator",
     )?;
     if matching_migrations.next().is_some() {
         return Err("transaction event migration description must be unique");
@@ -543,20 +542,20 @@ pub enum TransactionEventSchemaReadinessError {
     MigrationTableMissing,
     /// The transaction event migration has not completed successfully.
     #[error(
-        "transaction-event Postgres schema is not ready: required sqlx migration version {required_version} for 001_transaction_events_partitioned.sql has not been applied successfully; run `audit-archiver migrate up` or the audit migration WorkflowTemplate before enabling TIPS_AUDIT_POSTGRES_URL"
+        "transaction-event Postgres schema is not ready: required sqlx migration version {required_version} for 003_transaction_events_v2.sql has not been applied successfully; run `audit-archiver migrate up` or the audit migration WorkflowTemplate before enabling TIPS_AUDIT_POSTGRES_URL"
     )]
     RequiredMigrationMissing {
         /// Required sqlx migration version.
         required_version: i64,
     },
-    /// The expected table is missing or not visible to the runtime role.
+    /// An expected table is missing or not visible to the runtime role.
     #[error(
-        "transaction-event Postgres schema is not ready: public.transaction_events is missing or not visible to the runtime role; run `audit-archiver migrate up` or the audit migration WorkflowTemplate before enabling TIPS_AUDIT_POSTGRES_URL"
+        "transaction-event Postgres schema is not ready: public.transaction_events_v2 is missing or not visible to the runtime role; run `audit-archiver migrate up` or the audit migration WorkflowTemplate before enabling TIPS_AUDIT_POSTGRES_URL"
     )]
     TransactionEventsRelationMissing,
-    /// The expected table exists but cannot be queried by the runtime role.
+    /// An expected table exists but cannot be queried by the runtime role.
     #[error(
-        "transaction-event Postgres schema is not ready: runtime role cannot query public.transaction_events; verify audit_archiver privileges from 001_transaction_events_partitioned.sql"
+        "transaction-event Postgres schema is not ready: runtime role cannot query public.transaction_events_v2; verify audit_archiver privileges from 003_transaction_events_v2.sql"
     )]
     TransactionEventsRelationUnavailable {
         /// Underlying database error.
@@ -636,55 +635,11 @@ impl PgTransactionEventSink {
         Ok(Self::new_with_retention_pool(pool, retention_pool))
     }
 
-    /// Runs pending Postgres migrations.
-    ///
-    /// A database that recorded the pre-partition migrations 001-004 is reset
-    /// first. Its old table and their `_sqlx_migrations` rows are dropped in the
-    /// transaction that applies the partitioned baseline, so the reset commits
-    /// only if the baseline does. Every other database gets sqlx's standard
-    /// checks.
+    /// Runs pending Postgres migrations under sqlx's migration lock.
     pub async fn migrate(database_url: &str) -> Result<()> {
         let pool = PgPoolOptions::new().max_connections(1).connect(database_url).await?;
-        let mut conn = pool.acquire().await?;
-        // Hold sqlx's migration lock across the legacy-history check and the
-        // run, so a concurrent migrator cannot change the history between
-        // them. The lock is session-level and reentrant; run_direct takes it
-        // again and releases its own hold.
-        conn.lock().await?;
-        let result = async {
-            let legacy_versions = legacy_transaction_event_migration_versions(&mut conn).await?;
-            if legacy_versions.is_empty() {
-                TRANSACTION_EVENT_MIGRATOR.run_direct(&mut *conn).await?;
-                return anyhow::Ok(());
-            }
-
-            let mut tx = conn.begin().await?;
-            // Bound the DROP's lock wait so a long-running vacuum or query on
-            // the old table fails the migration quickly instead of queueing
-            // ingest behind it. The migrator can simply be retried.
-            sqlx::query("SET LOCAL lock_timeout = '60s'").execute(&mut *tx).await?;
-            sqlx::query("DROP TABLE IF EXISTS transaction_events").execute(&mut *tx).await?;
-            sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ANY($1)")
-                .bind(&legacy_versions)
-                .execute(&mut *tx)
-                .await?;
-            // sqlx applies each migration in a savepoint of this transaction.
-            TRANSACTION_EVENT_MIGRATOR.run_direct(&mut *tx).await?;
-            tx.commit().await?;
-            info!(
-                legacy_versions = ?legacy_versions,
-                "reset legacy transaction event migration history"
-            );
-            anyhow::Ok(())
-        }
-        .await;
-        // Keep the migration's own error. A failed unlock is harmless: this
-        // pool closes when migrate returns, which ends the session and releases
-        // the lock.
-        if let Err(err) = conn.unlock().await {
-            warn!(error = %err, "failed to release transaction event migration lock");
-        }
-        result
+        TRANSACTION_EVENT_MIGRATOR.run(&pool).await?;
+        Ok(())
     }
 
     /// Creates a sink from an existing ingest pool. Retention uses the same pool.
@@ -716,15 +671,14 @@ impl PgTransactionEventSink {
     pub async fn check_schema_ready(
         &self,
     ) -> std::result::Result<(), TransactionEventSchemaReadinessError> {
-        let (migration_table_exists, transaction_events_relation_exists): (bool, bool) =
-            sqlx::query_as(
-                "SELECT \
+        let (migration_table_exists, relation_exists): (bool, bool) = sqlx::query_as(
+            "SELECT \
                     to_regclass('_sqlx_migrations') IS NOT NULL AS migration_table_exists, \
-                    to_regclass('public.transaction_events') IS NOT NULL AS transaction_events_relation_exists",
-            )
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|source| TransactionEventSchemaReadinessError::QueryFailed { source })?;
+                    to_regclass('public.transaction_events_v2') IS NOT NULL AS relation_exists",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|source| TransactionEventSchemaReadinessError::QueryFailed { source })?;
 
         if !migration_table_exists {
             return Err(TransactionEventSchemaReadinessError::MigrationTableMissing);
@@ -739,8 +693,6 @@ impl PgTransactionEventSink {
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|source| TransactionEventSchemaReadinessError::QueryFailed { source })?;
-        // The checksum distinguishes the partitioned baseline from the legacy
-        // migration that also recorded version 1.
         let applied = applied.is_some_and(|(success, checksum)| {
             success && checksum == required_migration.checksum.as_ref()
         });
@@ -750,15 +702,18 @@ impl PgTransactionEventSink {
             });
         }
 
-        if !transaction_events_relation_exists {
+        if !relation_exists {
             return Err(TransactionEventSchemaReadinessError::TransactionEventsRelationMissing);
         }
 
-        sqlx::query("SELECT 1 FROM transaction_events LIMIT 0").execute(&self.pool).await.map_err(
-            |source| TransactionEventSchemaReadinessError::TransactionEventsRelationUnavailable {
-                source,
-            },
-        )?;
+        sqlx::query("SELECT 1 FROM transaction_events_v2 LIMIT 0")
+            .execute(&self.pool)
+            .await
+            .map_err(|source| {
+                TransactionEventSchemaReadinessError::TransactionEventsRelationUnavailable {
+                    source,
+                }
+            })?;
 
         Ok(())
     }
@@ -904,55 +859,53 @@ impl PgTransactionEventSink {
         outcome
     }
 
-    /// Checks optional transaction event storage readiness.
-    pub async fn check_optional_schema_ready(
-        sink: Option<&Self>,
-    ) -> std::result::Result<(), TransactionEventSchemaReadinessError> {
-        match sink {
-            Some(sink) => sink.check_schema_ready().await,
-            None => Ok(()),
-        }
-    }
-
     async fn insert_event_chunk(
         &self,
         events: &[TransactionEvent],
     ) -> std::result::Result<HashSet<String>, TransactionEventStorageError> {
-        let mut ordered: Vec<&TransactionEvent> = events.iter().collect();
-        ordered.sort_unstable_by(|lhs, rhs| lhs.event_id.cmp(&rhs.event_id));
-        let block_numbers: Vec<Option<i64>> = ordered
+        let mut ordered = events
             .iter()
             .map(|event| {
-                event
+                let event_hour = event
+                    .event_time
+                    .duration_trunc(Duration::hours(1))
+                    .map_err(|err| TransactionEventStorageError::new(err.into()))?;
+                let retention_class =
+                    TransactionEventRetentionClass::for_event_type(event.event_type).as_str();
+                let block_number = event
                     .block_number
                     .map(i64::try_from)
                     .transpose()
-                    .map_err(|err| TransactionEventStorageError::new(err.into()))
+                    .map_err(|err| TransactionEventStorageError::new(err.into()))?;
+                Ok((event_hour, retention_class, event, block_number))
             })
-            .collect::<std::result::Result<_, _>>()?;
+            .collect::<std::result::Result<Vec<_>, TransactionEventStorageError>>()?;
+        // Primary key order gives overlapping batches the same lock order, so
+        // they cannot deadlock on each other's keys.
+        ordered.sort_unstable_by(|lhs, rhs| {
+            (lhs.0, lhs.1, &lhs.2.event_id).cmp(&(rhs.0, rhs.1, &rhs.2.event_id))
+        });
         let mut attempt = 1u32;
         loop {
             let mut query_builder = QueryBuilder::new(
-                "INSERT INTO transaction_events \
-                 (event_id, schema_version, event_time, event_date, retention_class, producer, \
+                "INSERT INTO transaction_events_v2 \
+                 (event_id, schema_version, event_time, event_hour, retention_class, producer, \
                   event_type, network, tx_hash, block_hash, block_number, payload_id, request_id, \
                   data) ",
             );
             query_builder.push_values(
-                ordered.iter().copied().zip(block_numbers.iter().copied()),
-                |mut row, (event, block_number)| {
+                ordered.iter().copied(),
+                |mut row, (event_hour, retention_class, event, block_number)| {
                     let tx_hash = event.tx_hash.map(|hash| format!("{hash:#x}"));
                     let block_hash = event.block_hash.map(|hash| format!("{hash:#x}"));
                     let producer = event.producer.to_string();
                     let event_type = event.event_type.to_string();
-                    let retention_class =
-                        TransactionEventRetentionClass::for_event_type(event.event_type).as_str();
                     let data = Value::Object(event.data.clone());
 
                     row.push_bind(&event.event_id)
                         .push_bind(&event.schema_version)
                         .push_bind(event.event_time)
-                        .push_bind(event.event_time.date_naive())
+                        .push_bind(event_hour)
                         .push_bind(retention_class)
                         .push_bind(producer)
                         .push_bind(event_type)
@@ -965,10 +918,10 @@ impl PgTransactionEventSink {
                         .push_bind(data);
                 },
             );
-            // The partitioned primary key adds retention_class and event_date:
-            // retries and same-day re-emissions of an event_id still conflict.
+            // The partitioned primary key adds event_hour and retention_class:
+            // retries and same-hour re-emissions of an event_id still conflict.
             query_builder.push(
-                " ON CONFLICT (event_id, retention_class, event_date) DO NOTHING RETURNING event_id",
+                " ON CONFLICT (event_hour, retention_class, event_id) DO NOTHING RETURNING event_id",
             );
 
             let result = async {
@@ -1011,19 +964,11 @@ impl PgTransactionEventSink {
         limit: i64,
     ) -> Result<Vec<TransactionEventRecord>> {
         let limit = normalize_limit(limit);
-        let lookup_keys = hex_lookup_keys(tx_hash);
-        let rows = sqlx::query(
-            "SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
-             network, tx_hash, block_hash, block_number, payload_id, request_id, data \
-             FROM transaction_events \
-             WHERE tx_hash = ANY($1) \
-             ORDER BY event_time ASC, ingested_at ASC, event_id ASC \
-             LIMIT $2",
-        )
-        .bind(&lookup_keys)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = sqlx::query(&oldest_first_sql("tx_hash = $1"))
+            .bind(canonical_hash_key(tx_hash))
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
         rows.into_iter().map(record_from_row).collect()
     }
 
@@ -1035,18 +980,11 @@ impl PgTransactionEventSink {
     ) -> Result<Vec<TransactionEventRecord>> {
         let block_number = i64::try_from(block_number)?;
         let limit = normalize_limit(limit);
-        let rows = sqlx::query(
-            "SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
-             network, tx_hash, block_hash, block_number, payload_id, request_id, data \
-             FROM transaction_events \
-             WHERE block_number = $1 \
-             ORDER BY event_time ASC, ingested_at ASC, event_id ASC \
-             LIMIT $2",
-        )
-        .bind(block_number)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = sqlx::query(&oldest_first_sql("block_number = $1"))
+            .bind(block_number)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
         rows.into_iter().map(record_from_row).collect()
     }
 
@@ -1057,19 +995,11 @@ impl PgTransactionEventSink {
         limit: i64,
     ) -> Result<Vec<TransactionEventRecord>> {
         let limit = normalize_limit(limit);
-        let lookup_keys = hex_lookup_keys(block_hash);
-        let rows = sqlx::query(
-            "SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
-             network, tx_hash, block_hash, block_number, payload_id, request_id, data \
-             FROM transaction_events \
-             WHERE block_hash = ANY($1) \
-             ORDER BY event_time ASC, ingested_at ASC, event_id ASC \
-             LIMIT $2",
-        )
-        .bind(&lookup_keys)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = sqlx::query(&oldest_first_sql("block_hash = $1"))
+            .bind(canonical_hash_key(block_hash))
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
         rows.into_iter().map(record_from_row).collect()
     }
 
@@ -1080,27 +1010,21 @@ impl PgTransactionEventSink {
         limit: i64,
     ) -> Result<Vec<TransactionEventRecord>> {
         let limit = normalize_limit(limit);
-        let rows = sqlx::query(
+        let rows = sqlx::query(&format!(
             "WITH bundle_events AS ( \
-                SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
-                network, tx_hash, block_hash, block_number, payload_id, request_id, data \
-                FROM transaction_events \
+                SELECT {READ_COLUMNS} FROM transaction_events_v2 \
                 WHERE data ? 'bundle_hash' AND data->>'bundle_hash' = $1 \
                 UNION ALL \
-                SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
-                network, tx_hash, block_hash, block_number, payload_id, request_id, data \
-                FROM transaction_events \
+                SELECT {READ_COLUMNS} FROM transaction_events_v2 \
                 WHERE data ? 'bundle_id' AND data->>'bundle_id' = $1 \
              ), deduped AS ( \
                 SELECT DISTINCT ON (event_id) * FROM bundle_events \
                 ORDER BY event_id, event_time ASC, ingested_at ASC \
              ) \
-             SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
-             network, tx_hash, block_hash, block_number, payload_id, request_id, data \
-             FROM deduped \
+             SELECT * FROM deduped \
              ORDER BY event_time ASC, ingested_at ASC, event_id ASC \
              LIMIT $2",
-        )
+        ))
         .bind(bundle_key)
         .bind(limit)
         .fetch_all(&self.pool)
@@ -1111,7 +1035,7 @@ impl PgTransactionEventSink {
     /// Returns rejected transaction events sorted newest first for list views.
     ///
     /// Optional filters are omitted from SQL when unset so Postgres can use
-    /// `transaction_events_rejected_event_time_idx` for a bounded `LIMIT`
+    /// `transaction_events_v2_rejected_event_time_idx` for a bounded `LIMIT`
     /// list. The previous `($1 IS NULL OR ...)` shape forced a heap scan on
     /// large journals and missed the Internal Explorer 3s timeout. `event_id`
     /// is a tie-break only; `ingested_at` is not in `ORDER BY` so the planner
@@ -1124,12 +1048,9 @@ impl PgTransactionEventSink {
         let from_block = query.from_block.map(i64::try_from).transpose()?;
         let to_block = query.to_block.map(i64::try_from).transpose()?;
 
-        let mut query_builder = QueryBuilder::new(
-            "SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
-             network, tx_hash, block_hash, block_number, payload_id, request_id, data \
-             FROM transaction_events \
-             WHERE event_type IN ('SIMULATION_FAILED', 'BUILDER_REJECTED', 'BUILDER_EXPIRED')",
-        );
+        let mut query_builder = QueryBuilder::new(format!(
+            "SELECT {READ_COLUMNS} FROM transaction_events_v2 WHERE {REJECTED_EVENT_TYPES_SQL}"
+        ));
         if let Some(from_block) = from_block {
             query_builder.push(" AND block_number >= ").push_bind(from_block);
         }
@@ -1152,44 +1073,35 @@ impl PgTransactionEventSink {
     }
 }
 
+/// Columns read back into a [`TransactionEventRecord`].
+const READ_COLUMNS: &str = "event_id, schema_version, event_time, ingested_at, producer, \
+     event_type, network, tx_hash, block_hash, block_number, payload_id, request_id, data";
+
+/// Event types served by the rejected-events list.
+const REJECTED_EVENT_TYPES_SQL: &str =
+    "event_type IN ('SIMULATION_FAILED', 'BUILDER_REJECTED', 'BUILDER_EXPIRED')";
+
+/// Oldest-first rows matching `filter`, limited by the `$2` bind.
+fn oldest_first_sql(filter: &str) -> String {
+    format!(
+        "SELECT {READ_COLUMNS} FROM transaction_events_v2 WHERE {filter} \
+         ORDER BY event_time ASC, ingested_at ASC, event_id ASC LIMIT $2"
+    )
+}
+
 fn normalize_limit(limit: i64) -> i64 {
     limit.clamp(1, MAX_TRANSACTION_EVENT_QUERY_LIMIT)
 }
 
-/// Lookup keys for hex join columns stored as text.
-///
-/// Ingest writes `0x` + lowercase via `{hash:#x}`. Readers may send mixed
-/// case, missing `0x`, or the original string; exact `ANY()` matches keep
-/// the btree index while covering those variants.
-fn hex_lookup_keys(value: &str) -> Vec<String> {
+/// The stored v2 form of a hash (`0x` and 64 lowercase hex digits), or `None`
+/// when `value` is not 64 hex digits with an optional `0x` prefix in any case.
+fn canonical_hash_key(value: &str) -> Option<String> {
     let trimmed = value.trim();
-    let mut keys = Vec::with_capacity(5);
-    if !trimmed.is_empty() {
-        keys.push(trimmed.to_string());
-    }
-
     let hex = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")).unwrap_or(trimmed);
-    if hex.is_empty() || !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        return keys;
+    if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
     }
-
-    let prefixed = format!("0x{}", hex.to_ascii_lowercase());
-    if !keys.iter().any(|key| key == &prefixed) {
-        keys.push(prefixed);
-    }
-    let prefixed_upper = format!("0x{}", hex.to_ascii_uppercase());
-    if !keys.iter().any(|key| key == &prefixed_upper) {
-        keys.push(prefixed_upper);
-    }
-    let bare = hex.to_ascii_lowercase();
-    if !keys.iter().any(|key| key == &bare) {
-        keys.push(bare);
-    }
-    let bare_upper = hex.to_ascii_uppercase();
-    if !keys.iter().any(|key| key == &bare_upper) {
-        keys.push(bare_upper);
-    }
-    keys
+    Some(format!("0x{}", hex.to_ascii_lowercase()))
 }
 
 fn record_from_row(row: sqlx::postgres::PgRow) -> Result<TransactionEventRecord> {
@@ -1257,38 +1169,6 @@ fn persist_retry_sqlstate(code: &str) -> Option<&'static str> {
     }
 }
 
-/// Versions of the recorded pre-partition migrations 001-004.
-///
-/// A row counts only if both its version and checksum match a legacy
-/// migration. A database that records legacy migrations alongside anything
-/// else fails, so the reset never deletes history it does not recognize.
-async fn legacy_transaction_event_migration_versions(conn: &mut PgConnection) -> Result<Vec<i64>> {
-    let migrations_table_exists: bool =
-        sqlx::query_scalar("SELECT to_regclass('_sqlx_migrations') IS NOT NULL")
-            .fetch_one(&mut *conn)
-            .await?;
-    if !migrations_table_exists {
-        return Ok(Vec::new());
-    }
-
-    let applied: Vec<(i64, Vec<u8>)> =
-        sqlx::query_as("SELECT version, checksum FROM _sqlx_migrations ORDER BY version")
-            .fetch_all(&mut *conn)
-            .await?;
-    let (legacy, other): (Vec<_>, Vec<_>) = applied.into_iter().partition(|(version, checksum)| {
-        LEGACY_TRANSACTION_EVENT_MIGRATOR.iter().any(|migration| {
-            migration.version == *version && migration.checksum.as_ref() == checksum.as_slice()
-        })
-    });
-    let legacy: Vec<i64> = legacy.into_iter().map(|(version, _)| version).collect();
-    let other: Vec<i64> = other.into_iter().map(|(version, _)| version).collect();
-    anyhow::ensure!(
-        legacy.is_empty() || other.is_empty(),
-        "database records legacy transaction event migrations {legacy:?} alongside unrecognized migrations {other:?}; refusing to reset migration history"
-    );
-    Ok(legacy)
-}
-
 fn is_lock_timeout(err: &sqlx::Error) -> bool {
     matches!(err, sqlx::Error::Database(database) if database.code().as_deref() == Some("55P03"))
 }
@@ -1298,6 +1178,9 @@ const fn utc_midnight(day: NaiveDate) -> DateTime<Utc> {
     day.and_time(chrono::NaiveTime::MIN).and_utc()
 }
 
+/// Prefix of the v2 class and day partition table names.
+const PARTITION_TABLE_PREFIX: &str = "transaction_events_v2_";
+
 /// One UTC day partition of one retention class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct DayPartition {
@@ -1306,13 +1189,14 @@ struct DayPartition {
 }
 
 impl DayPartition {
-    /// Table name used by the partition functions in the baseline migration.
+    /// Table name used by the partition functions.
     fn table_name(self) -> String {
-        format!("transaction_events_{}_{}", self.class.as_str(), self.day.format("%Y%m%d"))
+        format!("{PARTITION_TABLE_PREFIX}{}_{}", self.class.as_str(), self.day.format("%Y%m%d"))
     }
 
     fn from_table_name(name: &str) -> Option<Self> {
-        let (class, day) = name.strip_prefix("transaction_events_")?.split_once('_')?;
+        let rest = name.strip_prefix(PARTITION_TABLE_PREFIX)?;
+        let (class, day) = rest.split_once('_')?;
         if day.len() != 8 {
             return None;
         }
@@ -1419,7 +1303,7 @@ async fn list_day_partitions(conn: &mut sqlx::PgConnection) -> Result<Vec<Existi
          JOIN pg_namespace n ON n.oid = c.relnamespace \
          WHERE n.nspname = 'public' \
            AND c.relkind = 'r' \
-           AND c.relname ~ '^transaction_events_(hot|warm|cold)_[0-9]{8}$'",
+           AND c.relname ~ '^transaction_events_v2_(hot|warm|cold)_[0-9]{8}$'",
     )
     .fetch_all(conn)
     .await?;
@@ -1450,10 +1334,10 @@ impl PartitionDdl {
 
     const fn sql(self) -> &'static str {
         match self {
-            Self::Create => "SELECT public.transaction_events_create_partition($1, $2)",
-            Self::Detach => "SELECT public.transaction_events_detach_partition($1, $2)",
+            Self::Create => "SELECT public.transaction_events_v2_create_partition($1, $2)",
+            Self::Detach => "SELECT public.transaction_events_v2_detach_partition($1, $2)",
             Self::DropDetached => {
-                "SELECT public.transaction_events_drop_detached_partition($1, $2)"
+                "SELECT public.transaction_events_v2_drop_detached_partition($1, $2)"
             }
         }
     }
@@ -1862,9 +1746,14 @@ fn response_from_results(
 mod tests {
     use std::sync::Mutex;
 
-    use axum::http::StatusCode;
+    use axum::{
+        Router,
+        body::{Body, to_bytes},
+        http::{Request, StatusCode},
+    };
     use chrono::Utc;
     use serde_json::{Map, json};
+    use tower::ServiceExt;
 
     use super::*;
 
@@ -1932,6 +1821,20 @@ mod tests {
         DayPartition { class, day: day(value) }
     }
 
+    #[derive(Debug, Default)]
+    struct FailingSink;
+
+    #[async_trait]
+    impl TransactionEventSink for FailingSink {
+        async fn insert_events(
+            &self,
+            _events: &[TransactionEvent],
+        ) -> std::result::Result<TransactionEventInsertOutcome, TransactionEventStorageError>
+        {
+            Err(TransactionEventStorageError::new(anyhow::anyhow!("database unavailable")))
+        }
+    }
+
     fn config() -> TransactionEventIngestConfig {
         TransactionEventIngestConfig {
             path: DEFAULT_TRANSACTION_EVENT_BATCH_PATH.to_string(),
@@ -1939,6 +1842,16 @@ mod tests {
             max_event_bytes: 4096,
             max_data_bytes: 1024,
             max_request_bytes: 16 * 1024,
+        }
+    }
+
+    fn default_config() -> TransactionEventIngestConfig {
+        TransactionEventIngestConfig {
+            path: DEFAULT_TRANSACTION_EVENT_BATCH_PATH.to_string(),
+            max_batch_size: DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE,
+            max_event_bytes: DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES,
+            max_data_bytes: DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
+            max_request_bytes: DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
         }
     }
 
@@ -1972,6 +1885,23 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         Bytes::from(body)
+    }
+
+    fn boundary_events(prefix: &str, count: usize) -> Bytes {
+        ndjson((0..count).map(|index| event(&format!("{prefix}-{index}"))).collect::<Vec<_>>())
+    }
+
+    async fn post_ndjson(app: Router, body: Bytes) -> (StatusCode, Value) {
+        let request = Request::builder()
+            .method("POST")
+            .uri(DEFAULT_TRANSACTION_EVENT_BATCH_PATH)
+            .header("content-type", "application/x-ndjson")
+            .body(Body::from(body))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        (status, serde_json::from_slice(&body).unwrap())
     }
 
     fn raw_event(value: Value) -> RawTransactionEvent {
@@ -2123,14 +2053,18 @@ mod tests {
     #[test]
     fn round_trips_day_partition_table_names() {
         let hot = partition(TransactionEventRetentionClass::Hot, "2026-09-23");
-        assert_eq!(hot.table_name(), "transaction_events_hot_20260923");
+        assert_eq!(hot.table_name(), "transaction_events_v2_hot_20260923");
         assert_eq!(DayPartition::from_table_name(&hot.table_name()), Some(hot));
         assert_eq!(hot.end(), at("2026-09-24T00:00:00Z"));
 
         for name in [
             "transaction_events",
+            "transaction_events_cold_20260923",
             "transaction_events_hot",
+            "transaction_events_v2_hot",
             "transaction_events_tepid_20260923",
+            "transaction_events_v2_tepid_20260923",
+            "transaction_events_v3_hot_20260923",
             "transaction_events_hot_2026092",
             "transaction_events_hot_20261341",
         ] {
@@ -2424,23 +2358,133 @@ mod tests {
     }
 
     #[test]
-    fn hex_lookup_keys_cover_prefixed_mixed_case_and_bare() {
-        let keys = hex_lookup_keys("0xAa");
-        assert_eq!(
-            keys,
-            vec![
-                "0xAa".to_string(),
-                "0xaa".to_string(),
-                "0xAA".to_string(),
-                "aa".to_string(),
-                "AA".to_string(),
-            ]
-        );
+    fn canonical_hash_key_accept_32_byte_hex_in_any_case() {
+        let lower = format!("0x{}", "ab".repeat(32));
+        let expected = Some(lower.clone());
+        assert_eq!(canonical_hash_key(&lower), expected);
+        assert_eq!(canonical_hash_key(&lower.to_ascii_uppercase()), expected);
+        assert_eq!(canonical_hash_key(&format!("  {}  ", "Ab".repeat(32))), expected);
     }
 
     #[test]
-    fn hex_lookup_keys_keep_non_hex_input_as_exact_match() {
-        assert_eq!(hex_lookup_keys("not-a-hash"), vec!["not-a-hash".to_string()]);
-        assert!(hex_lookup_keys("   ").is_empty());
+    fn canonical_hash_key_reject_non_hash_input() {
+        for value in [
+            String::new(),
+            "0x".to_string(),
+            "not-a-hash".to_string(),
+            format!("0x{}", "ab".repeat(31)),
+            format!("0x{}", "ab".repeat(33)),
+            format!("0x+{}", "a".repeat(63)),
+            format!("0x{}é", "a".repeat(62)),
+        ] {
+            assert_eq!(canonical_hash_key(&value), None, "{value}");
+        }
+    }
+
+    #[test]
+    fn default_batch_matches_vector_max_events() {
+        // Vector's HTTP sink is configured with `max_events: 1000`; the endpoint
+        // default must accept a full Vector batch instead of rejecting it with
+        // HTTP 400 (which Vector permanently drops).
+        assert_eq!(DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, 1000);
+    }
+
+    #[test]
+    fn default_batch_fits_in_single_insert_statement() {
+        // Each row binds 12 parameters and Postgres allows 65,535 per statement,
+        // so a full HTTP batch inserts in one statement without chunking.
+        const {
+            assert!(DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE * 12 <= 65_535);
+            assert!(
+                DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE <= MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn accepts_exactly_default_max_batch_events() {
+        let sink = Arc::new(FakeSink::default());
+        let state_sink: Arc<dyn TransactionEventSink> = Arc::<FakeSink>::clone(&sink);
+        let state = TransactionEventIngestState { sink: state_sink, config: default_config() };
+
+        let (status, Json(response)) = ingest_transaction_event_batch(
+            &state,
+            boundary_events("boundary", DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(response.status, TransactionEventBatchStatus::Accepted);
+        assert_eq!(response.accepted, DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE);
+        assert_eq!(response.duplicate, 0);
+        assert_eq!(response.rejected, 0);
+        assert_eq!(sink.inserted.lock().unwrap().len(), DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE);
+    }
+
+    #[tokio::test]
+    async fn rejects_one_event_over_default_max_batch() {
+        let sink = Arc::new(FakeSink::default());
+        let state_sink: Arc<dyn TransactionEventSink> = Arc::<FakeSink>::clone(&sink);
+        let state = TransactionEventIngestState { sink: state_sink, config: default_config() };
+
+        let (status, Json(response)) = ingest_transaction_event_batch(
+            &state,
+            boundary_events("overflow", DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE + 1),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(response.status, TransactionEventBatchStatus::Rejected);
+        assert_eq!(response.results[0].reason.as_deref(), Some("batch size exceeds maximum 1000"));
+        assert!(sink.inserted.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn endpoint_accepts_1000_events() {
+        let app = default_config().into_router(Arc::new(FakeSink::default()));
+
+        let (status, json) =
+            post_ndjson(app, boundary_events("endpoint", DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE))
+                .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["status"], "accepted");
+        assert_eq!(json["accepted"], 1000);
+        assert_eq!(json["duplicate"], 0);
+        assert_eq!(json["rejected"], 0);
+    }
+
+    #[tokio::test]
+    async fn endpoint_rejects_1001_events() {
+        let app = default_config().into_router(Arc::new(FakeSink::default()));
+
+        let (status, json) = post_ndjson(
+            app,
+            boundary_events("endpoint-overflow", DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE + 1),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(json["status"], "rejected");
+        assert_eq!(json["results"][0]["reason"], "batch size exceeds maximum 1000");
+    }
+
+    #[tokio::test]
+    async fn database_failure_returns_retryable_503() {
+        let state =
+            TransactionEventIngestState { sink: Arc::new(FailingSink), config: default_config() };
+
+        let (status, Json(response)) =
+            ingest_transaction_event_batch(&state, boundary_events("db-failure", 3)).await;
+
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.status, TransactionEventBatchStatus::Rejected);
+        assert_eq!(response.accepted, 0);
+        assert_eq!(response.results.len(), 1);
+        assert_eq!(response.results[0].status, TransactionEventItemStatus::Rejected);
+        assert_eq!(
+            response.results[0].reason.as_deref(),
+            Some("database unavailable; retry batch")
+        );
     }
 }

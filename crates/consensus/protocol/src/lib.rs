@@ -10,9 +10,6 @@
 
 extern crate alloc;
 
-/// The system transaction gas limit post-Regolith.
-pub(crate) const REGOLITH_SYSTEM_TX_GAS: u64 = 1_000_000;
-
 mod batch;
 pub use batch::{
     Batch, BatchDecodingError, BatchDropReason, BatchEncodingError, BatchReader, BatchReaderError,
@@ -49,19 +46,14 @@ mod channel;
 pub use channel::{Channel, ChannelError, ChannelId};
 
 mod deposits;
-pub use deposits::{DepositDecodeError, Deposits};
-
-mod base_time;
-pub use base_time::{
+pub use base_common_consensus::{
     BaseTimeMetadataError, BaseTimeScheduleError, BaseTimeUpdateDecodeError, BaseTimeUpdateError,
     BaseTimeUpdateTx,
 };
+pub use deposits::{DepositDecodeError, Deposits};
 
 mod timing;
-pub use timing::DEFAULT_SEAL_OFFSET;
-
-mod info;
-pub use info::{
+pub use base_common_consensus::{
     BlockInfoError, DecodeError, L1BlockInfoBedrock, L1BlockInfoBedrockBase,
     L1BlockInfoBedrockBaseFields, L1BlockInfoBedrockFields, L1BlockInfoBedrockOnlyFields,
     L1BlockInfoEcotone, L1BlockInfoEcotoneBase, L1BlockInfoEcotoneBaseFields,
@@ -69,6 +61,7 @@ pub use info::{
     L1BlockInfoIsthmusBaseFields, L1BlockInfoIsthmusFields, L1BlockInfoJovian,
     L1BlockInfoJovianBaseFields, L1BlockInfoJovianFields, L1BlockInfoTx,
 };
+pub use timing::DEFAULT_SEAL_OFFSET;
 
 mod output_root;
 pub use output_root::OutputRoot;

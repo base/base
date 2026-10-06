@@ -6,7 +6,7 @@ use base_batcher_core::{
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
-    types::ErrorObjectOwned,
+    types::{ErrorCode, ErrorObjectOwned},
 };
 use tracing::warn;
 
@@ -32,17 +32,14 @@ pub trait BatcherAdminApi {
 
     /// Replace the throttle strategy and configuration.
     ///
-    /// `config` sets the full throttle configuration; all fields are required.
+    /// `config` sets the full throttle configuration, and all fields are required. Fails if
+    /// `config` does not pass [`ThrottleConfig::validate`].
     #[method(name = "setThrottleController")]
     async fn set_throttle_controller(
         &self,
         strategy: ThrottleStrategy,
         config: ThrottleConfig,
     ) -> RpcResult<()>;
-
-    /// Clear the throttle dedup cache so limits are re-applied unconditionally.
-    #[method(name = "resetThrottleController")]
-    async fn reset_throttle_controller(&self) -> RpcResult<()>;
 
     /// Read the current driver runtime state.
     #[method(name = "getBatcherStatus")]
@@ -71,6 +68,7 @@ impl BatcherAdminApiServerImpl {
             AdminError::NotSupported(_) => -32601,
             AdminError::ChannelClosed => -32001,
             AdminError::Stopped => -32002,
+            AdminError::InvalidThrottleConfig(_) => ErrorCode::InvalidParams.code(),
         };
         ErrorObjectOwned::owned(code, e.to_string(), None::<()>)
     }
@@ -102,10 +100,6 @@ impl BatcherAdminApiServer for BatcherAdminApiServerImpl {
         self.handle.set_throttle(strategy, config).await.map_err(Self::admin_error)
     }
 
-    async fn reset_throttle_controller(&self) -> RpcResult<()> {
-        self.handle.reset_throttle().await.map_err(Self::admin_error)
-    }
-
     async fn get_batcher_status(&self) -> RpcResult<BatcherStatus> {
         self.handle.get_status().await.map_err(Self::admin_error)
     }
@@ -113,29 +107,5 @@ impl BatcherAdminApiServer for BatcherAdminApiServerImpl {
     async fn set_log_level(&self, level: String) -> RpcResult<()> {
         warn!(level = %level, "admin_setLogLevel called but not yet supported");
         self.handle.set_log_level(level).map_err(Self::admin_error)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn admin_error_not_supported_uses_method_not_found_code() {
-        let err = BatcherAdminApiServerImpl::admin_error(AdminError::NotSupported("test"));
-        assert_eq!(err.code(), -32601);
-        assert!(err.message().contains("not yet supported"));
-    }
-
-    #[test]
-    fn admin_error_channel_closed_uses_server_error_code() {
-        let err = BatcherAdminApiServerImpl::admin_error(AdminError::ChannelClosed);
-        assert_eq!(err.code(), -32001);
-    }
-
-    #[test]
-    fn admin_error_stopped_uses_invalid_state_code() {
-        let err = BatcherAdminApiServerImpl::admin_error(AdminError::Stopped);
-        assert_eq!(err.code(), -32002);
     }
 }

@@ -116,25 +116,22 @@ impl Eip8130Constants {
     /// [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
     pub const DELEGATION_INDICATOR_SIZE: usize = 23;
 
-    /// `account_changes` entry type byte: account creation.
-    ///
-    /// Still decoded on this wire. A follow-up deletes `Create` rather than
-    /// gating it behind a feature.
-    pub const ACCOUNT_CHANGE_TYPE_CREATE: u8 = 0x00;
-
     /// `account_changes` entry type byte: code delegation.
     ///
-    /// The launch wire keeps delegation, so it takes the low `0x01` slot.
-    /// `Create` stays at `0x00` and `ConfigChange` moves to `0x02` until the
-    /// follow-ups that delete them.
+    /// Defined by the AA transaction type. `0x00` is reserved there and never
+    /// decodes.
     pub const ACCOUNT_CHANGE_TYPE_DELEGATION: u8 = 0x01;
 
-    /// `account_changes` entry type byte: a signed account-change batch
+    /// `account_changes` entry type byte: Keystore account creation.
+    ///
+    /// Assigned by the Keystore integration and only valid once Zenith is active.
+    pub const ACCOUNT_CHANGE_TYPE_CREATE: u8 = 0x02;
+
+    /// `account_changes` entry type byte: a Keystore signed account-change batch
     /// (`SignedAccountChanges`, applied via `applySignedAccountChanges`).
     ///
-    /// Still decoded on this wire. A follow-up deletes `ConfigChange` rather
-    /// than gating it behind a feature.
-    pub const ACCOUNT_CHANGE_TYPE_CONFIG: u8 = 0x02;
+    /// Assigned by the Keystore integration and only valid once Zenith is active.
+    pub const ACCOUNT_CHANGE_TYPE_CONFIG: u8 = 0x03;
 
     /// `SignedAccountChanges.channel` byte: the Local channel (binds
     /// `block.chainid`; carries epoch + sequence and the unsequenced JIT mode).
@@ -179,6 +176,12 @@ impl Eip8130Constants {
     /// `address(0)` is reserved as the empty / "no actor configured" sentinel and
     /// is never a valid authenticator selector; addresses below this are reserved.
     pub const K1_AUTHENTICATOR: Address = address!("0x0000000000000000000000000000000000000001");
+
+    /// In-memory `payer` value for open payer mode, encoded on the wire as the
+    /// single byte `0x00`. The payer is recovered from a raw 65-byte
+    /// `payer_auth` over the payer signature hash. A 20-byte zero address is
+    /// not a valid wire `payer`.
+    pub const OPEN_PAYER: Address = Address::ZERO;
 
     /// `AccountState.flags` bit that disables the implicit default-EOA path.
     ///
@@ -271,6 +274,38 @@ impl Eip8130Constants {
     /// invariant test in `base-common-precompiles`).
     pub const NONCE_FREE_MAX_EXPIRY_WINDOW: u64 = 20_000;
 
+    /// Seconds/milliseconds split for validity-bound normalization, from
+    /// EIP-8130's Timestamp Normalization section (`10^11`).
+    ///
+    /// `valid_after`/`valid_before` may be supplied in either Unix **seconds**
+    /// or Unix **milliseconds**; the denomination is auto-detected per value.
+    /// A non-zero bound *below* this threshold is interpreted as seconds and
+    /// scaled to milliseconds; a bound at or above it is already milliseconds.
+    /// The split sits far from every realistic timestamp for the next several
+    /// millennia (`10^11` seconds is year ~5138; `10^11` ms is March 1973), so a
+    /// seconds value (~`1.7e9`) is always below it and a milliseconds value
+    /// (~`1.7e12`) always at or above it.
+    pub const TIMESTAMP_MS_THRESHOLD: u64 = 100_000_000_000;
+
+    /// Normalizes a validity bound (`valid_after`/`valid_before`) to Unix
+    /// **milliseconds**, per EIP-8130 Timestamp Normalization.
+    ///
+    /// `0` is the "disabled" sentinel and passes through unchanged; a non-zero
+    /// value below [`Self::TIMESTAMP_MS_THRESHOLD`] is treated as seconds and
+    /// scaled by `1000` (saturating); a value at or above the threshold is
+    /// already milliseconds and passes through unchanged. This is the single
+    /// definition of the seconds↔ms rule shared by the mempool admission window
+    /// ([`crate::Eip8130Signed::validate_timestamp`]) and the consensus
+    /// inclusion window and nonce-free replay ring.
+    #[must_use]
+    pub const fn normalize_timestamp_ms(value: u64) -> u64 {
+        if value != 0 && value < Self::TIMESTAMP_MS_THRESHOLD {
+            value.saturating_mul(1_000)
+        } else {
+            value
+        }
+    }
+
     /// Maximum number of actor entries the mempool accepts in a single
     /// `Create.initial_actors` slice. Bounds per-transaction memory and CPU
     /// spent on duplicate-actor_id detection at admission time.
@@ -351,6 +386,26 @@ mod tests {
             Eip8130Constants::SCOPE_OPERATOR | Eip8130Constants::SCOPE_POLICY
         ));
         assert!(!Eip8130Constants::sender_is_policy_gated(0));
+    }
+
+    #[test]
+    fn normalize_timestamp_ms_detects_seconds_and_milliseconds() {
+        // Zero is the disabled sentinel: never scaled.
+        assert_eq!(Eip8130Constants::normalize_timestamp_ms(0), 0);
+        // Realistic seconds (~1.7e9) are below the threshold and scale to ms.
+        assert_eq!(Eip8130Constants::normalize_timestamp_ms(1_700_000_000), 1_700_000_000_000);
+        // Realistic milliseconds (~1.7e12) are at/above the threshold: unchanged.
+        assert_eq!(Eip8130Constants::normalize_timestamp_ms(1_700_000_000_000), 1_700_000_000_000);
+        // Threshold boundary: the value just below is seconds; the threshold
+        // itself is already milliseconds.
+        assert_eq!(
+            Eip8130Constants::normalize_timestamp_ms(Eip8130Constants::TIMESTAMP_MS_THRESHOLD - 1),
+            (Eip8130Constants::TIMESTAMP_MS_THRESHOLD - 1) * 1_000
+        );
+        assert_eq!(
+            Eip8130Constants::normalize_timestamp_ms(Eip8130Constants::TIMESTAMP_MS_THRESHOLD),
+            Eip8130Constants::TIMESTAMP_MS_THRESHOLD
+        );
     }
 
     #[test]

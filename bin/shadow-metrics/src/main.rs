@@ -22,11 +22,6 @@ use tracing::{error, info};
 base_cli_utils::define_log_args!("SHADOW_METRICS");
 base_cli_utils::define_metrics_args!("SHADOW_METRICS", 9003);
 
-#[derive(Debug, Clone)]
-struct HealthState {
-    store: Option<ShadowMetricsStore>,
-}
-
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -85,14 +80,17 @@ async fn main() -> Result<()> {
 async fn run_server(args: Args) -> Result<()> {
     let http_addr = SocketAddr::from(([0, 0, 0, 0], args.http_port));
 
-    let connection = match (&args.postgres_host, &args.postgres_password) {
-        (Some(host), Some(password)) => Some(PgConnectionParams {
-            host: host.clone(),
-            port: args.postgres_port,
-            database: args.postgres_database.clone(),
-            username: args.postgres_user.clone(),
-            password: password.clone(),
-        }),
+    let store = match (&args.postgres_host, &args.postgres_password) {
+        (Some(host), Some(password)) => {
+            let connection = PgConnectionParams {
+                host: host.clone(),
+                port: args.postgres_port,
+                database: args.postgres_database.clone(),
+                username: args.postgres_user.clone(),
+                password: password.clone(),
+            };
+            Some(ShadowMetricsStore::connect(&connection, args.postgres_max_connections).await?)
+        }
         // Connecting with an empty password would surface as an opaque Postgres auth
         // failure rather than a configuration error.
         (Some(_), None) => anyhow::bail!(
@@ -102,18 +100,11 @@ async fn run_server(args: Args) -> Result<()> {
         (None, _) => None,
     };
 
-    let store = match &connection {
-        Some(connection) => {
-            Some(ShadowMetricsStore::connect(connection, args.postgres_max_connections).await?)
-        }
-        None => None,
-    };
-
     info!(
         http_addr = %http_addr,
         metrics_addr = %args.metrics.addr,
         metrics_port = args.metrics.port,
-        postgres_enabled = connection.is_some(),
+        postgres_enabled = store.is_some(),
         "Starting shadow-metrics service"
     );
 
@@ -160,15 +151,15 @@ fn health_router(store: Option<ShadowMetricsStore>) -> Router {
     Router::new()
         .route("/healthz", get(healthz_handler))
         .route("/readyz", get(readyz_handler))
-        .with_state(HealthState { store })
+        .with_state(store)
 }
 
 async fn healthz_handler() -> &'static str {
     "ok\n"
 }
 
-async fn readyz_handler(State(state): State<HealthState>) -> Response {
-    let readiness = match &state.store {
+async fn readyz_handler(State(store): State<Option<ShadowMetricsStore>>) -> Response {
+    let readiness = match &store {
         Some(store) => store.check_schema_ready().await,
         None => Ok(()),
     };
@@ -187,9 +178,7 @@ mod tests {
 
     #[tokio::test]
     async fn readyz_is_ready_without_postgres() {
-        let state = HealthState { store: None };
-
-        let response = readyz_handler(State(state)).await;
+        let response = readyz_handler(State(None)).await;
 
         assert_eq!(response.status(), StatusCode::OK);
     }

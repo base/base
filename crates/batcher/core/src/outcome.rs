@@ -8,10 +8,6 @@ pub enum TxOutcome {
         /// The L1 block number at which the transaction was included.
         l1_block: u64,
     },
-    /// Transaction failed or timed out; frames should be requeued.
+    /// The transaction manager returned an error for the transaction, so its frames are requeued.
     Failed,
-    /// The txpool rejected the transaction because the nonce slot is already
-    /// reserved by a stuck transaction. Frames are requeued and no new
-    /// submissions are attempted until the blockage is cleared.
-    TxpoolBlocked,
 }

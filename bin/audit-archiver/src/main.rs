@@ -4,18 +4,15 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use audit_archiver_lib::{
-    AuditArchiver, AuditArchiverApiServer, AuditArchiverRpc, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
+    AuditArchiverApiServer, AuditArchiverRpc, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
     DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS, DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS,
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
     DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
     DEFAULT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS,
     DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS,
-    DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, Metrics, PgTransactionEventSink, RpcEventReader,
-    S3EventReaderWriter, TransactionEventIngestConfig, TransactionEventRetentionConfig,
+    DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, Metrics, PgTransactionEventSink,
+    TransactionEventIngestConfig, TransactionEventRetentionConfig,
 };
-use aws_config::{BehaviorVersion, Region};
-use aws_credential_types::Credentials;
-use aws_sdk_s3::{Client as S3Client, config::Builder as S3ConfigBuilder};
 use axum::{
     BoxError,
     error_handling::HandleErrorLayer,
@@ -27,10 +24,8 @@ use axum::{
 use base_cli_utils::LogConfig;
 use clap::{Parser, ValueEnum};
 use jsonrpsee::server::{ServerBuilder, stop_channel};
-use moka::{policy::EvictionPolicy, sync::Cache};
 use tokio::{
     net::TcpListener,
-    sync::mpsc,
     time::{MissedTickBehavior, interval},
 };
 use tower::ServiceBuilder;
@@ -38,12 +33,6 @@ use tracing::{error, info};
 
 base_cli_utils::define_log_args!("TIPS_AUDIT");
 base_cli_utils::define_metrics_args!("TIPS_AUDIT", 9002);
-
-#[derive(Debug, Clone, ValueEnum)]
-enum S3ConfigType {
-    Aws,
-    Manual,
-}
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum Command {
@@ -62,7 +51,7 @@ enum MigrationDirection {
 
 #[derive(Debug, Clone)]
 struct HealthState {
-    transaction_event_sink: Option<PgTransactionEventSink>,
+    transaction_event_sink: PgTransactionEventSink,
 }
 
 #[derive(Parser, Debug)]
@@ -74,53 +63,17 @@ struct Args {
     #[arg(value_enum)]
     migration_direction: Option<MigrationDirection>,
 
-    #[arg(long, env = "TIPS_AUDIT_S3_BUCKET")]
-    s3_bucket: Option<String>,
-
     #[command(flatten)]
     log: LogArgs,
 
     #[command(flatten)]
     metrics: MetricsArgs,
 
-    #[arg(long, env = "TIPS_AUDIT_S3_CONFIG_TYPE", default_value = "aws")]
-    s3_config_type: S3ConfigType,
-
-    #[arg(long, env = "TIPS_AUDIT_S3_ENDPOINT")]
-    s3_endpoint: Option<String>,
-
-    #[arg(long, env = "TIPS_AUDIT_S3_REGION", default_value = "us-east-1")]
-    s3_region: String,
-
-    #[arg(long, env = "TIPS_AUDIT_S3_ACCESS_KEY_ID")]
-    s3_access_key_id: Option<String>,
-
-    #[arg(long, env = "TIPS_AUDIT_S3_SECRET_ACCESS_KEY")]
-    s3_secret_access_key: Option<String>,
-
-    #[arg(long, env = "TIPS_AUDIT_WORKER_POOL_SIZE", default_value = "80")]
-    worker_pool_size: usize,
-
-    #[arg(long, env = "TIPS_AUDIT_CHANNEL_BUFFER_SIZE", default_value = "1024")]
-    channel_buffer_size: usize,
-
     #[arg(long, env = "TIPS_AUDIT_RPC_PORT", default_value = "9100")]
     rpc_port: u16,
 
-    #[arg(long, env = "TIPS_AUDIT_NOOP_ARCHIVE", default_value = "false")]
-    noop_archive: bool,
-
-    /// Maximum number of dedup-cache entries (event-key → ()). Cross-pod dedup
-    /// is enforced at the S3 layer; this cache short-circuits in-pod dupes.
-    #[arg(long, env = "TIPS_AUDIT_RPC_CACHE_CAPACITY", default_value = "100000")]
-    rpc_cache_capacity: u64,
-
-    /// Time-to-live in seconds for entries in the dedup cache.
-    #[arg(long, env = "TIPS_AUDIT_RPC_CACHE_TTL_SECS", default_value = "300")]
-    rpc_cache_ttl_secs: u64,
-
-    /// Postgres connection URL for transaction observability events. When unset,
-    /// the HTTP transaction-event ingest endpoint is disabled.
+    /// Postgres connection URL for transaction observability events. Required
+    /// when serving HTTP ingest and RPC queries.
     #[arg(long, env = "TIPS_AUDIT_POSTGRES_URL")]
     postgres_url: Option<String>,
 
@@ -258,10 +211,10 @@ async fn run_migrations(args: &Args) -> Result<()> {
 }
 
 async fn run_server(args: Args) -> Result<()> {
-    let s3_bucket = args
-        .s3_bucket
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("TIPS_AUDIT_S3_BUCKET must be set for serve"))?;
+    let postgres_url = args
+        .postgres_url
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("TIPS_AUDIT_POSTGRES_URL must be set for serve"))?;
 
     let retention_config = TransactionEventRetentionConfig {
         hot_days: args.transaction_event_hot_retention_days,
@@ -274,51 +227,26 @@ async fn run_server(args: Args) -> Result<()> {
     let retention_interval = Duration::from_secs(retention_config.interval_secs);
 
     info!(
-        s3_bucket = %s3_bucket,
         metrics_addr = %args.metrics.addr,
         metrics_port = args.metrics.port,
         rpc_port = args.rpc_port,
         transaction_event_http_path = %args.transaction_event_http_path,
-        transaction_event_http_enabled = args.postgres_url.is_some(),
         transaction_event_hot_retention_days = retention_config.hot_days,
         transaction_event_warm_retention_days = retention_config.warm_days,
         transaction_event_cold_retention_days = retention_config.cold_days,
         transaction_event_partition_lock_timeout_ms = retention_config.partition_lock_timeout_ms,
         transaction_event_retention_interval_secs = retention_interval.as_secs(),
-        rpc_cache_capacity = args.rpc_cache_capacity,
-        rpc_cache_ttl_secs = args.rpc_cache_ttl_secs,
-        channel_buffer_size = args.channel_buffer_size,
         "Starting audit archiver"
     );
 
-    let s3_client = create_s3_client(&args).await?;
-    let writer = S3EventReaderWriter::new(s3_client, s3_bucket);
-
-    let dedup_cache: Cache<String, ()> = Cache::builder()
-        .max_capacity(args.rpc_cache_capacity)
-        .eviction_policy(EvictionPolicy::lru())
-        .time_to_live(Duration::from_secs(args.rpc_cache_ttl_secs))
-        .build();
-
-    let (event_tx, event_rx) = mpsc::channel(args.channel_buffer_size);
-    let reader = RpcEventReader::new(event_rx);
-
     let rpc_addr = SocketAddr::from(([0, 0, 0, 0], args.rpc_port));
-    let transaction_event_sink = if let Some(postgres_url) = &args.postgres_url {
-        Some(
-            PgTransactionEventSink::connect(postgres_url, args.postgres_max_connections)
-                .await?
-                .with_retention_config(retention_config)?,
-        )
-    } else {
-        None
-    };
+    let transaction_event_sink =
+        PgTransactionEventSink::connect(postgres_url, args.postgres_max_connections)
+            .await?
+            .with_retention_config(retention_config)?;
+    transaction_event_sink.check_schema_ready().await?;
 
-    let mut rpc_module =
-        AuditArchiverRpc::with_bundle_events(Arc::new(writer.clone()), dedup_cache, event_tx);
-    if let Some(sink) = transaction_event_sink.clone() {
-        rpc_module = rpc_module.with_transaction_event_store(sink);
-    }
+    let rpc_module = AuditArchiverRpc::new(transaction_event_sink.clone());
     // The jsonrpsee service is driven by the axum listener below. Keep the
     // stop handle passed into the service builder; axum owns the HTTP server
     // lifecycle for this combined RPC and transaction-event endpoint.
@@ -336,39 +264,27 @@ async fn run_server(args: Args) -> Result<()> {
 
     let retention_sink = transaction_event_sink.clone();
     let health_router = health_router(transaction_event_sink.clone());
-    let http_app = if let Some(sink) = transaction_event_sink {
-        let config = TransactionEventIngestConfig {
-            path: args.transaction_event_http_path.clone(),
-            max_batch_size: args.transaction_event_max_batch_size,
-            max_event_bytes: args.transaction_event_max_event_bytes,
-            max_data_bytes: args.transaction_event_max_data_bytes,
-            max_request_bytes: args.transaction_event_max_request_bytes,
-        };
-        let path = config.path.clone();
-        info!(rpc_addr = %rpc_addr, %path, "transaction event HTTP ingest enabled on audit RPC server");
-        config.into_router(Arc::new(sink)).merge(health_router).fallback_service(rpc_service)
-    } else {
-        info!("transaction event HTTP ingest disabled; TIPS_AUDIT_POSTGRES_URL is not set");
-        health_router.fallback_service(rpc_service)
+    let config = TransactionEventIngestConfig {
+        path: args.transaction_event_http_path.clone(),
+        max_batch_size: args.transaction_event_max_batch_size,
+        max_event_bytes: args.transaction_event_max_event_bytes,
+        max_data_bytes: args.transaction_event_max_data_bytes,
+        max_request_bytes: args.transaction_event_max_request_bytes,
     };
+    let path = config.path.clone();
+    info!(rpc_addr = %rpc_addr, %path, "transaction event HTTP ingest enabled on audit RPC server");
+    let http_app = config
+        .into_router(Arc::new(transaction_event_sink))
+        .merge(health_router)
+        .fallback_service(rpc_service);
 
     let http_listener = TcpListener::bind(rpc_addr).await?;
     let http_server = axum::serve(http_listener, http_app);
     info!(rpc_addr = %rpc_addr, "Audit archiver HTTP server started");
 
-    let mut archiver = AuditArchiver::new(
-        reader,
-        writer,
-        args.worker_pool_size,
-        args.channel_buffer_size,
-        args.noop_archive,
-    );
-
-    info!("Audit archiver initialized, starting main loop");
     let retention_worker = run_retention_worker(retention_sink, retention_interval);
 
     tokio::select! {
-        result = archiver.run() => result,
         result = http_server => {
             result.map_err(|e| anyhow::anyhow!("audit archiver HTTP server stopped unexpectedly: {e}"))
         }
@@ -377,13 +293,9 @@ async fn run_server(args: Args) -> Result<()> {
 }
 
 async fn run_retention_worker(
-    transaction_event_sink: Option<PgTransactionEventSink>,
+    transaction_event_sink: PgTransactionEventSink,
     retention_interval: Duration,
 ) -> Result<()> {
-    let Some(sink) = transaction_event_sink else {
-        return std::future::pending().await;
-    };
-
     // First tick is immediate so a new replica creates today's and upcoming
     // partitions without waiting a full interval. Skip missed ticks so a slow
     // pass does not catch up.
@@ -392,7 +304,7 @@ async fn run_retention_worker(
 
     loop {
         ticker.tick().await;
-        match sink.maintain_partitions().await {
+        match transaction_event_sink.maintain_partitions().await {
             Ok(outcome)
                 if outcome.partitions_created > 0
                     || outcome.partitions_dropped > 0
@@ -414,7 +326,7 @@ async fn run_retention_worker(
     }
 }
 
-fn health_router(transaction_event_sink: Option<PgTransactionEventSink>) -> axum::Router {
+fn health_router(transaction_event_sink: PgTransactionEventSink) -> axum::Router {
     axum::Router::new()
         .route("/healthz", get(healthz_handler))
         .route("/readyz", get(readyz_handler))
@@ -426,9 +338,7 @@ async fn healthz_handler() -> &'static str {
 }
 
 async fn readyz_handler(State(state): State<HealthState>) -> Response {
-    match PgTransactionEventSink::check_optional_schema_ready(state.transaction_event_sink.as_ref())
-        .await
-    {
+    match state.transaction_event_sink.check_schema_ready().await {
         Ok(()) => (StatusCode::OK, "ready\n".to_string()).into_response(),
         Err(err) => {
             error!(error = %err, "audit archiver readiness check failed");
@@ -437,34 +347,16 @@ async fn readyz_handler(State(state): State<HealthState>) -> Response {
     }
 }
 
-async fn create_s3_client(args: &Args) -> Result<S3Client> {
-    match args.s3_config_type {
-        S3ConfigType::Manual => {
-            let region = args.s3_region.clone();
-            let mut config_builder =
-                aws_config::defaults(BehaviorVersion::latest()).region(Region::new(region));
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-            if let Some(endpoint) = &args.s3_endpoint {
-                config_builder = config_builder.endpoint_url(endpoint);
-            }
+    #[tokio::test]
+    async fn serve_without_postgres_fails_before_accepting_events() {
+        let mut args = Args::parse_from(["audit-archiver"]);
+        args.postgres_url = None;
 
-            if let (Some(access_key), Some(secret_key)) =
-                (&args.s3_access_key_id, &args.s3_secret_access_key)
-            {
-                let credentials = Credentials::new(access_key, secret_key, None, None, "manual");
-                config_builder = config_builder.credentials_provider(credentials);
-            }
-
-            let config = config_builder.load().await;
-            let s3_config_builder = S3ConfigBuilder::from(&config).force_path_style(true);
-
-            info!(message = "manually configuring s3 client");
-            Ok(S3Client::from_conf(s3_config_builder.build()))
-        }
-        S3ConfigType::Aws => {
-            info!(message = "using aws s3 client");
-            let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
-            Ok(S3Client::new(&config))
-        }
+        let error = run_server(args).await.expect_err("serve must require durable event storage");
+        assert!(error.to_string().contains("TIPS_AUDIT_POSTGRES_URL must be set for serve"));
     }
 }

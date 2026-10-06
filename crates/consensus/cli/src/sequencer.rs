@@ -51,7 +51,8 @@ pub struct SequencerArgs {
     )]
     pub recover: bool,
 
-    /// Run the sequencer without canonical-chain ingress or payload publication.
+    /// Catch up to the canonical chain on startup, then sequence privately without following or
+    /// publishing to it.
     #[arg(
         long = "sequencer.isolated",
         default_value = "false",
@@ -126,8 +127,6 @@ impl SequencerArgs {
         SequencerConfig {
             sequencer_stopped: self.stopped,
             sequencer_recovery_mode: self.recover,
-            isolated: self.isolated,
-            shadow_blocks_per_cycle: self.shadow_blocks_per_cycle,
             shadow_funding: self.shadow_funding_address.map(|address| {
                 ShadowFunding::new(
                     address,
@@ -211,7 +210,6 @@ mod tests {
         ]);
 
         assert_eq!(args.shadow_blocks_per_cycle, NonZeroU64::new(12));
-        assert_eq!(args.config().shadow_blocks_per_cycle, NonZeroU64::new(12));
     }
 
     #[test]
@@ -220,7 +218,6 @@ mod tests {
             .expect("isolated flag should parse");
 
         assert!(args.isolated);
-        assert!(args.config().isolated);
     }
 
     #[test]

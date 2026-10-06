@@ -2701,7 +2701,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
-      "description": "L1 submission outcomes per second, shown separately for op-batcher stages and base-batcher outcomes. Submitted and successful or confirmed transactions should track; failed or requeued outcomes identify publication instability.",
+      "description": "L1 submission outcomes per second, shown separately for op-batcher stages and base-batcher outcomes. Submitted and successful or confirmed transactions should track; failed outcomes identify publication instability.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2741,7 +2741,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "failed|requeued"
+              "options": "failed"
             },
             "properties": [
               {

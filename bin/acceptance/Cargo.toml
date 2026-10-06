@@ -1,0 +1,21 @@
+[package]
+name = "base-acceptance-cli"
+description = "CLI for Base acceptance scenarios"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-acceptance"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+base-acceptance.workspace = true
+clap = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

@@ -11,6 +11,7 @@ exclude = [".github/"]
 resolver = "2"
 exclude = ["actions/fixtures", "crates/proof/zk/programs"]
 members = [
+  "acceptance",
   "actions/*",
   "bin/[a-o]*",
   "bin/[q-z]*",
@@ -223,6 +224,7 @@ base-execution-eip8130-rpc-node = { path = "crates/execution/eip8130-rpc-node" }
 base-execution-eip8130 = { path = "crates/execution/eip8130", default-features = false }
 
 # Infra
+base-acceptance = { path = "acceptance" }
 basectl-cli = { path = "crates/infra/basectl" }
 base-roxy = { path = "crates/infra/roxy" }
 base-sidecrush = { path = "crates/infra/sidecrush" }
@@ -438,8 +440,6 @@ arboard = "3.6.1"
 ratatui = "0.30.0"
 crossterm = "0.29"
 indicatif = "0.18"
-human_bytes = "0.4.3"
-clap_builder = "4.6.5"
 tracing-indicatif = "0.3"
 
 # tracing
@@ -449,10 +449,8 @@ tracing = { version = "0.1.43", default-features = false }
 
 # OpenTelemetry
 opentelemetry = "0.32"
-opentelemetry-appender-tracing = "0.32"
 opentelemetry_sdk = { version = "0.32", default-features = false }
 opentelemetry-http = { version = "0.32", default-features = false }
-opentelemetry-otlp = { version = "0.32", default-features = false }
 
 # metrics
 cadence = "1.5"
@@ -593,7 +591,6 @@ nanoid = "0.4"
 rand_08 = { package = "rand", version = "0.8" }
 
 # time
-time = "0.3.55"
 chrono = "0.4.42"
 humantime = "2.3"
 
@@ -617,7 +614,6 @@ derive_more = { version = "2.1.0", default-features = false }
 spin = "0.10"
 cfg-if = "1.0"
 alloc-no-stdlib = "2.0"
-lazy_static = { version = "1.5.0", features = ["spin_no_std"] }
 
 # system
 libc = "0.2"
@@ -628,7 +624,6 @@ tikv-jemallocator = "0.6"
 
 # tooling
 notify = "8.2"
-cargo_metadata = "0.18.1"
 
 # rate limiting
 governor = "0.7"

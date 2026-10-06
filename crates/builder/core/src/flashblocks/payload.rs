@@ -16,7 +16,6 @@ use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONC
 use alloy_evm::Database;
 use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::HashMap};
 use base_builder_publish::WebSocketPublisher;
-use base_bundles::RejectedTransaction;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
 use base_common_flashblocks::{
@@ -106,8 +105,6 @@ pub(super) struct BuilderOutputs {
     /// WebSocket publisher for broadcasting flashblocks
     /// to all connected subscribers.
     pub ws_pub: Arc<WebSocketPublisher>,
-    /// Sender for forwarding per-block batches of rejected transactions to the audit-archiver.
-    pub rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
 }
 
 /// Base payload builder
@@ -121,8 +118,7 @@ pub(super) struct BasePayloadBuilder<Pool, Client> {
     pub client: Client,
     /// System configuration for the builder
     pub config: BuilderConfig,
-    /// The outbound channels the builder emits built payloads, flashblocks, and rejected
-    /// transactions to.
+    /// The outbound channels for built payloads and flashblocks.
     pub outputs: BuilderOutputs,
     /// Last flashblock emitted by this builder instance.
     last_emitted_flashblock_id: Arc<LastEmittedFlashblockId>,
@@ -240,7 +236,6 @@ where
             cancel,
             extra,
             builder_config: self.config.clone(),
-            rejected_tx_sender: self.outputs.rejected_tx_sender.clone(),
         })
     }
 
@@ -646,20 +641,6 @@ where
             .execute_best_transactions(info, state, best_txs, &limits)
             .wrap_err("failed to execute best transactions")?;
 
-        // Evict permanently rejected transactions from the iterator and pool.
-        // The rejection cache (inside best_txs) prevents re-entry on P2P re-gossip.
-        if !diag.permanently_rejected_txs.is_empty() {
-            let rejected_count = diag.permanently_rejected_txs.len();
-            best_txs.mark_rejected(&diag.permanently_rejected_txs);
-            self.config.metering_provider.remove(&diag.permanently_rejected_txs);
-            self.pool.remove_transactions(diag.permanently_rejected_txs.clone());
-            info!(
-                target: "payload_builder",
-                count = rejected_count,
-                "evicted permanently rejected transactions from pool",
-            );
-        }
-
         // Extract last transactions
         let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..]
             .iter()
@@ -739,18 +720,25 @@ where
                 // it will either:
                 // 1. Cancel before we acquire the lock → we see cancelled and return early
                 // 2. Wait for us to release the lock → we publish, then it cancels (correct behavior)
-                let (cancelled, flashblock_byte_size) = {
+                let (cancelled, flashblock_byte_size, expired) = {
                     let _guard = publish_guard.lock();
                     if block_cancel.is_cancelled() {
-                        (true, 0)
+                        (true, 0, 0)
                     } else {
-                        let size = self
-                            .outputs
-                            .ws_pub
-                            .publish(&fb_payload, ctx.block_number(), flashblock_index)
-                            .wrap_err("failed to publish flashblock via websocket")?;
+                        // Serialize admission with publication: once a client observes the
+                        // flashblock, its expired nonce slot is already free.
+                        let (size, expired) = self.pool.publish_and_expire(
+                            ctx.block_number(),
+                            flashblock_index,
+                            || {
+                                self.outputs
+                                    .ws_pub
+                                    .publish(&fb_payload, ctx.block_number(), flashblock_index)
+                                    .wrap_err("failed to publish flashblock via websocket")
+                            },
+                        )?;
                         self.record_emitted_flashblock(ctx.block_number(), flashblock_index);
-                        (false, size)
+                        (false, size, expired)
                     }
                 };
 
@@ -788,6 +776,21 @@ where
                         invalidated,
                         "transactions invalidated after flashblock publication"
                     );
+                }
+
+                // The indexed sweep also covers candidates never reached by selection.
+                if expired > 0 {
+                    debug!(
+                        block = ctx.block_number(),
+                        flashblock = flashblock_index,
+                        expired,
+                        "evicted transactions at published flashblock deadline"
+                    );
+                }
+                if !diag.permanently_rejected_txs.is_empty() {
+                    best_txs.mark_rejected(&diag.permanently_rejected_txs);
+                    self.config.metering_provider.remove(&diag.permanently_rejected_txs);
+                    self.pool.remove_transactions(diag.permanently_rejected_txs.clone());
                 }
 
                 // Send to handler outside mutex.
@@ -961,7 +964,6 @@ where
         // Build the final block WITH state root computed
         let (final_payload, _, _) = build_block(state, ctx, info, FlashblockId::default(), true)?;
 
-        ctx.flush_rejected_txs(info);
         self.emit_final_inclusion_events(ctx, &final_payload);
 
         let elapsed = start_time.elapsed();

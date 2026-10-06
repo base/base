@@ -50,6 +50,7 @@ FROM rust-builder-base AS workspace-source
 # Keep these inputs aligned with workspace members; runtime scripts are copied later.
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY actions ./actions
+COPY acceptance ./acceptance
 COPY bin ./bin
 COPY crates ./crates
 COPY etc/tools ./etc/tools
@@ -60,7 +61,9 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM rust-builder-base AS rust-deps
 ARG PROFILE=release
-ARG CARGO_CHEF_ARGS=""
+# Default to the `base` target's packages so plain `docker compose build` does not
+# cook the whole workspace, whose SP1 crates need Go. Bake overrides this per target.
+ARG CARGO_CHEF_ARGS="--package base --package base-reth-node --package base-consensus --package base-snapshotter-bin"
 ARG CARGO_FEATURES=""
 ARG SCCACHE_CACHE_ID=rust-services-sccache
 COPY --from=planner /app/recipe.json recipe.json

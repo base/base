@@ -74,8 +74,11 @@ pub enum ValidityPredicateError {
     /// block-expiry eviction and is rejected at ingress instead. `index` is the
     /// position of the offending predicate within the batch, `bound` the
     /// greatest block number at which the predicate can still hold.
+    ///
+    /// The message omits `current_block`: it is the validating node's view of
+    /// the chain head, and returning it to callers exposes per-node lag.
     #[error(
-        "block-number predicate at index {index} already expired: last satisfiable block {bound} is before the block currently being built ({current_block})"
+        "block-number predicate at index {index} already expired: last satisfiable block {bound} has already been built"
     )]
     ExpiredBlockBound {
         /// Position of the offending predicate within the batch.
@@ -89,8 +92,11 @@ pub enum ValidityPredicateError {
     #[error("validity transactions require a block-number predicate with an upper bound")]
     MissingBlockExpiry,
     /// A block-number predicate's tightest upper bound exceeds the configured lifetime window.
+    ///
+    /// The message omits `maximum_block` because it is derived from the
+    /// validating node's chain head; see [`Self::ExpiredBlockBound`].
     #[error(
-        "block-number predicate at index {index} expires too far in the future: last satisfiable block {bound} exceeds the maximum permitted block {maximum_block}"
+        "block-number predicate at index {index} expires too far in the future: last satisfiable block {bound} exceeds the maximum validity window of {max_expiry_secs} seconds"
     )]
     BlockExpiryWindowExceeded {
         /// Position of the predicate that establishes the tightest upper bound.
@@ -99,6 +105,8 @@ pub enum ValidityPredicateError {
         bound: U256,
         /// Greatest permitted block number for this submission.
         maximum_block: u64,
+        /// Configured maximum validity window, in seconds.
+        max_expiry_secs: u64,
     },
 }
 
@@ -302,20 +310,21 @@ impl ValidityPredicate {
     ///
     /// The bound must not precede `current_block`, because every block it
     /// permits has already been sealed. It must also be no later than
-    /// `current_block + max_expiry_blocks`, so the transaction has a bounded
-    /// lifetime. Lower bounds (`>`, `>=`) and `!=` do not establish expiry.
+    /// `current_block` plus the number of full blocks that fit in
+    /// `max_expiry_secs` at `block_interval_millis`, so the transaction has a
+    /// bounded lifetime. Lower bounds (`>`, `>=`) and `!=` do not establish expiry.
     /// State predicates ([`Self::Balance`], [`Self::Storage`]) are recoverable
     /// and flashblock indices reset each block, so neither establishes expiry.
     ///
     /// A bound equal to `current_block` is deliberately accepted: the
     /// transaction can still land in a later flashblock of the block being
-    /// built. Callers convert their configured wall-clock window to
-    /// `max_expiry_blocks` using the active full-block cadence; flashblock
-    /// cadence must not be used for that conversion.
+    /// built. `block_interval_millis` must be the active full-block cadence;
+    /// flashblock cadence must not be used.
     pub fn validate_block_expiry_bounds(
         predicates: &[Self],
         current_block: u64,
-        max_expiry_blocks: u64,
+        max_expiry_secs: u64,
+        block_interval_millis: u64,
     ) -> Result<(), ValidityPredicateError> {
         let current = U256::from(current_block);
         let mut upper = None;
@@ -340,12 +349,15 @@ impl ValidityPredicate {
         if bound < current {
             return Err(ValidityPredicateError::ExpiredBlockBound { index, bound, current_block });
         }
+        let max_expiry_blocks =
+            max_expiry_secs.saturating_mul(1_000).div_ceil(block_interval_millis);
         let maximum_block = current_block.saturating_add(max_expiry_blocks);
         if bound > U256::from(maximum_block) {
             return Err(ValidityPredicateError::BlockExpiryWindowExceeded {
                 index,
                 bound,
                 maximum_block,
+                max_expiry_secs,
             });
         }
         Ok(())
@@ -448,7 +460,7 @@ impl ValidityPredicate {
     /// any block (drop as soon as the chain advances), and `None` when no
     /// `block_number` upper bound applies or the bound exceeds [`u64::MAX`]. This
     /// is the pool-side, block-granular projection of [`Self::is_batch_expired`];
-    /// the finer flashblock deadline is enforced only by the builder.
+    /// [`Self::flashblock_expiry_bound`] supplies the optional finer deadline.
     #[must_use]
     pub fn block_expiry_bound(predicates: &[Self]) -> Option<u64> {
         let mut upper: Option<U256> = None;
@@ -468,6 +480,28 @@ impl ValidityPredicate {
             upper = Some(upper.map_or(candidate, |current| current.min(candidate)));
         }
         upper.and_then(|bound| u64::try_from(bound).ok())
+    }
+
+    /// Returns the inclusive last flashblock index allowed by a predicate batch.
+    /// The bound is meaningful for eviction only together with a finite block bound.
+    #[must_use]
+    pub fn flashblock_expiry_bound(predicates: &[Self]) -> Option<u64> {
+        predicates
+            .iter()
+            .filter_map(|predicate| {
+                let Self::FlashblockIndex { op, value } = predicate else { return None };
+                match op {
+                    ValidityOperator::LessThan => {
+                        Some(value.checked_sub(U256::from(1)).unwrap_or_default())
+                    }
+                    ValidityOperator::LessThanOrEqual | ValidityOperator::Equal => Some(*value),
+                    ValidityOperator::NotEqual
+                    | ValidityOperator::GreaterThan
+                    | ValidityOperator::GreaterThanOrEqual => None,
+                }
+            })
+            .min()
+            .and_then(|bound| u64::try_from(bound).ok())
     }
 
     /// Stable-sorts a predicate batch into canonical evaluation order: timing
@@ -1348,7 +1382,7 @@ mod tests {
             let predicates = vec![block_number(op, value)];
             assert!(
                 matches!(
-                    ValidityPredicate::validate_block_expiry_bounds(&predicates, 100, 30),
+                    ValidityPredicate::validate_block_expiry_bounds(&predicates, 100, 60, 2_000),
                     Err(ValidityPredicateError::ExpiredBlockBound {
                         index: 0,
                         current_block: 100,
@@ -1363,7 +1397,8 @@ mod tests {
     #[test]
     fn validate_block_expiry_bounds_accepts_bounds_within_the_window() {
         // A bound equal to the block currently being built may still land in a
-        // later flashblock. Bounds through 130 are within the 30-block window.
+        // later flashblock. Bounds through 130 are within the 60-second window
+        // at 2-second blocks.
         let within_window = [
             (ValidityOperator::Equal, 100),
             (ValidityOperator::LessThanOrEqual, 100),
@@ -1373,7 +1408,7 @@ mod tests {
         for (op, value) in within_window {
             let predicates = vec![block_number(op, value)];
             assert_eq!(
-                ValidityPredicate::validate_block_expiry_bounds(&predicates, 100, 30),
+                ValidityPredicate::validate_block_expiry_bounds(&predicates, 100, 60, 2_000),
                 Ok(()),
                 "expected {op:?} {value} to be accepted",
             );
@@ -1394,7 +1429,7 @@ mod tests {
         ];
 
         assert_eq!(
-            ValidityPredicate::validate_block_expiry_bounds(&predicates, 100, 30),
+            ValidityPredicate::validate_block_expiry_bounds(&predicates, 100, 60, 2_000),
             Err(ValidityPredicateError::MissingBlockExpiry)
         );
     }
@@ -1406,7 +1441,10 @@ mod tests {
             block_number(ValidityOperator::LessThanOrEqual, 130),
         ];
 
-        assert_eq!(ValidityPredicate::validate_block_expiry_bounds(&predicates, 100, 30), Ok(()));
+        assert_eq!(
+            ValidityPredicate::validate_block_expiry_bounds(&predicates, 100, 60, 2_000),
+            Ok(())
+        );
     }
 
     #[test]
@@ -1417,11 +1455,12 @@ mod tests {
         ];
 
         assert_eq!(
-            ValidityPredicate::validate_block_expiry_bounds(&predicates, 100, 30),
+            ValidityPredicate::validate_block_expiry_bounds(&predicates, 100, 60, 2_000),
             Err(ValidityPredicateError::BlockExpiryWindowExceeded {
                 index: 1,
                 bound: U256::from(140),
                 maximum_block: 130,
+                max_expiry_secs: 60,
             })
         );
     }
@@ -1573,6 +1612,28 @@ mod tests {
             None
         );
         assert_eq!(ValidityPredicate::block_expiry_bound(&[]), None);
+    }
+    #[test]
+    fn flashblock_expiry_bound_uses_tightest_inclusive_index() {
+        let predicates = [
+            flashblock_index(ValidityOperator::LessThan, 4),
+            flashblock_index(ValidityOperator::LessThanOrEqual, 2),
+        ];
+        assert_eq!(ValidityPredicate::flashblock_expiry_bound(&predicates), Some(2));
+        assert_eq!(
+            ValidityPredicate::flashblock_expiry_bound(&[flashblock_index(
+                ValidityOperator::LessThan,
+                3
+            )]),
+            Some(2)
+        );
+        assert_eq!(
+            ValidityPredicate::flashblock_expiry_bound(&[flashblock_index(
+                ValidityOperator::GreaterThan,
+                3
+            )]),
+            None
+        );
     }
 
     #[test]

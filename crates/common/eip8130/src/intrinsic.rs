@@ -21,6 +21,9 @@ pub enum IntrinsicGasError {
     /// delegate authenticator is not a priced *leaf*.
     #[error("no gas-schedule entry for authenticator {0}")]
     UnscheduledAuthenticator(Address),
+    /// `payer_auth_cost` exceeds [`Eip8130GasSchedule::MAX_AUTHENTICATION_GAS`].
+    #[error("payer authentication gas {0} exceeds MAX_AUTHENTICATION_GAS")]
+    PayerAuthGasExceeded(u64),
 }
 
 /// Wire encoding of an authentication blob, selecting how it is parsed and
@@ -59,6 +62,9 @@ impl AuthWireForm {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct IntrinsicGasInput {
+    /// The resolved sender. Calls back to the sender carry no
+    /// `value_transfer_cost`.
+    pub sender: Address,
     /// Whether this transaction's sequence nonce channel is being used for the
     /// first time (its current nonce is zero) — selects the SSTORE *set* cost
     /// over the *reset* cost. Ignored for nonce-free (`NONCE_KEY_MAX`)
@@ -90,8 +96,9 @@ pub struct IntrinsicGasInput {
 impl IntrinsicGasInput {
     /// Creates the intrinsic-gas state hints.
     #[must_use]
-    pub const fn new(nonce_key_first_use: bool) -> Self {
+    pub const fn new(sender: Address, nonce_key_first_use: bool) -> Self {
         Self {
+            sender,
             nonce_key_first_use,
             sender_policy_gated: false,
             payer_policy_gated: false,
@@ -135,8 +142,8 @@ impl IntrinsicGasInput {
     /// drifting apart: both must feed [`IntrinsicGas::compute`] the *same* pinned
     /// input for the `estimate == admission >= execution` guarantee to hold.
     #[must_use]
-    pub const fn worst_case(nonce_key_first_use: bool, has_payer: bool) -> Self {
-        Self::new(nonce_key_first_use)
+    pub const fn worst_case(sender: Address, nonce_key_first_use: bool, has_payer: bool) -> Self {
+        Self::new(sender, nonce_key_first_use)
             .with_policy_gates(true, has_payer)
             .with_revoke_discount_slots(0)
     }
@@ -148,10 +155,22 @@ impl IntrinsicGasInput {
 pub struct IntrinsicGas {
     /// `AA_BASE_COST`.
     pub base: u64,
-    /// `tx_payload_cost` — EIP-2028 data-availability cost.
+    /// `tx_payload_cost` — EIP-2028 data-availability cost over the encoding
+    /// with an empty `payer_auth` (the *standard* per-token rate). Subject to
+    /// the EIP-7623 calldata floor; see [`Self::payload_floor`] and
+    /// [`Self::sender_floor`].
     pub payload: u64,
+    /// The EIP-7623 calldata *floor* over the same bytes [`Self::payload`]
+    /// covers: `TX_TOTAL_COST_FLOOR_PER_TOKEN` (10) per payload token instead of
+    /// the standard `TX_DATA_ZERO_BYTE` (4). Always `>= payload`. Not part of
+    /// [`Self::total`]; it only raises the sender's metered gas via
+    /// [`Self::sender_floor`] when a data-heavy transaction's execution is cheap.
+    pub payload_floor: u64,
     /// `nonce_key_cost`.
     pub nonce_key: u64,
+    /// `value_transfer_cost` — [`Eip8130GasSchedule::TX_VALUE_COST`] per call
+    /// with `value > 0` and `to != sender`.
+    pub value_transfer: u64,
     /// `bytecode_cost` — account creation.
     pub bytecode: u64,
     /// `account_changes_cost` — config-change and delegation entries.
@@ -160,7 +179,7 @@ pub struct IntrinsicGas {
     /// SLOAD(s) (see `auth_sloads`).
     pub sender_auth: u64,
     /// `payer_auth_cost` — payer authenticator execution + its `authorize`
-    /// SLOAD(s), or `0` for self-pay.
+    /// SLOAD(s) + the data cost of the `payer_auth` bytes, or `0` for self-pay.
     pub payer_auth: u64,
 }
 
@@ -171,6 +190,7 @@ impl IntrinsicGas {
         self.base
             .saturating_add(self.payload)
             .saturating_add(self.nonce_key)
+            .saturating_add(self.value_transfer)
             .saturating_add(self.bytecode)
             .saturating_add(self.account_changes)
             .saturating_add(self.sender_auth)
@@ -188,9 +208,33 @@ impl IntrinsicGas {
     /// Gas available to `calls` after sender-intrinsic gas, or `None` when
     /// sender-intrinsic gas alone exceeds `gas_limit` (the transaction is
     /// underfunded and cannot be included).
+    ///
+    /// The EIP-7623 calldata floor ([`Self::sender_floor`]) does not reduce this
+    /// budget — it is a post-execution minimum spend, not an intrinsic cost — so
+    /// the gas available to `calls` is still `gas_limit - sender_intrinsic`. The
+    /// floor is enforced separately as a lower bound on `gas_limit` and on the
+    /// settled charge.
     #[must_use]
     pub const fn execution_gas_available(&self, gas_limit: u64) -> Option<u64> {
         gas_limit.checked_sub(self.sender_intrinsic())
+    }
+
+    /// The EIP-7623 sender-side floor: the minimum sender gas a transaction is
+    /// metered, regardless of how little its `calls` execute. Mirrors EIP-7623's
+    /// floor branch by swapping the standard `tx_payload_cost` for the higher
+    /// per-token floor over the same bytes:
+    ///
+    /// ```text
+    /// sender_floor = (sender_intrinsic - payload) + payload_floor
+    /// ```
+    ///
+    /// Always `>= sender_intrinsic` (since `payload_floor >= payload`), so a
+    /// transaction that clears the floor also clears sender-intrinsic gas. A
+    /// `gas_limit` below this is invalid at mempool acceptance, and settlement
+    /// charges at least this for the sender portion.
+    #[must_use]
+    pub const fn sender_floor(&self) -> u64 {
+        self.sender_intrinsic().saturating_sub(self.payload).saturating_add(self.payload_floor)
     }
 
     /// Computes the intrinsic gas for a signed EIP-8130 transaction.
@@ -201,10 +245,15 @@ impl IntrinsicGas {
     /// parameter, rather than re-serialized here, because `compute` runs for
     /// every transaction on both the mempool-admission and block-building paths,
     /// where the caller already holds the serialized form; it feeds only the
-    /// EIP-2028 `payload` cost.
+    /// EIP-2028 `payload` cost. A sponsored transaction is priced as if
+    /// `payer_auth` were empty, since the payer's bytes are billed in
+    /// `payer_auth` rather than against the sender's `gas_limit`. That cost is
+    /// folded from `encoded` rather than by re-serializing the body.
     ///
     /// Returns [`IntrinsicGasError::UnscheduledAuthenticator`] if any sender,
-    /// payer, or config-change authenticator lacks a gas-schedule entry.
+    /// payer, or config-change authenticator lacks a gas-schedule entry, and
+    /// [`IntrinsicGasError::PayerAuthGasExceeded`] if `payer_auth_cost` exceeds
+    /// [`Eip8130GasSchedule::MAX_AUTHENTICATION_GAS`].
     #[must_use = "discarding the result silently skips the entire intrinsic-gas computation"]
     pub fn compute(
         signed: &Eip8130Signed,
@@ -331,20 +380,33 @@ impl IntrinsicGas {
             AuthWireForm::for_sender(tx.sender),
             input.sender_policy_gated,
         )?;
-        let payer_auth = if tx.payer.is_some() {
-            Self::auth_cost(
-                signed.payer_auth().as_ref(),
-                AuthWireForm::Prefixed,
-                input.payer_policy_gated,
-            )?
-        } else {
-            0
-        };
+        let payer_auth = Self::payer_auth_cost(signed, input.payer_policy_gated)?;
+
+        let value_calls = tx
+            .calls
+            .iter()
+            .flatten()
+            .filter(|call| !call.value.is_zero() && call.to != input.sender)
+            .count();
+        let value_transfer = Eip8130GasSchedule::TX_VALUE_COST
+            .saturating_mul(u64::try_from(value_calls).unwrap_or(u64::MAX));
+
+        // `payload` and its EIP-7623 floor are priced over the sender-billed
+        // bytes: the encoding with an empty `payer_auth`. `payer_auth` bytes are
+        // metered separately (outside the sender's `gas_limit`). The fold
+        // rewrites the list header in place instead of re-encoding the body.
+        let (payload, payload_floor) =
+            signed.fold_sender_billed_bytes(encoded, (0u64, 0u64), |costs, byte| {
+                let (standard, floor) = Self::byte_payload_costs(byte);
+                (costs.0.saturating_add(standard), costs.1.saturating_add(floor))
+            });
 
         Ok(Self {
             base: Eip8130GasSchedule::AA_BASE_COST,
-            payload: Self::payload_cost(encoded),
+            payload,
+            payload_floor,
             nonce_key,
+            value_transfer,
             bytecode,
             account_changes,
             sender_auth,
@@ -368,42 +430,70 @@ impl IntrinsicGas {
     /// `gas_limit` alone could let true consumption push cumulative gas over the
     /// block limit.
     ///
-    /// It is a deliberate *ceiling*, not the exact charge: the auth-blob shape
-    /// gives the authenticator execution gas plus its cold `actor_config` SLOAD,
-    /// and on top of that we pin the payer's **policy gate worst-case** — one
-    /// extra cold `policy_manager` SLOAD ([`Eip8130GasSchedule::COLD_SLOAD`]) that
-    /// a policy-gated payer's `authorize` step reads. The pre-execution reservation
-    /// cannot resolve the payer's on-chain scope (the payer blob is not
-    /// authenticable before execution), so pinning the gate keeps the reservation
-    /// a safe upper bound regardless of whether the payer turns out to be gated.
-    /// Over-reserving can only reject a too-tight block, never admit an over-limit
-    /// one, and building and validation share this bound so they stay consistent.
+    /// It is a deliberate *ceiling*: the reservation cannot authenticate the payer
+    /// to learn whether it is policy-gated, so it pins the gate's extra cold
+    /// `policy_manager` SLOAD. Over-reserving can only reject a too-tight block,
+    /// never admit an over-limit one, and building and validation share this
+    /// bound so they stay consistent.
     #[must_use = "discarding the result skips the payer-authentication reservation"]
     pub fn max_payer_auth_cost(signed: &Eip8130Signed) -> Result<u64, IntrinsicGasError> {
-        if signed.tx().payer.is_some() {
-            // Price the blob without the policy gate (`policy_gated = false`), then
-            // pin the payer's policy-gate worst-case explicitly by adding one cold
-            // `policy_manager` SLOAD unconditionally — the reservation cannot
-            // authenticate the payer to resolve whether it is actually gated.
-            let auth =
-                Self::auth_cost(signed.payer_auth().as_ref(), AuthWireForm::Prefixed, false)?;
-            Ok(auth.saturating_add(Eip8130GasSchedule::COLD_SLOAD))
+        if signed.tx().payer.is_none() {
+            return Ok(0);
+        }
+        Ok(Self::payer_auth_cost(signed, false)?.saturating_add(Eip8130GasSchedule::COLD_SLOAD))
+    }
+
+    /// Payer-authentication gas billed on top of `gas_limit`: authenticator
+    /// execution gas, its `authorize` SLOADs (plus the policy-gate read when
+    /// `policy_gated`), and the `payer_auth` bytes at the EIP-7623 floor rate.
+    /// The bytes are never executed and sit outside the sender's floor, so the
+    /// floor rate is what keeps a payer from padding them cheaply. `0` for
+    /// self-pay.
+    ///
+    /// Returns [`IntrinsicGasError::PayerAuthGasExceeded`] above
+    /// [`Eip8130GasSchedule::MAX_AUTHENTICATION_GAS`].
+    fn payer_auth_cost(
+        signed: &Eip8130Signed,
+        policy_gated: bool,
+    ) -> Result<u64, IntrinsicGasError> {
+        if signed.tx().payer.is_none() {
+            return Ok(0);
+        }
+        let payer_auth = signed.payer_auth().as_ref();
+        let form = if signed.tx().is_open_payer() {
+            AuthWireForm::BareSignature
         } else {
-            Ok(0)
+            AuthWireForm::Prefixed
+        };
+        let cost = Self::auth_cost(payer_auth, form, policy_gated)?
+            .saturating_add(Self::floor_data_cost(payer_auth));
+        if cost > Eip8130GasSchedule::MAX_AUTHENTICATION_GAS {
+            return Err(IntrinsicGasError::PayerAuthGasExceeded(cost));
+        }
+        Ok(cost)
+    }
+
+    /// Standard EIP-2028 cost and EIP-7623 floor cost of one payload byte.
+    ///
+    /// A zero byte is one token (`TX_DATA_ZERO_BYTE` / `TX_TOTAL_COST_FLOOR_PER_TOKEN`).
+    /// A non-zero byte is four tokens.
+    const fn byte_payload_costs(byte: u8) -> (u64, u64) {
+        if byte == 0 {
+            (
+                Eip8130GasSchedule::TX_DATA_ZERO_BYTE,
+                Eip8130GasSchedule::TX_TOTAL_COST_FLOOR_PER_TOKEN,
+            )
+        } else {
+            (
+                Eip8130GasSchedule::TX_DATA_NONZERO_BYTE,
+                Eip8130GasSchedule::TX_TOTAL_COST_FLOOR_PER_TOKEN.saturating_mul(4),
+            )
         }
     }
 
-    /// EIP-2028 data-availability cost over the caller-supplied EIP-2718
-    /// serialization (`type_byte || rlp([..fields.., sender_auth, payer_auth])`).
-    fn payload_cost(encoded: &[u8]) -> u64 {
-        encoded.iter().fold(0u64, |acc, &byte| {
-            let cost = if byte == 0 {
-                Eip8130GasSchedule::TX_DATA_ZERO_BYTE
-            } else {
-                Eip8130GasSchedule::TX_DATA_NONZERO_BYTE
-            };
-            acc.saturating_add(cost)
-        })
+    /// EIP-7623 floor data cost of `bytes`.
+    fn floor_data_cost(bytes: &[u8]) -> u64 {
+        bytes.iter().fold(0u64, |acc, &byte| acc.saturating_add(Self::byte_payload_costs(byte).1))
     }
 
     /// Cost of authenticating one auth blob: authenticator execution gas plus the
@@ -570,8 +660,8 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address};
     use alloy_sol_types::SolValue;
     use base_common_consensus::{
-        AccountChange, AccountChangeChannel, ChangeType, CreateEntry, Delegation, InitialActor,
-        SignedAccountChanges, SignedChange, TxEip8130,
+        AccountChange, AccountChangeChannel, Call, ChangeType, CreateEntry, Delegation,
+        InitialActor, SignedAccountChanges, SignedChange, TxEip8130,
     };
 
     use super::*;
@@ -601,7 +691,7 @@ mod tests {
 
     const ACCOUNT: Address = address!("0x1111111111111111111111111111111111111111");
     const K1: Address = Eip8130Constants::K1_AUTHENTICATOR;
-    const EXISTING_KEY: IntrinsicGasInput = IntrinsicGasInput::new(false);
+    const EXISTING_KEY: IntrinsicGasInput = IntrinsicGasInput::new(ACCOUNT, false);
 
     fn signed(tx: TxEip8130, sender_auth: Vec<u8>, payer_auth: Vec<u8>) -> Eip8130Signed {
         Eip8130Signed::new(tx, Bytes::from(sender_auth), Bytes::from(payer_auth))
@@ -698,13 +788,57 @@ mod tests {
     }
 
     #[test]
+    fn eip7623_calldata_floor_prices_payload_above_the_standard_rate() {
+        // The floor swaps the standard EIP-2028 4/16-per-byte rate for EIP-7623's
+        // 10/40-per-token rate over the same serialized bytes, so `payload_floor`
+        // is exactly `TX_TOTAL_COST_FLOOR_PER_TOKEN` per token and the sender floor
+        // sits `(10 - 4)` gas per token above sender-intrinsic gas.
+        let gas = intrinsic(&signed(TxEip8130::default(), vec![0xcd; 65], vec![]), &EXISTING_KEY);
+
+        assert!(gas.payload > 0);
+        // Standard payload == TX_DATA_ZERO_BYTE (4) per token; recover the token
+        // count from it, then check the floor is the per-token floor rate.
+        assert_eq!(gas.payload % Eip8130GasSchedule::TX_DATA_ZERO_BYTE, 0);
+        let tokens = gas.payload / Eip8130GasSchedule::TX_DATA_ZERO_BYTE;
+        assert_eq!(gas.payload_floor, Eip8130GasSchedule::TX_TOTAL_COST_FLOOR_PER_TOKEN * tokens);
+        assert!(gas.payload_floor > gas.payload);
+
+        // sender_floor == (sender_intrinsic - payload) + payload_floor, and exceeds
+        // sender-intrinsic gas by exactly (10 - 4) gas per token.
+        assert_eq!(gas.sender_floor(), gas.sender_intrinsic() - gas.payload + gas.payload_floor);
+        let per_token_premium = Eip8130GasSchedule::TX_TOTAL_COST_FLOOR_PER_TOKEN
+            - Eip8130GasSchedule::TX_DATA_ZERO_BYTE;
+        assert_eq!(gas.sender_floor() - gas.sender_intrinsic(), per_token_premium * tokens);
+        assert!(gas.sender_floor() >= gas.sender_intrinsic());
+    }
+
+    #[test]
+    fn eip7623_floor_grows_with_payload_size() {
+        // A data-heavy transaction pays a strictly larger floor premium than a
+        // minimal one: the floor is what stops an 8130 transaction from posting
+        // data availability more cheaply than a standard EIP-7623 transaction.
+        let minimal =
+            intrinsic(&signed(TxEip8130::default(), vec![0xcd; 65], vec![]), &EXISTING_KEY);
+        let heavy_tx =
+            TxEip8130 { metadata: Bytes::from(vec![0x11u8; 20_000]), ..Default::default() };
+        let heavy = intrinsic(&signed(heavy_tx, vec![0xcd; 65], vec![]), &EXISTING_KEY);
+
+        assert!(heavy.payload > minimal.payload);
+        assert!(
+            heavy.sender_floor() - heavy.sender_intrinsic()
+                > minimal.sender_floor() - minimal.sender_intrinsic()
+        );
+    }
+
+    #[test]
     fn nonce_free_and_first_use_costs() {
         let mut tx = TxEip8130 { nonce_key: Eip8130Constants::NONCE_KEY_MAX, ..Default::default() };
         let free = intrinsic(&signed(tx.clone(), vec![0; 65], vec![]), &EXISTING_KEY);
         assert_eq!(free.nonce_key, Eip8130GasSchedule::NONCE_FREE_COST);
 
         tx.nonce_key = U256::from(7u64);
-        let first = intrinsic(&signed(tx, vec![0; 65], vec![]), &IntrinsicGasInput::new(true));
+        let first =
+            intrinsic(&signed(tx, vec![0; 65], vec![]), &IntrinsicGasInput::new(ACCOUNT, true));
         assert_eq!(first.nonce_key, Eip8130GasSchedule::NONCE_KEY_FIRST_USE_COST);
     }
 
@@ -1273,13 +1407,13 @@ mod tests {
             payer: Some(address!("0x2222222222222222222222222222222222222222")),
             ..Default::default()
         };
-        let gas = intrinsic(
-            &signed(tx, configured_auth(K1), configured_auth(Eip8130Contracts::P256_AUTHENTICATOR)),
-            &EXISTING_KEY,
-        );
+        let payer_auth = configured_auth(Eip8130Contracts::P256_AUTHENTICATOR);
+        let gas = intrinsic(&signed(tx, configured_auth(K1), payer_auth.clone()), &EXISTING_KEY);
         assert_eq!(
             gas.payer_auth,
-            Eip8130GasSchedule::AUTH_EXEC_P256 + Eip8130GasSchedule::COLD_SLOAD
+            Eip8130GasSchedule::AUTH_EXEC_P256
+                + Eip8130GasSchedule::COLD_SLOAD
+                + IntrinsicGas::floor_data_cost(&payer_auth)
         );
         // payer_auth is metered on top of gas_limit, so it is excluded here.
         assert_eq!(gas.sender_intrinsic(), gas.total() - gas.payer_auth);
@@ -1299,8 +1433,108 @@ mod tests {
         );
         assert_eq!(
             policy_gated.payer_auth,
-            Eip8130GasSchedule::AUTH_EXEC_P256 + Eip8130GasSchedule::COLD_SLOAD * 2
+            Eip8130GasSchedule::AUTH_EXEC_P256
+                + Eip8130GasSchedule::COLD_SLOAD * 2
+                + IntrinsicGas::floor_data_cost(&payer_auth)
         );
+    }
+
+    #[test]
+    fn open_payer_auth_is_priced_as_a_bare_k1_signature() {
+        let tx = TxEip8130 { payer: Some(Eip8130Constants::OPEN_PAYER), ..Default::default() };
+        let payer_auth = vec![0xab; 65];
+        let gas = intrinsic(&signed(tx, vec![0; 65], payer_auth.clone()), &EXISTING_KEY);
+        assert_eq!(
+            gas.payer_auth,
+            Eip8130GasSchedule::AUTH_EXEC_K1
+                + Eip8130GasSchedule::COLD_SLOAD
+                + IntrinsicGas::floor_data_cost(&payer_auth)
+        );
+    }
+
+    #[test]
+    fn payer_auth_bytes_do_not_change_sender_payload() {
+        let tx = TxEip8130 {
+            sender: Some(ACCOUNT),
+            payer: Some(address!("0x2222222222222222222222222222222222222222")),
+            ..Default::default()
+        };
+        let short =
+            intrinsic(&signed(tx.clone(), configured_auth(K1), configured_auth(K1)), &EXISTING_KEY);
+        let mut long_auth = configured_auth(K1);
+        long_auth.extend_from_slice(&[0xff; 200]);
+        let long = intrinsic(&signed(tx, configured_auth(K1), long_auth), &EXISTING_KEY);
+
+        assert_eq!(short.payload, long.payload);
+        assert_eq!(short.sender_intrinsic(), long.sender_intrinsic());
+        assert_eq!(
+            long.payer_auth - short.payer_auth,
+            200 * 4 * Eip8130GasSchedule::TX_TOTAL_COST_FLOOR_PER_TOKEN,
+            "payer_auth bytes are billed at the calldata floor rate"
+        );
+    }
+
+    #[test]
+    fn sender_payload_cost_matches_empty_payer_auth_encoding() {
+        let tx = TxEip8130 {
+            sender: Some(ACCOUNT),
+            payer: Some(address!("0x2222222222222222222222222222222222222222")),
+            calls: vec![vec![Call {
+                to: ACCOUNT,
+                value: U256::from(1u64),
+                data: Bytes::from(vec![0u8; 64]),
+            }]],
+            ..Default::default()
+        };
+        // A long, mostly-zero `payer_auth` changes the list header's
+        // length-of-length and the zero/nonzero mix of the suffix. The
+        // sender-billed payload must still match a true empty-`payer_auth`
+        // re-encoding.
+        let mut payer_auth = configured_auth(K1);
+        payer_auth.extend_from_slice(&[0x00; 4_000]);
+        let signed_tx = signed(tx, configured_auth(K1), payer_auth);
+        let gas = intrinsic(&signed_tx, &EXISTING_KEY);
+        let (payload, payload_floor) = signed_tx.encoded_2718_without_payer_auth().iter().fold(
+            (0u64, 0u64),
+            |costs, &byte| {
+                let (standard, floor) = IntrinsicGas::byte_payload_costs(byte);
+                (costs.0.saturating_add(standard), costs.1.saturating_add(floor))
+            },
+        );
+        assert_eq!(gas.payload, payload);
+        assert_eq!(gas.payload_floor, payload_floor);
+    }
+
+    #[test]
+    fn payer_auth_over_max_authentication_gas_is_an_error() {
+        let tx = TxEip8130 {
+            sender: Some(ACCOUNT),
+            payer: Some(address!("0x2222222222222222222222222222222222222222")),
+            ..Default::default()
+        };
+        let mut payer_auth = configured_auth(K1);
+        payer_auth.extend_from_slice(&[0xff; 7_000]);
+        let s = signed(tx, configured_auth(K1), payer_auth);
+        assert!(matches!(
+            IntrinsicGas::compute(&s, &encode(&s), &EXISTING_KEY),
+            Err(IntrinsicGasError::PayerAuthGasExceeded(cost))
+                if cost > Eip8130GasSchedule::MAX_AUTHENTICATION_GAS
+        ));
+    }
+
+    #[test]
+    fn value_calls_to_others_charge_tx_value_cost() {
+        let other = address!("0x3333333333333333333333333333333333333333");
+        let call = |to, value: u64| Call { to, value: U256::from(value), data: Bytes::new() };
+        let tx = TxEip8130 {
+            calls: vec![
+                vec![call(other, 1), call(ACCOUNT, 1), call(other, 0)],
+                vec![call(other, 5)],
+            ],
+            ..Default::default()
+        };
+        let gas = intrinsic(&signed(tx, vec![0; 65], vec![]), &EXISTING_KEY);
+        assert_eq!(gas.value_transfer, 2 * Eip8130GasSchedule::TX_VALUE_COST);
     }
 
     #[test]

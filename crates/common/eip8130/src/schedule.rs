@@ -44,6 +44,18 @@ impl Eip8130GasSchedule {
     /// Cost of a non-zero byte of serialized transaction data.
     pub const TX_DATA_NONZERO_BYTE: u64 = 16;
 
+    // ── EIP-7623 calldata floor ──────────────────────────────────────────────
+    /// `TOTAL_COST_FLOOR_PER_TOKEN`: the per-token gas an EIP-7623 transaction
+    /// pays for data availability under the floor branch. An 8130 transaction has
+    /// no single `data` field, so the floor is evaluated over the serialized
+    /// transaction (one token per zero byte, four per non-zero byte). A data-heavy
+    /// transaction whose execution is cheap pays `payload_tokens * this` instead
+    /// of the standard `payload_tokens * TX_DATA_ZERO_BYTE`, so it cannot post data
+    /// availability more cheaply than a standard EIP-7623 transaction on the same
+    /// chain. Pinned to revm's `TOTAL_COST_FLOOR_PER_TOKEN` by the
+    /// `gas_primitives_match_evm_reference` drift tripwire.
+    pub const TX_TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
+
     // ── EIP-8130 table values ────────────────────────────────────────────────
     /// Base intrinsic cost for any AA transaction (`AA_BASE_COST`).
     pub const AA_BASE_COST: u64 = Eip8130Constants::EIP8130_BASE_COST;
@@ -76,6 +88,15 @@ impl Eip8130GasSchedule {
     /// indicator, charged per delegation entry.
     pub const DELEGATION_DEPOSIT_COST: u64 =
         Self::CODE_DEPOSIT_PER_BYTE * Eip8130Constants::DELEGATION_INDICATOR_SIZE as u64;
+    /// `TX_VALUE_COST`: per call with `value > 0` and `to != sender`, covering
+    /// the recipient balance write and the transfer log. Charged statically
+    /// because `to` and `value` are signed fields.
+    pub const TX_VALUE_COST: u64 = 6_000;
+    /// Account-creation charge for a value-bearing call to an account that does
+    /// not exist, charged at dispatch because existence is only known then.
+    pub const NEW_ACCOUNT_COST: u64 = 25_000;
+    /// Upper bound on `payer_auth_cost`, which is metered outside `gas_limit`.
+    pub const MAX_AUTHENTICATION_GAS: u64 = 100_000;
 
     // ── Config-change actor slot writes ──────────────────────────────────────
     //

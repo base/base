@@ -31,7 +31,7 @@ base_metrics::define_metrics! {
     )]
     pipeline_reset_total: counter,
     #[describe("Total number of L1 batch submissions")]
-    #[label(name = "outcome", default = ["submitted", "confirmed", "failed", "requeued"])]
+    #[label(name = "outcome", default = ["submitted", "confirmed", "failed"])]
     submission_total: counter,
     #[describe("Total bytes of frame payload submitted to the DA layer")]
     #[label(name = "da_type", default = ["blob", "calldata"])]
@@ -107,11 +107,8 @@ impl BatcherMetrics {
     /// Submission confirmed on L1.
     pub const OUTCOME_CONFIRMED: &'static str = "confirmed";
 
-    /// Submission failed (tx reverted or timed out) and was requeued.
+    /// Submission failed for any reason and was requeued.
     pub const OUTCOME_FAILED: &'static str = "failed";
-
-    /// Submission requeued due to txpool blockage.
-    pub const OUTCOME_REQUEUED: &'static str = "requeued";
 
     /// Blob DA: frames encoded into EIP-4844 blobs.
     pub const DA_TYPE_BLOB: &'static str = "blob";

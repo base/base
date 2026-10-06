@@ -22,14 +22,13 @@ base-runtime = { workspace = true, features = ["tokio"] }
 base-common-consensus = { workspace = true, features = ["std"] }
 
 # external
-auto_impl.workspace = true
 futures.workspace = true
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "macros", "rt"] }
-derive_more = { workspace = true, features = ["debug", "display", "from_str"] }
+derive_more = { workspace = true, features = ["debug"] }
 
 # optional — activated by the `test-utils` feature
 async-trait = { workspace = true, optional = true }

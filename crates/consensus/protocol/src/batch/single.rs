@@ -96,6 +96,14 @@ impl SingleBatch {
             return BatchValidity::Drop(BatchDropReason::ParentHashMismatch);
         }
 
+        // Denim permits only one L1 origin per whole second. Compare against the exact parent
+        // origin because the derivation pipeline's current epoch may already be one block ahead.
+        let same_second = cfg.is_denim_active(self.timestamp)
+            && self.timestamp == l2_safe_head.block_info.timestamp;
+        if same_second && self.epoch() != l2_safe_head.l1_origin {
+            return BatchValidity::Drop(BatchDropReason::SameSecondOriginChange);
+        }
+
         // Filter out batches that were included too late.
         if self.epoch_num + cfg.seq_window_size < inclusion_block.number {
             return BatchValidity::Drop(BatchDropReason::IncludedTooLate);
@@ -148,9 +156,9 @@ impl SingleBatch {
         if self.timestamp > max && no_txs {
             // If the sequencer is co-operating by producing an empty batch,
             // allow the batch if it was the right thing to do to maintain the L2 time >= L1 time
-            // invariant. Only check batches that do not advance the epoch, to ensure
-            // epoch advancement regardless of time drift is allowed.
-            if epoch.number == batch_origin.number {
+            // invariant. Only check batches that do not advance the epoch and are not pinned by
+            // Denim's one-origin-per-second rule, to ensure permitted epoch advancement is allowed.
+            if epoch.number == batch_origin.number && !same_second {
                 if l1_blocks.len() < 2 {
                     return BatchValidity::Undecided;
                 }
@@ -212,6 +220,7 @@ mod tests {
     use alloy_rlp::{Decodable, Encodable};
     use base_common_consensus::{BaseTxEnvelope, TxDeposit};
     use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, UpgradeConfig};
+    use rstest::rstest;
     use tracing::Level;
 
     use super::*;
@@ -373,6 +382,159 @@ mod tests {
             batch.check_batch_timestamp(&cfg, l2_safe_head, &inclusion_block),
             BatchValidity::Accept
         );
+    }
+
+    #[rstest]
+    #[case::pre_denim(0, 98, 100, true, true)]
+    #[case::activation(1, 100, 102, true, true)]
+    #[case::retain_origin(2, 102, 102, false, true)]
+    #[case::at_200ms(2, 102, 102, true, false)]
+    #[case::at_400ms(3, 102, 102, true, false)]
+    #[case::at_600ms(4, 102, 102, true, false)]
+    #[case::at_800ms(5, 102, 102, true, false)]
+    #[case::next_second(6, 102, 103, true, true)]
+    fn test_denim_same_second_origin_validation(
+        #[case] parent_number: u64,
+        #[case] parent_timestamp: u64,
+        #[case] timestamp: u64,
+        #[case] advance_origin: bool,
+        #[case] accepted: bool,
+    ) {
+        let cfg = RollupConfig {
+            block_time: 2,
+            max_sequencer_drift: 600,
+            seq_window_size: 10,
+            genesis: ChainGenesis { l2_time: 98, ..Default::default() },
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { denim: Some(102), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let current = BlockInfo {
+            number: 10,
+            hash: BlockHash::repeat_byte(10),
+            timestamp: 88,
+            ..Default::default()
+        };
+        let next = BlockInfo {
+            number: 11,
+            hash: BlockHash::repeat_byte(11),
+            parent_hash: current.hash,
+            timestamp: 100,
+        };
+        let parent = L2BlockInfo {
+            block_info: BlockInfo {
+                number: parent_number,
+                timestamp: parent_timestamp,
+                hash: BlockHash::repeat_byte(42),
+                ..Default::default()
+            },
+            l1_origin: current.id(),
+            ..Default::default()
+        };
+        let origin = if advance_origin { next } else { current };
+        let batch = SingleBatch {
+            parent_hash: parent.block_info.hash,
+            epoch_num: origin.number,
+            epoch_hash: origin.hash,
+            timestamp,
+            transactions: vec![Bytes::from_static(&[0x02, 0x01])],
+        };
+        let validity = batch.check_batch(&cfg, &[current, next], parent, &next);
+        if accepted {
+            assert_eq!(validity, BatchValidity::Accept);
+            if !advance_origin {
+                // Matching origin numbers do not permit a different hash within the same second.
+                let mut conflicting_parent = parent;
+                conflicting_parent.l1_origin.hash = BlockHash::repeat_byte(12);
+                assert_eq!(
+                    batch.check_batch(&cfg, &[current, next], conflicting_parent, &next),
+                    BatchValidity::Drop(BatchDropReason::SameSecondOriginChange),
+                );
+            }
+        } else {
+            let expected = BatchValidity::Drop(BatchDropReason::SameSecondOriginChange);
+            assert_eq!(validity, expected);
+            // The pipeline may already have advanced its internal epoch ahead of the parent.
+            assert_eq!(batch.check_batch(&cfg, &[next], parent, &next), expected);
+        }
+    }
+
+    #[rstest]
+    #[case::empty_past_drift_same_second(2, 102, 102, false, BatchValidity::Accept)]
+    #[case::nonempty_past_drift_same_second(
+        2,
+        102,
+        102,
+        true,
+        BatchValidity::Drop(BatchDropReason::SequencerDriftExceeded)
+    )]
+    #[case::empty_past_drift_next_second(
+        6,
+        102,
+        103,
+        false,
+        BatchValidity::Drop(BatchDropReason::SequencerDriftNotAdoptedNextOrigin)
+    )]
+    #[case::empty_past_drift_pre_denim(
+        0,
+        98,
+        100,
+        false,
+        BatchValidity::Drop(BatchDropReason::SequencerDriftNotAdoptedNextOrigin)
+    )]
+    fn test_denim_same_second_origin_drift(
+        #[case] parent_number: u64,
+        #[case] parent_timestamp: u64,
+        #[case] timestamp: u64,
+        #[case] nonempty: bool,
+        #[case] expected: BatchValidity,
+    ) {
+        let cfg = RollupConfig {
+            block_time: 2,
+            max_sequencer_drift: 10,
+            seq_window_size: 10,
+            genesis: ChainGenesis { l2_time: 98, ..Default::default() },
+            upgrades: UpgradeConfig {
+                base: BaseUpgradeConfig { denim: Some(102), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let current = BlockInfo {
+            number: 10,
+            hash: BlockHash::repeat_byte(10),
+            timestamp: 88,
+            ..Default::default()
+        };
+        let next = BlockInfo {
+            number: 11,
+            hash: BlockHash::repeat_byte(11),
+            parent_hash: current.hash,
+            timestamp: 100,
+        };
+        let parent = L2BlockInfo {
+            block_info: BlockInfo {
+                number: parent_number,
+                timestamp: parent_timestamp,
+                ..Default::default()
+            },
+            l1_origin: current.id(),
+            ..Default::default()
+        };
+        let batch = SingleBatch {
+            epoch_num: current.number,
+            epoch_hash: current.hash,
+            timestamp,
+            transactions: if nonempty { vec![Bytes::from_static(&[0x02, 0x01])] } else { vec![] },
+            ..Default::default()
+        };
+        assert_eq!(batch.check_batch(&cfg, &[current, next], parent, &next), expected);
+        if expected == BatchValidity::Accept {
+            // A pinned origin does not require knowing its successor, even past drift.
+            assert_eq!(batch.check_batch(&cfg, &[current], parent, &next), expected);
+        }
     }
 
     #[test]
@@ -619,7 +781,7 @@ mod tests {
 
         let single_batch = SingleBatch {
             parent_hash: BlockHash::ZERO,
-            epoch_num: 1,
+            epoch_num: 0,
             epoch_hash: BlockHash::ZERO,
             timestamp: 0,
             transactions,
@@ -654,7 +816,7 @@ mod tests {
 
         let single_batch = SingleBatch {
             parent_hash: BlockHash::ZERO,
-            epoch_num: 1,
+            epoch_num: 0,
             epoch_hash: BlockHash::ZERO,
             timestamp: 0,
             transactions,

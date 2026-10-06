@@ -200,6 +200,9 @@ pub enum AlloyL2ChainProviderError {
     /// Failed to construct [`L2BlockInfo`] from the block and genesis.
     #[error("Failed to construct L2BlockInfo from block {0} and genesis")]
     L2BlockInfoConstruction(u64),
+    /// Failed to construct [`L2BlockInfo`] from the block and genesis.
+    #[error("Failed to construct L2BlockInfo from block {0} and genesis")]
+    L2BlockInfoByHashConstruction(B256),
     /// Failed to convert the block into a [`SystemConfig`].
     #[error("Failed to convert block {0} into SystemConfig")]
     SystemConfigConversion(B256),
@@ -218,7 +221,8 @@ impl From<AlloyL2ChainProviderError> for PipelineErrorKind {
             AlloyL2ChainProviderError::BlockHashNotFound(hash) => {
                 ResetError::BlockNotFound(hash.into()).reset()
             }
-            AlloyL2ChainProviderError::L2BlockInfoConstruction(_) => Self::Temporary(
+            AlloyL2ChainProviderError::L2BlockInfoConstruction(_)
+            | AlloyL2ChainProviderError::L2BlockInfoByHashConstruction(_) => Self::Temporary(
                 PipelineError::Provider("L2 block info construction failed".to_string()),
             ),
             AlloyL2ChainProviderError::SystemConfigConversion(_) => Self::Temporary(
@@ -233,9 +237,15 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
     type Error = AlloyL2ChainProviderError;
 
     async fn l2_block_info_by_number(&mut self, number: u64) -> Result<L2BlockInfo, Self::Error> {
-        let block = self.block_by_number(number).await?;
+        let block = self.fetch_block_by_number(number).await?;
         L2BlockInfo::from_block_and_genesis(&block, &self.rollup_config.genesis)
             .map_err(|_| AlloyL2ChainProviderError::L2BlockInfoConstruction(number))
+    }
+
+    async fn l2_block_info_by_hash(&mut self, hash: B256) -> Result<L2BlockInfo, Self::Error> {
+        let block = self.block_by_hash(hash).await?;
+        L2BlockInfo::from_block_and_genesis(&block, &self.rollup_config.genesis)
+            .map_err(|_| AlloyL2ChainProviderError::L2BlockInfoByHashConstruction(hash))
     }
 
     async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, Self::Error> {
@@ -243,6 +253,18 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
             return Ok((**block).clone());
         }
 
+        let block = self.fetch_block_by_number(number).await?;
+        self.block_by_number_cache.put(number, Arc::new(block.clone()));
+        Ok(block)
+    }
+}
+
+impl AlloyL2ChainProvider {
+    /// Fetches the block canonical at `number` without using the number-keyed cache.
+    async fn fetch_block_by_number(
+        &mut self,
+        number: u64,
+    ) -> Result<BaseBlock, AlloyL2ChainProviderError> {
         for attempt in 1..=L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS {
             Metrics::l2_chain_requests(L2_BLOCK_REF_BY_NUMBER_METHOD).increment(1);
 
@@ -265,7 +287,6 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
                 );
                 self.verify_block_hash(&block.header, block_hash)?;
                 self.block_by_hash_cache.put(block_hash, Arc::clone(&block));
-                self.block_by_number_cache.put(number, Arc::clone(&block));
                 return Ok((*block).clone());
             }
 
@@ -435,6 +456,38 @@ mod tests {
         assert_eq!(block.header.number, block_number);
         mock.assert_calls_async(3).await;
         assert_eq!(hits.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn test_l2_block_info_by_number_bypasses_number_cache() {
+        let server = MockServer::start_async().await;
+        let block_number = 42;
+        let mock = server
+            .mock_async(move |when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockByNumber"}"#);
+                then.respond_with(move |req| {
+                    HttpMockResponse::builder()
+                        .status(200)
+                        .header("content-type", "application/json")
+                        .body(json_rpc_response(req, block_json(block_number)))
+                        .build()
+                });
+            })
+            .await;
+
+        let mut provider = l2_provider(&server);
+        assert!(matches!(
+            provider.l2_block_info_by_number(block_number).await,
+            Err(AlloyL2ChainProviderError::L2BlockInfoConstruction(_))
+        ));
+        assert!(matches!(
+            provider.l2_block_info_by_number(block_number).await,
+            Err(AlloyL2ChainProviderError::L2BlockInfoConstruction(_))
+        ));
+
+        mock.assert_calls_async(2).await;
     }
 
     #[tokio::test(start_paused = true)]

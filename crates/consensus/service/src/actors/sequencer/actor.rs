@@ -1,7 +1,6 @@
 //! The [`SequencerActor`].
 
 use std::{
-    num::NonZeroU64,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -21,7 +20,7 @@ use tokio::{
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
 use crate::{
-    CancellableContext, Metrics, NodeActor, ResetReason, SequencerAdminQuery,
+    CancellableContext, Metrics, NodeActor, NodeOperatingMode, ResetReason, SequencerAdminQuery,
     UnsafePayloadGossipClient,
     actors::{
         SequencerEngineClient,
@@ -71,8 +70,8 @@ pub struct SequencerActor<
     pub engine_client: Arc<SequencerEngineClient_>,
     /// Whether the sequencer is active.
     pub is_active: bool,
-    /// Number of private blocks to build per shadow sequencing cycle.
-    pub shadow_blocks_per_cycle: Option<NonZeroU64>,
+    /// The node's operating mode.
+    pub mode: NodeOperatingMode,
     /// Optional account funding injected into the first private block of every shadow cycle.
     pub shadow_funding: Option<ShadowFunding>,
     /// Shared recovery mode flag.
@@ -117,7 +116,7 @@ where
 {
     /// Returns whether this actor is running as a shadow sequencer.
     pub const fn is_shadow_sequencer(&self) -> bool {
-        self.shadow_blocks_per_cycle.is_some()
+        self.mode.is_shadow_sequencer()
     }
 
     /// Fetches the sealed payload envelope from the engine for the given unsealed handle.
@@ -136,13 +135,17 @@ where
         Metrics::sequencer_total_transactions_sequenced()
             .increment(handle.attributes_with_parent.count_transactions());
 
-        if self.is_shadow_sequencer() {
-            Ok(PayloadSealer::new_private(envelope, "shadow"))
-        } else if self.unsafe_payload_gossip_client.seals_privately() {
-            Ok(PayloadSealer::new_private(envelope, "isolated"))
-        } else {
-            Ok(PayloadSealer::new(envelope))
-        }
+        Ok(match self.mode {
+            NodeOperatingMode::ShadowSequencer { .. } => {
+                PayloadSealer::new_private(envelope, "shadow")
+            }
+            NodeOperatingMode::IsolatedSequencer => {
+                PayloadSealer::new_private(envelope, "isolated")
+            }
+            NodeOperatingMode::Validator | NodeOperatingMode::Sequencer => {
+                PayloadSealer::new(envelope)
+            }
+        })
     }
 
     /// Attempts to seal a pre-built payload, first checking whether it is still fresh.
@@ -332,7 +335,7 @@ where
             .cycle
             .record_insertion(
                 inserted_head,
-                self.shadow_blocks_per_cycle.expect("shadow mode checked").get(),
+                self.mode.shadow_blocks_per_cycle().expect("shadow mode checked").get(),
             )
             .inspect_err(|_| self.cancellation_token.cancel())
     }
@@ -875,9 +878,18 @@ mod tests {
         );
         let (request_tx, request_rx) = mpsc::channel(8);
         let (head_tx, mut head_rx) = watch::channel(L2BlockInfo::default());
-        let coordinator =
-            SequencerEngineRequestCoordinator::new(processor, shadow, None, true, head_tx)
-                .start(request_rx);
+        let coordinator = SequencerEngineRequestCoordinator::new(
+            processor,
+            if shadow {
+                NodeOperatingMode::ShadowSequencer { blocks_per_cycle: std::num::NonZeroU64::MIN }
+            } else {
+                NodeOperatingMode::Sequencer
+            },
+            None,
+            true,
+            head_tx,
+        )
+        .start(request_rx);
         tokio::time::timeout(Duration::from_secs(1), head_rx.wait_for(|value| *value == head))
             .await
             .unwrap()
@@ -893,8 +905,7 @@ mod tests {
         conductor.expect_leader().once().returning(|| Ok(true));
         let mut origin_selector = MockOriginSelector::new();
         origin_selector.expect_next_l1_origin().returning(|_| Ok(BlockInfo::default()));
-        let mut gossip = MockUnsafePayloadGossipClient::new();
-        gossip.expect_seals_privately().return_const(false);
+        let gossip = MockUnsafePayloadGossipClient::new();
         let mut attributes = BasePayloadAttributes::default();
         attributes.payload_attributes.timestamp = now + 2;
         let recovery_mode = RecoveryModeGuard::new(false);
@@ -916,7 +927,13 @@ mod tests {
             conductor: Some(conductor),
             engine_client: Arc::clone(&engine_client),
             is_active: false,
-            shadow_blocks_per_cycle: shadow.then(|| NonZeroU64::new(1).unwrap()),
+            mode: if shadow {
+                NodeOperatingMode::ShadowSequencer {
+                    blocks_per_cycle: std::num::NonZeroU64::new(1).unwrap(),
+                }
+            } else {
+                NodeOperatingMode::Sequencer
+            },
             shadow_funding: None,
             recovery_mode,
             rollup_config: config,
