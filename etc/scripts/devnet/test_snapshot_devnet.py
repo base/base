@@ -212,6 +212,17 @@ class SnapshotTests(unittest.TestCase):
         self.assertNotIn("secret-api-key", str(caught.exception))
         self.assertNotIn("secret.invalid", str(caught.exception))
 
+    def test_response_without_result_is_unavailable_but_null_result_is_returned(self):
+        for envelope in (None, 42, ["result"], "result", {},
+                         {"jsonrpc": "2.0", "id": 1, "message": "secret-api-key"}):
+            with patch.object(devnet, "request_json", return_value=envelope):
+                with self.assertRaises(devnet.Unavailable) as caught:
+                    devnet.rpc("https://secret.invalid/key", "eth_chainId", upstream=True)
+            self.assertNotIn("secret-api-key", str(caught.exception))
+            self.assertNotIn("secret.invalid", str(caught.exception))
+        with patch.object(devnet, "request_json", return_value={"jsonrpc": "2.0", "id": 1, "result": None}):
+            self.assertIsNone(devnet.rpc("https://secret.invalid/key", "eth_getBlockByNumber", upstream=True))
+
     def test_malformed_endpoint_failure_does_not_print_secret(self):
         # http.client rejects the space before connecting, so the request stays offline.
         endpoint = "http://127.0.0.1:1/secret-key path"
