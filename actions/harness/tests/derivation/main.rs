@@ -111,7 +111,7 @@ async fn derivation_scenarios(
 
     match submission {
         Submission::Single => {
-            let source = ActionL2Source::from_blocks(blocks.clone());
+            let source = ActionL2Source::from_blocks(blocks);
             Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
         }
         Submission::PerBlock => {
