@@ -564,19 +564,21 @@ mod tests {
         op: VersionedCursorOp,
         start: u8,
     ) -> Option<(StoredNibbles, Option<(u64, bool)>)> {
-        let key = stored(Nibbles::from_nibbles([start]));
         match op {
             VersionedCursorOp::LatestVersion => {
+                let key = stored(Nibbles::from_nibbles([start]));
                 let mut cursor = version_cursor(tx, max_block);
                 cursor.latest_version_for_key(key).expect("ok").map(|(key, value)| {
                     (key, Some((value.block_number, matches!(value.value, MaybeDeleted(None)))))
                 })
             }
             VersionedCursorOp::SeekExact => {
+                let key = stored(Nibbles::from_nibbles([start]));
                 let mut cursor = version_cursor(tx, max_block);
                 cursor.seek_exact(key).expect("ok").map(|(key, _)| (key, None))
             }
             VersionedCursorOp::Seek => {
+                let key = stored(Nibbles::from_nibbles([start]));
                 let mut cursor = version_cursor(tx, max_block);
                 cursor.seek(key).expect("ok").map(|(key, _)| (key, None))
             }
@@ -585,6 +587,7 @@ mod tests {
                 cursor.next().expect("ok").map(|(key, _)| (key, None))
             }
             VersionedCursorOp::TrieSeekExact => {
+                let key = stored(Nibbles::from_nibbles([start]));
                 let mut cursor = account_trie_cursor(tx, max_block);
                 TrieCursor::seek_exact(&mut cursor, key.0)
                     .expect("ok")
