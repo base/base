@@ -6525,6 +6525,7 @@ dependencies = [
  "reth-tracing",
  "reth-transaction-pool",
  "revm-database",
+ "rstest",
  "serde_json",
  "tokio",
  "tokio-stream",
