@@ -36,6 +36,7 @@ READ_METHODS = {
 ROLES = ("sequencer", "validator")
 EXECUTION_RPC_PORT = 8545
 CONSENSUS_RPC_PORT = 9545
+GOSSIP_PORT = 9222
 OBSOLETE_CONFIG = {
     "fork_block": "init discovers F from the sequencer snapshot; remove it",
     "rollup_env": "no Base rollup endpoint is used; remove it",
@@ -131,32 +132,44 @@ def call(url, address, signature, *args, block="latest", upstream=False):
     return json.loads(run("cast", "abi-decode", "--json", signature, encoded))[0]
 
 
-def wait(description, check, timeout, poll_interval=1, report_interval=30, diagnostics=None):
+def wait(description, check, timeout, poll_interval=1, progress=None, report_interval=30, diagnostics=None):
     """Polls `check` until truthy.
 
-    `timeout=None` waits without a deadline; otherwise `timeout` bounds the whole wait. The
-    description is printed before the first poll and with the elapsed time at each report.
+    `timeout=None` waits without a deadline. Otherwise, without `progress`, `timeout` bounds the
+    whole wait. With it, `timeout` bounds a stall: any
+    change in the first element of `progress()` restarts it, and the second element, which must
+    not contain endpoints or keys, is printed every `report_interval` seconds. The description is
+    printed before the first poll and, without `progress`, with the elapsed time at each report.
     Optional `diagnostics` describes the first failed poll and each report, without extending waits.
     """
     print(f"waiting for {description}", file=sys.stderr, flush=True)
     started = time.monotonic()
     deadline = None if timeout is None else started + timeout
-    next_report = started if diagnostics is not None else started + report_interval
+    next_report, state, message = started + report_interval, None, ""
+    if diagnostics is not None:
+        next_report = started
     while True:
         result = check()
         if result:
             return result
         now = time.monotonic()
+        if progress is not None:
+            current, message = progress()
+            if current != state:
+                state = current
+                if timeout is not None:
+                    deadline = now + timeout
         if now >= next_report:
-            detail = f"{int(now - started)}s elapsed"
+            detail = message if progress is not None else f"{int(now - started)}s elapsed"
             if diagnostics is not None:
                 if deadline is not None:
                     detail += f" ({max(0, int(deadline - now))}s remaining)"
                 detail += f"; {diagnostics()}"
             print(f"waiting for {description}: {detail}", file=sys.stderr, flush=True)
             next_report = now + report_interval
+        stalled = f" (no progress for {timeout}s; {message})" if progress is not None else ""
         require(deadline is None or now < deadline,
-                f"timed out: {description}; data preserved, rerun start to resume")
+                f"timed out: {description}{stalled}; data preserved, rerun start to resume")
         time.sleep(poll_interval)
 
 
@@ -230,6 +243,26 @@ def validate_boundary(inspections, fork_number):
         for label in ("latest", "safe", "finalized"):
             require(snapshot[label]["block_info"]["l1origin"]["number"] <= fork_number,
                     "snapshot L1 origin is after the fork")
+
+
+def derived_boundary(statuses, fork_number, initial_latest):
+    """Returns the common derived safe head once every node has moved its L1 origin past F.
+
+    `current_l1 == F` means the pipeline entered F, not that F's batches were applied; it only
+    advances after the engine acknowledged every attribute derived from F.
+    """
+    if any(number(status["current_l1"]["number"]) <= fork_number for status in statuses.values()):
+        return None
+    for role, status in statuses.items():
+        safe, unsafe = status["safe_l2"], status["unsafe_l2"]
+        require(safe["hash"] == unsafe["hash"] and number(safe["number"]) == number(unsafe["number"]),
+                f"{role} kept unsafe blocks after deriving F: the snapshot tail is not covered by canonical batches")
+        require(number(safe["number"]) >= initial_latest["number"],
+                f"{role} derived safe head is below the snapshot head after deriving F")
+    heads = {(number(status["safe_l2"]["number"]), status["safe_l2"]["hash"]) for status in statuses.values()}
+    require(len(heads) == 1, "sequencer and validator derived different safe heads")
+    (height, block_hash), = heads
+    return {"number": height, "hash": block_hash}
 
 
 def upgrade_times(config):
@@ -581,6 +614,97 @@ class SnapshotFork:
         require(number(call(url, system, "batcherHash()(bytes32)")) == number(batcher), "batcher update not applied")
         require(call(url, system, "unsafeBlockSigner()(address)").lower() == signer.lower(), "signer update not applied")
         rpc(url, "anvil_setBalance", batcher, hex(100 * 10**18))
+
+    def sync_status(self, role):
+        return rpc(self.url(role + "-cl"), "optimism_syncStatus")
+
+    def consensus_ready(self, role):
+        """False while the role is stopped or starting; identity/safety failures still raise."""
+        try:
+            return bool(self.sync_status(role))
+        except Unavailable:
+            return False
+
+    def wait_upgrades(self):
+        expected = [timestamp or None for timestamp in self.manifest["schedule"]]
+        for role in ("sequencer", "validator"):
+            def observed():
+                config = rpc(self.url(role + "-cl"), "optimism_rollupConfig")
+                ready = rpc(self.url(role + "-cl"), "base_upgradeReadiness")
+                return ready["ready"] and upgrade_times(config)[:len(expected)] == expected
+            wait(role + " observing the recorded upgrade schedule", observed, self.timeout)
+
+    def wait_boundary(self):
+        """Gates sequencing on both nodes having derived every canonical batch through F."""
+        fork = self.manifest["fork"]
+        fork_number = number(fork["number"])
+        initial = self.manifest["initial"][0]["latest"]["block_info"]
+        if number(rpc(self.url("l1"), "eth_blockNumber")) == fork_number:
+            # Nodes can only report leaving F once a local successor exists. One wall-time slot is enough.
+            self.mine()
+        successor = rpc(self.url("l1"), "eth_getBlockByNumber", hex(fork_number + 1), False)
+        require(successor and successor["parentHash"] == fork["hash"], "local L1 has no successor built on F")
+        statuses = {}
+
+        def derived():
+            try:
+                statuses.update((role, self.sync_status(role)) for role in ROLES)
+            except Unavailable:
+                return None
+            return derived_boundary(statuses, fork_number, initial)
+
+        def progress():
+            heads = {role: (status["current_l1"]["number"], status["safe_l2"]["number"], status["unsafe_l2"]["number"])
+                     for role, status in statuses.items()}
+            return heads, "; ".join(f"{role} L1 {l1}/{fork_number + 1} needed, safe {safe}, unsafe {unsafe}"
+                                    for role, (l1, safe, unsafe) in heads.items()) or "consensus status unavailable"
+
+        safe = wait("both nodes deriving past L1 fork block F", derived, self.timeout, progress=progress)
+        for role in ROLES:
+            block = rpc(self.url(role), "eth_getBlockByNumber", hex(initial["number"]), False)
+            require(block and block["hash"] == initial["hash"], f"snapshot head is no longer canonical on {role}")
+        self.manifest.update(boundary_validated=True, boundary={
+            "l1_successor": {key: successor[key] for key in ("number", "hash")},
+            "current_l1": {role: statuses[role]["current_l1"] for role in ROLES}, "safe_l2": safe})
+        self.save()
+
+    def peers(self):
+        infos = {role: rpc(self.url(role + "-cl"), "opp2p_self") for role in ROLES}
+        for role, other in (("sequencer", "validator"), ("validator", "sequencer")):
+            # Gossip stays on the internal network; resolve the peer's address there explicitly.
+            _, ip = private_address(self.manifest["project"], (other,), self.containers())
+            address = f"/ip4/{ip}/tcp/{GOSSIP_PORT}/p2p/{infos[other]['peerID']}"
+            rpc(self.url(role + "-cl"), "opp2p_connectPeer", address)
+
+    def require_batcher(self):
+        self._containers = None
+        require("batcher" in self.running_services(), "batcher exited after start (any exit, including "
+                "code 0, fails); inspect its logs; data preserved, rerun start to resume")
+
+    def start_batcher(self):
+        """Starts the batcher and requires both nodes to derive one canonical block it batched."""
+        target = max(number(self.sync_status(role)["safe_l2"]["number"]) for role in ROLES) + 1
+        self.compose("up", "-d", "--no-build", "batcher")
+        statuses = {}
+
+        def batched():
+            self.require_batcher()
+            try:
+                statuses.update((role, self.sync_status(role)) for role in ROLES)
+            except Unavailable:
+                return False
+            return all(number(status["safe_l2"]["number"]) >= target for status in statuses.values())
+
+        def progress():
+            heads = {role: number(status["safe_l2"]["number"]) for role, status in statuses.items()}
+            return heads, "; ".join(f"{role} safe {safe}/{target} needed"
+                                    for role, safe in heads.items()) or "consensus status unavailable"
+
+        wait("batcher advancing both safe heads", batched, self.timeout, progress=progress)
+        hashes = {(rpc(self.url(role), "eth_getBlockByNumber", hex(target), False) or {}).get("hash")
+                  for role in ROLES}
+        require(len(hashes) == 1 and None not in hashes,
+                f"sequencer and validator disagree on canonical safe block {target}; data preserved")
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
