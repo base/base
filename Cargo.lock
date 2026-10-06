@@ -4614,6 +4614,7 @@ dependencies = [
  "reth-trie-common",
  "reth-trie-db",
  "rocksdb",
+ "rstest",
  "secp256k1 0.30.0",
  "serde",
  "serial_test",
