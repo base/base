@@ -4,7 +4,7 @@ import pathlib
 import tempfile
 import unittest
 
-from compare_pipeline_profile import ACTIVE, WALL, WORKLOADS, compare
+from compare_pipeline_profile import ACTIVE, COMPLETE_ACTIVE, COMPLETE_WALL, WALL, WORKLOADS, compare
 
 
 class PipelineComparisonTests(unittest.TestCase):
@@ -99,6 +99,35 @@ class PipelineComparisonTests(unittest.TestCase):
                 path.unlink()
         with self.assertRaises(ValueError):
             compare(self.baseline, self.candidate)
+
+    def add_complete_observations(self, baseline_active=0.12, candidate_active=0.09):
+        for directory, active in ((self.baseline, baseline_active), (self.candidate, candidate_active)):
+            for path in directory.glob("[0-9][0-9]-*.json"):
+                samples = json.loads(path.read_text())
+                for sample in samples:
+                    sample["timings"].update({COMPLETE_ACTIVE: [active], COMPLETE_WALL: [1.02]})
+                    sample["observations"].update({COMPLETE_ACTIVE: 1, COMPLETE_WALL: 1})
+                path.write_text(json.dumps(samples))
+
+    def test_complete_scope_accepts_verified_full_improvement(self):
+        self.add_complete_observations()
+        result = compare(self.baseline, self.candidate, complete=True)
+        self.assertTrue(result["passed"])
+        self.assertAlmostEqual(result["reduction_percent"], 25)
+
+    def test_scoped_speedup_cannot_certify_complete_pipeline(self):
+        self.add_complete_observations(candidate_active=0.11)
+        self.assertTrue(compare(self.baseline, self.candidate)["passed"])
+        self.assertFalse(compare(self.baseline, self.candidate, complete=True)["passed"])
+
+    def test_complete_scope_rejects_absent_observations(self):
+        with self.assertRaises(KeyError):
+            compare(self.baseline, self.candidate, complete=True)
+
+    def test_complete_scope_cannot_exclude_construction(self):
+        self.add_complete_observations(candidate_active=0.06)
+        with self.assertRaisesRegex(ValueError, "scope excludes construction"):
+            compare(self.baseline, self.candidate, complete=True)
 
 
 if __name__ == "__main__":

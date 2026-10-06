@@ -10,6 +10,8 @@ import statistics
 WORKLOADS = ("transfer-legacy", "transfer-azul", "storage-legacy", "storage-azul")
 ACTIVE = "base_builder_active_block_build_duration"
 WALL = "base_builder_block_build_wall_duration"
+COMPLETE_ACTIVE = "base_builder_complete_block_build_active_duration"
+COMPLETE_WALL = "base_builder_complete_block_build_wall_duration"
 # Rounded small-sample Student-t critical values; add 0.001 below to round conservatively upward.
 T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365,
        8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145,
@@ -22,11 +24,12 @@ def percentile(values, p):
     return values[max(0, math.ceil(len(values) * p) - 1)]
 
 
-def summarize(samples, log):
+def summarize(samples, log, complete=False):
     if any(error in log for error in ("Persistence service failed", "Termination failed", "panicked at", "critical task exited")):
         raise ValueError("node background task or persistence failure in benchmark log")
-    active = [sample["timings"][ACTIVE][0] * 1000 for sample in samples]
-    wall = [sample["timings"][WALL][0] * 1000 for sample in samples]
+    active_metric, wall_metric = (COMPLETE_ACTIVE, COMPLETE_WALL) if complete else (ACTIVE, WALL)
+    active = [sample["timings"][active_metric][0] * 1000 for sample in samples]
+    wall = [sample["timings"][wall_metric][0] * 1000 for sample in samples]
     driver = [sample["driver_wall_seconds"] * 1000 for sample in samples]
     rss = re.search(r"(\d+)\s+maximum resident set size", log)
     stages = {}
@@ -38,7 +41,7 @@ def summarize(samples, log):
             "stages_ms": stages}
 
 
-def compare(baseline, candidate, coverage=False):
+def compare(baseline, candidate, coverage=False, complete=False):
     names = sorted(path.name for path in baseline.glob("[0-9][0-9]-*.json"))
     if len(names) < 20 or names != sorted(path.name for path in candidate.glob("[0-9][0-9]-*.json")):
         raise ValueError("at least five complete matching four-workload run pairs required")
@@ -46,6 +49,7 @@ def compare(baseline, candidate, coverage=False):
     pairs = {}
     failures = []
     load_classes = set()
+    active_metric, wall_metric = (COMPLETE_ACTIVE, COMPLETE_WALL) if complete else (ACTIVE, WALL)
     for name in names:
         before = json.loads((baseline / name).read_text())
         after = json.loads((candidate / name).read_text())
@@ -62,15 +66,22 @@ def compare(baseline, candidate, coverage=False):
             if left["transactions"] != expected_transactions or right["transactions"] != expected_transactions or left["gas_used"] != right["gas_used"]:
                 raise ValueError(f"transaction/gas work changed in {name}")
             for sample in (left, right):
-                if len(sample["timings"][ACTIVE]) != 1 or len(sample["timings"][WALL]) != 1:
+                if len(sample["timings"][active_metric]) != 1 or len(sample["timings"][wall_metric]) != 1:
                     raise ValueError("each block must have exactly one active/wall observation")
-                if sample.get("published_flashblocks") != expected_publications or sample.get("observations", {}).get(ACTIVE) != 1:
+                if sample.get("published_flashblocks") != expected_publications or sample.get("observations", {}).get(active_metric) != 1:
                     raise ValueError("missing flashblocks or noncanonical observation count")
-                if sample["observations"].get(WALL) != 1:
+                if sample["observations"].get(wall_metric) != 1:
                     raise ValueError("expected one complete wall-clock observation")
-                durations = [sample["timings"][metric][0] for metric in (ACTIVE, WALL)]
+                durations = [sample["timings"][metric][0] for metric in (active_metric, wall_metric)]
                 if not all(math.isfinite(value) and value > 0 for value in durations) or durations[0] > durations[1]:
                     raise ValueError("invalid pipeline duration")
+                if complete:
+                    for metric, full in ((ACTIVE, COMPLETE_ACTIVE), (WALL, COMPLETE_WALL)):
+                        scoped = sample["timings"].get(metric, [])
+                        if len(scoped) != 1 or sample["observations"].get(metric) != 1 or not math.isfinite(scoped[0]) or scoped[0] <= 0:
+                            raise ValueError("missing or invalid legacy scoped duration")
+                        if sample["timings"][full][0] < scoped[0]:
+                            raise ValueError("complete pipeline scope excludes construction time")
                 deadlines = sample.get("deadlines")
                 if not isinstance(deadlines, dict):
                     raise ValueError("missing explicit deadline observations")
@@ -84,8 +95,12 @@ def compare(baseline, candidate, coverage=False):
                         raise ValueError("stress workload did not exercise near-capacity gas/DA budgets")
                 if load_class == "normal" and "storage" in name and not 20_000_000 <= sample["gas_used"] <= 60_200_000:
                     raise ValueError("normal storage workload outside sampled production gas regime")
-        b = summarize(before, (baseline / name.replace(".json", ".log")).read_text())
-        o = summarize(after, (candidate / name.replace(".json", ".log")).read_text())
+        b = summarize(before, (baseline / name.replace(".json", ".log")).read_text(), complete)
+        o = summarize(after, (candidate / name.replace(".json", ".log")).read_text(), complete)
+        if complete:
+            for samples, stats in ((before, b), (after, o)):
+                stats["scoped_p95_ms"] = percentile([sample["timings"][ACTIVE][0] * 1000 for sample in samples], .95)
+                stats["scoped_wall_p95_ms"] = percentile([sample["timings"][WALL][0] * 1000 for sample in samples], .95)
         runs.append({"name": name, "baseline": b, "candidate": o, "reduction_percent": 100 * (1 - o["mean_ms"] / b["mean_ms"])})
         pair = pairs.setdefault(name[:2], {"baseline": [], "candidate": []})
         pair["baseline"].append(b["mean_ms"])
@@ -95,7 +110,10 @@ def compare(baseline, candidate, coverage=False):
     # Per-workload guardrails aggregate across repetitions, rather than treating noisy individual runs as conclusive.
     for workload in WORKLOADS:
         rows = [run for run in runs if run["name"].endswith(workload + ".json")]
-        for guardrail in ("p95_ms", "wall_p95_ms", "driver_p95_ms", "peak_rss_bytes"):
+        guardrails = ("p95_ms", "wall_p95_ms", "driver_p95_ms", "peak_rss_bytes")
+        if complete:
+            guardrails += ("scoped_p95_ms", "scoped_wall_p95_ms")
+        for guardrail in guardrails:
             values_b = [row["baseline"][guardrail] for row in rows]
             values_o = [row["candidate"][guardrail] for row in rows]
             if any(value is None for value in values_b + values_o):
@@ -129,8 +147,11 @@ def main():
     parser.add_argument("candidate", type=pathlib.Path)
     parser.add_argument("--output", type=pathlib.Path, required=True)
     parser.add_argument("--coverage", action="store_true", help="Supplemental normal/stress safety checks; cannot certify the reference performance target")
+    parser.add_argument("--complete", action="store_true", help="Require the complete try_build metric including cleanup and final handoff")
     args = parser.parse_args()
-    result = compare(args.baseline, args.candidate, coverage=args.coverage)
+    result = compare(args.baseline, args.candidate, coverage=args.coverage, complete=args.complete)
+    if args.complete:
+        result["measurement_boundary"] = "complete-try-build"
     args.output.write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps({k: v for k, v in result.items() if k != "runs"}, indent=2))
     raise SystemExit(0 if result["passed"] else 1)

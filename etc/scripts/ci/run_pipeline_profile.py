@@ -12,7 +12,7 @@ import sys
 WORKLOADS = ("transfer-legacy", "transfer-azul", "storage-legacy", "storage-azul")
 
 
-def run_one(binary, label, output_dir, repetition, workload, load_class):
+def run_one(binary, label, output_dir, repetition, workload, load_class, complete=False):
     name = f"{repetition + 1:02}-{workload}"
     output = output_dir.resolve() / f"{name}.json"
     env = dict(os.environ, PIPELINE_WORKLOAD=workload, PIPELINE_OUTPUT=str(output), PIPELINE_LOAD_CLASS=load_class)
@@ -26,7 +26,8 @@ def run_one(binary, label, output_dir, repetition, workload, load_class):
     if any(error in log_text for error in ("Persistence service failed", "Termination failed", "panicked at", "critical task exited")):
         raise RuntimeError(f"node task failed during {name}; inspect the preserved log")
     samples = json.loads(output.read_text())
-    active = [v for sample in samples for v in sample["timings"]["base_builder_active_block_build_duration"]]
+    metric = "base_builder_complete_block_build_active_duration" if complete else "base_builder_active_block_build_duration"
+    active = [v for sample in samples for v in sample["timings"][metric]]
     print(f"  mean active pipeline: {1000 * sum(active) / len(active):.3f} ms/block", flush=True)
 
 
@@ -41,6 +42,7 @@ def main():
     parser.add_argument("--baseline-commit")
     parser.add_argument("--comparison-commit")
     parser.add_argument("--load-class", choices=("reference", "normal", "stress"), default="reference")
+    parser.add_argument("--complete", action="store_true", help="Measure the complete try_build call including cleanup and final watch handoff")
     args = parser.parse_args()
     binary = args.binary.resolve()
     args.output.mkdir(parents=True, exist_ok=False)
@@ -60,13 +62,15 @@ def main():
             "load_class": args.load_class,
             "comparison_order": "baseline/candidate on odd pairs, candidate/baseline on even pairs; paired per workload" if args.comparison_binary else "single cohort",
             "contract_sha256": hashlib.sha256(pathlib.Path("etc/benchmarks/block-building-contract.json").read_bytes()).hexdigest(),
+            "measurement_boundary": "complete-try-build" if args.complete else "scoped-build-payload",
+            "complete_contract_sha256": hashlib.sha256(pathlib.Path("etc/benchmarks/block-building-complete-contract.json").read_bytes()).hexdigest() if args.complete else None,
         }
         (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     for repetition in range(args.repetitions):
         for workload in WORKLOADS:
             order = entries if repetition % 2 == 0 else list(reversed(entries))
             for executable, label, output_dir, _ in order:
-                run_one(executable, label, output_dir, repetition, workload, args.load_class)
+                run_one(executable, label, output_dir, repetition, workload, args.load_class, args.complete)
 
 
 if __name__ == "__main__":

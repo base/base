@@ -429,7 +429,7 @@ pub async fn profile_pipeline() -> eyre::Result<()> {
             missing_flashblocks: deadline_after.1 - deadline_before.1,
             reduced_flashblocks: deadline_after.2 - deadline_before.2,
             build_wall_budget_seconds: wall_budget.as_secs_f64(),
-            build_wall_budget_missed: timings["base_builder_block_build_wall_duration"][0]
+            build_wall_budget_missed: timings["base_builder_complete_block_build_wall_duration"][0]
                 > wall_budget.as_secs_f64(),
         };
         eyre::ensure!(
@@ -449,6 +449,23 @@ pub async fn profile_pipeline() -> eyre::Result<()> {
                     .get("base_builder_active_block_build_duration")
                     .is_some_and(|v| v.len() == 1),
                 "missing or duplicate active pipeline observation: {timings:?}"
+            );
+            for metric in [
+                "base_builder_complete_block_build_active_duration",
+                "base_builder_complete_block_build_wall_duration",
+            ] {
+                eyre::ensure!(
+                    observations.get(metric) == Some(&1)
+                        && timings.get(metric).is_some_and(|values| values.len() == 1),
+                    "missing or duplicate complete pipeline observation: {metric}"
+                );
+            }
+            eyre::ensure!(
+                timings["base_builder_complete_block_build_active_duration"][0]
+                    >= timings["base_builder_active_block_build_duration"][0]
+                    && timings["base_builder_complete_block_build_wall_duration"][0]
+                        >= timings["base_builder_block_build_wall_duration"][0],
+                "complete pipeline scope must contain the original construction scope"
             );
             results.push(BlockSample {
                 index,

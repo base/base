@@ -24,6 +24,10 @@ base_metrics::define_metrics! {
     active_block_build_duration: histogram,
     #[describe("End-to-end wall-clock time of a successful block build, including scheduled flashblock waits")]
     block_build_wall_duration: histogram,
+    #[describe("Complete successful try_build active time through state/provider cleanup and final watch handoff, excluding scheduled flashblock waits")]
+    complete_block_build_active_duration: histogram,
+    #[describe("Complete successful try_build wall time through state/provider cleanup and final watch handoff, including scheduled flashblock waits")]
+    complete_block_build_wall_duration: histogram,
     #[describe("Histogram of the time taken to build a Flashblock")]
     flashblock_build_duration: histogram,
     #[describe("Histogram of the time taken to sync a Flashblock")]

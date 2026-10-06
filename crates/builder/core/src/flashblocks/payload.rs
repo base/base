@@ -249,6 +249,7 @@ where
     async fn build_payload(
         &self,
         args: BuildArguments<BasePayloadBuilderAttributes<BaseTransactionSigned>, BaseBuiltPayload>,
+        complete_scheduled_wait: &mut Duration,
     ) -> Result<BaseBuiltPayload, PayloadBuilderError> {
         let block_build_start_time = Instant::now();
         let mut scheduled_wait = Duration::ZERO;
@@ -555,6 +556,7 @@ where
                 .record(wall_duration.saturating_sub(scheduled_wait));
             BuilderMetrics::block_build_wall_duration().record(wall_duration);
         }
+        *complete_scheduled_wait = scheduled_wait;
         result
     }
 
@@ -1091,8 +1093,16 @@ where
     ) -> Result<(), PayloadBuilderError> {
         // Keep construction behind this call boundary so its state provider, including any shared
         // cache handle, is released before publishing wakes the payload resolver.
-        let payload = self.build_payload(args).await?;
+        let complete_build_start = Instant::now();
+        let mut scheduled_wait = Duration::ZERO;
+        let payload = self.build_payload(args, &mut scheduled_wait).await?;
         payload_tx.send_replace(Some(payload));
+        // The returned old payload is dropped at the statement boundary above.
+        // Include construction-future cleanup and the final resolver handoff in this scope.
+        let wall_duration = complete_build_start.elapsed();
+        BuilderMetrics::complete_block_build_active_duration()
+            .record(wall_duration.saturating_sub(scheduled_wait));
+        BuilderMetrics::complete_block_build_wall_duration().record(wall_duration);
         Ok(())
     }
 }
