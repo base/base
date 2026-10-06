@@ -128,43 +128,6 @@ impl From<&TxResources> for BuilderTransactionResources {
     }
 }
 
-/// Fields emitted when the builder considers a transaction.
-#[derive(Debug, Serialize)]
-pub(crate) struct BuilderConsideredEventData {
-    #[serde(flatten)]
-    budget: BuilderBudgetFields,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tx_age_ms: Option<u128>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    metering_wait_duration_ms: Option<u128>,
-}
-
-impl BuilderConsideredEventData {
-    /// Creates a considered-event payload with no additional decision details.
-    pub(crate) fn new(
-        info: &ExecutionInfo,
-        limits: &ResourceLimits,
-        resources: Option<&TxResources>,
-    ) -> Self {
-        Self {
-            budget: BuilderBudgetFields::new(info, limits, resources),
-            tx_age_ms: None,
-            metering_wait_duration_ms: None,
-        }
-    }
-
-    /// Adds metering wait details to the considered-event payload.
-    pub(crate) const fn with_metering_wait(
-        mut self,
-        tx_age_ms: u128,
-        metering_wait_duration_ms: u128,
-    ) -> Self {
-        self.tx_age_ms = Some(tx_age_ms);
-        self.metering_wait_duration_ms = Some(metering_wait_duration_ms);
-        self
-    }
-}
-
 /// Fields emitted when the builder rejects a transaction.
 /// This journal event replaces the legacy S3 rejected-transaction RPC; retain
 /// the rejection reason and metering limit details here.
