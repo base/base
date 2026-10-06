@@ -40,9 +40,9 @@ impl ProofRequestRepo {
             INSERT INTO proof_requests (
                 id, session_id, request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
                 start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, status,
-                prover_address, l1_head, intermediate_root_interval
+                prover_address, l1_head
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             "#,
         )
         .bind(prepared.id)
@@ -59,7 +59,6 @@ impl ProofRequestRepo {
         .bind(ProofStatus::Created.as_str())
         .bind(&prepared.prover_address)
         .bind(&prepared.l1_head)
-        .bind(prepared.intermediate_root_interval)
         .execute(&self.pool)
         .await?;
 
@@ -82,9 +81,9 @@ impl ProofRequestRepo {
             INSERT INTO proof_requests (
                 id, session_id, request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
                 start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, status,
-                prover_address, l1_head, intermediate_root_interval
+                prover_address, l1_head
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             ON CONFLICT ((COALESCE(session_id, id::text))) DO NOTHING
             "#,
         )
@@ -102,7 +101,6 @@ impl ProofRequestRepo {
         .bind(ProofStatus::Created.as_str())
         .bind(&prepared.prover_address)
         .bind(&prepared.l1_head)
-        .bind(prepared.intermediate_root_interval)
         .execute(&mut *tx)
         .await?;
 
@@ -118,7 +116,7 @@ impl ProofRequestRepo {
                    request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
                    start_block_number, number_of_blocks_to_prove, sequence_window,
                    proof_type, status, prover_address, l1_head,
-                   intermediate_root_interval, retry_count
+                   retry_count
             FROM proof_requests
             WHERE COALESCE(session_id, id::text) = $1
             FOR UPDATE
@@ -148,7 +146,6 @@ impl ProofRequestRepo {
             proof_type: prepared.proof_type.map(|proof_type| proof_type.as_str()),
             prover_address: prepared.prover_address.as_deref(),
             l1_head: prepared.l1_head.as_deref(),
-            intermediate_root_interval: prepared.intermediate_root_interval,
         };
         let status_str: &str = row.get("status");
         let status = ProofStatus::try_from(status_str).map_err(|e| {
@@ -336,7 +333,7 @@ impl ProofRequestRepo {
                 stark_receipt, snark_receipt, result_payload,
                 submitted_by_worker_id, submitted_lock_id,
                 status, error_message,
-                prover_address, l1_head, intermediate_root_interval,
+                prover_address, l1_head,
                 created_at, updated_at, completed_at, retry_count
             FROM proof_requests
             WHERE id = $1
@@ -362,7 +359,7 @@ impl ProofRequestRepo {
                 stark_receipt, snark_receipt, result_payload,
                 submitted_by_worker_id, submitted_lock_id,
                 status, error_message,
-                prover_address, l1_head, intermediate_root_interval,
+                prover_address, l1_head,
                 created_at, updated_at, completed_at, retry_count
             FROM proof_requests
             WHERE COALESCE(session_id, id::text) = $1
@@ -980,8 +977,7 @@ impl ProofRequestRepo {
             r#"
             SELECT retry_count, status, job_status, lock_expires_at,
                    start_block_number, number_of_blocks_to_prove,
-                   sequence_window, proof_type, prover_address, l1_head,
-                   intermediate_root_interval
+                   sequence_window, proof_type, prover_address, l1_head
             FROM proof_requests
             WHERE id = $1
             FOR UPDATE
@@ -1383,7 +1379,6 @@ impl ProofRequestRepo {
                    sequence_window, proof_type, stark_receipt, snark_receipt,
                    result_payload, submitted_by_worker_id, submitted_lock_id,
                    status, error_message, prover_address, l1_head,
-                   intermediate_root_interval,
                    created_at, updated_at, completed_at, retry_count
             FROM proof_requests
             WHERE status = $1
@@ -1412,7 +1407,6 @@ impl ProofRequestRepo {
                 pr.sequence_window, pr.proof_type, pr.stark_receipt, pr.snark_receipt,
                 pr.result_payload, pr.submitted_by_worker_id, pr.submitted_lock_id,
                 pr.status, pr.error_message, pr.prover_address, pr.l1_head,
-                pr.intermediate_root_interval,
                 pr.created_at, pr.updated_at, pr.completed_at, pr.retry_count
             FROM proof_requests pr
             WHERE pr.updated_at < NOW() - INTERVAL '1 minute' * $1
@@ -1630,7 +1624,7 @@ impl ProofRequestRepo {
                     stark_receipt, snark_receipt, result_payload,
                     submitted_by_worker_id, submitted_lock_id,
                     status, error_message,
-                    prover_address, l1_head, intermediate_root_interval,
+                    prover_address, l1_head,
                     created_at, updated_at, completed_at, retry_count
                 FROM proof_requests
                 WHERE status = $1
@@ -1652,7 +1646,7 @@ impl ProofRequestRepo {
                     stark_receipt, snark_receipt, result_payload,
                     submitted_by_worker_id, submitted_lock_id,
                     status, error_message,
-                    prover_address, l1_head, intermediate_root_interval,
+                    prover_address, l1_head,
                     created_at, updated_at, completed_at, retry_count
                 FROM proof_requests
                 ORDER BY created_at DESC
@@ -1784,7 +1778,6 @@ struct PreparedProofRequest {
     proof_type: Option<ProofType>,
     prover_address: Option<String>,
     l1_head: Option<String>,
-    intermediate_root_interval: Option<i64>,
 }
 
 impl TryFrom<CreateProofRequest> for PreparedProofRequest {
@@ -1813,14 +1806,6 @@ impl TryFrom<CreateProofRequest> for PreparedProofRequest {
                 })
             })
             .transpose()?;
-        let intermediate_root_interval = req
-            .intermediate_root_interval
-            .map(|v| {
-                i64::try_from(v).map_err(|_| CreateProofRequestValidationError::ValueOutOfRange {
-                    field: "intermediate_root_interval",
-                })
-            })
-            .transpose()?;
         validate_backend_proof_type(req.api_proof_type, req.proof_type)?;
         let request_payload = serde_json::to_value(&req.request_payload)
             .map_err(|_| CreateProofRequestValidationError::RequestPayloadSerialization)?;
@@ -1839,7 +1824,6 @@ impl TryFrom<CreateProofRequest> for PreparedProofRequest {
             proof_type: req.proof_type,
             prover_address: req.prover_address,
             l1_head: req.l1_head,
-            intermediate_root_interval,
         })
     }
 }
@@ -1958,7 +1942,6 @@ struct ProtocolRequestPayloadParams<'a> {
     zk_backend: Option<ZkBackend>,
     prover_address: Option<&'a str>,
     l1_head: Option<&'a str>,
-    intermediate_root_interval: Option<i64>,
 }
 
 impl ProtocolRequestPayloadParams<'_> {
@@ -1968,7 +1951,6 @@ impl ProtocolRequestPayloadParams<'_> {
             "number_of_blocks_to_prove": self.number_of_blocks_to_prove,
             "sequence_window": self.sequence_window,
             "l1_head": self.l1_head,
-            "intermediate_root_interval": self.intermediate_root_interval,
             "zk_vm": ZkVmKind::Sp1.as_str(),
             "zk_backend": self.zk_backend.unwrap_or(ZkBackend::Cluster).as_str(),
         });
@@ -2004,9 +1986,6 @@ impl ProtocolRequestPayloadParams<'_> {
                             "claimed_l2_output_root": ZERO_HASH,
                             "claimed_l2_block_number": self.start_block_number,
                             "proposer": ZERO_ADDRESS,
-                            "intermediate_block_interval": self
-                                .intermediate_root_interval
-                                .unwrap_or_default(),
                             "l1_head_number": 0,
                         },
                         "tee_kind": self.tee_kind.unwrap_or(TeeKind::AwsNitro).as_str(),
@@ -2051,7 +2030,6 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
     let sequence_window = row.get("sequence_window");
     let prover_address = row.get::<Option<String>, _>("prover_address");
     let l1_head = row.get::<Option<String>, _>("l1_head");
-    let intermediate_root_interval = row.get("intermediate_root_interval");
 
     let status_str: &str = row.get("status");
     let status = ProofStatus::try_from(status_str)
@@ -2095,7 +2073,6 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
                 zk_backend,
                 prover_address: prover_address.as_deref(),
                 l1_head: l1_head.as_deref(),
-                intermediate_root_interval,
             }
             .build()
         });
@@ -2121,7 +2098,6 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
         error_message: row.get("error_message"),
         prover_address,
         l1_head,
-        intermediate_root_interval,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         completed_at: row.get("completed_at"),
@@ -2150,7 +2126,7 @@ const PROOF_JOB_RETURNING_COLUMNS: &str = "id, COALESCE(session_id, id::text) AS
      start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, \
      stark_receipt, snark_receipt, result_payload, \
      submitted_by_worker_id, submitted_lock_id, status, error_message, \
-     prover_address, l1_head, intermediate_root_interval, \
+     prover_address, l1_head, \
      created_at, updated_at, completed_at, retry_count, \
      job_status, worker_id, lock_id, lock_expires_at, claimed_at, attempt, last_heartbeat_at";
 
@@ -2290,7 +2266,6 @@ struct CreateRequestParams<'a> {
     proof_type: Option<&'a str>,
     prover_address: Option<&'a str>,
     l1_head: Option<&'a str>,
-    intermediate_root_interval: Option<i64>,
 }
 
 impl CreateRequestParams<'_> {
@@ -2331,11 +2306,6 @@ impl CreateRequestParams<'_> {
             && row.get::<Option<&str>, _>("l1_head") != self.l1_head
         {
             return Some("l1_head");
-        }
-        if row.get::<Option<i64>, _>("intermediate_root_interval")
-            != self.intermediate_root_interval
-        {
-            return Some("intermediate_root_interval");
         }
         if let Some(api_proof_type) = row.get::<Option<&str>, _>("api_proof_type")
             && api_proof_type != self.api_proof_type
@@ -2397,6 +2367,9 @@ fn comparable_request_payload(
         };
     if let Some(map) = zk_backend_path.and_then(|path| value.pointer_mut(path)?.as_object_mut()) {
         map.entry("zk_backend").or_insert_with(|| serde_json::Value::String("cluster".to_owned()));
+        // Older ZK payloads recorded a caller-supplied interval. The range program
+        // ignores it, so it must not split an otherwise identical replay.
+        map.remove("intermediate_root_interval");
     }
     if mode == RequestMismatchMode::AllowL1HeadReplacement {
         remove_l1_head_fields(&mut value);
@@ -2437,7 +2410,6 @@ mod tests {
                 number_of_blocks_to_prove: 5,
                 sequence_window: Some(50),
                 l1_head: None,
-                intermediate_root_interval: Some(5),
                 schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
@@ -2461,7 +2433,6 @@ mod tests {
         assert_eq!(zk_request.start_block_number, 100);
         assert_eq!(zk_request.number_of_blocks_to_prove, 5);
         assert_eq!(zk_request.sequence_window, Some(50));
-        assert_eq!(zk_request.intermediate_root_interval, Some(5));
         assert_eq!(zk_request.zk_vm, ZkVm::Sp1);
     }
 
@@ -2474,7 +2445,6 @@ mod tests {
                 number_of_blocks_to_prove: 5,
                 sequence_window: None,
                 l1_head: None,
-                intermediate_root_interval: None,
                 schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
@@ -2514,7 +2484,6 @@ mod tests {
             zk_backend: None,
             prover_address: None,
             l1_head: Some(ZERO_HASH),
-            intermediate_root_interval: Some(10),
         }
         .build();
 
@@ -2527,7 +2496,6 @@ mod tests {
         };
         assert_eq!(request.tee_kind, ProtocolTeeKind::AwsNitro);
         assert_eq!(request.proof.claimed_l2_block_number, 100);
-        assert_eq!(request.proof.intermediate_block_interval, 10);
     }
 
     #[test]
@@ -2614,7 +2582,10 @@ mod tests {
         let payloads = [
             (
                 serde_json::json!({
-                    "request": {"proof_type": "compressed", "payload": {"start_block_number": 1}}
+                    "request": {
+                        "proof_type": "compressed",
+                        "payload": {"start_block_number": 1, "intermediate_root_interval": 10}
+                    }
                 }),
                 serde_json::json!({
                     "request": {
@@ -2688,7 +2659,6 @@ mod tests {
                 number_of_blocks_to_prove: 5,
                 sequence_window: None,
                 l1_head: None,
-                intermediate_root_interval: None,
                 schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,

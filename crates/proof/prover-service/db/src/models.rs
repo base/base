@@ -548,8 +548,6 @@ pub struct ProofRequest {
     pub prover_address: Option<String>,
     /// Explicit L1 head hash used for witness generation.
     pub l1_head: Option<String>,
-    /// Intermediate root interval requested for ZK proof generation.
-    pub intermediate_root_interval: Option<i64>,
     /// Timestamp when the request was created.
     pub created_at: DateTime<Utc>,
     /// Timestamp of the last status update.
@@ -770,8 +768,6 @@ pub struct CreateProofRequest {
     pub prover_address: Option<String>,
     /// Explicit L1 head hash for witness generation.
     pub l1_head: Option<String>,
-    /// Intermediate root interval for ZK proof generation.
-    pub intermediate_root_interval: Option<u64>,
 }
 
 impl CreateProofRequest {
@@ -794,7 +790,6 @@ impl CreateProofRequest {
             sequence_window: fields.sequence_window,
             prover_address: fields.prover_address,
             l1_head: fields.l1_head,
-            intermediate_root_interval: fields.intermediate_root_interval,
         })
     }
 
@@ -847,11 +842,6 @@ impl CreateProofRequest {
         if self.l1_head != expected.l1_head {
             return Err(CreateProofRequestValidationError::FieldMismatch { field: "l1_head" });
         }
-        if self.intermediate_root_interval != expected.intermediate_root_interval {
-            return Err(CreateProofRequestValidationError::FieldMismatch {
-                field: "intermediate_root_interval",
-            });
-        }
 
         Ok(())
     }
@@ -880,8 +870,6 @@ pub struct DerivedProofRequestFields {
     pub prover_address: Option<String>,
     /// Explicit L1 head hash.
     pub l1_head: Option<String>,
-    /// Intermediate root interval.
-    pub intermediate_root_interval: Option<u64>,
 }
 
 impl DerivedProofRequestFields {
@@ -901,7 +889,6 @@ impl DerivedProofRequestFields {
                 sequence_window: proof.sequence_window,
                 prover_address: None,
                 l1_head: proof.l1_head.map(|hash| format!("{hash:#x}")),
-                intermediate_root_interval: proof.intermediate_root_interval,
             }),
             ProtocolProofRequestKind::SnarkPlonk(request) => Ok(Self {
                 api_proof_type: ApiProofType::SnarkPlonk,
@@ -914,7 +901,6 @@ impl DerivedProofRequestFields {
                 sequence_window: request.proof.sequence_window,
                 prover_address: Some(format!("{:#x}", request.prover_address)),
                 l1_head: request.proof.l1_head.map(|hash| format!("{hash:#x}")),
-                intermediate_root_interval: request.proof.intermediate_root_interval,
             }),
             ProtocolProofRequestKind::Tee(request) => Ok(Self {
                 api_proof_type: ApiProofType::Tee,
@@ -927,8 +913,6 @@ impl DerivedProofRequestFields {
                 sequence_window: None,
                 prover_address: None,
                 l1_head: Some(format!("{:#x}", request.proof.l1_head)),
-                intermediate_root_interval: (request.proof.intermediate_block_interval > 0)
-                    .then_some(request.proof.intermediate_block_interval),
             }),
         }
     }
@@ -1290,7 +1274,6 @@ mod tests {
                 number_of_blocks_to_prove: 5,
                 sequence_window: Some(50),
                 l1_head: None,
-                intermediate_root_interval: None,
                 schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,

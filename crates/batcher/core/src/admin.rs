@@ -77,12 +77,6 @@ pub enum AdminCommand {
         #[debug(skip)]
         reply: oneshot::Sender<()>,
     },
-    /// Clear the throttle dedup cache so limits are re-applied unconditionally.
-    ResetThrottle {
-        /// Answered once the cache is cleared.
-        #[debug(skip)]
-        reply: oneshot::Sender<()>,
-    },
     /// Read the current throttle state.
     GetThrottleInfo {
         /// Answered with a snapshot of the throttle state.
@@ -139,8 +133,8 @@ impl AdminHandle {
     /// Replace the throttle strategy and configuration.
     ///
     /// The full [`ThrottleConfig`] is required because partial updates are not supported. The
-    /// new limits are pushed to the block builder right after. An invalid `config` is rejected
-    /// with [`AdminError::InvalidThrottleConfig`] before reaching the driver.
+    /// new limits are pushed to the block builders. An invalid `config` is rejected with
+    /// [`AdminError::InvalidThrottleConfig`] before reaching the driver.
     pub async fn set_throttle(
         &self,
         strategy: ThrottleStrategy,
@@ -148,12 +142,6 @@ impl AdminHandle {
     ) -> AdminResult<()> {
         config.validate()?;
         self.request(|reply| AdminCommand::SetThrottle { strategy, config, reply }).await
-    }
-
-    /// Clear the throttle dedup cache, so the current limits are pushed to the block
-    /// builder again right after, even if they have not changed.
-    pub async fn reset_throttle(&self) -> AdminResult<()> {
-        self.request(|reply| AdminCommand::ResetThrottle { reply }).await
     }
 
     /// Read the current throttle controller state.

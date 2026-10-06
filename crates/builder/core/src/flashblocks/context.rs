@@ -711,9 +711,6 @@ impl BasePayloadBuilderCtx {
         );
         diag.txs_rejected_other += 1;
         diag.permanently_rejected_txs.push(tx_hash);
-        // Same series as the pool-side block eviction: the builder drops the tx
-        // before the pool sweep sees it.
-        GuardMetrics::record_block_expiry_invalidations(1);
         Self::skip_pooled_current(best_txs, tx);
     }
 
