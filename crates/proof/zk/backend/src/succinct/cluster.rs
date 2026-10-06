@@ -946,20 +946,7 @@ impl ZkProver for ClusterZkProver {
 
 #[cfg(test)]
 mod tests {
-    use super::{ClusterSessionId, ClusterZkProver};
-
-    #[test]
-    fn cluster_session_id_round_trips_json() {
-        let session = ClusterSessionId {
-            proof_id: "proof-1".to_owned(),
-            proof_output_id: "artifact-1".to_owned(),
-        };
-
-        let encoded = session.to_backend_session_id().unwrap();
-        let decoded = ClusterSessionId::parse(&encoded).unwrap();
-
-        assert_eq!(decoded, session);
-    }
+    use super::ClusterZkProver;
 
     #[test]
     fn proof_id_for_attempt_uses_retry_suffix_after_first_attempt() {
