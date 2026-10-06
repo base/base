@@ -529,7 +529,7 @@ def validate_fork(fork, header, finalized, genesis_time, slot_seconds):
             and header["parentHash"].lower() == fork["parentHash"].lower()
             and number(header["timestamp"]) == fork["timestamp"],
             "discovered fork block is not canonical upstream")
-    require(fork["number"] <= number(finalized["number"]),
+    require(finalized is not None and fork["number"] <= number(finalized["number"]),
             "discovered fork block is not finalized yet; retry init after finality")
     require(slot_seconds > 0 and fork["timestamp"] >= genesis_time
             and (fork["timestamp"] - genesis_time) % slot_seconds == 0,
