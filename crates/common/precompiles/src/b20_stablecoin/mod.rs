@@ -12,7 +12,7 @@ mod versions;
 pub use versions::{StablecoinVersion, StablecoinVersions};
 
 mod logic;
-pub use logic::{B20StablecoinToken, Stablecoin, StablecoinV1, StablecoinV2};
+pub use logic::{B20StablecoinToken, Stablecoin, StablecoinV1, StablecoinV2, StablecoinV3};
 
 mod precompile;
 pub use precompile::B20StablecoinPrecompile;

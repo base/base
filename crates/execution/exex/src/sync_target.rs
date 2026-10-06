@@ -53,11 +53,19 @@ impl SyncTargetState {
             // If we are just syncing to tip already, replace with the new state.
             (Self::SyncUpTo { .. }, new) => new,
 
-            // If the new state is a revert, replace with the new state.
-            (_, Self::Revert { revert_to }) => Self::Revert { revert_to },
-            (_, Self::RevertThenSync { revert_to, sync_to }) => {
-                Self::RevertThenSync { revert_to, sync_to }
-            }
+            // A new revert supersedes any pending sync, but retain the earliest revert target.
+            (
+                Self::RevertThenSync { revert_to: current, .. }
+                | Self::Revert { revert_to: current },
+                Self::Revert { revert_to: new },
+            ) => Self::Revert { revert_to: earliest_revert(current, new) },
+
+            // A reorg updates the sync target while retaining the earliest pending revert.
+            (
+                Self::RevertThenSync { revert_to: current, .. }
+                | Self::Revert { revert_to: current },
+                Self::RevertThenSync { revert_to: new, sync_to },
+            ) => Self::RevertThenSync { revert_to: earliest_revert(current, new), sync_to },
 
             // If we're currently reverting, replace the sync to value with the new
             // state.
@@ -67,6 +75,11 @@ impl SyncTargetState {
             ) => Self::RevertThenSync { revert_to: *revert_to, sync_to: to },
         };
     }
+}
+
+/// Returns the first block that must be unwound from two pending revert targets.
+const fn earliest_revert(current: &BlockWithParent, new: BlockWithParent) -> BlockWithParent {
+    if current.block.number <= new.block.number { *current } else { new }
 }
 
 /// Sync target that buffers trie data from recent exex notifications.
@@ -307,14 +320,29 @@ mod tests {
     }
 
     #[test]
-    fn apply_next_revert_then_sync_replaced_by_new_revert() {
+    fn apply_next_revert_then_sync_keeps_earliest_revert() {
         let revert_to = block_with_parent(5);
         let mut state = SyncTargetState::RevertThenSync { revert_to, sync_to: 10 };
-        let new_revert = block_with_parent(3);
+        let new_revert = block_with_parent(7);
         state.apply_next(SyncTargetState::Revert { revert_to: new_revert });
         assert!(matches!(
             state,
-            SyncTargetState::Revert { revert_to } if revert_to.block.number == 3
+            SyncTargetState::Revert { revert_to } if revert_to.block.number == 5
+        ));
+    }
+
+    #[test]
+    fn apply_next_reorg_keeps_earliest_revert_and_latest_sync_target() {
+        let mut state =
+            SyncTargetState::RevertThenSync { revert_to: block_with_parent(5), sync_to: 8 };
+        state.apply_next(SyncTargetState::RevertThenSync {
+            revert_to: block_with_parent(9),
+            sync_to: 11,
+        });
+        assert!(matches!(
+            state,
+            SyncTargetState::RevertThenSync { revert_to, sync_to: 11 }
+            if revert_to.block.number == 5
         ));
     }
 

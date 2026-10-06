@@ -33,7 +33,7 @@ use super::{
     ChainSpecSource, InProcessBatcher, InProcessBatcherConfig, InProcessBuilder,
     InProcessBuilderConfig, InProcessClient, InProcessClientConfig, InProcessConsensus,
     InProcessConsensusConfig, InProcessFollowConsensus, InProcessFollowConsensusConfig,
-    L2ContainerConfig, ShadowSequencer, ShadowSequencerConfig,
+    InProcessNodeRuntime, L2ContainerConfig, ShadowSequencer, ShadowSequencerConfig,
 };
 use crate::config::{ANVIL_ACCOUNT_1, BATCHER, SEQUENCER};
 
@@ -193,7 +193,7 @@ impl L2Stack {
     /// # Errors
     ///
     /// Returns an error if any component fails to start.
-    pub async fn start(config: L2StackConfig) -> Result<Self> {
+    pub async fn start(mut config: L2StackConfig) -> Result<Self> {
         let container_config = config.container_config.as_ref();
 
         let l1_rpc_url: Url = config.l1_rpc_url.parse().wrap_err("Invalid L1 RPC URL")?;
@@ -204,6 +204,11 @@ impl L2Stack {
         if config.shadow_sequencers.as_ref().is_some_and(|shadow| shadow.start_block.is_some()) {
             rollup_config.block_time = 2;
         }
+        // op-deployer supplies the legacy interval in rollup.json, not the EL genesis.
+        let mut genesis: serde_json::Value =
+            serde_json::from_slice(&config.l2_genesis).wrap_err("Failed to parse L2 genesis")?;
+        genesis["config"]["blockTime"] = rollup_config.block_time.into();
+        config.l2_genesis = serde_json::to_vec(&genesis)?;
         let l1_chain_config: ChainConfig = serde_json::from_slice(&config.l1_genesis)
             .wrap_err("Failed to parse L1 chain config")?;
         let builder_chain_spec =
@@ -212,6 +217,7 @@ impl L2Stack {
 
         // 1. Start the builder (in-process EL).
         let builder_config = InProcessBuilderConfig {
+            runtime: InProcessNodeRuntime::SystemTest,
             chain_spec: builder_chain_spec,
             datadir: config.builder_datadir,
             jwt_secret: config.jwt_secret,
@@ -227,6 +233,7 @@ impl L2Stack {
             extra_extensions: config.extra_builder_extensions,
             block_time: Duration::from_secs(rollup_config.block_time),
             persistence_threshold: None,
+            persistence_backpressure_threshold: None,
             txpool_max_transactions: None,
             txpool_max_size_mb: None,
             txpool_max_account_slots: None,
@@ -297,6 +304,7 @@ impl L2Stack {
         };
 
         let client_config = InProcessClientConfig {
+            runtime: InProcessNodeRuntime::SystemTest,
             chain_spec: ChainSpecSource::GenesisJson(config.l2_genesis.clone()),
             datadir: config.client_datadir,
             jwt_secret: config.jwt_secret,
@@ -309,6 +317,7 @@ impl L2Stack {
             p2p_port: container_config.and_then(|c| c.client_p2p_port),
             metrics_port: None,
             persistence_threshold: None,
+            persistence_backpressure_threshold: None,
             tx_forwarding_config,
             enable_experimental_validity_transactions: config
                 .enable_experimental_validity_transactions,

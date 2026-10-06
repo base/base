@@ -1,7 +1,6 @@
 //! The [`SequencerActor`].
 
 use std::{
-    num::NonZeroU64,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -21,7 +20,7 @@ use tokio::{
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
 use crate::{
-    CancellableContext, Metrics, NodeActor, ResetReason, SequencerAdminQuery,
+    CancellableContext, Metrics, NodeActor, NodeOperatingMode, ResetReason, SequencerAdminQuery,
     UnsafePayloadGossipClient,
     actors::{
         SequencerEngineClient,
@@ -71,8 +70,8 @@ pub struct SequencerActor<
     pub engine_client: Arc<SequencerEngineClient_>,
     /// Whether the sequencer is active.
     pub is_active: bool,
-    /// Number of private blocks to build per shadow sequencing cycle.
-    pub shadow_blocks_per_cycle: Option<NonZeroU64>,
+    /// The node's operating mode.
+    pub mode: NodeOperatingMode,
     /// Optional account funding injected into the first private block of every shadow cycle.
     pub shadow_funding: Option<ShadowFunding>,
     /// Shared recovery mode flag.
@@ -117,7 +116,7 @@ where
 {
     /// Returns whether this actor is running as a shadow sequencer.
     pub const fn is_shadow_sequencer(&self) -> bool {
-        self.shadow_blocks_per_cycle.is_some()
+        self.mode.is_shadow_sequencer()
     }
 
     /// Fetches the sealed payload envelope from the engine for the given unsealed handle.
@@ -136,11 +135,17 @@ where
         Metrics::sequencer_total_transactions_sequenced()
             .increment(handle.attributes_with_parent.count_transactions());
 
-        if self.is_shadow_sequencer() {
-            Ok(PayloadSealer::new_private(envelope))
-        } else {
-            Ok(PayloadSealer::new(envelope))
-        }
+        Ok(match self.mode {
+            NodeOperatingMode::ShadowSequencer { .. } => {
+                PayloadSealer::new_private(envelope, "shadow")
+            }
+            NodeOperatingMode::IsolatedSequencer => {
+                PayloadSealer::new_private(envelope, "isolated")
+            }
+            NodeOperatingMode::Validator | NodeOperatingMode::Sequencer => {
+                PayloadSealer::new(envelope)
+            }
+        })
     }
 
     /// Attempts to seal a pre-built payload, first checking whether it is still fresh.
@@ -219,6 +224,8 @@ where
     ///
     /// Admin API queries are serviced throughout — both during reset attempts and during the
     /// backoff sleep — so that control can reach the sequencer while EL sync is in progress.
+    /// A successful non-shadow admin start already validated the engine's takeover head; do not
+    /// follow it with a startup reset that could replace that head.
     async fn schedule_initial_reset(
         &mut self,
         next_payload: &mut Option<UnsealedPayloadHandle>,
@@ -230,7 +237,11 @@ where
                 biased;
                 _ = self.cancellation_token.cancelled() => return Ok(()),
                 Some(query) = self.admin_api_rx.recv() => {
+                    let was_active = self.is_active;
                     self.handle_admin_query(next_payload, query).await;
+                    if !was_active && self.is_active && !shadow_cycle_coordinated {
+                        return Ok(());
+                    }
                 }
                 result = async {
                     if shadow_cycle_coordinated {
@@ -262,7 +273,11 @@ where
                     biased;
                     _ = self.cancellation_token.cancelled() => return Ok(()),
                     Some(query) = self.admin_api_rx.recv() => {
+                        let was_active = self.is_active;
                         self.handle_admin_query(next_payload, query).await;
+                        if !was_active && self.is_active && !shadow_cycle_coordinated {
+                            return Ok(());
+                        }
                     }
                     _ = &mut sleep => break,
                 }
@@ -320,7 +335,7 @@ where
             .cycle
             .record_insertion(
                 inserted_head,
-                self.shadow_blocks_per_cycle.expect("shadow mode checked").get(),
+                self.mode.shadow_blocks_per_cycle().expect("shadow mode checked").get(),
             )
             .inspect_err(|_| self.cancellation_token.cancel())
     }
@@ -779,14 +794,194 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::{B256, Sealed};
+    use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum};
     use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
-    use base_common_genesis::{RollupConfig, SystemConfig};
-    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+    use base_common_genesis::{ChainGenesis, RollupConfig, SystemConfig, UpgradeConfig};
+    use base_common_rpc_types_engine::{
+        BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes,
+    };
+    use base_consensus_derive::test_utils::TestAttributesBuilder;
+    use base_consensus_engine::{Engine, test_utils::TestEngineStateBuilder};
     use base_protocol::{BlockInfo, L1BlockInfoBedrock};
+    use rstest::rstest;
+    use tokio::sync::watch;
 
     use super::*;
-    use crate::actors::sequencer::tests::test_actor;
+    use crate::{
+        EngineProcessor, EngineRequestReceiver, MockConductor, MockEngineDerivationClient,
+        MockOriginSelector, MockUnsafePayloadGossipClient, QueuedSequencerEngineClient,
+        SequencerEngineRequestCoordinator,
+        actors::sequencer::tests::test_actor,
+        test_utils::{EngineClientCall, FakeEngineClient, ScriptedForkchoiceResponse},
+    };
+
+    #[rstest]
+    #[tokio::test(start_paused = true)]
+    async fn conductor_takeover_without_gossip_starts_building(
+        #[values(false, true)] shadow: bool,
+        #[values(false, true)] during_backoff: bool,
+    ) {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let head = L2BlockInfo {
+            block_info: BlockInfo {
+                number: 100,
+                hash: B256::with_last_byte(100),
+                timestamp: now,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let config = Arc::new(RollupConfig {
+            block_time: 2,
+            genesis: ChainGenesis { l2_time: now - 200, ..Default::default() },
+            upgrades: UpgradeConfig { ecotone_time: Some(0), ..Default::default() },
+            ..Default::default()
+        });
+        let el = Arc::new(FakeEngineClient::new(Arc::clone(&config)));
+        el.set_l2_block_info_by_label(BlockNumberOrTag::Latest, head);
+        let el_handle = el.handle();
+        el_handle.push_scripted_fcu_v3([None, Some(PayloadId::new([1; 8]))].map(|payload_id| {
+            ScriptedForkchoiceResponse::Ok(ForkchoiceUpdated {
+                payload_status: PayloadStatus {
+                    status: PayloadStatusEnum::Valid,
+                    latest_valid_hash: Some(head.block_info.hash),
+                },
+                payload_id,
+            })
+        }));
+        let safe = L2BlockInfo {
+            block_info: BlockInfo {
+                number: 90,
+                hash: B256::with_last_byte(90),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let state = TestEngineStateBuilder::new()
+            .with_unsafe_head(head)
+            .with_safe_head(safe)
+            .with_finalized_head(safe)
+            .build();
+        let (state_tx, state_rx) = watch::channel(state);
+        let (queue_tx, _) = watch::channel(0usize);
+        let mut derivation = MockEngineDerivationClient::new();
+        derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
+        derivation.expect_notify_sync_completed().returning(|_| Ok(()));
+        derivation.expect_send_signal().returning(|_| Ok(()));
+        let processor = EngineProcessor::new(
+            el,
+            Arc::clone(&config),
+            derivation,
+            Engine::new(state, state_tx, queue_tx),
+        );
+        let (request_tx, request_rx) = mpsc::channel(8);
+        let (head_tx, mut head_rx) = watch::channel(L2BlockInfo::default());
+        let coordinator = SequencerEngineRequestCoordinator::new(
+            processor,
+            if shadow {
+                NodeOperatingMode::ShadowSequencer { blocks_per_cycle: std::num::NonZeroU64::MIN }
+            } else {
+                NodeOperatingMode::Sequencer
+            },
+            None,
+            true,
+            head_tx,
+        )
+        .start(request_rx);
+        tokio::time::timeout(Duration::from_secs(1), head_rx.wait_for(|value| *value == head))
+            .await
+            .unwrap()
+            .unwrap();
+        let engine_client =
+            Arc::new(QueuedSequencerEngineClient::new(request_tx, head_rx, state_rx));
+        assert!(matches!(
+            engine_client.reset_engine_forkchoice(ResetReason::SequencerStartup).await,
+            Err(EngineClientError::ELSyncing)
+        ));
+
+        let mut conductor = MockConductor::new();
+        conductor.expect_leader().once().returning(|| Ok(true));
+        let mut origin_selector = MockOriginSelector::new();
+        origin_selector.expect_next_l1_origin().returning(|_| Ok(BlockInfo::default()));
+        let gossip = MockUnsafePayloadGossipClient::new();
+        let mut attributes = BasePayloadAttributes::default();
+        attributes.payload_attributes.timestamp = now + 2;
+        let recovery_mode = RecoveryModeGuard::new(false);
+        let cancellation = CancellationToken::new();
+        let (admin_tx, admin_rx) = mpsc::channel(8);
+        let actor = SequencerActor {
+            admin_api_rx: admin_rx,
+            builder: PayloadBuilder {
+                attributes_builder: TestAttributesBuilder {
+                    attributes: vec![Ok(attributes)],
+                    ..Default::default()
+                },
+                engine_client: Arc::clone(&engine_client),
+                origin_selector,
+                recovery_mode: recovery_mode.clone(),
+                rollup_config: Arc::clone(&config),
+            },
+            cancellation_token: cancellation.clone(),
+            conductor: Some(conductor),
+            engine_client: Arc::clone(&engine_client),
+            is_active: false,
+            mode: if shadow {
+                NodeOperatingMode::ShadowSequencer {
+                    blocks_per_cycle: std::num::NonZeroU64::new(1).unwrap(),
+                }
+            } else {
+                NodeOperatingMode::Sequencer
+            },
+            shadow_funding: None,
+            recovery_mode,
+            rollup_config: config,
+            seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
+            unsafe_payload_gossip_client: gossip,
+            sealer: None,
+            pending_stop: None,
+        };
+        let actor = tokio::spawn(actor.start(()));
+        if during_backoff {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let (result_tx, result_rx) = oneshot::channel();
+        admin_tx
+            .send(SequencerAdminQuery::StartSequencer(head.block_info.hash, result_tx))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), result_rx).await.unwrap().unwrap().unwrap();
+
+        let built = tokio::time::timeout(Duration::from_secs(6), async {
+            loop {
+                if let Some(fcs) = el_handle.calls().into_iter().find_map(|call| match call {
+                    EngineClientCall::ForkChoiceUpdatedV3 { fcs, payload_attributes }
+                        if payload_attributes.is_some() =>
+                    {
+                        Some(fcs)
+                    }
+                    _ => None,
+                }) {
+                    break fcs;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        cancellation.cancel();
+        actor.await.unwrap().unwrap();
+        drop(engine_client);
+        assert!(matches!(coordinator.await.unwrap(), Err(crate::EngineError::ChannelClosed)));
+        if shadow {
+            assert!(built.is_err(), "admin start must not bypass shadow catch-up");
+        } else {
+            assert_eq!(
+                built.expect("takeover must build without gossip").head_block_hash,
+                head.block_info.hash
+            );
+        }
+    }
 
     fn valid_sealer() -> (PayloadSealer, L2BlockInfo, SystemConfig) {
         let block = BaseBlock {

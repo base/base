@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use super::parsing::parse_address;
 use crate::{
-    runner::{BlockNumberBound, PredicateAddress, SlotTemplate, ValidityPredicateTemplate},
+    runner::{
+        BlockNumberBound, PredicateAddress, PredicateValue, SlotTemplate, ValidityPredicateTemplate,
+    },
     utils::{BaselineError, Result},
 };
 
@@ -14,17 +16,42 @@ use crate::{
 /// `base_sendRawTransactionValidity`, carrying the configured predicates.
 /// Routing is per sender (not per transaction) so each sender's nonce stream
 /// stays on a single submission origin.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ValidityConfig {
     /// Fraction `0.0..=1.0` of senders assigned to the validity path.
     pub ratio: f64,
+
+    /// Fraction `0.0..=1.0` of validity senders in the priority-lead cohort.
+    ///
+    /// The remaining validity senders use [`Self::priority_fee_divisor`]. A small lead
+    /// cohort can park predicates before plain transactions mutate
+    /// watched state, while the lower-priority bulk cohort sustains cutoff pressure.
+    pub priority_lead_ratio: f64,
+
+    /// Priority-tip multiplier for senders in the priority-lead cohort.
+    pub priority_lead_multiplier: u128,
+
+    /// Priority-tip divisor for validity-cohort measured transactions.
+    pub priority_fee_divisor: u128,
 
     /// Predicate templates attached to each validity-bearing transaction.
     ///
     /// Must be non-empty when `ratio > 0`, and must contain at most
     /// [`DEFAULT_MAX_VALIDITY_PREDICATES`] entries.
     pub predicates: Vec<ValidityPredicateConfig>,
+}
+
+impl Default for ValidityConfig {
+    fn default() -> Self {
+        Self {
+            ratio: 0.0,
+            priority_lead_ratio: 0.0,
+            priority_lead_multiplier: 1,
+            priority_fee_divisor: 1,
+            predicates: Vec::new(),
+        }
+    }
 }
 
 /// A configured validity predicate template.
@@ -56,8 +83,8 @@ pub enum ValidityPredicateConfig {
         mask: Option<U256>,
         /// Comparison operator (`<`, `<=`, `=`, `!=`, `>`, `>=`).
         op: String,
-        /// Right-hand comparison value.
-        value: U256,
+        /// Right-hand comparison value or the string `sender_parity`.
+        value: PredicateValueConfig,
     },
     /// Compares the number of the block being built with a bound.
     ///
@@ -82,6 +109,32 @@ pub enum ValidityPredicateConfig {
         /// Right-hand comparison value.
         value: U256,
     },
+}
+
+/// Configured source for a storage predicate's comparison value.
+///
+/// Fixed values retain the existing YAML representation (`"0x1"`, `"42"`).
+/// The string `sender_parity` derives zero or one from each sender address.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PredicateValueConfig {
+    /// A fixed comparison value.
+    Fixed(U256),
+    /// A named per-transaction value source.
+    Source(String),
+}
+
+impl PredicateValueConfig {
+    /// Converts this configured value source into its runtime template.
+    pub fn to_template(&self) -> Result<PredicateValue> {
+        match self {
+            Self::Fixed(value) => Ok(PredicateValue::Fixed(*value)),
+            Self::Source(source) if source == "sender_parity" => Ok(PredicateValue::SenderParity),
+            Self::Source(source) => Err(BaselineError::Config(format!(
+                "invalid storage predicate value source '{source}', expected 'sender_parity'"
+            ))),
+        }
+    }
 }
 
 /// Source for a predicate's address, resolved per transaction at prepare time.
@@ -149,8 +202,21 @@ pub enum PredicateSlotConfig {
 impl ValidityConfig {
     /// Validates the validity configuration.
     pub fn validate(&self) -> Result<()> {
+        if self.priority_fee_divisor < 1 {
+            return Err(BaselineError::Config("validity.priority_fee_divisor must be >= 1".into()));
+        }
+        if self.priority_lead_multiplier < 1 {
+            return Err(BaselineError::Config(
+                "validity.priority_lead_multiplier must be >= 1".into(),
+            ));
+        }
         if !(0.0..=1.0).contains(&self.ratio) {
             return Err(BaselineError::Config("validity.ratio must be between 0.0 and 1.0".into()));
+        }
+        if !(0.0..=1.0).contains(&self.priority_lead_ratio) {
+            return Err(BaselineError::Config(
+                "validity.priority_lead_ratio must be between 0.0 and 1.0".into(),
+            ));
         }
         if self.predicates.len() > DEFAULT_MAX_VALIDITY_PREDICATES {
             return Err(BaselineError::Config(format!(
@@ -192,7 +258,7 @@ impl ValidityPredicateConfig {
                     slot: slot.to_template()?,
                     mask: *mask,
                     op: parse_operator(op)?,
-                    value: *value,
+                    value: value.to_template()?,
                 })
             }
             Self::BlockNumber { op, value, offset } => {
@@ -301,7 +367,7 @@ mod tests {
             slot: PredicateSlotConfig::Fixed { value: U256::from(1u64) },
             mask: Some(U256::from(0xffu64)),
             op: "=".into(),
-            value: U256::ZERO,
+            value: PredicateValueConfig::Fixed(U256::ZERO),
         };
         match config.to_template().unwrap() {
             ValidityPredicateTemplate::Storage { address, slot, mask, op, value } => {
@@ -309,7 +375,7 @@ mod tests {
                 assert!(matches!(slot, SlotTemplate::Fixed(s) if s == U256::from(1u64)));
                 assert_eq!(mask, Some(U256::from(0xffu64)));
                 assert_eq!(op, ValidityOperator::Equal);
-                assert_eq!(value, U256::ZERO);
+                assert_eq!(value, PredicateValue::Fixed(U256::ZERO));
             }
             other => panic!("expected storage template, got {other:?}"),
         }
@@ -416,10 +482,36 @@ mod tests {
                 assert!(matches!(slot, SlotTemplate::Fixed(s) if s == U256::from(0x100)));
                 assert_eq!(mask, Some(U256::from(0xffu64)));
                 assert_eq!(op, ValidityOperator::Equal);
-                assert_eq!(value, U256::from(1u64));
+                assert_eq!(value, PredicateValue::Fixed(U256::from(1u64)));
             }
             other => panic!("expected storage template, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn storage_predicate_parses_sender_parity_value() {
+        let config: ValidityPredicateConfig = serde_yaml::from_str(
+            "type: storage\naddress: sender\nslot:\n  kind: fixed\n  value: \"0x0\"\nmask: \"0x1\"\nop: \"=\"\nvalue: sender_parity\n",
+        )
+        .unwrap();
+
+        match config.to_template().unwrap() {
+            ValidityPredicateTemplate::Storage { value, .. } => {
+                assert_eq!(value, PredicateValue::SenderParity);
+            }
+            other => panic!("expected storage template, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn storage_predicate_rejects_unknown_value_source() {
+        let config: ValidityPredicateConfig = serde_yaml::from_str(
+            "type: storage\naddress: sender\nslot:\n  kind: fixed\n  value: \"0x0\"\nop: \"=\"\nvalue: sender_hash\n",
+        )
+        .unwrap();
+
+        let error = config.to_template().unwrap_err();
+        assert!(error.to_string().contains("expected 'sender_parity'"));
     }
 
     #[test]
@@ -473,6 +565,9 @@ mod tests {
         };
         let config = ValidityConfig {
             ratio: 1.0,
+            priority_lead_ratio: 0.0,
+            priority_lead_multiplier: 1,
+            priority_fee_divisor: 1,
             predicates: vec![predicate; DEFAULT_MAX_VALIDITY_PREDICATES + 1],
         };
         let err = config.validate().unwrap_err();
@@ -483,6 +578,9 @@ mod tests {
     fn validate_surfaces_bad_operator() {
         let config = ValidityConfig {
             ratio: 1.0,
+            priority_lead_ratio: 0.0,
+            priority_lead_multiplier: 1,
+            priority_fee_divisor: 1,
             predicates: vec![ValidityPredicateConfig::Balance {
                 address: PredicateAddressConfig::Sender,
                 op: "==".into(),

@@ -1,29 +1,35 @@
 # `audit-archiver-lib`
 
-Audit library for tracking and archiving bundle events.
+Audit library for Postgres-backed transaction observability events.
 
 ## Overview
 
-Provides event publishing, storage, and retrieval for bundle lifecycle events. `AuditConnector`
-wires an event receiver to a publisher, `RpcBundleEventPublisher` publishes events over RPC,
-and `S3EventReaderWriter` archives events to S3 for long-term retention. Also exposes
-`LoggingBundleEventPublisher` for local development.
+Accepts Vector's `transaction-event/v1` batches over HTTP, persists them
+idempotently in Postgres, and provides JSON-RPC queries by transaction, block,
+bundle, and rejection. Postgres schema readiness is checked before the
+`audit-archiver` binary starts serving; see the binary README for the
+S3 removal and rollout prerequisites.
 
-## Usage
+## Postgres schema
 
-Add the dependency to your `Cargo.toml`:
+`migrations/` holds the transaction event schema. `001` creates the legacy
+`transaction_events` tree, `002` registers its `ingested_at` BRIN index, and
+`003` creates `transaction_events_v2`, which ingest writes. See the `audit-archiver`
+README for the cutover and legacy drain. `schema.sql` is a committed
+`pg_dump` of the schema those migrations produce, without dated day partitions.
+The Postgres integration tests fail if a fresh or upgraded database differs
+from it. After changing a migration, regenerate the snapshot and review the
+diff:
 
-```toml
-[dependencies]
-audit-archiver-lib = { workspace = true }
+```bash
+UPDATE_SCHEMA_SNAPSHOT=1 cargo test -p audit-archiver-lib \
+  --test postgres_transaction_events postgres_schema_matches_committed_snapshot
 ```
 
-```rust,ignore
-use audit_archiver_lib::{AuditConnector, RpcBundleEventPublisher};
-
-let publisher = RpcBundleEventPublisher::new(rpc_url, timeout)?;
-AuditConnector::connect_batched(event_rx, publisher, batch_size, batch_wait);
-```
+`legacy_migrations/` holds the pre-partition migrations 001-004. They are never
+applied. The migrator recognizes their recorded rows by version and checksum,
+then drops the old table and resets that history in the same transaction that
+applies the partitioned baseline.
 
 ## License
 

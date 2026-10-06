@@ -1,97 +1,107 @@
 //! Integration tests for reorg handling in [`BatchDriver`].
 
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::time::Duration;
 
-use alloy_primitives::Address;
-use base_batcher_core::{
-    BatchDriver, BatchDriverConfig, DaThrottle, NoopThrottleClient, ThrottleController,
-    test_utils::{
-        ImmediateConfirmTxManager, OneBlockSource, PendingL1HeadSource, Recorded, ReorgPipeline,
-        TrackingPipeline,
-    },
+use base_batcher_core::test_utils::{
+    BlockStub, DriverFixture, PipelineCall, ScriptedTxManager, SubmissionStub, TrackingPipeline,
+    TrackingSource,
 };
-use base_batcher_source::{ChannelBlockSource, L2BlockEvent};
+use base_batcher_source::{L2BlockEvent, test_utils::ChannelBlockSource};
 use base_runtime::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
 };
 
-/// When `add_block` returns a `ReorgError`, the driver must reset the pipeline
-/// and discard in-flight futures instead of propagating a fatal error. This
-/// mirrors the `L2BlockEvent::Reorg` handling path.
+/// A block that does not build on the buffered chain resets the pipeline, and the source
+/// starts again from the safe head.
 #[test]
-fn test_add_block_reorg_resets_pipeline_instead_of_fatal_error() {
+fn test_add_block_reorg_resets_pipeline_and_source() {
     Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = ReorgPipeline::new(Arc::clone(&recorded));
+        let pipeline = TrackingPipeline::new().with_add_block_reorg();
+        let recorded = pipeline.recorded();
+        let (source, catchup_heads) = TrackingSource::new();
+        let source =
+            source.with_events([L2BlockEvent::Block(Box::new(BlockStub::with_number(11)))]);
 
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            pipeline,
-            OneBlockSource::new(),
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
-            PendingL1HeadSource,
-        );
+        let (driver, _handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                .source(source)
+                .safe_head(BlockStub::info(10))
+                .build();
         let handle = ctx.spawn(driver.run());
-
-        ctx.sleep(Duration::from_millis(50)).await;
-        ctx.cancel();
-
-        let result = handle.await.unwrap();
-        assert!(result.is_ok(), "driver must not return a fatal error on add_block reorg");
-        assert_eq!(
-            recorded.lock().unwrap().resets,
-            1,
-            "pipeline.reset() must be called when add_block returns ReorgError"
-        );
-    });
-}
-
-/// When the source delivers `L2BlockEvent::Reorg`, the driver must reset the
-/// pipeline and discard in-flight submissions. This is distinct from the
-/// `add_block`-triggered reorg path tested above.
-#[test]
-fn test_l2_reorg_event_resets_pipeline() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-        let (source, source_tx) = ChannelBlockSource::new();
-
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            pipeline,
-            source,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
-            PendingL1HeadSource,
-        );
-        let handle = ctx.spawn(driver.run());
-
-        source_tx.send(L2BlockEvent::Reorg).unwrap();
-        ctx.sleep(Duration::from_millis(50)).await;
+        ctx.sleep(Duration::from_millis(10)).await;
         ctx.cancel();
 
         assert!(handle.await.unwrap().is_ok());
         assert_eq!(
-            recorded.lock().unwrap().resets,
-            1,
-            "pipeline must be reset when source delivers a Reorg event"
+            recorded.lock().unwrap().calls,
+            [PipelineCall::AddBlock(11), PipelineCall::Reset, PipelineCall::Flush]
         );
+        assert_eq!(*catchup_heads.lock().unwrap(), [BlockStub::info(10)]);
+    });
+}
+
+/// A reorg the source reports resets the pipeline, and the source starts again from the safe
+/// head.
+#[test]
+fn test_l2_reorg_event_resets_pipeline_and_source() {
+    Runner::start(Config::seeded(0), |ctx| async move {
+        let pipeline = TrackingPipeline::new();
+        let recorded = pipeline.recorded();
+        let (source, catchup_heads) = TrackingSource::new();
+
+        let (driver, _handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                .source(source.with_events([L2BlockEvent::Reorg]))
+                .safe_head(BlockStub::info(10))
+                .build();
+        let handle = ctx.spawn(driver.run());
+        ctx.sleep(Duration::from_millis(10)).await;
+        ctx.cancel();
+
+        assert!(handle.await.unwrap().is_ok());
+        assert_eq!(recorded.lock().unwrap().calls, [PipelineCall::Reset, PipelineCall::Flush]);
+        assert_eq!(*catchup_heads.lock().unwrap(), [BlockStub::info(10)]);
+    });
+}
+
+/// A submission in flight when the pipeline resets must stay tracked and settle normally
+/// once its receipt arrives.
+#[test]
+fn test_reorg_keeps_tracking_in_flight_submissions() {
+    Runner::start(Config::seeded(0), |ctx| async move {
+        let mut pipeline = TrackingPipeline::new();
+        let recorded = pipeline.recorded();
+        pipeline.submissions.push_back(SubmissionStub::stub());
+        let tx_manager = ScriptedTxManager::new([]);
+        let (source, source_tx) = ChannelBlockSource::new();
+        let (driver, handles) =
+            DriverFixture::new(ctx.clone(), pipeline, tx_manager.clone()).source(source).build();
+        let handle = ctx.spawn(driver.run());
+
+        // Let the driver submit the stub, then reorg while it is in flight.
+        ctx.sleep(Duration::from_millis(10)).await;
+        source_tx.send(L2BlockEvent::Reorg).unwrap();
+        ctx.sleep(Duration::from_millis(10)).await;
+
+        assert_eq!(recorded.lock().unwrap().resets(), 1);
+        assert_eq!(
+            handles.admin.get_status().await.unwrap().in_flight,
+            1,
+            "the reset must not drop the in-flight submission"
+        );
+
+        tx_manager.confirm_next(7);
+        ctx.sleep(Duration::from_millis(10)).await;
+
+        assert_eq!(
+            handles.admin.get_status().await.unwrap().in_flight,
+            0,
+            "the receipt must settle the submission after the reset"
+        );
+        assert_eq!(recorded.lock().unwrap().l1_heads(), [7]);
+
+        ctx.cancel();
+        assert!(handle.await.unwrap().is_ok());
     });
 }

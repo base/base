@@ -9,6 +9,22 @@ name: CI Main Cache
 on:
   push:
     branches: [main]
+    # The persistent sccache is keyed by compiler inputs. Warming it after a
+    # documentation-only merge consumes two 8-vCPU runners without helping a
+    # later Rust build.
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.cargo/**'
+      - 'rust-toolchain.toml'
+      - 'Justfile'
+      - 'crates/**'
+      - 'bin/**'
+      - 'etc/just/build.just'
+      - 'etc/scripts/local/affected-crates.py'
+      - 'crates/utilities/test-utils/contracts/**'
+      - '.depot/actions/setup/**'
+      - '.depot/workflows/ci-main-cache.yml'
   workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

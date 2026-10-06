@@ -2,6 +2,7 @@
 
 use clap::Parser;
 use eyre::WrapErr;
+use reth_node_core::args::TraceArgs;
 
 /// Base Challenger.
 #[derive(Parser)]
@@ -10,13 +11,17 @@ use eyre::WrapErr;
 pub(crate) struct Cli {
     #[command(flatten)]
     args: base_challenger::Cli,
+
+    #[command(flatten)]
+    traces: TraceArgs,
 }
 
 impl Cli {
     /// Run the challenger service.
     pub(crate) fn run(self) -> eyre::Result<()> {
-        base_cli_utils::LogConfig::from(self.args.logging.clone()).init_tracing_subscriber()?;
-        let config = base_challenger::ChallengerConfig::from_cli(self.args)?;
+        let Self { args, traces } = self;
+        let logging = args.logging.clone();
+        let config = base_challenger::ChallengerConfig::from_cli(args)?;
         config
             .metrics
             .init_with(|| {
@@ -24,7 +29,9 @@ impl Cli {
                 base_challenger::ChallengerMetrics::up().set(1.0);
             })
             .wrap_err("failed to install Prometheus recorder")?;
-        base_cli_utils::RuntimeManager::new()
-            .run_until_ctrl_c(base_challenger::ChallengerService::run(config))
+        base_cli_utils::RuntimeManager::new().run_until_ctrl_c(async move {
+            base_cli_utils::LogConfig::from(logging).init_with_trace_args(&traces, &[])?;
+            base_challenger::ChallengerService::run(config).await
+        })
     }
 }

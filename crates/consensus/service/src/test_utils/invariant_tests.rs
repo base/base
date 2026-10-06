@@ -223,6 +223,73 @@ async fn l5_no_cross_actor_deadlock() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn sequencer_recovers_when_el_becomes_ready_after_bootstrap_probe() {
+    let mut driver = Driver::new();
+    let initial_head = L2BlockInfo {
+        block_info: block(100, hash_for(99), hash_for(100), 100),
+        ..Default::default()
+    };
+    let node_id = driver
+        .spawn_node(
+            NodeMode::Sequencer,
+            NodeConfig {
+                builder: HarnessBuilder::new()
+                    .with_reset_recovery_support()
+                    .with_sequencer_stopped(true)
+                    .with_initial_l2_head(initial_head)
+                    .with_scripted_el_responses(
+                        std::iter::once(syncing_fcu()).chain((0..16).map(|_| valid_fcu())),
+                    ),
+            },
+        )
+        .await;
+
+    driver.tick(20).await;
+    assert!(
+        !driver.harness(node_id).latest_engine_state().el_sync_finished,
+        "bootstrap Syncing response must leave EL sync incomplete"
+    );
+
+    let l1_head = block(1, B256::ZERO, hash_for(1), 1);
+    driver
+        .harness(node_id)
+        .derivation_request_sender()
+        .send(crate::DerivationActorRequest::ProcessL1HeadUpdateRequest(Box::new(l1_head)))
+        .await
+        .expect("derivation actor must accept the L1 head");
+    driver.tick(100).await;
+
+    assert_eq!(
+        driver.harness(node_id).derivation_state().await,
+        crate::DerivationState::AwaitingELSyncCompletion,
+        "L1 activity alone must not bypass the EL sync gate"
+    );
+    assert_eq!(
+        driver.harness(node_id).latest_safe_head_number().await,
+        0,
+        "derivation must not advance before the EL confirms readiness"
+    );
+
+    tokio::time::advance(std::time::Duration::from_secs(5)).await;
+    for _ in 0..200 {
+        if driver.harness(node_id).latest_engine_state().el_sync_finished {
+            break;
+        }
+        driver.tick(1).await;
+    }
+
+    assert!(
+        driver.harness(node_id).latest_engine_state().el_sync_finished,
+        "sequencer did not automatically re-probe after the EL became ready"
+    );
+    assert_eq!(
+        driver.harness(node_id).derivation_state().await,
+        crate::DerivationState::AwaitingL1Data,
+        "sync completion must automatically unblock derivation and attempt catch-up"
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn e2e_invalid_fcu_reset_and_recovery() {
     // Regression: 2026-06-25 mainnet incident.
     //

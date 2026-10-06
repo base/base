@@ -1,10 +1,10 @@
 #![doc = include_str!("../README.md")]
 
 mod config;
-pub use config::Config;
+pub use config::{Config, Scenario};
 
 mod metrics;
 pub use metrics::Scrape;
 
 mod challenger_e2e;
-pub use challenger_e2e::ChallengerE2e;
+pub use challenger_e2e::{ChallengerE2e, Phase, RevertData, Verdict};

@@ -18,7 +18,7 @@ use crate::{
         Format, L1BlocksTableParams, build_gas_bar, render_da_backlog_bar, render_gas_usage_bar,
         render_l1_blocks_table,
     },
-    tui::{Keybinding, Toast},
+    tui::{Browser, Keybinding, Toast},
 };
 
 const KEYBINDINGS: &[Keybinding] = &[
@@ -171,15 +171,16 @@ impl CommandCenterView {
                     .get(row)
                     .map(|e| format!("{base_url}/block/{}", e.block_number))
             }),
-            Panel::Da | Panel::Txns => resources.config.explorer_base_url().and_then(|base_url| {
-                let block_number = match self.focused_panel {
-                    Panel::Da => {
-                        resources.da.tracker.block_contributions.get(row).map(|c| c.block_number)
-                    }
-                    Panel::Txns => self.tx_pane.as_ref().map(|p| p.block_number),
-                    _ => None,
-                }?;
-                Some(format!("{base_url}/block/{block_number}"))
+            Panel::Da => resources.config.explorer_base_url().and_then(|base_url| {
+                resources
+                    .da
+                    .tracker
+                    .block_contributions
+                    .get(row)
+                    .map(|c| format!("{base_url}/block/{}", c.block_number))
+            }),
+            Panel::Txns => resources.config.explorer_base_url().and_then(|base_url| {
+                self.tx_pane.as_ref().map(|p| format!("{base_url}/block/{}", p.block_number))
             }),
             Panel::L1Blocks => resources.config.l1_explorer_base_url().and_then(|base_url| {
                 resources
@@ -192,18 +193,7 @@ impl CommandCenterView {
         };
 
         if let Some(url) = url {
-            let cmd = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-            match std::process::Command::new(cmd).arg(&url).spawn() {
-                Ok(mut child) => {
-                    std::thread::spawn(move || {
-                        let _ = child.wait();
-                    });
-                    resources.toasts.push(Toast::info(format!("Opening {url}")));
-                }
-                Err(e) => {
-                    resources.toasts.push(Toast::warning(format!("Failed to open browser: {e}")));
-                }
-            }
+            resources.toasts.push(Browser::open(&url));
         }
     }
 }
