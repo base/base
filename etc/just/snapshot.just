@@ -39,3 +39,9 @@ schedule-denim *args:
 # Offline launcher tests
 test:
     PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s etc/scripts/devnet -p test_snapshot_devnet.py -v
+
+# Build the pinned fork-aware Beacon and durable-resume Anvil revision
+build-anvil:
+    docker buildx build --load --tag base-anvil:snapshot-24ec5e47 \
+      --build-arg RUST_PROFILE=release --build-arg RUST_FEATURES=anvil/cli \
+      'https://github.com/base/base-anvil.git#24ec5e4732f35b904c43cb05a33fd459e6e92cb8'
