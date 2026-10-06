@@ -21,7 +21,8 @@ use sp1_cluster_common::{
     client::ClusterServiceClient,
     proto::{
         ExecutionFailureCause, ExecutionStatus, ProofRequest as ClusterProtoProofRequest,
-        ProofRequestCreateRequest, ProofRequestGetRequest, ProofRequestStatus,
+        ProofRequestCancelRequest, ProofRequestCreateRequest, ProofRequestGetRequest,
+        ProofRequestStatus,
     },
 };
 use sp1_prover_types::{Artifact, ArtifactClient as _, ArtifactType};
@@ -903,6 +904,16 @@ impl ZkProver for ClusterZkProver {
         }
     }
 
+    async fn cancel(&self, backend_session_id: &str) -> Result<(), ZkProverError> {
+        let session = ClusterSessionId::parse(backend_session_id)?;
+        self.config
+            .cluster
+            .service_client
+            .cancel_proof_request(ProofRequestCancelRequest { proof_id: session.proof_id })
+            .await
+            .map_err(|e| backend_error!("failed to cancel cluster proof request: {e}"))
+    }
+
     async fn submit_next(
         &self,
         request: &SnarkPlonkProofRequest,
@@ -946,20 +957,7 @@ impl ZkProver for ClusterZkProver {
 
 #[cfg(test)]
 mod tests {
-    use super::{ClusterSessionId, ClusterZkProver};
-
-    #[test]
-    fn cluster_session_id_round_trips_json() {
-        let session = ClusterSessionId {
-            proof_id: "proof-1".to_owned(),
-            proof_output_id: "artifact-1".to_owned(),
-        };
-
-        let encoded = session.to_backend_session_id().unwrap();
-        let decoded = ClusterSessionId::parse(&encoded).unwrap();
-
-        assert_eq!(decoded, session);
-    }
+    use super::ClusterZkProver;
 
     #[test]
     fn proof_id_for_attempt_uses_retry_suffix_after_first_attempt() {

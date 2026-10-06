@@ -25,7 +25,8 @@ pub use engine::{
 mod rpc;
 pub(crate) use rpc::launch_rpc_server;
 pub use rpc::{
-    QueuedEngineRpcClient, QueuedSequencerAdminAPIClient, RpcActor, RpcActorError, RpcContext,
+    ExecutionForwarding, ExecutionForwardingLayer, ForwardedParams, QueuedEngineRpcClient,
+    QueuedSequencerAdminAPIClient, RpcActor, RpcActorError, RpcContext,
 };
 
 mod derivation;
@@ -66,8 +67,8 @@ pub use sequencer::{
     PreparedL1Origin, QueuedSequencerEngineClient, RecoveryModeGuard, ResetResponder,
     ScheduledTicker, SealState, SealStepError, SealStepOutcome, SequencerActor,
     SequencerActorError, SequencerAdminQuery, SequencerConfig, SequencerEngineClient,
-    SequencerEngineRequestCoordinator, SequencerEngineState, ShadowCycle, ShadowFunding,
-    ShadowReconciliationGate, ShadowReconciliationTask, ShadowSequencingState,
+    SequencerEngineRequestCoordinator, SequencerEngineState, SequencerKind, ShadowCycle,
+    ShadowFunding, ShadowReconciliationGate, ShadowReconciliationTask, ShadowSequencingState,
     UnsealedPayloadHandle,
 };
 #[cfg(test)]

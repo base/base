@@ -41,7 +41,11 @@ use tokio::sync::{Semaphore, oneshot};
 use crate::{
     metrics::{DebugApiExtMetrics, DebugApis},
     state::BaseStateProviderFactory,
+    witness::MAX_CONCURRENT_PAYLOAD_EXECUTIONS,
 };
+
+/// Version byte mixed into the payload ID derived for `debug_executePayload` attributes.
+const PAYLOAD_ID_VERSION: u8 = 3;
 
 /// Represents the current proofs sync status.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -140,7 +144,7 @@ where
             eth_api,
             evm_config,
             task_spawner,
-            semaphore: Semaphore::new(3),
+            semaphore: Semaphore::new(MAX_CONCURRENT_PAYLOAD_EXECUTIONS),
             _attrs: PhantomData,
         }
     }
@@ -207,7 +211,7 @@ where
             self.inner.task_spawner.spawn_blocking_task(async move {
                 let result = async {
                     let parent_hash = parent_header.hash();
-                    let attributes = Attrs::try_new(parent_hash, attributes, 3)
+                    let attributes = Attrs::try_new(parent_hash, attributes, PAYLOAD_ID_VERSION)
                         .map_err(PayloadBuilderError::other)?;
                     let payload_id = attributes.payload_job_id();
 

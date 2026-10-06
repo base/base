@@ -7,7 +7,7 @@ use std::{
 
 use alloy_primitives::Address;
 use base_batcher_core::ThrottleConfig;
-use base_batcher_service::{BatcherConfig, BatcherService};
+use base_batcher_service::{BatcherConfig, BatcherService, ShadowConfig};
 use base_cli_utils::RuntimeManager;
 use base_runtime::TokioRuntime;
 use base_tx_manager::{SignerConfig, TxManagerConfig};
@@ -25,7 +25,8 @@ pub struct BatcherArgs {
 
     /// L2 HTTP RPC endpoint, the source of the unsafe blocks the batcher submits.
     ///
-    /// The DA throttle is also sent to this endpoint.
+    /// The DA limits are also pushed to this endpoint, so it must serve `miner_setMaxDASize`
+    /// unless `--no-throttle` is set. Otherwise the batcher stops.
     #[arg(long = "l2-rpc-url", env = "BASE_BATCHER_L2_RPC_URL")]
     pub l2_rpc_url: Url,
 
@@ -37,19 +38,12 @@ pub struct BatcherArgs {
     #[arg(long = "l1-ws-url", env = "BASE_BATCHER_L1_WS_URL")]
     pub l1_ws_url: Option<Url>,
 
-    /// Parity validator L2 RPC endpoint for shadow mode.
-    ///
-    /// Required with `--dangerously-override-batch-inbox-address` and rejected
-    /// without it. The validator's derived block hashes are compared with the
-    /// sequencer's.
-    #[arg(long = "parity-validator-l2-rpc-url", env = "BASE_BATCHER_PARITY_VALIDATOR_L2_RPC_URL")]
-    pub parity_validator_l2_rpc_url: Option<Url>,
-
     /// Rollup node RPC endpoint.
     ///
     /// The batcher reads the rollup config of this node and follows its
-    /// derivation, so the node must derive the inbox the batcher posts to. In
-    /// shadow mode it is the parity validator's rollup node.
+    /// derivation, so it posts to the batch inbox of that config, the inbox this
+    /// node derives its chain from. In shadow mode it is the parity validator's
+    /// rollup node.
     #[arg(long = "rollup-rpc-url", env = "BASE_BATCHER_ROLLUP_RPC_URL")]
     pub rollup_rpc_url: Url,
 
@@ -58,20 +52,21 @@ pub struct BatcherArgs {
     pub signer: SignerCli,
 
     /// Run as a shadow batcher.
-    ///
-    /// Must be set together with `--dangerously-override-batch-inbox-address`, so a
-    /// canonical deployment cannot turn into a shadow one by setting a single flag.
-    #[arg(long = "shadow-mode", env = "BASE_BATCHER_SHADOW_MODE")]
-    pub shadow_mode: bool,
+    #[arg(long = "shadow.enabled", env = "BASE_BATCHER_SHADOW_ENABLED")]
+    pub shadow_enabled: bool,
 
-    /// The shadow inbox, which the `--rollup-rpc-url` node must derive.
+    /// The shadow inbox, which must be the batch inbox of the `--rollup-rpc-url` node's config.
     ///
-    /// Requires `--shadow-mode`. Canonical deployments must not set this flag.
-    #[arg(
-        long = "dangerously-override-batch-inbox-address",
-        env = "BASE_BATCHER_DANGEROUSLY_OVERRIDE_BATCH_INBOX_ADDRESS"
-    )]
-    pub dangerously_override_batch_inbox_address: Option<Address>,
+    /// Required with `--shadow.enabled`.
+    #[arg(long = "shadow.inbox", env = "BASE_BATCHER_SHADOW_INBOX")]
+    pub shadow_inbox: Option<Address>,
+
+    /// Parity validator L2 RPC endpoint, whose derived block hashes are compared
+    /// with the sequencer's.
+    ///
+    /// Required with `--shadow.enabled`.
+    #[arg(long = "shadow.validator-l2-rpc", env = "BASE_BATCHER_SHADOW_VALIDATOR_L2_RPC")]
+    pub shadow_validator_l2_rpc: Option<Url>,
 
     /// L2 block polling interval in seconds.
     #[arg(long = "poll-interval", default_value = "1", env = "BASE_BATCHER_POLL_INTERVAL")]
@@ -160,7 +155,7 @@ pub struct BatcherArgs {
     /// DA backlog threshold in bytes at which throttling activates.
     ///
     /// When the estimated unsubmitted DA backlog exceeds this value, the batcher
-    /// signals the sequencer to reduce block throughput.
+    /// pushes lower DA limits to the `--l2-rpc-url` endpoint.
     #[arg(
         long = "throttle-threshold",
         default_value = "1000000",
@@ -170,7 +165,8 @@ pub struct BatcherArgs {
 
     /// Disable DA throttling.
     ///
-    /// Pass this flag to submit batches at full rate regardless of DA backlog.
+    /// The batcher never pushes DA limits to the `--l2-rpc-url` endpoint, however large its DA
+    /// backlog grows. Required with `--shadow.enabled`.
     #[arg(long = "no-throttle", env = "BASE_BATCHER_NO_THROTTLE")]
     pub no_throttle: bool,
 
@@ -251,12 +247,17 @@ pub struct BatcherArgs {
 impl BatcherArgs {
     /// Convert CLI arguments into a [`BatcherConfig`].
     pub fn into_config(self, metrics_enabled: bool) -> eyre::Result<BatcherConfig> {
-        // Shadow mode must never run against the configured production inbox.
-        if self.shadow_mode != self.dangerously_override_batch_inbox_address.is_some() {
-            eyre::bail!(
-                "--shadow-mode and --dangerously-override-batch-inbox-address must be set together"
-            );
-        }
+        // Shadow mode takes all three of its flags, and a canonical batcher none of them.
+        let shadow = match (self.shadow_enabled, self.shadow_inbox, self.shadow_validator_l2_rpc) {
+            (true, Some(inbox), Some(validator_l2_rpc)) => {
+                Some(ShadowConfig { inbox, validator_l2_rpc })
+            }
+            (false, None, None) => None,
+            _ => eyre::bail!(
+                "--shadow.enabled, --shadow.inbox and --shadow.validator-l2-rpc \
+                 must be set together"
+            ),
+        };
 
         let signer = SignerConfig::try_from(self.signer)?;
 
@@ -299,11 +300,10 @@ impl BatcherArgs {
             l1_rpc_url: self.l1_rpc_url,
             l1_ws_url: self.l1_ws_url,
             l2_rpc_url: self.l2_rpc_url,
-            parity_validator_l2_rpc_url: self.parity_validator_l2_rpc_url,
             rollup_rpc_url: self.rollup_rpc_url,
             signer: Some(signer),
             metrics_enabled,
-            batch_inbox_override: self.dangerously_override_batch_inbox_address,
+            shadow,
             poll_interval: Duration::from_secs(self.poll_interval_secs),
             encoder_config,
             max_pending_transactions: self.max_pending_transactions,
@@ -386,43 +386,51 @@ mod tests {
         assert_eq!(signer.address(), Address::repeat_byte(0x42));
     }
 
-    /// `--shadow-mode` and the inbox override only go together.
+    /// Any one or two of the three shadow flags are refused with the same message.
     #[test]
-    fn into_config_requires_shadow_mode_and_the_inbox_override_together() {
-        let shadow_mode_alone: &[&'static str] = &["--shadow-mode"];
-        let override_alone: &[&'static str] = &[
-            "--dangerously-override-batch-inbox-address",
-            "0x1111111111111111111111111111111111111111",
+    fn into_config_requires_the_shadow_flags_together() {
+        let shadow_enabled: &[&str] = &["--shadow.enabled"];
+        let shadow_inbox: &[&str] =
+            &["--shadow.inbox", "0x1111111111111111111111111111111111111111"];
+        let shadow_validator_l2_rpc: &[&str] =
+            &["--shadow.validator-l2-rpc", "http://validator:9545"];
+        let incomplete = [
+            shadow_enabled.to_vec(),
+            shadow_inbox.to_vec(),
+            shadow_validator_l2_rpc.to_vec(),
+            [shadow_enabled, shadow_inbox].concat(),
+            [shadow_enabled, shadow_validator_l2_rpc].concat(),
+            [shadow_inbox, shadow_validator_l2_rpc].concat(),
         ];
-        for flags in [shadow_mode_alone, override_alone] {
-            let error = parse_cli(flags).into_config(false).unwrap_err();
+
+        for flags in incomplete {
+            let error = parse_cli(&flags).into_config(false).unwrap_err();
 
             assert_eq!(
                 error.to_string(),
-                "--shadow-mode and --dangerously-override-batch-inbox-address must be set together",
+                "--shadow.enabled, --shadow.inbox and --shadow.validator-l2-rpc \
+                 must be set together",
                 "{flags:?}"
             );
         }
     }
 
-    /// `--shadow-mode` with the inbox override sends batches to that inbox and takes the parity
-    /// validator's L2 RPC.
+    /// The three shadow flags together build a `ShadowConfig` holding the given inbox and parity
+    /// validator URL.
     #[test]
-    fn into_config_accepts_shadow_batch_inbox_override() {
+    fn into_config_builds_the_shadow_config() {
         let cli = parse_cli(&[
-            "--shadow-mode",
-            "--dangerously-override-batch-inbox-address",
+            "--shadow.enabled",
+            "--shadow.inbox",
             "0x1111111111111111111111111111111111111111",
-            "--parity-validator-l2-rpc-url",
+            "--shadow.validator-l2-rpc",
             "http://validator:9545",
+            "--no-throttle",
         ]);
-        let config = cli.into_config(false).expect("config should build");
+        let shadow = cli.into_config(false).unwrap().shadow.expect("a shadow config");
 
-        assert_eq!(config.batch_inbox_override, Some(Address::repeat_byte(0x11)));
-        assert_eq!(
-            config.parity_validator_l2_rpc_url.expect("a parity validator").as_str(),
-            "http://validator:9545/"
-        );
+        assert_eq!(shadow.inbox, Address::repeat_byte(0x11));
+        assert_eq!(shadow.validator_l2_rpc.as_str(), "http://validator:9545/");
     }
 
     /// Without flags the batcher runs blobs at full blob frames and Brotli quality 9, starts

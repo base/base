@@ -8,7 +8,7 @@ digest = "e66bc30bc0"
 
 ["CLAUDE.md"]
 summary = "Repo coding conventions for agents: crate naming, lib.rs and module layout, Cargo manifest rules, doc and lint policy, tracing style, testing and mocking rules, review expectations."
-digest = "daa45d4733"
+digest = "f6c4fb2c76"
 
 ["CONTRIBUTING.md"]
 summary = "Contribution policy: open an issue first, work only on assigned issues, no typo or refactor PRs, dev setup (Rust, just, Foundry), run just ci, PR and bug report expectations."
@@ -47,8 +47,8 @@ summary = "base-acceptance CLI entry point for the acceptance system: lists subc
 digest = "de5b6325d7"
 
 ["bin/audit-archiver/README.md"]
-summary = "audit-archiver service: ingests transaction-event NDJSON over HTTP into Postgres, serves JSON-RPC queries, partition retention classes, env vars, S3 removal rollout, and BRIN index step."
-digest = "5e3d85a9c3"
+summary = "audit-archiver service: NDJSON ingest into Postgres, JSON-RPC queries, retention classes and partition maintenance, BRIN summary worker, event_seq extraction split, env vars, S3 removal rollout."
+digest = "4681f8af49"
 
 ["bin/base-telemetry/README.md"]
 summary = "base-telemetry backend: CLI and env config, per-IP rate limiting, and on-demand P2P reachability probes for execution-layer (enode) and consensus-layer (ENR or multiaddr) nodes."
@@ -144,7 +144,7 @@ digest = "0cd289e19a"
 
 ["crates/batcher/admin/README.md"]
 summary = "Batcher admin JSON-RPC API: start, stop, flush, status, and DA throttle controller methods (admin_*), their behavior and error codes. Use when operating the batcher."
-digest = "557b8b8f0c"
+digest = "5c08642d89"
 
 ["crates/batcher/blobs/README.md"]
 summary = "base-blobs: EIP-4844 blob encoder and decoder for the batcher wire format (130,044 payload bytes per blob); excludes KZG commitments and submission."
@@ -152,7 +152,7 @@ digest = "d1525977c0"
 
 ["crates/batcher/cli/README.md"]
 summary = "base-batcher-cli: arguments and startup for base batcher, including channel and DA config flags and shadow mode, where the batcher posts to a non-canonical inbox checked by a parity validator."
-digest = "55e674df9f"
+digest = "beae72f1e4"
 
 ["crates/batcher/comp/README.md"]
 summary = "base-comp: incremental Brotli channel compression (CompressionStream, BrotliLevel) producing protocol-compatible channels; batch encoding and framing live in batcher-encoder."
@@ -160,7 +160,7 @@ digest = "ce9421e523"
 
 ["crates/batcher/core/README.md"]
 summary = "base-batcher-core: async BatchDriver, SubmissionQueue for L1 transactions, and the DA throttle subsystem (Off, Step, Linear) that limits sequencer DA via miner_setMaxDASize."
-digest = "fdc7f66087"
+digest = "e5165c05ef"
 
 ["crates/batcher/encoder/README.md"]
 summary = "base-batcher-encoder: synchronous, no-I/O encoder from L2 blocks to L1 submissions. Covers channel closing rules, blob framing, metric labels, and BatchEncoder usage."
@@ -200,7 +200,7 @@ digest = "279c9afeab"
 
 ["crates/common/chains/README.md"]
 summary = "Single source of truth for Base chain config (BaseChainConfig consts: chain IDs, upgrade timestamps, genesis) and the BaseUpgrade enum/traits. Use when you need upgrade timestamps or chain params."
-digest = "e46d5a6b1b"
+digest = "5ffbd5d04c"
 
 ["crates/common/consensus/README.md"]
 summary = "Base EL consensus types that differ from alloy-consensus, notably BaseTxEnvelope with deposit txs and receipts with deposit_nonce. Use when handling Base transactions and receipts."
@@ -300,7 +300,7 @@ digest = "de5aceb5e6"
 
 ["crates/consensus/rpc/README.md"]
 summary = "jsonrpsee trait definitions for the rollup node RPC, chiefly optimism_syncStatus, with a security note that the endpoint is internal-only. Use when implementing or calling consensus RPC."
-digest = "a0d3fd00d7"
+digest = "969c4d6125"
 
 ["crates/consensus/safedb/README.md"]
 summary = "redb-backed persistent safe head tracking (SafeDB, SafeHeadListener, SafeDBReader) serving optimism_safeHeadAtL1; not multi-process safe. Use when working on safe head history."
@@ -308,7 +308,7 @@ digest = "030a8cd22a"
 
 ["crates/consensus/service/README.md"]
 summary = "Consensus node composition layer: actor model, RollupNode vs FollowNode, startup sequence, and each actor (engine, derivation, sequencer, network, L1 watcher, RPC). Read to understand node wiring."
-digest = "5842c6289d"
+digest = "07a60f6111"
 
 ["crates/consensus/service/src/actors/network/README.md"]
 summary = "Overview and example of the network actor, which owns libp2p gossip and discv5 discovery, built via NetworkBuilder or with_transport for tests. Use when wiring or testing the P2P actor."
@@ -427,20 +427,20 @@ summary = "Base txpool: BaseTransactionValidator (L1 data fee), BaseOrdering/Tim
 digest = "906eadac6b"
 
 ["crates/infra/audit/README.md"]
-summary = "audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers schema snapshot regeneration and legacy migrations."
-digest = "650b583c41"
+summary = "audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers the migrations and schema snapshot regeneration."
+digest = "1e33baabb5"
 
 ["crates/infra/basectl/README.md"]
 summary = "basectl-cli: the basectl clap parser and commands (blocks, sync, txpool, peers, proofs, conductor), interactive monitor, flashblocks JSON-lines stream, Denim readiness checks, and pods view config."
 digest = "1e4810a82c"
 
 ["crates/infra/challenger-e2e/README.md"]
-summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games, asserts valid games are left alone and Path 4 (plus Path 3 conditionally, Path 2 in a separate scenario) is disputed."
-digest = "92e79d0b74"
+summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games, asserts valid games are left alone and Path 4 (plus Path 3 and Path 2 in separate scenarios) is disputed."
+digest = "118deb12bf"
 
 ["crates/infra/load-tests/README.md"]
 summary = "Load-testing framework (base-load-tests lib, base-load-tester bin): just/cargo commands, YAML config, tx mixes (precompile, B-20, swap, validity). Use to run or configure devnet/sepolia load tests."
-digest = "b49396d306"
+digest = "74e01ef24a"
 
 ["crates/infra/roxy/README.md"]
 summary = "Scaffold-only Rust JSON-RPC reverse proxy meant to replace the ProxyD fork; currently just a listen-address flag plus /healthz and /readyz probes, no proxying yet."
@@ -680,7 +680,7 @@ digest = "e87f3373b8"
 
 ["docs/transaction-events/README.md"]
 summary = "Spec for transaction-event/v1, the JSONL business event journal for transaction observability: config fields, envelope, event vocabulary, Vector to audit-archiver ingest, Postgres retention, examples."
-digest = "e1240243d9"
+digest = "1089184709"
 
 ["docs/transaction-events/tips-parity-checklist.md"]
 summary = "Checklist for verifying TIPS UI audit-archiver/Postgres responses match the S3-backed routes (block, txn, bundle, rejected) before switching TIPS_UI_QUERY_BACKEND=audit."
@@ -688,7 +688,7 @@ digest = "49f6748dde"
 
 ["etc/docker/README.md"]
 summary = "Dockerfiles, Bake targets, published images (ghcr.io/base/node and single-binary images), and Compose setup for the local devnet and Rust services, including batcher topology and build profiles."
-digest = "83a7d99bb5"
+digest = "e9f609b61d"
 
 ["etc/systems/README.md"]
 summary = "Docs for base-system-tests: running the snapshot-backed mainnet devnet (builder and follow client), snapshot and transfer benchmarks, workload suite, 2s vs 200ms comparison, cleanup."

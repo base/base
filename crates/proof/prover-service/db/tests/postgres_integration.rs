@@ -18,18 +18,18 @@ use std::time::Duration;
 use alloy_primitives::Address;
 use base_proof_primitives::Proposal;
 use base_prover_service_db::{
-    AbandonProofJob, AbandonProofOutcome, ApiProofType, ClaimProofJob, CompleteClaimedProofJob,
-    CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
-    DeleteProofRequestOutcome, FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob,
-    ProofJobStatus, ProofRequestPage, ProofRequestRepo, ProofStatus, ProofType,
+    AbandonProofJob, AbandonProofOutcome, ApiProofType, CancelProofRequestOutcome, ClaimProofJob,
+    CompleteClaimedProofJob, CreateProofRequest, CreateProofRequestError,
+    CreateProofRequestOutcome, DeleteProofRequestOutcome, FailExpiredProofJobs, HeartbeatOutcome,
+    HeartbeatProofJob, ProofJobStatus, ProofRequestPage, ProofRequestRepo, ProofStatus, ProofType,
     RecordSessionOutcome, RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind,
     WorkerSessionUpsert, ZkVmKind,
 };
 use base_prover_service_protocol::{
-    ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
-    ProofResult as ProtocolProofResult, SnarkPlonkProofRequest, SnarkPlonkProofResult,
-    TeeKind as ProtocolTeeKind, TeeProofRequest, TeeProofResult, ZkBackend, ZkProofRequest,
-    ZkProofResult, ZkVm,
+    PROOF_REQUEST_CANCELLED_MESSAGE, ProofRequest as ProtocolProofRequest,
+    ProofRequestKind as ProtocolProofRequestKind, ProofResult as ProtocolProofResult,
+    SnarkPlonkProofRequest, SnarkPlonkProofResult, TeeKind as ProtocolTeeKind, TeeProofRequest,
+    TeeProofResult, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
 };
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
@@ -73,7 +73,6 @@ fn compressed_request_at_with_backend(
             number_of_blocks_to_prove: 5,
             sequence_window: Some(50),
             l1_head: None,
-            intermediate_root_interval: None,
             schedule_l2_block_number: None,
             zk_vm: ZkVm::Sp1,
             zk_backend,
@@ -90,7 +89,6 @@ fn compressed_request_with_l1_head(l1_head: &str) -> CreateProofRequest {
             number_of_blocks_to_prove: 5,
             sequence_window: Some(50),
             l1_head: Some(l1_head.parse().expect("valid hash")),
-            intermediate_root_interval: None,
             schedule_l2_block_number: None,
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
@@ -112,7 +110,6 @@ fn snark_request() -> CreateProofRequest {
                         .parse()
                         .expect("valid hash"),
                 ),
-                intermediate_root_interval: None,
                 schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
@@ -295,9 +292,9 @@ async fn test_legacy_rollout_request_without_protocol_storage_is_readable_and_re
         r#"
         INSERT INTO proof_requests (
             id, start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, status,
-            prover_address, l1_head, intermediate_root_interval
+            prover_address, l1_head
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         "#,
     )
     .bind(explicit_id)
@@ -308,7 +305,6 @@ async fn test_legacy_rollout_request_without_protocol_storage_is_readable_and_re
     .bind(ProofStatus::Created.as_str())
     .bind(&req.prover_address)
     .bind(&req.l1_head)
-    .bind(req.intermediate_root_interval.map(|value| i64::try_from(value).unwrap()))
     .execute(&pool)
     .await
     .unwrap();
@@ -820,6 +816,87 @@ async fn test_create_for_worker_queue_rejects_succeeded_row_with_new_l1_head() {
         err,
         CreateProofRequestError::IdCollision { id, field: "l1_head" } if id == explicit_id
     ));
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_cancel_proof_request_by_session_id_rejects_tee_and_dry_run() {
+    let repo = test_repo(test_pool().await);
+
+    let cluster_session = Uuid::new_v4().to_string();
+    let mut cluster = compressed_request_at_with_backend(100, ZkBackend::Cluster);
+    set_request_session_id(&mut cluster, cluster_session.clone());
+    repo.create_for_worker_queue(cluster, TEST_MAX_PROOF_RETRIES, true).await.unwrap();
+
+    let CancelProofRequestOutcome::Cancelled(job) =
+        repo.cancel_proof_request_by_session_id(&cluster_session).await.unwrap()
+    else {
+        panic!("cluster cancel should succeed");
+    };
+    assert_eq!(job.job_status, ProofJobStatus::Failed);
+    assert_eq!(job.error_message.as_deref(), Some(PROOF_REQUEST_CANCELLED_MESSAGE));
+    assert!(matches!(
+        repo.cancel_proof_request_by_session_id(&cluster_session).await.unwrap(),
+        CancelProofRequestOutcome::AlreadyCancelled
+    ));
+
+    for mut request in [tee_request(), compressed_request_at_with_backend(100, ZkBackend::DryRun)] {
+        let session_id = Uuid::new_v4().to_string();
+        set_request_session_id(&mut request, session_id.clone());
+        repo.create_for_worker_queue(request, TEST_MAX_PROOF_RETRIES, true).await.unwrap();
+        assert!(matches!(
+            repo.cancel_proof_request_by_session_id(&session_id).await.unwrap(),
+            CancelProofRequestOutcome::UnsupportedBackend
+        ));
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_cancel_proof_request_blocks_replay_and_worker_session_writes() {
+    let repo = test_repo(test_pool().await);
+    drain_claimable_compressed_jobs(&repo).await;
+
+    let session_id = Uuid::new_v4().to_string();
+    let mut request = compressed_request();
+    set_request_session_id(&mut request, session_id.clone());
+    repo.create_for_worker_queue(request.clone(), TEST_MAX_PROOF_RETRIES, true).await.unwrap();
+    let claim = repo
+        .claim_next_proof_job(compressed_claim("cancel-worker", 1))
+        .await
+        .unwrap()
+        .expect("compressed job should be claimed");
+    assert_eq!(claim.session_id, session_id);
+
+    assert!(matches!(
+        repo.cancel_proof_request_by_session_id(&session_id).await.unwrap(),
+        CancelProofRequestOutcome::Cancelled(_)
+    ));
+
+    // A replay with the default retry_failed = true must not requeue a cancelled request.
+    assert!(matches!(
+        repo.create_for_worker_queue(request, TEST_MAX_PROOF_RETRIES, true).await.unwrap(),
+        CreateProofRequestOutcome::Cancelled(_)
+    ));
+    let job = repo.get_proof_job_by_session_id(&session_id).await.unwrap().unwrap();
+    assert_eq!(job.job_status, ProofJobStatus::Failed);
+    assert_eq!(job.error_message.as_deref(), Some(PROOF_REQUEST_CANCELLED_MESSAGE));
+
+    // The previous owner recording a backend session it submitted just before the cancel
+    // is told the job was cancelled, so it can stop that backend proof.
+    let recorded = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id,
+            lock_id: claim.lock_id.expect("claimed job has lock"),
+            worker_id: "cancel-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: "backend-after-cancel".to_owned(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(recorded, RecordSessionOutcome::Cancelled));
 }
 
 #[tokio::test]

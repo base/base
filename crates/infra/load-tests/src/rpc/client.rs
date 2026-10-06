@@ -461,11 +461,9 @@ mod tests {
 
     use super::*;
 
-    fn storage_predicate() -> ValidityPredicate {
-        ValidityPredicate::Storage {
+    fn balance_predicate() -> ValidityPredicate {
+        ValidityPredicate::Balance {
             address: address!("00000000000000000000000000000000000000aa"),
-            slot: U256::ZERO,
-            mask: U256::MAX,
             op: ValidityOperator::GreaterThanOrEqual,
             value: U256::from(1u64),
         }
@@ -505,7 +503,7 @@ mod tests {
         assert!(!plain.is_validity());
 
         let validity =
-            SubmitItem::with_validity(Bytes::from_static(&[0x02]), vec![storage_predicate()]);
+            SubmitItem::with_validity(Bytes::from_static(&[0x02]), vec![balance_predicate()]);
         assert!(validity.is_validity());
     }
 
@@ -513,7 +511,7 @@ mod tests {
     fn build_batch_body_mixes_methods_and_ids() {
         let items = vec![
             SubmitItem::plain(Bytes::from_static(&[0xaa])),
-            SubmitItem::with_validity(Bytes::from_static(&[0xbb]), vec![storage_predicate()]),
+            SubmitItem::with_validity(Bytes::from_static(&[0xbb]), vec![balance_predicate()]),
         ];
 
         let body = BatchRpcClient::build_batch_body(&items);
@@ -529,15 +527,15 @@ mod tests {
         assert_eq!(body[1]["id"], 1);
         assert_eq!(body[1]["method"], BASE_SEND_RAW_TRANSACTION_VALIDITY);
         assert_eq!(body[1]["params"][0], "0xbb");
-        assert_eq!(body[1]["params"][1]["validity"][0]["type"], "storage");
+        assert_eq!(body[1]["params"][1]["validity"][0]["type"], "balance");
         assert_eq!(body[1]["params"][1]["validity"][0]["params"]["op"], ">=");
     }
 
     #[test]
     fn validity_predicate_serializes_to_server_wire_shape() {
         // Guards against drift from the canonical base-execution-txpool type.
-        let json = serde_json::to_value(storage_predicate()).unwrap();
-        assert_eq!(json["type"], "storage");
+        let json = serde_json::to_value(balance_predicate()).unwrap();
+        assert_eq!(json["type"], "balance");
         assert_eq!(json["params"]["op"], ">=");
         assert_eq!(json["params"]["address"], "0x00000000000000000000000000000000000000aa");
     }

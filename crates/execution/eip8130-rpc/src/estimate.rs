@@ -9,12 +9,13 @@ use alloy_primitives::U256;
 use alloy_rpc_types::state::EvmOverrides;
 use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_rpc_types::{BaseRpcTypes, BaseTransactionRequest};
+use base_execution_chainspec::BaseChainSpec;
+use base_execution_evm::{BaseNextBlockEnvAttributes, BasePendingForecast};
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
-use reth_evm::{EvmFactoryFor, HaltReasonFor, TxEnvFor};
-use reth_rpc_eth_api::{
-    FromEthApiError,
-    helpers::{FullEthApi, LoadPendingBlock},
-};
+use reth_chainspec::ChainSpecProvider;
+use reth_errors::RethError;
+use reth_evm::{ConfigureEvm, EvmFactoryFor, TxEnvFor};
+use reth_rpc_eth_api::{FromEthApiError, helpers::FullEthApi};
 use reth_rpc_eth_types::error::api::{FromEvmHalt, FromRevert};
 use revm::context::{Block, BlockEnv, TxEnv, result::ExecutionResult};
 
@@ -52,6 +53,10 @@ impl Eip8130GasEstimator {
     /// match the standard call path), and runs the EIP-8130 simulation,
     /// returning the gas it would charge.
     ///
+    /// Like the standard estimator, `pending` without an executed pending block
+    /// simulates the scheduled Denim successor, including its temporary
+    /// `BaseTime` state beneath user state overrides.
+    ///
     /// Block overrides are threaded through (not just state overrides) so the
     /// simulation runs against the same block env — basefee, timestamp, etc. —
     /// as the standard `eth_estimateGas` path.
@@ -67,26 +72,19 @@ impl Eip8130GasEstimator {
         eth_api: &Eth,
         request: BaseTransactionRequest,
         block_id: BlockId,
-        overrides: EvmOverrides,
+        mut overrides: EvmOverrides,
     ) -> Result<U256, ErrorObjectOwned>
     where
-        Eth: FullEthApi<NetworkTypes = BaseRpcTypes>
-            + LoadPendingBlock
-            + Clone
-            + Send
-            + Sync
-            + 'static,
-        Eth::Error: FromEthApiError,
+        Eth: FullEthApi<NetworkTypes = BaseRpcTypes>,
+        Eth::Evm: ConfigureEvm<NextBlockEnvCtx = BaseNextBlockEnvAttributes>,
+        Eth::Provider: ChainSpecProvider<ChainSpec = BaseChainSpec>,
         TxEnvFor<Eth::Evm>: From<BaseRevm<TxEnv>>,
         // Pin the block env to revm's concrete type so block overrides can be
         // applied directly (Base's `EvmFactory::BlockEnv` is `revm::BlockEnv`).
         EvmFactoryFor<Eth::Evm>: EvmFactory<BlockEnv = BlockEnv>,
-        // Surface phase reverts/halts as execution errors, like the standard
-        // estimator (`FullEthApi` already guarantees these on `Eth::Error`).
-        Eth::Error: FromRevert + FromEvmHalt<HaltReasonFor<Eth::Evm>>,
         ErrorObjectOwned: From<Eth::Error>,
     {
-        let (evm_env, at) = eth_api.evm_env_at(block_id).await?;
+        let (evm_env, at, forecast) = BasePendingForecast::evm_env_at(eth_api, block_id).await?;
         let chain_id = evm_env.cfg_env.chain_id;
         // Bound execution by the block gas limit when the request omits `gas`.
         let gas_cap = Block::gas_limit(&evm_env.block_env);
@@ -99,17 +97,21 @@ impl Eip8130GasEstimator {
             )
         })?;
 
-        let EvmOverrides { state, block } = overrides;
-
         let result = eth_api
             .spawn_with_state_at_block(at, move |this, mut db| {
                 let mut evm_env = evm_env;
                 // Block overrides first (mutating the block env), then state, so
                 // the simulation matches the standard call path's ordering.
-                if let Some(block) = block {
+                if let Some(block) = overrides.block.take() {
                     apply_block_overrides(*block, &mut db, &mut evm_env.block_env);
                 }
-                if let Some(state) = state {
+                if let Some(forecast) = forecast {
+                    overrides = forecast
+                        .state_overrides(this.provider().chain_spec().as_ref(), &mut db, overrides)
+                        .map_err(RethError::other)
+                        .map_err(Eth::Error::from_eth_err)?;
+                }
+                if let Some(state) = overrides.state {
                     apply_state_overrides(state, &mut db).map_err(Eth::Error::from_eth_err)?;
                 }
                 this.transact(db, evm_env, sim_tx.into())

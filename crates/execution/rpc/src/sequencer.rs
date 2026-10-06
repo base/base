@@ -133,7 +133,7 @@ impl SequencerClient {
         Ok(Self { inner: Arc::new(inner) })
     }
 
-    /// Returns the network of the client
+    /// Returns the sequencer endpoint URL.
     pub fn endpoint(&self) -> &str {
         &self.inner.sequencer_endpoint
     }
@@ -149,17 +149,15 @@ impl SequencerClient {
         method: &str,
         params: Params,
     ) -> Result<Resp, SequencerClientError> {
-        let resp =
-            self.client().request::<Params, Resp>(method.to_string(), params).await.inspect_err(
-                |err| {
-                    warn!(
-                        target: "rpc::sequencer",
-                        %err,
-                        "HTTP request to sequencer failed",
-                    );
-                },
-            )?;
-        Ok(resp)
+        Ok(self.client().request::<Params, Resp>(method.to_string(), params).await.inspect_err(
+            |err| {
+                warn!(
+                    target: "rpc::sequencer",
+                    %err,
+                    "HTTP request to sequencer failed",
+                );
+            },
+        )?)
     }
 
     /// Forwards a transaction to the sequencer endpoint.

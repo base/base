@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use crate::{
     output::{COLOR_ACTIVE_BORDER, COLOR_ROW_SELECTED},
     rpc::TxSummary,
-    tui::Toast,
+    tui::{Browser, Toast},
 };
 
 /// Reusable transaction list pane that can be embedded in any block-listing view.
@@ -43,19 +43,7 @@ impl TransactionPane {
             && let Some(tx_summary) = self.transactions.get(idx)
             && let Some(ref base_url) = self.explorer_base_url
         {
-            let url = format!("{base_url}/tx/{:#x}", tx_summary.hash);
-            let cmd = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-            match std::process::Command::new(cmd).arg(&url).spawn() {
-                Ok(mut child) => {
-                    std::thread::spawn(move || {
-                        let _ = child.wait();
-                    });
-                    toast_tx(Toast::info(format!("Opening {url}")));
-                }
-                Err(e) => {
-                    toast_tx(Toast::warning(format!("Failed to open browser: {e}")));
-                }
-            }
+            toast_tx(Browser::open(&format!("{base_url}/tx/{:#x}", tx_summary.hash)));
         }
     }
 

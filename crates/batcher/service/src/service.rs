@@ -12,8 +12,7 @@ use backon::Retryable;
 use base_balance_monitor::BalanceMonitorLayer;
 use base_batcher_admin::AdminServer;
 use base_batcher_core::{
-    AdminHandle, BatchDriver, BatchDriverInputs, DaThrottle, NoopThrottleClient, ThrottleClient,
-    ThrottleController, ThrottleStrategy,
+    AdminHandle, BatchDriver, BatchDriverInputs, DaThrottle, ThrottleController, ThrottleStrategy,
 };
 use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
 use base_batcher_source::{HybridL1HeadSource, PollingBlockSource};
@@ -24,12 +23,12 @@ use base_retry::{DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
 use base_runtime::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use futures::{
-    StreamExt,
+    FutureExt, StreamExt, TryFutureExt,
     future::BoxFuture,
     stream::{self, BoxStream, FuturesUnordered},
 };
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use url::Url;
@@ -37,33 +36,11 @@ use url::Url;
 use crate::{
     BatcherConfig, DerivationStatusPoller, DerivationStatusProvider, L2BlockParityMonitor,
     L2BlockParityMonitorConfig, MAX_CHECK_RECENT_TXS_DEPTH, RecentTxSyncTarget,
-    RpcL1HeadPollingSource, RpcL2BlockProvider, RpcPollingSource, RpcThrottleClient,
-    SystemConfigBatcher,
+    RpcL1HeadPollingSource, RpcL2BlockProvider, RpcPollingSource, SystemConfigBatcher,
+    ThrottlePusher,
 };
 
 const WEI_PER_ETHER: f64 = 1_000_000_000_000_000_000.0;
-
-/// Service-internal throttle client variant: either a no-op or an RPC client.
-///
-/// Using a concrete enum avoids heap allocation while still allowing
-/// `start` to return either branch based on config.
-enum ServiceThrottle {
-    Noop(NoopThrottleClient),
-    Rpc(RpcThrottleClient),
-}
-
-impl ThrottleClient for ServiceThrottle {
-    fn set_max_da_size(
-        &self,
-        max_tx_size: u64,
-        max_block_size: u64,
-    ) -> BoxFuture<'_, Result<(), Box<dyn std::error::Error + Send + Sync>>> {
-        match self {
-            Self::Noop(n) => n.set_max_da_size(max_tx_size, max_block_size),
-            Self::Rpc(r) => r.set_max_da_size(max_tx_size, max_block_size),
-        }
-    }
-}
 
 /// Concrete driver type produced by [`BatcherService::setup`].
 ///
@@ -73,7 +50,6 @@ type ServiceDriver = BatchDriver<
     BatchEncoder,
     PollingBlockSource<RpcPollingSource, TokioRuntime>,
     SimpleTxManager<RootProvider>,
-    ServiceThrottle,
     HybridL1HeadSource<RpcL1HeadPollingSource>,
 >;
 
@@ -89,7 +65,7 @@ pub struct ReadyBatcher {
     #[debug(skip)]
     admin_server: Option<AdminServer>,
     #[debug(skip)]
-    background_tasks: Vec<(&'static str, JoinHandle<()>)>,
+    background_tasks: Vec<(&'static str, BoxFuture<'static, eyre::Result<()>>)>,
     #[debug(skip)]
     cancellation: CancellationToken,
 }
@@ -103,19 +79,15 @@ impl ReadyBatcher {
         let background_task_exit = async move {
             let mut background_tasks = background_tasks
                 .into_iter()
-                .map(|(task_name, handle)| async move { (task_name, handle.await) })
+                .map(|(task_name, task)| async move { (task_name, task.await) })
                 .collect::<FuturesUnordered<_>>();
             tokio::select! {
                 biased;
                 () = background_cancellation.cancelled() => {}
                 Some((task_name, result)) = background_tasks.next(), if !background_tasks.is_empty() => {
                     match result {
-                        Ok(()) => {
-                            eyre::bail!("{task_name} exited unexpectedly")
-                        }
-                        Err(error) => {
-                            eyre::bail!("{task_name} task failed: {error}")
-                        }
+                        Ok(()) => eyre::bail!("{task_name} exited unexpectedly"),
+                        Err(error) => eyre::bail!("{task_name} failed: {error}"),
                     }
                 }
             }
@@ -322,10 +294,10 @@ impl BatcherService {
 
     /// Initialise all batcher components and return a [`ReadyBatcher`].
     ///
-    /// Requires a signer, connects to the L2 RPC, fetches the rollup config and checks that its
-    /// node derives the inbox the batcher posts to, connects to L1, checks outside shadow mode
-    /// that the signer is the batcher the L1 `SystemConfig` authorizes, and constructs the
-    /// driver. One-shot startup RPCs retry with exponential backoff until
+    /// Requires a signer, connects to the L2 RPC, fetches the rollup config, whose batch inbox
+    /// the batcher posts to and must be the shadow inbox in shadow mode, connects to L1, checks
+    /// outside shadow mode that the signer is the batcher the L1 `SystemConfig` authorizes, and
+    /// constructs the driver. One-shot startup RPCs retry with exponential backoff until
     /// [`BatcherConfig::wait_node_sync_timeout`]. Returns an error if any of those steps fail,
     /// before any background work is spawned.
     ///
@@ -364,10 +336,11 @@ impl BatcherService {
         if self.config.check_recent_txs_depth > 0 && !self.config.wait_node_sync {
             eyre::bail!("check_recent_txs_depth requires wait_node_sync");
         }
-        match (self.config.batch_inbox_override, self.config.parity_validator_l2_rpc_url.as_ref()) {
-            (None, Some(_)) => eyre::bail!("parity validator L2 RPC URL requires shadow mode"),
-            (Some(_), None) => eyre::bail!("shadow mode requires a parity validator L2 RPC URL"),
-            _ => {}
+        if self.config.shadow.is_some() && self.config.throttle.is_some() {
+            eyre::bail!(
+                "shadow mode requires the DA throttle to be disabled: the batcher would push its \
+                 DA limits to the sequencer it reads blocks from"
+            );
         }
 
         let signer_config = self
@@ -407,19 +380,23 @@ impl BatcherService {
             })
             .await?,
         );
-        let batch_inbox = self.config.batch_inbox(rollup_config.batch_inbox_address)?;
-        if self.config.batch_inbox_override.is_some() {
+
+        // Post to the batch inbox of the rollup node's config, which must be the shadow inbox in
+        // shadow mode.
+        let batch_inbox = rollup_config.batch_inbox_address;
+        if let Some(shadow) = &self.config.shadow {
+            shadow.validate_batch_inbox(batch_inbox)?;
             warn!(inbox = %batch_inbox, "shadow mode, posting to the shadow batch inbox");
         } else {
             info!(inbox = %batch_inbox, "rollup config loaded");
         }
 
-        let validator_provider = if let Some(url) = &self.config.parity_validator_l2_rpc_url {
-            let provider = Self::rpc_retry("parity-validator-l2-rpc", retry, rpc_timeout, || {
+        let validator_provider = if let Some(shadow) = &self.config.shadow {
+            let provider = Self::rpc_retry("shadow.validator-l2-rpc", retry, rpc_timeout, || {
                 ProviderBuilder::new()
                     .disable_recommended_fillers()
                     .network::<Base>()
-                    .connect(url.as_str())
+                    .connect(shadow.validator_l2_rpc.as_str())
             })
             .await?;
             let provider: Arc<dyn Provider<Base> + Send + Sync> = Arc::new(provider);
@@ -438,7 +415,7 @@ impl BatcherService {
 
         // Derivation ignores batches from any other sender, so a wrong signer would only burn L1
         // fees. The shadow batcher posts with its own key on purpose.
-        if self.config.batch_inbox_override.is_none() {
+        if self.config.shadow.is_none() {
             let system_config = rollup_config.l1_system_config_address;
             let authorized = Self::rpc_retry("system-config-batcher", retry, rpc_timeout, || {
                 SystemConfigBatcher::fetch(&l1_provider, system_config)
@@ -524,7 +501,7 @@ impl BatcherService {
                     }
                 }
             });
-            background_tasks.push(("balance monitor relay", balance_handle));
+            background_tasks.push(("balance monitor relay", balance_handle.err_into().boxed()));
             info!(
                 address = %signer_address,
                 "batcher balance monitor started"
@@ -541,7 +518,7 @@ impl BatcherService {
                 ),
             )
             .spawn(cancellation.clone());
-            background_tasks.push(("derived L2 block parity monitor", handle));
+            background_tasks.push(("derived L2 block parity monitor", handle.err_into().boxed()));
         }
 
         let poller = RpcPollingSource::new(Arc::clone(&l2_provider));
@@ -554,15 +531,11 @@ impl BatcherService {
         let encoder =
             BatchEncoder::new(Arc::clone(&rollup_config), self.config.encoder_config.clone())?;
 
-        // Send the DA limits to the L2 endpoint, whose block builder applies them.
-        let throttle_client = match &self.config.throttle {
-            None => ServiceThrottle::Noop(NoopThrottleClient),
-            Some(_) => ServiceThrottle::Rpc(RpcThrottleClient::new(&self.config.l2_rpc_url)?),
-        };
-        let throttle =
+        let throttle = DaThrottle::new(
             self.config.throttle.clone().map_or_else(ThrottleController::disabled, |cfg| {
                 ThrottleController::new(cfg, ThrottleStrategy::Linear)
-            });
+            }),
+        );
 
         // Build the L1 head source: a hybrid of optional WS subscription + polling.
         let l1_head_stream = Self::build_l1_head_stream(self.config.l1_ws_url.as_ref()).await;
@@ -589,6 +562,15 @@ impl BatcherService {
         .await
         .map_err(|e| eyre::eyre!("failed to create tx manager: {e}"))?;
 
+        // Push the DA limits to the L2 endpoint, whose block builder applies them. A disabled
+        // throttle has nothing to push.
+        if self.config.throttle.is_some() {
+            let pusher = ThrottlePusher::new(&self.config.l2_rpc_url, throttle.subscribe())?;
+            let handle = tokio::spawn(pusher.run(runtime.clone()));
+            background_tasks
+                .push(("throttle pusher", handle.err_into().map(Result::flatten).boxed()));
+        }
+
         let (derivation_status_tx, derivation_status_rx) = mpsc::channel(1);
 
         let derivation_status_handle = tokio::spawn(
@@ -600,7 +582,8 @@ impl BatcherService {
             )
             .run(runtime.clone()),
         );
-        background_tasks.push(("derivation status poller", derivation_status_handle));
+        background_tasks
+            .push(("derivation status poller", derivation_status_handle.err_into().boxed()));
 
         // Build the driver.
         let (admin_handle, admin_rx) = AdminHandle::channel();
@@ -615,7 +598,7 @@ impl BatcherService {
                 force_blobs_when_throttling: self.config.force_blobs_when_throttling,
                 stopped: self.config.stopped,
             },
-            DaThrottle::new(throttle, throttle_client),
+            throttle,
             BatchDriverInputs {
                 source,
                 l1_head_source,
@@ -654,12 +637,13 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+    use crate::ShadowConfig;
 
     /// The `SystemConfig` address of the mocked rollup config.
     const SYSTEM_CONFIG: Address = Address::repeat_byte(0x5c);
 
     /// The batch inbox of the mocked rollup config, which a shadow batcher following that rollup
-    /// node declares as its override.
+    /// node declares as its shadow inbox.
     const BATCH_INBOX: Address = Address::repeat_byte(0x1b);
 
     fn test_retry() -> RetryConfig {
@@ -770,16 +754,17 @@ mod tests {
         BatcherConfig { check_recent_txs_depth: 1, ..BatcherConfig::default() },
         "check_recent_txs_depth requires wait_node_sync"
     )]
-    #[case::shadow_without_parity_validator(
-        BatcherConfig { batch_inbox_override: Some(Address::ZERO), ..BatcherConfig::default() },
-        "shadow mode requires a parity validator L2 RPC URL"
-    )]
-    #[case::parity_validator_without_shadow(
+    #[case::shadow_with_throttle(
         BatcherConfig {
-            parity_validator_l2_rpc_url: Some("http://127.0.0.1:1".parse().unwrap()),
+            shadow: Some(ShadowConfig {
+                inbox: Address::ZERO,
+                validator_l2_rpc: "http://127.0.0.1:1".parse().unwrap(),
+            }),
+            throttle: Some(ThrottleConfig::default()),
             ..BatcherConfig::default()
         },
-        "parity validator L2 RPC URL requires shadow mode"
+        "shadow mode requires the DA throttle to be disabled: the batcher would push its DA \
+         limits to the sequencer it reads blocks from"
     )]
     #[tokio::test]
     async fn setup_refuses_a_config_it_cannot_run(
@@ -872,8 +857,11 @@ mod tests {
         // Setup reads the L1 head right after the check, so a served read means setup got that far.
         let l1_head = mock_rpc(&server, r#"{"method":"eth_blockNumber"}"#, r#""0x1""#.into()).await;
         let config = BatcherConfig {
-            batch_inbox_override: Some(BATCH_INBOX),
-            parity_validator_l2_rpc_url: Some(server.url("/").parse().unwrap()),
+            shadow: Some(ShadowConfig {
+                inbox: BATCH_INBOX,
+                validator_l2_rpc: server.url("/").parse().unwrap(),
+            }),
+            throttle: None,
             ..mocked_config(&server, Address::repeat_byte(0x51))
         };
 

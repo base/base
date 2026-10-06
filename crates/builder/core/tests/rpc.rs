@@ -296,10 +296,8 @@ async fn test_send_raw_transaction_validity_pre_cobalt_gate() -> eyre::Result<()
                 signed_eip1559_tx(enabled_harness.chain_id()),
                 SendRawTransactionValidityOptions {
                     validity: vec![
-                        ValidityPredicate::Storage {
+                        ValidityPredicate::Balance {
                             address: Account::Alice.address(),
-                            slot: U256::ZERO,
-                            mask: U256::MAX,
                             op: ValidityOperator::Equal,
                             value: U256::ZERO,
                         },
@@ -321,9 +319,10 @@ async fn test_send_raw_transaction_validity_pre_cobalt_gate() -> eyre::Result<()
 #[tokio::test]
 async fn test_send_raw_transaction_validity_enforces_configured_limit() -> eyre::Result<()> {
     let (harness, client) = setup_with_validity_ingress(true, 1).await?;
-    let predicate = ValidityPredicate::BlockNumber {
-        op: ValidityOperator::LessThanOrEqual,
-        value: U256::from(31),
+    let predicate = ValidityPredicate::Balance {
+        address: Account::Alice.address(),
+        op: ValidityOperator::Equal,
+        value: U256::ZERO,
     };
     let result: Result<TxHash, _> = client
         .request(

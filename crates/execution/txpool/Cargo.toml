@@ -52,6 +52,7 @@ c-kzg.workspace = true
 revm.workspace = true
 futures.workspace = true
 tracing.workspace = true
+hostname.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
 derive_more.workspace = true

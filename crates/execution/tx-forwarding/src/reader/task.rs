@@ -244,7 +244,10 @@ where
             producer: TransactionEventProducer::BaseRethNode,
             event_type: TransactionEventType::TxpoolBuilderConsumed,
             tx_hash: tx_hash,
+            // Every destination's reader walks the same pool snapshot, so `iterator_index` alone
+            // collides across destinations.
             id: {
+                "builder_url" => self.url_label.as_ref(),
                 "tx_hash" => format!("{tx_hash:#x}"),
                 "iterator_index" => iterator_index,
             },
@@ -271,10 +274,13 @@ impl<P: TransactionPool, E> fmt::Debug for DestinationReader<P, E> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use alloy_consensus::transaction::Recovered;
     use alloy_primitives::{Address, B256, TxKind, U256};
     use base_common_consensus::{BaseTransactionSigned, TxDeposit};
     use base_execution_txpool::BasePooledTransaction;
+    use base_observability_events::TransactionEventCapture;
     use reth_transaction_pool::{
         TransactionOrigin, identifier::TransactionId, noop::NoopTransactionPool,
     };
@@ -316,6 +322,14 @@ mod tests {
         sender: mpsc::Sender<InsertValidatedTransaction>,
         cancel: CancellationToken,
     ) -> TestReader {
+        reader_for("http://builder.test", sender, cancel)
+    }
+
+    fn reader_for(
+        url: &str,
+        sender: mpsc::Sender<InsertValidatedTransaction>,
+        cancel: CancellationToken,
+    ) -> TestReader {
         DestinationReader::new(
             NoopTransactionPool::new(),
             ReaderConfig {
@@ -326,7 +340,7 @@ mod tests {
             },
             sender,
             cancel,
-            "http://builder.test".parse().unwrap(),
+            url.parse().unwrap(),
         )
     }
 
@@ -354,6 +368,28 @@ mod tests {
         assert!(matches!(reader.try_enqueue(&expected), Err(mpsc::error::TrySendError::Full(()))));
         assert_eq!(receiver.try_recv().unwrap().tx_hash, wire(0).tx_hash);
         assert!(receiver.try_recv().is_err());
+    }
+
+    /// Every destination's reader walks the same pool snapshot, so the same transaction is
+    /// consumed at the same iterator index for each destination. Those events must keep distinct
+    /// IDs, or the archive's ID dedupe keeps only one destination's.
+    #[test]
+    fn consumed_events_for_different_destinations_have_distinct_ids() {
+        let capture = TransactionEventCapture::install();
+        let hash = B256::repeat_byte(0xc1);
+        let destinations = ["http://builder-a.test", "http://builder-b.test"];
+        for url in destinations {
+            let (sender, _receiver) = mpsc::channel(1);
+            reader_for(url, sender, CancellationToken::new()).emit_builder_consumed_event(hash, 7);
+        }
+
+        let ids: HashSet<String> = capture
+            .events()
+            .into_iter()
+            .filter(|event| event.tx_hash == Some(hash))
+            .map(|event| event.event_id)
+            .collect();
+        assert_eq!(ids.len(), destinations.len());
     }
 
     #[test]
