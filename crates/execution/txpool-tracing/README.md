@@ -38,6 +38,10 @@ let ext = TxPoolExtension::new(config);
 let builder = Box::new(ext).apply(builder);
 ```
 
+## Event IDs
+
+Each emitted transaction event ID combines the producer, event type, transaction hash, the event's index in the transaction's in-memory event log, and the local wall-clock time in nanoseconds when the event was emitted. The index alone resets whenever the in-memory log is lost (node restart, cache eviction or overflow, or a dropped transaction being re-admitted), so the timestamp keeps those distinct events from sharing an ID and being deduplicated downstream. IDs are therefore unique per emission, not reproducible across nodes or restarts.
+
 ## Metrics
 
 The extension records a histogram named `reth_transaction_tracing_tx_event` with an `event` label for each lifecycle event (`pending`, `queued`, `replaced`, `dropped`, `block_inclusion`, etc.). Values represent the milliseconds a transaction spent in the mempool up to that event. When the in-memory log reaches its limit (20,000 transactions), an `overflowed` event is recorded so dashboards can alert on data loss.

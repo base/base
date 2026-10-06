@@ -465,6 +465,8 @@ impl Tracker {
         if let Some(overflow_reason) = event_data.overflow_reason {
             data.insert("overflow_reason".to_string(), json!(overflow_reason));
         }
+        // `event_index` restarts when a tx's event log is lost (restart, eviction,
+        // re-admission); the timestamp keeps those events' IDs distinct.
         let event_time_ns = Local::now().timestamp_nanos_opt().unwrap_or_default();
 
         let _ = transaction_event!(
