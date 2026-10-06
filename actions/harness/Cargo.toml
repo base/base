@@ -96,3 +96,6 @@ tokio = { workspace = true, features = ["rt", "macros"] }
 
 # tracing
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+# misc
+rstest.workspace = true
