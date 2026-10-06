@@ -168,3 +168,41 @@ fn test_upper_limits_are_published_once_while_the_backlog_is_unchanged() {
         assert!(handle.await.unwrap().is_ok());
     });
 }
+
+/// A stopped batcher has dropped its backlog but posts nothing, so it keeps the last published
+/// limits instead of lifting them. Starting again re-evaluates the backlog.
+#[test]
+fn test_stopped_batcher_keeps_the_last_limits() {
+    Runner::start(Config::seeded(0), |ctx| async move {
+        let config = ThrottleConfig::default();
+        let pipeline = TrackingPipeline::new().with_da_backlog(2 * config.threshold_bytes);
+        let backlog = Arc::clone(&pipeline.da_backlog_bytes);
+        let blob_override = Arc::clone(&pipeline.blob_override);
+        let throttle =
+            DaThrottle::new(ThrottleController::new(config.clone(), ThrottleStrategy::Linear));
+        let limits = throttle.subscribe();
+
+        let (driver, handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                .throttle(throttle)
+                .build();
+        let handle = ctx.spawn(driver.run());
+
+        ctx.sleep(Duration::from_millis(10)).await;
+        assert_eq!(*limits.borrow(), lower_limits(&config));
+
+        // Stopping drops the buffered state, so the backlog reads as zero.
+        backlog.store(0, Ordering::SeqCst);
+        handles.admin.stop().await.unwrap();
+        ctx.sleep(Duration::from_millis(10)).await;
+        assert_eq!(*limits.borrow(), lower_limits(&config), "a stopped batcher keeps its limits");
+        assert!(blob_override.load(Ordering::SeqCst), "a stopped batcher keeps forcing blobs");
+
+        handles.admin.start().await.unwrap();
+        ctx.sleep(Duration::from_millis(10)).await;
+        assert_eq!(*limits.borrow(), upper_limits(&config), "starting re-evaluates the backlog");
+
+        ctx.cancel();
+        assert!(handle.await.unwrap().is_ok());
+    });
+}
