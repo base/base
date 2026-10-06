@@ -1777,71 +1777,52 @@ mod tests {
         );
     }
 
-    #[test]
-    fn seize_ignores_receiver_policy_on_to() {
+    #[rstest]
+    #[case::transfer_receiver_policy_ignored_on_to(
+        Some((B20PolicyType::TransferReceiver, PolicyRegistryStorage::ALWAYS_BLOCK_ID)),
+        50,
+        None
+    )]
+    #[case::seize_receiver_policy_forbids(
+        Some((B20PolicyType::SeizeReceiver, PolicyRegistryStorage::ALWAYS_BLOCK_ID)),
+        1,
+        Some(PolicyRegistryStorage::ALWAYS_BLOCK_ID)
+    )]
+    #[case::unset_receiver_policy_allows_any_destination(None, 50, None)]
+    #[case::seize_receiver_policy_allows(
+        Some((B20PolicyType::SeizeReceiver, PolicyRegistryStorage::ALWAYS_ALLOW_ID)),
+        50,
+        None
+    )]
+    fn seize_receiver_policy(
+        #[case] policy: Option<(B20PolicyType, u64)>,
+        #[case] amount: u64,
+        #[case] forbidden_policy_id: Option<u64>,
+    ) {
         let mut tok = token();
         fund(&mut tok, ALICE, U256::from(50u64));
         make_seizable(&mut tok);
         grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-        // A normal transfer to BOB would revert on this; seize does not consult it.
-        tok.accounting_mut()
-            .set_policy_id(
-                B20PolicyType::TransferReceiver.id(),
-                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
-            )
-            .unwrap();
-        LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
-        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
-    }
+        if let Some((policy_type, policy_id)) = policy {
+            // A transfer-receiver policy must not affect seize; a seize-receiver policy must.
+            tok.accounting_mut().set_policy_id(policy_type.id(), policy_id).unwrap();
+        }
 
-    #[test]
-    fn seize_reverts_when_receiver_policy_forbids() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(50u64));
-        make_seizable(&mut tok);
-        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-        tok.accounting_mut()
-            .set_policy_id(
-                B20PolicyType::SeizeReceiver.id(),
-                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
-            )
-            .unwrap();
-        let err =
-            LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(1u64), MEMO).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::PolicyForbids {
-                policyScope: B20PolicyType::SeizeReceiver.id(),
-                policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
-            })
-        );
-    }
+        let result = LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(amount), MEMO);
 
-    #[test]
-    fn seize_unset_receiver_policy_allows_any_destination() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(50u64));
-        make_seizable(&mut tok);
-        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-        // SEIZE_RECEIVER_POLICY left unset => ALWAYS_ALLOW => any destination is allowed.
-        LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
-        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
-    }
-
-    #[test]
-    fn seize_succeeds_with_configured_receiver_policy_allow() {
-        let mut tok = token();
-        fund(&mut tok, ALICE, U256::from(50u64));
-        make_seizable(&mut tok);
-        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
-        tok.accounting_mut()
-            .set_policy_id(
-                B20PolicyType::SeizeReceiver.id(),
-                PolicyRegistryStorage::ALWAYS_ALLOW_ID,
-            )
-            .unwrap();
-        LOGIC.seize_with_memo(&mut tok, ADMIN, ALICE, BOB, U256::from(50u64), MEMO).unwrap();
-        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+        match forbidden_policy_id {
+            Some(policy_id) => assert_eq!(
+                result.unwrap_err(),
+                BasePrecompileError::revert(IB20::PolicyForbids {
+                    policyScope: B20PolicyType::SeizeReceiver.id(),
+                    policyId: policy_id,
+                })
+            ),
+            None => {
+                result.unwrap();
+                assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(amount));
+            }
+        }
     }
 
     #[test]
