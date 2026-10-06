@@ -289,10 +289,23 @@ answerable without reading the whole stream. Note the prefix: the driver's
 | What one run actually asserted | `"scenario complete"` — has `phases_asserted` |
 | Which scenario a run was | `"starting scenario"` — has `scenario`, both keys, the timeouts |
 | A named contract revert | `"reverted with"` |
+| Where a run is, phase by phase | `"started" OR "finished" OR "failed" OR "skipped"` with `@data.message.fields.step:*` |
+| Which phase a failed run died in | `"failed" @data.message.fields.verdict:fail` — has `phase` and `elapsed_ms` |
+| Every planned phase of one run, with timings | `"run summary"` — has `results`, e.g. `setup=pass(41.2s) quiet-window=pass(95.0s) path3=pass(22.4s) bystanders=pass(1.8s)` |
+| A wait that is taking long | `"still waiting for"` — has `waiting_for`, `elapsed_s`, `budget_s` |
+
+Progress logs read as a sequence. Each planned phase logs `Path 1 started (3/7)`
+and `Path 1 finished` (with `elapsed_ms`), or `Path 1 failed`. A phase that a
+branch did not reach logs `Path 2 skip skipped: <reason>`. Phases with several
+steps log them numbered, e.g. `Path 3 step 2/5: waiting for two challenger scans`.
+Every wait and observation window logs `still waiting for ...` /
+`still observing ...` every 30 seconds, so a slow run is distinguishable from a
+hung one. The run ends with one `run summary` that lists every planned phase,
+`not-run` included.
 
 `phase` values: `setup`, `quiet-window`, `path1`, `path2-skip`, `path2-dispute`,
-`path3`, `path4`, `bystanders`. `verdict` values: `pass`, `skip` on a phase;
-`pass`, `fail` on the run. They are asserted by a unit test because dashboards
+`path3`, `path4`, `bystanders`. `verdict` values: `pass`, `skip`, `fail` on a
+phase; `pass`, `fail` on the run. They are asserted by a unit test because dashboards
 filter on them.
 
 Two fields worth knowing:
