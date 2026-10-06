@@ -248,12 +248,26 @@ def prepare_snapshot(args, fork, work, lock):
     config_path = work / "input.json"
     state = json.loads(journal.read_text()) if journal.exists() else None
     config = json.loads(config_path.read_text()) if config_path.exists() else None
+    explicit = {role: getattr(args, role + "_image") for role in ("anvil", "batcher")}
     new = state is None
     if new:
-        require(config is None, "unrecorded download may be incomplete; refusing to download over existing data")
-        state = {"version": 1, "phase": "build",
-                 "images": {**DEFAULT_IMAGES, "anvil": args.anvil_image, "batcher": args.batcher_image},
-                 "download_container": "snapshot-download-" + secrets.token_hex(6)}
+        requested = {role: tag or DEFAULT_IMAGES[role] for role, tag in explicit.items()}
+        state = {"version": 1, "phase": "build", "images": {**DEFAULT_IMAGES, **requested},
+                 "requested_images": requested, "download_container": "snapshot-download-" + secrets.token_hex(6)}
+        if config is not None:
+            # Older setup versions saved input.json but no completion marker. Never rerun
+            # their unpinned downloader, which may select a different snapshot now.
+            if fork.manifest is None:
+                require((work / "builder/reth.toml").is_file(),
+                        "unrecorded download may be incomplete; refusing to download over existing data")
+                answer = input("Reuse the completed download? Confirm download succeeded, both datadirs "
+                               "are unused, and no copy is running [y/N]: ").strip().lower()
+                require(answer == "y", "existing data preserved; download completion was not confirmed")
+            # Once initialization began from that input, resume it rather than copying again. Those
+            # setups never recorded their requested tags.
+            state.update(phase="copy" if fork.manifest is None else "initialize",
+                         images={role: config[role + "_image"] for role in DEFAULT_IMAGES})
+            del state["requested_images"]
     require(state["version"] == 1 and state["phase"] in ("build", "download", "copy", "initialize"),
             "unsupported snapshot setup journal; data preserved")
     require(state["phase"] == "build" or config is not None, "saved setup input is missing; data preserved")
@@ -358,17 +372,47 @@ def prepare_snapshot(args, fork, work, lock):
 
 
 def setup(args):
-    """Selects an initialized fork and privately saves its validated upstream endpoints."""
-    if not args.dir:
-        selection = json.loads(setup_path().read_text()) if setup_path().exists() else {}
-        args.dir = selection.get("directory")
-        require(args.dir and (Path(args.dir) / "manifest.json").is_file(),
-                "saved snapshot directory is unavailable; select one with --dir")
-    fork = SnapshotFork(args.dir, args.timeout)
-    require(fork.manifest is not None, "--dir requires an initialized fork")
-    require(fork.manifest.get("version") == 2
-            and fork.manifest.get("phase") in ("prepared", "stopped", "running", "starting"),
-            "unsupported or incompletely initialized snapshot manifest; data preserved")
+    """Prepare or resume an experiment; completed setups only select the existing fork."""
+    require(args.download_concurrency > 0, "download concurrency must be positive")
+    selection = json.loads(setup_path().read_text()) if setup_path().exists() else {}
+    work = None
+    if not args.dir and not args.workdir:
+        if selection.get("pending_directory"):
+            pending = Path(selection["pending_directory"])
+            if (pending / "manifest.json").is_file():
+                args.dir = str(pending)
+            else:
+                args.workdir = str(pending.parent)
+        elif selection.get("directory"):
+            saved = Path(selection["directory"])
+            if (saved / "manifest.json").is_file():
+                args.dir = str(saved)
+            else:
+                require((saved / "setup.json").is_file() or (saved / "input.json").is_file(),
+                        "saved snapshot directory is unavailable; select one with --workdir or --dir")
+                args.workdir = str(saved)
+    if args.dir:
+        require(not args.workdir, "choose either --dir for an existing fork or --workdir for a setup")
+        require(args.anvil_image is None and args.batcher_image is None,
+                "image options apply only to a setup working directory; this fork's images are already pinned")
+        fork = SnapshotFork(args.dir, args.timeout)
+        require(fork.manifest is not None, "--dir requires an initialized fork; use --workdir to resume setup")
+    else:
+        work = Path(args.workdir or input(f"Working directory [{Path.home() / 'data/snapshot-devnet'}]: ").strip()
+                    or Path.home() / "data/snapshot-devnet").expanduser().resolve()
+        require(not work.exists() or (work / "setup.json").is_file() or (work / "input.json").is_file()
+                or (selection.get("pending_directory") == str(work / "fork")
+                    and all(entry.name == "fork" or interrupted_write(entry.name, "setup.json")
+                            for entry in work.iterdir()))
+                # Killed after creating the fork's lock, before recording the setup.
+                or ([entry.name for entry in work.iterdir()] == ["fork"] and (work / "fork").is_dir()
+                    and [entry.name for entry in (work / "fork").iterdir()] == [".lock"])
+                or not any(work.iterdir()),
+                "setup requires an unused working directory or a saved setup; existing data is never overwritten")
+        fork = SnapshotFork(work / "fork", args.timeout)
+    require(fork.manifest is None or (fork.manifest.get("version") == 2
+            and fork.manifest.get("phase") in ("inspecting", "prepared", "stopped", "running", "starting")),
+            "unsupported snapshot manifest; data preserved")
 
     defaults = {}
     env_file = setup_path().parent / "l1.env"
@@ -380,7 +424,8 @@ def setup(args):
                 if len(values) == 1:
                     defaults[match[1]] = values[0]
     defaults.update(os.environ)
-    variables = fork.manifest["upstreams"]
+    variables = (fork.manifest or {}).get("upstreams", {
+        "execution": "SNAPSHOT_UPSTREAM_EXECUTION", "beacon": "SNAPSHOT_UPSTREAM_BEACON"})
     execution = (defaults.get(variables["execution"]) or fork.credentials.get("execution")
                  or defaults.get("ETH_L1_RPC", ""))
     if not execution:
@@ -401,12 +446,37 @@ def setup(args):
         require(number(genesis["genesis_time"]) > 0, "invalid Beacon genesis")
     require(number(request_json(beacon, path="/eth/v1/config/spec")["data"]["SECONDS_PER_SLOT"]) > 0,
             "invalid Beacon slot duration")
+    credentials = {"execution": execution, "beacon": beacon}
 
     path = setup_path()
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fork.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     with open(fork.directory / ".lock", "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        write_json(fork.directory / "upstreams.json", {"execution": execution, "beacon": beacon})
+        # Re-read after taking the same lock used by init/up/down. Record pending work before the
+        # first credentials write so a retry resumes rather than refuses an interrupted one.
+        fork = SnapshotFork(fork.directory, args.timeout)
+        pending = fork.manifest is None or fork.manifest["phase"] == "inspecting"
+        if work is not None and (fork.manifest is not None or (work / "setup.json").exists()
+                                 or (work / "input.json").exists()):
+            # Requested tags are recorded only by journals that created them; never silently replace
+            # or ignore a pin, including after setup completed.
+            journal = work / "setup.json"
+            recorded = json.loads(journal.read_text()).get("requested_images", {}) if journal.exists() else {}
+            require(all(getattr(args, role + "_image") in (None, recorded.get(role)) for role in ("anvil", "batcher")),
+                    "image options differ from, or cannot be verified against, those this setup began with; data preserved")
+        if pending:
+            write_json(path, {**selection, "pending_directory": str(fork.directory)})
+        write_json(fork.directory / "upstreams.json", credentials)
+        # Initialization uses the saved endpoints.
+        fork.credentials = credentials
+        if pending:
+            if work is None:
+                require(fork.manifest is not None and "setup_input" in fork.manifest,
+                        "use init with the original input config to resume this fork")
+                fork.initialize(fork.manifest["setup_input"], allow_write=True)
+            else:
+                prepare_snapshot(args, fork, work, lock)
     write_json(path, {"directory": str(fork.directory)})
     print(f"Setup complete: {fork.directory}. Endpoint credentials saved privately in upstreams.json.\n"
           "Run just devnet snapshot up (then status/down); --dir is optional.")
@@ -1326,7 +1396,12 @@ def main():
                              "snapshot repair waits without a deadline; derivation and catch-up gates fail only after "
                              "this long without head progress")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("setup", parents=[common], help="select an initialized fork and save its upstream endpoints")
+    prepare = commands.add_parser("setup", parents=[common], help="prepare or resume an experiment; completed steps are reused")
+    prepare.add_argument("--workdir", help="new or interrupted working directory (remembered on retry)")
+    prepare.add_argument("--download-concurrency", type=int, default=DEFAULT_DOWNLOAD_CONCURRENCY,
+                         help="maximum simultaneous HTTP downloads, including file chunks (default: %(default)s)")
+    prepare.add_argument("--anvil-image", help=f"new setups only (default: {DEFAULT_IMAGES['anvil']})")
+    prepare.add_argument("--batcher-image", help=f"new setups only (default: {DEFAULT_IMAGES['batcher']})")
     init = commands.add_parser("init", parents=[common],
                                help="initialize or resume a fork from existing writable snapshot copies")
     init.add_argument("--config", required=True)
@@ -1343,12 +1418,13 @@ def main():
     if args.command == "setup":
         setup(args)
         return
-    require(args.command != "init" or args.dir, "init requires --dir")
+    require(args.command != "init" or args.dir, "init requires --dir; use setup for the guided workflow")
     args.dir = configured_directory(args.dir)
     fork = SnapshotFork(args.dir, args.timeout)
     if args.command == "init":
         require(not fork.directory.exists() or fork.manifest is not None
-                or all(entry.name == ".lock" or interrupted_write(entry.name, "manifest.json")
+                or all(entry.name in (".lock", "upstreams.json")
+                       or any(interrupted_write(entry.name, target) for target in ("manifest.json", "upstreams.json"))
                        for entry in fork.directory.iterdir()),
                 "init directory contains unrecognized data; existing data is never overwritten")
         fork.directory.mkdir(mode=0o700, parents=True, exist_ok=True)

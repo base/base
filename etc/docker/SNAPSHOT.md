@@ -8,18 +8,49 @@ fresh-genesis devnet with destructive cleanup. Run commands below from the repos
 
 ## What you need
 
-- Linux with a local Docker daemon and Compose v2; `just`, Python 3.11+, Rust and Foundry `cast`.
+- Linux with a local Docker daemon, Compose v2 and Buildx; `just`, Python 3.11+, Rust,
+  Foundry `cast` and `rsync`.
+- An Ethereum mainnet archive RPC and a Beacon API with historical blobs covering the snapshot's
+  derivation history. They can share one URL. **No Base RPC is required.**
+- Disk space for two independent snapshot databases, build artifacts, download cache and growth.
+  Setup downloads the snapshot itself.
+
+To use existing snapshot copies with `init` instead, you also need:
+
 - Two independent, writable copies of the same Base mainnet snapshot (Reth datadirs). Copy only
   stopped databases; hard links, symlinked aliases and nested paths are rejected.
 - Local Base, fork-aware Anvil and op-batcher images. Init pins their image IDs.
   `just devnet snapshot build-anvil` builds the pinned Anvil revision as `base-anvil:snapshot-24ec5e47`.
-- An Ethereum mainnet archive RPC and a Beacon API with historical blobs covering the snapshot's
-  derivation history. They can share one URL. **No Base RPC is required.**
 - The snapshot inspector, built with `cargo build --locked -p base-system-tests --bin base-devnet`,
   or `BASE_SNAPSHOT_INSPECTOR` set to an existing build.
 
-## Initialize a fork
+## Set up a fork
 
+```sh
+just devnet snapshot setup
+just devnet snapshot up
+```
+
+Setup asks for a working directory (default `~/data/snapshot-devnet`) and L1 endpoints. It builds
+Base from this checkout, obtains the pinned Anvil and batcher images and the inspector, downloads
+one snapshot, fully copies it for the validator, and initializes the fork as `init` does below.
+**No hand-written config, image selection or `--dir` is needed.**
+
+Setup validates the endpoints and saves them privately in the fork's `upstreams.json`. It reads
+them from the environment, `~/.config/base/l1.env` or a previous run, prompting only when none is
+configured. A configured endpoint that fails validation is an error, not a prompt.
+
+Rerun `setup` after an interruption; it resumes the remembered working directory without repeating
+completed builds, downloads or copies, and never downloads or copies again once initialization has
+begun. An incomplete download rechecks existing files, which can be slow; an interrupted copy reuses
+its partial data. A completed setup only selects its fork and keeps its pinned images; it does not
+rebuild from newer source. `--anvil-image` and `--batcher-image` choose other images for a new
+setup only; resuming or rerunning an existing setup refuses different ones. For a new experiment, run
+`just devnet snapshot setup --workdir /path/to/new-directory`.
+
+## Initialize existing snapshot copies
+
+For existing independently writable copies, use `init` rather than asking setup to overwrite them.
 Write a config naming the copies and images:
 
 ```json
@@ -59,15 +90,12 @@ Rerunning the same command resumes an interrupted inspection with the same proje
 prepared fork is left unchanged. A changed config, unrecognized files in `--dir`, or a concurrent
 command holding the fork lock fails without modifying the fork.
 
-To omit `--dir` from later commands, select the initialized fork once:
+To omit `--dir` from later commands, select the fork once; this also saves its endpoints as above
+and resumes an interrupted initialization with its recorded config:
 
 ```sh
 just devnet snapshot setup --dir /data/snapshot/fork
 ```
-
-Setup validates the endpoints and saves them privately in the fork's `upstreams.json`. It reads
-them from the environment, `~/.config/base/l1.env` or a previous `upstreams.json`, prompting only
-when none is configured. A configured endpoint that fails validation is an error, not a prompt.
 
 ## Start, check and stop the fork
 
@@ -135,6 +163,10 @@ The status countdown is not proof that a node activated it. A scheduling transac
 before its hash was saved must have its nonce reconciled manually.
 
 ## Where things live
+
+Under setup's working directory, `builder/` and `validator/` are the writable databases,
+`input.json` the generated init config, `setup.json` the setup journal and `fork/` the fork
+directory.
 
 `manifest.json` in the fork directory records the project, pinned images, datadirs, accounts, F,
 both inspections, the contract schedule, the local transaction journal and the last shutdown
