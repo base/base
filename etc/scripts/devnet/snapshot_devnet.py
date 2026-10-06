@@ -2,6 +2,7 @@
 """Non-destructive, mainnet-identity snapshot fork. Requires Python 3.11+, Docker and cast."""
 
 import argparse
+import contextlib
 import fcntl
 import http.client
 import ipaddress
@@ -35,9 +36,13 @@ READ_METHODS = {
 }
 ROLES = ("sequencer", "validator")
 ZERO_HASH = "0x" + "0" * 64
+FORK_SERVICES = {"l1", *ROLES, "batcher"}
 EXECUTION_RPC_PORT = 8545
 CONSENSUS_RPC_PORT = 9545
 GOSSIP_PORT = 9222
+# Interpolated into Compose before F is known; invalid for Anvil and the nodes, which compose()
+# also refuses to start until init records F.
+UNKNOWN = "unknown-before-fork-discovery"
 OBSOLETE_CONFIG = {
     "fork_block": "init discovers F from the sequencer snapshot; remove it",
     "rollup_env": "no Base rollup endpoint is used; remove it",
@@ -281,12 +286,14 @@ def validate_schedule(config, schedule, head_timestamp):
                     f"contract would change historical {UPGRADES[index]} activation")
 
 
-def validate_origins(inspections, url):
+def validate_origins(inspections, url, *, upstream=False):
     for inspection in inspections:
         for label in ("latest", "safe", "finalized"):
             origin = inspection[label]["block_info"]["l1origin"]
-            header = rpc(url, "eth_getBlockByNumber", hex(origin["number"]), False, upstream=True)
-            require(header and header["hash"] == origin["hash"], "snapshot has a noncanonical L1 origin")
+            header = rpc(url, "eth_getBlockByNumber", hex(origin["number"]), False, upstream=upstream)
+            require(header and header["hash"] == origin["hash"],
+                    "snapshot has a noncanonical L1 origin" if upstream
+                    else "restored L2 refers to missing/conflicting L1 history")
 
 
 class SnapshotFork:
@@ -324,6 +331,22 @@ class SnapshotFork:
             raise Unavailable(f"{node} consensus RPC is not running")
         return f"http://{address}:{CONSENSUS_RPC_PORT if consensus else EXECUTION_RPC_PORT}"
 
+    def status(self):
+        endpoints = {}
+        for role in ("l1", *ROLES, *(role + "-cl" for role in ROLES)):
+            with contextlib.suppress(Unavailable):
+                endpoints[role] = self.url(role)
+        # Docker's raw ps/inspect output includes command arguments containing provider credentials.
+        services = [{"service": item["Config"]["Labels"]["com.docker.compose.service"],
+                     "running": item["State"]["Running"], "exit_code": item["State"].get("ExitCode", 0)}
+                    for item in self.containers()]
+        phase = self.manifest["phase"]
+        # Container state only; status never probes RPCs to judge health.
+        if phase == "running" and FORK_SERVICES - {item["service"] for item in services if item["running"]}:
+            phase = "degraded"
+        return {"project": self.manifest["project"], "phase": phase,
+                "rpc_docker_host_only": endpoints, "services": services}
+
     def endpoint(self, name):
         variable = self.manifest["upstreams"][name]
         value = os.environ.get(variable, "")
@@ -332,13 +355,26 @@ class SnapshotFork:
 
     def compose_env(self):
         manifest = self.manifest
-        values = {"DIR": self.directory, "UID": os.getuid(), "GID": os.getgid(),
-                  "BASE_IMAGE": manifest["images"]["base"]}
+        keys = json.loads((self.directory / "keys.json").read_text())
+        values = {
+            "DIR": self.directory, "UID": os.getuid(), "GID": os.getgid(),
+            "BASE_IMAGE": manifest["images"]["base"], "ANVIL_IMAGE": manifest["images"]["anvil"],
+            "BATCHER_IMAGE": manifest["images"]["batcher"],
+            "FORK_BLOCK": number(manifest["fork"]["number"]) if "fork" in manifest else UNKNOWN,
+            "EPOCH_SLOTS": manifest["epoch_slots"], "SLOT_SECONDS": manifest.get("slot_seconds", UNKNOWN),
+            "PROTOCOL_VERSIONS": manifest["protocol_versions"], "L1_PORT": manifest["port"],
+            "SIGNER_KEY": keys["signer"], "BATCHER_KEY": keys["batcher"],
+            # Placeholders allow stop/status without provider credentials. Start validates them.
+            "L1_RPC": os.environ.get(manifest["upstreams"]["execution"]) or "http://unconfigured.invalid",
+            "BEACON": os.environ.get(manifest["upstreams"]["beacon"]) or "http://unconfigured.invalid",
+        }
         for role in ROLES:
             values[role.upper() + "_DATADIR"] = manifest["datadirs"][role]
         return {**os.environ, **{"SNAPSHOT_" + key: str(value) for key, value in values.items()}}
 
     def compose(self, *args):
+        require("fork" in self.manifest or "up" not in args or not FORK_SERVICES & set(args),
+                "refusing to start fork services before F is discovered")
         # Announce lifecycle actions only; Compose output and its environment may carry credentials.
         for action, verb in (("up", "Starting"), ("stop", "Stopping")):
             if action in args:
@@ -347,6 +383,10 @@ class SnapshotFork:
         self._containers = None
         return run("docker", "compose", "--project-name", self.manifest["project"],
                    "--file", str(COMPOSE), *args, env=self.compose_env(), timeout=self.timeout)
+
+    def running(self):
+        self._containers = None
+        return bool(self.running_services())
 
     def rpc_startup_status(self, role):
         """Summarizes current-run startup logs using only known stages and numeric progress fields."""
@@ -409,6 +449,19 @@ class SnapshotFork:
     def inspect(self, discover=False):
         """Inspects both datadirs; with `discover`, the sequencer inspection also finds F."""
         inspector = os.environ.get("BASE_SNAPSHOT_INSPECTOR", str(ROOT / "target/debug/base-devnet"))
+        arguments = []
+        if "initial" in self.manifest:
+            config = json.loads((self.directory / "config/rollup.json").read_text())
+            require(config == self.manifest["initial"][0]["rollup_config"], "pinned rollup config changed")
+            schedule = self.manifest["schedule"]
+            for index, upgrade in enumerate(UPGRADES):
+                timestamp = schedule[index] if index < len(schedule) else 0
+                if index >= LEGACY_UPGRADE_COUNT:
+                    config.setdefault("base", {})[upgrade] = timestamp or None
+                else:
+                    config[upgrade + "_time"] = timestamp or None
+            write_json(self.directory / "config/inspection.json", config)
+            arguments = ["--rollup-config", str(self.directory / "config/inspection.json")]
         result = []
         require(not self.running_services() & set(ROLES),
                 "production nodes are running on these datadirs; stop them before inspection")
@@ -422,8 +475,8 @@ class SnapshotFork:
             self.compose("--profile", "inspect", "up", "-d", "--no-build", "inspect-sequencer", "inspect-validator")
             for role in ROLES:
                 self.await_rpc(role)
-                command, env, timeout, secrets = [inspector, "inspect-snapshot", "--rpc-url",
-                                                  self.url(role)], None, self.timeout, ()
+                command, env, timeout, secrets = [inspector, "inspect-snapshot", "--rpc-url", self.url(role),
+                                                  *arguments], None, self.timeout, ()
                 if discover and role == "sequencer":
                     # The inspector reads the standard names; config may name other variables.
                     upstreams = {"SNAPSHOT_UPSTREAM_" + name.upper(): self.endpoint(name)
@@ -529,7 +582,7 @@ class SnapshotFork:
         fork = {key: header[key] for key in ("number", "hash", "timestamp", "parentHash")}
         validate_boundary(inspections, discovered["number"])
         config = inspections[0]["rollup_config"]
-        validate_origins(inspections, execution)
+        validate_origins(inspections, execution, upstream=True)
         contract = self.manifest["protocol_versions"]
         schedule = list(map(number, call(execution, contract, "getSchedule()(uint64[])",
                                          block=fork["number"], upstream=True)))
@@ -551,7 +604,8 @@ class SnapshotFork:
         self.manifest.update(phase="prepared", fork=fork, initial=inspections, schedule=schedule,
                              system_config=system, portal=portal, contracts=implementations, owners=owners)
         self.save()
-        print(f"Prepared with L1 fork block {number(fork['number'])}; no local contracts changed.")
+        print(f"Prepared with L1 fork block {number(fork['number'])}; no local contracts changed. "
+              "Start derives past F before sequencing.")
 
 
     def assert_local_l1(self):
@@ -624,6 +678,21 @@ class SnapshotFork:
         require(number(call(url, system, "batcherHash()(bytes32)")) == number(batcher), "batcher update not applied")
         require(call(url, system, "unsafeBlockSigner()(address)").lower() == signer.lower(), "signer update not applied")
         rpc(url, "anvil_setBalance", batcher, hex(100 * 10**18))
+
+    def validate_restored_contracts(self):
+        url = self.url("l1")
+        actual = list(map(number, call(url, self.manifest["protocol_versions"], "getSchedule()(uint64[])")))
+        require(actual == self.manifest["schedule"], "restored upgrade schedule differs from manifest")
+        for address, implementation in self.manifest["contracts"].items():
+            require(rpc(url, "eth_getStorageAt", address, IMPLEMENTATION_SLOT, "latest") == implementation,
+                    "restored contract implementation differs from manifest")
+        if not self.manifest.get("bootstrapped"):
+            return
+        system = self.manifest["system_config"]
+        require(number(call(url, system, "batcherHash()(bytes32)")) == number(self.manifest["accounts"]["batcher"]),
+                "restored batcher differs from manifest")
+        require(call(url, system, "unsafeBlockSigner()(address)").lower() == self.manifest["accounts"]["signer"].lower(),
+                "restored signer differs from manifest")
 
     def sync_status(self, role):
         return rpc(self.url(role + "-cl"), "optimism_syncStatus")
@@ -782,28 +851,179 @@ class SnapshotFork:
         require(len(hashes) == 1 and None not in hashes,
                 f"sequencer and validator disagree on canonical safe block {target}; data preserved")
 
+    def start_nodes(self):
+        self.compose("up", "-d", "--no-build", *ROLES)
+        for role in ROLES:
+            self.await_rpc(role)
+            wait(role + " consensus RPC", lambda: self.consensus_ready(role), self.timeout)
+
+    def start(self):
+        require(self.manifest["phase"] in ("prepared", "stopped", "running", "starting"), "init did not complete")
+        print("Starting snapshot devnet: checking containers.", file=sys.stderr, flush=True)
+        if self.running():
+            if self.manifest["phase"] == "running" and FORK_SERVICES <= self.running_services():
+                self.assert_local_l1()
+                self.validate_restored_contracts()
+                if all(self.consensus_ready(role) for role in ROLES) and rpc(
+                        self.url("sequencer-cl"), "admin_sequencerActive"):
+                    print("Snapshot devnet already running.", flush=True)
+                    return
+            self.stop()
+        validate_paths(self.directory, self.manifest["datadirs"].values())
+        self.endpoint("execution")
+        self.endpoint("beacon")
+        previous_phase = self.manifest["phase"]
+        # Never reuse a fork whose Anvil has served once but whose durable L1 state vanished.
+        if previous_phase != "prepared":
+            require((self.directory / "l1/anvil.json").is_file(), "L1 state is missing; refusing a fresh fork")
+        try:
+            self.compose("up", "-d", "--no-build", "l1")
+            self.await_rpc("l1")
+            self.assert_local_l1()
+            # Anvil now serves this fork; from here on its saved state must survive every restart.
+            self.manifest["phase"] = "starting"
+            self.save()
+            self.validate_restored_contracts()
+            inspections = self.inspect()
+            validate_origins(inspections, self.url("l1"))
+            require(not self.running_services() & {"inspect-" + role for role in ROLES},
+                    "inspection nodes still hold the datadirs")
+            self.start_nodes()
+            require(not rpc(self.url("validator-cl"), "admin_sequencerActive"),
+                    "validator must remain stopped and derive independently")
+            self.wait_checkpoints()
+            if not self.manifest.get("boundary_validated"):
+                self.wait_boundary()
+            if not self.manifest.get("bootstrapped"):
+                self.bootstrap()
+                # The startup signer read must use the new local SystemConfig.
+                self.compose("stop", "sequencer", "validator")
+                self.start_nodes()
+                self.manifest["bootstrapped"] = True
+                self.save()
+            self.wait_upgrades()
+            self.mine()
+            rpc(self.url("l1"), "anvil_setIntervalMining", self.manifest["slot_seconds"])
+            self.peers()
+            try:
+                # op-batcher exits, even with code 0, when it cannot call miner_setMaxDASize.
+                rpc(self.url("sequencer"), "miner_getMaxDASize")
+            except Unavailable as error:
+                raise RuntimeError("sequencer HTTP RPC lacks the miner API required by the batcher; "
+                                   "data preserved, recreate services from the current Compose file") from error
+            head = rpc(self.url("sequencer"), "eth_getBlockByNumber", "latest", False)
+            rpc(self.url("sequencer-cl"), "admin_startSequencer", head["hash"])
+            # Derivation authorizes batch senders by the SystemConfig at each batch's L1 inclusion
+            # block, not the L2 block's origin, so old-origin catch-up blocks are batchable now.
+            # Deferring batching until wall time would risk their sequencing windows expiring.
+            self.start_batcher()
+            unsafe = {}
+
+            def caught_up():
+                self.require_batcher()
+                try:
+                    unsafe.update(self.sync_status("sequencer")["unsafe_l2"])
+                except Unavailable:
+                    return False
+                return unsafe["timestamp"] >= int(time.time()) - 2 * self.manifest["slot_seconds"]
+
+            def progress():
+                if not unsafe:
+                    return None, "sequencer status unavailable"
+                return unsafe["number"], (
+                    f"unsafe L2 {unsafe['number']} at {unsafe['timestamp']} "
+                    f"({max(0, int(time.time()) - unsafe['timestamp'])}s behind wall time), "
+                    f"L1 origin {unsafe['l1origin']['number']}")
+            # Each poll queries Docker; catch-up can take hours.
+            wait("sequencer catch-up to wall time with a live batcher", caught_up, self.timeout, poll_interval=5,
+                 progress=progress)
+            self.manifest["phase"] = "running"
+            self.save()
+            print(f"Sequencer RPC: {self.url('sequencer')}\nValidator RPC: {self.url('validator')}\n"
+                  "These internal-network addresses work only on this Docker host and change when "
+                  "containers are recreated; rerun status for current values.")
+        except (Exception, KeyboardInterrupt):
+            # Keep L1 alive while stopping dependents; never remove state on failure. Report cleanup
+            # failures without replacing the startup error.
+            for services in (("batcher", "sequencer", "validator", "inspect-sequencer", "inspect-validator"), ("l1",)):
+                try:
+                    self.compose("stop", *services)
+                except RuntimeError as error:
+                    print(f"snapshot devnet: cleanup after failed start: {error}", file=sys.stderr, flush=True)
+            raise
+
+    def stop(self):
+        failure = None
+        if self.running():
+            try:
+                if self.consensus_ready("sequencer") and rpc(self.url("sequencer-cl"), "admin_sequencerActive"):
+                    rpc(self.url("sequencer-cl"), "admin_stopSequencer")
+            except Unavailable:
+                pass  # Stopping its container below also stops sequencing.
+            except RuntimeError as error:
+                failure = error  # Still stop every container below, then report it.
+            # Attempt every stage in order even if an earlier one fails, then report the first failure.
+            for stage in (lambda: self.compose("stop", "batcher"), self.record_checkpoints,
+                          lambda: self.compose("stop", "sequencer", "validator", "inspect-sequencer", "inspect-validator"),
+                          lambda: self.compose("stop", "l1")):
+                try:
+                    stage()
+                except RuntimeError as error:
+                    failure = failure or error
+        if self.manifest["phase"] not in ("prepared", "inspecting"):
+            self.manifest["phase"] = "stopped"
+        self.save()
+        if failure:
+            raise failure
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--dir", required=True, help="fork directory")
+    common.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
+                        help="seconds per readiness gate except L2 execution RPC (default: %(default)s); "
+                             "snapshot repair waits without a deadline; derivation and catch-up gates fail only after "
+                             "this long without head progress")
     commands = parser.add_subparsers(dest="command", required=True)
-    init = commands.add_parser("init", help="initialize or resume a fork from existing writable snapshot copies")
-    init.add_argument("--dir", required=True, help="fork directory")
+    init = commands.add_parser("init", parents=[common],
+                               help="initialize or resume a fork from existing writable snapshot copies")
     init.add_argument("--config", required=True)
     init.add_argument("--allow-write", action="store_true")
-    init.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
-                      help="seconds per Compose command and snapshot inspection, including fork discovery "
-                           "(default: %(default)s); execution RPC startup waits without a deadline")
+    for command, aliases in (("start", ["up"]), ("stop", ["down"]), ("status", [])):
+        commands.add_parser(command, aliases=aliases, parents=[common]).set_defaults(command=command)
+    reset = commands.add_parser("reset", parents=[common], help="retire the fork directory without deleting any datadir")
+    reset.add_argument("--confirm-project", required=True)
     args = parser.parse_args()
     require(args.timeout > 0, "timeout must be positive")
     fork = SnapshotFork(args.dir, args.timeout)
-    require(not fork.directory.exists() or fork.manifest is not None
-            or {entry.name for entry in fork.directory.iterdir()} <= {".lock", "manifest.json.tmp"},
-            "init directory contains unrecognized data; existing data is never overwritten")
-    fork.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if args.command == "init":
+        require(not fork.directory.exists() or fork.manifest is not None
+                or {entry.name for entry in fork.directory.iterdir()} <= {".lock", "manifest.json.tmp"},
+                "init directory contains unrecognized data; existing data is never overwritten")
+        fork.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    require(fork.directory.is_dir(), "fork directory does not exist")
     with open(fork.directory / ".lock", "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # Manifests are atomically replaced, so read-only status is safe during a long start.
+        if args.command != "status":
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         # Re-read state persisted by the previous lock holder.
         fork = SnapshotFork(args.dir, args.timeout)
-        fork.initialize(json.loads(Path(args.config).read_text()), args.allow_write)
+        if args.command == "init":
+            fork.initialize(json.loads(Path(args.config).read_text()), args.allow_write)
+        else:
+            require(fork.manifest is not None and fork.manifest["version"] == 2,
+                    "unsupported/missing manifest; manifests from launchers requiring fork_block cannot resume")
+            if args.command == "status":
+                print(json.dumps(fork.status(), indent=2))
+            elif args.command == "reset":
+                require(args.confirm_project == fork.manifest["project"], "project confirmation does not match")
+                require(not fork.running(), "stop the fork before retiring it")
+                destination = fork.directory.with_name(fork.directory.name + ".retired-" + secrets.token_hex(4))
+                fork.directory.rename(destination)
+                print(f"Preserved fork state at {destination}; restore fresh working datadirs before init.")
+            else:
+                getattr(fork, args.command)()
 
 
 if __name__ == "__main__":

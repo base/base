@@ -1,7 +1,7 @@
-# Prepare a snapshot devnet fork
+# Run a snapshot devnet fork
 
-Prepare a local Base fork of two mainnet snapshot copies, one for a sequencer and one for a
-validator, at a finalized Ethereum block. **Experimental; use disposable data and test keys only.**
+Run a local Base sequencer and validator from two mainnet snapshot copies, with a batcher and an
+Anvil L1 forked at a finalized Ethereum block. **Experimental; use disposable data and test keys only.**
 
 Always use `just devnet snapshot ...`. Plain `just devnet up/down` runs a different,
 fresh-genesis devnet with destructive cleanup. Run commands below from the repository root.
@@ -58,14 +58,61 @@ Rerunning the same command resumes an interrupted inspection with the same proje
 prepared fork is left unchanged. A changed config, unrecognized files in `--dir`, or a concurrent
 command holding the fork lock fails without modifying the fork.
 
+## Start, check and stop the fork
+
+Keep the upstream variables exported and pass the fork directory to every command:
+
+```sh
+just devnet snapshot up --dir /data/snapshot/fork      # alias: start
+just devnet snapshot status --dir /data/snapshot/fork
+just devnet snapshot down --dir /data/snapshot/fork    # alias: stop
+```
+
+`up` starts or resumes a prepared or stopped fork in this order:
+
+1. Starts Anvil at F and checks its fork and Beacon identity, the recorded upgrade schedule and
+   contract implementations. Inspection then repeats, and both snapshots' L1 origins must exist on
+   the local L1. Once Anvil has served the fork, a start without its saved L1 state
+   (`l1/anvil.json`) is refused before any container starts.
+2. Starts both nodes on the internal network. The validator is a stopped sequencer that derives
+   independently. After a restart, each node must re-derive the safe and finalized blocks recorded
+   by the last `down` with the same hashes before any L1 block or transaction is created.
+3. On first start, mines one L1 block after F if needed and waits until both nodes derive past F
+   and agree on a safe head at or above the snapshot head. It then authorizes this fork's batcher
+   and signer on the local SystemConfig and restarts the nodes. Each local L1 transaction is
+   journaled; one interrupted before its hash was recorded is never resent and must be reconciled
+   by hand.
+4. Waits until both nodes report upgrade readiness for the recorded schedule, mines on the Beacon
+   slot grid, connects the nodes' gossip and starts sequencing and the batcher. Both nodes must
+   then derive the same newly batched safe block; any batcher exit, even with code 0, fails.
+5. Keeps batching while the sequencer catches up to wall time, then prints the L2 RPC addresses.
+
+`up` sends no upgrade-schedule transactions. Execution RPC startup waits without a deadline while
+its container runs. Derivation, batching and catch-up fail after `--timeout` seconds (default
+7200) without head progress; other readiness checks after `--timeout` in total. On any failure or
+interrupt, `up` stops the batcher and all nodes, then L1, attempting each stop even if an earlier
+one fails, and keeps all data; rerun `up` to resume.
+
+`status` reports the phase, container states and L2 RPC addresses without probing RPCs, even
+while `up` runs; a running fork missing a service is `degraded`. L2 RPC addresses are internal
+container IPs, reachable only from the Docker host, and change when containers are recreated.
+`down` stops sequencing, the batcher, both nodes and finally L1, attempting each stop even if an
+earlier one fails. It records each node's sync status as the checkpoints the next `up` must
+restore; a node that is stopped, uninitialized or still re-deriving its earlier checkpoints keeps them.
+
+To retire a stopped fork, run `just devnet snapshot reset --dir ... --confirm-project <project>`.
+It renames the fork directory to `<dir>.retired-<suffix>` and leaves the datadirs, which the fork
+has modified, untouched. Supply fresh snapshot copies before another `init`.
+
 ## Where things live
 
 `manifest.json` in the fork directory records the project, pinned images, datadirs, accounts, F,
-both inspections and the contract schedule. `keys.json` holds the throwaway keys and
-`config/rollup.json` the pinned rollup config. Do not share `keys.json` or raw Docker
+both inspections, the contract schedule, the local transaction journal and the last shutdown
+checkpoints. `keys.json` holds the throwaway keys, `config/rollup.json` the pinned rollup config
+and `l1/` Anvil's saved state. Do not share `keys.json` or raw Docker
 logs/configuration, which may contain credentials. Never reconnect modified copies to production.
 
 `just devnet snapshot` lists tasks; `just devnet snapshot test` runs the offline launcher tests.
 Implementation: [launcher](../scripts/devnet/snapshot_devnet.py),
 [Compose services](docker-compose.snapshot.yml), [Just recipes](../just/snapshot.just).
-Do not run Compose directly: it skips the launcher's checks.
+Do not run Compose directly: it skips the launcher's initialization and recovery checks.
