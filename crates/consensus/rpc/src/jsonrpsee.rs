@@ -290,7 +290,7 @@ pub trait AdminApi {
     async fn admin_conductor_enabled(&self) -> RpcResult<bool>;
 
     /// Gets the recover mode.
-    #[method(name = "adminRecoverMode")]
+    #[method(name = "recoverMode")]
     async fn admin_recover_mode(&self) -> RpcResult<bool>;
 
     /// Sets the recover mode.
@@ -685,7 +685,7 @@ mod tests {
     #[case("admin_startSequencer")]
     #[case("admin_stopSequencer")]
     #[case("admin_conductorEnabled")]
-    #[case("admin_adminRecoverMode")]
+    #[case("admin_recoverMode")]
     #[case("admin_setRecoverMode")]
     #[case("admin_overrideLeader")]
     #[case("admin_resetDerivationPipeline")]
