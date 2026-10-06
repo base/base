@@ -10,12 +10,11 @@ mod models;
 pub use models::{
     AbandonProofJob, AbandonProofOutcome, ApiProofType, CancelProofRequestOutcome, ClaimAuth,
     ClaimProofJob, CompleteClaimedProofJob, CreateProofRequest, CreateProofRequestError,
-    CreateProofRequestOutcome, CreateProofRequestValidationError, CreateProofSession,
-    DeleteProofRequestOutcome, DerivedProofRequestFields, FailExpiredProofJobs, HeartbeatOutcome,
-    HeartbeatProofJob, JobLockState, ProofJob, ProofJobStatus, ProofRequest, ProofRequestListItem,
-    ProofRequestPage, ProofSession, ProofStatus, ProofType, RecordSessionOutcome, RetryOutcome,
-    SessionStatus, SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession, UpdateReceipt,
-    WorkerSessionUpsert, ZkVmKind, canonical_session_id,
+    CreateProofRequestOutcome, CreateProofRequestValidationError, DeleteProofRequestOutcome,
+    DerivedProofRequestFields, FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob,
+    JobLockState, ProofJob, ProofJobStatus, ProofRequest, ProofRequestListItem, ProofRequestPage,
+    ProofSession, ProofStatus, ProofType, RecordSessionOutcome, RetryOutcome, SessionStatus,
+    SessionType, SubmitProofOutcome, TeeKind, WorkerSessionUpsert, ZkVmKind, canonical_session_id,
 };
 
 mod repo;
