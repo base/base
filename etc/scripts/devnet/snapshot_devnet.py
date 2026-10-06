@@ -25,6 +25,7 @@ COMPOSE = ROOT / "etc/docker/docker-compose.snapshot.yml"
 DEFAULT_TIMEOUT = 7200
 PROTOCOL_VERSIONS = "0x7480Afc8D99a5c645c247dB5A1e4a4f440e6e095"
 IMPLEMENTATION_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
+DENIM_ID = 13
 COBALT_ID = 12
 UPGRADES = (
     "regolith", "canyon", "delta", "ecotone", "fjord", "granite", "holocene",
@@ -344,8 +345,20 @@ class SnapshotFork:
         # Container state only; status never probes RPCs to judge health.
         if phase == "running" and FORK_SERVICES - {item["service"] for item in services if item["running"]}:
             phase = "degraded"
-        return {"project": self.manifest["project"], "phase": phase,
+        return {"project": self.manifest["project"], "phase": phase, "denim": self.denim_status(),
                 "rpc_docker_host_only": endpoints, "services": services}
+
+    def denim_status(self):
+        """The journaled schedule, not proof that either L2 node has activated it."""
+        timestamp = self.manifest.get("denim_timestamp")
+        pending = self.manifest.get("pending_denim_timestamp")
+        if timestamp is None:
+            return ({"state": "unscheduled"} if pending is None
+                    else {"state": "submission pending", "pending_timestamp": pending})
+        remaining = timestamp - int(time.time())
+        return {"state": "scheduled" if remaining > 0 else "activation time reached", "timestamp": timestamp,
+                "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(timestamp)),
+                "seconds_until_activation": max(0, remaining)}
 
     def endpoint(self, name):
         variable = self.manifest["upstreams"][name]
@@ -453,7 +466,7 @@ class SnapshotFork:
         if "initial" in self.manifest:
             config = json.loads((self.directory / "config/rollup.json").read_text())
             require(config == self.manifest["initial"][0]["rollup_config"], "pinned rollup config changed")
-            schedule = self.manifest["schedule"]
+            schedule = self.expected_schedule()
             for index, upgrade in enumerate(UPGRADES):
                 timestamp = schedule[index] if index < len(schedule) else 0
                 if index >= LEGACY_UPGRADE_COUNT:
@@ -679,10 +692,18 @@ class SnapshotFork:
         require(call(url, system, "unsafeBlockSigner()(address)").lower() == signer.lower(), "signer update not applied")
         rpc(url, "anvil_setBalance", batcher, hex(100 * 10**18))
 
+    def expected_schedule(self):
+        schedule = self.manifest["schedule"]
+        return (schedule[:DENIM_ID] + [self.manifest["denim_timestamp"]]
+                if "denim_timestamp" in self.manifest else list(schedule))
+
     def validate_restored_contracts(self):
         url = self.url("l1")
         actual = list(map(number, call(url, self.manifest["protocol_versions"], "getSchedule()(uint64[])")))
-        require(actual == self.manifest["schedule"], "restored upgrade schedule differs from manifest")
+        pending = self.manifest.get("pending_denim_timestamp")
+        if pending is not None and actual == self.manifest["schedule"][:DENIM_ID] + [pending]:
+            self.record_denim(pending)
+        require(actual == self.expected_schedule(), "restored upgrade schedule differs from manifest")
         for address, implementation in self.manifest["contracts"].items():
             require(rpc(url, "eth_getStorageAt", address, IMPLEMENTATION_SLOT, "latest") == implementation,
                     "restored contract implementation differs from manifest")
@@ -705,7 +726,7 @@ class SnapshotFork:
             return False
 
     def wait_upgrades(self):
-        expected = [timestamp or None for timestamp in self.manifest["schedule"]]
+        expected = [timestamp or None for timestamp in self.expected_schedule()]
         for role in ("sequencer", "validator"):
             def observed():
                 config = rpc(self.url(role + "-cl"), "optimism_rollupConfig")
@@ -866,6 +887,7 @@ class SnapshotFork:
                 self.validate_restored_contracts()
                 if all(self.consensus_ready(role) for role in ROLES) and rpc(
                         self.url("sequencer-cl"), "admin_sequencerActive"):
+                    self.schedule_denim()
                     print("Snapshot devnet already running.", flush=True)
                     return
             self.stop()
@@ -951,6 +973,13 @@ class SnapshotFork:
                 except RuntimeError as error:
                     print(f"snapshot devnet: cleanup after failed start: {error}", file=sys.stderr, flush=True)
             raise
+        # start_batcher already proved both nodes independently derive and agree on a newly batched
+        # block. A scheduling failure leaves the healthy fork and its durable journal in place.
+        try:
+            self.schedule_denim()
+        except RuntimeError as error:
+            raise RuntimeError(f"fork is running but Denim scheduling did not complete ({error}); "
+                               "rerun schedule-denim to resume") from error
 
     def stop(self):
         failure = None
@@ -976,6 +1005,90 @@ class SnapshotFork:
         if failure:
             raise failure
 
+    def record_denim(self, timestamp):
+        """Journals Denim at `timestamp`, already on local L1; a pending submission must have succeeded."""
+        if self.manifest.get("pending_denim_timestamp") is not None:
+            operation = self.manifest["operations"].get("schedule-denim", {})
+            require("hash" in operation, "Denim submission was interrupted; reconcile its nonce manually")
+            receipt = rpc(self.url("l1"), "eth_getTransactionReceipt", operation["hash"])
+            require(receipt and number(receipt["status"]) == 1, "Denim transaction missing from restored L1")
+            operation["receipt"] = receipt
+        self.manifest["denim_timestamp"] = timestamp
+        self.manifest.pop("pending_denim_timestamp", None)
+        self.save()
+
+    def schedule_denim(self, timestamp=None):
+        """Schedules Denim at `timestamp`, by default the earliest the live contract notice allows.
+
+        As in production, any timestamp is valid: each chain activates at its first pre-Denim block slot
+        at or after it. An existing schedule is preserved and a journaled submission is reconciled,
+        never moved or resent. Returns once both nodes observe the recorded schedule."""
+        self.assert_local_l1()
+        require(self.manifest["phase"] == "running", "start the fork before scheduling Denim")
+        url, contract = self.url("l1"), self.manifest["protocol_versions"]
+        schedule = list(map(number, call(url, contract, "getSchedule()(uint64[])")))
+        require(schedule[:DENIM_ID] == self.manifest["schedule"][:DENIM_ID], "historical schedule changed")
+        require(len(schedule) in (DENIM_ID, DENIM_ID + 1), "unsupported schedule; no implicit registrations")
+        current = schedule[DENIM_ID] if len(schedule) > DENIM_ID else 0
+        if "pending_denim_timestamp" in self.manifest and "schedule-denim" not in self.manifest["operations"]:
+            # send() journals the transaction before submitting it, so none was ever sent.
+            del self.manifest["pending_denim_timestamp"]
+            self.save()
+        pending = self.manifest.get("pending_denim_timestamp")
+        # A timestamp set outside this launcher is preserved too.
+        existing = pending if pending is not None else self.manifest.get("denim_timestamp", current or None)
+        if existing is not None:
+            state = "scheduled" if pending is None else "pending"
+            require(timestamp in (None, existing), f"Denim is already {state} at {existing}; refusing to move it")
+            timestamp = existing
+            if current == timestamp:
+                self.record_denim(timestamp)
+                self.wait_upgrades()
+                self.report_denim(timestamp, "already scheduled")
+                return
+            require(pending is not None, "Denim on local L1 differs from manifest")
+        else:
+            l1_time = number(rpc(url, "eth_getBlockByNumber", "latest", False)["timestamp"])
+            l2_time = number(rpc(self.url("sequencer"), "eth_getBlockByNumber", "latest", False)["timestamp"])
+            notice = number(call(url, contract, "MIN_NOTICE()(uint64)"))
+            slot = self.manifest["slot_seconds"]
+            # The contract measures notice from the inclusion block, mined in a later interval slot.
+            earliest = max(l1_time, l2_time, int(time.time())) + notice + slot
+            if timestamp is None:
+                # One more slot absorbs clock truncation and submission latency; Denim cannot precede Cobalt.
+                timestamp = max(earliest + slot, schedule[COBALT_ID])
+            require(timestamp >= earliest,
+                    f"Denim requires the contract's {notice}s notice plus a mining-slot margin (earliest {earliest})")
+            require(schedule[COBALT_ID] != 0 and schedule[COBALT_ID] <= timestamp,
+                    "Cobalt must already be scheduled; do not fabricate historical activations")
+            self.manifest["pending_denim_timestamp"] = timestamp
+            self.save()
+            print(f"Scheduling Denim at L2 timestamp {timestamp} "
+                  f"({time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(timestamp))}) with the contract's "
+                  f"{notice}s notice", flush=True)
+        minimum = call(url, contract, "minimumProtocolVersion()(uint256)")
+        owner = call(url, contract, "proxyAdminOwner()(address)")
+        if len(schedule) == DENIM_ID:
+            # The real contract interprets zero as retaining the current minimum version.
+            self.send("schedule-denim", owner, contract, "registerUpgrade(uint64,uint256)", timestamp, 0)
+        else:
+            self.send("schedule-denim", owner, contract, "setTimestamp(uint256,uint64)", DENIM_ID, timestamp)
+        actual = list(map(number, call(url, contract, "getSchedule()(uint64[])")))
+        require(actual[:DENIM_ID] == schedule[:DENIM_ID] and actual[DENIM_ID:] == [timestamp],
+                "unexpected schedule after Denim transaction")
+        require(call(url, contract, "minimumProtocolVersion()(uint256)") == minimum,
+                "Denim transaction changed the minimum protocol version")
+        self.record_denim(timestamp)
+        self.wait_upgrades()
+        self.report_denim(timestamp, "scheduled")
+
+    def report_denim(self, timestamp, outcome):
+        remaining = timestamp - int(time.time())
+        when = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(timestamp))
+        print(f"Denim {outcome} at L2 timestamp {timestamp} ({when}); both nodes observe it. "
+              + (f"Activation in {remaining}s (~{remaining // 60}m{remaining % 60:02d}s) by wall clock."
+                 if remaining > 0 else f"Activation time passed {-remaining}s ago by wall clock."), flush=True)
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -994,6 +1107,9 @@ def main():
         commands.add_parser(command, aliases=aliases, parents=[common]).set_defaults(command=command)
     reset = commands.add_parser("reset", parents=[common], help="retire the fork directory without deleting any datadir")
     reset.add_argument("--confirm-project", required=True)
+    schedule = commands.add_parser("schedule-denim", parents=[common])
+    schedule.add_argument("timestamp", type=int, nargs="?",
+                          help="L2 timestamp; defaults to the earliest the contract notice allows")
     args = parser.parse_args()
     require(args.timeout > 0, "timeout must be positive")
     fork = SnapshotFork(args.dir, args.timeout)
@@ -1022,6 +1138,8 @@ def main():
                 destination = fork.directory.with_name(fork.directory.name + ".retired-" + secrets.token_hex(4))
                 fork.directory.rename(destination)
                 print(f"Preserved fork state at {destination}; restore fresh working datadirs before init.")
+            elif args.command == "schedule-denim":
+                fork.schedule_denim(args.timestamp)
             else:
                 getattr(fork, args.command)()
 

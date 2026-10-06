@@ -691,8 +691,8 @@ summary = "Dockerfiles, Bake targets, published images (ghcr.io/base/node and si
 digest = "c5f0fe328e"
 
 ["etc/docker/SNAPSHOT.md"]
-summary = "Experimental snapshot devnet guide: init config and `init --allow-write` to find L1 fork block F, then `up`/`status`/`down`/`reset` startup gates, resume checkpoints and recovery."
-digest = "cde15161fc"
+summary = "Experimental snapshot devnet guide: `init --allow-write` finds L1 fork block F; `up`/`status`/`down`/`reset` startup gates, resume checkpoints and recovery; `schedule-denim` with real notice."
+digest = "6d2a3a911e"
 
 ["etc/systems/README.md"]
 summary = "Docs for base-system-tests: snapshot-backed mainnet devnet (builder and follow client), inspect-snapshot head JSON and L1 fork discovery, snapshot/transfer benchmarks, workloads, 2s vs 200ms, cleanup."
