@@ -17,11 +17,11 @@ use base_execution_trie::{
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand_08::{RngCore, SeedableRng, rngs::StdRng};
 use reth_primitives_traits::Account;
-use reth_provider::{AccountReader, StateProvider, noop::NoopProvider};
+use reth_provider::{AccountReader, StateProvider, StateRootProvider, noop::NoopProvider};
 use reth_revm::{
     Database, State, database::StateProviderDatabase, witness::ExecutionWitnessRecord,
 };
-use reth_trie_common::ExecutionWitnessMode;
+use reth_trie_common::{ExecutionWitnessMode, HashedPostState, updates::TrieUpdates};
 use tempfile::TempDir;
 
 const BASE_ACCOUNTS: usize = 10_000;
@@ -82,11 +82,7 @@ fn missing_addresses() -> Vec<Address> {
     (0..MISSING_ACCOUNTS).map(|index| Address::repeat_byte(0x80 | index as u8)).collect()
 }
 
-fn create_fixture(compact: bool) -> WitnessReadFixture {
-    let dir = TempDir::new().expect("create temp dir");
-    let rocksdb = Arc::new(RocksdbProofsStorage::new(dir.path()).expect("create RocksDB storage"));
-    let accounts = generate_accounts(BASE_ACCOUNTS, SLOTS_PER_ACCOUNT);
-
+fn seed_leaves(rocksdb: &RocksdbProofsStorage, accounts: &[SeedAccount]) {
     rocksdb
         .store_hashed_accounts(
             accounts
@@ -96,7 +92,7 @@ fn create_fixture(compact: bool) -> WitnessReadFixture {
         )
         .expect("store hashed accounts");
 
-    for account in &accounts {
+    for account in accounts {
         let storages = account
             .slots
             .iter()
@@ -105,6 +101,48 @@ fn create_fixture(compact: bool) -> WitnessReadFixture {
             .store_hashed_storages(account.hashed_address, storages.collect())
             .expect("store hashed storage");
     }
+}
+
+/// Computes the branch nodes for the seeded leaves in a scratch store, so the benchmarked store holds
+/// complete tries like production proofs history. Without them every trie walk rehashes all leaves.
+fn trie_branches(accounts: &[SeedAccount]) -> TrieUpdates {
+    let dir = TempDir::new().expect("create temp dir");
+    let scratch = Arc::new(RocksdbProofsStorage::new(dir.path()).expect("create RocksDB storage"));
+    seed_leaves(&scratch, accounts);
+    scratch.set_initial_state_anchor(BlockNumHash::new(0, B256::ZERO)).expect("set anchor");
+    scratch.commit_initial_state().expect("commit initial state");
+    let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> = scratch.into();
+    BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &storage, 0)
+        .state_root_with_updates(HashedPostState::default())
+        .expect("compute trie branches")
+        .1
+}
+
+fn create_fixture(compact: bool) -> WitnessReadFixture {
+    let dir = TempDir::new().expect("create temp dir");
+    let rocksdb = Arc::new(RocksdbProofsStorage::new(dir.path()).expect("create RocksDB storage"));
+    let accounts = generate_accounts(BASE_ACCOUNTS, SLOTS_PER_ACCOUNT);
+    seed_leaves(&rocksdb, &accounts);
+
+    let branches = trie_branches(&accounts);
+    rocksdb
+        .store_account_branches(
+            branches.account_nodes.into_iter().map(|(path, node)| (path, Some(node))).collect(),
+        )
+        .expect("store account branches");
+    rocksdb
+        .store_storage_branches_bulk(
+            branches
+                .storage_tries
+                .into_iter()
+                .map(|(hashed_address, trie)| {
+                    let nodes =
+                        trie.storage_nodes.into_iter().map(|(path, node)| (path, Some(node)));
+                    (hashed_address, nodes.collect())
+                })
+                .collect(),
+        )
+        .expect("store storage branches");
 
     rocksdb
         .set_initial_state_anchor(BlockNumHash::new(0, B256::ZERO))

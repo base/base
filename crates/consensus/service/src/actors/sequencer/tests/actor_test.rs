@@ -23,9 +23,10 @@ use rstest::rstest;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    ConductorError, L1OriginSelectorError, NodeActor, ResetReason, ScheduledTicker, SealState,
-    SealStepError, SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery,
-    ShadowFunding, UnsafePayloadGossipClientError, UnsealedPayloadHandle,
+    ConductorError, L1OriginSelectorError, NodeActor, NodeOperatingMode, ResetReason,
+    ScheduledTicker, SealState, SealStepError, SealStepOutcome, SequencerActor,
+    SequencerActorError, SequencerAdminQuery, SequencerConfig, ShadowFunding,
+    UnsafePayloadGossipClientError, UnsealedPayloadHandle,
     actors::{
         MockConductor, MockOriginSelector, MockSequencerEngineClient,
         MockUnsafePayloadGossipClient,
@@ -168,6 +169,7 @@ async fn test_on_time_or_late_insert_starts_child_build_immediately(#[case] seco
     origin_selector.expect_next_l1_origin().times(2).returning(|_| Ok(BlockInfo::default()));
 
     let mut gossip = MockUnsafePayloadGossipClient::new();
+
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
 
     let rollup_config = Arc::new(base_common_genesis::RollupConfig {
@@ -265,7 +267,8 @@ async fn shadow_funding_only_applies_to_first_private_block() {
     actor.builder.rollup_config = Arc::clone(&rollup_config);
     actor.engine_client = engine_client;
     actor.rollup_config = rollup_config;
-    actor.shadow_blocks_per_cycle = NonZeroU64::new(2);
+    actor.mode =
+        NodeOperatingMode::ShadowSequencer { blocks_per_cycle: NonZeroU64::new(2).unwrap() };
     actor.shadow_funding = Some(funding);
 
     let cancellation_token = actor.cancellation_token.clone();
@@ -309,6 +312,7 @@ async fn test_early_insert_defers_child_build_until_parent_timestamp() {
     origin_selector.expect_next_l1_origin().times(2).returning(|_| Ok(BlockInfo::default()));
 
     let mut gossip = MockUnsafePayloadGossipClient::new();
+
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
 
     let rollup_config = Arc::new(base_common_genesis::RollupConfig {
@@ -377,7 +381,12 @@ async fn test_stop_discards_queued_parent_and_restart_builds_immediately_on_fres
 
     let mut client = MockSequencerEngineClient::new();
     client.expect_reset_engine_forkchoice().times(1).return_once(|_| Ok(()));
-    client.expect_get_unsafe_head().times(5).returning({
+    client
+        .expect_prepare_sequencer_start()
+        .with(mockall::predicate::eq(restart_head.block_info.hash))
+        .once()
+        .return_once(|_| Ok(()));
+    client.expect_get_unsafe_head().times(4).returning({
         let get_head_calls = Arc::clone(&get_head_calls);
         move || {
             let call = get_head_calls.fetch_add(1, Ordering::Relaxed);
@@ -402,6 +411,7 @@ async fn test_stop_discards_queued_parent_and_restart_builds_immediately_on_fres
     origin_selector.expect_next_l1_origin().times(2).returning(|_| Ok(BlockInfo::default()));
 
     let mut gossip = MockUnsafePayloadGossipClient::new();
+
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
 
     let rollup_config = Arc::new(base_common_genesis::RollupConfig {
@@ -491,8 +501,8 @@ async fn shadow_cycle_reconciles_after_configured_private_block_count() {
     actor.engine_client = Arc::new(client);
     actor.builder.rollup_config = Arc::clone(&rollup_config);
     actor.rollup_config = rollup_config;
-    actor.shadow_blocks_per_cycle = NonZeroU64::new(1);
-    actor.sealer = Some(PayloadSealer::new_private(dummy_envelope()));
+    actor.mode = NodeOperatingMode::ShadowSequencer { blocks_per_cycle: NonZeroU64::MIN };
+    actor.sealer = Some(PayloadSealer::new_private(dummy_envelope(), "shadow"));
 
     actor.start(()).await.unwrap();
 }
@@ -850,7 +860,8 @@ async fn test_shadow_seal_payload_returns_private_sealer() {
 
     let mut actor = test_actor();
     actor.engine_client = Arc::new(client);
-    actor.shadow_blocks_per_cycle = NonZeroU64::new(10);
+    actor.mode =
+        NodeOperatingMode::ShadowSequencer { blocks_per_cycle: NonZeroU64::new(10).unwrap() };
 
     let handle = UnsealedPayloadHandle {
         payload_id: Default::default(),
@@ -859,6 +870,30 @@ async fn test_shadow_seal_payload_returns_private_sealer() {
     let sealer = actor.seal_payload(&handle).await.unwrap();
 
     assert_eq!(sealer.state, SealState::Private);
+}
+
+#[tokio::test]
+async fn isolated_private_sealing_is_not_capped_by_shadow_cycle_limit() {
+    let private_block_count =
+        usize::try_from(SequencerConfig::MAX_SHADOW_BLOCKS_PER_CYCLE + 1).unwrap();
+    let mut client = MockSequencerEngineClient::new();
+    client
+        .expect_get_sealed_payload()
+        .times(private_block_count)
+        .returning(|_, _| Ok(dummy_envelope()));
+
+    let mut actor = test_actor();
+    actor.engine_client = Arc::new(client);
+    actor.mode = NodeOperatingMode::IsolatedSequencer;
+    let handle = UnsealedPayloadHandle {
+        payload_id: Default::default(),
+        attributes_with_parent: dummy_attributes_with_parent(),
+    };
+
+    for _ in 0..private_block_count {
+        let sealer = actor.seal_payload(&handle).await.unwrap();
+        assert_eq!(sealer.state, SealState::Private);
+    }
 }
 
 #[tokio::test]
@@ -896,7 +931,7 @@ async fn test_private_sealer_only_inserts() {
     let mut engine = MockSequencerEngineClient::new();
     engine.expect_insert_unsafe_payload().times(1).return_once(|_| Ok(L2BlockInfo::default()));
 
-    let mut sealer = PayloadSealer::new_private(envelope);
+    let mut sealer = PayloadSealer::new_private(envelope, "shadow");
     let result = sealer.step(&Some(conductor), &gossip, &engine).await;
 
     assert_eq!(result.unwrap(), SealStepOutcome::Inserted(L2BlockInfo::default()));
@@ -919,7 +954,7 @@ async fn test_private_sealer_insert_failure_stays_private() {
         .times(1)
         .return_once(|_| Err(EngineClientError::RequestError("channel closed".to_string())));
 
-    let mut sealer = PayloadSealer::new_private(envelope);
+    let mut sealer = PayloadSealer::new_private(envelope, "shadow");
     let result = sealer.step(&Some(conductor), &gossip, &engine).await;
 
     assert!(matches!(result.unwrap_err(), SealStepError::Insert(_)));

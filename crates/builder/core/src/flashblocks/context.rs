@@ -1,7 +1,7 @@
 use core::fmt::Debug;
 use std::{
     sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime},
 };
 
 use alloy_consensus::{Eip658Value, Transaction};
@@ -11,7 +11,6 @@ use alloy_evm::Database;
 use alloy_primitives::B256;
 use alloy_primitives::{Address, BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
-use base_bundles::{MeterBundleResponse, RejectedTransaction, RejectionReason};
 use base_common_chains::Upgrades;
 use base_common_consensus::{
     BaseReceipt, BaseTransactionSigned, CoinbaseTip, DepositReceipt, OpTxType,
@@ -42,7 +41,6 @@ use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
 use serde::Serialize;
-use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, debug, span, trace, warn};
 
@@ -272,8 +270,6 @@ pub struct BasePayloadBuilderCtx {
     pub extra: FlashblocksExtraCtx,
     /// Builder configuration containing limits and metering settings.
     pub builder_config: BuilderConfig,
-    /// Sender for forwarding per-block batches of rejected transactions to the audit-archiver.
-    pub rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
 }
 
 impl BasePayloadBuilderCtx {
@@ -428,54 +424,6 @@ impl BasePayloadBuilderCtx {
     /// Returns the chain id
     pub fn chain_id(&self) -> u64 {
         self.chain_spec.chain_id()
-    }
-
-    fn record_rejected_tx(
-        &self,
-        info: &mut ExecutionInfo,
-        tx_hash: TxHash,
-        reason: RejectionReason,
-        metering: MeterBundleResponse,
-    ) {
-        if self.rejected_tx_sender.is_none() {
-            return;
-        }
-
-        if info.rejected_txs.len() >= self.builder_config.max_rejected_txs_per_block {
-            BuilderMetrics::rejected_tx_per_block_drops().increment(1);
-            return;
-        }
-
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-        info.rejected_txs.push(RejectedTransaction {
-            tx_hash,
-            block_number: self.block_number(),
-            reason,
-            timestamp: now,
-            metering,
-        });
-    }
-
-    /// Flushes all accumulated rejected transactions to the audit-archiver channel
-    /// as a single per-block batch.
-    pub fn flush_rejected_txs(&self, info: &mut ExecutionInfo) {
-        if info.rejected_txs.is_empty() {
-            return;
-        }
-
-        if let Some(sender) = &self.rejected_tx_sender {
-            let batch = std::mem::take(&mut info.rejected_txs);
-            let batch_size = batch.len();
-            if let Err(e) = sender.try_send(batch) {
-                BuilderMetrics::rejected_tx_channel_drops().increment(batch_size as u64);
-                warn!(
-                    target: "payload_builder",
-                    error = %e,
-                    batch_size,
-                    "Rejected tx channel full or closed, dropping batch"
-                );
-            }
-        }
     }
 
     fn builder_transaction_event_context(
@@ -763,9 +711,6 @@ impl BasePayloadBuilderCtx {
         );
         diag.txs_rejected_other += 1;
         diag.permanently_rejected_txs.push(tx_hash);
-        // Same series as the pool-side block eviction: the builder drops the tx
-        // before the pool sweep sees it.
-        GuardMetrics::record_block_expiry_invalidations(1);
         Self::skip_pooled_current(best_txs, tx);
     }
 
@@ -846,7 +791,8 @@ impl BasePayloadBuilderCtx {
         let block_number = as_u64_saturated!(self.evm_env.block_env.number);
         let block_timestamp = self.attributes().timestamp();
         let payload_id = self.payload_id().to_string();
-        let mut predicate_index = ParkedPredicateIndex::default();
+        let mut predicate_index =
+            ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
         let predicate_context =
             PredicateContext { block_number, flashblock_index: self.flashblock_index() };
 
@@ -873,9 +819,8 @@ impl BasePayloadBuilderCtx {
             let tx_hash = *tx.hash();
             let replay_independent = tx.eip8130_replay_id().is_some();
             let has_validity_predicates = !tx.validity_predicates().is_empty();
-            let has_coinbase_tip = tx
-                .as_eip8130()
-                .is_some_and(|signed| CoinbaseTip::decode(signed.tx(), tx.sender()).is_some());
+            let coinbase_tip = tx.as_eip8130().and_then(|signed| CoinbaseTip::decode(signed.tx()));
+            let has_coinbase_tip = coinbase_tip.is_some();
 
             // Defer without evaluating once this flashblock's predicate-eval time budget is
             // exhausted, rather than spending more IO on the naive per-transaction loop. The
@@ -920,9 +865,13 @@ impl BasePayloadBuilderCtx {
                     )
                 }) {
                     Ok(ValidityPredicateEvaluation::Matched) => None,
-                    Ok(ValidityPredicateEvaluation::Unsatisfied { blocker, expired }) => {
+                    Ok(ValidityPredicateEvaluation::Unsatisfied {
+                        blocker,
+                        blocker_index,
+                        expired,
+                    }) => {
                         predicate_expired = expired;
-                        Some(blocker)
+                        Some((blocker, blocker_index))
                     }
                     Err(error) => {
                         warn!(
@@ -990,7 +939,7 @@ impl BasePayloadBuilderCtx {
                     // Recoverable state mismatch: park under the current blocker to retry at a
                     // later position or flashblock, or reject if the iterator cannot park it.
                     self.emit_considered(&cx, tx_hash, ordering_position);
-                    let blocking_predicate = blocking_predicate
+                    let (_, blocker_index) = blocking_predicate
                         .expect("unsatisfied, non-terminal predicate implies a blocking key");
                     if self.defer_or_reject_current(
                         best_txs,
@@ -999,7 +948,8 @@ impl BasePayloadBuilderCtx {
                         &tx,
                         ordering_position,
                     ) {
-                        predicate_index.park(tx_hash, tx, blocking_predicate);
+                        let predicate = tx.validity_predicates()[blocker_index].clone();
+                        predicate_index.park(tx_hash, tx, predicate);
                     }
                 }
                 continue;
@@ -1212,21 +1162,6 @@ impl BasePayloadBuilderCtx {
                         if err.is_permanent() {
                             diag.permanently_rejected_txs.push(tx_hash);
                         }
-
-                        let ExecutionMeteringLimitExceeded::TransactionExecutionTime(
-                            tx_time_us,
-                            limit_us,
-                        ) = limit_err;
-                        // Only record per-tx execution time limits for the audit trail for now
-                        self.record_rejected_tx(
-                            info,
-                            tx_hash,
-                            RejectionReason::ExecutionTimeExceeded {
-                                tx_time_us: *tx_time_us,
-                                limit_us: *limit_us,
-                            },
-                            resource_usage.unwrap_or_default(),
-                        );
 
                         self.emit_builder_decision_event(
                             &payload_id,
@@ -1540,9 +1475,11 @@ impl BasePayloadBuilderCtx {
                         )
                     }) {
                         Ok(ValidityPredicateEvaluation::Matched) => None,
-                        Ok(ValidityPredicateEvaluation::Unsatisfied { blocker, .. }) => {
-                            Some(blocker)
-                        }
+                        Ok(ValidityPredicateEvaluation::Unsatisfied {
+                            blocker,
+                            blocker_index,
+                            ..
+                        }) => Some((blocker, blocker_index)),
                         Err(error) => {
                             warn!(
                                 target: "payload_builder",
@@ -1565,8 +1502,9 @@ impl BasePayloadBuilderCtx {
                 if predicate_read_failed {
                     predicate_index.remove(*parked_hash);
                     best_txs.discard_parked(*parked_hash);
-                } else if let Some(blocking_predicate) = blocking_predicate {
-                    predicate_index.reindex(*parked_hash, blocking_predicate);
+                } else if let Some((_, blocker_index)) = blocking_predicate {
+                    let predicate = parked_transaction.validity_predicates()[blocker_index].clone();
+                    predicate_index.reindex(*parked_hash, predicate);
                 } else {
                     predicate_index.remove(*parked_hash);
                     best_txs.promote(*parked_hash);
@@ -1582,7 +1520,13 @@ impl BasePayloadBuilderCtx {
                 .effective_tip_per_gas(base_fee)
                 .expect("fee is always valid; execution succeeded");
             info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
-            info.inclusion.record(has_validity_predicates, gas_used, miner_fee, base_fee);
+            info.inclusion.record(
+                has_validity_predicates,
+                gas_used,
+                miner_fee,
+                base_fee,
+                coinbase_tip.unwrap_or_default(),
+            );
 
             // Per-tx tip-per-gas distribution (builder priority score), tagged
             // by flow cohort and bid mechanism. `X` for top-X-percentile share is
@@ -1735,7 +1679,6 @@ impl BasePayloadBuilderCtx {
             cancel: CancellationToken::new(),
             extra: FlashblocksExtraCtx::default(),
             builder_config: crate::BuilderConfig::default(),
-            rejected_tx_sender: None,
         }
     }
 }

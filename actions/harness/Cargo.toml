@@ -50,13 +50,13 @@ base-node-core.workspace = true
 base-builder-core = { workspace = true, features = ["test-utils"] }
 base-test-utils.workspace = true
 base-tx-manager.workspace = true
-base-batcher-core = { workspace = true, features = ["test-utils"] }
+base-batcher-core.workspace = true
 base-common-chains.workspace = true
 base-execution-evm.workspace = true
 base-consensus-rpc.workspace = true
 base-consensus-node.workspace = true
 base-batcher-source.workspace = true
-base-batcher-encoder.workspace = true
+base-batcher-encoder = { workspace = true, features = ["test-utils"] }
 base-consensus-safedb.workspace = true
 base-consensus-gossip.workspace = true
 base-consensus-engine.workspace = true
@@ -83,19 +83,18 @@ serde_json.workspace = true
 miniz_oxide.workspace = true
 
 [dev-dependencies]
+# networking
+libp2p = { workspace = true, features = ["gossipsub"] }
+
 # alloy
 alloy-sol-types = { workspace = true, features = ["std"] }
 
 # base
-base-blobs.workspace = true
 base-common-precompiles.workspace = true
 base-precompile-storage.workspace = true
 
 # tokio
 tokio = { workspace = true, features = ["rt", "macros"] }
 
-# tracing
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
-
-# misc
+# testing
 rstest.workspace = true

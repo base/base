@@ -67,6 +67,8 @@ pub enum StorageOperation {
     TrieCursorCurrent,
     /// Hashed cursor seek
     HashedCursorSeek,
+    /// Hashed account or storage point lookup
+    HashedCursorSeekExact,
     /// Hashed cursor next
     HashedCursorNext,
 }
@@ -84,6 +86,7 @@ impl StorageOperation {
             Self::TrieCursorNext => "trie_cursor_next",
             Self::TrieCursorCurrent => "trie_cursor_current",
             Self::HashedCursorSeek => "hashed_cursor_seek",
+            Self::HashedCursorSeekExact => "hashed_cursor_seek_exact",
             Self::HashedCursorNext => "hashed_cursor_next",
         }
     }
@@ -120,6 +123,61 @@ base_metrics::define_metrics! {
     earliest_number: gauge,
     #[describe("Latest block number that the proofs storage has stored")]
     latest_number: gauge,
+}
+
+/// Which state cursor a point read used.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub enum StateSeekKind {
+    /// Account lookup.
+    Account,
+    /// Storage slot lookup.
+    Storage,
+}
+
+impl StateSeekKind {
+    /// Metric label for this seek. The only values are `account` and `storage`.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Account => "account",
+            Self::Storage => "storage",
+        }
+    }
+}
+
+base_metrics::define_metrics! {
+    base_trie.state,
+    struct = StateMetrics,
+    #[describe("Account and storage seeks")]
+    #[label(name = "kind", default = ["account", "storage"])]
+    reads: counter,
+    #[describe("Seeks whose returned key was not the key requested")]
+    #[label(name = "kind", default = ["account", "storage"])]
+    misses: counter,
+    #[describe("Time spent in account and storage seeks, in seconds")]
+    #[label(name = "kind", default = ["account", "storage"])]
+    seek_duration_seconds: histogram,
+}
+
+impl StateMetrics {
+    /// Times one account or storage seek and counts it, including a seek that returns an error.
+    /// A successful seek where `hit` returns `false` counts as a miss.
+    pub fn record_seek<T, E>(
+        kind: StateSeekKind,
+        seek: impl FnOnce() -> Result<T, E>,
+        hit: impl FnOnce(&T) -> bool,
+    ) -> Result<T, E> {
+        let label = kind.as_str();
+        let result = {
+            let _timer = base_metrics::timed!(Self::seek_duration_seconds(label));
+            seek()
+        };
+
+        Self::reads(label).increment(1);
+        if result.as_ref().is_ok_and(|value| !hit(value)) {
+            Self::misses(label).increment(1);
+        }
+        result
+    }
 }
 
 impl BlockMetrics {
@@ -441,6 +499,37 @@ where
     {
         let cursor = self.storage.account_hashed_cursor_with_tx(tx, max_block_number)?;
         Ok(BaseProofsHashedCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
+    }
+
+    #[inline]
+    fn hashed_account_with_tx<'db>(
+        &self,
+        tx: &Self::Tx<'db>,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Account>>
+    where
+        Self: 'db,
+    {
+        self.metrics.record_operation(StorageOperation::HashedCursorSeekExact, || {
+            self.storage.hashed_account_with_tx(tx, hashed_address, max_block_number)
+        })
+    }
+
+    #[inline]
+    fn hashed_storage_with_tx<'db>(
+        &self,
+        tx: &Self::Tx<'db>,
+        hashed_address: B256,
+        hashed_slot: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<U256>>
+    where
+        Self: 'db,
+    {
+        self.metrics.record_operation(StorageOperation::HashedCursorSeekExact, || {
+            self.storage.hashed_storage_with_tx(tx, hashed_address, hashed_slot, max_block_number)
+        })
     }
 
     #[inline]

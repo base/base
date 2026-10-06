@@ -69,36 +69,50 @@ impl SequencerClient {
     ) -> Result<Self, Error> {
         let sequencer_endpoint = sequencer_endpoint.into();
         let endpoint = BuiltInConnectionString::from_str(&sequencer_endpoint)?;
-        if let BuiltInConnectionString::Http(url) = endpoint {
-            let mut builder = alloy_reqwest::Client::builder()
-                // we force use tls to prevent native issues
-                .use_rustls_tls();
-
-            if !headers.is_empty() {
-                let mut header_map = alloy_reqwest::header::HeaderMap::new();
-                for header in headers {
-                    if let Some((key, value)) = header.split_once('=') {
-                        header_map.insert(
-                            key.trim()
-                                .parse::<alloy_reqwest::header::HeaderName>()
-                                .map_err(|err| Error::InvalidHeader(err.to_string()))?,
-                            value
-                                .trim()
-                                .parse::<alloy_reqwest::header::HeaderValue>()
-                                .map_err(|err| Error::InvalidHeader(err.to_string()))?,
-                        );
-                    }
-                }
-                builder = builder.default_headers(header_map);
-            }
-
-            let client = builder.build()?;
-            Self::with_http_client(url, client)
+        if matches!(&endpoint, BuiltInConnectionString::Http(_)) {
+            Self::new_http_with_headers(sequencer_endpoint, headers)
         } else {
             let client = ClientBuilder::default().connect_with(endpoint).await?;
             let inner = SequencerClientInner::new(sequencer_endpoint, client);
             Ok(Self { inner: Arc::new(inner) })
         }
+    }
+
+    /// Creates an HTTP sequencer client synchronously, with optional `header=value` headers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a non-HTTP URL, invalid headers, or HTTP client construction.
+    pub fn new_http_with_headers(
+        sequencer_endpoint: impl Into<String>,
+        headers: Vec<String>,
+    ) -> Result<Self, Error> {
+        let sequencer_endpoint = sequencer_endpoint.into();
+        if !matches!(
+            BuiltInConnectionString::from_str(&sequencer_endpoint)?,
+            BuiltInConnectionString::Http(_)
+        ) {
+            return Err(Error::InvalidScheme(sequencer_endpoint));
+        }
+        let mut builder = alloy_reqwest::Client::builder().use_rustls_tls();
+        if !headers.is_empty() {
+            let mut header_map = alloy_reqwest::header::HeaderMap::new();
+            for header in headers {
+                if let Some((key, value)) = header.split_once('=') {
+                    header_map.insert(
+                        key.trim()
+                            .parse::<alloy_reqwest::header::HeaderName>()
+                            .map_err(|err| Error::InvalidHeader(err.to_string()))?,
+                        value
+                            .trim()
+                            .parse::<alloy_reqwest::header::HeaderValue>()
+                            .map_err(|err| Error::InvalidHeader(err.to_string()))?,
+                    );
+                }
+            }
+            builder = builder.default_headers(header_map);
+        }
+        Self::with_http_client(sequencer_endpoint, builder.build()?)
     }
 
     /// Creates a new [`SequencerClient`] with http transport with the given http client.
@@ -119,7 +133,7 @@ impl SequencerClient {
         Ok(Self { inner: Arc::new(inner) })
     }
 
-    /// Returns the network of the client
+    /// Returns the sequencer endpoint URL.
     pub fn endpoint(&self) -> &str {
         &self.inner.sequencer_endpoint
     }
@@ -135,17 +149,15 @@ impl SequencerClient {
         method: &str,
         params: Params,
     ) -> Result<Resp, SequencerClientError> {
-        let resp =
-            self.client().request::<Params, Resp>(method.to_string(), params).await.inspect_err(
-                |err| {
-                    warn!(
-                        target: "rpc::sequencer",
-                        %err,
-                        "HTTP request to sequencer failed",
-                    );
-                },
-            )?;
-        Ok(resp)
+        Ok(self.client().request::<Params, Resp>(method.to_string(), params).await.inspect_err(
+            |err| {
+                warn!(
+                    target: "rpc::sequencer",
+                    %err,
+                    "HTTP request to sequencer failed",
+                );
+            },
+        )?)
     }
 
     /// Forwards a transaction to the sequencer endpoint.

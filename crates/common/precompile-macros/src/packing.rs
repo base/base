@@ -293,38 +293,17 @@ pub(crate) fn get_neighbor_slot_refs<T, F>(
     fields: &[T],
     packing: &Ident,
     get_name: F,
-    use_full_slot: bool,
 ) -> (Option<TokenStream>, Option<TokenStream>)
 where
     F: Fn(&T) -> &Ident,
 {
-    let prev_slot_ref = if idx > 0 {
-        let prev_name = get_name(&fields[idx - 1]);
-        if use_full_slot {
-            let prev_slot = PackingConstants::new(prev_name).slot();
-            Some(quote! { #packing::#prev_slot })
-        } else {
-            let prev_loc = PackingConstants::new(prev_name).location();
-            Some(quote! { #packing::#prev_loc.offset_slots })
-        }
-    } else {
-        None
+    let slot_ref = |field: &T| {
+        let loc = PackingConstants::new(get_name(field)).location();
+        quote! { #packing::#loc.offset_slots }
     };
-
-    let next_slot_ref = if idx + 1 < fields.len() {
-        let next_name = get_name(&fields[idx + 1]);
-        if use_full_slot {
-            let next_slot = PackingConstants::new(next_name).slot();
-            Some(quote! { #packing::#next_slot })
-        } else {
-            let next_loc = PackingConstants::new(next_name).location();
-            Some(quote! { #packing::#next_loc.offset_slots })
-        }
-    } else {
-        None
-    };
-
-    (prev_slot_ref, next_slot_ref)
+    let prev = (idx > 0).then(|| slot_ref(&fields[idx - 1]));
+    let next = fields.get(idx + 1).map(slot_ref);
+    (prev, next)
 }
 
 /// Generate slot packing decision logic.

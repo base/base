@@ -193,13 +193,18 @@ pub struct Args {
     #[arg(long = "builder.enable-experimental-validity-transactions", default_value = "false")]
     pub enable_experimental_validity_transactions: bool,
 
-    /// Maximum validity predicates accepted per experimental transaction.
+    /// Maximum validity predicates accepted per validity transaction.
+    ///
+    /// Capped at [`DEFAULT_MAX_VALIDITY_PREDICATES`], the fixed wire ceiling the
+    /// request deserializer enforces. Values above it can never be honored and
+    /// are rejected at startup rather than silently truncated.
     #[arg(
-        long = "builder.experimental-validity-max-predicates",
+        long = "builder.validity-max-predicates",
         default_value_t = DEFAULT_MAX_VALIDITY_PREDICATES,
-        requires = "enable_experimental_validity_transactions"
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new()
+            .range(1..=DEFAULT_MAX_VALIDITY_PREDICATES as u64),
     )]
-    pub experimental_validity_max_predicates: usize,
+    pub validity_max_predicates: usize,
 
     /// Decorate sampled ordinary transactions with a behavior-preserving validity predicate.
     ///
@@ -230,17 +235,13 @@ pub struct Args {
     #[arg(long = "builder.predicate-eval-hard-cutoff-ms", default_value = "10")]
     pub predicate_eval_hard_cutoff_ms: u64,
 
-    /// URL of the audit-archiver RPC endpoint for forwarding rejected transactions
-    #[arg(long = "builder.audit-archiver-url", env = "BUILDER_AUDIT_ARCHIVER_URL")]
-    pub audit_archiver_url: Option<String>,
-
-    /// Bounded channel capacity for rejected transaction forwarding (drops on full)
-    #[arg(long = "builder.rejected-tx-channel-size", default_value = "500")]
-    pub rejected_tx_channel_size: usize,
-
-    /// Maximum rejected transactions accumulated per block before dropping
-    #[arg(long = "builder.max-rejected-txs-per-block", default_value = "500")]
-    pub max_rejected_txs_per_block: usize,
+    /// Parked predicate bucket depth at which state wakeups become threshold-aware.
+    #[arg(
+        long = "builder.predicate-bucket-ordered-threshold",
+        default_value = "32",
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
+    )]
+    pub predicate_bucket_ordered_threshold: usize,
 
     /// Buffer size for tx data store (LRU eviction when full)
     #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
@@ -334,15 +335,13 @@ impl Default for Args {
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
             enable_experimental_validity_transactions: false,
-            experimental_validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
+            validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
             shadow_validity_injection_enabled: false,
             shadow_validity_injection_sample_rate_bps: 100,
             max_uncompressed_block_size: None,
             metering_wait_duration_ms: None,
             predicate_eval_hard_cutoff_ms: 10,
-            audit_archiver_url: None,
-            rejected_tx_channel_size: 500,
-            max_rejected_txs_per_block: 500,
+            predicate_bucket_ordered_threshold: 32,
             tx_data_store_buffer_size: 10000,
             metering_store_ttl_secs: 30,
             rejection_cache_max_capacity: 100_000,
@@ -372,7 +371,7 @@ impl Args {
         };
         Ok(BuilderApiExtensionConfig::new(
             self.enable_experimental_validity_transactions,
-            self.experimental_validity_max_predicates,
+            self.validity_max_predicates,
         )
         .with_shadow_validity(shadow_validity)?)
     }
@@ -398,6 +397,7 @@ impl Args {
         );
 
         Ok(BuilderConfig {
+            state_provider_metrics: false,
             block_time: Duration::from_millis(self.chain_block_time),
             block_time_leeway: Duration::from_secs(self.extra_block_deadline_secs),
             da_config: Default::default(),
@@ -414,14 +414,12 @@ impl Args {
             max_uncompressed_block_size: self.max_uncompressed_block_size,
             metering_wait_duration: self.metering_wait_duration_ms.map(Duration::from_millis),
             predicate_eval_hard_cutoff: Duration::from_millis(self.predicate_eval_hard_cutoff_ms),
+            predicate_bucket_ordered_threshold: self.predicate_bucket_ordered_threshold,
             metering_provider,
             rejection_cache: RejectionCache::new(
                 self.rejection_cache_max_capacity,
                 Duration::from_secs(self.rejection_cache_ttl_secs),
             ),
-            audit_archiver_url: self.audit_archiver_url,
-            rejected_tx_channel_size: self.rejected_tx_channel_size,
-            max_rejected_txs_per_block: self.max_rejected_txs_per_block,
             manifest_precheck_enabled: self.manifest_precheck_enabled,
         })
     }
@@ -460,7 +458,7 @@ mod tests {
     fn default_args_produce_valid_config() {
         let args = Args::default();
         assert!(!args.enable_experimental_validity_transactions);
-        assert_eq!(args.experimental_validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
+        assert_eq!(args.validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
         assert!(!args.shadow_validity_injection_enabled);
         assert_eq!(args.shadow_validity_injection_sample_rate_bps, 100);
         assert!(!args.builder_api_config().unwrap().shadow_validity.is_enabled());
@@ -475,12 +473,48 @@ mod tests {
         let parsed = CommandParser::parse_from([
             "builder",
             "--builder.enable-experimental-validity-transactions",
-            "--builder.experimental-validity-max-predicates",
+            "--builder.validity-max-predicates",
             "8",
         ]);
 
         assert!(parsed.args.enable_experimental_validity_transactions);
-        assert_eq!(parsed.args.experimental_validity_max_predicates, 8);
+        assert_eq!(parsed.args.validity_max_predicates, 8);
+    }
+
+    #[test]
+    fn validity_max_predicates_rejects_values_above_the_wire_ceiling() {
+        // The request deserializer bounds batches at DEFAULT_MAX_VALIDITY_PREDICATES,
+        // so a larger configured maximum could never be honored. Reject it at
+        // startup instead of silently accepting an unenforceable limit.
+        let error = CommandParser::try_parse_from([
+            "builder",
+            "--builder.validity-max-predicates",
+            &(DEFAULT_MAX_VALIDITY_PREDICATES + 1).to_string(),
+        ])
+        .expect_err("a maximum above the wire ceiling should be rejected");
+
+        assert!(error.to_string().contains("--builder.validity-max-predicates"));
+    }
+
+    #[test]
+    fn validity_max_predicates_rejects_zero() {
+        let error =
+            CommandParser::try_parse_from(["builder", "--builder.validity-max-predicates", "0"])
+                .expect_err("a maximum of zero should be rejected");
+
+        assert!(error.to_string().contains("--builder.validity-max-predicates"));
+    }
+
+    #[test]
+    fn validity_max_predicates_accepts_the_wire_ceiling_without_experimental_override() {
+        let parsed = CommandParser::parse_from([
+            "builder",
+            "--builder.validity-max-predicates",
+            &DEFAULT_MAX_VALIDITY_PREDICATES.to_string(),
+        ]);
+
+        assert!(!parsed.args.enable_experimental_validity_transactions);
+        assert_eq!(parsed.args.validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
     }
 
     #[test]
@@ -646,6 +680,20 @@ mod tests {
         let args = Args { predicate_eval_hard_cutoff_ms: input, ..Default::default() };
         let config = convert(args);
         assert_eq!(config.predicate_eval_hard_cutoff, expected);
+    }
+
+    #[test]
+    fn predicate_bucket_threshold_is_nonzero_and_propagated() {
+        let config = convert(Args { predicate_bucket_ordered_threshold: 64, ..Default::default() });
+        assert_eq!(config.predicate_bucket_ordered_threshold, 64);
+        assert!(
+            CommandParser::try_parse_from([
+                "builder",
+                "--builder.predicate-bucket-ordered-threshold",
+                "0",
+            ])
+            .is_err()
+        );
     }
 
     #[test]
