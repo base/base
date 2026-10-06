@@ -32,6 +32,26 @@ struct ServerState {
     trusted_proxy_config: TrustedProxyConfig,
 }
 
+impl ServerState {
+    /// Validates the API key, counting either an unauthorized request or a successful
+    /// connection for the key's application, and returns the 401 response for invalid keys.
+    fn authenticate(&self, api_key: &str) -> Result<(), Box<Response>> {
+        let Some(app) = self.auth.get_application_for_key(api_key).cloned() else {
+            Metrics::unauthorized_requests().increment(1);
+
+            return Err(Box::new(
+                Response::builder()
+                    .status(StatusCode::UNAUTHORIZED)
+                    .body(Body::from(json!({"message": "Invalid API key"}).to_string()))
+                    .unwrap(),
+            ));
+        };
+
+        Metrics::connections_by_app(app).increment(1);
+        Ok(())
+    }
+}
+
 /// WebSocket proxy server that accepts client connections and forwards messages
 /// from a shared registry of upstream sources.
 #[derive(Clone)]
@@ -166,22 +186,11 @@ async fn authenticated_websocket_handler(
     headers: HeaderMap,
     Path(api_key): Path<String>,
 ) -> impl IntoResponse {
-    let application = state.auth.get_application_for_key(&api_key).cloned();
+    if let Err(response) = state.authenticate(&api_key) {
+        return *response;
+    }
 
-    application.map_or_else(
-        || {
-            Metrics::unauthorized_requests().increment(1);
-
-            Response::builder()
-                .status(StatusCode::UNAUTHORIZED)
-                .body(Body::from(json!({"message": "Invalid API key"}).to_string()))
-                .unwrap()
-        },
-        |app| {
-            Metrics::connections_by_app(app).increment(1);
-            websocket_handler(state, ws, addr, headers, FilterType::None)
-        },
-    )
+    websocket_handler(state, ws, addr, headers, FilterType::None)
 }
 
 async fn authenticated_filter_websocket_handler(
@@ -192,23 +201,12 @@ async fn authenticated_filter_websocket_handler(
     Path(api_key): Path<String>,
     query: Query<FilterQuery>,
 ) -> impl IntoResponse {
-    let application = state.auth.get_application_for_key(&api_key).cloned();
+    if let Err(response) = state.authenticate(&api_key) {
+        return *response;
+    }
 
-    application.map_or_else(
-        || {
-            Metrics::unauthorized_requests().increment(1);
-
-            Response::builder()
-                .status(StatusCode::UNAUTHORIZED)
-                .body(Body::from(json!({"message": "Invalid API key"}).to_string()))
-                .unwrap()
-        },
-        |app| {
-            Metrics::connections_by_app(app).increment(1);
-            let filter = create_filter_from_query(query.0);
-            websocket_handler(state, ws, addr, headers, filter)
-        },
-    )
+    let filter = create_filter_from_query(query.0);
+    websocket_handler(state, ws, addr, headers, filter)
 }
 
 async fn unauthenticated_websocket_handler(

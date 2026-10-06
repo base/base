@@ -19,9 +19,10 @@ use base_consensus_providers::{
     AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider,
     OnlinePipeline,
 };
-use base_consensus_rpc::{BaseRpc, RpcBuilder};
+use base_consensus_rpc::{AdminNetworkAccess, BaseRpc, RpcBuilder};
 use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListener};
 use base_protocol::L2BlockInfo;
+use base_upgrade_signal::{UpgradeSignalMetricLayer, UpgradeSignalMetrics};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -31,7 +32,7 @@ use crate::{
     DerivationActor, DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest,
     EngineConfig, EngineProcessor, EngineRequestReceiver, EngineRpcProcessor, L1OriginSelector,
     L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder, NetworkConfig,
-    NodeActor, NodeMode, PayloadBuilder, PrefetchedChainProvider, PreparedL1Origin,
+    NodeActor, NodeOperatingMode, PayloadBuilder, PrefetchedChainProvider, PreparedL1Origin,
     QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
     QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
     QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor, RpcContext, SequencerActor,
@@ -185,8 +186,7 @@ where
 }
 
 impl RollupNode {
-    /// The mode of operation for the node.
-    const fn mode(&self) -> NodeMode {
+    const fn mode(&self) -> NodeOperatingMode {
         self.engine_config.mode
     }
 
@@ -281,11 +281,10 @@ impl RollupNode {
         let (engine_queue_length_tx, engine_queue_length_rx) = watch::channel(0);
         let engine = Engine::new(engine_state, engine_state_tx, engine_queue_length_tx);
 
-        let mode = self.mode();
+        let node_mode = self.mode();
         let checkpoint_reader: Arc<dyn ForkchoiceCheckpointReader> =
             Arc::new(checkpoint_client.clone());
         let checkpoint_writer: Arc<dyn CheckpointWriter> = Arc::new(checkpoint_client);
-        let shadow_sequencer = mode.is_sequencer() && self.sequencer_config.is_shadow_sequencer();
         let engine_processor = EngineProcessor::new_with_checkpoint(
             Arc::clone(&engine_client),
             Arc::clone(&self.config),
@@ -302,14 +301,14 @@ impl RollupNode {
             engine_queue_length_rx,
         );
 
-        let engine_handler = if mode.is_validator() {
+        let engine_handler = if node_mode.is_validator() {
             ConfiguredEngineReceiver::Validator(ValidatorEngineRequestHandler::new(
                 engine_processor,
             ))
         } else {
             ConfiguredEngineReceiver::Sequencer(SequencerEngineRequestCoordinator::new(
                 engine_processor,
-                shadow_sequencer,
+                node_mode,
                 conductor,
                 self.sequencer_config.sequencer_stopped,
                 unsafe_head_tx,
@@ -407,6 +406,11 @@ impl RollupNode {
         DerivationActor<QueuedDerivationEngineClient, P>:
             NodeActor<StartData = (), Error = DerivationError>,
     {
+        UpgradeSignalMetrics::record_mode(
+            UpgradeSignalMetricLayer::Consensus,
+            self.upgrade_signal_config.as_ref().map(|config| config.config.mode),
+        );
+
         // Build the safe head DB pair. Both actors share the same underlying DB via Arc.
         //
         // In delegate mode the local derivation actor is replaced by a `DelegateDerivationActor`
@@ -468,12 +472,14 @@ impl RollupNode {
         let engine_conductor: Option<Arc<dyn Conductor>> =
             conductor.clone().map(|c| Arc::new(c) as Arc<dyn Conductor>);
 
+        let engine_derivation_client =
+            QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone());
         let (engine_actor, engine_rpc_processor, sequencer_engine_state_rx) = self
             .create_engine_actor(
                 engine_client,
                 cancellation.clone(),
                 engine_actor_request_rx,
-                QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone()),
+                engine_derivation_client,
                 unsafe_head_tx,
                 engine_conductor,
                 checkpoint_client,
@@ -551,7 +557,7 @@ impl RollupNode {
             Arc::clone(&self.config),
             AlloyL1BlockFetcher(self.l1_config.engine_provider.clone()),
             l1_head_updates_tx.clone(),
-            QueuedL1WatcherDerivationClient { derivation_actor_request_tx },
+            QueuedL1WatcherDerivationClient::new(derivation_actor_request_tx),
             Some(signer),
             cancellation.clone(),
             head_stream,
@@ -594,8 +600,11 @@ impl RollupNode {
 
             // Create the admin API channel
             let (sequencer_admin_api_tx, sequencer_admin_api_rx) = mpsc::channel(1024);
-            let queued_gossip_client =
-                QueuedUnsafePayloadGossipClient::new(gossip_payload_tx.clone());
+            let queued_gossip_client = if node_mode.is_isolated() {
+                QueuedUnsafePayloadGossipClient::private()
+            } else {
+                QueuedUnsafePayloadGossipClient::new(gossip_payload_tx)
+            };
 
             let recovery_mode =
                 RecoveryModeGuard::new(self.sequencer_config.sequencer_recovery_mode);
@@ -614,7 +623,7 @@ impl RollupNode {
                     conductor,
                     engine_client,
                     is_active: self.sequencer_config.sequencer_stopped.not(),
-                    shadow_blocks_per_cycle: self.sequencer_config.shadow_blocks_per_cycle,
+                    mode: node_mode,
                     shadow_funding: self.sequencer_config.shadow_funding,
                     recovery_mode,
                     rollup_config: Arc::clone(&self.config),
@@ -661,7 +670,11 @@ impl RollupNode {
                     RpcContext {
                         cancellation: cancellation.clone(),
                         p2p_network: Some(network_rpc),
-                        network_admin: Some(net_admin_rpc),
+                        admin_network_access: if node_mode.is_isolated() {
+                            AdminNetworkAccess::Disabled
+                        } else {
+                            AdminNetworkAccess::Enabled(net_admin_rpc)
+                        },
                         l1_watcher_queries: l1_query_tx,
                     }
                 )),

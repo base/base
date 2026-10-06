@@ -12,9 +12,10 @@ mod macros;
 mod aggregate_verifier;
 pub use aggregate_verifier::{
     AggregateVerifierClient, AggregateVerifierContractClient, GameInfo, GameStatus,
-    already_proven_selector, encode_challenge_calldata, encode_claim_credit_calldata,
-    encode_nullify_calldata, encode_resolve_calldata, encode_verify_proposal_proof_calldata,
-    invalid_parent_game_selector, invalid_signer_selector, l1_origin_too_old_selector,
+    already_proven_selector, describe_revert, encode_challenge_calldata,
+    encode_claim_credit_calldata, encode_nullify_calldata, encode_resolve_calldata,
+    encode_verify_proposal_proof_calldata, invalid_parent_game_selector, invalid_signer_selector,
+    l1_origin_too_old_selector, resolve_intervals,
 };
 
 mod delayed_weth;

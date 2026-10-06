@@ -25,6 +25,11 @@ pub use account_changes::{
 mod tx;
 pub use tx::TxEip8130;
 
+#[cfg(feature = "serde")]
+mod payer_serde;
+#[cfg(feature = "serde")]
+pub use payer_serde::Eip8130PayerSerde;
+
 mod coinbase_tip;
 pub use coinbase_tip::CoinbaseTip;
 

@@ -1,14 +1,15 @@
 //! Implementation of the prover worker JSON-RPC endpoints.
 
 use base_prover_service_db::{
-    ClaimProofJob, CompleteClaimedProofJob, HeartbeatOutcome, HeartbeatProofJob,
-    RecordSessionOutcome, SubmitProofOutcome, WorkerSessionUpsert, canonical_session_id,
+    AbandonProofJob, AbandonProofOutcome, ClaimProofJob, CompleteClaimedProofJob, HeartbeatOutcome,
+    HeartbeatProofJob, RecordSessionOutcome, SubmitProofOutcome, WorkerSessionUpsert,
+    canonical_session_id,
 };
 use base_prover_service_protocol::{
-    GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
-    HeartbeatRequest, HeartbeatResponse, ProofJob as ProtocolProofJob, ProverWorkerApiServer,
-    RecordProofSessionRequest, RecordProofSessionResponse, WorkerSubmitProofRequest,
-    WorkerSubmitProofResponse,
+    AbandonProofRequest, AbandonProofResponse, GetNextProofRequest, GetNextProofResponse,
+    GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest, HeartbeatResponse,
+    ProofJob as ProtocolProofJob, ProverWorkerApiServer, RecordProofSessionRequest,
+    RecordProofSessionResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -36,6 +37,10 @@ impl ProverWorkerApiServer for ProverServiceServer {
 
     async fn heartbeat(&self, request: HeartbeatRequest) -> RpcResult<HeartbeatResponse> {
         self.heartbeat_impl(request).await
+    }
+
+    async fn abandon_proof(&self, request: AbandonProofRequest) -> RpcResult<AbandonProofResponse> {
+        self.abandon_proof_impl(request).await
     }
 
     async fn submit_proof(
@@ -200,7 +205,91 @@ impl ProverServiceServer {
         }
     }
 
+    /// Abandons a worker-owned proof job after generation failure.
+    #[tracing::instrument(
+        name = "prover.abandon_proof",
+        skip_all,
+        fields(session_id = %request.session_id, worker_id = %request.worker_id)
+    )]
+    pub async fn abandon_proof_impl(
+        &self,
+        request: AbandonProofRequest,
+    ) -> RpcResult<AbandonProofResponse> {
+        let start = std::time::Instant::now();
+        let result = self.abandon_proof_inner(request).await;
+        record_rpc_result("AbandonProof", start, &result);
+        result
+    }
+
+    async fn abandon_proof_inner(
+        &self,
+        request: AbandonProofRequest,
+    ) -> RpcResult<AbandonProofResponse> {
+        let session_id = canonical_session_id(&request.session_id)
+            .map_err(|e| invalid_argument(format!("{e}")))?;
+        let lock_id = parse_lock_id(&request.lock_id)?;
+        let outcome = self
+            .repo
+            .abandon_proof_job(AbandonProofJob {
+                session_id,
+                lock_id,
+                worker_id: request.worker_id.clone(),
+                error_message: request.error_message.clone(),
+                max_attempts: self.config.worker_queue.reclaim_attempts,
+            })
+            .await
+            .map_err(|e| internal(format!("Database error: {e}")))?;
+
+        match outcome {
+            AbandonProofOutcome::Requeued(job) => {
+                info!(
+                    worker_id = %request.worker_id,
+                    session_id = %request.session_id,
+                    attempt = job.attempt,
+                    "worker abandoned and requeued proof job"
+                );
+                Ok(AbandonProofResponse { job: into_protocol_job(job)? })
+            }
+            AbandonProofOutcome::Failed(job) => {
+                metrics::record_terminal_proof_job(metrics::PROOF_STATUS_FAILED, &job);
+                warn!(
+                    worker_id = %request.worker_id,
+                    session_id = %request.session_id,
+                    attempt = job.attempt,
+                    "worker abandoned proof job after reclaim budget was exhausted"
+                );
+                Ok(AbandonProofResponse { job: into_protocol_job(job)? })
+            }
+            AbandonProofOutcome::NotFound => {
+                Err(not_found(format!("proof job not found for session_id {}", request.session_id)))
+            }
+            AbandonProofOutcome::NotClaimed(_) => Err(reject_ownership(
+                "abandon_proof",
+                &request.session_id,
+                "job is not currently claimed",
+            )),
+            AbandonProofOutcome::StaleLock(_) => Err(reject_ownership(
+                "abandon_proof",
+                &request.session_id,
+                "lock is held by another worker or has been rotated",
+            )),
+            AbandonProofOutcome::Expired(_) => {
+                Err(reject_ownership("abandon_proof", &request.session_id, "lock has expired"))
+            }
+            AbandonProofOutcome::Terminal(_) => Err(reject_ownership(
+                "abandon_proof",
+                &request.session_id,
+                "job has already reached a terminal state",
+            )),
+        }
+    }
+
     /// Records a worker proof submission and completes the job.
+    #[tracing::instrument(
+        name = "prover.submit_proof",
+        skip_all,
+        fields(session_id = %request.session_id, worker_id = %request.worker_id)
+    )]
     pub async fn submit_proof_impl(
         &self,
         request: WorkerSubmitProofRequest,
@@ -330,6 +419,15 @@ impl ProverServiceServer {
     }
 
     /// Records (inserts or updates) the backend session for a claimed proof job.
+    #[tracing::instrument(
+        name = "prover.record_session",
+        skip_all,
+        fields(
+            session_id = %request.session_id,
+            worker_id = %request.worker_id,
+            session_type = ?request.session_type
+        )
+    )]
     pub async fn record_proof_session_impl(
         &self,
         request: RecordProofSessionRequest,

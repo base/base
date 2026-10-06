@@ -1,6 +1,13 @@
 # `audit-archiver`
 
-Reads audit log events via RPC and archives them to S3.
+Accepts transaction observability events over HTTP, stores them in Postgres,
+and serves Postgres-backed transaction event queries over JSON-RPC.
+`TIPS_AUDIT_POSTGRES_URL` is required to serve; startup fails if the Postgres
+schema is not ready, which includes migration `003_transaction_events_v2.sql`;
+run `migrate up` before rolling out this release. This S3 removal needs no new
+database migration.
+If still on the pre-partition schema, `migrate up` resets the table and deletes
+its old rows: export them or agree on retention before running that migration.
 
 ## Security Model
 
@@ -8,97 +15,152 @@ The unauthenticated RPC and ingest APIs are internal endpoints. Restrict them to
 trusted producers with private-network controls; never expose them publicly. The
 wildcard bind supports container networking.
 
-When `TIPS_AUDIT_POSTGRES_URL` is set, `audit-archiver` also accepts
-transaction observability event batches over HTTP and stores them in Postgres.
+`audit-archiver` accepts transaction observability event batches over HTTP and
+stores them in Postgres.
 The HTTP ingest endpoint is intended for Vector and accepts newline-delimited
 JSON, with one `transaction-event/v1` object per line:
 
 ```bash
-curl -sS -X POST "http://127.0.0.1:8080/v1/transaction-events/batch" \
-  -H "content-type: application/x-ndjson" \
-  --data-binary '{"schema_version":"transaction-event/v1","event_id":"example-builder-accepted-1","event_time":"2026-06-02T00:00:00Z","producer":"base-builder","event_type":"BUILDER_ACCEPTED","network":"base-mainnet","tx_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","block_hash":null,"block_number":null,"payload_id":null,"request_id":null,"data":{"position":1}}
-'
+printf '{"schema_version":"transaction-event/v1","event_id":"example-builder-accepted-1","event_time":"%s","producer":"base-builder","event_type":"BUILDER_ACCEPTED","network":"base-mainnet","tx_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","block_hash":null,"block_number":null,"payload_id":null,"request_id":null,"data":{"position":1}}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" |
+  curl -sS -X POST "http://127.0.0.1:9100/v1/transaction-events/batch" \
+    -H "content-type: application/x-ndjson" \
+    --data-binary @-
 ```
 
 The endpoint is intended for Vector HTTP output from the dedicated transaction
 event journal. It is not a stdout/stderr log ingestion endpoint.
 
+The legacy S3 archive, bundle-event RPC ingest, and rejected-transaction
+S3 RPC ingest are removed. The old RPC methods return "method not found";
+they never acknowledge events that would be discarded. Existing S3 history is
+not migrated; decide whether to export or retain it before deleting buckets.
+
+The old S3 rejection feed only covered enforced per-transaction execution-time
+rejections. `BUILDER_REJECTED` records that decision, its reason, predicted time,
+and limit in the journal, but not the full S3 `MeterBundleResponse`. Bundle
+lifecycle events have no one-to-one transaction-journal equivalent. The old
+builder forwarder and bundle connector log and drop failed RPC batches; verify
+no legacy bundle sender remains and journal rejections reach Postgres before
+deploying this binary. Chart settings alone are not proof.
+
+Roll out only after the old ingress bundle sender is gone and the builder's
+transaction event journal is enabled. On each network, compare
+`BUILDER_REJECTED` emissions with events queryable from Postgres and monitor
+`transaction_events_persisted`, `transaction_events_rejected`, and Vector
+discard/retry metrics during the soak. `TIPS_AUDIT_NOOP_ARCHIVE` previously
+covered bundle workers only: rejected-transaction RPC calls could still write
+to S3. Confirm S3 writes have stopped before removing S3 IAM or buckets.
+
 To verify the local devnet path end-to-end:
 
 ```bash
-just devnet ingress
+just devnet tx-observability
 just devnet tx-observability-smoke
 ```
 
 ## Transaction event retention
 
-When `TIPS_AUDIT_POSTGRES_URL` is set, a background worker deletes expired
-`transaction_events` rows. Expire is I/O-heavy and shares the instance with
-HTTP ingest, so it is not a continuous `DELETE` loop.
+Ingest writes `transaction_events_v2`, which is partitioned by retention class
+(`hot`, `warm`, `cold`), then by UTC day of `event_time`. Retention drops whole
+day partitions instead of deleting rows, so expiry creates no dead tuples,
+index bloat, or vacuum work.
 
-The worker uses a dedicated one-connection Postgres pool and
-`pg_try_advisory_lock`. Replicas that lose the lock return immediately and do
-not occupy ingest connections. The first tick runs at startup. Later ticks wait
-the retention interval. Missed ticks are skipped so a slow pass does not stack
-catch-up work.
+The primary key is `(event_hour, retention_class, event_id)`, where
+`event_hour` is the UTC hour of `event_time`. Leading with the hour keeps
+inserts in the current hour's key range instead of spreading them across the
+whole day's index. A retried or re-emitted `event_id` dedupes only within the
+same UTC hour of `event_time`; a re-emission in another hour stores a second
+row. `event_id`, `tx_hash`, and `block_hash` use `COLLATE "C"`. Hashes are
+stored only as `0x` followed by 64 lowercase hex digits, which a `CHECK`
+enforces.
 
-Rows expire by `ingested_at` in three classes, oldest first within a pass: hot
-(high-volume proxy and builder-decision events), then warm (ingress, simulation
-success, txpool-forward), then cold (failures, drops, inclusion, flashblocks).
-The pass budget (`max_batches`) is shared across classes, so a large hot
-backlog can defer warm and cold until a later pass.
+### Legacy tree
 
-### Two clocks
+Migrations 001 and 002 created an earlier `transaction_events` tree.
+Migration 003 created `transaction_events_v2` beside it without copying rows,
+and migration 004 drops the earlier tree and its partition functions. Apply
+004 only after every pod runs a release that reads and writes only v2;
+earlier releases fail readiness without the old tree.
 
-`TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS` (default `30000`)
-is the Postgres `statement_timeout` on **each** expire `DELETE`. It is a stall
-fuse, not a target runtime. A canceled statement rolls back so the connection
-can be reused; any `ctid`s already found are discarded.
+### Direct reads and warehouse extraction
 
-`TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS` (default `3600`) is both
-the worker tick spacing and the maximum wall-clock age of one in-pass scan
-cycle. A cycle can run many 30s-capped statements. A single delete cannot run
-for an hour. The hourly default matches the original pass budget (1000 batches
-× 10000 rows) and keeps expire from deleting continuously.
+Ad hoc queries should filter hashes by their lowercase `0x` form, since no
+other form is stored. Migration 003 grants `SELECT` on the
+`transaction_events_v2` parent to the `datapilot` extraction role when that
+role exists. Leaf partitions get no grants because reads through the parent
+need none. Migration 003 builds BRIN indexes on `ingested_at` and `event_seq`,
+and each day partition gets both when it attaches.
 
-### One delete batch
+`event_seq` is a `BIGINT` identity column that numbers v2 rows in insertion
+order. Inserts through the parent take it from one sequence shared by every
+partition, and the runtime role needs no grant on that sequence. Values are
+unique, but each connection reserves 100 at a time, so they can be out of
+order across connections and have gaps. It exists for parallel extraction:
+DataPilot splits each incremental window into `event_seq` ranges, and because
+`event_seq` grows with physical row order, the `event_seq` BRIN index lets
+each range read only its own blocks. A hash such as `event_id` would make
+every range read the whole window. The DataPilot table entry for v2 uses:
 
-Each batch is one transaction: `SET LOCAL statement_timeout`, a keyset
-`SELECT … FOR UPDATE SKIP LOCKED LIMIT n` on `(event_type, ingested_at,
-event_id)`, then `DELETE` by `ctid`. `SKIP LOCKED` skips rows held by ingest;
-it does not skip dead tuples or bound I/O. The resume cursor is the smallest
-selected key so the next `WHERE key < cursor` walk does not rescan rows just
-deleted.
+```json
+{
+  "incremental_load_column": "ingested_at",
+  "split_by_int_column": "event_seq",
+  "overwrite_by_columns": ["event_id", "event_hour", "retention_class"]
+}
+```
 
-The configured `LIMIT` (default 10000) is the size to use when the index walk
-is dense. On `57014` (statement timeout), expire tries `LIMIT 1`. If that
-succeeds, it bisects between the last full success and the timed-out size. If
-`LIMIT 1` times out, that class stops for the rest of the pass; warm and cold
-still run. Progress (`LIMIT` bounds and cursor) is in memory on the lock
-holder for this pass.
+with a small `NUM_SLICES` (DataPilot recommends 2-16 for incremental loads).
 
-When a cycle is older than the retention interval and at least one batch has
-returned, expire restarts the cycle immediately on the same lock: new cutoff,
-configured `LIMIT`, cleared cursor. The first batch of a cycle always runs,
-even when the interval is 1s. A queued post-timeout `LIMIT 1` also runs before
-restart. Cycle restart is not a replica handoff and does not wait for the
-worker ticker.
+Classes: hot (high-volume proxy and builder-decision events), warm (ingress,
+simulation success, txpool-forward), and cold (failures, drops, inclusion,
+flashblocks). An event's class comes from its `event_type` at ingest and is
+stored in `retention_class`.
 
-Watch `transaction_events_expired`,
-`transaction_events_expire_statement_timeouts`,
-`transaction_event_retention_effective_batch_limit`, and
-`transaction_event_retention_cycles_ended`. If a class times out the
-configured `LIMIT` on every cycle, lower
-`TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE` (or the statement timeout)
-in that environment rather than shrinking the defaults.
+### Partition maintenance
+
+When `TIPS_AUDIT_POSTGRES_URL` is set, a background worker maintains
+partitions. It uses a dedicated one-connection Postgres pool and
+`pg_try_advisory_lock`, so only one replica changes partitions at a time and
+lock losers do not occupy ingest connections. The first pass runs at startup;
+later passes wait the retention interval, skipping missed ticks.
+
+Each pass, for each class:
+
+- creates missing day partitions from the start of the retention window
+  through three days after today, so ingest keeps working for three days if
+  maintenance stops
+- drops day partitions that are entirely older than the
+  retention window plus a one-hour grace period
+
+The runtime role does not own the tables, so partition DDL goes through
+`SECURITY DEFINER` functions created by `003_transaction_events_v2.sql`,
+executable only by `audit_archiver`. Create uses `CREATE TABLE` + `ATTACH PARTITION`, which only
+takes a `SHARE UPDATE EXCLUSIVE` lock on the class partition. Drop detaches
+first (a brief `ACCESS EXCLUSIVE` lock on the class partition, which queues
+inserts for that class) and then drops the detached table in a separate
+transaction. Each statement runs under
+`TIPS_AUDIT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS`; a statement that
+times out is skipped and retried on the next pass.
+
+### Ingest admission
+
+Ingest rejects events whose `event_time` is older than their class's retention
+window or more than one hour in the future. Those events would have no
+partition, and one bad timestamp would otherwise fail the whole insert batch.
+Rejected events count toward `transaction_events_outside_retention_window`.
+
+Watch `transaction_event_partition_horizon_seconds`, which every replica
+refreshes from the catalog each pass, net of the one-hour future skew (alert
+well before it reaches zero), `transaction_event_partitions_created`,
+`transaction_event_partitions_dropped`,
+`transaction_event_partition_lock_timeouts`, and
+`transaction_event_retention_failures`.
 
 ### Environment
 
-- `TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS` (default `3600`): seconds between retention passes, and the maximum age of one expire scan cycle
+- `TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS` (default `3600`, at most `86400`): seconds between partition maintenance passes
 - `TIPS_AUDIT_TRANSACTION_EVENT_HOT_RETENTION_DAYS` (default `3`)
 - `TIPS_AUDIT_TRANSACTION_EVENT_WARM_RETENTION_DAYS` (default `7`)
-- `TIPS_AUDIT_TRANSACTION_EVENT_COLD_RETENTION_DAYS` (default `30`)
-- `TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE` (default `10000`): rows deleted per statement when the scan is not bisected
-- `TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES` (default `1000`): delete statements per locked pass
-- `TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS` (default `30000`): Postgres `statement_timeout` per expire `DELETE`
-
+- `TIPS_AUDIT_TRANSACTION_EVENT_COLD_RETENTION_DAYS` (default `30`, at most `90`)
+- `TIPS_AUDIT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS` (default `5000`): Postgres `lock_timeout` per partition create, detach, or drop

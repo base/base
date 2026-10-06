@@ -1,0 +1,39 @@
+name: Snapshot Manifests
+on:
+  pull_request:
+  merge_group:
+  schedule:
+    - cron: "30 7 * * *"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: "sccache"
+permissions:
+  contents: read
+jobs:
+  snapshot-manifests:
+    name: Snapshot Manifests
+    runs-on: depot-ubuntu-24.04-8
+    timeout-minutes: 30
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+      - uses: ./.depot/actions/setup
+        with:
+          native-deps: "true"
+          just: "false"
+      # Cargo builds this checkout's unified binary for CARGO_BIN_EXE_base.
+      - name: Test snapshot planning against local manifests
+        run: cargo test --locked --profile ci -p base --test snapshot_defaults
+      # Report failures normally; merge requirements are managed in branch protection.
+      - name: Check live discovery through the unified binary
+        if: github.event_name != 'merge_group'
+        run: cargo test --locked --profile ci -p base --test snapshot_defaults -- --ignored --nocapture

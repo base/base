@@ -5,9 +5,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use base_consensus_gossip::P2pRpcRequest;
 use base_consensus_rpc::{
-    AdminApiServer, AdminRpc, BaseApiServer, BaseP2PApiServer, BaseRpc, DevEngineApiServer,
-    DevEngineRpc, EngineRpcClient, HealthzApiServer, HealthzRpc, L1WatcherQueries,
-    NetworkAdminQuery, P2pRpc, RollupNodeApiServer, RollupRpc, RpcBuilder, SequencerAdminAPIClient,
+    AdminApiServer, AdminNetworkAccess, AdminRpc, BaseApiServer, BaseP2PApiServer, BaseRpc,
+    DevEngineApiServer, DevEngineRpc, EngineRpcClient, HealthzApiServer, HealthzRpc,
+    L1WatcherQueries, P2pRpc, RollupNodeApiServer, RollupRpc, RpcBuilder, SequencerAdminAPIClient,
     WsRPC, WsServer,
 };
 use base_consensus_safedb::SafeDBReader;
@@ -17,13 +17,15 @@ use derive_more::Constructor;
 use http::StatusCode;
 use jsonrpsee::{
     RpcModule,
+    core::middleware::RpcServiceBuilder,
+    http_client::HttpClientBuilder,
     server::{Server, ServerConfig, ServerHandle, middleware::http::ProxyGetRequestLayer},
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tower_http::timeout::TimeoutLayer;
 
-use crate::{NodeActor, RpcActorError, actors::CancellableContext};
+use crate::{ExecutionForwardingLayer, NodeActor, RpcActorError, actors::CancellableContext};
 
 /// An actor that handles the RPC server for the rollup node.
 #[derive(Constructor, Debug)]
@@ -48,8 +50,8 @@ where
 pub struct RpcContext {
     /// The network p2p rpc sender.
     pub p2p_network: Option<mpsc::Sender<P2pRpcRequest>>,
-    /// The network admin rpc sender.
-    pub network_admin: Option<mpsc::Sender<NetworkAdminQuery>>,
+    /// Access to network-backed admin RPC methods, or disabled for isolated sequencers.
+    pub admin_network_access: AdminNetworkAccess,
     /// The l1 watcher queries sender.
     pub l1_watcher_queries: mpsc::Sender<L1WatcherQueries>,
     /// The cancellation token, shared between all tasks.
@@ -64,11 +66,13 @@ impl CancellableContext for RpcContext {
 
 /// Launches the jsonrpsee [`Server`].
 ///
-/// If the RPC server is disabled, this will return `Ok(None)`.
+/// With [`RpcBuilder::execution_forwarding_endpoint`] set, the server forwards the methods
+/// `module` does not register to that endpoint.
 ///
 /// ## Errors
 ///
-/// - [`std::io::Error`] if the server fails to start.
+/// - [`std::io::Error`] if the forwarding client cannot be built from the endpoint, such as a
+///   URL that is neither `http` nor `https`, or if the server fails to start.
 pub(crate) async fn launch_rpc_server(
     config: &RpcBuilder,
     module: RpcModule<()>,
@@ -84,6 +88,7 @@ pub(crate) async fn launch_rpc_server(
             ProxyGetRequestLayer::new([("/healthz", "healthz")])
                 .expect("Critical: Failed to build GET method proxy"),
         );
+
     // The tower HTTP middleware above (concurrency limit, timeout, load shed) only bounds HTTP
     // requests — it does not see individual JSON-RPC calls streamed over a WebSocket connection, and
     // jsonrpsee serves WS by default even when the WS engine module is not merged. So a WS client
@@ -95,9 +100,34 @@ pub(crate) async fn launch_rpc_server(
     if !config.ws_enabled() {
         server_config = server_config.http_only();
     }
+
+    // SECURITY: With forwarding, this unauthenticated server also exposes every method of the
+    // execution client endpoint.
+    let forwarding = match &config.execution_forwarding_endpoint {
+        Some(endpoint) => {
+            // Give the forwarded calls the HTTP middleware's timeout and concurrency limit, which
+            // calls streamed over a WebSocket connection bypass.
+            let client = HttpClientBuilder::default()
+                .request_timeout(config.http_timeout)
+                .max_concurrent_requests(config.max_concurrent_requests.get())
+                .build(endpoint.as_str())
+                .map_err(std::io::Error::other)?;
+
+            // Log the origin only, since the rest of the URL can carry credentials or an API key.
+            info!(
+                target: "rpc",
+                endpoint = %endpoint.origin().ascii_serialization(),
+                "forwarding the RPC methods this server does not serve to the execution client"
+            );
+            Some(ExecutionForwardingLayer::new(client, module.clone().into()))
+        }
+        None => None,
+    };
+
     let server = Server::builder()
         .set_config(server_config.build())
         .set_http_middleware(middleware)
+        .set_rpc_middleware(RpcServiceBuilder::new().option_layer(forwarding))
         .build(config.socket)
         .await?;
 
@@ -126,7 +156,7 @@ where
             cancellation,
             p2p_network,
             l1_watcher_queries,
-            network_admin,
+            admin_network_access,
         }: Self::StartData,
     ) -> Result<(), Self::Error> {
         let mut modules = RpcModule::new(());
@@ -139,13 +169,11 @@ where
         }
 
         // Build the admin rpc module, gated on the `--rpc.enable-admin` flag.
-        if self.config.admin_enabled()
-            && let Some(network_admin) = network_admin
-        {
+        if self.config.admin_enabled() {
+            let sequencer_admin_client = self.sequencer_admin_rpc_client.take();
+            let admin_rpc = AdminRpc::new(sequencer_admin_client, admin_network_access);
             modules.merge(
-                AdminRpc::new(self.sequencer_admin_rpc_client, network_admin)
-                    .with_upgrade_signal_refresher(self.upgrade_signal_refresher)
-                    .into_rpc(),
+                admin_rpc.with_upgrade_signal_refresher(self.upgrade_signal_refresher).into_rpc(),
             )?;
         }
 
@@ -221,6 +249,7 @@ mod tests {
             dev_enabled: false,
             http_timeout: Duration::from_secs(60),
             max_concurrent_requests: NonZeroUsize::new(1024).expect("nonzero"),
+            execution_forwarding_endpoint: None,
         };
         let result = launch_rpc_server(&launcher, RpcModule::new(())).await;
         assert!(result.is_ok());
@@ -237,6 +266,7 @@ mod tests {
             dev_enabled: false,
             http_timeout: Duration::from_secs(60),
             max_concurrent_requests: NonZeroUsize::new(1024).expect("nonzero"),
+            execution_forwarding_endpoint: None,
         };
         let mut modules = RpcModule::new(());
 
