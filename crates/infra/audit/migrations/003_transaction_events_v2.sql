@@ -1,5 +1,5 @@
 -- transaction_events_v2: the same class-then-UTC-day partition tree as
--- transaction_events, with an hour-leading primary key and binary hashes.
+-- transaction_events, with an hour-leading primary key.
 --
 -- The legacy primary key leads with event_id, a random 66-character hex
 -- string, so every insert lands on a random page of the current day's index.
@@ -10,9 +10,11 @@
 --
 -- event_id stays TEXT because producers outside this repository may send
 -- non-hex ids. COLLATE "C" compares bytes instead of running locale-aware
--- comparisons on every key. tx_hash and block_hash are already parsed as
--- 32-byte hashes at ingest, so they are stored as BYTEA, which halves their
--- index keys and removes the case and 0x-prefix variants from lookups.
+-- comparisons on every key. tx_hash and block_hash are written in one form,
+-- 0x followed by 64 lowercase hex digits, so a lookup needs a single key
+-- instead of the case and 0x-prefix variants the legacy tree accepts. They
+-- stay TEXT rather than BYTEA because warehouse extraction exports BYTEA as
+-- an unreadable Python object string instead of hex.
 --
 -- audit-archiver writes only to this tree. The legacy tree keeps its name so
 -- pods still running the previous release can insert during a rolling
@@ -44,8 +46,8 @@ CREATE TABLE transaction_events_v2 (
     producer TEXT NOT NULL,
     event_type TEXT NOT NULL,
     network TEXT,
-    tx_hash BYTEA,
-    block_hash BYTEA,
+    tx_hash TEXT COLLATE "C",
+    block_hash TEXT COLLATE "C",
     block_number BIGINT,
     payload_id TEXT,
     request_id TEXT,
@@ -53,9 +55,9 @@ CREATE TABLE transaction_events_v2 (
     CONSTRAINT transaction_events_v2_event_hour_check
         CHECK (event_hour = date_trunc('hour', event_time, 'UTC')),
     CONSTRAINT transaction_events_v2_tx_hash_check
-        CHECK (octet_length(tx_hash) = 32),
+        CHECK (tx_hash ~ '^0x[0-9a-f]{64}$'),
     CONSTRAINT transaction_events_v2_block_hash_check
-        CHECK (octet_length(block_hash) = 32),
+        CHECK (block_hash ~ '^0x[0-9a-f]{64}$'),
     PRIMARY KEY (event_hour, retention_class, event_id)
 ) PARTITION BY LIST (retention_class);
 

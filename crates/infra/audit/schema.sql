@@ -272,15 +272,15 @@ CREATE TABLE public.transaction_events_v2 (
     producer text NOT NULL,
     event_type text NOT NULL,
     network text,
-    tx_hash bytea,
-    block_hash bytea,
+    tx_hash text COLLATE pg_catalog."C",
+    block_hash text COLLATE pg_catalog."C",
     block_number bigint,
     payload_id text,
     request_id text,
     data jsonb NOT NULL,
-    CONSTRAINT transaction_events_v2_block_hash_check CHECK ((octet_length(block_hash) = 32)),
+    CONSTRAINT transaction_events_v2_block_hash_check CHECK ((block_hash ~ '^0x[0-9a-f]{64}$'::text)),
     CONSTRAINT transaction_events_v2_event_hour_check CHECK ((event_hour = date_trunc('hour'::text, event_time, 'UTC'::text))),
-    CONSTRAINT transaction_events_v2_tx_hash_check CHECK ((octet_length(tx_hash) = 32))
+    CONSTRAINT transaction_events_v2_tx_hash_check CHECK ((tx_hash ~ '^0x[0-9a-f]{64}$'::text))
 )
 PARTITION BY LIST (retention_class);
 
@@ -295,15 +295,15 @@ CREATE TABLE public.transaction_events_v2_cold (
     producer text NOT NULL,
     event_type text NOT NULL,
     network text,
-    tx_hash bytea,
-    block_hash bytea,
+    tx_hash text COLLATE pg_catalog."C",
+    block_hash text COLLATE pg_catalog."C",
     block_number bigint,
     payload_id text,
     request_id text,
     data jsonb NOT NULL,
-    CONSTRAINT transaction_events_v2_block_hash_check CHECK ((octet_length(block_hash) = 32)),
+    CONSTRAINT transaction_events_v2_block_hash_check CHECK ((block_hash ~ '^0x[0-9a-f]{64}$'::text)),
     CONSTRAINT transaction_events_v2_event_hour_check CHECK ((event_hour = date_trunc('hour'::text, event_time, 'UTC'::text))),
-    CONSTRAINT transaction_events_v2_tx_hash_check CHECK ((octet_length(tx_hash) = 32))
+    CONSTRAINT transaction_events_v2_tx_hash_check CHECK ((tx_hash ~ '^0x[0-9a-f]{64}$'::text))
 )
 PARTITION BY RANGE (event_hour);
 
@@ -327,15 +327,15 @@ CREATE TABLE public.transaction_events_v2_hot (
     producer text NOT NULL,
     event_type text NOT NULL,
     network text,
-    tx_hash bytea,
-    block_hash bytea,
+    tx_hash text COLLATE pg_catalog."C",
+    block_hash text COLLATE pg_catalog."C",
     block_number bigint,
     payload_id text,
     request_id text,
     data jsonb NOT NULL,
-    CONSTRAINT transaction_events_v2_block_hash_check CHECK ((octet_length(block_hash) = 32)),
+    CONSTRAINT transaction_events_v2_block_hash_check CHECK ((block_hash ~ '^0x[0-9a-f]{64}$'::text)),
     CONSTRAINT transaction_events_v2_event_hour_check CHECK ((event_hour = date_trunc('hour'::text, event_time, 'UTC'::text))),
-    CONSTRAINT transaction_events_v2_tx_hash_check CHECK ((octet_length(tx_hash) = 32))
+    CONSTRAINT transaction_events_v2_tx_hash_check CHECK ((tx_hash ~ '^0x[0-9a-f]{64}$'::text))
 )
 PARTITION BY RANGE (event_hour);
 
@@ -350,15 +350,15 @@ CREATE TABLE public.transaction_events_v2_warm (
     producer text NOT NULL,
     event_type text NOT NULL,
     network text,
-    tx_hash bytea,
-    block_hash bytea,
+    tx_hash text COLLATE pg_catalog."C",
+    block_hash text COLLATE pg_catalog."C",
     block_number bigint,
     payload_id text,
     request_id text,
     data jsonb NOT NULL,
-    CONSTRAINT transaction_events_v2_block_hash_check CHECK ((octet_length(block_hash) = 32)),
+    CONSTRAINT transaction_events_v2_block_hash_check CHECK ((block_hash ~ '^0x[0-9a-f]{64}$'::text)),
     CONSTRAINT transaction_events_v2_event_hour_check CHECK ((event_hour = date_trunc('hour'::text, event_time, 'UTC'::text))),
-    CONSTRAINT transaction_events_v2_tx_hash_check CHECK ((octet_length(tx_hash) = 32))
+    CONSTRAINT transaction_events_v2_tx_hash_check CHECK ((tx_hash ~ '^0x[0-9a-f]{64}$'::text))
 )
 PARTITION BY RANGE (event_hour);
 

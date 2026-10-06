@@ -24,7 +24,7 @@
 ## Binaries
 
 - [bin/acceptance/README.md](bin/acceptance/README.md): base-acceptance CLI entry point for the acceptance system: lists subcommands (validate, plan, run, check, report, cleanup) and example cargo invocations, deferring to acceptance/README.md.
-- [bin/audit-archiver/README.md](bin/audit-archiver/README.md): audit-archiver service: NDJSON ingest into Postgres, JSON-RPC queries, retention classes, transaction_events_v2 cutover, legacy drain and warehouse extraction grant, env vars, BRIN index step.
+- [bin/audit-archiver/README.md](bin/audit-archiver/README.md): audit-archiver service: NDJSON ingest into Postgres, JSON-RPC queries, retention classes, v2 tree cutover and event_seq extraction split, env vars, S3 removal rollout, BRIN index step.
 - [bin/base-telemetry/README.md](bin/base-telemetry/README.md): base-telemetry backend: CLI and env config, per-IP rate limiting, and on-demand P2P reachability probes for execution-layer (enode) and consensus-layer (ENR or multiaddr) nodes.
 - [bin/base/README.md](bin/base/README.md): Unified base node binary: OTLP tracing options plus the batcher, rpc, sequencer and update subcommands, their flags and env vars, and chain selection.
 - [bin/basectl/README.md](bin/basectl/README.md): basectl operator console reference: global options, TUI and scriptable commands (block, sync-status, p2p, txpool, conductor, sequencer, batcher, doctor, proofs), JSON output and examples.
@@ -137,7 +137,7 @@
 
 ## Crates: infra
 
-- [crates/infra/audit/README.md](crates/infra/audit/README.md): audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; lists migrations 001-003 and covers schema snapshot regeneration.
+- [crates/infra/audit/README.md](crates/infra/audit/README.md): audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers schema snapshot regeneration and legacy migrations.
 - [crates/infra/basectl/README.md](crates/infra/basectl/README.md): basectl-cli: the basectl clap parser and commands (blocks, sync, txpool, peers, proofs, conductor), interactive monitor, flashblocks JSON-lines stream, Denim readiness checks, and pods view config.
 - [crates/infra/challenger-e2e/README.md](crates/infra/challenger-e2e/README.md): Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games, asserts valid games are left alone and Path 4 (plus Path 3 and Path 2 in separate scenarios) is disputed.
 - [crates/infra/load-tests/README.md](crates/infra/load-tests/README.md): Load-testing framework (base-load-tests lib, base-load-tester bin): just/cargo commands, YAML config, tx mixes (precompile, B-20, swap, validity). Use to run or configure devnet/sepolia load tests.

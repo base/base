@@ -71,8 +71,9 @@ The primary key is `(event_hour, retention_class, event_id)`, where
 inserts in the current hour's key range instead of spreading them across the
 whole day's index. A retried or re-emitted `event_id` dedupes only within the
 same UTC hour of `event_time`; a re-emission in another hour stores a second
-row. `event_id` uses `COLLATE "C"`. `tx_hash` and `block_hash` are stored as
-32-byte `BYTEA`, and read APIs return them as `0x` lowercase hex.
+row. `event_id`, `tx_hash`, and `block_hash` use `COLLATE "C"`. Hashes are
+stored only as `0x` followed by 64 lowercase hex digits, which a `CHECK`
+enforces.
 
 ### Legacy tree and cutover
 
@@ -97,9 +98,8 @@ from its read APIs until the next roll forward.
 
 Consumers that read the tables directly must read both trees until the legacy
 tree drains. Ad hoc operator queries must name `transaction_events_v2` and
-`transaction_events` explicitly; in v2, filter hashes as 32-byte `BYTEA`
-values, such as `decode('<64 hex chars>', 'hex')`, so lookups use the v2
-indexes. Incremental warehouse extraction needs its own pipeline on
+`transaction_events` explicitly; in v2, filter hashes by their lowercase
+`0x` form, since no other form is stored. Incremental warehouse extraction needs its own pipeline on
 `transaction_events_v2`, started before the writer cutover. Migration 003
 grants `SELECT` on the `transaction_events_v2` parent to the `datapilot`
 extraction role when that role exists. Leaf partitions get no grants because

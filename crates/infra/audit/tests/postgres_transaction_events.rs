@@ -1494,7 +1494,7 @@ async fn postgres_queries_read_through_legacy_rows() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn postgres_v2_keys_lead_with_event_hour_and_store_binary_hashes() -> anyhow::Result<()> {
+async fn postgres_v2_keys_lead_with_event_hour_and_store_canonical_hashes() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
     PgTransactionEventSink::migrate(&harness.database_url).await?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
@@ -1510,22 +1510,22 @@ async fn postgres_v2_keys_lead_with_event_hour_and_store_binary_hashes() -> anyh
     .await?;
     assert_eq!(key, vec!["event_hour", "retention_class", "event_id"]);
 
-    let columns: Vec<(String, String, Option<String>)> = sqlx::query_as(
-        "SELECT a.attname::text, format_type(a.atttypid, a.atttypmod), c.collname::text \
-         FROM pg_attribute a LEFT JOIN pg_collation c ON c.oid = a.attcollation \
-         WHERE a.attrelid = 'transaction_events_v2'::regclass \
-           AND a.attname IN ('event_id', 'tx_hash', 'block_hash') \
-         ORDER BY a.attname",
-    )
-    .fetch_all(&pool)
-    .await?;
+    // Lookups bind one hash form, so a writer that bypasses audit-archiver
+    // must not store another.
+    let uppercase_hash = sqlx::query(&format!(
+        "INSERT INTO transaction_events_v2 \
+         (event_id, schema_version, event_time, event_hour, retention_class, producer, \
+          event_type, tx_hash, data) \
+         VALUES ('uppercase', 'transaction-event/v1', now(), date_trunc('hour', now(), 'UTC'), \
+                 'hot', 'base-builder', 'BUILDER_ACCEPTED', '0x{}', '{{}}'::jsonb)",
+        "AB".repeat(32)
+    ))
+    .execute(&pool)
+    .await
+    .unwrap_err();
     assert_eq!(
-        columns,
-        vec![
-            ("block_hash".to_string(), "bytea".to_string(), None),
-            ("event_id".to_string(), "text".to_string(), Some("C".to_string())),
-            ("tx_hash".to_string(), "bytea".to_string(), None),
-        ]
+        uppercase_hash.as_database_error().and_then(|err| err.code()).as_deref(),
+        Some("23514")
     );
 
     // The CHECK keeps event_hour consistent with event_time for writers that

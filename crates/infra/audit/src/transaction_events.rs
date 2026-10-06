@@ -956,8 +956,8 @@ impl PgTransactionEventSink {
             query_builder.push_values(
                 ordered.iter().copied(),
                 |mut row, (event_hour, retention_class, event, block_number)| {
-                    let tx_hash = event.tx_hash.map(|hash| hash.to_vec());
-                    let block_hash = event.block_hash.map(|hash| hash.to_vec());
+                    let tx_hash = event.tx_hash.map(|hash| format!("{hash:#x}"));
+                    let block_hash = event.block_hash.map(|hash| format!("{hash:#x}"));
                     let producer = event.producer.to_string();
                     let event_type = event.event_type.to_string();
                     let data = Value::Object(event.data.clone());
@@ -1025,7 +1025,7 @@ impl PgTransactionEventSink {
     ) -> Result<Vec<TransactionEventRecord>> {
         let limit = normalize_limit(limit);
         let rows = sqlx::query(&oldest_first_union_sql("tx_hash = $1", "tx_hash = ANY($2)", "$3"))
-            .bind(hash_lookup_bytes(tx_hash))
+            .bind(canonical_hash_key(tx_hash))
             .bind(hex_lookup_keys(tx_hash))
             .bind(limit)
             .fetch_all(&self.pool)
@@ -1059,7 +1059,7 @@ impl PgTransactionEventSink {
         let limit = normalize_limit(limit);
         let rows =
             sqlx::query(&oldest_first_union_sql("block_hash = $1", "block_hash = ANY($2)", "$3"))
-                .bind(hash_lookup_bytes(block_hash))
+                .bind(canonical_hash_key(block_hash))
                 .bind(hex_lookup_keys(block_hash))
                 .bind(limit)
                 .fetch_all(&self.pool)
@@ -1139,10 +1139,9 @@ impl PgTransactionEventSink {
     }
 }
 
-/// Read columns from `transaction_events_v2`, with hashes as `0x` hex text.
+/// Read columns from `transaction_events_v2`.
 const V2_READ_COLUMNS: &str = "event_id, schema_version, event_time, ingested_at, producer, \
-     event_type, network, '0x' || encode(tx_hash, 'hex') AS tx_hash, \
-     '0x' || encode(block_hash, 'hex') AS block_hash, block_number, payload_id, request_id, data";
+     event_type, network, tx_hash, block_hash, block_number, payload_id, request_id, data";
 
 /// Read columns from the legacy tree. `event_id` takes the v2 tree's `C`
 /// collation so a union of both trees can sort by it.
@@ -1194,18 +1193,15 @@ fn normalize_limit(limit: i64) -> i64 {
     limit.clamp(1, MAX_TRANSACTION_EVENT_QUERY_LIMIT)
 }
 
-/// 32-byte hash for a v2 `BYTEA` lookup, or `None` when `value` is not a
-/// 32-byte hex string with an optional `0x` prefix in any case.
-fn hash_lookup_bytes(value: &str) -> Option<Vec<u8>> {
+/// The stored v2 form of a hash (`0x` and 64 lowercase hex digits), or `None`
+/// when `value` is not 64 hex digits with an optional `0x` prefix in any case.
+fn canonical_hash_key(value: &str) -> Option<String> {
     let trimmed = value.trim();
     let hex = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")).unwrap_or(trimmed);
     if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
     }
-    (0..hex.len())
-        .step_by(2)
-        .map(|index| u8::from_str_radix(&hex[index..index + 2], 16).ok())
-        .collect()
+    Some(format!("0x{}", hex.to_ascii_lowercase()))
 }
 
 /// Lookup keys for legacy hex join columns stored as text.
@@ -2627,16 +2623,16 @@ mod tests {
     }
 
     #[test]
-    fn hash_lookup_bytes_accept_32_byte_hex_in_any_case() {
+    fn canonical_hash_key_accept_32_byte_hex_in_any_case() {
         let lower = format!("0x{}", "ab".repeat(32));
-        let expected = Some(vec![0xab; 32]);
-        assert_eq!(hash_lookup_bytes(&lower), expected);
-        assert_eq!(hash_lookup_bytes(&lower.to_ascii_uppercase()), expected);
-        assert_eq!(hash_lookup_bytes(&format!("  {}  ", "Ab".repeat(32))), expected);
+        let expected = Some(lower.clone());
+        assert_eq!(canonical_hash_key(&lower), expected);
+        assert_eq!(canonical_hash_key(&lower.to_ascii_uppercase()), expected);
+        assert_eq!(canonical_hash_key(&format!("  {}  ", "Ab".repeat(32))), expected);
     }
 
     #[test]
-    fn hash_lookup_bytes_reject_non_hash_input() {
+    fn canonical_hash_key_reject_non_hash_input() {
         for value in [
             String::new(),
             "0x".to_string(),
@@ -2646,7 +2642,7 @@ mod tests {
             format!("0x+{}", "a".repeat(63)),
             format!("0x{}é", "a".repeat(62)),
         ] {
-            assert_eq!(hash_lookup_bytes(&value), None, "{value}");
+            assert_eq!(canonical_hash_key(&value), None, "{value}");
         }
     }
 
