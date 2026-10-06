@@ -9,7 +9,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use alloy_eips::{BlockId, BlockNumberOrTag, eip1898::BlockNumberOrTag as Eip1898BlockNumberOrTag};
+use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_network::{Ethereum, Network};
 use alloy_primitives::{Address, B256, BlockHash, StorageKey};
 use alloy_provider::{EthGetBlock, ProviderCall, RpcWithBlock};
@@ -67,9 +67,6 @@ struct FakeEngineClientState {
     l2_block_info_by_tag: HashMap<BlockNumberOrTag, L2BlockInfo>,
     l2_blocks_by_label: HashMap<BlockNumberOrTag, BaseBlockResponse<BaseTransaction>>,
     scripted_fcu_v3: VecDeque<ScriptedForkchoiceResponse>,
-    scripted_new_payload_v3: VecDeque<PayloadStatus>,
-    single_new_payload_v3: Option<PayloadStatus>,
-    single_get_payload_v3: Option<Result<BaseExecutionPayloadEnvelopeV3, String>>,
 }
 
 /// Handle for inspecting and mutating a [`FakeEngineClient`].
@@ -101,15 +98,6 @@ impl FakeEngineClientHandle {
             .extend(scripted);
     }
 
-    /// Appends scripted `new_payload_v3` responses to be consumed in call order.
-    pub fn push_scripted_new_payload_v3(&self, scripted: impl IntoIterator<Item = PayloadStatus>) {
-        self.state
-            .lock()
-            .expect("FakeEngineClient state mutex poisoned")
-            .scripted_new_payload_v3
-            .extend(scripted);
-    }
-
     /// Records a synthetic FCU-v3 call in the call log and consumes one scripted response.
     pub fn inject_fcu_v3_call(&self, fork_choice_state: ForkchoiceState) {
         let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
@@ -118,15 +106,6 @@ impl FakeEngineClientHandle {
             payload_attributes: Box::new(None),
         });
         let _ = state.scripted_fcu_v3.pop_front();
-    }
-
-    /// Sets the `l2_block_info_by_label` response for a specific tag.
-    pub fn set_l2_block_info_by_label(&self, tag: Eip1898BlockNumberOrTag, block: L2BlockInfo) {
-        self.state
-            .lock()
-            .expect("FakeEngineClient state mutex poisoned")
-            .l2_block_info_by_tag
-            .insert(tag, block);
     }
 
     /// Sets the `l2_block_by_label` response for a specific tag.
@@ -161,42 +140,12 @@ impl FakeEngineClient {
         FakeEngineClientHandle { state: Arc::clone(&self.state) }
     }
 
-    /// Scripts one fallback `new_payload_v3` response.
-    pub fn with_new_payload_v3_response(self, response: PayloadStatus) -> Self {
-        self.state.lock().expect("FakeEngineClient state mutex poisoned").single_new_payload_v3 =
-            Some(response);
-        self
-    }
-
-    /// Scripts one fallback `get_payload_v3` response.
-    pub fn with_get_payload_v3_response(
-        self,
-        response: Result<BaseExecutionPayloadEnvelopeV3, String>,
-    ) -> Self {
-        self.state.lock().expect("FakeEngineClient state mutex poisoned").single_get_payload_v3 =
-            Some(response);
-        self
-    }
-
     /// Sets the `l2_block_info_by_label` response for a specific tag.
     pub fn set_l2_block_info_by_label(&self, tag: BlockNumberOrTag, block: L2BlockInfo) {
         self.state
             .lock()
             .expect("FakeEngineClient state mutex poisoned")
             .l2_block_info_by_tag
-            .insert(tag, block);
-    }
-
-    /// Sets the `l2_block_by_label` response for a specific tag.
-    pub fn set_l2_block_by_label(
-        &self,
-        tag: BlockNumberOrTag,
-        block: BaseBlockResponse<BaseTransaction>,
-    ) {
-        self.state
-            .lock()
-            .expect("FakeEngineClient state mutex poisoned")
-            .l2_blocks_by_label
             .insert(tag, block);
     }
 }
@@ -299,12 +248,6 @@ impl BaseEngineApi for FakeEngineClient {
     ) -> TransportResult<PayloadStatus> {
         let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
         state.calls.push(EngineClientCall::NewPayloadV3(Box::new(payload)));
-        if let Some(response) = state.scripted_new_payload_v3.pop_front() {
-            return Ok(response);
-        }
-        if let Some(response) = state.single_new_payload_v3.clone() {
-            return Ok(response);
-        }
         Ok(PayloadStatus {
             status: alloy_rpc_types_engine::PayloadStatusEnum::Valid,
             latest_valid_hash: None,
@@ -373,14 +316,9 @@ impl BaseEngineApi for FakeEngineClient {
     ) -> TransportResult<BaseExecutionPayloadEnvelopeV3> {
         let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
         state.calls.push(EngineClientCall::GetPayloadV3(payload_id));
-        let response = state.single_get_payload_v3.clone();
-        match response {
-            Some(Ok(payload)) => Ok(payload),
-            Some(Err(error)) => Err(TransportError::from(TransportErrorKind::custom_str(&error))),
-            None => Err(TransportError::from(TransportErrorKind::custom_str(
-                "get_payload_v3 is not scripted in FakeEngineClient",
-            ))),
-        }
+        Err(TransportError::from(TransportErrorKind::custom_str(
+            "get_payload_v3 is not scripted in FakeEngineClient",
+        )))
     }
 
     async fn get_payload_v4(
