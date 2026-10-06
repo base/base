@@ -286,13 +286,13 @@ impl MempoolGuard {
             return Err(LimitRejection::PayerLimit);
         }
 
-        let (payer_booked, count_limit) = self.payment_bounds(&admission);
+        let (wants_book, count_limit) = self.payment_bounds(&admission);
         let payment_counted = count_limit.is_some();
         let rejection = if let Some(limit) = count_limit
             && !self.payment_counts.try_increment(admission.payer, limit)
         {
             Some(LimitRejection::PaymentLimit)
-        } else if payer_booked && {
+        } else if wants_book && {
             // Only the first admission seeds the book. Once it exists, canonical
             // balance updates own this value through `on_balance_changed`; a
             // later validation snapshot must not overwrite a newer diff-fed value.
@@ -321,8 +321,7 @@ impl MempoolGuard {
             }
             // A freshly created, now-empty payer book is pruned to avoid leaking
             // an entry for a payer that never successfully reserved.
-            if payer_booked
-                && self.payer_books.get(&admission.payer).is_some_and(PayerBook::is_empty)
+            if wants_book && self.payer_books.get(&admission.payer).is_some_and(PayerBook::is_empty)
             {
                 self.payer_books.remove(&admission.payer);
             }
@@ -336,7 +335,8 @@ impl MempoolGuard {
                 payer: admission.payer,
                 sender_signature_charged,
                 payer_signature_charged,
-                payer_booked,
+                // Rejections returned above, so a wanted book was reserved.
+                payer_booked: wants_book,
                 payment_counted,
                 max_cost: admission.max_cost,
             },

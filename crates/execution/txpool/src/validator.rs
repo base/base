@@ -109,12 +109,19 @@ pub struct LimitClassCache {
     entries: LruCache<Address, (Option<AccountState>, Option<bool>)>,
     // A slot mapping exists exactly while its account's cached lock state is present.
     slots: HashMap<B256, Address>,
+    // Allowlisted payers validated since their last balance change. Bounded by
+    // the operator allowlist, so it needs no eviction.
+    allowlisted_validations: AddressSet,
 }
 
 impl LimitClassCache {
     /// Creates an empty cache with the supplied non-zero account capacity.
     pub fn new(capacity: NonZeroUsize) -> Self {
-        Self { entries: LruCache::new(capacity), slots: HashMap::new() }
+        Self {
+            entries: LruCache::new(capacity),
+            slots: HashMap::new(),
+            allowlisted_validations: AddressSet::default(),
+        }
     }
 
     /// Returns and marks as recently used the cached account state, if present.
@@ -196,6 +203,19 @@ impl LimitClassCache {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.slots.clear();
+        self.allowlisted_validations.clear();
+    }
+
+    /// Records that an allowlisted payer was just validated, so its next
+    /// balance change advances the classification generation.
+    pub fn mark_allowlisted_validation(&mut self, payer: Address) {
+        self.allowlisted_validations.insert(payer);
+    }
+
+    /// Whether an allowlisted payer was validated since its last balance
+    /// change, clearing the record.
+    pub fn take_allowlisted_validation(&mut self, payer: Address) -> bool {
+        self.allowlisted_validations.remove(&payer)
     }
 }
 
@@ -796,14 +816,16 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
             // Advance the generation so an admission whose validation predates
             // this diff re-validates against the fresh balance.
             //
-            // Restricted to payers that use a book: known-trusted payers (a
-            // trusted payer with a pending transaction was just classified into
-            // the cache during that validation) and allowlisted payers. Ordinary
-            // balance churn — the vast majority, and unrelated to any book —
-            // must not advance the generation and bounce unrelated admissions.
+            // Restricted to payers that use a book and could have a validation
+            // in flight: known-trusted payers (a trusted payer with a pending
+            // transaction was just classified into the cache during that
+            // validation) and allowlisted payers validated since their last
+            // balance change. Ordinary balance churn — the vast majority, and
+            // unrelated to any book — must not advance the generation and
+            // bounce unrelated admissions, which fail as stale.
             if diff.balance.is_some()
                 && (cache.is_trusted_cached(diff.address)
-                    || self.allowlisted_payers.contains(&diff.address))
+                    || cache.take_allowlisted_validation(diff.address))
             {
                 changed = true;
             }
@@ -1070,6 +1092,13 @@ where
             .record(auth_start.elapsed().as_secs_f64());
         let (sender, payer, sender_actor, is_create, payer_actor) =
             auth_result.map_err(Self::map_tx_auth_error)?;
+        // Record the validation as soon as the payer is known, so a balance
+        // change that lands before admission invalidates it (see
+        // `invalidate_limit_class_cache`).
+        let payer_allowlisted = self.allowlisted_payers.contains(&payer);
+        if payer_allowlisted {
+            self.limit_class_cache.write().mark_allowlisted_validation(payer);
+        }
         let authorization_code_reads = storage.code_reads.clone();
         let config_reads = storage.take_reads();
 
@@ -1322,7 +1351,7 @@ where
             sender_locked: sender_locked || !keystore,
             payer_locked: payer_locked || !keystore,
             payer_trusted,
-            payer_allowlisted: self.allowlisted_payers.contains(&payer),
+            payer_allowlisted,
             payer_max_cost,
             manifest,
         })
@@ -2394,19 +2423,31 @@ mod tests {
         }
     }
 
-    /// An allowlisted payer also seeds a balance book on first admission, so
-    /// its balance change advances the generation like a trusted payer's: an
-    /// admission validated against the old balance re-validates instead of
-    /// seeding a stale book.
+    /// An allowlisted payer also seeds a balance book on first admission, so a
+    /// balance change after its validation advances the generation, as for a
+    /// trusted payer: an admission validated against the old balance
+    /// re-validates instead of seeding a stale book. An allowlisted payer with
+    /// no validation since its last balance change must not advance it, so its
+    /// balance churn does not bounce unrelated admissions.
     #[test]
-    fn allowlisted_payer_balance_diff_advances_classification_generation() {
+    fn allowlisted_payer_balance_diff_advances_generation_only_after_validation() {
         let allowlisted = Address::repeat_byte(7);
         let validator = build_test_validator().with_allowlisted_payers([allowlisted]);
         let before = validator.limit_class_cache_generation();
-        validator.invalidate_limit_class_cache(&[balance_diff(Address::repeat_byte(8), 1)]);
-        assert_eq!(validator.limit_class_cache_generation(), before);
         validator.invalidate_limit_class_cache(&[balance_diff(allowlisted, 1)]);
-        assert!(validator.limit_class_cache_generation() > before);
+        assert_eq!(validator.limit_class_cache_generation(), before, "idle payer");
+
+        validator.limit_class_cache.write().mark_allowlisted_validation(allowlisted);
+        validator.invalidate_limit_class_cache(&[balance_diff(allowlisted, 2)]);
+        let after = validator.limit_class_cache_generation();
+        assert!(after > before, "a validated payer's balance change advances the generation");
+
+        validator.invalidate_limit_class_cache(&[balance_diff(allowlisted, 3)]);
+        assert_eq!(
+            validator.limit_class_cache_generation(),
+            after,
+            "the record is consumed; churn without a new validation does not advance it"
+        );
     }
 
     /// Validation classifies an allowlisted payer so admission can count and
@@ -2425,11 +2466,14 @@ mod tests {
             .validate_eip8130_full(&signed)
             .unwrap();
         assert!(!ordinary.payer_allowlisted);
-        let allowlisted = build_test_validator_with_account(sender, funded)
-            .with_allowlisted_payers([sender])
-            .validate_eip8130_full(&signed)
-            .unwrap();
+        let validator =
+            build_test_validator_with_account(sender, funded).with_allowlisted_payers([sender]);
+        let allowlisted = validator.validate_eip8130_full(&signed).unwrap();
         assert!(allowlisted.payer_allowlisted, "the self-paying sender is its own payer");
+        assert!(
+            validator.limit_class_cache.write().take_allowlisted_validation(sender),
+            "validation records the allowlisted payer for balance-diff invalidation"
+        );
     }
 
     #[test]
