@@ -114,6 +114,9 @@ mod upgrade_signal;
 #[cfg(feature = "upgrade-signal")]
 pub use upgrade_signal::{MockProtocolVersionsClient, UpgradeSignalStackOptions};
 
+#[cfg(test)]
+pub mod test_utils;
+
 mod urls;
 pub use urls::SystemTestUrls;
 
