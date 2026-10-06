@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
 use base_common_genesis::{ChainGenesis, RollupConfig, SystemConfig};
-use base_protocol::L2BlockInfo;
+use base_protocol::{BlockInfo, L2BlockInfo};
 use eyre::{Result, ensure};
 use serde::Serialize;
 use url::Url;
@@ -44,6 +44,9 @@ pub struct SnapshotInspection {
     pub safe: SnapshotLabeledBlock,
     /// Finalized head.
     pub finalized: SnapshotLabeledBlock,
+    /// Canonical L1 block that completes derivation of the unsafe tail, when fork discovery ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fork: Option<BlockInfo>,
 }
 
 impl SnapshotInspection {
@@ -85,6 +88,7 @@ impl SnapshotInspection {
             latest: latest.into(),
             safe: safe.into(),
             finalized: finalized.into(),
+            fork: None,
         })
     }
 }
@@ -138,6 +142,7 @@ mod tests {
                 "{label}"
             );
         }
+        assert!(json.get("fork").is_none(), "fork is reported only by fork discovery");
     }
 
     #[tokio::test]

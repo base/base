@@ -18,7 +18,7 @@ use jsonrpsee::{
     server::{ServerBuilder, ServerHandle},
     types::ErrorObjectOwned,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use url::Url;
 
 /// L2 blocks served over a minimal JSON-RPC node, keyed by their `eth_getBlockByNumber` tag.
@@ -134,13 +134,13 @@ impl SnapshotRpcFixture {
             )),
             uncles: Vec::new(),
             transactions: BlockTransactions::Full(transactions),
-            withdrawals: None,
+            withdrawals: block.body.withdrawals,
         })
         .unwrap()
     }
 
-    /// Serves `eth_chainId` as `chain_id` and the fixture blocks, returning `null` for any other
-    /// tag. Stop the returned handle to shut the server down.
+    /// Serves `eth_chainId` as `chain_id` and the fixture blocks by tag or hash, returning `null`
+    /// for any other block. Stop the returned handle to shut the server down.
     pub async fn serve(self, chain_id: u64) -> (Url, ServerHandle) {
         let server = ServerBuilder::default().build("127.0.0.1:0").await.unwrap();
         let address = server.local_addr().unwrap();
@@ -154,6 +154,13 @@ impl SnapshotRpcFixture {
             .register_method("eth_getBlockByNumber", |params, node, _| {
                 let (tag, _full): (String, bool) = params.parse()?;
                 Ok::<_, ErrorObjectOwned>(node.1.get(&tag).cloned().unwrap_or(Value::Null))
+            })
+            .unwrap();
+        module
+            .register_method("eth_getBlockByHash", |params, node, _| {
+                let (hash, _full): (B256, bool) = params.parse()?;
+                let block = node.1.values().find(|block| block["hash"] == json!(hash));
+                Ok::<_, ErrorObjectOwned>(block.cloned().unwrap_or(Value::Null))
             })
             .unwrap();
         (format!("http://{address}").parse().unwrap(), server.start(module))

@@ -1,6 +1,6 @@
 //! Command-line launcher for development networks.
 
-use std::{num::NonZeroU64, path::PathBuf, sync::Arc};
+use std::{num::NonZeroU64, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256};
 use base_common_chains::ChainConfig;
@@ -13,8 +13,8 @@ use url::Url;
 
 use crate::{
     DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund, DevnetSnapshotHead,
-    ResolvedSnapshotChain, SharedL1, SnapshotChainConfig, SnapshotInspection, SnapshotL2Stack,
-    SystemTestStackBuilder,
+    ResolvedSnapshotChain, SharedL1, SnapshotChainConfig, SnapshotForkFinder, SnapshotForkSource,
+    SnapshotInspection, SnapshotL2Stack, SystemTestStackBuilder,
 };
 
 /// Local Base development network launcher.
@@ -33,7 +33,8 @@ pub enum DevnetCommand {
     Snapshot(SnapshotArgs),
     /// Start a CI-scoped shared L1 and write its runtime manifest.
     SharedL1(SharedL1Args),
-    /// Print a snapshot source node's validated latest, safe, and finalized heads as JSON.
+    /// Print a snapshot source node's validated latest, safe, and finalized heads, and optionally
+    /// the L1 fork block that derives its unsafe tail, as JSON.
     InspectSnapshot(InspectSnapshotArgs),
 }
 
@@ -51,6 +52,14 @@ pub struct InspectSnapshotArgs {
     /// Its chain and genesis identity must match the selected chain.
     #[arg(long)]
     pub rollup_config: Option<PathBuf>,
+    /// Also report as `fork` the canonical finalized L1 block that derives the unsafe tail.
+    /// Reads upstream L1 URLs only from `SNAPSHOT_UPSTREAM_EXECUTION` and
+    /// `SNAPSHOT_UPSTREAM_BEACON`.
+    #[arg(long)]
+    pub find_fork: bool,
+    /// Deadline in seconds for the whole fork discovery.
+    #[arg(long, default_value_t = 600)]
+    pub timeout: u64,
 }
 
 /// Arguments for a CI-scoped shared L1 fixture.
@@ -192,13 +201,26 @@ impl InspectSnapshotArgs {
         Ok(chain)
     }
 
-    /// Prints exactly one JSON object describing the node's labeled heads to stdout.
+    /// Prints exactly one JSON object describing the node's labeled heads, plus `fork` when
+    /// requested, to stdout.
     pub async fn run(self) -> Result<()> {
         let inspection = async {
             let rpc_url: Url =
                 self.rpc_url.parse().map_err(|error| eyre!("invalid --rpc-url: {error}"))?;
             let chain = self.resolved_chain()?;
-            SnapshotInspection::read(rpc_url, chain.rollup_config, chain.l2_chain_id).await
+            let source = self.find_fork.then(SnapshotForkSource::from_env).transpose()?;
+            let mut inspection =
+                SnapshotInspection::read(rpc_url.clone(), chain.rollup_config, chain.l2_chain_id)
+                    .await?;
+            if let Some(source) = source {
+                let finder = SnapshotForkFinder {
+                    rpc_url,
+                    source,
+                    timeout: Duration::from_secs(self.timeout),
+                };
+                inspection.fork = Some(finder.find(&inspection).await?);
+            }
+            Ok::<_, eyre::Report>(inspection)
         }
         .await
         .map_err(|error| {
@@ -359,6 +381,8 @@ mod tests {
         assert_eq!(args.rpc_url, "http://127.0.0.1:8545");
         assert_eq!(args.chain, "mainnet");
         assert!(args.rollup_config.is_none());
+        assert!(!args.find_fork);
+        assert_eq!(args.timeout, 600);
 
         let cli = DevnetCli::try_parse_from([
             "base-devnet",
@@ -369,6 +393,9 @@ mod tests {
             "/tmp/genesis.json",
             "--rollup-config",
             "/tmp/rollup.json",
+            "--find-fork",
+            "--timeout",
+            "90",
         ])
         .unwrap();
         let DevnetCommand::InspectSnapshot(args) = cli.command else {
@@ -376,6 +403,8 @@ mod tests {
         };
         assert_eq!(args.chain, "/tmp/genesis.json");
         assert_eq!(args.rollup_config.unwrap().to_str(), Some("/tmp/rollup.json"));
+        assert!(args.find_fork);
+        assert_eq!(args.timeout, 90);
     }
 
     #[test]
@@ -385,6 +414,8 @@ mod tests {
             rpc_url: "http://127.0.0.1:8545".parse().unwrap(),
             chain: "mainnet".to_string(),
             rollup_config: None,
+            find_fork: false,
+            timeout: 600,
         };
         let mut config = (*args.resolved_chain().unwrap().rollup_config).clone();
         config.upgrades.base.denim = Some(2_000_000_000);
@@ -425,8 +456,13 @@ mod tests {
             (unreachable, "failed to read snapshot chain ID"),
             (served.to_string(), "failed to read snapshot finalized block"),
         ] {
-            let args =
-                InspectSnapshotArgs { rpc_url, chain: "mainnet".into(), rollup_config: None };
+            let args = InspectSnapshotArgs {
+                rpc_url,
+                chain: "mainnet".into(),
+                rollup_config: None,
+                find_fork: false,
+                timeout: 600,
+            };
             let diagnostic = format!("{:?}", args.run().await.unwrap_err());
             assert!(diagnostic.contains(message), "{diagnostic}");
             assert!(!diagnostic.contains("secret-"), "{diagnostic}");
@@ -452,6 +488,8 @@ mod tests {
             rpc_url: "http://127.0.0.1:8545".parse().unwrap(),
             chain: genesis_path.to_string_lossy().into_owned(),
             rollup_config: Some(rollup_path.clone()),
+            find_fork: false,
+            timeout: 600,
         };
         args.resolved_chain().expect("matching custom genesis must be accepted");
         let mutations: [fn(&mut RollupConfig); 3] = [
@@ -509,6 +547,8 @@ mod tests {
                 rpc_url: "http://127.0.0.1:8545".into(),
                 chain: "mainnet".into(),
                 rollup_config: Some(path.clone()),
+                find_fork: false,
+                timeout: 600,
             };
             let diagnostic = format!("{:?}", args.run().await.unwrap_err());
             assert!(diagnostic.contains(message), "{diagnostic}");
@@ -523,6 +563,8 @@ mod tests {
             rpc_url: "http://127.0.0.1:8545".into(),
             chain: "dev".into(),
             rollup_config: None,
+            find_fork: false,
+            timeout: 600,
         };
         let config = args.resolved_chain().unwrap().rollup_config;
         std::fs::write(file.path(), serde_json::to_vec(&*config).unwrap()).unwrap();
