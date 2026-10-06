@@ -4415,6 +4415,7 @@ dependencies = [
  "k256 0.13.4",
  "p256 0.13.2",
  "revm",
+ "rstest",
  "sha2 0.10.9",
  "thiserror 2.0.19",
 ]
