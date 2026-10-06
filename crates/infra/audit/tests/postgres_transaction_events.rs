@@ -938,14 +938,14 @@ async fn postgres_runtime_role_maintains_partitions_through_definer_functions() 
         .max_connections(1)
         .connect(&harness.url_for("unrelated", "unrelated"))
         .await?;
-    for function in
-        ["transaction_events_detach_partition", "transaction_events_v2_detach_partition"]
-    {
-        let call = sqlx::query(&format!("SELECT {function}('hot', current_date)"))
-            .execute(&unrelated)
-            .await;
-        assert!(call.is_err(), "{function} is not executable by PUBLIC");
-    }
+    let call = sqlx::query("SELECT transaction_events_v2_detach_partition('hot', current_date)")
+        .execute(&unrelated)
+        .await;
+    let code = call
+        .expect_err("transaction_events_v2_detach_partition is not executable by PUBLIC")
+        .as_database_error()
+        .and_then(|error| error.code().map(|code| code.into_owned()));
+    assert_eq!(code.as_deref(), Some("42501"), "expected permission denied");
 
     Ok(())
 }
