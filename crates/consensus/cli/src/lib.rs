@@ -33,6 +33,8 @@ pub use l2::{EmbeddedL2ClientArgs, L2ClientArgs};
 mod metrics;
 pub use metrics::CliMetrics;
 
+mod embedded;
+
 mod node;
 pub use node::{
     ConsensusNodeArgs, ConsensusNodeCommand, ConsensusNodeConfigArgs, ConsensusNodeOverrides,

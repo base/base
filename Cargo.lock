@@ -2919,7 +2919,6 @@ dependencies = [
  "base-node-core",
  "base-node-runner",
  "base-txpool-rpc",
- "base-upgrade-signal",
  "clap",
  "eyre",
  "figment",
@@ -2927,7 +2926,6 @@ dependencies = [
  "reth-cli-runner",
  "serde",
  "tokio",
- "tokio-util",
  "tracing",
  "url",
 ]
@@ -3836,6 +3834,7 @@ dependencies = [
  "metrics",
  "reqwest 0.13.4",
  "reth-node-core",
+ "reth-tasks",
  "rstest",
  "serde",
  "serde_json",
