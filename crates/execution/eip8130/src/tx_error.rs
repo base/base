@@ -24,6 +24,11 @@ pub enum TxAuthError {
     #[error("EOA sender signature could not be recovered")]
     SenderRecovery,
 
+    /// The open-payer `payer_auth` was malformed or did not recover. Applies
+    /// only in open payer mode.
+    #[error("open payer signature could not be recovered")]
+    PayerRecovery,
+
     /// The resolved actor is valid but its scope does not grant the operation it
     /// was authorized for. Mirrors the contract's scope requirement.
     #[error("{operation:?} actor scope {scope:#04x} does not grant the required context")]
@@ -45,6 +50,21 @@ pub enum TxAuthError {
     /// unlocked account.
     #[error("delegation requires an admin actor")]
     DelegationUnauthorized,
+
+    /// The transaction carries an account change type this chain does not
+    /// support.
+    #[error("unsupported account change type")]
+    UnsupportedAccountChange,
+
+    /// A named sender or payer selects an authenticator this chain does not
+    /// support.
+    #[error("unsupported authenticator")]
+    UnsupportedAuthenticator,
+
+    /// A named sender or payer's native secp256k1 signature recovered to a
+    /// different address than the one named.
+    #[error("secp256k1 signature does not recover to the named account")]
+    SignerMismatch,
 
     /// A signed account-change batch's sequence does not match the account's
     /// current sequence for its channel. The contract reads the sequence from

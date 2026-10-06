@@ -43,6 +43,7 @@ jsonrpsee = { workspace = true, features = ["macros", "server"] }
 
 [dev-dependencies]
 rstest.workspace = true
+mockall.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 

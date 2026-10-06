@@ -20,7 +20,10 @@
 //! wrapper as the evaluator issues them, short-circuit evaluation is respected:
 //! only the reads a predicate check actually performs are counted.
 
-use alloy_primitives::{Address, B256, U256, map::HashSet};
+use alloy_primitives::{
+    Address, B256, U256,
+    map::{AddressSet, HashSet},
+};
 use revm::{
     Database,
     state::{AccountInfo, Bytecode},
@@ -39,7 +42,7 @@ pub struct PredicateLoadTracker {
     /// Total storage-slot reads.
     slot_reads: u64,
     /// Distinct accounts read this block.
-    unique_accounts: HashSet<Address>,
+    unique_accounts: AddressSet,
     /// Distinct storage slots read this block.
     unique_slots: HashSet<(Address, U256)>,
 }
@@ -220,7 +223,7 @@ mod tests {
             assert_eq!(
                 ValidityPredicateKey::first_unsatisfied(&predicates, &mut recorder, &context())
                     .unwrap(),
-                Some(ValidityPredicateKey::Balance(address))
+                Some((0, ValidityPredicateKey::Balance(address)))
             );
         }
 

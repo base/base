@@ -5,9 +5,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use base_consensus_gossip::P2pRpcRequest;
 use base_consensus_rpc::{
-    AdminApiServer, AdminRpc, BaseApiServer, BaseP2PApiServer, BaseRpc, DevEngineApiServer,
-    DevEngineRpc, EngineRpcClient, HealthzApiServer, HealthzRpc, L1WatcherQueries,
-    NetworkAdminQuery, P2pRpc, RollupNodeApiServer, RollupRpc, RpcBuilder, SequencerAdminAPIClient,
+    AdminApiServer, AdminNetworkAccess, AdminRpc, BaseApiServer, BaseP2PApiServer, BaseRpc,
+    DevEngineApiServer, DevEngineRpc, EngineRpcClient, HealthzApiServer, HealthzRpc,
+    L1WatcherQueries, P2pRpc, RollupNodeApiServer, RollupRpc, RpcBuilder, SequencerAdminAPIClient,
     WsRPC, WsServer,
 };
 use base_consensus_safedb::SafeDBReader;
@@ -48,8 +48,8 @@ where
 pub struct RpcContext {
     /// The network p2p rpc sender.
     pub p2p_network: Option<mpsc::Sender<P2pRpcRequest>>,
-    /// The network admin rpc sender.
-    pub network_admin: Option<mpsc::Sender<NetworkAdminQuery>>,
+    /// Access to network-backed admin RPC methods, or disabled for isolated sequencers.
+    pub admin_network_access: AdminNetworkAccess,
     /// The l1 watcher queries sender.
     pub l1_watcher_queries: mpsc::Sender<L1WatcherQueries>,
     /// The cancellation token, shared between all tasks.
@@ -126,7 +126,7 @@ where
             cancellation,
             p2p_network,
             l1_watcher_queries,
-            network_admin,
+            admin_network_access,
         }: Self::StartData,
     ) -> Result<(), Self::Error> {
         let mut modules = RpcModule::new(());
@@ -139,13 +139,11 @@ where
         }
 
         // Build the admin rpc module, gated on the `--rpc.enable-admin` flag.
-        if self.config.admin_enabled()
-            && let Some(network_admin) = network_admin
-        {
+        if self.config.admin_enabled() {
+            let sequencer_admin_client = self.sequencer_admin_rpc_client.take();
+            let admin_rpc = AdminRpc::new(sequencer_admin_client, admin_network_access);
             modules.merge(
-                AdminRpc::new(self.sequencer_admin_rpc_client, network_admin)
-                    .with_upgrade_signal_refresher(self.upgrade_signal_refresher)
-                    .into_rpc(),
+                admin_rpc.with_upgrade_signal_refresher(self.upgrade_signal_refresher).into_rpc(),
             )?;
         }
 

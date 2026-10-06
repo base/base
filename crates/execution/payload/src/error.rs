@@ -23,4 +23,16 @@ pub enum BasePayloadBuilderError {
     /// Thrown when the DA footprint scalar is missing while building a Jovian block.
     #[error("DA footprint scalar must be defined for Jovian blocks")]
     DaFootprintScalarMissing,
+    /// Thrown when `BlockBuilder` refuses to commit a sequencer transaction.
+    ///
+    /// Resource metering always returns [`alloy_evm::block::CommitChanges::Yes`]
+    /// for sequencer transactions. This error is the `Ok(None)` contract of
+    /// `execute_transaction_with_commit_condition` under `no_tx_pool`, where
+    /// skipping a sequencer transaction would diverge the EL from the proof
+    /// executor.
+    #[error("sequencer transaction commit was refused")]
+    SequencerTransactionCommitRefused,
+    /// Thrown when the job was cancelled, e.g. because the requesting client went away.
+    #[error("payload job cancelled")]
+    Cancelled,
 }

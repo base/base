@@ -16,13 +16,13 @@ pub use base_proof_worker::{
 };
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_prover_service_protocol::{
-    BackendSession, BackendSessionState, ProofJob, ProofRequestKind, ProofResult, SessionType,
-    WorkerSubmitProofRequest, ZkBackend,
+    AbandonProofRequest, BackendSession, BackendSessionState, ProofJob, ProofRequestKind,
+    ProofResult, SessionType, WorkerSubmitProofRequest, ZkBackend,
 };
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 use tokio::time::{sleep, timeout};
-use tracing::{debug, info, warn};
+use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
     ProofSessionHandle, ProofSubmitterRequest, ZkProofRequestKind, ZkProver, ZkProverError,
@@ -131,8 +131,19 @@ where
     Client: Clone + ProverWorkerProvider + 'static,
 {
     /// Generate a proof for a claimed worker job and spawn proof submission.
+    #[tracing::instrument(
+        name = "zk.generate_and_submit",
+        skip_all,
+        fields(session_id, worker_id, start_block, block_count, zk_backend)
+    )]
     pub async fn generate_and_submit(&self, job: ProofJob) -> Result<(), ProofGeneratorError> {
         let request = ProofGeneratorRequest::try_from(job)?;
+        tracing::Span::current()
+            .record("session_id", tracing::field::display(&request.claim.session_id))
+            .record("worker_id", tracing::field::display(&request.claim.worker_id))
+            .record("start_block", request.request.start_block_number())
+            .record("block_count", request.request.number_of_blocks_to_prove())
+            .record("zk_backend", tracing::field::display(request.request.zk_backend()));
 
         info!(
             session_id = %request.claim.session_id,
@@ -144,7 +155,7 @@ where
             "starting zk proof generation"
         );
 
-        let (result, permit) = self
+        let generated = self
             .with_heartbeat_while_generating(&request, async {
                 let result = self.prove_to_completion(&request).await?;
                 let permit = self.tasks.acquire_submission_permit().await;
@@ -173,7 +184,23 @@ where
                     );
                 }
                 _ => {}
-            })?;
+            });
+        let (result, permit) = match generated {
+            Ok(generated) => generated,
+            Err(error) => {
+                if matches!(
+                    error,
+                    ProofGeneratorError::Generate {
+                        source: ZkProverError::BackendSessionFailed { .. }
+                            | ZkProverError::BackendSessionNotFound { .. },
+                        ..
+                    }
+                ) {
+                    self.abandon_generation_failure(&request, &error).await;
+                }
+                return Err(error);
+            }
+        };
 
         let submit_request = WorkerSubmitProofRequest::try_from(ProofSubmitterRequest {
             session_id: request.claim.session_id.clone(),
@@ -196,6 +223,32 @@ where
         );
 
         Ok(())
+    }
+
+    async fn abandon_generation_failure(
+        &self,
+        request: &ProofGeneratorRequest,
+        error: &ProofGeneratorError,
+    ) {
+        if let Err(abandon_error) = self
+            .submitter
+            .client()
+            .abandon_proof(AbandonProofRequest {
+                session_id: request.claim.session_id.clone(),
+                lock_id: request.claim.lock_id.clone(),
+                worker_id: request.claim.worker_id.clone(),
+                error_message: error.to_string(),
+            })
+            .await
+        {
+            warn!(
+                session_id = %request.claim.session_id,
+                lock_id = %request.claim.lock_id,
+                worker_id = %request.claim.worker_id,
+                error = %abandon_error,
+                "failed to abandon zk proof job after generation failure"
+            );
+        }
     }
 
     async fn prove_to_completion(
@@ -302,7 +355,16 @@ where
             }
         };
 
-        self.poll_to_completion(request, handle, session_type, prover, backend_session_id).await
+        let span = info_span!(
+            "zk.prove_stage",
+            session_id = %request.claim.session_id,
+            session_type = ?session_type,
+            zk_backend = %request.request.zk_backend(),
+            backend_session_id = %backend_session_id,
+        );
+        self.poll_to_completion(request, handle, session_type, prover, backend_session_id)
+            .instrument(span)
+            .await
     }
 
     /// Poll a running backend session until it reaches a terminal state.

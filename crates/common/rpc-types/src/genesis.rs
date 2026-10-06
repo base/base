@@ -48,6 +48,8 @@ pub struct UpgradeInfo {
     pub cobalt: Option<u64>,
     /// Denim upgrade timestamp.
     pub denim: Option<u64>,
+    /// Everest upgrade timestamp.
+    pub everest: Option<u64>,
     /// Zenith upgrade timestamp.
     #[serde(alias = "future")]
     pub zenith: Option<u64>,
@@ -169,6 +171,7 @@ mod tests {
                     beryl: Some(16),
                     cobalt: None,
                     denim: None,
+                    everest: None,
                     zenith: Some(1_000_000),
                 },
                 activation_admin_address: None,
@@ -248,6 +251,7 @@ mod tests {
                         beryl: Some(16),
                         cobalt: None,
                         denim: None,
+                        everest: None,
                         zenith: None,
                     },
                     activation_admin_address: None,
@@ -280,6 +284,7 @@ mod tests {
                         beryl: Some(16),
                         cobalt: None,
                         denim: None,
+                        everest: None,
                         zenith: None,
                     },
                     activation_admin_address: None,
