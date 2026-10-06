@@ -30,7 +30,7 @@ mod snapshot_boundary;
 pub use snapshot_boundary::SnapshotBoundary;
 
 mod snapshot_fork;
-pub use snapshot_fork::{SnapshotForkMetadata, SnapshotForkSource};
+pub use snapshot_fork::{SnapshotForkFinder, SnapshotForkMetadata, SnapshotForkSource};
 
 mod snapshot_inspection;
 pub use snapshot_inspection::{SnapshotInspection, SnapshotLabeledBlock};

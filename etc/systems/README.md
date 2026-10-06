@@ -139,6 +139,28 @@ than fetched, because snapshot nodes may prune it. `--rollup-config` may supply 
 upgrade schedule for decoding the heads, but it must keep the selected chain's L1/L2 chain IDs and
 genesis.
 
+## Find a snapshot's L1 fork block
+
+`inspect-snapshot --find-fork` adds `fork`: the canonical, finalized L1 block containing the
+batches that derive the snapshot's unsafe tail. This is usually later than the latest block's L1
+origin. Upstream L1 URLs are read only from the environment, never from arguments; they may carry
+credentials in their userinfo, path or query. Errors never echo them; logs, which may, are off unless
+`RUST_LOG` is set:
+
+```bash
+SNAPSHOT_UPSTREAM_EXECUTION="$L1_RPC" SNAPSHOT_UPSTREAM_BEACON="$L1_BEACON" \
+  cargo run -p base-system-tests --bin base-devnet -- inspect-snapshot \
+  --chain sepolia --rpc-url "$SOURCE_RPC" --find-fork --timeout 600
+```
+
+Discovery trusts the snapshot's safe head, re-derives the blocks after it with the production
+derivation pipeline, and requires every derived payload to match the snapshot block. It reads L1
+no further than the earlier of upstream finality and the latest L1 origin plus the sequencer
+window. `--timeout` (seconds) bounds the whole discovery, including upstream metadata reads. It
+fails without a result when the snapshot has no unsafe tail (safe equals latest), a payload
+mismatches, the batch is not finalized, the snapshot's latest block or the fork block is no longer
+canonical, or an upstream request fails.
+
 ## Run a snapshot benchmark
 
 ## Run a quick local transfer benchmark
