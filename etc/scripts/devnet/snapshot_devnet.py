@@ -6,6 +6,7 @@ import contextlib
 import fcntl
 import getpass
 import http.client
+import io
 import ipaddress
 import json
 import os
@@ -27,7 +28,9 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[3]
 COMPOSE = ROOT / "etc/docker/docker-compose.snapshot.yml"
 DEFAULT_TIMEOUT = 7200
+DEFAULT_DOWNLOAD_CONCURRENCY = 16
 DEFAULT_IMAGES = {"base": "base:local", "anvil": "base-anvil:snapshot-24ec5e47", "batcher": "op-batcher:local"}
+SNAPSHOT_INDEX = "https://chain.base.org/api/snapshots"
 PROTOCOL_VERSIONS = "0x7480Afc8D99a5c645c247dB5A1e4a4f440e6e095"
 IMPLEMENTATION_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
 DENIM_ID = 13
@@ -46,6 +49,9 @@ FORK_SERVICES = {"l1", *ROLES, "batcher"}
 EXECUTION_RPC_PORT = 8545
 CONSENSUS_RPC_PORT = 9545
 GOSSIP_PORT = 9222
+# The published full snapshot keeps 31 days of legacy 2s-block history (31 * 43200 blocks). The
+# downloader's --full preset follows Denim production pruning, which retains 10x as many blocks.
+PUBLISHED_FULL_SNAPSHOT_DISTANCE = 1339200
 # Interpolated into Compose before F is known; invalid for Anvil and the nodes, which compose()
 # also refuses to start until init records F.
 UNKNOWN = "unknown-before-fork-discovery"
@@ -221,60 +227,134 @@ def configured_directory(directory=None):
 
 
 def setup_command(*args, lock_fd):
-    # Builds can exceed the node-readiness timeout. Stream their progress rather than retaining
-    # potentially hours of output; none of these commands contains RPC credentials.
-    # A surviving child must retain the lock if its launcher is killed.
-    require(subprocess.call(list(map(str, args)), cwd=ROOT, pass_fds=(lock_fd,)) == 0,
-            "snapshot setup command failed; completed steps preserved")
+    # Downloads and builds can exceed the node-readiness timeout. Stream their progress rather
+    # than retaining potentially hours of output, without URLs: the downloader may print presigned
+    # archive URLs. The child inherits the lock, which stays held until the child exits even if the
+    # launcher dies first, but such a child usually dies on its next write to the closed pipe. The
+    # Docker daemon may keep a container running unlocked; the download's fixed container name and
+    # journaled phase stop a retry from starting a second download or copying an incomplete one.
+    with subprocess.Popen(list(map(str, args)), cwd=ROOT, pass_fds=(lock_fd,), stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT) as child, \
+            io.TextIOWrapper(child.stdout, errors="replace", newline="") as output:
+        # Untranslated carriage returns keep progress bars redrawing in place.
+        for line in output:
+            print(redact(line, ()), end="", flush=True)
+    require(child.returncode == 0, "snapshot setup command failed; completed steps preserved")
 
 
-def prepare_snapshot(args, work, lock):
-    """Builds or obtains the experiment images and inspector under the fork lock, journaling each one."""
+def prepare_snapshot(args, fork, work, lock):
+    """Resumes preparation under the fork lock; never copies after initialization begins."""
     journal = work / "setup.json"
+    config_path = work / "input.json"
     state = json.loads(journal.read_text()) if journal.exists() else None
-    if state is None:
+    config = json.loads(config_path.read_text()) if config_path.exists() else None
+    new = state is None
+    if new:
+        require(config is None, "unrecorded download may be incomplete; refusing to download over existing data")
         state = {"version": 1, "phase": "build",
-                 "images": {**DEFAULT_IMAGES, "anvil": args.anvil_image, "batcher": args.batcher_image}}
-        write_json(journal, state)
-    require(state["version"] == 1 and state["phase"] == "build", "unsupported snapshot setup journal; data preserved")
-    require(shutil.which("docker"), "setup requires Docker")
+                 "images": {**DEFAULT_IMAGES, "anvil": args.anvil_image, "batcher": args.batcher_image},
+                 "download_container": "snapshot-download-" + secrets.token_hex(6)}
+    require(state["version"] == 1 and state["phase"] in ("build", "download", "copy", "initialize"),
+            "unsupported snapshot setup journal; data preserved")
+    require(state["phase"] == "build" or config is not None, "saved setup input is missing; data preserved")
+    require(fork.manifest is None or state["phase"] == "initialize",
+            "initialization already began; refusing to download or copy over its databases")
+    require(not any((work / role).is_symlink() for role in ("builder", "validator")),
+            "setup datadirs must not be symlinks")
     images = state["images"]
-    # Checkouts share Docker's tags; a unique one keeps another build from replacing this one before inspection.
-    base_tag = "base:snapshot-setup-" + secrets.token_hex(6)
-    builds = {
-        "base": ("docker", "buildx", "bake", "-f", "etc/docker/docker-bake.hcl", "base",
-                 "--set", "base.args.PROFILE=release", "--set", "base.tags=" + base_tag, "--load"),
-        "anvil": ("just", "devnet", "snapshot", "build-anvil"),
-        "batcher": ("docker", "build", "-f", "etc/docker/Dockerfile.op-batcher", "-t", DEFAULT_IMAGES["batcher"], "."),
-    }
-    for role, image in images.items():
-        if image.startswith("sha256:"):
-            continue
-        command = None
-        if role == "base":
-            print("Building Base from the current checkout (including local changes).", flush=True)
-            command, image = builds[role], base_tag
-        elif image.startswith("ghcr.io/"):
-            command = ("docker", "pull", image)
-        else:
-            try:
-                run("docker", "image", "inspect", image)
-            except RuntimeError:
-                if image != DEFAULT_IMAGES[role]:
-                    raise
-                command = builds[role]
-        if command is not None:
-            setup_command(*command, lock_fd=lock.fileno())
-        images[role] = run("docker", "image", "inspect", "--format", "{{.Id}}", image)
+    if config is not None:
+        require(config == {"sequencer_datadir": str(work / "builder"),
+                           "validator_datadir": str(work / "validator"), "port": config["port"],
+                           **{role + "_image": image for role, image in images.items()}},
+                "saved setup input changed; refusing to overwrite data")
+    require(shutil.which("docker") and shutil.which("cast") and shutil.which("rsync"),
+            "setup requires Docker Compose, Foundry cast and rsync")
+    if new:
         write_json(journal, state)
-    if "BASE_SNAPSHOT_INSPECTOR" in os.environ:
-        require(Path(os.environ["BASE_SNAPSHOT_INSPECTOR"]).is_file(), "configured snapshot inspector does not exist")
-    elif not state.get("inspector_built"):
-        # The launcher runs target/debug/base-devnet; an inherited CARGO_TARGET_DIR must not redirect the build.
-        setup_command("cargo", "build", "--locked", "-p", "base-system-tests", "--bin", "base-devnet",
-                      "--target-dir", "target", lock_fd=lock.fileno())
-        state["inspector_built"] = True
+    if state["phase"] == "build":
+        # Checkouts share Docker's tags; a unique one keeps another build from replacing this one before inspection.
+        base_tag = "base:snapshot-setup-" + secrets.token_hex(6)
+        builds = {
+            "base": ("docker", "buildx", "bake", "-f", "etc/docker/docker-bake.hcl", "base",
+                     "--set", "base.args.PROFILE=release", "--set", "base.tags=" + base_tag, "--load"),
+            "anvil": ("just", "devnet", "snapshot", "build-anvil"),
+            "batcher": ("docker", "build", "-f", "etc/docker/Dockerfile.op-batcher", "-t", DEFAULT_IMAGES["batcher"], "."),
+        }
+        for role, image in images.items():
+            if image.startswith("sha256:"):
+                continue
+            command = None
+            if role == "base":
+                print("Building Base from the current checkout (including local changes).", flush=True)
+                command, image = builds[role], base_tag
+            elif image.startswith("ghcr.io/"):
+                command = ("docker", "pull", image)
+            else:
+                try:
+                    run("docker", "image", "inspect", image)
+                except RuntimeError:
+                    if image != DEFAULT_IMAGES[role]:
+                        raise
+                    command = builds[role]
+            if command is not None:
+                setup_command(*command, lock_fd=lock.fileno())
+            images[role] = run("docker", "image", "inspect", "--format", "{{.Id}}", image)
+            write_json(journal, state)
+        if "BASE_SNAPSHOT_INSPECTOR" in os.environ:
+            require(Path(os.environ["BASE_SNAPSHOT_INSPECTOR"]).is_file(), "configured snapshot inspector does not exist")
+        elif not state.get("inspector_built"):
+            # The launcher runs target/debug/base-devnet; an inherited CARGO_TARGET_DIR must not redirect the build.
+            setup_command("cargo", "build", "--locked", "-p", "base-system-tests", "--bin", "base-devnet",
+                          "--target-dir", "target", lock_fd=lock.fileno())
+            state["inspector_built"] = True
+            write_json(journal, state)
+        if config is None:
+            with socket.socket() as sock:
+                sock.bind(("127.0.0.1", 0))
+                port = sock.getsockname()[1]
+            config = {"sequencer_datadir": str(work / "builder"), "validator_datadir": str(work / "validator"),
+                      "port": port, **{role + "_image": image for role, image in images.items()}}
+            write_json(config_path, config)
+        manifest_path = work / "download-manifest.json"
+        if not manifest_path.exists():
+            entries = [entry for entry in request_json(SNAPSHOT_INDEX)
+                       if number(entry["chainId"]) == 8453 and entry["metadataUrl"].endswith("manifest.json")]
+            require(entries, "no Base mainnet snapshot manifest available")
+            latest = max(entries, key=lambda entry: number(entry["block"]))
+            snapshot = request_json(latest["metadataUrl"])
+            require(number(snapshot["chain_id"]) == 8453 and number(snapshot["block"]) == number(latest["block"]),
+                    "snapshot manifest does not match the selected snapshot")
+            snapshot["base_url"] = snapshot.get("base_url") or urllib.parse.urljoin(latest["metadataUrl"], ".")
+            write_json(manifest_path, snapshot)
+        state["phase"] = "download"
         write_json(journal, state)
+    if state["phase"] == "download":
+        require((work / "download-manifest.json").is_file(), "pinned download manifest is missing; data preserved")
+        print("Downloading the pinned snapshot (completed files are verified and reused).", flush=True)
+        setup_command("docker", "run", "--rm", "--name", state["download_container"],
+                      "--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/work",
+                      "-v", f"{work}:/work", "--entrypoint", "/app/base", images["base"],
+                      "snapshot", "download", "--chain", "mainnet", "--datadir", "/work/builder",
+                      "--manifest-path", "/work/download-manifest.json",
+                      "--download-concurrency", str(args.download_concurrency),
+                      "--with-txs-distance", str(PUBLISHED_FULL_SNAPSHOT_DISTANCE),
+                      "--with-receipts-distance", str(PUBLISHED_FULL_SNAPSHOT_DISTANCE),
+                      "--with-state-history-distance", str(PUBLISHED_FULL_SNAPSHOT_DISTANCE), "--non-interactive",
+                      lock_fd=lock.fileno())
+        state["phase"] = "copy"
+        write_json(journal, state)
+    if state["phase"] == "copy":
+        validate_paths(fork.directory, [work / "builder"])
+        print("Copying the downloaded datadir into an independent validator database.", flush=True)
+        # The validator copy is unused until initialization, so it is written in place: a retry
+        # delta-checks an interrupted file against the unmodified source without writing a second
+        # database-sized file or rewriting matched blocks. rsync still verifies each file's checksum.
+        setup_command("rsync", "-a", "--info=progress2", "--no-inc-recursive", "--inplace", "--no-whole-file",
+                      f"{work / 'builder'}/", f"{work / 'validator'}/", lock_fd=lock.fileno())
+        state["phase"] = "initialize"
+        write_json(journal, state)
+    print("Initializing the fork.", flush=True)
+    fork.initialize(config, allow_write=True)
 
 
 def setup(args):
