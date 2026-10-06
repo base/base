@@ -26,6 +26,19 @@ UPDATE_SCHEMA_SNAPSHOT=1 cargo test -p audit-archiver-lib \
   --test postgres_transaction_events postgres_schema_matches_committed_snapshot
 ```
 
+`legacy_migrations/` holds the pre-partition migrations 001-004. They are never
+applied. The migrator recognizes their recorded rows by version and checksum,
+then drops the old table and resets that history in the same transaction that
+applies the partitioned baseline.
+
+## Partitioned indexes
+
+See [Add indexes to the partitioned transaction-event schema](../../../docs/transaction-events/partition-indexes.md)
+for parent-only migrations, forward-only coverage versus historical backfill,
+native reconciliation, and catalog validation. `migrate up` applies schema only;
+the separate `audit-archiver index` command backfills the existing `ingested_at`
+BRIN index. New index definitions do not register a generic backfill operation.
+
 ## License
 
 Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

@@ -60,12 +60,13 @@ Find a doc through the index below instead of grepping the tree. After adding, m
 - [docs/guides/TESTING.md](docs/guides/TESTING.md): Testing overview: what just ci and just pr run, the four tiers (unit, action, system, fuzz), other checks, the CI pipeline, and guidelines. Use to decide which command or test tier covers your change.
 - [docs/guides/UPGRADES.md](docs/guides/UPGRADES.md): Step-by-step guide to adding a network upgrade (Azul as example): BaseUpgrade enum, RollupConfig activation, timestamps, plus BaseSpecId and precompile routing if EVM rules change, and a checklist.
 - [docs/transaction-events/README.md](docs/transaction-events/README.md): Spec for transaction-event/v1, the JSONL business event journal for transaction observability: config fields, envelope, event vocabulary, Vector to audit-archiver ingest, Postgres retention, examples.
+- [docs/transaction-events/partition-indexes.md](docs/transaction-events/partition-indexes.md): Add partitioned audit indexes: parent-only migrations, forward-only versus historical coverage, explicit native BRIN backfill, catalog checks, locks, cancellation, and future-index steps.
 - [docs/transaction-events/tips-parity-checklist.md](docs/transaction-events/tips-parity-checklist.md): Checklist for verifying TIPS UI audit-archiver/Postgres responses match the S3-backed routes (block, txn, bundle, rejected) before switching TIPS_UI_QUERY_BACKEND=audit.
 
 ## Binaries
 
 - [bin/acceptance/README.md](bin/acceptance/README.md): base-acceptance CLI entry point for the acceptance system: lists subcommands (validate, plan, run, check, report, cleanup) and example cargo invocations, deferring to acceptance/README.md.
-- [bin/audit-archiver/README.md](bin/audit-archiver/README.md): audit-archiver service: NDJSON ingest into Postgres, JSON-RPC queries, retention classes and partition maintenance, event_seq extraction split, env vars, S3 removal rollout.
+- [bin/audit-archiver/README.md](bin/audit-archiver/README.md): audit-archiver service: NDJSON ingest into Postgres, JSON-RPC queries, retention classes and partition maintenance, env vars, S3 removal rollout, and explicit ingested_at index coverage.
 - [bin/base-telemetry/README.md](bin/base-telemetry/README.md): base-telemetry backend: CLI and env config, per-IP rate limiting, and on-demand P2P reachability probes for execution-layer (enode) and consensus-layer (ENR or multiaddr) nodes.
 - [bin/base/README.md](bin/base/README.md): Unified base node binary: OTLP tracing options plus the batcher, rpc, sequencer and update subcommands, their flags and env vars, and chain selection.
 - [bin/basectl/README.md](bin/basectl/README.md): basectl operator console reference: global options, TUI and scriptable commands (block, sync-status, p2p, txpool, conductor, sequencer, batcher, doctor, proofs), JSON output and examples.
@@ -178,7 +179,7 @@ Find a doc through the index below instead of grepping the tree. After adding, m
 
 ## Crates: infra
 
-- [crates/infra/audit/README.md](crates/infra/audit/README.md): audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers the migrations and schema snapshot regeneration.
+- [crates/infra/audit/README.md](crates/infra/audit/README.md): audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers migrations and schema snapshots, and links the partition-index guide.
 - [crates/infra/basectl/README.md](crates/infra/basectl/README.md): basectl-cli: the basectl clap parser and commands (blocks, sync, txpool, peers, proofs, conductor), interactive monitor, flashblocks JSON-lines stream, Denim readiness checks, and pods view config.
 - [crates/infra/challenger-e2e/README.md](crates/infra/challenger-e2e/README.md): Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games, asserts valid games are left alone and Path 4 (plus Path 3 and Path 2 in separate scenarios) is disputed.
 - [crates/infra/load-tests/README.md](crates/infra/load-tests/README.md): Load-testing framework (base-load-tests lib, base-load-tester bin): just/cargo commands, YAML config, tx mixes (precompile, B-20, swap, validity). Use to run or configure devnet/sepolia load tests.
