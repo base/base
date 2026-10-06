@@ -199,6 +199,16 @@ async fn event_ids_like(pool: &PgPool, prefix: &str) -> anyhow::Result<Vec<Strin
     .await?)
 }
 
+/// Inserts enough hot rows into today's partition to fill blocks past the
+/// first BRIN range (128 pages). Creating a BRIN index summarizes the first
+/// range of the empty partition, so only later ranges start unsummarized.
+async fn fill_past_first_brin_range(sink: &PgTransactionEventSink) -> anyhow::Result<()> {
+    let prefix = unique_event_id();
+    let events: Vec<_> = (0..5_000).map(|index| event(&format!("{prefix}-{index}"))).collect();
+    sink.insert_events(&events).await?;
+    Ok(())
+}
+
 async fn hot_partitions(pool: &PgPool) -> anyhow::Result<Vec<String>> {
     Ok(sqlx::query_scalar(HOT_PARTITIONS_SQL).fetch_all(pool).await?)
 }
@@ -351,7 +361,7 @@ async fn postgres_fresh_database_runs_partitioned_migrations() -> anyhow::Result
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1, 2, 3, 4]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5]);
 
     Ok(())
 }
@@ -924,6 +934,16 @@ async fn postgres_runtime_role_maintains_partitions_through_definer_functions() 
     assert_eq!(event_seqs.len(), 2);
     assert!(event_seqs[0] < event_seqs[1], "event_seq follows insertion order: {event_seqs:?}");
 
+    fill_past_first_brin_range(&sink).await?;
+    let summary = sink.summarize_brin_indexes().await?;
+    assert!(summary.lock_acquired);
+    assert!(summary.ranges_summarized > 0, "runtime role can summarize partitions it does not own");
+    assert_eq!(
+        sink.summarize_brin_indexes().await?.ranges_summarized,
+        0,
+        "summarized ranges are not counted again"
+    );
+
     let later = sink.maintain_partitions_at(Utc::now() + chrono::Duration::days(5)).await?;
     assert!(later.partitions_dropped > 0, "runtime role can drop expired partitions");
 
@@ -946,6 +966,96 @@ async fn postgres_runtime_role_maintains_partitions_through_definer_functions() 
         .as_database_error()
         .and_then(|error| error.code().map(|code| code.into_owned()));
     assert_eq!(code.as_deref(), Some("42501"), "expected permission denied");
+
+    let call = sqlx::query("SELECT transaction_events_v2_summarize_brin('hot', current_date)")
+        .execute(&unrelated)
+        .await;
+    let code = call
+        .expect_err("transaction_events_v2_summarize_brin is not executable by PUBLIC")
+        .as_database_error()
+        .and_then(|error| error.code().map(|code| code.into_owned()));
+    assert_eq!(code.as_deref(), Some("42501"), "expected permission denied");
+
+    Ok(())
+}
+
+/// A partition locked by a vacuum is skipped quickly instead of waiting long
+/// enough to cancel an autovacuum, and the next pass summarizes it.
+#[tokio::test]
+async fn postgres_brin_summary_skips_partition_whose_lock_is_busy() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    fill_past_first_brin_range(&sink).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let partition =
+        format!("transaction_events_v2_hot_{}", Utc::now().date_naive().format("%Y%m%d"));
+
+    // VACUUM holds SHARE UPDATE EXCLUSIVE on the table it processes.
+    let mut vacuum = pool.begin().await?;
+    sqlx::query(&format!("LOCK TABLE {partition} IN SHARE UPDATE EXCLUSIVE MODE"))
+        .execute(&mut *vacuum)
+        .await?;
+
+    let started = Instant::now();
+    let blocked = sink.summarize_brin_indexes().await?;
+    assert!(started.elapsed() < Duration::from_secs(1), "gives up before deadlock_timeout");
+    assert_eq!(blocked.lock_timeouts, 1);
+    assert_eq!(blocked.ranges_summarized, 0, "only the locked partition has rows");
+
+    vacuum.rollback().await?;
+    let retried = sink.summarize_brin_indexes().await?;
+    assert_eq!(retried.lock_timeouts, 0);
+    assert!(retried.ranges_summarized > 0);
+
+    Ok(())
+}
+
+/// The API can roll out before migration 005: the pass reports the missing
+/// function instead of failing.
+#[tokio::test]
+async fn postgres_brin_summary_reports_pending_migration() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    Migrator::new(migrations_through(4)?).await?.run(&pool).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    sink.check_schema_ready().await?;
+
+    let outcome = sink.summarize_brin_indexes().await?;
+    assert!(outcome.lock_acquired);
+    assert!(outcome.migration_pending);
+
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    assert!(!sink.summarize_brin_indexes().await?.migration_pending);
+
+    Ok(())
+}
+
+/// Summary passes and partition maintenance take different advisory locks, so
+/// a replica running maintenance does not stop another from summarizing.
+#[tokio::test]
+async fn postgres_brin_summary_lock_is_separate_from_retention_lock() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+
+    let mut retention = pool.begin().await?;
+    let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(744697762131337711)")
+        .fetch_one(&mut *retention)
+        .await?;
+    assert!(locked);
+    assert!(sink.summarize_brin_indexes().await?.lock_acquired);
+    retention.rollback().await?;
+
+    let mut summary = pool.begin().await?;
+    let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(744697762131337712)")
+        .fetch_one(&mut *summary)
+        .await?;
+    assert!(locked);
+    assert!(!sink.summarize_brin_indexes().await?.lock_acquired);
+    assert!(sink.maintain_partitions().await?.lock_acquired);
+    summary.rollback().await?;
 
     Ok(())
 }

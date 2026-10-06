@@ -109,8 +109,29 @@ pub const MAX_TRANSACTION_EVENT_FUTURE_SKEW_SECS: i64 = 3_600;
 const TRANSACTION_EVENT_PARTITION_DROP_GRACE_SECS: i64 = 3_600;
 const TRANSACTION_EVENT_RETENTION_ACQUIRE_TIMEOUT: StdDuration = StdDuration::from_secs(1);
 const TRANSACTION_EVENT_RETENTION_LOCK_ID: i64 = 744_697_762_131_337_711;
+const TRANSACTION_EVENT_BRIN_SUMMARY_LOCK_ID: i64 = 744_697_762_131_337_712;
 
-/// Session advisory lock held on one pooled connection for a retention pass.
+/// Default seconds between BRIN summary passes.
+///
+/// Each pass leaves at most this many seconds of inserted blocks outside the
+/// BRIN summaries that warehouse extraction scans with.
+pub const DEFAULT_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS: u64 = 60;
+/// Maximum seconds between BRIN summary passes. Zero disables the passes.
+pub const MAX_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS: u64 = 3_600;
+
+/// Session `lock_timeout` for one partition's BRIN summary.
+///
+/// Summarizing takes a SHARE UPDATE EXCLUSIVE lock, which conflicts with
+/// VACUUM. When a lock request waits on an autovacuum for `deadlock_timeout`
+/// (1s by default), Postgres cancels that autovacuum. Giving up well before
+/// then leaves a running autovacuum alone, and the vacuum summarizes the
+/// partition itself when it finishes.
+const TRANSACTION_EVENT_BRIN_SUMMARY_LOCK_TIMEOUT_SQL: &str = "SET LOCAL lock_timeout = '200ms'";
+
+/// Postgres SQLSTATE for a missing function.
+const UNDEFINED_FUNCTION_SQLSTATE: &str = "42883";
+
+/// Session advisory lock held on one pooled connection for a background pass.
 ///
 /// Unlock is always attempted. If unlock fails, or this guard is dropped
 /// without unlocking, the connection is detached from the pool so Postgres
@@ -118,17 +139,18 @@ const TRANSACTION_EVENT_RETENTION_LOCK_ID: i64 = 744_697_762_131_337_711;
 /// it onto a reused pool connection.
 struct RetentionAdvisoryLock {
     conn: Option<sqlx::pool::PoolConnection<sqlx::Postgres>>,
+    lock_id: i64,
 }
 
 impl RetentionAdvisoryLock {
-    async fn try_acquire(pool: &PgPool) -> Result<Option<Self>> {
+    async fn try_acquire(pool: &PgPool, lock_id: i64) -> Result<Option<Self>> {
         let mut conn = match pool.acquire().await {
             Ok(conn) => conn,
             Err(sqlx::Error::PoolTimedOut) => return Ok(None),
             Err(err) => return Err(err.into()),
         };
         let locked = match sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
-            .bind(TRANSACTION_EVENT_RETENTION_LOCK_ID)
+            .bind(lock_id)
             .fetch_one(&mut *conn)
             .await
         {
@@ -141,7 +163,7 @@ impl RetentionAdvisoryLock {
                 return Err(err.into());
             }
         };
-        if locked { Ok(Some(Self { conn: Some(conn) })) } else { Ok(None) }
+        if locked { Ok(Some(Self { conn: Some(conn), lock_id })) } else { Ok(None) }
     }
 
     fn conn(&mut self) -> &mut sqlx::PgConnection {
@@ -153,11 +175,11 @@ impl RetentionAdvisoryLock {
             return;
         };
         if let Err(err) = sqlx::query("SELECT pg_advisory_unlock($1)")
-            .bind(TRANSACTION_EVENT_RETENTION_LOCK_ID)
+            .bind(self.lock_id)
             .execute(&mut *conn)
             .await
         {
-            error!(error = %err, "failed to release transaction event retention lock");
+            error!(error = %err, lock_id = self.lock_id, "failed to release transaction event advisory lock");
             let _detached = conn.detach();
         }
     }
@@ -395,6 +417,20 @@ pub struct TransactionEventRetentionOutcome {
     pub lock_timeouts: u64,
 }
 
+/// Result of one locked BRIN summary pass.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TransactionEventBrinSummaryOutcome {
+    /// Whether this replica held the summary lock and ran the pass.
+    pub lock_acquired: bool,
+    /// BRIN block ranges newly summarized, across every index summarized.
+    pub ranges_summarized: u64,
+    /// Partitions skipped because their lock was busy, usually by a vacuum.
+    pub lock_timeouts: u64,
+    /// Whether the summary function is missing because migration 005 has not
+    /// run yet. The pass stops without summarizing anything.
+    pub migration_pending: bool,
+}
+
 /// Configuration for transaction event HTTP ingest.
 #[derive(Debug, Clone)]
 pub struct TransactionEventIngestConfig {
@@ -607,6 +643,7 @@ pub trait TransactionEventSink: Send + Sync {
 pub struct PgTransactionEventSink {
     pool: PgPool,
     retention_pool: PgPool,
+    brin_summary_pool: PgPool,
     retention: TransactionEventRetentionConfig,
 }
 
@@ -619,20 +656,29 @@ impl PgTransactionEventSink {
     /// Connects to Postgres without running migrations.
     ///
     /// The ingest pool is used for persist, RPC reads, and `/readyz`.
-    /// Partition maintenance uses a dedicated one-connection pool with a short
-    /// acquire timeout so lock losers do not occupy ingest connections. The
-    /// sink starts with the default retention config; see
-    /// [`Self::with_retention_config`].
+    /// Partition maintenance and BRIN summaries each use a dedicated
+    /// one-connection pool with a short acquire timeout, so lock losers do
+    /// not occupy ingest connections and a long summary does not hold up a
+    /// maintenance pass. The sink starts with the default retention config;
+    /// see [`Self::with_retention_config`].
     pub async fn connect(database_url: &str, max_connections: u32) -> Result<Self> {
         let max_connections = max_connections.max(1);
         let pool =
             PgPoolOptions::new().max_connections(max_connections).connect(database_url).await?;
-        let retention_pool = PgPoolOptions::new()
-            .max_connections(1)
-            .acquire_timeout(TRANSACTION_EVENT_RETENTION_ACQUIRE_TIMEOUT)
-            .connect(database_url)
-            .await?;
-        Ok(Self::new_with_retention_pool(pool, retention_pool))
+        let background_pool = || {
+            PgPoolOptions::new()
+                .max_connections(1)
+                .acquire_timeout(TRANSACTION_EVENT_RETENTION_ACQUIRE_TIMEOUT)
+                .connect(database_url)
+        };
+        let retention_pool = background_pool().await?;
+        let brin_summary_pool = background_pool().await?;
+        Ok(Self {
+            pool,
+            retention_pool,
+            brin_summary_pool,
+            retention: TransactionEventRetentionConfig::default(),
+        })
     }
 
     /// Runs pending Postgres migrations under sqlx's migration lock.
@@ -642,14 +688,20 @@ impl PgTransactionEventSink {
         Ok(())
     }
 
-    /// Creates a sink from an existing ingest pool. Retention uses the same pool.
+    /// Creates a sink from an existing ingest pool. Retention and BRIN
+    /// summaries use the same pool.
     pub fn new(pool: PgPool) -> Self {
         Self::new_with_retention_pool(pool.clone(), pool)
     }
 
-    /// Creates a sink with a dedicated retention pool.
+    /// Creates a sink with a dedicated pool for retention and BRIN summaries.
     pub fn new_with_retention_pool(pool: PgPool, retention_pool: PgPool) -> Self {
-        Self { pool, retention_pool, retention: TransactionEventRetentionConfig::default() }
+        Self {
+            pool,
+            brin_summary_pool: retention_pool.clone(),
+            retention_pool,
+            retention: TransactionEventRetentionConfig::default(),
+        }
     }
 
     /// Sets the retention windows used for ingest admission and partition
@@ -780,7 +832,12 @@ impl PgTransactionEventSink {
         now: DateTime<Utc>,
     ) -> Result<TransactionEventRetentionOutcome> {
         let config = self.retention;
-        let Some(mut lock) = RetentionAdvisoryLock::try_acquire(&self.retention_pool).await? else {
+        let Some(mut lock) = RetentionAdvisoryLock::try_acquire(
+            &self.retention_pool,
+            TRANSACTION_EVENT_RETENTION_LOCK_ID,
+        )
+        .await?
+        else {
             return Ok(TransactionEventRetentionOutcome::default());
         };
 
@@ -851,6 +908,70 @@ impl PgTransactionEventSink {
                 }
             }
 
+            Ok(outcome)
+        }
+        .await;
+
+        lock.unlock().await;
+        outcome
+    }
+
+    /// Summarizes new blocks in the BRIN indexes of the day partitions that
+    /// take inserts.
+    ///
+    /// Covers today's and yesterday's UTC day partition of every class:
+    /// ingest writes by `event_time`, so late events still land in
+    /// yesterday's partition after midnight. Uses its own session advisory
+    /// lock, so one replica summarizes at a time. Each partition runs in its
+    /// own transaction under a short `lock_timeout`; a partition whose lock is
+    /// busy, usually by a vacuum, is skipped until the next pass.
+    ///
+    /// Returns an outcome with `migration_pending = true` and does nothing when
+    /// migration 005 has not created the summary function yet, so the API can
+    /// roll out before the migrator.
+    pub async fn summarize_brin_indexes(&self) -> Result<TransactionEventBrinSummaryOutcome> {
+        self.summarize_brin_indexes_at(Utc::now()).await
+    }
+
+    /// Runs [`Self::summarize_brin_indexes`] as if the current time were
+    /// `now`.
+    #[doc(hidden)]
+    pub async fn summarize_brin_indexes_at(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<TransactionEventBrinSummaryOutcome> {
+        let Some(mut lock) = RetentionAdvisoryLock::try_acquire(
+            &self.brin_summary_pool,
+            TRANSACTION_EVENT_BRIN_SUMMARY_LOCK_ID,
+        )
+        .await?
+        else {
+            return Ok(TransactionEventBrinSummaryOutcome::default());
+        };
+
+        let outcome = async {
+            let mut outcome =
+                TransactionEventBrinSummaryOutcome { lock_acquired: true, ..Default::default() };
+            for partition in brin_summary_partitions(now) {
+                match summarize_partition_brin(lock.conn(), partition).await? {
+                    BrinSummary::Summarized(ranges) => {
+                        outcome.ranges_summarized += ranges;
+                        Metrics::transaction_event_brin_ranges_summarized(partition.class.as_str())
+                            .increment(ranges);
+                    }
+                    BrinSummary::LockTimeout => {
+                        outcome.lock_timeouts += 1;
+                        Metrics::transaction_event_brin_summary_lock_timeouts(
+                            partition.class.as_str(),
+                        )
+                        .increment(1);
+                    }
+                    BrinSummary::MigrationPending => {
+                        outcome.migration_pending = true;
+                        break;
+                    }
+                }
+            }
             Ok(outcome)
         }
         .await;
@@ -1173,6 +1294,14 @@ fn is_lock_timeout(err: &sqlx::Error) -> bool {
     matches!(err, sqlx::Error::Database(database) if database.code().as_deref() == Some("55P03"))
 }
 
+fn is_undefined_function(err: &sqlx::Error) -> bool {
+    matches!(
+        err,
+        sqlx::Error::Database(database)
+            if database.code().as_deref() == Some(UNDEFINED_FUNCTION_SQLSTATE)
+    )
+}
+
 /// Midnight UTC at the start of `day`.
 const fn utc_midnight(day: NaiveDate) -> DateTime<Utc> {
     day.and_time(chrono::NaiveTime::MIN).and_utc()
@@ -1382,6 +1511,66 @@ async fn run_partition_ddl(
             Err(anyhow::Error::new(err).context(format!(
                 "failed to {} transaction event partition {}",
                 ddl.as_str(),
+                partition.table_name()
+            )))
+        }
+    }
+}
+
+/// Day partitions whose BRIN indexes a summary pass covers at `now`:
+/// yesterday's and today's UTC day of every class.
+fn brin_summary_partitions(now: DateTime<Utc>) -> Vec<DayPartition> {
+    let today = now.date_naive();
+    TransactionEventRetentionClass::ALL
+        .into_iter()
+        .flat_map(|class| [today - Duration::days(1), today].map(|day| DayPartition { class, day }))
+        .collect()
+}
+
+/// Result of summarizing one partition's BRIN indexes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BrinSummary {
+    /// Block ranges newly summarized.
+    Summarized(u64),
+    /// The partition's lock was busy; retried next pass.
+    LockTimeout,
+    /// Migration 005 has not created the summary function yet.
+    MigrationPending,
+}
+
+/// Summarizes one partition's BRIN indexes in its own transaction.
+async fn summarize_partition_brin(
+    conn: &mut sqlx::PgConnection,
+    partition: DayPartition,
+) -> Result<BrinSummary> {
+    let mut tx = conn.begin().await?;
+    sqlx::query(TRANSACTION_EVENT_BRIN_SUMMARY_LOCK_TIMEOUT_SQL).execute(&mut *tx).await?;
+    let result: std::result::Result<i64, sqlx::Error> =
+        sqlx::query_scalar("SELECT public.transaction_events_v2_summarize_brin($1, $2)")
+            .bind(partition.class.as_str())
+            .bind(partition.day)
+            .fetch_one(&mut *tx)
+            .await;
+    match result {
+        Ok(ranges) => {
+            tx.commit().await?;
+            Ok(BrinSummary::Summarized(u64::try_from(ranges).unwrap_or_default()))
+        }
+        Err(err) => {
+            let _ = tx.rollback().await;
+            if is_lock_timeout(&err) {
+                warn!(
+                    error = %err,
+                    partition = %partition.table_name(),
+                    "transaction event BRIN summary hit lock timeout; retrying next pass"
+                );
+                return Ok(BrinSummary::LockTimeout);
+            }
+            if is_undefined_function(&err) {
+                return Ok(BrinSummary::MigrationPending);
+            }
+            Err(anyhow::Error::new(err).context(format!(
+                "failed to summarize BRIN indexes of transaction event partition {}",
                 partition.table_name()
             )))
         }
