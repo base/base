@@ -78,9 +78,10 @@ enforces.
 ### Legacy tree
 
 Migrations 001 and 002 created an earlier `transaction_events` tree.
-Migration 003 created `transaction_events_v2` beside it without copying rows.
-The service no longer reads, writes, or maintains the legacy tree, and a later
-migration drops it.
+Migration 003 created `transaction_events_v2` beside it without copying rows,
+and migration 004 drops the earlier tree and its partition functions. Apply
+004 only after every pod runs a release that reads and writes only v2;
+earlier releases fail readiness without the old tree.
 
 ### Direct reads and warehouse extraction
 
