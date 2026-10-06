@@ -692,7 +692,7 @@ digest = "83a7d99bb5"
 
 ["etc/systems/README.md"]
 summary = "Docs for base-system-tests: snapshot-backed mainnet devnet (builder and follow client), inspect-snapshot head JSON and L1 fork discovery, snapshot/transfer benchmarks, workloads, 2s vs 200ms, cleanup."
-digest = "2f16c2caca"
+digest = "815f300e5a"
 
 ["etc/tools/witness-diff/README.md"]
 summary = "witness-diff tool that compares two execution witnesses (from debug_executionWitness) to find differing trie nodes, bytecodes, or preimages. Use when debugging state root mismatches between nodes."

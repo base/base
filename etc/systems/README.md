@@ -156,10 +156,11 @@ SNAPSHOT_UPSTREAM_EXECUTION="$L1_RPC" SNAPSHOT_UPSTREAM_BEACON="$L1_BEACON" \
 Discovery trusts the snapshot's safe head, re-derives the blocks after it with the production
 derivation pipeline, and requires every derived payload to match the snapshot block. It reads L1
 no further than the earlier of upstream finality and the latest L1 origin plus the sequencer
-window. `--timeout` (seconds) bounds the whole discovery, including upstream metadata reads. It
-fails without a result when the snapshot has no unsafe tail (safe equals latest), a payload
-mismatches, the batch is not finalized, the snapshot's latest block or the fork block is no longer
-canonical, or an upstream request fails.
+window. When safe equals latest, discovery starts from latest's parent instead, so the parent must
+retain its body and cannot be the rollup genesis. `--timeout` (seconds) bounds the whole discovery,
+including upstream metadata reads. It fails without a result when a payload mismatches, the batch
+is not finalized, the snapshot's latest block or the fork block is no longer canonical, or an
+upstream request fails.
 
 ## Run a snapshot benchmark
 
