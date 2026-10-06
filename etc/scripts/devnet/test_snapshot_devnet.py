@@ -704,6 +704,162 @@ class SnapshotTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "historical"):
                 devnet.validate_schedule(config, changed, 300)
 
+    def test_slot_grid_skips_downtime_without_reusing_future_tip(self):
+        self.assertEqual(devnet.next_slot(1000, 12, 1240, 1293), 1300)
+        self.assertEqual(devnet.next_slot(1000, 12, 1312, 1293), 1324)
+        self.assertEqual(devnet.next_slot(1000, 12, 1240, 1252), 1252)
+        with self.assertRaises(RuntimeError):
+            devnet.next_slot(1000, 0, 1240, 1252)
+
+    def test_mining_waits_for_current_slot_and_does_not_warp_a_future_tip(self):
+        calls = []
+        self.fork.manifest["slot_seconds"] = 12
+        with patch.object(self.fork, "assert_local_l1"), patch.object(devnet.time, "time", return_value=1293), \
+                patch.object(devnet.time, "sleep", side_effect=lambda seconds: calls.append(("sleep", seconds))), \
+                patch.object(devnet, "rpc", side_effect=lambda _, method, *args: calls.append((method, *args)) or {"timestamp": hex(1240)}):
+            self.fork.mine()
+        self.assertEqual(calls[-2:], [("sleep", 7), ("evm_mine", {"timestamp": 1300})])
+        with patch.object(self.fork, "assert_local_l1"), patch.object(devnet.time, "time", return_value=1293), \
+                patch.object(devnet, "rpc", return_value={"timestamp": hex(1312)}), \
+                patch.object(devnet.time, "sleep") as sleep:
+            with self.assertRaisesRegex(RuntimeError, "ahead of wall clock"):
+                self.fork.mine()
+            sleep.assert_not_called()
+
+    def test_durable_operation_is_not_resent_and_rejects_changed_request(self):
+        receipt = {"status": "0x1", "blockNumber": "0x65"}
+        transaction = {"from": "0x1", "to": "0x2", "data": "0x1234", "value": "0x0"}
+        self.fork.manifest["operations"]["bootstrap"] = {"transaction": transaction, "hash": "0xtx"}
+        with patch.object(self.fork, "assert_local_l1"), patch.object(devnet, "run", return_value="0x1234"), \
+                patch.object(devnet, "rpc", return_value=receipt) as transport:
+            self.fork.send("bootstrap", "0x1", "0x2", "set(uint256)", 1)
+            self.assertTrue(all(call.args[1] == "eth_getTransactionReceipt" for call in transport.call_args_list))
+            with self.assertRaisesRegex(RuntimeError, "different operation"):
+                self.fork.send("bootstrap", "0x1", "0x2", "set(uint256)", 1, value=2)
+        stored = json.loads((self.fork.directory / "manifest.json").read_text())
+        self.assertEqual(stored["operations"]["bootstrap"]["receipt"], receipt)
+        self.assertEqual((self.fork.directory / "manifest.json").stat().st_mode & 0o777, 0o600)
+
+    def test_ambiguous_send_is_preserved_not_blindly_retried(self):
+        self.fork.manifest["operations"]["bootstrap"] = {
+            "transaction": {"from": "0x1", "to": "0x2", "data": "0x1234", "value": "0x0", "nonce": "0x4"}}
+        with patch.object(self.fork, "assert_local_l1"), patch.object(devnet, "run", return_value="0x1234"), \
+                patch.object(devnet, "rpc") as transport:
+            with self.assertRaisesRegex(RuntimeError, "reconcile its nonce"):
+                self.fork.send("bootstrap", "0x1", "0x2", "set(uint256)", 1)
+            transport.assert_not_called()
+
+    def local_l1(self, apply_writes=True, fail_send=False, status="0x1"):
+        """Patches a local Anvil fork whose sent SystemConfig writes take effect when a block is mined.
+
+        Returns the ordered RPC method log and the persisted journal observed at each send and mine.
+        """
+        self.fork.manifest["system_config"] = "0x" + "5" * 40
+        system = {"owner": "0x" + "a" * 40, "batcherHash": "0x0", "unsafeBlockSigner": "0x0"}
+        pending, receipts, calls, journals = [], {}, [], []
+
+        def node(url, method, *params):
+            self.assertEqual(url, "http://127.0.0.1:19545")
+            calls.append(method)
+            if method == "anvil_metadata":
+                return {"chainId": "0x1", "forkedNetwork": {"forkBlockHash": "0xf", "forkBlockNumber": "0x64"}}
+            if method in ("eth_sendTransaction", "evm_mine"):
+                journals.append(json.loads((self.fork.directory / "manifest.json").read_text())["operations"])
+            if method == "eth_sendTransaction":
+                if fail_send:
+                    raise devnet.Unavailable("connection reset after the request was written")
+                pending.append(params[0])
+                return f"0xtx{len(receipts) + len(pending)}"
+            if method == "evm_mine":
+                for transaction in pending:
+                    signature, argument = transaction["data"].split("|")
+                    if apply_writes:
+                        system[{"setBatcherHash(bytes32)": "batcherHash",
+                                "setUnsafeBlockSigner(address)": "unsafeBlockSigner"}[signature]] = argument
+                    receipts[f"0xtx{len(receipts) + 1}"] = {"status": status}
+                pending.clear()
+            if method == "eth_getTransactionReceipt":
+                return receipts.get(params[0])
+            return {"eth_getTransactionCount": "0x7", "eth_estimateGas": "0x5208",
+                    "eth_getBlockByNumber": {"timestamp": hex(1240)}}.get(method)
+
+        self.addCleanup(patch.stopall)
+        patch.object(devnet, "rpc", side_effect=node).start()
+        patch.object(devnet, "request_json", return_value={"data": {"genesis_time": "1000"}}).start()
+        patch.object(devnet, "run", side_effect=lambda *args: "|".join(args[2:])).start()
+        patch.object(devnet, "call", side_effect=lambda url, address, signature: system[signature.split("(")[0]]).start()
+        patch.object(devnet.time, "time", return_value=1293).start()
+        patch.object(devnet.time, "sleep").start()
+        patch("builtins.print").start()
+        return calls, journals
+
+    def test_local_l1_writes_require_matching_fork_and_beacon_identity(self):
+        for name, change in (("fork hash", {"fork": {**manifest()["fork"], "hash": "0xother"}}),
+                             ("fork number", {"fork": {**manifest()["fork"], "number": "0x65"}}),
+                             ("beacon genesis", {"beacon_genesis": {"genesis_time": "1001"}})):
+            with self.subTest(name):
+                self.fork.manifest = {**manifest(), **change}
+                calls, _ = self.local_l1()
+                with self.assertRaisesRegex(RuntimeError, "identity does not match manifest"):
+                    self.fork.send("set-signer", "0x1", "0x2", "set(uint256)", 1)
+                self.assertEqual(calls, ["anvil_metadata"])
+                self.assertFalse((self.fork.directory / "manifest.json").exists())
+                patch.stopall()
+
+    def test_send_journals_nonce_before_sending_and_hash_after(self):
+        calls, journals = self.local_l1()
+        receipt = self.fork.send("set-signer", "0x1", "0x2", "setUnsafeBlockSigner(address)", "0x3")
+        self.assertEqual(journals[0]["set-signer"]["transaction"]["nonce"], "0x7")
+        self.assertNotIn("hash", journals[0]["set-signer"])
+        self.assertEqual(journals[1]["set-signer"]["hash"], "0xtx1", "persist the hash before awaiting a receipt")
+        stored = devnet.SnapshotFork(self.fork.directory).manifest["operations"]["set-signer"]
+        self.assertEqual((stored["hash"], stored["receipt"]), ("0xtx1", receipt))
+        self.assertLess(calls.index("eth_sendTransaction"), calls.index("anvil_stopImpersonatingAccount"))
+        self.assertLess(calls.index("anvil_stopImpersonatingAccount"), calls.index("evm_mine"))
+
+    def test_reverted_send_persists_its_receipt_and_is_never_resent(self):
+        calls, _ = self.local_l1(status="0x0")
+        for _ in range(2):
+            with self.assertRaisesRegex(RuntimeError, "set-signer reverted; inspect its persisted receipt"):
+                self.fork.send("set-signer", "0x1", "0x2", "setUnsafeBlockSigner(address)", "0x3")
+            self.fork = devnet.SnapshotFork(self.fork.directory, timeout=1)
+            self.assertEqual(self.fork.manifest["operations"]["set-signer"]["receipt"], {"status": "0x0"})
+        self.assertEqual(calls.count("eth_sendTransaction"), 1)
+        # A resumed send re-reads its receipt: restored L1 may differ from the journal.
+        self.assertEqual(calls[-1], "eth_getTransactionReceipt")
+
+    def test_send_without_a_recorded_hash_is_never_resent(self):
+        calls, _ = self.local_l1(fail_send=True)
+        with self.assertRaises(devnet.Unavailable):
+            self.fork.send("set-signer", "0x1", "0x2", "setUnsafeBlockSigner(address)", "0x3")
+        self.assertEqual(calls[-1], "anvil_stopImpersonatingAccount")
+        stored = devnet.SnapshotFork(self.fork.directory).manifest["operations"]["set-signer"]
+        self.assertEqual((stored["transaction"]["nonce"], "hash" in stored), ("0x7", False))
+        calls.clear()
+        with self.assertRaisesRegex(RuntimeError, "interrupted; reconcile its nonce"):
+            self.fork.send("set-signer", "0x1", "0x2", "setUnsafeBlockSigner(address)", "0x3")
+        self.assertEqual(calls, ["anvil_metadata"])
+
+    def test_bootstrap_authorizes_batcher_and_signer_once_through_journaled_owner_sends(self):
+        calls, _ = self.local_l1()
+        accounts = self.fork.manifest["accounts"]
+        self.fork.bootstrap()
+        writes = [method for method in calls if method in ("eth_sendTransaction", "evm_mine", "anvil_setBalance")]
+        self.assertEqual(writes, ["anvil_setBalance", "eth_sendTransaction", "evm_mine"] * 2 + ["anvil_setBalance"])
+        operations = devnet.SnapshotFork(self.fork.directory).manifest["operations"]
+        self.assertEqual(operations["set-batcher"]["transaction"]["from"], "0x" + "a" * 40)
+        self.assertEqual(operations["set-batcher"]["transaction"]["data"],
+                         "setBatcherHash(bytes32)|0x" + accounts["batcher"][2:].zfill(64))
+        self.assertEqual(operations["set-signer"]["transaction"]["data"],
+                         "setUnsafeBlockSigner(address)|" + accounts["signer"])
+        calls.clear()
+        self.fork.bootstrap()
+        self.assertNotIn("eth_sendTransaction", calls)
+        self.fork.manifest["operations"] = {}
+        self.local_l1(apply_writes=False)
+        with self.assertRaisesRegex(RuntimeError, "batcher update not applied"):
+            self.fork.bootstrap()
+
     @unittest.skipUnless(shutil.which("just"), "requires the just command dispatcher")
     def test_snapshot_is_a_just_module_that_forwards_init_arguments_without_writes(self):
         for args in (["devnet", "snapshot"], ["--list", "devnet", "snapshot"]):
