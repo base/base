@@ -160,6 +160,13 @@ def wait(description, check, timeout, poll_interval=1, report_interval=30, diagn
         time.sleep(poll_interval)
 
 
+def next_slot(genesis, duration, tip, now):
+    require(duration > 0 and tip >= genesis, "invalid Beacon clock")
+    # Ceiling of wall clock; a restored head may already be slightly ahead of it.
+    slot = max((now - genesis + duration - 1) // duration, (tip - genesis) // duration + 1)
+    return genesis + slot * duration
+
+
 def validate_paths(directory, paths):
     resolved = [directory.resolve(), *(Path(p).expanduser().resolve(strict=True) for p in paths)]
     for index, left in enumerate(resolved):
@@ -503,6 +510,77 @@ class SnapshotFork:
         self.save()
         print(f"Prepared with L1 fork block {number(fork['number'])}; no local contracts changed.")
 
+
+    def assert_local_l1(self):
+        metadata = rpc(self.url("l1"), "anvil_metadata")
+        fork = metadata.get("forkedNetwork") or {}
+        require(number(metadata["chainId"]) == 1 and fork.get("forkBlockHash") == self.manifest["fork"]["hash"]
+                and number(fork["forkBlockNumber"]) == number(self.manifest["fork"]["number"]),
+                "local Anvil fork identity does not match manifest")
+        require(request_json(self.url("l1"), path="/eth/v1/beacon/genesis")["data"] == self.manifest["beacon_genesis"],
+                "local Beacon identity does not match manifest")
+
+    def mine(self):
+        self.assert_local_l1()
+        tip = rpc(self.url("l1"), "eth_getBlockByNumber", "latest", False)
+        timestamp = next_slot(number(self.manifest["beacon_genesis"]["genesis_time"]),
+                              self.manifest["slot_seconds"], number(tip["timestamp"]), int(time.time()))
+        require(timestamp - time.time() <= self.manifest["slot_seconds"],
+                "restored L1 is ahead of wall clock; wait before resuming")
+        time.sleep(max(0, timestamp - time.time()))
+        # Fork-aware Beacon mode aligns subsequent interval-mined blocks to this same grid,
+        # skipping missed slots. Do not use parent+duration timestamps, which accumulate lag.
+        rpc(self.url("l1"), "evm_mine", {"timestamp": timestamp})
+
+    def send(self, name, sender, target, signature, *args, value=0):
+        """Sends one local L1 transaction as `sender` exactly once, journaled under `name` in the manifest.
+
+        The nonce is persisted before sending and the hash after, so a retry waits for the recorded
+        transaction; a send interrupted before its hash was saved is ambiguous and is never resent.
+        """
+        self.assert_local_l1()
+        operations = self.manifest["operations"]
+        operation = operations.get(name)
+        transaction = {"from": sender, "to": target, "value": hex(value),
+                       "data": run("cast", "calldata", signature, *map(str, args))}
+        if operation:
+            require(all(operation["transaction"][key] == value for key, value in transaction.items()),
+                    f"{name} already records a different operation")
+            require("hash" in operation, f"{name} submission was interrupted; reconcile its nonce manually before retrying")
+            transaction_hash = operation["hash"]
+        else:
+            transaction["nonce"] = rpc(self.url("l1"), "eth_getTransactionCount", sender, "pending")
+            rpc(self.url("l1"), "anvil_impersonateAccount", sender)
+            try:
+                rpc(self.url("l1"), "anvil_setBalance", sender, hex(100 * 10**18))
+                transaction["gas"] = rpc(self.url("l1"), "eth_estimateGas", transaction)
+                operations[name] = {"transaction": transaction}
+                self.save()  # Persist the nonce before the potentially ambiguous send.
+                transaction_hash = rpc(self.url("l1"), "eth_sendTransaction", transaction)
+                operations[name]["hash"] = transaction_hash
+                self.save()
+            finally:
+                rpc(self.url("l1"), "anvil_stopImpersonatingAccount", sender)
+        if self.manifest["phase"] != "running" and rpc(self.url("l1"), "eth_getTransactionReceipt", transaction_hash) is None:
+            self.mine()
+        receipt = wait(name + " receipt", lambda: rpc(self.url("l1"), "eth_getTransactionReceipt", transaction_hash), self.timeout)
+        operations[name]["receipt"] = receipt
+        self.save()
+        require(number(receipt["status"]) == 1, f"{name} reverted; inspect its persisted receipt")
+        return receipt
+
+    def bootstrap(self):
+        """Authorizes this fork's batcher and unsafe-block signer on the local SystemConfig as its owner."""
+        url = self.url("l1")
+        system = self.manifest["system_config"]
+        owner = call(url, system, "owner()(address)")
+        batcher = self.manifest["accounts"]["batcher"]
+        signer = self.manifest["accounts"]["signer"]
+        self.send("set-batcher", owner, system, "setBatcherHash(bytes32)", "0x" + batcher[2:].zfill(64))
+        self.send("set-signer", owner, system, "setUnsafeBlockSigner(address)", signer)
+        require(number(call(url, system, "batcherHash()(bytes32)")) == number(batcher), "batcher update not applied")
+        require(call(url, system, "unsafeBlockSigner()(address)").lower() == signer.lower(), "signer update not applied")
+        rpc(url, "anvil_setBalance", batcher, hex(100 * 10**18))
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
