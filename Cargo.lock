@@ -3977,6 +3977,7 @@ dependencies = [
  "metrics",
  "multihash",
  "rand 0.9.5",
+ "rstest",
  "serde",
  "serde_json",
  "serde_repr",

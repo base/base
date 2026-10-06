@@ -153,343 +153,53 @@ impl BlockHandler {
 
 #[cfg(test)]
 mod tests {
-    use alloy_chains::Chain;
-    use alloy_primitives::{B256, Signature};
-    use alloy_rpc_types_engine::{ExecutionPayloadV2, ExecutionPayloadV3};
-    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadV4, PayloadHash};
+    use rstest::rstest;
 
     use super::*;
-    use crate::{v2_valid_block, v3_valid_block, v4_valid_block};
+    use crate::{block_handler, envelope};
 
-    #[test]
-    fn test_valid_decode() {
-        let block = v2_valid_block();
-
-        let v2 = ExecutionPayloadV2::from_block_slow(&block);
-
-        let payload = BaseExecutionPayload::V2(v2);
-        let envelope = NetworkPayloadEnvelope {
-            payload,
-            signature: Signature::test_signature(),
-            payload_hash: PayloadHash(B256::ZERO),
-            parent_beacon_block_root: None,
-        };
-
-        let msg = envelope.payload_hash.signature_message(8453);
-        let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
-        let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
-        let mut handler = BlockHandler::new(
-            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
-            unsafe_signer,
-        );
-
-        // TRICK: Since the decode method recomputes the payload hash, we need to change the unsafe
-        // signer in the handler to ensure that the payload won't be rejected for invalid
-        // signature.
-        let encoded = handler.encode(handler.blocks_v2_topic.clone(), envelope).unwrap();
-        let decoded = NetworkPayloadEnvelope::decode_v2(&encoded).unwrap();
-
-        let msg = decoded.payload_hash.signature_message(8453);
-        let signer = decoded.signature.recover_address_from_prehash(&msg).unwrap();
-        let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
-        handler.signer_recv = unsafe_signer;
-
-        // Let's try to encode a message.
+    #[rstest]
+    #[case::valid_v2(2, 2, true, MessageAcceptance::Accept)]
+    #[case::valid_v3(3, 3, true, MessageAcceptance::Accept)]
+    #[case::valid_v4(4, 4, true, MessageAcceptance::Accept)]
+    #[case::v2_on_v1_topic(2, 1, true, MessageAcceptance::Reject)]
+    #[case::v3_on_v2_topic(3, 2, true, MessageAcceptance::Reject)]
+    #[case::v2_on_v3_topic(2, 3, true, MessageAcceptance::Reject)]
+    #[case::v4_on_v3_topic(4, 3, true, MessageAcceptance::Reject)]
+    #[case::invalid_payload_hash(2, 2, false, MessageAcceptance::Reject)]
+    fn test_decode(
+        #[case] version: u8,
+        #[case] topic_version: usize,
+        #[case] use_decoded_signer: bool,
+        #[case] expected: MessageAcceptance,
+        #[with(version)] envelope: NetworkPayloadEnvelope,
+        #[from(block_handler)] mut handler: BlockHandler,
+    ) {
+        let topics = handler.topics();
+        let encoded = handler
+            .encode(IdentTopic::new(topics[usize::from(version) - 1].as_str()), envelope)
+            .unwrap();
+        if use_decoded_signer {
+            let decoded = match version {
+                2 => NetworkPayloadEnvelope::decode_v2(&encoded),
+                3 => NetworkPayloadEnvelope::decode_v3(&encoded),
+                4 => NetworkPayloadEnvelope::decode_v4(&encoded),
+                _ => unreachable!(),
+            }
+            .unwrap();
+            let msg = decoded.payload_hash.signature_message(8453);
+            let signer = decoded.signature.recover_address_from_prehash(&msg).unwrap();
+            let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
+            handler.signer_recv = unsafe_signer;
+        }
         let message = Message {
             source: None,
             sequence_number: None,
-            topic: handler.blocks_v2_topic.clone().into(),
+            topic: topics[topic_version - 1].clone(),
             data: encoded,
         };
-
-        assert!(matches!(handler.handle(message).0, MessageAcceptance::Accept));
-    }
-
-    /// This payload has a wrong hash so the signature won't be valid.
-    #[test]
-    fn test_invalid_decode_payload_hash() {
-        let block = v2_valid_block();
-
-        let v2 = ExecutionPayloadV2::from_block_slow(&block);
-
-        let payload = BaseExecutionPayload::V2(v2);
-        let envelope = NetworkPayloadEnvelope {
-            payload,
-            signature: Signature::test_signature(),
-            payload_hash: PayloadHash(B256::ZERO),
-            parent_beacon_block_root: None,
-        };
-
-        let msg = envelope.payload_hash.signature_message(8453);
-        let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
-        let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
-        let mut handler = BlockHandler::new(
-            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
-            unsafe_signer,
-        );
-
-        // Let's try to encode a message.
-        let message = Message {
-            source: None,
-            sequence_number: None,
-            topic: handler.blocks_v2_topic.clone().into(),
-            data: handler.encode(handler.blocks_v2_topic.clone(), envelope).unwrap(),
-        };
-
-        assert!(matches!(handler.handle(message).0, MessageAcceptance::Reject));
-    }
-
-    /// The message contains a wrong version so the payload won't be properly decoded.
-    #[test]
-    fn test_invalid_decode_version_mismatch() {
-        let block = v2_valid_block();
-
-        let v2 = ExecutionPayloadV2::from_block_slow(&block);
-
-        let payload = BaseExecutionPayload::V2(v2);
-        let envelope = NetworkPayloadEnvelope {
-            payload,
-            signature: Signature::test_signature(),
-            payload_hash: PayloadHash(B256::ZERO),
-            parent_beacon_block_root: None,
-        };
-
-        let msg = envelope.payload_hash.signature_message(8453);
-        let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
-        let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
-        let mut handler = BlockHandler::new(
-            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
-            unsafe_signer,
-        );
-
-        let encoded = handler.encode(handler.blocks_v2_topic.clone(), envelope).unwrap();
-
-        // Let's try to encode a message.
-        let message = Message {
-            source: None,
-            sequence_number: None,
-            // Version mismatch!
-            topic: handler.blocks_v1_topic.clone().into(),
-            data: encoded,
-        };
-
-        assert!(matches!(handler.handle(message).0, MessageAcceptance::Reject));
-    }
-
-    /// The message contains a wrong version so the payload won't be properly decoded.
-    #[test]
-    fn test_invalid_decode_version_mismatch_v3_with_v2() {
-        let block = v3_valid_block();
-
-        let v3 = ExecutionPayloadV3::from_block_slow(&block);
-
-        let payload = BaseExecutionPayload::V3(v3);
-        let envelope = NetworkPayloadEnvelope {
-            payload,
-            signature: Signature::test_signature(),
-            payload_hash: PayloadHash(B256::ZERO),
-            parent_beacon_block_root: Some(
-                block.header.parent_beacon_block_root.unwrap_or_default(),
-            ),
-        };
-
-        let msg = envelope.payload_hash.signature_message(8453);
-        let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
-        let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
-        let mut handler = BlockHandler::new(
-            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
-            unsafe_signer,
-        );
-
-        let encoded = handler.encode(handler.blocks_v3_topic.clone(), envelope).unwrap();
-
-        // Let's try to encode a message.
-        let message = Message {
-            source: None,
-            sequence_number: None,
-            // Version mismatch!
-            topic: handler.blocks_v2_topic.clone().into(),
-            data: encoded,
-        };
-
-        assert!(matches!(handler.handle(message).0, MessageAcceptance::Reject));
-    }
-
-    /// The message contains a wrong version so the payload won't be properly decoded.
-    #[test]
-    fn test_invalid_decode_version_mismatch_v2_with_v3() {
-        let block = v2_valid_block();
-
-        let v2 = ExecutionPayloadV2::from_block_slow(&block);
-
-        let payload = BaseExecutionPayload::V2(v2);
-        let envelope = NetworkPayloadEnvelope {
-            payload,
-            signature: Signature::test_signature(),
-            payload_hash: PayloadHash(B256::ZERO),
-            parent_beacon_block_root: Some(
-                block.header.parent_beacon_block_root.unwrap_or_default(),
-            ),
-        };
-
-        let msg = envelope.payload_hash.signature_message(8453);
-        let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
-        let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
-        let mut handler = BlockHandler::new(
-            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
-            unsafe_signer,
-        );
-
-        let encoded = handler.encode(handler.blocks_v2_topic.clone(), envelope).unwrap();
-
-        // Let's try to encode a message.
-        let message = Message {
-            source: None,
-            sequence_number: None,
-            // Version mismatch!
-            topic: handler.blocks_v3_topic.clone().into(),
-            data: encoded,
-        };
-
-        assert!(matches!(handler.handle(message).0, MessageAcceptance::Reject));
-    }
-
-    /// The message contains a wrong version so the payload won't be properly decoded.
-    #[test]
-    fn test_invalid_decode_version_mismatch_v4_with_v3() {
-        let block = v4_valid_block();
-
-        let v3 = ExecutionPayloadV3::from_block_slow(&block);
-        let v4 = BaseExecutionPayloadV4::from_v3_with_withdrawals_root(
-            v3,
-            block.withdrawals_root.unwrap(),
-        );
-
-        let payload = BaseExecutionPayload::V4(v4);
-        let envelope = NetworkPayloadEnvelope {
-            payload,
-            signature: Signature::test_signature(),
-            payload_hash: PayloadHash(B256::ZERO),
-            parent_beacon_block_root: Some(
-                block.header.parent_beacon_block_root.unwrap_or_default(),
-            ),
-        };
-
-        let msg = envelope.payload_hash.signature_message(8453);
-        let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
-        let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
-        let mut handler = BlockHandler::new(
-            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
-            unsafe_signer,
-        );
-
-        let encoded = handler.encode(handler.blocks_v4_topic.clone(), envelope).unwrap();
-
-        // Let's try to encode a message.
-        let message = Message {
-            source: None,
-            sequence_number: None,
-            // Version mismatch!
-            topic: handler.blocks_v3_topic.clone().into(),
-            data: encoded,
-        };
-
-        assert!(matches!(handler.handle(message).0, MessageAcceptance::Reject));
-    }
-
-    #[test]
-    fn test_valid_decode_v4() {
-        let block = v4_valid_block();
-
-        let v3 = ExecutionPayloadV3::from_block_slow(&block);
-        let v4 = BaseExecutionPayloadV4::from_v3_with_withdrawals_root(
-            v3,
-            block.withdrawals_root.unwrap(),
-        );
-
-        let payload = BaseExecutionPayload::V4(v4);
-        let envelope = NetworkPayloadEnvelope {
-            payload,
-            signature: Signature::test_signature(),
-            payload_hash: PayloadHash(B256::ZERO),
-            parent_beacon_block_root: Some(
-                block.header.parent_beacon_block_root.unwrap_or_default(),
-            ),
-        };
-
-        let msg = envelope.payload_hash.signature_message(8453);
-        let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
-        let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
-        let mut handler = BlockHandler::new(
-            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
-            unsafe_signer,
-        );
-
-        // TRICK: Since the decode method recomputes the payload hash, we need to change the unsafe
-        // signer in the handler to ensure that the payload won't be rejected for invalid
-        // signature.
-        let encoded = handler.encode(handler.blocks_v4_topic.clone(), envelope).unwrap();
-        let decoded = NetworkPayloadEnvelope::decode_v4(&encoded).unwrap();
-
-        let msg = decoded.payload_hash.signature_message(8453);
-        let signer = decoded.signature.recover_address_from_prehash(&msg).unwrap();
-        let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
-        handler.signer_recv = unsafe_signer;
-
-        // Let's try to encode a message.
-        let message = Message {
-            source: None,
-            sequence_number: None,
-            topic: handler.blocks_v4_topic.clone().into(),
-            data: encoded,
-        };
-
-        assert!(matches!(handler.handle(message).0, MessageAcceptance::Accept));
-    }
-
-    #[test]
-    fn test_valid_decode_v3() {
-        let block = v3_valid_block();
-
-        let v3 = ExecutionPayloadV3::from_block_slow(&block);
-
-        let payload = BaseExecutionPayload::V3(v3);
-        let envelope = NetworkPayloadEnvelope {
-            payload,
-            signature: Signature::test_signature(),
-            payload_hash: PayloadHash(B256::ZERO),
-            parent_beacon_block_root: Some(
-                block.header.parent_beacon_block_root.unwrap_or_default(),
-            ),
-        };
-
-        let msg = envelope.payload_hash.signature_message(8453);
-        let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
-        let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
-        let mut handler = BlockHandler::new(
-            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
-            unsafe_signer,
-        );
-
-        // TRICK: Since the decode method recomputes the payload hash, we need to change the unsafe
-        // signer in the handler to ensure that the payload won't be rejected for invalid
-        // signature.
-        let encoded = handler.encode(handler.blocks_v3_topic.clone(), envelope).unwrap();
-        let decoded = NetworkPayloadEnvelope::decode_v3(&encoded).unwrap();
-
-        let msg = decoded.payload_hash.signature_message(8453);
-        let signer = decoded.signature.recover_address_from_prehash(&msg).unwrap();
-        let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
-        handler.signer_recv = unsafe_signer;
-
-        // Let's try to encode a message.
-        let message = Message {
-            source: None,
-            sequence_number: None,
-            topic: handler.blocks_v3_topic.clone().into(),
-            data: encoded,
-        };
-
-        assert!(matches!(handler.handle(message).0, MessageAcceptance::Accept));
+        let (acceptance, envelope) = handler.handle(message);
+        assert_eq!(std::mem::discriminant(&acceptance), std::mem::discriminant(&expected));
+        assert_eq!(envelope.is_some(), matches!(expected, MessageAcceptance::Accept));
     }
 }
