@@ -17,9 +17,10 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::{BaseEvmConfig, BaseRethReceiptBuilder};
 use base_execution_payload_builder::{
-    Attributes, BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadPrimitives,
+    Attributes, BaseBuiltPayload, BasePayloadBuilderAttributes,
+    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, PayloadPrimitives, RejectionCache,
     builder::BasePayloadTransactions,
-    config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig},
+    config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
 use base_execution_rpc::{
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
@@ -1046,6 +1047,12 @@ pub struct BasePayloadBuilder<Txs = ()> {
     pub manifest_precheck_enabled: bool,
     /// Hard cutoff on cumulative validity-predicate evaluation time per payload build.
     pub predicate_eval_hard_cutoff: Duration,
+    /// Number of parked predicates that converts one state bucket to ordered wakeups.
+    pub predicate_bucket_ordered_threshold: usize,
+    /// Resource metering by opcode for native payload admission.
+    pub resource_metering: ResourceMeteringConfig,
+    /// Shared, cross-job cache of permanently rejected transaction hashes.
+    pub rejection_cache: RejectionCache,
 }
 
 impl<Txs: Default> Default for BasePayloadBuilder<Txs> {
@@ -1056,6 +1063,9 @@ impl<Txs: Default> Default for BasePayloadBuilder<Txs> {
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
+            predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
+            resource_metering: ResourceMeteringConfig::default(),
+            rejection_cache: RejectionCache::default(),
         }
     }
 }
@@ -1069,6 +1079,9 @@ impl BasePayloadBuilder {
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
+            predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
+            resource_metering: ResourceMeteringConfig::default(),
+            rejection_cache: RejectionCache::default(),
         }
     }
 
@@ -1095,6 +1108,24 @@ impl BasePayloadBuilder {
         self.predicate_eval_hard_cutoff = cutoff;
         self
     }
+
+    /// Configures the predicate bucket ordered conversion threshold.
+    pub const fn with_predicate_bucket_ordered_threshold(mut self, threshold: usize) -> Self {
+        self.predicate_bucket_ordered_threshold = threshold;
+        self
+    }
+
+    /// Configure resource metering by opcode for the native payload builder.
+    pub fn with_resource_metering(mut self, resource_metering: ResourceMeteringConfig) -> Self {
+        self.resource_metering = resource_metering;
+        self
+    }
+
+    /// Configure the shared rejection cache for permanently rejected transactions.
+    pub fn with_rejection_cache(mut self, rejection_cache: RejectionCache) -> Self {
+        self.rejection_cache = rejection_cache;
+        self
+    }
 }
 
 impl<Txs> BasePayloadBuilder<Txs> {
@@ -1107,6 +1138,9 @@ impl<Txs> BasePayloadBuilder<Txs> {
             gas_limit_config: self.gas_limit_config,
             manifest_precheck_enabled: self.manifest_precheck_enabled,
             predicate_eval_hard_cutoff: self.predicate_eval_hard_cutoff,
+            predicate_bucket_ordered_threshold: self.predicate_bucket_ordered_threshold,
+            resource_metering: self.resource_metering,
+            rejection_cache: self.rejection_cache,
         }
     }
 }
@@ -1155,6 +1189,10 @@ where
                     gas_limit_config: self.gas_limit_config,
                     manifest_precheck_enabled: self.manifest_precheck_enabled,
                     predicate_eval_hard_cutoff: self.predicate_eval_hard_cutoff,
+                    predicate_bucket_ordered_threshold: self.predicate_bucket_ordered_threshold,
+                    resource_metering: self.resource_metering,
+                    rejection_cache: self.rejection_cache,
+                    state_provider_metrics: ctx.config().engine.state_provider_metrics,
                 },
             )
             .with_transactions(self.best_transactions);

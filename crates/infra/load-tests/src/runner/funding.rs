@@ -31,6 +31,7 @@ const FUNDING_REPLACEMENT_FEE_MULTIPLIER: u128 = 3;
 const FUNDING_REPLACEMENT_MAX_ATTEMPTS: u32 = 8;
 
 const TXPOOL_CLEAR_CONCURRENCY: usize = 64;
+const TXPOOL_CLEAR_PASSES: usize = 3;
 const PENDING_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(200);
 
 impl LoadRunner {
@@ -649,6 +650,7 @@ impl LoadRunner {
                 | TxType::Calldata { .. }
                 | TxType::Erc20 { .. }
                 | TxType::Storage { .. }
+                | TxType::DoubleCounter { .. }
                 | TxType::B20
                 | TxType::Precompile { .. }
                 | TxType::Osaka { .. } => {}
@@ -669,6 +671,7 @@ impl LoadRunner {
                 | TxType::Calldata { .. }
                 | TxType::Erc20 { .. }
                 | TxType::Storage { .. }
+                | TxType::DoubleCounter { .. }
                 | TxType::B20
                 | TxType::Precompile { .. }
                 | TxType::Osaka { .. } => {}
@@ -702,47 +705,49 @@ impl LoadRunner {
             .collect::<Result<_>>()?;
         let addresses: Vec<_> =
             self.accounts.accounts().iter().map(|account| account.address).collect();
-        let requests: Vec<_> = clients
-            .iter()
-            .flat_map(|(node, client)| {
-                addresses
-                    .iter()
-                    .copied()
-                    .map(move |address| (node.clone(), client.clone(), address))
-            })
-            .collect();
-
-        let clear_results: Vec<_> =
-            stream::iter(requests.into_iter().map(|(node, client, address)| async move {
-                let removed = client.drop_sender_transactions(address).await.map_err(|e| {
-                    BaselineError::Rpc(format!(
-                        "failed to clear txpool node {node} for sender {address}: {e}"
-                    ))
-                })?;
-                Ok::<_, BaselineError>((node, removed.len() as u64))
-            }))
-            .buffer_unordered(TXPOOL_CLEAR_CONCURRENCY)
-            .collect()
-            .await;
-
-        let mut removed_by_node: HashMap<url::Url, u64> = HashMap::new();
-        for result in clear_results {
-            let (node, removed) = result?;
-            removed_by_node
-                .entry(node)
-                .and_modify(|total| *total = total.saturating_add(removed))
-                .or_insert(removed);
-        }
-
         let mut removed_total = 0u64;
-        for node in &self.config.txpool_nodes {
-            let removed_for_node = removed_by_node.get(node).copied().unwrap_or(0);
-            removed_total = removed_total.saturating_add(removed_for_node);
-            info!(
-                node = %node,
-                removed = removed_for_node,
-                "cleared txpool sender transactions from node"
-            );
+        for pass in 1..=TXPOOL_CLEAR_PASSES {
+            let requests: Vec<_> = clients
+                .iter()
+                .flat_map(|(node, client)| {
+                    addresses
+                        .iter()
+                        .copied()
+                        .map(move |address| (node.clone(), client.clone(), address))
+                })
+                .collect();
+            let clear_results: Vec<_> =
+                stream::iter(requests.into_iter().map(|(node, client, address)| async move {
+                    let removed = client.drop_sender_transactions(address).await.map_err(|e| {
+                        BaselineError::Rpc(format!(
+                            "failed to clear txpool node {node} for sender {address}: {e}"
+                        ))
+                    })?;
+                    Ok::<_, BaselineError>((node, removed.len() as u64))
+                }))
+                .buffer_unordered(TXPOOL_CLEAR_CONCURRENCY)
+                .collect()
+                .await;
+
+            let mut removed_by_node: HashMap<url::Url, u64> = HashMap::new();
+            for result in clear_results {
+                let (node, removed) = result?;
+                removed_by_node
+                    .entry(node)
+                    .and_modify(|total| *total = total.saturating_add(removed))
+                    .or_insert(removed);
+            }
+
+            for node in &self.config.txpool_nodes {
+                let removed_for_node = removed_by_node.get(node).copied().unwrap_or(0);
+                removed_total = removed_total.saturating_add(removed_for_node);
+                info!(
+                    pass,
+                    node = %node,
+                    removed = removed_for_node,
+                    "cleared txpool sender transactions from node"
+                );
+            }
         }
 
         info!(removed = removed_total, "txpool clearing complete");

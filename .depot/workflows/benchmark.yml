@@ -51,19 +51,19 @@ jobs:
       - name: Build base-reth-node
         if: steps.cache-binaries.outputs.cache-hit != 'true'
         run: |
-          cargo build --locked --bin base-reth-node --profile maxperf
+          cargo build --locked --bin base-reth-node --release
           mkdir -p ~/bin
-          cp target/maxperf/base-reth-node ~/bin/
+          cp target/release/base-reth-node ~/bin/
       - name: Build base-builder
         if: steps.cache-binaries.outputs.cache-hit != 'true'
         run: |
-          cargo build --locked --bin base-builder --profile maxperf
-          cp target/maxperf/base-builder ~/bin/base-builder
+          cargo build --locked --bin base-builder --release
+          cp target/release/base-builder ~/bin/base-builder
       - name: Build base-load-test
         if: steps.cache-binaries.outputs.cache-hit != 'true'
         run: |
-          cargo build --locked -p base-load-tester-bin --bin base-load-tester --profile maxperf
-          cp target/maxperf/base-load-tester ~/bin/base-load-test
+          cargo build --locked -p base-load-tester-bin --bin base-load-tester --release
+          cp target/release/base-load-tester ~/bin/base-load-test
       - name: Verify binaries exist
         run: |
           echo "Binaries in ~/bin:"

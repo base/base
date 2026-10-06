@@ -42,7 +42,8 @@ pub(crate) fn b20_token_for(sender: Address, run_salt: B256) -> Address {
 /// Generates B-20 precompile token transfer transactions.
 ///
 /// During the load phase, each generated transaction calls `transfer(address,uint256)` on the
-/// sender's own B-20 token precompile. The B-20 `transfer` selector is ERC-20 compatible, so this
+/// sender's own B-20 token precompile, sending to the runner-supplied recipient (the paired
+/// counterparty: alice <-> bob). The B-20 `transfer` selector is ERC-20 compatible, so this
 /// exercises the precompile's state-mutation code path (balance updates, event emission) under
 /// sustained load.
 ///
@@ -92,6 +93,10 @@ impl Payload for B20TransferPayload {
     }
 
     fn uses_runner_recipient(&self) -> bool {
+        true
+    }
+
+    fn uses_pair_recipient(&self) -> bool {
         true
     }
 
@@ -190,6 +195,16 @@ mod tests {
             tx.input.input().expect("input set").as_ref(),
             expected.abi_encode().as_slice(),
             "calldata must be a transfer of the chosen amount to the recipient"
+        );
+    }
+
+    #[test]
+    fn b20_payload_uses_pair_recipient() {
+        let payload = B20TransferPayload::pending(U256::from(1), U256::from(1));
+        assert!(payload.uses_runner_recipient(), "B-20 transfers consume the runner recipient");
+        assert!(
+            payload.uses_pair_recipient(),
+            "B-20 transfers target the pair partner, not a ring"
         );
     }
 

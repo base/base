@@ -7,7 +7,7 @@ use std::{
 
 use async_trait::async_trait;
 use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
-use base_proof_zk_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
+use base_proof_zk_utils::INTERMEDIATE_ROOT_INTERVAL;
 use base_prover_service_protocol::{
     ExecutionStats, ProofResult, SessionType, SnarkPlonkProofRequest, SnarkPlonkProofResult,
     ZkProofRequest, ZkProofResult, ZkVm,
@@ -156,8 +156,6 @@ impl DryRunZkProver {
             .checked_add(request.number_of_blocks_to_prove)
             .ok_or_else(|| backend_error!("proof range end block overflowed u64"))?;
         let sequence_window = request.sequence_window.unwrap_or(self.default_sequence_window);
-        let intermediate_root_interval =
-            request.intermediate_root_interval.unwrap_or(DEFAULT_INTERMEDIATE_ROOT_INTERVAL);
 
         info!(
             request_session_id = %request_session_id,
@@ -165,7 +163,7 @@ impl DryRunZkProver {
             end_block = end_block,
             number_of_blocks = request.number_of_blocks_to_prove,
             sequence_window = sequence_window,
-            intermediate_root_interval = intermediate_root_interval,
+            intermediate_root_interval = INTERMEDIATE_ROOT_INTERVAL,
             range_cycle_limit = self.range_cycle_limit,
             l1_head = ?request.l1_head,
             "starting dry-run SP1 execution"
@@ -185,7 +183,6 @@ impl DryRunZkProver {
                     },
                     L1HeadSource::Pinned,
                 ),
-                intermediate_root_interval,
                 schedule_l2_block_number: request.schedule_l2_block_number,
             })
             .await

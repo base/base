@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use alloy_primitives::B256;
 use alloy_rpc_types_engine::PayloadId;
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
@@ -40,6 +41,13 @@ impl ActionSequencerEngineClient {
 
 #[async_trait]
 impl SequencerEngineClient for ActionSequencerEngineClient {
+    async fn prepare_sequencer_start(
+        &self,
+        expected_hash: B256,
+    ) -> Result<(), base_consensus_node::EngineClientError> {
+        self.inner.prepare_sequencer_start(expected_hash).await
+    }
+
     async fn reset_engine_forkchoice(
         &self,
         reason: ResetReason,

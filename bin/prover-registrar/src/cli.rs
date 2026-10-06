@@ -9,6 +9,7 @@ use base_proof_tee_registrar::{
 };
 use base_tx_manager::{SignerConfig, TxManagerConfig};
 use clap::Parser;
+use reth_node_core::args::TraceArgs;
 use url::Url;
 
 // Generate env-var helper and CLI structs with the `BASE_REGISTRAR_` prefix.
@@ -122,6 +123,9 @@ pub(crate) struct Cli {
 
     #[command(flatten)]
     metrics: MetricsArgs,
+
+    #[command(flatten)]
+    pub(crate) traces: TraceArgs,
 }
 
 impl Cli {

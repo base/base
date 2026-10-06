@@ -12,11 +12,14 @@ one event JSON object per line, not a wrapped JSON batch.
 ## Postgres Retention
 
 `audit-archiver` stores events in Postgres for operational queries. Postgres is
-not the long-term archive. A background worker deletes rows by event type:
-high-volume proxy and builder-decision events default to 3 days, ingress and
-forwarding events default to 7 days, and failures, drops, inclusion, and
-flashblock events default to 30 days. Autovacuum reclaims the resulting table
-bloat. `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` uses the same warm window as
+not the long-term archive. Events are partitioned by retention class and UTC
+day of `event_time`, and a background worker drops whole day partitions once
+they age out: high-volume proxy and builder-decision events default to 3 days,
+ingress and forwarding events default to 7 days, and failures, drops,
+inclusion, and flashblock events default to 30 days. Ingest rejects events
+whose `event_time` is already outside its window or more than an hour in the
+future. A retried `event_id` dedupes only within the same UTC hour of its
+`event_time`. `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` uses the same warm window as
 `TXPOOL_SEND_RAW_TRANSACTION`. `BUILDER_DEFERRED` and `BUILDER_EXPIRED` use the
 same hot window as the other per-attempt builder decisions; deferral can fire
 once per flashblock for a parked validity transaction.
@@ -112,12 +115,12 @@ and `privateKey` before ingest.
 
 Core devnet (`just devnet up` / `just devnet up-single`) enables durable
 transaction event journals on `base-client` and `base-builder`, writing JSONL
-under `.devnet/transaction-events/`. The ingress overlay adds the collection
-pipeline (Vector, Postgres, `audit-archiver`) plus ingress/proxyd producers; it
+under `.devnet/transaction-events/`. The tx-observability overlay adds the collection
+pipeline (Vector, Postgres, `audit-archiver`) plus the proxyd producer; it
 does not own node journal config.
 
 ```bash
-just devnet ingress
+just devnet tx-observability
 just devnet tx-observability-smoke
 ```
 
@@ -126,12 +129,12 @@ testing proxyd transaction events before that implementation has landed in the
 default proxyd image:
 
 ```bash
-BASE_ROUTING_CONTEXT=/path/to/base-routing just devnet ingress
+BASE_ROUTING_CONTEXT=/path/to/base-routing just devnet tx-observability
 just devnet tx-observability-smoke
 ```
 
-The smoke test sends one transaction through ingress, waits for Vector to ship
-JSONL events from ingress, proxyd, txpool tracing, and builder producers, and
+The smoke test sends one transaction through proxyd, waits for Vector to ship
+JSONL events from proxyd, txpool tracing, and builder producers, and
 verifies `audit-archiver` can read the persisted events back from Postgres by
 transaction hash.
 
@@ -143,8 +146,8 @@ For local Vector health, alert or inspect `component_discarded_events_total`.
 
 - `base-reth-node`
 - `base-builder`
-- `ingress-rpc`
 - `base-routing/proxyd`
+- `ingress-rpc` (retired; retained so historical events remain readable)
 
 ## Txpool Tracing Example
 
@@ -167,11 +170,11 @@ Edge/proxy:
 - `PROXY_ROUTED_TO_BACKEND`
 - `PROXY_BACKEND_SUCCESS`
 - `PROXY_BACKEND_FAILURE`
-- `PROXY_INGRESS_RPC_ATTEMPT`
-- `PROXY_INGRESS_RPC_SUCCESS`
-- `PROXY_INGRESS_RPC_FAILURE`
+- `PROXY_INGRESS_RPC_ATTEMPT` (retired)
+- `PROXY_INGRESS_RPC_SUCCESS` (retired)
+- `PROXY_INGRESS_RPC_FAILURE` (retired)
 
-Ingress/audit:
+Ingress/audit (retired producer; retained so historical events remain readable):
 
 - `INGRESS_RECEIVED`
 - `SIMULATION_STARTED`
@@ -211,12 +214,23 @@ incoming one. `base_insertValidatedTransaction` uses
 
 Forwarding:
 
+- `TXPOOL_BUILDER_CONSUMED`
 - `TXPOOL_BUILDER_FORWARD_ATTEMPT`
-- `TXPOOL_BUILDER_FORWARD_SUCCESS`
+- `TXPOOL_BUILDER_FORWARD_SUCCESS` (retired)
 - `TXPOOL_BUILDER_FORWARD_FAILURE`
 - `TXPOOL_BUILDER_FORWARD_DROPPED`
 - `TXPOOL_VALIDATED_INSERT_ACCEPTED`
 - `TXPOOL_VALIDATED_INSERT_REJECTED`
+
+A mempool node forwards each pending transaction to every configured builder,
+and forwards it again every `--tx-forwarding-resend-after-ms` while it stays
+pending. `TXPOOL_BUILDER_CONSUMED` is emitted per destination each time a
+transaction is queued for forwarding, and its event ID includes the builder
+URL. `TXPOOL_BUILDER_FORWARD_ATTEMPT` is emitted only for RPC retries
+(`data.attempt` >= 1); the first attempt is implied by `CONSUMED`. Successful
+delivery is recorded by the receiving builder as
+`TXPOOL_VALIDATED_INSERT_ACCEPTED`, whose event ID includes the builder host, so
+the mempool node no longer emits `TXPOOL_BUILDER_FORWARD_SUCCESS`.
 
 `TXPOOL_BUILDER_FORWARD_DROPPED` is emitted only for transaction-scoped drops
 where the forwarding task still knows the `tx_hash`, such as final RPC failure

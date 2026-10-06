@@ -50,7 +50,18 @@ pub struct DockerContainerManager {
 }
 
 impl DockerContainerManager {
-    /// Connects to the Docker daemon via a Unix socket.
+    /// Connects to the Docker or Podman daemon using environment defaults.
+    ///
+    /// Respects the `DOCKER_HOST` environment variable, which Podman sets when
+    /// exposing its socket through a Docker-compatible shim.  Falls back to the
+    /// platform default socket path when `DOCKER_HOST` is not set.
+    pub fn connect_with_defaults() -> Result<Self> {
+        let client = Docker::connect_with_socket_defaults()
+            .context("failed to connect to Docker/Podman daemon")?;
+        Ok(Self { client })
+    }
+
+    /// Connects to the Docker daemon via an explicit Unix socket path.
     pub fn new(socket_path: &str) -> Result<Self> {
         let client = Docker::connect_with_socket(socket_path, 120, bollard::API_DEFAULT_VERSION)
             .with_context(|| format!("failed to connect to Docker socket at {socket_path}"))?;

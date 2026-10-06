@@ -28,3 +28,6 @@ alloy-consensus.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["test-utils"] }
+
+[features]
+test-utils = []

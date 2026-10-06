@@ -488,10 +488,11 @@ mod tests {
 
     use async_trait::async_trait;
     use base_prover_service_protocol::{
-        GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest,
-        HeartbeatResponse, ProofJob, ProofJobStatus, ProofRequest, ProofRequestKind,
-        RecordProofSessionRequest, RecordProofSessionResponse, SnarkPlonkProofRequest,
-        WorkerSubmitProofRequest, WorkerSubmitProofResponse, ZkProofRequest,
+        AbandonProofRequest, AbandonProofResponse, GetNextProofResponse, GetProofSessionRequest,
+        GetProofSessionResponse, HeartbeatRequest, HeartbeatResponse, ProofJob, ProofJobStatus,
+        ProofRequest, ProofRequestKind, RecordProofSessionRequest, RecordProofSessionResponse,
+        SnarkPlonkProofRequest, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
+        ZkProofRequest,
     };
     use chrono::Utc;
     use tokio::time::timeout;
@@ -564,6 +565,13 @@ mod tests {
             panic!("heartbeat is not used by job discovery tests")
         }
 
+        async fn abandon_proof(
+            &self,
+            _request: AbandonProofRequest,
+        ) -> Result<AbandonProofResponse, ProverServiceClientError> {
+            panic!("abandon_proof is not used by job discovery tests")
+        }
+
         async fn submit_proof(
             &self,
             _request: WorkerSubmitProofRequest,
@@ -626,7 +634,6 @@ mod tests {
             number_of_blocks_to_prove: 1,
             sequence_window: None,
             l1_head: None,
-            intermediate_root_interval: None,
             schedule_l2_block_number: None,
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,

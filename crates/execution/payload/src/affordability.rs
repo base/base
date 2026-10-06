@@ -61,11 +61,23 @@ impl CoinbaseTipAffordability {
         let Some(signed) = tx.as_eip8130() else {
             return false;
         };
-        let Some(tip) = CoinbaseTip::decode(signed.tx(), tx.sender()) else {
+        let Some(tip) = CoinbaseTip::decode(signed.tx()) else {
             return false;
         };
         let sender = tx.sender();
-        let payer = signed.tx().payer.unwrap_or(sender);
+        // Admission already resolved the payer (recovering it in open payer
+        // mode), so reuse it rather than recovering the signature again for
+        // every build attempt. Without a classification, an open payer whose
+        // signature does not recover cannot be priced and is skipped.
+        let payer = match tx.limit_class() {
+            Some(class) => class.payer,
+            None => {
+                let Ok(payer) = signed.resolved_payer(sender) else {
+                    return true;
+                };
+                payer
+            }
+        };
         Self::unaffordable_tip(
             sender,
             payer,
@@ -80,7 +92,13 @@ impl CoinbaseTipAffordability {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, U256};
+    use alloy_consensus::transaction::Recovered;
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{Address, B256, Bytes, U256};
+    use base_common_consensus::{
+        BaseTxEnvelope, Call, Eip8130Constants, Eip8130Signed, Predeploys, TxEip8130,
+    };
+    use base_execution_txpool::{BasePooledTransaction, BasePooledTx, LimitClass};
     use revm::{
         Database,
         database::InMemoryDB,
@@ -175,6 +193,59 @@ mod tests {
         assert!(!CoinbaseTipAffordability::unaffordable_tip(
             SENDER, PAYER, 21_000, 0, 2, TIP, &mut db
         ));
+    }
+
+    /// An open-payer transaction tipping the fee vault, whose `payer_auth` is
+    /// 65 zero bytes (`v = 0`), which never recovers.
+    fn unrecoverable_open_payer_tip() -> BasePooledTransaction {
+        let tx = TxEip8130 {
+            gas_limit: 21_000,
+            max_fee_per_gas: 2,
+            payer: Some(Eip8130Constants::OPEN_PAYER),
+            calls: vec![vec![Call {
+                to: Predeploys::SEQUENCER_FEE_VAULT,
+                value: TIP,
+                data: Bytes::new(),
+            }]],
+            ..Default::default()
+        };
+        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(
+            tx,
+            Bytes::from(vec![0u8; 65]),
+            Bytes::from(vec![0u8; 65]),
+        ));
+        let encoded_len = envelope.encode_2718_len();
+        BasePooledTransaction::new(Recovered::new_unchecked(envelope, SENDER), encoded_len)
+    }
+
+    /// Block building prices an open payer from the payer admission resolved,
+    /// without recovering `payer_auth` again. Without a classification the
+    /// payer must be recovered, and an unrecoverable one is skipped.
+    #[test]
+    fn open_payer_uses_the_admission_resolved_payer() {
+        let mut db = InMemoryDB::default();
+        fund(&mut db, PAYER, 42_000);
+        fund(&mut db, SENDER, 1_000);
+        let tx = unrecoverable_open_payer_tip();
+        assert!(
+            CoinbaseTipAffordability::unaffordable(&tx, 0, &mut db),
+            "an unclassified open payer that does not recover is unaffordable"
+        );
+
+        tx.set_limit_class(LimitClass {
+            sender: SENDER,
+            payer: PAYER,
+            classification_generation: 0,
+            sender_locked: false,
+            payer_locked: false,
+            payer_trusted: false,
+            payer_balance: U256::from(42_000u64),
+            max_cost: U256::from(42_000u64),
+        });
+        assert!(
+            !CoinbaseTipAffordability::unaffordable(&tx, 0, &mut db),
+            "the classified payer covers gas and the sender covers the tip"
+        );
     }
 
     #[test]

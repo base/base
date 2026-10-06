@@ -2,7 +2,7 @@
 //!
 //! [`SequencerActor`]: super::SequencerActor
 
-use std::{num::NonZeroU64, time::Duration};
+use std::time::Duration;
 
 use url::Url;
 
@@ -20,10 +20,6 @@ pub struct SequencerConfig {
     pub sequencer_stopped: bool,
     /// Whether or not the sequencer is in recovery mode.
     pub sequencer_recovery_mode: bool,
-    /// Number of private blocks to build per cycle when running as a shadow sequencer.
-    ///
-    /// When [`None`], the node runs as a normal sequencer.
-    pub shadow_blocks_per_cycle: Option<NonZeroU64>,
     /// Optional account funding for the first private block of each shadow cycle.
     pub shadow_funding: Option<ShadowFunding>,
     /// The [`Url`] for the conductor RPC endpoint. If [`Some`], enables the conductor service.
@@ -55,11 +51,6 @@ impl SequencerConfig {
     pub const MAX_SHADOW_BLOCKS_PER_CYCLE: u64 = 300;
     /// Default request timeout for L1 RPC calls on the sequencer block-production hot path.
     pub const DEFAULT_L1_RPC_TIMEOUT: Duration = Duration::from_millis(500);
-
-    /// Returns whether shadow sequencer mode is enabled.
-    pub const fn is_shadow_sequencer(&self) -> bool {
-        self.shadow_blocks_per_cycle.is_some()
-    }
 }
 
 impl Default for SequencerConfig {
@@ -67,7 +58,6 @@ impl Default for SequencerConfig {
         Self {
             sequencer_stopped: false,
             sequencer_recovery_mode: false,
-            shadow_blocks_per_cycle: None,
             shadow_funding: None,
             conductor_rpc_url: None,
             conductor_binary_commit: false,
