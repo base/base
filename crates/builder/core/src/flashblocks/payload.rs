@@ -317,7 +317,10 @@ where
             skip_flashblocks_building, // need to calculate state root for CL sync or if not building flashblocks
         )?;
 
+        BuilderMetrics::fallback_construction_duration().record(fallback_start.elapsed());
+        let fallback_handoff_start = Instant::now();
         self.outputs.payload_tx.send(payload.clone()).await.map_err(PayloadBuilderError::other)?;
+        BuilderMetrics::fallback_handoff_duration().record(fallback_handoff_start.elapsed());
 
         info!(
             target: "payload_builder",
@@ -812,6 +815,7 @@ where
 
                 // Record flashblock build duration
                 let flashblock_build_duration = flashblock_build_start_time.elapsed();
+                let diagnostics_start = Instant::now();
                 self.emit_flashblock_event(
                     ctx,
                     &payload_id,
@@ -890,6 +894,8 @@ where
                     target_flashblocks = ctx.target_flashblock_count(),
                 );
 
+                BuilderMetrics::flashblock_diagnostics_duration()
+                    .record(diagnostics_start.elapsed());
                 Ok(Some(next_extra))
             }
         }
@@ -932,6 +938,7 @@ where
         span: &tracing::Span,
         message: &str,
     ) {
+        let metrics_start = Instant::now();
         BuilderMetrics::block_built_success().increment(1);
         BuilderMetrics::flashblock_count().record(ctx.flashblock_index() as f64);
         BuilderMetrics::missing_flashblocks_count()
@@ -956,6 +963,7 @@ where
         );
 
         span.record("flashblock_count", ctx.flashblock_index());
+        BuilderMetrics::payload_finish_metrics_duration().record(metrics_start.elapsed());
     }
 
     /// Finalize the payload by computing the state root.
