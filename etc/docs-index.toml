@@ -300,7 +300,7 @@ digest = "de5aceb5e6"
 
 ["crates/consensus/rpc/README.md"]
 summary = "jsonrpsee trait definitions for the rollup node RPC, chiefly optimism_syncStatus, with a security note that the endpoint is internal-only. Use when implementing or calling consensus RPC."
-digest = "a0d3fd00d7"
+digest = "969c4d6125"
 
 ["crates/consensus/safedb/README.md"]
 summary = "redb-backed persistent safe head tracking (SafeDB, SafeHeadListener, SafeDBReader) serving optimism_safeHeadAtL1; not multi-process safe. Use when working on safe head history."
@@ -308,7 +308,7 @@ digest = "030a8cd22a"
 
 ["crates/consensus/service/README.md"]
 summary = "Consensus node composition layer: actor model, RollupNode vs FollowNode, startup sequence, and each actor (engine, derivation, sequencer, network, L1 watcher, RPC). Read to understand node wiring."
-digest = "5842c6289d"
+digest = "07a60f6111"
 
 ["crates/consensus/service/src/actors/network/README.md"]
 summary = "Overview and example of the network actor, which owns libp2p gossip and discv5 discovery, built via NetworkBuilder or with_transport for tests. Use when wiring or testing the P2P actor."
