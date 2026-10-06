@@ -58,9 +58,20 @@ Rerunning the same command resumes an interrupted inspection with the same proje
 prepared fork is left unchanged. A changed config, unrecognized files in `--dir`, or a concurrent
 command holding the fork lock fails without modifying the fork.
 
+To omit `--dir` from later commands, select the initialized fork once:
+
+```sh
+just devnet snapshot setup --dir /data/snapshot/fork
+```
+
+Setup validates the endpoints and saves them privately in the fork's `upstreams.json`. It reads
+them from the environment, `~/.config/base/l1.env` or a previous `upstreams.json`, prompting only
+when none is configured. A configured endpoint that fails validation is an error, not a prompt.
+
 ## Start, check and stop the fork
 
-Keep the upstream variables exported and pass the fork directory to every command:
+Keep the upstream variables exported and pass the fork directory to every command; after setup,
+both are optional:
 
 ```sh
 just devnet snapshot up --dir /data/snapshot/fork      # alias: start
@@ -127,8 +138,10 @@ before its hash was saved must have its nonce reconciled manually.
 `manifest.json` in the fork directory records the project, pinned images, datadirs, accounts, F,
 both inspections, the contract schedule, the local transaction journal and the last shutdown
 checkpoints. `keys.json` holds the throwaway keys, `config/rollup.json` the pinned rollup config
-and `l1/` Anvil's saved state. Do not share `keys.json` or raw Docker
-logs/configuration, which may contain credentials. Never reconnect modified copies to production.
+and `l1/` Anvil's saved state, and `upstreams.json` the endpoint credentials saved by setup. The
+selected fork is saved in `~/.config/base/snapshot-devnet.json` (or `$XDG_CONFIG_HOME/base/`).
+Do not share `keys.json`, `upstreams.json` or raw Docker logs/configuration, which may contain
+credentials. Never reconnect modified copies to production.
 
 `just devnet snapshot` lists tasks; `just devnet snapshot test` runs the offline launcher tests.
 Implementation: [launcher](../scripts/devnet/snapshot_devnet.py),

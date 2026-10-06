@@ -4,6 +4,7 @@
 import argparse
 import contextlib
 import fcntl
+import getpass
 import http.client
 import ipaddress
 import json
@@ -11,9 +12,11 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shlex
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -90,18 +93,29 @@ def run(*args, env=None, timeout=120, secrets=None):
 
 
 def write_json(path, value):
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    with open(temporary, "w", opener=lambda p, flags: os.open(p, flags, 0o600)) as output:
-        json.dump(value, output, indent=2)
-        output.write("\n")
-        output.flush()
-        os.fsync(output.fileno())
-    temporary.replace(path)
+    # Unique per writer: setups selecting different forks hold different locks but share one selection.
+    # mkstemp creates the file with mode 0600.
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with open(descriptor, "w") as output:
+            json.dump(value, output, indent=2)
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
     descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
     try:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def interrupted_write(name, target):
+    """Whether `name` is a temporary file write_json left for `target` when killed before its rename."""
+    return name.startswith(target + ".") and name.endswith(".tmp")
 
 
 def request_json(url, body=None, *, path=None):
@@ -185,6 +199,78 @@ def next_slot(genesis, duration, tip, now):
     # Ceiling of wall clock; a restored head may already be slightly ahead of it.
     slot = max((now - genesis + duration - 1) // duration, (tip - genesis) // duration + 1)
     return genesis + slot * duration
+
+
+def setup_path():
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "base/snapshot-devnet.json"
+
+
+def configured_directory(directory=None):
+    if directory is not None:
+        return Path(directory).expanduser().resolve()
+    path = setup_path()
+    require(path.is_file(), "snapshot setup has not completed; run just devnet snapshot setup first")
+    selected = json.loads(path.read_text()).get("directory")
+    require(selected, "snapshot setup has not completed; run just devnet snapshot setup first")
+    directory = Path(selected)
+    require((directory / "manifest.json").is_file(),
+            "saved snapshot directory is unavailable; run just devnet snapshot setup again")
+    return directory
+
+
+def setup(args):
+    """Selects an initialized fork and privately saves its validated upstream endpoints."""
+    if not args.dir:
+        selection = json.loads(setup_path().read_text()) if setup_path().exists() else {}
+        args.dir = selection.get("directory")
+        require(args.dir and (Path(args.dir) / "manifest.json").is_file(),
+                "saved snapshot directory is unavailable; select one with --dir")
+    fork = SnapshotFork(args.dir, args.timeout)
+    require(fork.manifest is not None, "--dir requires an initialized fork")
+    require(fork.manifest.get("version") == 2
+            and fork.manifest.get("phase") in ("prepared", "stopped", "running", "starting"),
+            "unsupported or incompletely initialized snapshot manifest; data preserved")
+
+    defaults = {}
+    env_file = setup_path().parent / "l1.env"
+    if env_file.is_file():
+        for line in env_file.read_text().splitlines():
+            match = re.fullmatch(r"\s*(?:export\s+)?(ETH_L1_RPC|SNAPSHOT_UPSTREAM_EXECUTION|SNAPSHOT_UPSTREAM_BEACON)=(.*)", line)
+            if match:
+                values = shlex.split(match[2], comments=True)
+                if len(values) == 1:
+                    defaults[match[1]] = values[0]
+    defaults.update(os.environ)
+    variables = fork.manifest["upstreams"]
+    execution = (defaults.get(variables["execution"]) or fork.credentials.get("execution")
+                 or defaults.get("ETH_L1_RPC", ""))
+    if not execution:
+        execution = getpass.getpass("Ethereum L1 RPC (hidden): ").strip()
+    require(execution.startswith(("http://", "https://")), "an HTTP(S) Ethereum L1 RPC is required")
+    require(number(rpc(execution, "eth_chainId", upstream=True)) == 1, "expected Ethereum mainnet upstream")
+    configured_beacon = defaults.get(variables["beacon"]) or fork.credentials.get("beacon")
+    beacon = configured_beacon or execution
+    try:
+        genesis = request_json(beacon, path="/eth/v1/beacon/genesis")["data"]
+        require(number(genesis["genesis_time"]) > 0, "invalid Beacon genesis")
+    except (Unavailable, KeyError, ValueError, RuntimeError):
+        require(not configured_beacon, "configured Beacon endpoint failed validation; update "
+                f"{variables['beacon']} or the fork's upstreams.json and rerun setup")
+        beacon = getpass.getpass("Beacon API URL (the L1 endpoint did not provide a valid Beacon API): ").strip()
+        require(beacon.startswith(("http://", "https://")), "an HTTP(S) Beacon endpoint is required")
+        genesis = request_json(beacon, path="/eth/v1/beacon/genesis")["data"]
+        require(number(genesis["genesis_time"]) > 0, "invalid Beacon genesis")
+    require(number(request_json(beacon, path="/eth/v1/config/spec")["data"]["SECONDS_PER_SLOT"]) > 0,
+            "invalid Beacon slot duration")
+
+    path = setup_path()
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with open(fork.directory / ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        write_json(fork.directory / "upstreams.json", {"execution": execution, "beacon": beacon})
+    write_json(path, {"directory": str(fork.directory)})
+    print(f"Setup complete: {fork.directory}. Endpoint credentials saved privately in upstreams.json.\n"
+          "Run just devnet snapshot up (then status/down); --dir is optional.")
 
 
 def validate_paths(directory, paths):
@@ -303,6 +389,8 @@ class SnapshotFork:
         self.timeout = timeout
         path = self.directory / "manifest.json"
         self.manifest = json.loads(path.read_text()) if path.exists() else None
+        path = self.directory / "upstreams.json"
+        self.credentials = json.loads(path.read_text()) if path.exists() else {}
         self._containers = None
 
     def save(self):
@@ -362,7 +450,7 @@ class SnapshotFork:
 
     def endpoint(self, name):
         variable = self.manifest["upstreams"][name]
-        value = os.environ.get(variable, "")
+        value = os.environ.get(variable) or self.credentials.get(name, "")
         require(value.startswith(("http://", "https://")), f"set {variable} to an HTTP(S) endpoint")
         return value
 
@@ -378,8 +466,8 @@ class SnapshotFork:
             "PROTOCOL_VERSIONS": manifest["protocol_versions"], "L1_PORT": manifest["port"],
             "SIGNER_KEY": keys["signer"], "BATCHER_KEY": keys["batcher"],
             # Placeholders allow stop/status without provider credentials. Start validates them.
-            "L1_RPC": os.environ.get(manifest["upstreams"]["execution"]) or "http://unconfigured.invalid",
-            "BEACON": os.environ.get(manifest["upstreams"]["beacon"]) or "http://unconfigured.invalid",
+            "L1_RPC": os.environ.get(manifest["upstreams"]["execution"]) or self.credentials.get("execution", "http://unconfigured.invalid"),
+            "BEACON": os.environ.get(manifest["upstreams"]["beacon"]) or self.credentials.get("beacon", "http://unconfigured.invalid"),
         }
         for role in ROLES:
             values[role.upper() + "_DATADIR"] = manifest["datadirs"][role]
@@ -1093,12 +1181,13 @@ class SnapshotFork:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--dir", required=True, help="fork directory")
+    common.add_argument("--dir", help="override the fork directory selected by setup")
     common.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
                         help="seconds per readiness gate except L2 execution RPC (default: %(default)s); "
                              "snapshot repair waits without a deadline; derivation and catch-up gates fail only after "
                              "this long without head progress")
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("setup", parents=[common], help="select an initialized fork and save its upstream endpoints")
     init = commands.add_parser("init", parents=[common],
                                help="initialize or resume a fork from existing writable snapshot copies")
     init.add_argument("--config", required=True)
@@ -1112,10 +1201,16 @@ def main():
                           help="L2 timestamp; defaults to the earliest the contract notice allows")
     args = parser.parse_args()
     require(args.timeout > 0, "timeout must be positive")
+    if args.command == "setup":
+        setup(args)
+        return
+    require(args.command != "init" or args.dir, "init requires --dir")
+    args.dir = configured_directory(args.dir)
     fork = SnapshotFork(args.dir, args.timeout)
     if args.command == "init":
         require(not fork.directory.exists() or fork.manifest is not None
-                or {entry.name for entry in fork.directory.iterdir()} <= {".lock", "manifest.json.tmp"},
+                or all(entry.name == ".lock" or interrupted_write(entry.name, "manifest.json")
+                       for entry in fork.directory.iterdir()),
                 "init directory contains unrecognized data; existing data is never overwritten")
         fork.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     require(fork.directory.is_dir(), "fork directory does not exist")
@@ -1150,6 +1245,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("snapshot devnet: interrupted; data preserved, rerun the same command to continue", file=sys.stderr)
         sys.exit(130)
-    except (RuntimeError, OSError, ValueError, KeyError) as error:
+    except (RuntimeError, OSError, ValueError, KeyError, EOFError) as error:
         print(f"snapshot devnet: {error}", file=sys.stderr)
         sys.exit(1)

@@ -67,6 +67,9 @@ class SnapshotTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        environment = patch.dict(os.environ, {"XDG_CONFIG_HOME": str(self.root / "user-config")})
+        environment.start()
+        self.addCleanup(environment.stop)
         self.fork = devnet.SnapshotFork(self.root / "fork", timeout=1)
         self.fork.directory.mkdir()
         self.fork.manifest = manifest()
@@ -86,6 +89,16 @@ class SnapshotTests(unittest.TestCase):
                   "validator_datadir": str(self.datadir("validator" + suffix)),
                   "port": port, **{role + "_image": role + ":local" for role in ("base", "anvil", "batcher")}}
         return {**config, **changes}
+
+    def kill_while_writing(self, path):
+        """Leaves what write_json leaves when its process is killed after writing, before the rename."""
+        child = os.fork()
+        if child == 0:
+            with patch.object(devnet.os, "fsync", side_effect=lambda _: os._exit(9)):
+                devnet.write_json(path, {"interrupted": True})
+            os._exit(1)
+        self.assertEqual(os.waitstatus_to_exitcode(os.waitpid(child, 0)[1]), 9)
+        self.assertFalse(path.exists())
 
     @contextlib.contextmanager
     def starting(self):
@@ -250,6 +263,35 @@ class SnapshotTests(unittest.TestCase):
     def test_endpoint_keeps_a_credential_ending_in_a_slash(self):
         with patch.dict(os.environ, {"TEST_EXECUTION_URL": "https://rpc.invalid/v2?key=abc/"}):
             self.assertEqual(self.fork.endpoint("execution"), "https://rpc.invalid/v2?key=abc/")
+
+    def test_concurrent_json_writers_never_share_a_temporary_file(self):
+        # Setups selecting different forks hold different locks but write the same global selection.
+        path, fsync = self.root / "selection.json", os.fsync
+        first, second = {"directory": "/first/" + "x" * 4096}, {"directory": "/second"}
+
+        def interleave(descriptor):
+            fsync(descriptor)
+            if not interleave.done:
+                interleave.done = True
+                devnet.write_json(path, second)  # Runs entirely between the first writer's fsync and rename.
+
+        interleave.done = False
+        with patch.object(devnet.os, "fsync", side_effect=interleave):
+            devnet.write_json(path, first)
+        self.assertTrue(interleave.done)
+        self.assertEqual(json.loads(path.read_text()), first)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual([entry.name for entry in self.root.iterdir() if entry.name.startswith("selection")],
+                         ["selection.json"])
+
+    def test_failed_json_write_removes_its_temporary_file_and_keeps_the_previous_file(self):
+        path = self.root / "selection.json"
+        devnet.write_json(path, {"directory": "/previous"})
+        with patch.object(devnet.json, "dump", side_effect=OSError("disk full")), self.assertRaises(OSError):
+            devnet.write_json(path, {"directory": "/next"})
+        self.assertEqual(json.loads(path.read_text()), {"directory": "/previous"})
+        self.assertEqual([entry.name for entry in self.root.iterdir() if entry.name.startswith("selection")],
+                         ["selection.json"])
 
     def test_beacon_paths_extend_the_endpoint_path_before_its_query(self):
         requests = []
@@ -715,6 +757,20 @@ class SnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "unrecognized data"):
             init("--allow-write")
         self.assertEqual(sorted(entry.name for entry in target.iterdir()), [".lock", "notes.txt"])
+
+    def test_init_resumes_after_its_first_manifest_write_was_interrupted(self):
+        config_path, config = self.root / "input.json", self.preparation()
+        devnet.write_json(config_path, config)
+        target = self.root / "new-fork"
+        target.mkdir()
+        (target / ".lock").touch()
+        self.kill_while_writing(target / "manifest.json")
+        self.assertEqual(len(list(target.iterdir())), 2)
+        with patch.object(sys, "argv", ["launcher", "init", "--dir", str(target), "--config", str(config_path),
+                                       "--allow-write"]), \
+                patch.object(devnet.SnapshotFork, "initialize") as initialize:
+            devnet.main()
+        initialize.assert_called_once_with(config, True)
 
     def test_boundary_requires_matching_snapshots_with_origins_before_fork(self):
         initial = snapshot()
@@ -1222,13 +1278,146 @@ class SnapshotTests(unittest.TestCase):
                     patch.object(devnet.SnapshotFork, method) as lifecycle:
                 devnet.main()
                 lifecycle.assert_called_once_with()
-        for argv, error in ((["up"], SystemExit), (["up", "--dir", str(self.root / "missing")], RuntimeError),
+        for argv, error in ((["up"], RuntimeError), (["up", "--dir", str(self.root / "missing")], RuntimeError),
                             (["status", "--dir", str(self.root)], RuntimeError)):
             with self.subTest(argv=argv), patch.object(sys, "argv", ["launcher", *argv]), \
                     patch.object(devnet, "run") as run, patch("sys.stderr"):
                 with self.assertRaises(error):
                     devnet.main()
                 run.assert_not_called()
+
+    def test_up_requires_completed_setup_before_any_service_operation(self):
+        with patch.object(sys, "argv", ["launcher", "up"]), patch.object(devnet, "run") as run:
+            with self.assertRaisesRegex(RuntimeError, "run just devnet snapshot setup first"):
+                devnet.main()
+            path = devnet.setup_path()
+            path.parent.mkdir(parents=True)
+            devnet.write_json(path, {"directory": str(self.root / "missing")})
+            with self.assertRaisesRegex(RuntimeError, "saved snapshot directory is unavailable"):
+                devnet.main()
+            run.assert_not_called()
+
+    def test_setup_selects_existing_fork_and_reuses_private_credentials_without_dir(self):
+        self.fork.save()
+        before = (self.fork.directory / "manifest.json").read_bytes()
+        devnet.setup_path().parent.mkdir(parents=True)
+        (devnet.setup_path().parent / "l1.env").write_text("export ETH_L1_RPC='https://rpc.invalid/secret-key'\n")
+        with patch.object(sys, "argv", ["launcher", "setup", "--dir", str(self.fork.directory)]), \
+                patch.object(devnet.getpass, "getpass", side_effect=AssertionError("configured endpoint must not prompt")), \
+                patch.object(devnet, "rpc", return_value="0x1"), \
+                patch.object(devnet, "request_json", side_effect=[{"data": {"genesis_time": "1000"}},
+                                                                 {"data": {"SECONDS_PER_SLOT": "12"}}]), \
+                patch("builtins.print") as output:
+            devnet.main()
+        self.assertEqual(devnet.configured_directory(), self.fork.directory)
+        self.assertEqual((self.fork.directory / "manifest.json").read_bytes(), before)
+        self.assertEqual((self.fork.directory / "upstreams.json").stat().st_mode & 0o777, 0o600)
+        self.assertNotIn("secret-key", devnet.setup_path().read_text() + str(output.call_args_list))
+        (devnet.setup_path().parent / "l1.env").unlink()
+        with patch.object(sys, "argv", ["launcher", "setup"]), \
+                patch.object(devnet.getpass, "getpass", side_effect=AssertionError("saved endpoint must not prompt")), \
+                patch.object(devnet, "rpc", return_value="0x1") as rpc, \
+                patch.object(devnet, "request_json", return_value={"data": {"genesis_time": "1000", "SECONDS_PER_SLOT": "12"}}), \
+                patch("builtins.print"):
+            devnet.main()
+            rpc.assert_called_once_with("https://rpc.invalid/secret-key", "eth_chainId", upstream=True)
+        for action, method in (("up", "start"), ("down", "stop")):
+            with self.subTest(action=action), patch.object(sys, "argv", ["launcher", action]), \
+                    patch.object(devnet.SnapshotFork, method, autospec=True) as lifecycle:
+                devnet.main()
+                fork = lifecycle.call_args.args[0]
+                self.assertEqual(fork.directory, self.fork.directory)
+                self.assertEqual(fork.timeout, 7200)
+                self.assertEqual(fork.endpoint("execution"), "https://rpc.invalid/secret-key")
+        devnet.write_json(self.fork.directory / "keys.json", {"signer": "0x1", "batcher": "0x2"})
+        fork = devnet.SnapshotFork(self.fork.directory)
+        self.assertEqual(fork.compose_env()["SNAPSHOT_BEACON"], "https://rpc.invalid/secret-key")
+
+    def test_setup_selects_only_initialized_forks(self):
+        for phase in (None, "inspecting"):
+            with self.subTest(phase=phase), \
+                    patch.object(sys, "argv", ["launcher", "setup", "--dir", str(self.fork.directory)]), \
+                    patch.object(devnet, "rpc") as rpc:
+                if phase:
+                    self.fork.manifest["phase"] = phase
+                    self.fork.save()
+                with self.assertRaisesRegex(RuntimeError, "initialized"):
+                    devnet.main()
+                rpc.assert_not_called()
+        self.assertFalse(devnet.setup_path().exists())
+        self.assertFalse((self.fork.directory / "upstreams.json").exists())
+
+    def test_setup_validates_saved_endpoints_without_prompting_for_replacements(self):
+        self.fork.save()
+        devnet.write_json(self.fork.directory / "upstreams.json", {
+            "execution": "https://rpc.invalid/key", "beacon": "https://beacon.invalid/key"})
+        for name, chain, metadata in (("wrong chain", "0xa", {}),
+                                      ("unreachable RPC", devnet.Unavailable("offline"), {}),
+                                      ("invalid Beacon", "0x1", {"data": {"genesis_time": "0"}})):
+            with self.subTest(name=name), \
+                    patch.object(sys, "argv", ["launcher", "setup", "--dir", str(self.fork.directory)]), \
+                    patch.object(devnet.getpass, "getpass", side_effect=AssertionError("configured endpoints must not prompt")), \
+                    patch.object(devnet, "rpc", side_effect=chain if isinstance(chain, Exception) else lambda *a, **k: chain), \
+                    patch.object(devnet, "request_json", return_value=metadata):
+                with self.assertRaises(RuntimeError):
+                    devnet.main()
+        self.assertFalse(devnet.setup_path().exists())
+
+    def test_setup_beacon_requests_extend_the_endpoint_path_before_its_query(self):
+        self.fork.save()
+        # Query credentials may end in "/"; requests and saved endpoints keep them intact.
+        execution, beacon = "https://rpc.invalid/v2?key=secret-rpc/", "https://beacon.invalid/path?token=secret-beacon/"
+        requests = []
+
+        def respond(request, timeout):
+            requests.append(request)
+            if opener.failure and not request.data:
+                raise opener.failure
+            return io.BytesIO(b'{"result": "0x1"}' if request.data else
+                              b'{"data": {"genesis_time": "1000", "SECONDS_PER_SLOT": "12"}}')
+
+        opener = Mock(failure=None)
+        opener.open.side_effect = respond
+        argv = ["launcher", "setup", "--dir", str(self.fork.directory)]
+        for name, environment, expected, saved in (
+                ("configured Beacon", {"TEST_EXECUTION_URL": execution, "TEST_BEACON_URL": beacon},
+                 ["https://beacon.invalid/path/eth/v1/beacon/genesis?token=secret-beacon/",
+                  "https://beacon.invalid/path/eth/v1/config/spec?token=secret-beacon/"], beacon),
+                ("execution fallback", {"TEST_EXECUTION_URL": execution},
+                 ["https://rpc.invalid/v2/eth/v1/beacon/genesis?key=secret-rpc/",
+                  "https://rpc.invalid/v2/eth/v1/config/spec?key=secret-rpc/"], execution)):
+            with self.subTest(name=name), patch.object(sys, "argv", argv), \
+                    patch.dict(os.environ, environment), \
+                    patch.object(devnet.urllib.request, "build_opener", return_value=opener), \
+                    patch.object(devnet.getpass, "getpass", side_effect=AssertionError("configured endpoint must not prompt")), \
+                    patch("builtins.print") as output:
+                (self.fork.directory / "upstreams.json").unlink(missing_ok=True)
+                requests.clear()
+                devnet.main()
+                self.assertEqual([request.full_url for request in requests], [execution, *expected])
+                self.assertNotIn("secret", devnet.setup_path().read_text() + str(output.call_args_list))
+                self.assertEqual(json.loads((self.fork.directory / "upstreams.json").read_text()),
+                                 {"execution": execution, "beacon": saved})
+        opener.failure = devnet.urllib.error.URLError(beacon)
+        with patch.object(sys, "argv", argv), \
+                patch.dict(os.environ, {"TEST_EXECUTION_URL": execution, "TEST_BEACON_URL": beacon}), \
+                patch.object(devnet.urllib.request, "build_opener", return_value=opener):
+            with self.assertRaisesRegex(RuntimeError, "configured Beacon endpoint failed validation") as caught:
+                devnet.main()
+        self.assertNotIn("secret", str(caught.exception))
+
+    def test_setup_lock_prevents_concurrent_preparation(self):
+        self.fork.save()
+        with open(self.fork.directory / ".lock", "a") as lock, \
+                patch.object(sys, "argv", ["launcher", "setup", "--dir", str(self.fork.directory)]), \
+                patch.object(devnet.getpass, "getpass", return_value="https://rpc.invalid/key"), \
+                patch.object(devnet, "rpc", return_value="0x1"), \
+                patch.object(devnet, "request_json", return_value={"data": {"genesis_time": "1000", "SECONDS_PER_SLOT": "12"}}):
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with self.assertRaises(BlockingIOError):
+                devnet.main()
+        self.assertFalse((self.fork.directory / "upstreams.json").exists())
+        self.assertFalse(devnet.setup_path().exists())
 
     def test_first_start_runs_every_gate_in_order_before_sequencing_and_catch_up(self):
         calls = []
@@ -1956,7 +2145,7 @@ class SnapshotTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("just"), "requires the just command dispatcher")
     def test_nested_just_commands_forward_arguments_without_starting_services(self):
         environment = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
-        for command in ("init", "up", "down", "start", "stop", "status", "reset", "schedule-denim"):
+        for command in ("setup", "init", "up", "down", "start", "stop", "status", "reset", "schedule-denim"):
             with self.subTest(command=command):
                 result = subprocess.run(
                     ["just", "devnet", "snapshot", command, "--dir", str(self.root / "fork with spaces"), "--help"],
@@ -1976,9 +2165,9 @@ class SnapshotTests(unittest.TestCase):
             with self.subTest(args=args):
                 result = subprocess.run(["just", *args], cwd=devnet.ROOT, capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                for command in ("init", "up", "down", "status", "reset", "schedule-denim", "test"):
+                for command in ("setup", "init", "up", "down", "status", "reset", "schedule-denim", "test"):
                     self.assertIn(command, result.stdout)
-                for command in ("setup", "deposit", "verify"):
+                for command in ("deposit", "verify"):
                     self.assertNotIn(command, result.stdout)
         target = self.root / "fork with spaces"
         config_path = self.root / "input with spaces.json"
