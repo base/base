@@ -397,6 +397,90 @@ const TEST_PARENT_BEACON_BLOCK_ROOT: B256 =
     b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
 
 #[tokio::test]
+async fn test_pending_without_flashblocks_snapshot() -> Result<()> {
+    let harness = FlashblocksHarness::new().await?;
+    let client = harness.rpc_client()?;
+    // Emit LOG0 during creation, then return runtime code that returns 42.
+    // Both the creation log and the contract exist only in the executed pending block.
+    let (deployment, contract, _) = Account::Deployer.create_deployment_tx(
+        bytes!("60006000a0600a6011600039600a6000f3602a60005260206000f3"),
+        0,
+    )?;
+    let prepared = harness.prepare_unsafe_block(vec![L1_BLOCK_INFO_DEPOSIT_TX, deployment]).await?;
+    assert!(harness.flashblocks_state().get_pending_blocks().as_ref().is_none());
+
+    let call = json!({ "to": contract, "gas": "0x186a0" });
+    let latest_call: Bytes = client.request("eth_call", json!([call, "latest"])).await?;
+    assert!(latest_call.is_empty());
+    let latest_gas: U256 = client.request("eth_estimateGas", json!([call, "latest"])).await?;
+    let latest_nonce: U256 = client
+        .request("eth_getTransactionCount", json!([Account::Deployer.address(), "latest"]))
+        .await?;
+    assert_eq!(latest_nonce, U256::ZERO);
+
+    let block: serde_json::Value =
+        client.request("eth_getBlockByNumber", json!(["pending", false])).await?;
+    let count: U256 =
+        client.request("eth_getBlockTransactionCountByNumber", json!(["pending"])).await?;
+    let nonce: U256 = client
+        .request("eth_getTransactionCount", json!([Account::Deployer.address(), "pending"]))
+        .await?;
+    let output: Bytes = client.request("eth_call", json!([call, "pending"])).await?;
+    let gas: U256 = client.request("eth_estimateGas", json!([call, "pending"])).await?;
+    let simulated: serde_json::Value = client
+        .request("eth_simulateV1", json!([{ "blockStateCalls": [{ "calls": [call] }] }, "pending"]))
+        .await?;
+    // Base's local_pending_block returns latest, so regular log filtering falls through
+    // to range validation and rejects an end above the canonical head, even for pending-only.
+    let mut log_errors = Vec::new();
+    for from in ["pending", "earliest"] {
+        let result: Result<serde_json::Value, _> = client
+            .request("eth_getLogs", json!([{ "fromBlock": from, "toBlock": "pending" }]))
+            .await;
+        log_errors
+            .push(result.err().and_then(|error| error.as_error_resp().map(|error| error.code)));
+    }
+    let expected_output = format!("0x{:064x}", 42);
+    assert_eq!(
+        json!({
+            "blockHash": block["hash"],
+            "transactionCount": count,
+            "nonce": nonce,
+            "call": output,
+            "executesContractForGas": gas > latest_gas,
+            "simulatedCall": simulated[0]["calls"][0]["returnData"],
+            "logErrors": log_errors,
+        }),
+        json!({
+            "blockHash": prepared.new_block_hash,
+            "transactionCount": U256::from(2),
+            "nonce": U256::from(1),
+            "call": expected_output,
+            "executesContractForGas": true,
+            "simulatedCall": expected_output,
+            "logErrors": [-32602, -32602],
+        }),
+    );
+
+    let latest: serde_json::Value =
+        client.request("eth_getBlockByNumber", json!(["latest", false])).await?;
+    assert_eq!(latest["hash"], json!(prepared.parent_hash));
+
+    // Once FCU consumes the executed pending block, the regular fallback is latest again.
+    harness.engine().update_forkchoice(prepared.parent_hash, prepared.new_block_hash, None).await?;
+    harness.wait_for_header(prepared.new_block_hash, prepared.new_block_number).await?;
+    let pending: serde_json::Value =
+        client.request("eth_getBlockByNumber", json!(["pending", false])).await?;
+    assert_eq!(pending["hash"], json!(prepared.new_block_hash));
+    let logs: Vec<serde_json::Value> = client
+        .request("eth_getLogs", json!([{ "fromBlock": "pending", "toBlock": "pending" }]))
+        .await?;
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0]["address"], json!(contract));
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_get_pending_block() -> Result<()> {
     let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();

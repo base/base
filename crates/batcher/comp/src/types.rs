@@ -51,7 +51,7 @@ pub enum BrotliLevel {
 
 impl BrotliLevel {
     /// Default quality used by the batcher.
-    pub const DEFAULT: Self = Self::Brotli10;
+    pub const DEFAULT: Self = Self::Brotli9;
 
     /// Prepended to Brotli channels so `BatchReader` selects Brotli decompression.
     pub const CHANNEL_VERSION: u8 = 0x01;
@@ -113,27 +113,30 @@ mod tests {
 
     use super::*;
 
+    /// A channel starts with the Brotli version byte, and the rest decompresses back to its
+    /// input at the lowest, default and highest quality. The highest quality compresses
+    /// smaller than the lowest, so the level reaches the compressor.
     #[cfg(feature = "std")]
     #[test]
-    fn brotli_channel_has_version_prefix() {
-        let channel = BrotliLevel::Brotli10.compress_channel(b"batch channel data").unwrap();
-
-        assert_eq!(channel.first(), Some(&BrotliLevel::CHANNEL_VERSION));
+    fn brotli_channel_roundtrips_at_min_default_and_max_quality() {
+        let input: Vec<u8> = (0..1_000u32).flat_map(|i| (i % 251).to_le_bytes()).collect();
+        let sizes =
+            [BrotliLevel::Brotli0, BrotliLevel::DEFAULT, BrotliLevel::Brotli11].map(|level| {
+                let channel = level.compress_channel(&input).unwrap();
+                assert_eq!(channel[0], BrotliLevel::CHANNEL_VERSION);
+                let decompressed = Brotli
+                    .decompress(
+                        &channel[1..],
+                        RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize,
+                    )
+                    .unwrap();
+                assert_eq!(decompressed, input);
+                channel.len()
+            });
+        assert!(sizes[2] < sizes[0], "quality 11 must compress smaller than quality 0: {sizes:?}");
     }
 
-    #[cfg(feature = "std")]
-    #[test]
-    fn brotli_channel_roundtrips_at_quality_bounds() {
-        let input = b"batch channel data";
-        for level in [BrotliLevel::Brotli0, BrotliLevel::Brotli11] {
-            let channel = level.compress_channel(input).unwrap();
-            let decompressed = Brotli
-                .decompress(&channel[1..], RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize)
-                .unwrap();
-            assert_eq!(decompressed, input);
-        }
-    }
-
+    /// Qualities 0 to 11 each map to their Brotli level and back, and 12 is refused.
     #[test]
     fn brotli_levels_cover_the_full_encoder_range() {
         let levels = [

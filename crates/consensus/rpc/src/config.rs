@@ -25,6 +25,9 @@ pub struct RpcBuilder {
 }
 
 impl RpcBuilder {
+    /// Number of restart attempts made when restarts are allowed.
+    const RESTART_ATTEMPTS: u32 = 3;
+
     /// Returns whether WebSocket RPC endpoint is enabled
     pub const fn ws_enabled(&self) -> bool {
         self.ws_enabled
@@ -47,7 +50,7 @@ impl RpcBuilder {
 
     /// Returns the number of times the RPC server will attempt to restart if it stops.
     pub const fn restart_count(&self) -> u32 {
-        if self.no_restart { 0 } else { 3 }
+        if self.no_restart { 0 } else { Self::RESTART_ATTEMPTS }
     }
 
     /// Sets the given [`SocketAddr`] on the [`RpcBuilder`].

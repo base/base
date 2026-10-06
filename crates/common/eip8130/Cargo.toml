@@ -1,0 +1,31 @@
+[package]
+name = "base-common-eip8130"
+description = "Engine-neutral EIP-8130 gas schedule, intrinsic gas, and nonce-manager slot derivation"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# alloy
+alloy-primitives.workspace = true
+
+# base
+base-common-consensus = { workspace = true, default-features = false }
+
+# misc
+thiserror.workspace = true
+
+[dev-dependencies]
+alloy-sol-types.workspace = true
+
+[features]
+default = [ "std" ]
+std = [ "alloy-primitives/std", "base-common-consensus/std", "thiserror/std" ]

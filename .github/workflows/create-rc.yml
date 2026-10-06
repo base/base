@@ -6,22 +6,18 @@ on:
       - 'releases/v*'
 
 permissions:
-  actions: read
+  actions: write
   contents: write
-  packages: write
-  id-token: write
-  attestations: write
-
-concurrency:
-  group: release-${{ github.ref_name }}
-  cancel-in-progress: false
 
 jobs:
   create-tag:
     runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.read-tag.outputs.tag }}
-      skip: ${{ steps.version-check.outputs.skip }}
+    # Serialize RC number allocation and dispatch, never the artifact builds.
+    # The default single pending slot cancels older queued RCs on rapid pushes.
+    concurrency:
+      group: release-${{ github.ref_name }}
+      cancel-in-progress: false
+      queue: max
 
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -32,7 +28,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ github.ref_name }}
+          # Tag the triggering commit even if the branch advances while queued.
+          ref: ${{ github.sha }}
           fetch-depth: 0
           fetch-tags: true
 
@@ -43,9 +40,9 @@ jobs:
           VERSION=$(get_cargo_version)
           if [[ "$VERSION" == "0.0.0" ]]; then
             echo "::notice::Cargo.toml version is 0.0.0 — version sync PR not yet merged. Skipping RC."
-            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "skip=true" >> "$GITHUB_OUTPUT"
           else
-            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create and push tag
@@ -62,29 +59,32 @@ jobs:
             exit 1
           fi
           TAG=$(cat "$TAG_FILE")
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Release tag: $TAG"
+
+      # GITHUB_TOKEN tag pushes do not trigger workflows; dispatch explicitly.
+      # This only waits for the dispatch request, not for the build to finish.
+      - name: Dispatch RC artifact build
+        if: steps.version-check.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.read-tag.outputs.tag }}
+        run: gh workflow run build-rc.yml --ref "$TAG"
 
       - name: Summary
         run: |
           SKIP="${{ steps.version-check.outputs.skip }}"
           if [[ "$SKIP" == "true" ]]; then
-            echo "## RC Skipped" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Cargo.toml version is still 0.0.0. Merge the version sync PR first." >> $GITHUB_STEP_SUMMARY
+            echo "## RC Skipped"
+            echo ""
+            echo "Cargo.toml version is still 0.0.0. Merge the version sync PR first."
           else
             TAG="${{ steps.read-tag.outputs.tag }}"
-            echo "## Tag Created" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Tag**: \`$TAG\`" >> $GITHUB_STEP_SUMMARY
-            echo "**Type**: Release Candidate" >> $GITHUB_STEP_SUMMARY
-          fi
-
-  build:
-    needs: [create-tag]
-    if: needs.create-tag.outputs.skip == 'false'
-    uses: ./.github/workflows/build-release.yml
-    with:
-      tag: ${{ needs.create-tag.outputs.tag }}
-      is_final: false
-    secrets: inherit
+            echo "## Tag Ready"
+            echo ""
+            echo "**Tag**: \`$TAG\`"
+            echo "**Type**: Release Candidate"
+            echo ""
+            echo "Artifact build dispatched to the independent **Build RC** workflow."
+          fi >> "$GITHUB_STEP_SUMMARY"

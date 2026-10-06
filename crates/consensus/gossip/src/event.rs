@@ -28,12 +28,6 @@ pub enum Event {
     /// and network identity. Used for protocol negotiation and compatibility
     /// checking.
     Identify(Box<identify::Event>),
-
-    /// Stream protocol event for request-response communication.
-    ///
-    /// Handles direct peer-to-peer communication outside of the gossip mesh,
-    /// typically used for block synchronization requests.
-    Stream,
 }
 
 impl From<ping::Event> for Event {
@@ -54,13 +48,6 @@ impl From<identify::Event> for Event {
     /// Converts [`identify::Event`] to [Event]
     fn from(value: identify::Event) -> Self {
         Self::Identify(Box::new(value))
-    }
-}
-
-impl From<()> for Event {
-    /// Converts () to [Event]
-    fn from(_value: ()) -> Self {
-        Self::Stream
     }
 }
 

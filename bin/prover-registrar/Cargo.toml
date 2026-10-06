@@ -17,8 +17,9 @@ workspace = true
 
 [dependencies]
 # Internal
-base-cli-utils.workspace = true
 base-tx-manager.workspace = true
+reth-node-core = { workspace = true, features = ["otlp"] }
+base-cli-utils = { workspace = true, features = ["otlp"] }
 base-proof-tee-registrar = { workspace = true, features = ["metrics"] }
 
 # Alloy

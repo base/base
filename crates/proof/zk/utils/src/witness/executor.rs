@@ -140,9 +140,7 @@ where
 
     /// Run derivation and block execution to produce the proven boot info and derived L2 block.
     ///
-    /// The intermediate root sampling interval is taken from
-    /// [`BootInfo::intermediate_block_interval`] (committed via preimage key 9, same source as
-    /// the TEE), so callers do not need to pass it explicitly.
+    /// Intermediate roots are sampled every [`crate::INTERMEDIATE_ROOT_INTERVAL`] blocks.
     pub async fn run<DP, P>(
         &self,
         boot: BootInfo,
@@ -159,7 +157,6 @@ where
 
         let boot_clone = boot.clone();
         let activation_admin_address = boot.activation_admin_address;
-        let intermediate_block_interval = boot.intermediate_block_interval.max(1);
 
         let rollup_config = Arc::new(boot.rollup_config);
 
@@ -181,7 +178,6 @@ where
             &mut driver,
             rollup_config.as_ref(),
             Some(boot.claimed_l2_block_number),
-            intermediate_block_interval,
         )
         .await?;
         #[cfg(target_os = "zkvm")]

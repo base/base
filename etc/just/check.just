@@ -4,8 +4,8 @@ _elf_stub := "BASE_SUCCINCT_ELF_STUB=1"
 default:
     @just --justfile {{source_file()}} --list --list-prefix '  check::'
 
-# Runs formatting, clippy, udeps, and deny checks
-all: format clippy udeps deny
+# Runs formatting, clippy, udeps, deny, and docs-index checks
+all: format clippy udeps deny docs-index
 
 # Checks formatting
 format:
@@ -47,19 +47,23 @@ deny:
 
 # Checks no_std crates compile without std
 no-std:
-    {{justfile_directory()}}/etc/scripts/ci/check-no-std.sh
+    @{{justfile_directory()}}/etc/scripts/ci/check-no-std.sh
 
 # Checks proof crates compile for bare-metal FPVM
 no-std-proof:
-    {{justfile_directory()}}/etc/scripts/ci/check-no-std-proof.sh
+    @{{justfile_directory()}}/etc/scripts/ci/check-no-std-proof.sh
 
 # Checks crate dependency boundary rules
 crate-deps:
-    {{justfile_directory()}}/etc/scripts/ci/check-crate-deps.sh
+    @{{justfile_directory()}}/etc/scripts/ci/check-crate-deps.sh
 
 # Verifies git-based reth-* workspace deps match etc/upstream-pins/reth.toml
 reth-pin:
     python3 {{justfile_directory()}}/etc/scripts/local/pin-reth.py check
+
+# Verifies llms.txt and llms-full.txt list every Markdown doc with a reviewed summary
+docs-index:
+    python3 {{justfile_directory()}}/etc/scripts/local/docs-index.py check
 
 [private]
 _build-contracts:

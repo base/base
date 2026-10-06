@@ -356,18 +356,21 @@ impl Drop for LocalInstance {
             // Tokio runtimes cannot perform their blocking shutdown while they are being dropped
             // from another runtime's async context. `LocalInstance` is commonly owned directly by
             // async tests, so shut down and drop its runtime on a plain thread before cleaning up
-            // the resources it owns.
+            // the resources it owns. The node and pool hold `Runtime` clones (it is an `Arc`), so
+            // they must be dropped on that thread too, or the last reference, and with it the
+            // tokio runtime, is released here in async context. Dropping them also releases their
+            // database handles before the backing files are removed below.
+            let node_handle = self.node_handle.take();
+            let pool_handle = self.pool_handle.take();
             let shutdown = std::thread::spawn(move || {
                 runtime.graceful_shutdown_with_timeout(Duration::from_secs(10));
+                drop(node_handle);
+                drop(pool_handle);
                 drop(runtime);
             });
             if let Err(panic) = shutdown.join() {
                 std::panic::resume_unwind(panic);
             }
-            // Drop the node and the pool handle (both hold open database handles via the node's
-            // provider / the pool's transaction validator) before removing the backing files.
-            drop(self.node_handle.take());
-            drop(self.pool_handle.take());
             if let Err(e) = std::fs::remove_dir_all(self.node_config().datadir().to_string()) {
                 eprintln!(
                     "Warning: failed to remove temporary data directory {}: {e}",

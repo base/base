@@ -166,6 +166,8 @@ impl BuilderConsideredEventData {
 }
 
 /// Fields emitted when the builder rejects a transaction.
+/// This journal event replaces the legacy S3 rejected-transaction RPC; retain
+/// the rejection reason and metering limit details here.
 #[derive(Debug, Serialize)]
 pub(crate) struct BuilderRejectedEventData {
     #[serde(flatten)]
@@ -649,6 +651,37 @@ mod tests {
             )),
             "tx_execution_time_exceeded"
         );
+    }
+
+    #[test]
+    fn enforced_metering_rejection_keeps_its_reason_and_limit_in_the_journal() {
+        let error = TxnExecutionError::ExecutionMeteringLimitExceeded(
+            ExecutionMeteringLimitExceeded::TransactionExecutionTime(2_000, 1_000),
+        );
+        let limits =
+            ResourceLimits { tx_execution_time_limit_us: Some(1_000), ..Default::default() };
+        let resources = TxResources {
+            da_size: 0,
+            gas_limit: 21_000,
+            payer_auth: 0,
+            execution_time_us: Some(2_000),
+            uncompressed_size: 0,
+        };
+        let data = serde_json::to_value(
+            BuilderRejectedEventData::from_error(
+                &error,
+                &ExecutionInfo::default(),
+                &limits,
+                Some(&resources),
+            )
+            .with_dry_run(false),
+        )
+        .unwrap();
+
+        assert_eq!(data["rejection_reason"], "tx_execution_time_exceeded");
+        assert_eq!(data["tx_execution_time_us"], 2_000);
+        assert_eq!(data["tx_execution_time_limit_us"], 1_000);
+        assert_eq!(data["dry_run"], false);
     }
 
     #[test]

@@ -12,6 +12,7 @@ eif*.bin
 !.env.mainnet
 !.env.sepolia
 /reth-data/
+/profiling-results/
 # SP1 ELF binaries are built on demand and not committed.
 crates/proof/zk/programs/succinct/elf/range-elf-embedded
 crates/proof/zk/programs/succinct/elf/aggregation-elf

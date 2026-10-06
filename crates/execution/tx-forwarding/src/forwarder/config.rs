@@ -2,6 +2,9 @@ use std::time::Duration;
 
 use crate::config::{DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS};
 
+/// Internal buffer cap used when RPC batch size is configured as unlimited.
+pub(crate) const UNLIMITED_BATCH_BUFFER_LIMIT: usize = 1024;
+
 /// Configuration for transaction forwarders.
 ///
 /// Each forwarder receives from its own queue and forwards transactions via
@@ -22,6 +25,15 @@ pub(crate) struct ForwarderConfig {
     pub(crate) retry_backoff: Duration,
     /// Per-request timeout for the HTTP client.
     pub(crate) request_timeout: Duration,
+}
+
+impl ForwarderConfig {
+    /// Most requests the forwarder sends in one batch.
+    ///
+    /// An unlimited `max_batch_size` is still capped, so one flush cannot grow without bound.
+    pub(crate) const fn batch_limit(&self) -> usize {
+        if self.max_batch_size == 0 { UNLIMITED_BATCH_BUFFER_LIMIT } else { self.max_batch_size }
+    }
 }
 
 impl Default for ForwarderConfig {

@@ -12,7 +12,7 @@ pub struct HealthzResponse {
 
 /// The healthz rpc server.
 #[derive(Debug, Clone)]
-pub struct HealthzRpc {}
+pub struct HealthzRpc;
 
 #[async_trait]
 impl HealthzApiServer for HealthzRpc {

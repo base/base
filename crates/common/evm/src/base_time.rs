@@ -127,11 +127,10 @@ impl BaseTime {
         }
 
         let code = Bytecode::new_raw(Self::implementation_bytecode());
-        let mut implementation_info = db.basic(Self::IMPLEMENTATION_ADDRESS)?.unwrap_or_default();
-        implementation_info.code_hash = code.hash_slow();
-        implementation_info.code = Some(code);
-
+        let implementation_info = db.basic(Self::IMPLEMENTATION_ADDRESS)?.unwrap_or_default();
         let mut implementation_account: revm::state::Account = implementation_info.into();
+        implementation_account.info.code_hash = code.hash_slow();
+        implementation_account.info.code = Some(code);
         implementation_account.mark_touch();
 
         let mut proxy_account: revm::state::Account = proxy_info.into();
@@ -185,7 +184,11 @@ mod tests {
     use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
     use alloy_primitives::{address, keccak256};
     use base_common_genesis::BaseUpgrade;
-    use revm::{Database as _, database::InMemoryDB, state::AccountInfo};
+    use revm::{
+        Database as _,
+        database::{InMemoryDB, State},
+        state::AccountInfo,
+    };
 
     use super::*;
 
@@ -304,6 +307,41 @@ mod tests {
         BaseTime::ensure_predeploy(TestUpgrades(true), 100, &mut db).unwrap();
         assert_eq!(
             db.basic(BaseTime::IMPLEMENTATION_ADDRESS).unwrap().unwrap().code_hash,
+            BaseTime::IMPLEMENTATION_CODE_HASH
+        );
+    }
+
+    #[test]
+    fn active_transition_preserves_implementation_prestate() {
+        let mut backing = base_time_db(600);
+        let proxy_code = Bytecode::new_raw(BaseTime::proxy_bytecode());
+        backing.insert_account_info(
+            Predeploys::BASE_TIME,
+            AccountInfo {
+                code_hash: proxy_code.hash_slow(),
+                code: Some(proxy_code),
+                ..Default::default()
+            },
+        );
+        backing
+            .insert_account_storage(
+                Predeploys::BASE_TIME,
+                BaseTime::ADMIN_SLOT,
+                U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()),
+            )
+            .unwrap();
+        let mut db = State::builder().with_database(backing).with_bal_builder().build();
+
+        BaseTime::ensure_predeploy(TestUpgrades(true), 100, &mut db).unwrap();
+
+        let bal = db.take_built_alloy_bal().expect("BAL builder is enabled");
+        let implementation = bal
+            .iter()
+            .find(|changes| changes.address == BaseTime::IMPLEMENTATION_ADDRESS)
+            .expect("BaseTime implementation must be present in the BAL");
+        assert_eq!(implementation.code_changes.len(), 1);
+        assert_eq!(
+            keccak256(&implementation.code_changes[0].new_code),
             BaseTime::IMPLEMENTATION_CODE_HASH
         );
     }

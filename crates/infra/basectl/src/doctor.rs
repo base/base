@@ -1424,6 +1424,7 @@ mod tests {
             consensus_node_rpc: None,
             chain_id,
             prover_rpc: None,
+            batcher_rpc: None,
             upgrades: None,
             system_config: alloy_primitives::Address::ZERO,
             batcher_address: None,

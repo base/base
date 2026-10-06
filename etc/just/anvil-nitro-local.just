@@ -20,7 +20,7 @@ down:
 # Prints container, contract, signer, L2-finality, and latest-game status
 status:
     docker compose {{ _env }} {{ _anvil }} --profile nitro-local ps {{ _services }}
-    ./etc/scripts/devnet/anvil-nitro-local.sh status
+    @./etc/scripts/devnet/anvil-nitro-local.sh status
 
 # Tails proof node, prover-service, Nitro worker, and proposer logs
 logs:
