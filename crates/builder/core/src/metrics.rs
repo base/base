@@ -24,22 +24,6 @@ base_metrics::define_metrics! {
     active_block_build_duration: histogram,
     #[describe("End-to-end wall-clock time of a successful block build, including scheduled flashblock waits")]
     block_build_wall_duration: histogram,
-    #[describe("Payload context and state provider setup duration")]
-    payload_setup_duration: histogram,
-    #[describe("Fallback payload construction, publication and handoff duration")]
-    fallback_payload_duration: histogram,
-    #[describe("Fallback block construction duration")]
-    fallback_construction_duration: histogram,
-    #[describe("Fallback payload channel handoff duration")]
-    fallback_handoff_duration: histogram,
-    #[describe("Initial transaction iterator and flashblock timer setup duration")]
-    payload_iterator_setup_duration: histogram,
-    #[describe("Final payload state root, construction and inclusion event duration")]
-    payload_finalize_duration: histogram,
-    #[describe("Post-construction flashblock event, metric and diagnostic duration")]
-    flashblock_diagnostics_duration: histogram,
-    #[describe("Final payload completion metric and diagnostic duration")]
-    payload_finish_metrics_duration: histogram,
     #[describe("Histogram of the time taken to build a Flashblock")]
     flashblock_build_duration: histogram,
     #[describe("Histogram of the time taken to sync a Flashblock")]

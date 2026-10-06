@@ -289,7 +289,6 @@ where
         )
         .into_provider();
         let db = StateProviderDatabase::new(state_provider);
-        BuilderMetrics::payload_setup_duration().record(block_build_start_time.elapsed());
 
         // 1. execute the pre steps and seal an early block with that
         let sequencer_tx_start_time = Instant::now();
@@ -307,7 +306,6 @@ where
 
         let skip_flashblocks_building = ctx.attributes().no_tx_pool || flashblocks_per_block == 0;
 
-        let fallback_start = Instant::now();
         let prev_flashblock_id = self.previous_flashblock_id();
         let (payload, fb_payload, state_diff) = build_block(
             &mut state,
@@ -317,10 +315,7 @@ where
             skip_flashblocks_building, // need to calculate state root for CL sync or if not building flashblocks
         )?;
 
-        BuilderMetrics::fallback_construction_duration().record(fallback_start.elapsed());
-        let fallback_handoff_start = Instant::now();
         self.outputs.payload_tx.send(payload.clone()).await.map_err(PayloadBuilderError::other)?;
-        BuilderMetrics::fallback_handoff_duration().record(fallback_handoff_start.elapsed());
 
         info!(
             target: "payload_builder",
@@ -365,8 +360,6 @@ where
             BuilderMetrics::payload_num_tx_gauge().set(info.executed_transactions.len() as f64);
         }
 
-        BuilderMetrics::fallback_payload_duration().record(fallback_start.elapsed());
-
         // fcu just arrived late, not syncing
         if flashblocks_per_block == 0 && !ctx.attributes().no_tx_pool {
             error!(
@@ -402,7 +395,6 @@ where
             flashblocks_interval = self.config.flashblocks_interval.as_millis(),
         );
 
-        let iterator_setup_start = Instant::now();
         let gas_per_batch = ctx.block_gas_limit() / flashblocks_per_block;
         let da_per_batch = ctx
             .builder_config
@@ -474,7 +466,6 @@ where
 
         // Highest executed nonce per sender, updated incrementally per flashblock.
         let mut executed_sender_nonces: HashMap<Address, u64> = HashMap::default();
-        BuilderMetrics::payload_iterator_setup_duration().record(iterator_setup_start.elapsed());
 
         // Process flashblocks in a blocking loop
         let result = loop {
@@ -815,7 +806,6 @@ where
 
                 // Record flashblock build duration
                 let flashblock_build_duration = flashblock_build_start_time.elapsed();
-                let diagnostics_start = Instant::now();
                 self.emit_flashblock_event(
                     ctx,
                     &payload_id,
@@ -894,8 +884,6 @@ where
                     target_flashblocks = ctx.target_flashblock_count(),
                 );
 
-                BuilderMetrics::flashblock_diagnostics_duration()
-                    .record(diagnostics_start.elapsed());
                 Ok(Some(next_extra))
             }
         }
@@ -938,7 +926,6 @@ where
         span: &tracing::Span,
         message: &str,
     ) {
-        let metrics_start = Instant::now();
         BuilderMetrics::block_built_success().increment(1);
         BuilderMetrics::flashblock_count().record(ctx.flashblock_index() as f64);
         BuilderMetrics::missing_flashblocks_count()
@@ -963,7 +950,6 @@ where
         );
 
         span.record("flashblock_count", ctx.flashblock_index());
-        BuilderMetrics::payload_finish_metrics_duration().record(metrics_start.elapsed());
     }
 
     /// Finalize the payload by computing the state root.
@@ -985,7 +971,6 @@ where
         self.emit_final_inclusion_events(ctx, &final_payload);
 
         let elapsed = start_time.elapsed();
-        BuilderMetrics::payload_finalize_duration().record(elapsed);
         info!(
             target: "payload_builder",
             block_number = ctx.block_number(),
