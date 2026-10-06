@@ -1,38 +1,51 @@
-use std::fmt;
+/// Random transaction event identifier.
+///
+/// Every emitted event gets its own ID, chosen when the event is built: 32 bytes from the
+/// thread-local CSPRNG, hex-encoded with a `0x` prefix. The ID identifies one emission, not
+/// the fact it describes. Two emissions about the same transaction always get different IDs,
+/// so downstream ingest never discards one observation as a duplicate of another. Collector
+/// retries and journal replays resend the serialized event, so they keep its ID and ingest
+/// still drops the redelivered copy.
+#[derive(Debug, Clone, Copy)]
+pub struct EventId;
 
-use sha2::{Digest, Sha256};
-
-/// Builder for deterministic event IDs.
-#[derive(Debug, Clone)]
-pub struct EventIdBuilder {
-    hasher: Sha256,
-}
-
-impl EventIdBuilder {
-    /// Creates an empty event ID builder.
-    pub fn new() -> Self {
-        Self { hasher: Sha256::new() }
-    }
-
-    /// Adds a stable component to the ID hash.
-    pub fn part(mut self, name: &str, value: impl fmt::Display) -> Self {
-        let value = value.to_string();
-        self.hasher.update(name.as_bytes());
-        self.hasher.update([0]);
-        self.hasher.update(value.len().to_le_bytes());
-        self.hasher.update(value.as_bytes());
-        self.hasher.update([0xff]);
-        self
-    }
-
-    /// Finalizes the event ID as a hex-encoded SHA-256 digest.
-    pub fn finish(self) -> String {
-        format!("0x{}", hex::encode(self.hasher.finalize()))
+impl EventId {
+    /// Returns a new random event ID.
+    pub fn random() -> String {
+        format!("0x{}", hex::encode(rand::random::<[u8; 32]>()))
     }
 }
 
-impl Default for EventIdBuilder {
-    fn default() -> Self {
-        Self::new()
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashSet, thread};
+
+    use super::*;
+
+    #[test]
+    fn random_ids_keep_the_existing_wire_format() {
+        let id = EventId::random();
+
+        assert_eq!(id.len(), 66);
+        assert!(id.starts_with("0x"));
+        assert!(id[2..].bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()));
+    }
+
+    #[test]
+    fn concurrent_random_ids_are_unique() {
+        const THREADS: usize = 8;
+        const PER_THREAD: usize = 1_000;
+
+        let ids: Vec<String> = thread::scope(|scope| {
+            let handles: Vec<_> = (0..THREADS)
+                .map(|_| {
+                    scope.spawn(|| (0..PER_THREAD).map(|_| EventId::random()).collect::<Vec<_>>())
+                })
+                .collect();
+            handles.into_iter().flat_map(|handle| handle.join().unwrap()).collect()
+        });
+
+        let unique: HashSet<_> = ids.iter().collect();
+        assert_eq!(unique.len(), THREADS * PER_THREAD);
     }
 }

@@ -475,10 +475,6 @@ pub(crate) fn emit_builder_transaction_event<D, F>(
         maybe_block_hash: ctx.block_hash,
         block_number: ctx.block_number,
         payload_id: ctx.payload_id,
-        id: {
-            "flashblock_index" => ctx.flashblock_index.map(|index| index.to_string()).unwrap_or_default(),
-            "ordering_position" => ctx.ordering_position.map(|position| position.to_string()).unwrap_or_default(),
-        },
         data: data,
     ) {
         Ok(TransactionEventEmitOutcome::Emitted) => {
@@ -524,9 +520,6 @@ pub(crate) fn emit_builder_payload_event<D, F>(
         maybe_block_hash: ctx.block_hash,
         block_number: ctx.block_number,
         payload_id: ctx.payload_id,
-        id: {
-            "flashblock_index" => ctx.flashblock_index.map(|index| index.to_string()).unwrap_or_default(),
-        },
         data: data,
     ) {
         Ok(TransactionEventEmitOutcome::Emitted) => {
@@ -572,6 +565,31 @@ mod tests {
             builder_mode: "flashblocks",
             source_queue: "txpool_best",
         }
+    }
+
+    /// A rebuilt payload can repeat a decision context exactly; each emission is still recorded.
+    #[test]
+    fn repeated_builder_decisions_emit_distinct_event_ids() {
+        let capture = base_observability_events::TransactionEventCapture::install();
+        let tx_hash = TxHash::repeat_byte(0xc4);
+
+        for _ in 0..2 {
+            emit_builder_transaction_event(
+                context(),
+                TransactionEventType::BuilderConsidered,
+                tx_hash,
+                || BuilderIncludedEventData::new("test"),
+            );
+        }
+
+        let ids: Vec<_> = capture
+            .events()
+            .into_iter()
+            .filter(|event| event.tx_hash == Some(tx_hash))
+            .map(|event| event.event_id)
+            .collect();
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0], ids[1]);
     }
 
     #[test]

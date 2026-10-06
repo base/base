@@ -239,8 +239,8 @@ summary = "Defines the alloy Network implementation for Base (Base type with Bas
 digest = "66133b4e24"
 
 ["crates/common/observability-events/README.md"]
-summary = "Producer-side transaction-event/v1 JSONL envelope and non-blocking writer for transaction audit journals, with field and privacy rules. Use when emitting transaction lifecycle events."
-digest = "3e17333f7d"
+summary = "Producer-side transaction-event/v1 JSONL envelope, non-blocking writer and random per-emission event_id rules. Use when emitting transaction lifecycle events."
+digest = "024f5aad79"
 
 ["crates/common/precompile-macros/README.md"]
 summary = "Proc macros for native precompile storage: #[contract], #[namespace], #[derive(Storable)], and primitive/array impl generators. Use when defining precompile storage layouts (adapted from Tempo)."
@@ -679,8 +679,8 @@ summary = "Step-by-step guide to adding a network upgrade (Azul as example): Bas
 digest = "e87f3373b8"
 
 ["docs/transaction-events/README.md"]
-summary = "Spec for transaction-event/v1, the JSONL business event journal for transaction observability: config fields, envelope, event vocabulary, Vector to audit-archiver ingest, Postgres retention, examples."
-digest = "1089184709"
+summary = "Spec for transaction-event/v1, the Base transaction observability event journal: config fields, envelope, Postgres retention, event vocabulary, event ID guidance, and Vector to audit-archiver ingest."
+digest = "1fc074ef87"
 
 ["docs/transaction-events/tips-parity-checklist.md"]
 summary = "Checklist for verifying TIPS UI audit-archiver/Postgres responses match the S3-backed routes (block, txn, bundle, rejected) before switching TIPS_UI_QUERY_BACKEND=audit."

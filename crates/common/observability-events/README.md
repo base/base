@@ -15,21 +15,35 @@ stdout/stderr and the normal Kubernetes log pipeline.
   mirrored by non-Rust producers.
 - **`TransactionEventType`**: Versioned vocabulary for proxy, ingress, txpool,
   and builder transaction lifecycle events.
-- **`EventIdBuilder`**: Helper for deterministic event IDs so downstream ingest
-  can deduplicate retries.
+- **`EventId`**: Random per-emission event IDs; redelivered copies keep theirs.
 - **`TransactionEventWriter`**: Non-blocking JSONL append writer with bounded
   queueing, aggregate dropped-event metrics, write-error metrics, and bytes
   written metrics.
 - **`TransactionEventBuilder`** and **`transaction_event!`**: Helpers for
   producer call sites that use the process-global transaction event writer while
-  filling common envelope fields such as `event_time`, `network`, join keys,
-  deterministic event IDs, and write-failure logging.
+  filling common envelope fields such as `event_id`, `event_time`, `network`,
+  join keys, and write-failure logging.
 
 ## Contract Notes
 
 Required envelope fields are `schema_version`, `event_id`, `event_time`,
 `producer`, and `event_type`. Producers should include at least one join key
 whenever available: `tx_hash`, `block_hash`/`block_number`, or `payload_id`.
+
+### Event Identity
+
+`event_id` is 32 random bytes, hex-encoded with a `0x` prefix, chosen when the
+event is built. It identifies one emission, not the fact the event describes.
+Two emissions about the same transaction always get different IDs, even when
+every other field matches, so ingest never discards one observation as a
+duplicate of another. To count or group facts (for example one row per
+transaction, event type and payload), group by the join keys and `data` fields
+at query time.
+
+The ID is part of the serialized event. Collector retries, journal rotation
+and replays resend the same line, so they keep its ID and ingest drops the
+redelivered copy. Nothing regenerates an ID for an event that was already
+built.
 
 Producer-specific fields belong in `data`. Do not put raw transaction bytes,
 calldata, full request bodies, API keys, secrets, private keys, tokens, or raw

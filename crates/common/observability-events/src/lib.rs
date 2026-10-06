@@ -22,7 +22,7 @@ pub mod test_utils;
 pub use test_utils::TransactionEventCapture;
 
 mod id;
-pub use id::EventIdBuilder;
+pub use id::EventId;
 
 mod metrics;
 pub use metrics::Metrics;

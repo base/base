@@ -8,7 +8,7 @@ use serde_json::{Map, Value};
 use tracing::debug;
 
 use crate::{
-    EventIdBuilder, TransactionEvent, TransactionEventProducer, TransactionEventType,
+    EventId, TransactionEvent, TransactionEventProducer, TransactionEventType,
     TransactionEventWriter, TransactionEventWriterConfig, WriteEventError,
 };
 
@@ -86,7 +86,6 @@ impl GlobalTransactionEventWriter {
 pub struct TransactionEventBuilder {
     producer: TransactionEventProducer,
     event_type: TransactionEventType,
-    event_id: EventIdBuilder,
     tx_hash: Option<TxHash>,
     block_hash: Option<B256>,
     block_number: Option<u64>,
@@ -96,14 +95,11 @@ pub struct TransactionEventBuilder {
 }
 
 impl TransactionEventBuilder {
-    /// Creates a builder with required event identity fields.
+    /// Creates a builder with the required event fields.
     pub fn new(producer: TransactionEventProducer, event_type: TransactionEventType) -> Self {
         Self {
             producer,
             event_type,
-            event_id: EventIdBuilder::new()
-                .part("producer", producer)
-                .part("event_type", event_type),
             tx_hash: None,
             block_hash: None,
             block_number: None,
@@ -113,70 +109,57 @@ impl TransactionEventBuilder {
         }
     }
 
-    /// Adds a producer-specific event ID component.
-    pub fn id_part(mut self, name: &str, value: impl std::fmt::Display) -> Self {
-        self.event_id = self.event_id.part(name, value);
-        self
-    }
-
-    /// Sets the transaction hash join key and includes it in the event ID.
-    pub fn tx_hash(mut self, tx_hash: TxHash) -> Self {
-        self.event_id = self.event_id.part("tx_hash", tx_hash);
+    /// Sets the transaction hash join key.
+    pub const fn tx_hash(mut self, tx_hash: TxHash) -> Self {
         self.tx_hash = Some(tx_hash);
         self
     }
 
     /// Sets the transaction hash join key when present.
-    pub fn maybe_tx_hash(self, tx_hash: Option<TxHash>) -> Self {
+    pub const fn maybe_tx_hash(self, tx_hash: Option<TxHash>) -> Self {
         match tx_hash {
             Some(tx_hash) => self.tx_hash(tx_hash),
             None => self,
         }
     }
 
-    /// Sets the block hash join key and includes it in the event ID.
-    pub fn block_hash(mut self, block_hash: B256) -> Self {
-        self.event_id = self.event_id.part("block_hash", block_hash);
+    /// Sets the block hash join key.
+    pub const fn block_hash(mut self, block_hash: B256) -> Self {
         self.block_hash = Some(block_hash);
         self
     }
 
     /// Sets the block hash join key when present.
-    pub fn maybe_block_hash(self, block_hash: Option<B256>) -> Self {
+    pub const fn maybe_block_hash(self, block_hash: Option<B256>) -> Self {
         match block_hash {
             Some(block_hash) => self.block_hash(block_hash),
             None => self,
         }
     }
 
-    /// Sets the block number join key and includes it in the event ID.
-    pub fn block_number(mut self, block_number: u64) -> Self {
-        self.event_id = self.event_id.part("block_number", block_number);
+    /// Sets the block number join key.
+    pub const fn block_number(mut self, block_number: u64) -> Self {
         self.block_number = Some(block_number);
         self
     }
 
     /// Sets the block number join key when present.
-    pub fn maybe_block_number(self, block_number: Option<u64>) -> Self {
+    pub const fn maybe_block_number(self, block_number: Option<u64>) -> Self {
         match block_number {
             Some(block_number) => self.block_number(block_number),
             None => self,
         }
     }
 
-    /// Sets the payload ID join key and includes it in the event ID.
+    /// Sets the payload ID join key.
     pub fn payload_id(mut self, payload_id: impl Into<String>) -> Self {
-        let payload_id = payload_id.into();
-        self.event_id = self.event_id.part("payload_id", &payload_id);
-        self.payload_id = Some(payload_id);
+        self.payload_id = Some(payload_id.into());
         self
     }
 
-    /// Sets the request ID join key and includes it in the event ID.
+    /// Sets the request ID join key.
     pub fn request_id(mut self, request_id: impl Into<String>) -> Self {
-        let request_id = request_id.into();
-        self.event_id = self.event_id.part("request_id", &request_id);
-        self.request_id = Some(request_id);
+        self.request_id = Some(request_id.into());
         self
     }
 
@@ -193,15 +176,13 @@ impl TransactionEventBuilder {
     }
 
     /// Builds an event for the given network label without writing it.
+    ///
+    /// Assigns a new random [`EventId`], so every built event is a distinct emission.
     pub fn build_with_network(self, network: &str) -> TransactionEvent {
-        let mut event = TransactionEvent::new(
-            self.event_id.finish(),
-            Utc::now(),
-            self.producer,
-            self.event_type,
-        )
-        .with_network(network)
-        .with_data(self.data);
+        let mut event =
+            TransactionEvent::new(EventId::random(), Utc::now(), self.producer, self.event_type)
+                .with_network(network)
+                .with_data(self.data);
 
         event.tx_hash = self.tx_hash;
         event.block_hash = self.block_hash;
@@ -252,7 +233,6 @@ macro_rules! transaction_event {
         $(, maybe_block_number: $maybe_block_number:expr)?
         $(, payload_id: $payload_id:expr)?
         $(, request_id: $request_id:expr)?
-        $(, id: { $( $id_name:expr => $id_value:expr ),* $(,)? })?
         $(, data: { $( $data_name:expr => $data_value:expr ),* $(,)? })?
         $(,)?
     ) => {{
@@ -265,7 +245,6 @@ macro_rules! transaction_event {
             $(.maybe_block_number($maybe_block_number))?
             $(.payload_id($payload_id))?
             $(.request_id($request_id))?
-            $($(.id_part($id_name, $id_value))*)?
             $($(.data_field($data_name, $crate::__private::json!($data_value)))*)?;
         builder.emit_global()
     }};
@@ -280,7 +259,6 @@ macro_rules! transaction_event {
         $(, maybe_block_number: $maybe_block_number:expr)?
         $(, payload_id: $payload_id:expr)?
         $(, request_id: $request_id:expr)?
-        $(, id: { $( $id_name:expr => $id_value:expr ),* $(,)? })?
         , data: $data:expr
         $(,)?
     ) => {{
@@ -293,7 +271,6 @@ macro_rules! transaction_event {
             $(.maybe_block_number($maybe_block_number))?
             $(.payload_id($payload_id))?
             $(.request_id($request_id))?
-            $($(.id_part($id_name, $id_value))*)?
             .data($data);
         builder.emit_global()
     }};
@@ -309,7 +286,6 @@ macro_rules! transaction_event {
         $(, maybe_block_number: $maybe_block_number:expr)?
         $(, payload_id: $payload_id:expr)?
         $(, request_id: $request_id:expr)?
-        $(, id: { $( $id_name:expr => $id_value:expr ),* $(,)? })?
         $(, data: { $( $data_name:expr => $data_value:expr ),* $(,)? })?
         $(,)?
     ) => {{
@@ -322,7 +298,6 @@ macro_rules! transaction_event {
             $(.maybe_block_number($maybe_block_number))?
             $(.payload_id($payload_id))?
             $(.request_id($request_id))?
-            $($(.id_part($id_name, $id_value))*)?
             $($(.data_field($data_name, $crate::__private::json!($data_value)))*)?;
         match $writer {
             Some(writer) => builder.emit_to(writer),
@@ -341,7 +316,6 @@ macro_rules! transaction_event {
         $(, maybe_block_number: $maybe_block_number:expr)?
         $(, payload_id: $payload_id:expr)?
         $(, request_id: $request_id:expr)?
-        $(, id: { $( $id_name:expr => $id_value:expr ),* $(,)? })?
         , data: $data:expr
         $(,)?
     ) => {{
@@ -354,7 +328,6 @@ macro_rules! transaction_event {
             $(.maybe_block_number($maybe_block_number))?
             $(.payload_id($payload_id))?
             $(.request_id($request_id))?
-            $($(.id_part($id_name, $id_value))*)?
             .data($data);
         match $writer {
             Some(writer) => builder.emit_to(writer),
@@ -371,9 +344,9 @@ mod tests {
     use serde_json::{Map, json};
 
     use crate::{
-        DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventBuilder,
-        TransactionEventEmitOutcome, TransactionEventProducer, TransactionEventType,
-        TransactionEventWriter, TransactionEventWriterConfig,
+        DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEvent,
+        TransactionEventBuilder, TransactionEventEmitOutcome, TransactionEventProducer,
+        TransactionEventType, TransactionEventWriter, TransactionEventWriterConfig,
     };
 
     fn disabled_writer() -> TransactionEventWriter {
@@ -404,7 +377,6 @@ mod tests {
         .block_number(42)
         .payload_id("0xabc")
         .request_id("request-1")
-        .id_part("event_index", 7)
         .data_field("event_index", json!(7))
         .build(&writer);
 
@@ -420,25 +392,33 @@ mod tests {
         assert!(event.event_id.starts_with("0x"));
     }
 
-    #[test]
-    fn builder_event_id_changes_when_id_part_changes() {
-        let writer = disabled_writer();
-        let first = TransactionEventBuilder::new(
+    fn pending(tx_hash: TxHash) -> TransactionEvent {
+        TransactionEventBuilder::new(
             TransactionEventProducer::BaseRethNode,
             TransactionEventType::Pending,
         )
-        .tx_hash(TxHash::repeat_byte(0x11))
-        .id_part("event_index", 1)
-        .build(&writer);
-        let second = TransactionEventBuilder::new(
-            TransactionEventProducer::BaseRethNode,
-            TransactionEventType::Pending,
-        )
-        .tx_hash(TxHash::repeat_byte(0x11))
-        .id_part("event_index", 2)
-        .build(&writer);
+        .tx_hash(tx_hash)
+        .data_field("event_index", json!(1))
+        .build_with_network("base-devnet")
+    }
 
-        assert_ne!(first.event_id, second.event_id);
+    #[test]
+    fn identical_inputs_build_distinct_event_ids() {
+        let tx_hash = TxHash::repeat_byte(0x11);
+
+        assert_ne!(pending(tx_hash).event_id, pending(tx_hash).event_id);
+    }
+
+    #[test]
+    fn serialized_event_id_is_fixed_across_retries_and_replays() {
+        let event = pending(TxHash::repeat_byte(0x11));
+        let line = serde_json::to_string(&event).unwrap();
+
+        // A collector retry or journal replay re-reads the serialized line; nothing regenerates
+        // the ID.
+        let replayed: TransactionEvent = serde_json::from_str(&line).unwrap();
+        assert_eq!(replayed.event_id, event.event_id);
+        assert_eq!(serde_json::to_string(&replayed).unwrap(), line);
     }
 
     #[test]
@@ -450,9 +430,6 @@ mod tests {
             producer: TransactionEventProducer::BaseRethNode,
             event_type: TransactionEventType::Pending,
             tx_hash: TxHash::repeat_byte(0x11),
-            id: {
-                "event_index" => 1,
-            },
             data: {
                 "source" => "txpool",
                 "event_index" => 1,

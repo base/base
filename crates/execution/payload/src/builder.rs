@@ -73,11 +73,9 @@ macro_rules! emit_native_validity_event {
                 tx_hash: $tx_hash,
                 block_number: $ctx.parent().number().saturating_add(1),
                 payload_id: $ctx.payload_id().to_string(),
-                id: {
-                    "validity_consideration_index" => $attempt,
-                },
                 data: {
                     "builder_mode" => "native",
+                    "validity_consideration_index" => $attempt,
                     "source_queue" => "txpool_best",
                     "parent_hash" => format!("{:#x}", $ctx.parent().hash()),
                     $( $data_name => $data_value ),*
@@ -1988,6 +1986,46 @@ mod tests {
                 .iter()
                 .any(|event| event.event_type == TransactionEventType::BuilderAccepted)
         );
+    }
+
+    /// The payload job rebuilds one payload ID several times and the validity consideration index
+    /// restarts with each build, so each build's decisions must keep their own event IDs.
+    #[test]
+    fn native_builder_rebuilds_of_one_payload_emit_distinct_validity_events() {
+        let event_capture = TransactionEventCapture::install();
+        let transaction =
+            pool_transaction(0).with_validity_predicates(vec![ValidityPredicate::BlockNumber {
+                op: ValidityOperator::Equal,
+                value: U256::ONE,
+            }]);
+        let sender = transaction.sender();
+        let transaction_hash = *transaction.hash();
+        let payload_id = pool_payload_context(DENIM_TIMESTAMP).payload_id().to_string();
+
+        for _ in 0..2 {
+            let _ = build_parkable_pool_payload(
+                pool_payload_context(DENIM_TIMESTAMP),
+                TestParkableTransactions::new(vec![transaction.clone()]),
+                &[sender],
+            );
+        }
+
+        // Each build considers the transaction once, at validity consideration index 1. Other
+        // tests in this binary build the same fixture concurrently, so assert that every
+        // captured consideration is distinct rather than an exact count.
+        let considered: Vec<_> = event_capture
+            .events()
+            .into_iter()
+            .filter(|event| {
+                event.event_type == TransactionEventType::BuilderConsidered
+                    && event.tx_hash == Some(transaction_hash)
+                    && event.payload_id.as_deref() == Some(payload_id.as_str())
+            })
+            .map(|event| event.event_id)
+            .collect();
+        assert!(considered.len() >= 2);
+        let unique: std::collections::HashSet<_> = considered.iter().collect();
+        assert_eq!(unique.len(), considered.len());
     }
 
     #[test]

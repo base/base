@@ -497,17 +497,11 @@ mod tests {
     use serde_json::{Map, Value, json};
 
     use super::*;
-    use crate::{
-        EventIdBuilder, SCHEMA_VERSION, TransactionEventType, TransactionEventValidationError,
-    };
+    use crate::{EventId, SCHEMA_VERSION, TransactionEventType, TransactionEventValidationError};
 
     fn sample_event() -> TransactionEvent {
         let tx_hash = TxHash::repeat_byte(0x11);
-        let event_id = EventIdBuilder::new()
-            .part("producer", TransactionEventProducer::BaseRethNode)
-            .part("event_type", TransactionEventType::Pending)
-            .part("tx_hash", tx_hash)
-            .finish();
+        let event_id = EventId::random();
 
         TransactionEvent::new(
             event_id,
@@ -707,29 +701,6 @@ mod tests {
         event.data = Map::from_iter([("nested".to_string(), value)]);
 
         assert!(matches!(event.validate(), Err(TransactionEventValidationError::DataTooDeep)));
-    }
-
-    #[test]
-    fn deterministic_event_id_is_stable_and_ordered() {
-        let id_a = EventIdBuilder::new()
-            .part("producer", "base-reth-node")
-            .part("event_type", "TXPOOL_PENDING")
-            .part("tx_hash", TxHash::repeat_byte(0x22))
-            .finish();
-        let id_b = EventIdBuilder::new()
-            .part("producer", "base-reth-node")
-            .part("event_type", "TXPOOL_PENDING")
-            .part("tx_hash", TxHash::repeat_byte(0x22))
-            .finish();
-        let id_c = EventIdBuilder::new()
-            .part("event_type", "TXPOOL_PENDING")
-            .part("producer", "base-reth-node")
-            .part("tx_hash", TxHash::repeat_byte(0x22))
-            .finish();
-
-        assert_eq!(id_a, id_b);
-        assert_ne!(id_a, id_c);
-        assert!(id_a.starts_with("0x"));
     }
 
     #[test]

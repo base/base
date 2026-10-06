@@ -63,6 +63,7 @@ jsonrpsee = { workspace = true, features = ["http-client", "server", "macros"] }
 
 [dev-dependencies]
 alloy-signer.workspace = true
+base-observability-events = { workspace = true, features = ["test-utils"] }
 alloy-sol-types.workspace = true
 alloy-signer-local.workspace = true
 reth-tasks.workspace = true

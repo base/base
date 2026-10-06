@@ -250,7 +250,6 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                         TransactionEventType::TxpoolBuilderForwardAttempt,
                         *tx_hash,
                         method,
-                        Some(attempt),
                         Map::from_iter([
                             ("attempt".to_string(), json!(attempt)),
                             ("batch_size".to_string(), json!(tx_count)),
@@ -287,7 +286,6 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                                     TransactionEventType::TxpoolBuilderForwardFailure,
                                     tx_hash,
                                     method,
-                                    Some(attempt),
                                     Map::from_iter([
                                         ("attempt".to_string(), json!(attempt)),
                                         ("batch_size".to_string(), json!(tx_count)),
@@ -326,7 +324,6 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                             TransactionEventType::TxpoolBuilderForwardDropped,
                             *tx_hash,
                             method,
-                            Some(attempt),
                             Map::from_iter([
                                 ("drop_reason".to_string(), json!("rpc_failure")),
                                 ("attempt".to_string(), json!(attempt)),
@@ -373,27 +370,22 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         )
     }
 
+    /// Records one forward attempt or outcome for one request.
     fn emit_forward_event(
         &self,
         event_type: TransactionEventType,
         tx_hash: Option<TxHash>,
         rpc_method: &'static str,
-        attempt: Option<u32>,
         mut data: Map<String, serde_json::Value>,
     ) {
         data.entry("target".to_string()).or_insert_with(|| json!("builder_forwarder"));
         data.entry("rpc_method".to_string()).or_insert_with(|| json!(rpc_method));
-        let attempt_id = attempt.map(|attempt| attempt.to_string()).unwrap_or_default();
+        data.entry("builder_url".to_string()).or_insert_with(|| json!(self.url_label.as_ref()));
 
         let _ = transaction_event!(
             producer: TransactionEventProducer::BaseRethNode,
             event_type: event_type,
             maybe_tx_hash: tx_hash,
-            id: {
-                "builder_url" => self.url_label.as_ref(),
-                "attempt" => attempt_id,
-                "tx_hash" => tx_hash.map(|hash| format!("{hash:#x}")).unwrap_or_default(),
-            },
             data: data,
         );
     }
@@ -410,11 +402,11 @@ impl<R> std::fmt::Debug for DestinationForwarder<R> {
 
 #[cfg(test)]
 mod tests {
-    use std::{net::SocketAddr, sync::Mutex, time::Duration};
+    use std::{collections::HashSet, net::SocketAddr, sync::Mutex, time::Duration};
 
     use alloy_primitives::{Address, B256, Bytes};
     use base_execution_txpool::{NoExtensions, ValidatedTransaction};
-    use base_observability_events::TransactionEventCapture;
+    use base_observability_events::{TransactionEvent, TransactionEventCapture};
     use jsonrpsee::{
         RpcModule, core::params::ArrayParams, http_client::HttpClientBuilder, server::Server,
     };
@@ -539,6 +531,78 @@ mod tests {
     ) -> DestinationForwarder<R> {
         let client = HttpClientBuilder::default().build(url.as_str()).unwrap();
         DestinationForwarder::new(url, client, receiver, config)
+    }
+
+    fn forward_events_by_type(
+        capture: &TransactionEventCapture,
+        tx_hash: TxHash,
+        event_type: TransactionEventType,
+    ) -> Vec<TransactionEvent> {
+        capture
+            .events()
+            .into_iter()
+            .filter(|event| event.event_type == event_type && event.tx_hash == Some(tx_hash))
+            .collect()
+    }
+
+    fn distinct_ids(events: &[TransactionEvent]) -> usize {
+        events.iter().map(|event| event.event_id.as_str()).collect::<HashSet<_>>().len()
+    }
+
+    /// `attempt` restarts at zero for every batch, so two batches carrying the same transaction
+    /// to the same destination must still produce separate retry and drop events.
+    #[tokio::test]
+    async fn separate_batches_of_one_transaction_emit_distinct_forward_events() {
+        let capture = TransactionEventCapture::install();
+        let unreachable = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            url::Url::parse(&format!("http://{address}")).unwrap()
+        };
+        let (_sender, receiver) = mpsc::channel::<InsertValidatedTransaction>(4);
+        let config = Arc::new(ForwarderConfig { max_retries: 1, ..*config(0, 0) });
+        let forwarder = forwarder(unreachable.clone(), receiver, config);
+        let tx_hash = transaction::<NoExtensions>(0xc2).tx_hash;
+
+        forwarder.send_with_retries(vec![transaction(0xc2)]).await;
+        forwarder.send_with_retries(vec![transaction(0xc2)]).await;
+
+        for event_type in [
+            TransactionEventType::TxpoolBuilderForwardAttempt,
+            TransactionEventType::TxpoolBuilderForwardDropped,
+        ] {
+            let events = forward_events_by_type(&capture, tx_hash, event_type);
+            assert_eq!(events.len(), 2, "{event_type}");
+            assert!(events.iter().all(|event| event.data["attempt"] == 1));
+            assert!(events.iter().all(|event| event.data["builder_url"] == unreachable.as_str()));
+            assert_eq!(distinct_ids(&events), 2, "{event_type} events must not share an ID");
+        }
+    }
+
+    /// Each failed dispatch of the same transaction is its own drop observation.
+    #[tokio::test]
+    async fn repeated_drops_of_one_transaction_emit_distinct_events() {
+        let capture = TransactionEventCapture::install();
+        let unreachable = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            url::Url::parse(&format!("http://{address}")).unwrap()
+        };
+        let (_sender, receiver) = mpsc::channel::<InsertValidatedTransaction>(4);
+        let forwarder = forwarder(unreachable, receiver, config(0, 0));
+        let tx_hash = transaction::<NoExtensions>(0xc3).tx_hash;
+
+        forwarder.send_with_retries(vec![transaction(0xc3)]).await;
+        forwarder.send_with_retries(vec![transaction(0xc3)]).await;
+
+        let drops = forward_events_by_type(
+            &capture,
+            tx_hash,
+            TransactionEventType::TxpoolBuilderForwardDropped,
+        );
+        assert_eq!(drops.len(), 2);
+        assert_eq!(distinct_ids(&drops), 2);
+        assert!(drops.iter().all(|event| event.data["attempt"] == 0));
     }
 
     #[test]

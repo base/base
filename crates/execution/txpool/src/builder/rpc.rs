@@ -27,11 +27,10 @@ use crate::{
     ValidatedTransactionExtensions,
 };
 
-/// Host name of this builder, part of the validated-insert event ID.
+/// Host name of this builder, recorded on each validated-insert event.
 ///
 /// Every mempool node forwards each transaction to all builders, so without it the events from
-/// different builders share an ID and the archive keeps only one of them. Empty if the host name
-/// cannot be read.
+/// different builders would be indistinguishable. Empty if the host name cannot be read.
 static BUILDER_HOST: LazyLock<String> = LazyLock::new(|| {
     hostname::get().ok().and_then(|name| name.into_string().ok()).unwrap_or_default()
 });
@@ -222,6 +221,7 @@ where
 }
 
 impl<P, E> BuilderApiImpl<P, E> {
+    /// Records the outcome of one `base_insertValidatedTransaction` call.
     fn emit_validated_insert_event(
         &self,
         event_type: TransactionEventType,
@@ -230,15 +230,12 @@ impl<P, E> BuilderApiImpl<P, E> {
     ) {
         data.entry("rpc_method".to_string())
             .or_insert_with(|| json!("base_insertValidatedTransaction"));
+        data.entry("builder_host".to_string()).or_insert_with(|| json!(BUILDER_HOST.as_str()));
 
         let _ = transaction_event!(
             producer: TransactionEventProducer::BaseBuilder,
             event_type: event_type,
             tx_hash: tx_hash,
-            id: {
-                "builder_host" => BUILDER_HOST.as_str(),
-                "tx_hash" => format!("{tx_hash:#x}"),
-            },
             data: data,
         );
     }
@@ -250,9 +247,10 @@ mod tests {
 
     use alloy_consensus::TxEip1559;
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Address, Bytes, Signature, TxHash, TxKind, U256};
+    use alloy_primitives::{Address, Bytes, Signature, TxHash, TxKind, U256, keccak256};
     use base_bundles::MeterBundleResponse;
     use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
+    use base_observability_events::TransactionEventCapture;
     use reth_transaction_pool::noop::NoopTransactionPool;
 
     use super::*;
@@ -462,6 +460,36 @@ mod tests {
             cache.inserted.lock().expect("recording lock").is_empty(),
             "rejected pool inserts must not pollute the builder metering cache"
         );
+    }
+
+    /// Each insert call has its own outcome; a resent transaction must not collapse into the
+    /// first call's event.
+    #[tokio::test]
+    async fn repeated_inserts_of_one_transaction_emit_distinct_events() {
+        let capture = TransactionEventCapture::install();
+        let handler = handler();
+        let (sender, raw) = create_eip1559_tx();
+        let tx_hash = keccak256(&raw);
+
+        for _ in 0..2 {
+            let tx = validated_transaction(sender, raw.clone(), NoExtensions {});
+            handler.insert_validated_transaction(tx).await.unwrap_err();
+        }
+
+        // Other tests in this binary may insert the same fixture concurrently, so assert that
+        // every captured insert event is distinct rather than an exact count.
+        let ids: Vec<_> = capture
+            .events()
+            .into_iter()
+            .filter(|event| {
+                event.event_type == TransactionEventType::TxpoolValidatedInsertRejected
+                    && event.tx_hash == Some(tx_hash)
+            })
+            .map(|event| event.event_id)
+            .collect();
+        assert!(ids.len() >= 2);
+        let unique: std::collections::HashSet<_> = ids.iter().collect();
+        assert_eq!(unique.len(), ids.len(), "each insert call must keep its own event ID");
     }
 
     #[test]

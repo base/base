@@ -292,20 +292,43 @@ tracing by matching `block_hash`, `block_number`, and transaction hashes.
 
 ## Event ID Guidance
 
-Use deterministic `event_id` values wherever the source has stable inputs.
-Recommended components:
+`event_id` identifies one emission, not the fact the event describes. Base Rust
+producers that use `base-observability-events` call `EventId::random()` when an
+event is built: 32 random bytes, hex-encoded with a `0x` prefix. Two emissions
+never share an ID, even when every other field matches. To count or group facts,
+such as one row per transaction, event type and payload, group by the join keys
+and `data` fields at query time.
 
-- `producer`
-- `event_type`
-- source timestamp bucket or source sequence
-- `tx_hash`
-- `request_id`
-- backend/node identifier when applicable
-- attempt index when applicable
+The ID is part of the serialized event. Collector retries, journal rotation and
+replays must resend the serialized line unchanged, so the ID stays the same.
+`audit-archiver` keeps the first row per `event_id`, retention class and UTC
+event day, and drops redelivered copies. A producer must never assign a new ID
+to an event it has already built.
 
-If a source cannot produce an exactly deterministic ID, document why in the
-producer implementation and include enough fields in `data` for
-`audit-archiver` to enforce database-side uniqueness.
+proxyd (`base-routing/proxyd`) keeps its own, unchanged contract. It hashes the
+producer, event type, available join keys (including its per-HTTP-request
+`request_id`) and curated ID parts such as rejection stage, backend and attempt.
+Two proxyd emissions with identical inputs therefore share one ID, and ingest
+keeps only the first. Both ID styles use the same `0x` + 64 hex digit format
+and are stored in the same tables.
+
+Because every Base Rust emission is stored, row counts per transaction grow
+with how long it stays pending. The transaction forwarder hands a pending
+transaction to each builder destination again every `resend_after` (4 seconds
+by default), and each hand-off records `TXPOOL_BUILDER_CONSUMED`,
+`TXPOOL_BUILDER_FORWARD_ATTEMPT` and a success, failure or dropped event. With six
+destinations that is about 18 rows per resend, or about 270 rows per minute
+pending. These figures are estimated from source code, not measured.
+`getTransactionEventsByHash` returns events in ascending `event_time` order,
+with a default limit of 500 and a maximum of 2,000. For a transaction pending
+longer than about 110 seconds, the default limit can omit later lifecycle
+events such as inclusion. Requesting the maximum only postpones truncation, to
+about 7 minutes pending. `getTransactionEventsByBlockNumber` and
+`getTransactionEventsByBlockHash` have the same ascending order and limits,
+applied across every transaction in the block, so they can truncate busy
+blocks too. Neither is a complete-history workaround. Paging, per-type
+queries, a producer emission policy, or explicitly accepting the truncation
+risk is still an open decision before rollout.
 
 ## proxyd Examples
 
