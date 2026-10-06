@@ -1003,8 +1003,7 @@ mod tests {
             ));
 
             // Storage unchanged (sync loop handles the actual revert)
-            let latest =
-                proofs.get_latest_block_number().expect("get latest block").expect("ok").0;
+            let latest = proofs.get_latest_block_number().expect("get latest block").expect("ok").0;
             assert_eq!(latest, expected_latest);
         }
     }
