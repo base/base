@@ -23,7 +23,7 @@ use base_protocol::{BatchValidationProvider, BlockInfo, L2BlockInfo};
 use eyre::{OptionExt, Result, WrapErr, bail, ensure, eyre};
 use tokio::{
     task::yield_now,
-    time::{Instant, timeout_at},
+    time::{Instant, sleep, timeout_at},
 };
 use tracing::debug;
 use url::Url;
@@ -177,18 +177,32 @@ impl SnapshotForkFinder {
     /// Confirmation depth that turns the pipeline's L1 head into an inclusive read limit of
     /// `head - 1`.
     pub const L1_LIMIT_CONFIRMATIONS: u64 = 1;
+    /// Delay before retrying after a temporary reset or derivation error.
+    pub const TRANSIENT_RETRY_DELAY: Duration = Duration::from_millis(500);
+    /// Provider errors labeled temporary that recur for the same block data, such as a pruned body.
+    ///
+    /// Providers erase their typed errors into [`PipelineError::Provider`] text, so these exact
+    /// messages are the only way to tell them from transport failures.
+    pub const DETERMINISTIC_PROVIDER_ERRORS: [&'static str; 3] = [
+        "L2 block info construction failed",
+        "system config conversion failed",
+        "Failed to convert RPC receipts into consensus receipts",
+    ];
     /// Stands in for provider-supplied error text, which can echo an upstream URL, credential or
     /// response body.
     pub const PROVIDER_ERROR: &'static str = "upstream provider request failed";
 
     /// Describes a derivation error by its kind and typed cause, replacing provider-supplied text
-    /// with [`Self::PROVIDER_ERROR`]. That text is logged only at debug level.
+    /// other than [`Self::DETERMINISTIC_PROVIDER_ERRORS`] with [`Self::PROVIDER_ERROR`]. That text
+    /// is logged only at debug level.
     ///
     /// Providers erase their errors into [`PipelineError::Provider`]; every other variant is typed
     /// and built from chain data.
     pub fn diagnostic(error: &PipelineErrorKind) -> String {
         let kind = match error {
-            PipelineErrorKind::Temporary(PipelineError::Provider(text)) => {
+            PipelineErrorKind::Temporary(PipelineError::Provider(text))
+                if !Self::DETERMINISTIC_PROVIDER_ERRORS.contains(&text.as_str()) =>
+            {
                 debug!(error = %text, "temporary provider error withheld from diagnostics");
                 "Temporary"
             }
@@ -201,15 +215,29 @@ impl SnapshotForkFinder {
         format!("{kind} error: {}", Self::PROVIDER_ERROR)
     }
 
+    /// Returns whether `error` is temporary and not one of
+    /// [`Self::DETERMINISTIC_PROVIDER_ERRORS`], so retrying it may succeed.
+    pub fn is_retryable(error: &PipelineErrorKind) -> bool {
+        match error {
+            PipelineErrorKind::Temporary(PipelineError::Provider(text)) => {
+                !Self::DETERMINISTIC_PROVIDER_ERRORS.contains(&text.as_str())
+            }
+            PipelineErrorKind::Temporary(_) => true,
+            _ => false,
+        }
+    }
+
     /// Returns the canonical, finalized L1 block at which the latest snapshot block's batch is
     /// derived: the maximum L1 source among the attributes derived for the unsafe tail.
     ///
     /// When safe equals latest, discovery starts from latest's parent so it still locates the
     /// latest batch; that parent must retain its body and cannot be the rollup genesis. L1 reads
-    /// stop at [`SnapshotForkMetadata::l1_limit`]. Mismatching attributes, reset, temporary or
-    /// critical pipeline errors, an exhausted L1 range, a snapshot latest block or L1 fork block
-    /// that is no longer canonical, and the deadline are all fatal. Errors never contain
-    /// provider-supplied text; see [`Self::diagnostic`].
+    /// stop at [`SnapshotForkMetadata::l1_limit`]. Retryable reset and derivation errors (see
+    /// [`Self::is_retryable`]) are retried every [`Self::TRANSIENT_RETRY_DELAY`] until the deadline,
+    /// which then reports the last one. Mismatching attributes, other pipeline errors, an exhausted
+    /// L1 range, a snapshot latest block or L1 fork block that is no longer canonical, and the
+    /// deadline are fatal. Errors contain no provider-supplied text beyond the fixed messages
+    /// [`Self::diagnostic`] keeps.
     pub async fn find(&self, inspection: &SnapshotInspection) -> Result<BlockInfo> {
         let deadline = Instant::now() + self.timeout;
         let latest = inspection.latest.block_info;
@@ -223,6 +251,7 @@ impl SnapshotForkFinder {
         let metadata = SnapshotForkMetadata::read(&self.source, inspection, deadline).await?;
 
         let mut stage = String::new();
+        let mut last_transient = None;
         let discovery = async {
             let config = Arc::new(inspection.rollup_config.clone());
             let genesis = config.genesis;
@@ -266,16 +295,22 @@ impl SnapshotForkFinder {
                 Arc::new(AtomicU64::new(metadata.l1_limit + 1)),
                 Self::L1_LIMIT_CONFIRMATIONS,
             );
-            stage = format!("resetting derivation at L2 block {}", start.block_info.number);
-            pipeline.signal(ResetSignal { l2_safe_head: start }.signal()).await.map_err(
-                |error| {
-                    eyre!(
+            loop {
+                stage = format!("resetting derivation at L2 block {}", start.block_info.number);
+                match pipeline.signal(ResetSignal { l2_safe_head: start }.signal()).await {
+                    Ok(()) => break,
+                    Err(error) if Self::is_retryable(&error) => {
+                        stage = "retrying the derivation reset".into();
+                        last_transient = Some(Self::diagnostic(&error));
+                        sleep(Self::TRANSIENT_RETRY_DELAY).await;
+                    }
+                    Err(error) => bail!(
                         "failed to reset derivation at L2 block {}: {}",
                         start.block_info.number,
                         Self::diagnostic(&error)
-                    )
-                },
-            )?;
+                    ),
+                }
+            }
 
             let mut cursor = start;
             let mut origin = pipeline.origin().map_or(0, |origin| origin.number);
@@ -341,6 +376,11 @@ impl SnapshotForkFinder {
                             metadata.finalized
                         )
                     }
+                    error if Self::is_retryable(&error) => {
+                        stage = format!("retrying derivation of L2 block {next}");
+                        last_transient = Some(Self::diagnostic(&error));
+                        sleep(Self::TRANSIENT_RETRY_DELAY).await;
+                    }
                     // Crossing Holocene activation is a deterministic in-place transition, not a
                     // reset.
                     PipelineErrorKind::Reset(ResetError::HoloceneActivation) => {
@@ -384,9 +424,13 @@ impl SnapshotForkFinder {
             );
             Ok(canonical)
         };
-        timeout_at(deadline, discovery)
-            .await
-            .map_err(|_| eyre!("fork discovery timed out after {:?} {stage}", self.timeout))?
+        timeout_at(deadline, discovery).await.map_err(|_| {
+            eyre!(
+                "fork discovery timed out after {:?} {stage} (last transient error: {})",
+                self.timeout,
+                last_transient.as_deref().unwrap_or("none")
+            )
+        })?
     }
 }
 
@@ -1052,30 +1096,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fails_explicitly_on_transient_upstream_error() {
+    async fn retries_transient_upstream_errors() {
         let chain = Chain::new(None);
-        let upstream =
-            Upstream { failing_receipts: Arc::new(AtomicUsize::new(1)), ..chain.upstream() };
+        let failing_receipts = Arc::new(AtomicUsize::new(2));
+        let upstream = Upstream { failing_receipts, ..chain.upstream() };
 
-        // The upstream error echoes the credential, which `find`'s `redacted` check rejects.
-        let error = chain.find(chain.snapshot(LABELS), upstream, TIMEOUT).await.unwrap_err();
-        let error = error.to_string();
-        assert!(error.contains("derivation of L2 block 9 failed"), "{error}");
-        assert!(error.ends_with("Temporary error: upstream provider request failed"), "{error}");
+        let fork = chain.find(chain.snapshot(LABELS), upstream, TIMEOUT).await.unwrap();
+        assert_eq!(fork, chain.l1_info(BATCH_L1_BLOCK));
     }
 
     #[tokio::test]
-    async fn fails_explicitly_when_lookback_body_is_pruned() {
+    async fn transient_retries_share_the_discovery_deadline() {
+        let chain = Chain::new(None);
+        let failing_receipts = Arc::new(AtomicUsize::new(4));
+        let upstream = Upstream { failing_receipts, ..chain.upstream() };
+
+        // Each retry sleeps 500ms, less than this budget; giving each operation a fresh deadline
+        // would eventually succeed instead of bounding the whole discovery.
+        let error = chain.find(chain.snapshot(LABELS), upstream, Duration::from_millis(900)).await;
+        let error = error.unwrap_err().to_string();
+        assert!(error.contains("timed out after 900ms retrying derivation"), "{error}");
+        let expected = format!(
+            "last transient error: Temporary error: {}",
+            SnapshotForkFinder::PROVIDER_ERROR
+        );
+        assert!(error.contains(&expected), "{error}");
+    }
+
+    #[tokio::test]
+    async fn rejects_pruned_lookback_without_retrying() {
         let chain = Chain::new(None);
         let mut snapshot = chain.snapshot(LABELS);
         let mut pruned = chain.l2[5].clone();
         pruned.body.transactions.clear();
         snapshot.blocks.insert("0x5".to_string(), SnapshotRpcFixture::rpc_block(pruned));
 
-        let error = chain.find(snapshot, chain.upstream(), TIMEOUT).await.unwrap_err();
-        let error = error.to_string();
-        assert!(error.contains("failed to reset derivation at L2 block 8"), "{error}");
-        assert!(error.contains(SnapshotForkFinder::PROVIDER_ERROR), "{error}");
+        let error = chain.find(snapshot, chain.upstream(), Duration::from_secs(2)).await;
+        let error = error.unwrap_err().to_string();
+        assert!(error.contains("failed to reset derivation at L2 block"), "{error}");
+        assert!(!error.contains("timed out"), "{error}");
+        assert!(error.contains("L2 block info construction failed"), "{error}");
     }
 
     #[tokio::test]
