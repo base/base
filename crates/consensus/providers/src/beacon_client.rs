@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use c_kzg::Blob;
 use reqwest::{self, Client};
 use thiserror::Error;
+use url::Url;
 
 use crate::{Metrics, blobs::BoxedBlob};
 
@@ -112,6 +113,10 @@ pub enum BeaconClientError {
     #[error("HTTP request failed: {0}")]
     Http(#[from] reqwest::Error),
 
+    /// The base URL cannot be parsed or cannot have API paths appended.
+    #[error("Invalid beacon API base URL")]
+    InvalidBaseUrl,
+
     /// The beacon node returned HTTP 404 for the requested slot. This means the slot was missed
     /// or orphaned and the blobs will never be available.
     #[error("Beacon slot not found (HTTP 404) for slot {0}")]
@@ -146,11 +151,7 @@ impl OnlineBeaconClient {
         Self::with_timeout(base, crate::L1_RPC_TIMEOUT)
     }
 
-    fn with_timeout(mut base: String, timeout: Duration) -> Self {
-        // If base ends with a slash, remove it
-        if base.ends_with('/') {
-            base.remove(base.len() - 1);
-        }
+    fn with_timeout(base: String, timeout: Duration) -> Self {
         Self {
             base,
             inner: Client::builder()
@@ -168,6 +169,18 @@ impl OnlineBeaconClient {
         self
     }
 
+    /// Returns the URL of the Beacon API resource at `path`.
+    ///
+    /// Appends `path` to the base URL's path and keeps its query, which may carry a credential.
+    pub fn endpoint(&self, path: &str) -> Result<Url, BeaconClientError> {
+        let mut url = Url::parse(&self.base).map_err(|_| BeaconClientError::InvalidBaseUrl)?;
+        url.path_segments_mut()
+            .map_err(|()| BeaconClientError::InvalidBaseUrl)?
+            .pop_if_empty()
+            .extend(path.split('/'));
+        Ok(url)
+    }
+
     /// Fetches only the blobs corresponding to the provided (versioned) blob hashes
     /// from the beacon [`BLOBS_METHOD_PREFIX`] endpoint.
     /// Blobs are validated against the supplied versioned hashes
@@ -178,13 +191,13 @@ impl OnlineBeaconClient {
         blob_hashes: &[B256],
     ) -> Result<Vec<BoxedBlob>, BeaconClientError> {
         let params = blob_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<_>>();
-        let url = format!(
-            "{}/{}/{}?versioned_hashes={}",
-            self.base,
-            BLOBS_METHOD_PREFIX,
-            slot,
-            params.join(",")
-        );
+        let mut url = self.endpoint(&format!("{BLOBS_METHOD_PREFIX}/{slot}"))?;
+        let filter = format!("versioned_hashes={}", params.join(","));
+        let query = match url.query() {
+            Some(query) => format!("{query}&{filter}"),
+            None => filter,
+        };
+        url.set_query(Some(&query));
         let response = self.inner.get(url).send().await?;
 
         // A 404 means the beacon slot was missed or orphaned. Blobs for such slots will never
@@ -239,8 +252,8 @@ impl BeaconClient for OnlineBeaconClient {
 
         let result = base_metrics::time!(Metrics::request_duration("spec"), {
             async {
-                let first = self.inner.get(format!("{}/{}", self.base, SPEC_METHOD)).send().await?;
-                first.json::<APIConfigResponse>().await
+                let first = self.inner.get(self.endpoint(SPEC_METHOD)?).send().await?;
+                Ok::<_, BeaconClientError>(first.json::<APIConfigResponse>().await?)
             }
             .await
         });
@@ -249,7 +262,7 @@ impl BeaconClient for OnlineBeaconClient {
             Metrics::beacon_errors("spec").increment(1);
         }
 
-        Ok(result?)
+        result
     }
 
     async fn genesis_time(&self) -> Result<APIGenesisResponse, Self::Error> {
@@ -257,9 +270,8 @@ impl BeaconClient for OnlineBeaconClient {
 
         let result = base_metrics::time!(Metrics::request_duration("genesis"), {
             async {
-                let first =
-                    self.inner.get(format!("{}/{}", self.base, GENESIS_METHOD)).send().await?;
-                first.json::<APIGenesisResponse>().await
+                let first = self.inner.get(self.endpoint(GENESIS_METHOD)?).send().await?;
+                Ok::<_, BeaconClientError>(first.json::<APIGenesisResponse>().await?)
             }
             .await
         });
@@ -268,7 +280,7 @@ impl BeaconClient for OnlineBeaconClient {
             Metrics::beacon_errors("genesis").increment(1);
         }
 
-        Ok(result?)
+        result
     }
 
     async fn filtered_beacon_blobs(
@@ -411,6 +423,52 @@ mod tests {
             matches!(response, Err(BeaconClientError::SlotNotFound(s)) if s == slot),
             "expected SlotNotFound({slot}), got {response:?}"
         );
+    }
+
+    /// Every request keeps the base URL's path prefix and query, which may carry a credential,
+    /// and the blob filter is appended to that query rather than replacing it.
+    #[tokio::test]
+    async fn requests_keep_base_path_and_query() {
+        let blob: Blob = FixedBytes::repeat_byte(1);
+        let hash = versioned_hash_for(&blob);
+        let slot = 42u64;
+        let server = MockServer::start_async().await;
+        let spec = server
+            .mock_async(|when, then| {
+                when.method(GET).path("/beacon/eth/v1/config/spec").query_param("key", "secret/");
+                then.status(200).json_body(json!({"data": {"SECONDS_PER_SLOT": "12"}}));
+            })
+            .await;
+        let genesis = server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/beacon/eth/v1/beacon/genesis")
+                    .query_param("key", "secret/");
+                then.status(200).json_body(json!({"data": {"genesis_time": "7"}}));
+            })
+            .await;
+        let blobs = server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path(format!("/beacon/eth/v1/beacon/blobs/{slot}"))
+                    .query_param("key", "secret/")
+                    .query_param("versioned_hashes", hash.to_string());
+                then.status(200).json_body(json!({
+                    "execution_optimistic": false,
+                    "finalized": false,
+                    "data": [blob]
+                }));
+            })
+            .await;
+        let client = OnlineBeaconClient::new_http(server.url("/beacon/?key=secret/"));
+
+        assert_eq!(client.slot_interval().await.unwrap(), APIConfigResponse::new(12));
+        assert_eq!(client.genesis_time().await.unwrap(), APIGenesisResponse::new(7));
+        let result = client.filtered_beacon_blobs(slot, &[hash]).await.unwrap();
+        assert_eq!(result, vec![BoxedBlob { blob: Box::new(blob) }]);
+        spec.assert_async().await;
+        genesis.assert_async().await;
+        blobs.assert_async().await;
     }
 
     #[tokio::test]
