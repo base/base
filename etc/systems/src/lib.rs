@@ -74,8 +74,8 @@ pub use l2::{
     InProcessNodeRuntime, InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig,
     L2ClientConsensus, L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig,
     ShadowSequencer, ShadowSequencerConfig, ShadowSequencersConfig, SnapshotBoundary,
-    SnapshotInspection, SnapshotL2Stack, SnapshotL2StackConfig, SnapshotLabeledBlock,
-    TestNodeRuntime,
+    SnapshotForkMetadata, SnapshotForkSource, SnapshotInspection, SnapshotL2Stack,
+    SnapshotL2StackConfig, SnapshotLabeledBlock, TestNodeRuntime,
 };
 
 mod network;

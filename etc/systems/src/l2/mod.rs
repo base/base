@@ -29,6 +29,9 @@ pub use in_process_standalone_consensus::{
 mod snapshot_boundary;
 pub use snapshot_boundary::SnapshotBoundary;
 
+mod snapshot_fork;
+pub use snapshot_fork::{SnapshotForkMetadata, SnapshotForkSource};
+
 mod snapshot_inspection;
 pub use snapshot_inspection::{SnapshotInspection, SnapshotLabeledBlock};
 
