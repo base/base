@@ -863,7 +863,6 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_consensus::transaction::Recovered;
-    use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, Bytes, keccak256, utils::Unit};
     use alloy_sol_types::{SolCall, SolValue};
     use base_bundles::{Bundle, ParsedBundle};
@@ -882,14 +881,7 @@ mod tests {
     use revm::state::{Account as RevmAccount, EvmStorageSlot, TransactionId};
 
     use super::*;
-
-    fn create_parsed_bundle(txs: Vec<BaseTransactionSigned>) -> eyre::Result<ParsedBundle> {
-        let txs: Vec<Bytes> = txs.iter().map(|tx| Bytes::from(tx.encoded_2718())).collect();
-
-        let bundle = Bundle { txs };
-
-        ParsedBundle::try_from(bundle).map_err(|e| eyre::eyre!(e))
-    }
+    use crate::TestSupport;
 
     fn create_call_tx(
         chain_id: u64,
@@ -898,18 +890,17 @@ mod tests {
         input: impl Into<Bytes>,
         gas_limit: u64,
     ) -> BaseTransactionSigned {
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(chain_id)
-            .nonce(nonce)
-            .to(to)
-            .gas_limit(gas_limit)
-            .max_fee_per_gas(MIN_BASEFEE as u128)
-            .max_priority_fee_per_gas(0)
-            .input(input.into())
-            .into_eip1559();
-
-        BaseTransactionSigned::Eip1559(signed_tx.as_eip1559().expect("eip1559 transaction").clone())
+        TestSupport::sign(
+            TransactionBuilder::default()
+                .signer(Account::Alice.signer_b256())
+                .chain_id(chain_id)
+                .nonce(nonce)
+                .to(to)
+                .gas_limit(gas_limit)
+                .max_fee_per_gas(MIN_BASEFEE as u128)
+                .max_priority_fee_per_gas(0)
+                .input(input.into()),
+        )
     }
 
     fn assert_precompile_gas(
@@ -1055,24 +1046,8 @@ mod tests {
     #[tokio::test]
     async fn meter_bundle_empty_transactions() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
 
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let parsed_bundle = create_parsed_bundle(Vec::new())?;
-
-        let output = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(MeteredOpcodes::default()),
-        })?;
+        let output = TestSupport::run_meter(&harness, Vec::new(), MeteredOpcodes::default())?;
 
         assert!(output.results.is_empty());
         assert_eq!(output.total_gas_used, 0);
@@ -1087,41 +1062,22 @@ mod tests {
     #[tokio::test]
     async fn meter_bundle_single_transaction() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
 
         let to = Address::random();
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(to)
-            .value(1_000)
-            .gas_limit(21_000)
-            .max_fee_per_gas(10)
-            .max_priority_fee_per_gas(1)
-            .into_eip1559();
-
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        let tx = TestSupport::sign(
+            TransactionBuilder::default()
+                .signer(Account::Alice.signer_b256())
+                .chain_id(harness.chain_id())
+                .nonce(0)
+                .to(to)
+                .value(1_000)
+                .gas_limit(21_000)
+                .max_fee_per_gas(10)
+                .max_priority_fee_per_gas(1),
         );
         let tx_hash = tx.tx_hash();
 
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let parsed_bundle = create_parsed_bundle(vec![tx])?;
-
-        let output = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(MeteredOpcodes::default()),
-        })?;
+        let output = TestSupport::run_meter(&harness, vec![tx], MeteredOpcodes::default())?;
 
         assert_eq!(output.results.len(), 1);
         let result = &output.results[0];
@@ -1149,27 +1105,8 @@ mod tests {
     #[tokio::test]
     async fn meter_bundle_reports_active_intrinsic_components_and_floor() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
         let to = Address::random();
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(to)
-            .gas_limit(100_000)
-            .max_fee_per_gas(MIN_BASEFEE as u128)
-            .max_priority_fee_per_gas(0)
-            .input(Bytes::from_static(&[0, 1]))
-            .into_eip1559();
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
-        );
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-        let parsed_bundle = create_parsed_bundle(vec![tx])?;
+        let tx = create_call_tx(harness.chain_id(), 0, to, Bytes::from_static(&[0, 1]), 100_000);
         let metered = MeteredOpcodes::parse(&[
             "INTRINSIC_TOTAL".to_string(),
             "INTRINSIC_TX_DATA_ZERO_BYTE_COST".to_string(),
@@ -1178,14 +1115,7 @@ mod tests {
             "TX_FLOOR_GAS".to_string(),
         ])?;
 
-        let output = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(metered),
-        })?;
+        let output = TestSupport::run_meter(&harness, vec![tx], metered)?;
 
         let entries = &output.results[0].opcode_gas;
         let gas = |opcode: &str| {
@@ -1211,39 +1141,15 @@ mod tests {
             Account::Deployer.create_deployment_tx(SimpleStorage::BYTECODE.clone(), 0)?;
         harness.build_block_from_transactions(vec![deployment_tx]).await?;
 
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
-
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(contract_address)
-            .gas_limit(100_000)
-            .max_fee_per_gas(MIN_BASEFEE as u128)
-            .max_priority_fee_per_gas(0)
-            .input(SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode())
-            .into_eip1559();
-
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        let tx = create_call_tx(
+            harness.chain_id(),
+            0,
+            contract_address,
+            SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode(),
+            100_000,
         );
 
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let parsed_bundle = create_parsed_bundle(vec![tx])?;
-
-        let output = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(MeteredOpcodes::default()),
-        })?;
+        let output = TestSupport::run_meter(&harness, vec![tx], MeteredOpcodes::default())?;
 
         assert_eq!(output.results.len(), 1);
         assert!(output.total_time_us > 0);
@@ -1260,41 +1166,17 @@ mod tests {
             Account::Deployer.create_deployment_tx(SimpleStorage::BYTECODE.clone(), 0)?;
         harness.build_block_from_transactions(vec![deployment_tx]).await?;
 
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
-
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(contract_address)
-            .gas_limit(100_000)
-            .max_fee_per_gas(MIN_BASEFEE as u128)
-            .max_priority_fee_per_gas(0)
-            .input(SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode())
-            .into_eip1559();
-
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        let tx = create_call_tx(
+            harness.chain_id(),
+            0,
+            contract_address,
+            SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode(),
+            100_000,
         );
-
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let parsed_bundle = create_parsed_bundle(vec![tx])?;
 
         let metered = MeteredOpcodes::parse(&["SSTORE".to_string(), "SLOAD".to_string()]).unwrap();
 
-        let output = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(metered),
-        })?;
+        let output = TestSupport::run_meter(&harness, vec![tx], metered)?;
 
         assert_eq!(output.results.len(), 1);
         let tx_opcodes = &output.results[0].opcode_gas;
@@ -1318,8 +1200,6 @@ mod tests {
             Account::Deployer.create_deployment_tx(SimpleStorage::BYTECODE.clone(), 0)?;
         harness.build_block_from_transactions(vec![deployment_tx]).await?;
 
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
         let write_tx = create_call_tx(
             harness.chain_id(),
             0,
@@ -1335,19 +1215,8 @@ mod tests {
             100_000,
         );
 
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
         let metered = MeteredOpcodes::parse(&state_effect_names())?;
-        let output = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: create_parsed_bundle(vec![write_tx, clear_tx])?,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(metered),
-        })?;
+        let output = TestSupport::run_meter(&harness, vec![write_tx, clear_tx], metered)?;
 
         assert_eq!(output.results.len(), 2);
         let write = &output.results[0].opcode_gas;
@@ -1373,24 +1242,11 @@ mod tests {
             Account::Deployer.create_deployment_tx(sstore_then_revert_initcode(), 0)?;
         harness.build_block_from_transactions(vec![deployment_tx]).await?;
 
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
         let revert_tx =
             create_call_tx(harness.chain_id(), 0, contract_address, Bytes::new(), 100_000);
 
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
         let metered = MeteredOpcodes::parse(&state_effect_names())?;
-        let output = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: create_parsed_bundle(vec![revert_tx])?,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(metered),
-        })?;
+        let output = TestSupport::run_meter(&harness, vec![revert_tx], metered)?;
 
         assert_eq!(output.results.len(), 1);
         let effects = &output.results[0].opcode_gas;
@@ -1413,51 +1269,25 @@ mod tests {
             Account::Deployer.create_deployment_tx(SimpleStorage::BYTECODE.clone(), 1)?;
         harness.build_block_from_transactions(vec![deployment_tx_1, deployment_tx_2]).await?;
 
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
+        let tx_1 = create_call_tx(
+            harness.chain_id(),
+            0,
+            contract_address_1,
+            SimpleStorage::setValueCall { v: U256::from(1) }.abi_encode(),
+            100_000,
+        );
 
-        let tx_1 = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(contract_address_1)
-            .gas_limit(100_000)
-            .max_fee_per_gas(MIN_BASEFEE as u128)
-            .max_priority_fee_per_gas(0)
-            .input(SimpleStorage::setValueCall { v: U256::from(1) }.abi_encode())
-            .into_eip1559();
-        let tx_1 =
-            BaseTransactionSigned::Eip1559(tx_1.as_eip1559().expect("eip1559 transaction").clone());
+        let tx_2 = create_call_tx(
+            harness.chain_id(),
+            1,
+            contract_address_2,
+            SimpleStorage::setValueCall { v: U256::from(2) }.abi_encode(),
+            100_000,
+        );
 
-        let tx_2 = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(1)
-            .to(contract_address_2)
-            .gas_limit(100_000)
-            .max_fee_per_gas(MIN_BASEFEE as u128)
-            .max_priority_fee_per_gas(0)
-            .input(SimpleStorage::setValueCall { v: U256::from(2) }.abi_encode())
-            .into_eip1559();
-        let tx_2 =
-            BaseTransactionSigned::Eip1559(tx_2.as_eip1559().expect("eip1559 transaction").clone());
-
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let parsed_bundle = create_parsed_bundle(vec![tx_1, tx_2])?;
         let metered = MeteredOpcodes::parse(&["SSTORE".to_string()]).unwrap();
 
-        let output = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(metered),
-        })?;
+        let output = TestSupport::run_meter(&harness, vec![tx_1, tx_2], metered)?;
 
         assert_eq!(output.results.len(), 2);
         let sstore_1 = output.results[0]
@@ -1486,44 +1316,18 @@ mod tests {
             Account::Deployer.create_deployment_tx(ContractFactory::BYTECODE.clone(), 0)?;
         harness.build_block_from_transactions(vec![factory_deployment_tx]).await?;
 
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
-
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(factory_address)
-            .gas_limit(1_000_000)
-            .max_fee_per_gas(MIN_BASEFEE as u128)
-            .max_priority_fee_per_gas(0)
-            .input(
-                ContractFactory::deployWithCreateCall { bytecode: SimpleStorage::BYTECODE.clone() }
-                    .abi_encode(),
-            )
-            .into_eip1559();
-
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        let tx = create_call_tx(
+            harness.chain_id(),
+            0,
+            factory_address,
+            ContractFactory::deployWithCreateCall { bytecode: SimpleStorage::BYTECODE.clone() }
+                .abi_encode(),
+            1_000_000,
         );
-
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let parsed_bundle = create_parsed_bundle(vec![tx])?;
 
         let metered = MeteredOpcodes::parse(&["CREATE".to_string()]).unwrap();
 
-        let output = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(metered),
-        })?;
+        let output = TestSupport::run_meter(&harness, vec![tx], metered)?;
 
         assert_eq!(output.results.len(), 1);
         let create = output.results[0]
@@ -1545,46 +1349,21 @@ mod tests {
             Account::Deployer.create_deployment_tx(ContractFactory::BYTECODE.clone(), 0)?;
         harness.build_block_from_transactions(vec![factory_deployment_tx]).await?;
 
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
-
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(factory_address)
-            .gas_limit(1_000_000)
-            .max_fee_per_gas(MIN_BASEFEE as u128)
-            .max_priority_fee_per_gas(0)
-            .input(
-                ContractFactory::deployAndCallCall {
-                    bytecode: SimpleStorage::BYTECODE.clone(),
-                    callData: SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode().into(),
-                }
-                .abi_encode(),
-            )
-            .into_eip1559();
-
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        let tx = create_call_tx(
+            harness.chain_id(),
+            0,
+            factory_address,
+            ContractFactory::deployAndCallCall {
+                bytecode: SimpleStorage::BYTECODE.clone(),
+                callData: SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode().into(),
+            }
+            .abi_encode(),
+            1_000_000,
         );
 
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let parsed_bundle = create_parsed_bundle(vec![tx])?;
         let metered = MeteredOpcodes::parse(&["CALL".to_string(), "SSTORE".to_string()]).unwrap();
 
-        let output = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(metered),
-        })?;
+        let output = TestSupport::run_meter(&harness, vec![tx], metered)?;
 
         assert_eq!(output.results.len(), 1);
         let tx_opcodes = &output.results[0].opcode_gas;
@@ -1616,53 +1395,40 @@ mod tests {
         let harness = TestHarness::new().await?;
 
         let existing_account = Address::random();
-        let create_existing_account_tx = TransactionBuilder::default()
-            .signer(Account::Bob.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(existing_account)
-            .value(1)
-            .gas_limit(21_000)
-            .max_fee_per_gas(MIN_BASEFEE as u128)
-            .max_priority_fee_per_gas(0)
-            .into_eip1559();
+        let create_existing_account_tx = TestSupport::sign(
+            TransactionBuilder::default()
+                .signer(Account::Bob.signer_b256())
+                .chain_id(harness.chain_id())
+                .nonce(0)
+                .to(existing_account)
+                .value(1)
+                .gas_limit(21_000)
+                .max_fee_per_gas(MIN_BASEFEE as u128)
+                .max_priority_fee_per_gas(0),
+        );
         harness
-            .build_block_from_transactions(vec![Bytes::from(
-                BaseTransactionSigned::Eip1559(
-                    create_existing_account_tx.as_eip1559().expect("eip1559 transaction").clone(),
-                )
-                .encoded_2718(),
-            )])
+            .build_block_from_transactions(vec![TestSupport::encoded(&create_existing_account_tx)])
             .await?;
 
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
         let new_account = Address::random();
         let transfers = [new_account, existing_account, Account::Alice.address()]
             .into_iter()
             .enumerate()
             .map(|(idx, to)| {
-                let signed_tx = TransactionBuilder::default()
-                    .signer(Account::Alice.signer_b256())
-                    .chain_id(harness.chain_id())
-                    .nonce(idx as u64)
-                    .to(to)
-                    .value(1)
-                    .gas_limit(21_000)
-                    .max_fee_per_gas(MIN_BASEFEE as u128)
-                    .max_priority_fee_per_gas(0)
-                    .into_eip1559();
-                BaseTransactionSigned::Eip1559(
-                    signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+                TestSupport::sign(
+                    TransactionBuilder::default()
+                        .signer(Account::Alice.signer_b256())
+                        .chain_id(harness.chain_id())
+                        .nonce(idx as u64)
+                        .to(to)
+                        .value(1)
+                        .gas_limit(21_000)
+                        .max_fee_per_gas(MIN_BASEFEE as u128)
+                        .max_priority_fee_per_gas(0),
                 )
             })
             .collect();
 
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-        let parsed_bundle = create_parsed_bundle(transfers)?;
         let metered = MeteredOpcodes::parse(&[
             "CALL".to_string(),
             "INTRINSIC_TOTAL".to_string(),
@@ -1672,14 +1438,7 @@ mod tests {
         ])
         .unwrap();
 
-        let output = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(metered),
-        })?;
+        let output = TestSupport::run_meter(&harness, transfers, metered)?;
 
         assert_eq!(output.results.len(), 3);
         for result in &output.results {
@@ -1717,23 +1476,19 @@ mod tests {
         let harness = TestHarness::new().await?;
 
         let existing_account = Address::random();
-        let create_existing_account_tx = TransactionBuilder::default()
-            .signer(Account::Bob.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(existing_account)
-            .value(1)
-            .gas_limit(21_000)
-            .max_fee_per_gas(MIN_BASEFEE as u128)
-            .max_priority_fee_per_gas(0)
-            .into_eip1559();
+        let create_existing_account_tx = TestSupport::sign(
+            TransactionBuilder::default()
+                .signer(Account::Bob.signer_b256())
+                .chain_id(harness.chain_id())
+                .nonce(0)
+                .to(existing_account)
+                .value(1)
+                .gas_limit(21_000)
+                .max_fee_per_gas(MIN_BASEFEE as u128)
+                .max_priority_fee_per_gas(0),
+        );
         harness
-            .build_block_from_transactions(vec![Bytes::from(
-                BaseTransactionSigned::Eip1559(
-                    create_existing_account_tx.as_eip1559().expect("eip1559 transaction").clone(),
-                )
-                .encoded_2718(),
-            )])
+            .build_block_from_transactions(vec![TestSupport::encoded(&create_existing_account_tx)])
             .await?;
 
         let new_account = Address::random();
@@ -1741,43 +1496,27 @@ mod tests {
         let call_existing_contract =
             deploy_value_call_contract(&harness, existing_account, 1).await?;
 
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
         let calls = [call_new_contract, call_existing_contract]
             .into_iter()
             .enumerate()
             .map(|(idx, to)| {
-                let signed_tx = TransactionBuilder::default()
-                    .signer(Account::Alice.signer_b256())
-                    .chain_id(harness.chain_id())
-                    .nonce(idx as u64)
-                    .to(to)
-                    .value(1)
-                    .gas_limit(100_000)
-                    .max_fee_per_gas(MIN_BASEFEE as u128)
-                    .max_priority_fee_per_gas(0)
-                    .into_eip1559();
-                BaseTransactionSigned::Eip1559(
-                    signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+                TestSupport::sign(
+                    TransactionBuilder::default()
+                        .signer(Account::Alice.signer_b256())
+                        .chain_id(harness.chain_id())
+                        .nonce(idx as u64)
+                        .to(to)
+                        .value(1)
+                        .gas_limit(100_000)
+                        .max_fee_per_gas(MIN_BASEFEE as u128)
+                        .max_priority_fee_per_gas(0),
                 )
             })
             .collect();
 
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-        let parsed_bundle = create_parsed_bundle(calls)?;
         let metered = MeteredOpcodes::parse(&["CALL".to_string()]).unwrap();
 
-        let output = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(metered),
-        })?;
+        let output = TestSupport::run_meter(&harness, calls, metered)?;
 
         assert_eq!(output.results.len(), 2);
         let call_new = output.results[0]
@@ -1809,40 +1548,21 @@ mod tests {
     #[tokio::test]
     async fn meter_bundle_opcode_gas_empty_when_disabled() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
 
         let to = Address::random();
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(to)
-            .value(1_000)
-            .gas_limit(21_000)
-            .max_fee_per_gas(10)
-            .max_priority_fee_per_gas(1)
-            .into_eip1559();
-
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        let tx = TestSupport::sign(
+            TransactionBuilder::default()
+                .signer(Account::Alice.signer_b256())
+                .chain_id(harness.chain_id())
+                .nonce(0)
+                .to(to)
+                .value(1_000)
+                .gas_limit(21_000)
+                .max_fee_per_gas(10)
+                .max_priority_fee_per_gas(1),
         );
 
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let parsed_bundle = create_parsed_bundle(vec![tx])?;
-
-        let output = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(MeteredOpcodes::default()),
-        })?;
+        let output = TestSupport::run_meter(&harness, vec![tx], MeteredOpcodes::default())?;
 
         assert!(
             output.results[0].opcode_gas.is_empty(),
@@ -1860,42 +1580,18 @@ mod tests {
             Account::Deployer.create_deployment_tx(SimpleStorage::BYTECODE.clone(), 0)?;
         harness.build_block_from_transactions(vec![deployment_tx]).await?;
 
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
-
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(contract_address)
-            .gas_limit(100_000)
-            .max_fee_per_gas(MIN_BASEFEE as u128)
-            .max_priority_fee_per_gas(0)
-            .input(SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode())
-            .into_eip1559();
-
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        let tx = create_call_tx(
+            harness.chain_id(),
+            0,
+            contract_address,
+            SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode(),
+            100_000,
         );
-
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let parsed_bundle = create_parsed_bundle(vec![tx])?;
 
         // Only request SSTORE — other opcodes like PUSH, ADD, etc. should be filtered out.
         let metered = MeteredOpcodes::parse(&["SSTORE".to_string()]).unwrap();
 
-        let output = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(metered),
-        })?;
+        let output = TestSupport::run_meter(&harness, vec![tx], metered)?;
 
         let tx_opcodes = &output.results[0].opcode_gas;
         for entry in tx_opcodes {
@@ -2011,22 +1707,11 @@ mod tests {
             ),
         ];
 
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-        let parsed_bundle = create_parsed_bundle(txs)?;
-
-        let output = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(MeteredOpcodes::default().with_all_precompiles()),
-        })?;
+        let output = TestSupport::run_meter(
+            &harness,
+            txs,
+            MeteredOpcodes::default().with_all_precompiles(),
+        )?;
 
         assert_eq!(output.results.len(), 7);
         assert_precompile_gas(
@@ -2282,8 +1967,6 @@ mod tests {
         let latest = harness.latest_block();
         let header = latest.sealed_header().clone();
 
-        let parsed_bundle = create_parsed_bundle(Vec::new())?;
-
         let state_provider = harness
             .blockchain_provider()
             .state_by_block_hash(latest.hash())
@@ -2297,7 +1980,7 @@ mod tests {
         let err = meter_bundle(MeterBundleInput {
             state_provider,
             chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle.clone(),
+            bundle: ParsedBundle::try_from(Bundle::default()).map_err(|e| eyre::eyre!(e))?,
             header: sealed_without_root,
             l1_block_info: L1BlockInfo::default(),
             metered_opcodes: Arc::new(MeteredOpcodes::default()),
@@ -2308,19 +1991,7 @@ mod tests {
             "expected missing parent beacon block root error, got {err:?}"
         );
 
-        let state_provider2 = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let output = meter_bundle(MeterBundleInput {
-            state_provider: state_provider2,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(MeteredOpcodes::default()),
-        })?;
+        let output = TestSupport::run_meter(&harness, Vec::new(), MeteredOpcodes::default())?;
 
         assert!(output.total_time_us > 0);
 
@@ -2330,62 +2001,40 @@ mod tests {
     #[tokio::test]
     async fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
 
         let to_1 = Address::random();
         let to_2 = Address::random();
 
         // Create first transaction
-        let signed_tx_1 = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(to_1)
-            .value(1_000)
-            .gas_limit(21_000)
-            .max_fee_per_gas(10)
-            .max_priority_fee_per_gas(1)
-            .into_eip1559();
-
-        let tx_1 = BaseTransactionSigned::Eip1559(
-            signed_tx_1.as_eip1559().expect("eip1559 transaction").clone(),
+        let tx_1 = TestSupport::sign(
+            TransactionBuilder::default()
+                .signer(Account::Alice.signer_b256())
+                .chain_id(harness.chain_id())
+                .nonce(0)
+                .to(to_1)
+                .value(1_000)
+                .gas_limit(21_000)
+                .max_fee_per_gas(10)
+                .max_priority_fee_per_gas(1),
         );
 
         // Create second transaction
-        let signed_tx_2 = TransactionBuilder::default()
-            .signer(Account::Bob.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(to_2)
-            .value(2_000)
-            .gas_limit(21_000)
-            .max_fee_per_gas(15)
-            .max_priority_fee_per_gas(2)
-            .into_eip1559();
-
-        let tx_2 = BaseTransactionSigned::Eip1559(
-            signed_tx_2.as_eip1559().expect("eip1559 transaction").clone(),
+        let tx_2 = TestSupport::sign(
+            TransactionBuilder::default()
+                .signer(Account::Bob.signer_b256())
+                .chain_id(harness.chain_id())
+                .nonce(0)
+                .to(to_2)
+                .value(2_000)
+                .gas_limit(21_000)
+                .max_fee_per_gas(15)
+                .max_priority_fee_per_gas(2),
         );
 
         let tx_hash_1 = tx_1.tx_hash();
         let tx_hash_2 = tx_2.tx_hash();
 
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let parsed_bundle = create_parsed_bundle(vec![tx_1, tx_2])?;
-
-        let output = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(MeteredOpcodes::default()),
-        })?;
+        let output = TestSupport::run_meter(&harness, vec![tx_1, tx_2], MeteredOpcodes::default())?;
 
         assert_eq!(output.results.len(), 2);
         assert!(output.total_time_us > 0);
@@ -2433,39 +2082,21 @@ mod tests {
     #[tokio::test]
     async fn meter_bundle_overrides_nonce_too_high() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
 
         let to = Address::random();
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(1) // Ahead of canonical nonce (0)
-            .to(to)
-            .value(100)
-            .gas_limit(21_000)
-            .max_fee_per_gas(MIN_BASEFEE as u128)
-            .max_priority_fee_per_gas(0)
-            .into_eip1559();
-
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        let tx = TestSupport::sign(
+            TransactionBuilder::default()
+                .signer(Account::Alice.signer_b256())
+                .chain_id(harness.chain_id())
+                .nonce(1) // Ahead of canonical nonce (0)
+                .to(to)
+                .value(100)
+                .gas_limit(21_000)
+                .max_fee_per_gas(MIN_BASEFEE as u128)
+                .max_priority_fee_per_gas(0),
         );
-        let parsed_bundle = create_parsed_bundle(vec![tx])?;
 
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let result = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(MeteredOpcodes::default()),
-        });
+        let result = TestSupport::run_meter(&harness, vec![tx], MeteredOpcodes::default());
 
         assert!(
             result.is_ok(),
@@ -2484,41 +2115,22 @@ mod tests {
     #[tokio::test]
     async fn meter_bundle_err_nonce_too_far_ahead() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
 
         let to = Address::random();
         let nonce = MAX_NONCE_AHEAD + 1; // Just over the limit (on-chain nonce is 0)
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(nonce)
-            .to(to)
-            .value(100)
-            .gas_limit(21_000)
-            .max_fee_per_gas(MIN_BASEFEE as u128)
-            .max_priority_fee_per_gas(0)
-            .into_eip1559();
-
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        let tx = TestSupport::sign(
+            TransactionBuilder::default()
+                .signer(Account::Alice.signer_b256())
+                .chain_id(harness.chain_id())
+                .nonce(nonce)
+                .to(to)
+                .value(100)
+                .gas_limit(21_000)
+                .max_fee_per_gas(MIN_BASEFEE as u128)
+                .max_priority_fee_per_gas(0),
         );
 
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let parsed_bundle = create_parsed_bundle(vec![tx])?;
-
-        let result = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(MeteredOpcodes::default()),
-        });
+        let result = TestSupport::run_meter(&harness, vec![tx], MeteredOpcodes::default());
 
         assert!(result.is_err(), "Nonce exceeding MAX_NONCE_AHEAD should fail");
         assert!(
@@ -2537,40 +2149,21 @@ mod tests {
     #[tokio::test]
     async fn meter_bundle_caps_basefee_at_minimum() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
 
         let to = Address::random();
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(to)
-            .value(1_000)
-            .gas_limit(21_000)
-            .max_fee_per_gas(MIN_BASEFEE as u128) // At the floor, below the ~980M on-chain base fee
-            .max_priority_fee_per_gas(0)
-            .into_eip1559();
-
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        let tx = TestSupport::sign(
+            TransactionBuilder::default()
+                .signer(Account::Alice.signer_b256())
+                .chain_id(harness.chain_id())
+                .nonce(0)
+                .to(to)
+                .value(1_000)
+                .gas_limit(21_000)
+                .max_fee_per_gas(MIN_BASEFEE as u128) // At the floor, below the ~980M on-chain base fee
+                .max_priority_fee_per_gas(0),
         );
 
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let parsed_bundle = create_parsed_bundle(vec![tx])?;
-
-        let result = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(MeteredOpcodes::default()),
-        });
+        let result = TestSupport::run_meter(&harness, vec![tx], MeteredOpcodes::default());
 
         assert!(
             result.is_ok(),
@@ -2588,8 +2181,6 @@ mod tests {
     #[tokio::test]
     async fn meter_bundle_err_insufficient_funds() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
 
         let to = Address::random();
         // TestHarness uses build_test_genesis() which gives accounts 1 million ETH.
@@ -2598,36 +2189,19 @@ mod tests {
         let value_eth = 2_000_000u128;
         let value_in_wei = value_eth.saturating_mul(Unit::ETHER.wei().to::<u128>());
 
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(to)
-            .value(value_in_wei)
-            .gas_limit(21_000)
-            .max_fee_per_gas(10)
-            .max_priority_fee_per_gas(1)
-            .into_eip1559();
-
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        let tx = TestSupport::sign(
+            TransactionBuilder::default()
+                .signer(Account::Alice.signer_b256())
+                .chain_id(harness.chain_id())
+                .nonce(0)
+                .to(to)
+                .value(value_in_wei)
+                .gas_limit(21_000)
+                .max_fee_per_gas(10)
+                .max_priority_fee_per_gas(1),
         );
 
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let parsed_bundle = create_parsed_bundle(vec![tx])?;
-
-        let result = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(MeteredOpcodes::default()),
-        });
+        let result = TestSupport::run_meter(&harness, vec![tx], MeteredOpcodes::default());
 
         assert!(result.is_err());
         assert!(
@@ -2643,37 +2217,20 @@ mod tests {
     #[tokio::test]
     async fn meter_bundle_missing_sender_defaults_then_fails_funds() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
 
-        let signed_tx = TransactionBuilder::default()
-            .signer(B256::random())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(Address::random())
-            .value(1)
-            .gas_limit(21_000)
-            .max_fee_per_gas(MIN_BASEFEE as u128)
-            .max_priority_fee_per_gas(0)
-            .into_eip1559();
-
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        let tx = TestSupport::sign(
+            TransactionBuilder::default()
+                .signer(B256::random())
+                .chain_id(harness.chain_id())
+                .nonce(0)
+                .to(Address::random())
+                .value(1)
+                .gas_limit(21_000)
+                .max_fee_per_gas(MIN_BASEFEE as u128)
+                .max_priority_fee_per_gas(0),
         );
 
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let result = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: create_parsed_bundle(vec![tx])?,
-            header,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(MeteredOpcodes::default()),
-        });
+        let result = TestSupport::run_meter(&harness, vec![tx], MeteredOpcodes::default());
 
         let err = result.expect_err("missing sender must not simulate successfully").to_string();
         assert!(
