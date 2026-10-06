@@ -158,9 +158,11 @@ derivation pipeline, and requires every derived payload to match the snapshot bl
 no further than the earlier of upstream finality and the latest L1 origin plus the sequencer
 window. When safe equals latest, discovery starts from latest's parent instead, so the parent must
 retain its body and cannot be the rollup genesis. `--timeout` (seconds) bounds the whole discovery,
-including upstream metadata reads. It fails without a result when a payload mismatches, the batch
-is not finalized, the snapshot's latest block or the fork block is no longer canonical, or an
-upstream request fails.
+including upstream metadata reads. Temporary derivation and reset errors, such as failed upstream
+requests, are retried every 500ms within that budget, and a timeout reports the last one. Discovery
+fails without a result when a payload mismatches, the batch is not finalized, the snapshot's latest
+block or the fork block is no longer canonical, snapshot or receipt data cannot be decoded (for
+example a pruned block body), an upstream metadata read fails, or the budget runs out.
 
 ## Run a snapshot benchmark
 
