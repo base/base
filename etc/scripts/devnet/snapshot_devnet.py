@@ -34,6 +34,7 @@ READ_METHODS = {
     "eth_chainId", "eth_getBlockByNumber", "eth_getBlockByHash", "eth_call", "eth_getCode", "eth_getStorageAt",
 }
 ROLES = ("sequencer", "validator")
+ZERO_HASH = "0x" + "0" * 64
 EXECUTION_RPC_PORT = 8545
 CONSENSUS_RPC_PORT = 9545
 GOSSIP_PORT = 9222
@@ -435,6 +436,15 @@ class SnapshotFork:
                 inspection = json.loads(run(*command, env=env, timeout=timeout, secrets=secrets))
                 require(not env or "fork" in inspection, "inspector did not report a fork block")
                 result.append(inspection)
+                for label in ("safe_l2", "finalized_l2"):
+                    saved = self.manifest.get("last_stop", {}).get(role, {}).get(label)
+                    if saved:
+                        block = rpc(self.url(role), "eth_getBlockByNumber", hex(saved["number"]), False)
+                        # Reth may persist a head older than the recorded checkpoints; wait_checkpoints
+                        # requires derivation to restore that missing tail before mining or sequencing.
+                        unpersisted = block is None and saved["number"] > inspection["latest"]["block_info"]["number"]
+                        require(unpersisted or (block and block["hash"] == saved["hash"]),
+                                "restored L2 lost a recorded checkpoint")
         finally:
             self.compose("--profile", "inspect", "stop", "inspect-sequencer", "inspect-validator")
         return result
@@ -667,6 +677,72 @@ class SnapshotFork:
             "l1_successor": {key: successor[key] for key in ("number", "hash")},
             "current_l1": {role: statuses[role]["current_l1"] for role in ROLES}, "safe_l2": safe})
         self.save()
+
+    def record_checkpoints(self):
+        """Persists each reachable node's sync status as its `last_stop` once it restored that role's earlier ones.
+
+        Inspection and wait_checkpoints require the next start to restore its safe/finalized blocks. A role
+        that is stopped, uninitialized, or still re-deriving keeps its earlier checkpoints; identity failures
+        and conflicting blocks are raised after the other roles' statuses are saved.
+        """
+        statuses, failure = dict(self.manifest.get("last_stop", {})), None
+        for role in ROLES:
+            try:
+                status = self.sync_status(role)
+                # Before its engine state is initialized from the EL, a node reports zeroed heads.
+                if ZERO_HASH not in (status["safe_l2"]["hash"], status["finalized_l2"]["hash"]) \
+                        and self.checkpoints_restored(role, status):
+                    statuses[role] = status
+            except Unavailable:
+                pass  # A stopped role keeps its earlier checkpoints.
+            except RuntimeError as error:
+                failure = failure or error
+        # Diagnostics recorded at shutdown, not an atomic cross-chain checkpoint.
+        self.manifest["last_stop"] = statuses
+        self.save()
+        if failure:
+            raise failure
+
+    def checkpoints_restored(self, role, status):
+        """Whether `status` derived every checkpoint recorded for `role`, read back with its exact hash.
+
+        False while the safe head is below one; a missing or conflicting block raises.
+        """
+        saved = [checkpoint for label in ("safe_l2", "finalized_l2")
+                 if (checkpoint := self.manifest.get("last_stop", {}).get(role, {}).get(label))]
+        if any(number(status["safe_l2"]["number"]) < number(checkpoint["number"]) for checkpoint in saved):
+            return False
+        for checkpoint in saved:
+            block = rpc(self.url(role), "eth_getBlockByNumber", hex(number(checkpoint["number"])), False)
+            require(block and block["hash"] == checkpoint["hash"],
+                    f"{role} derived a block conflicting with a recorded checkpoint; data preserved")
+        return True
+
+    def wait_checkpoints(self):
+        """Gates local L1 writes and sequencing on each node re-deriving its recorded safe and finalized
+        blocks from retained L1. EL availability or unsafe height alone does not restore them."""
+        last_stop = self.manifest.get("last_stop", {})
+        checkpoints = [(role, last_stop[role][label]) for role in ROLES for label in ("safe_l2", "finalized_l2")
+                       if last_stop.get(role, {}).get(label)]
+        targets = {}
+        for role, saved in checkpoints:
+            targets[role] = max(targets.get(role, 0), number(saved["number"]))
+        statuses = {}
+
+        def recovered():
+            try:
+                statuses.update((role, self.sync_status(role)) for role in targets)
+                return all(self.checkpoints_restored(role, statuses[role]) for role in targets)
+            except Unavailable:
+                self._containers = None
+                return False
+
+        def progress():
+            heads = {role: number(status["safe_l2"]["number"]) for role, status in statuses.items()}
+            return heads, "; ".join(f"{role} safe {safe}/{targets[role]} needed"
+                                    for role, safe in heads.items()) or "consensus status unavailable"
+
+        wait("nodes re-deriving recorded safe/finalized checkpoints", recovered, self.timeout, progress=progress)
 
     def peers(self):
         infos = {role: rpc(self.url(role + "-cl"), "opp2p_self") for role in ROLES}
