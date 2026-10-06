@@ -200,7 +200,7 @@ digest = "279c9afeab"
 
 ["crates/common/chains/README.md"]
 summary = "Single source of truth for Base chain config (BaseChainConfig consts: chain IDs, upgrade timestamps, genesis) and the BaseUpgrade enum/traits. Use when you need upgrade timestamps or chain params."
-digest = "e46d5a6b1b"
+digest = "cae9bb71d0"
 
 ["crates/common/consensus/README.md"]
 summary = "Base EL consensus types that differ from alloy-consensus, notably BaseTxEnvelope with deposit txs and receipts with deposit_nonce. Use when handling Base transactions and receipts."

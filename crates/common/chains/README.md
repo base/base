@@ -9,7 +9,7 @@ upgrade timestamps, genesis data, base fee params, contract addresses, and embed
 Const chain configuration instances eliminate duplicated configuration across the workspace.
 
 Also provides the `BaseUpgrade` enum, `BaseUpgrades` trait, and `BaseChainUpgrades` for the
-Base upgrade sequence. See [`BaseUpgrade::EXECUTION_VARIANTS`](../genesis/src/chain/upgrade.rs)
+Base upgrade sequence. See [`BaseUpgrade::EXECUTION_VARIANTS`]
 for the canonical execution fork ladder.
 
 ## Usage
