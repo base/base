@@ -123,7 +123,6 @@ services:
       - --flashblocks.port=${L2_SEQ1_FLASHBLOCKS_PORT}
       - --flashblocks.block-time=200
       - --rollup.chain-block-time=2000
-      - --builder.enable-experimental-validity-transactions
       - --builder.payload-builder-cutover
       - --metrics=0.0.0.0:${L2_SEQ1_METRICS_PORT}
       - --txpool.nolocals
@@ -234,7 +233,6 @@ services:
       - --flashblocks.port=${L2_SEQ2_FLASHBLOCKS_PORT}
       - --flashblocks.block-time=200
       - --rollup.chain-block-time=2000
-      - --builder.enable-experimental-validity-transactions
       - --builder.payload-builder-cutover
       - --metrics=0.0.0.0:${L2_SEQ2_METRICS_PORT}
       - --txpool.nolocals
