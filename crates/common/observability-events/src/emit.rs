@@ -384,7 +384,6 @@ mod tests {
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             max_files: DEFAULT_MAX_FILES,
             required: false,
-            producer: TransactionEventProducer::BaseRethNode,
             network: "base-devnet".to_string(),
         })
     }

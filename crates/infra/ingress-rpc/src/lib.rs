@@ -183,7 +183,6 @@ impl Config {
             max_file_bytes: self.transaction_events_max_file_bytes,
             max_files: self.transaction_events_max_files,
             required: self.transaction_events_required,
-            producer: TransactionEventProducer::IngressRpc,
             network: self.transaction_events_network.clone(),
         }
     }
