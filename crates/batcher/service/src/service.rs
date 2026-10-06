@@ -12,8 +12,7 @@ use backon::Retryable;
 use base_balance_monitor::BalanceMonitorLayer;
 use base_batcher_admin::AdminServer;
 use base_batcher_core::{
-    AdminHandle, BatchDriver, BatchDriverInputs, DaThrottle, NoopThrottleClient, ThrottleClient,
-    ThrottleController, ThrottleStrategy,
+    AdminHandle, BatchDriver, BatchDriverInputs, DaThrottle, ThrottleController, ThrottleStrategy,
 };
 use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
 use base_batcher_source::{HybridL1HeadSource, PollingBlockSource};
@@ -24,12 +23,12 @@ use base_retry::{DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
 use base_runtime::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use futures::{
-    StreamExt,
+    FutureExt, StreamExt, TryFutureExt,
     future::BoxFuture,
     stream::{self, BoxStream, FuturesUnordered},
 };
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use url::Url;
@@ -37,33 +36,11 @@ use url::Url;
 use crate::{
     BatcherConfig, DerivationStatusPoller, DerivationStatusProvider, L2BlockParityMonitor,
     L2BlockParityMonitorConfig, MAX_CHECK_RECENT_TXS_DEPTH, RecentTxSyncTarget,
-    RpcL1HeadPollingSource, RpcL2BlockProvider, RpcPollingSource, RpcThrottleClient,
-    SystemConfigBatcher,
+    RpcL1HeadPollingSource, RpcL2BlockProvider, RpcPollingSource, SystemConfigBatcher,
+    ThrottlePusher,
 };
 
 const WEI_PER_ETHER: f64 = 1_000_000_000_000_000_000.0;
-
-/// Service-internal throttle client variant: either a no-op or an RPC client.
-///
-/// Using a concrete enum avoids heap allocation while still allowing
-/// `start` to return either branch based on config.
-enum ServiceThrottle {
-    Noop(NoopThrottleClient),
-    Rpc(RpcThrottleClient),
-}
-
-impl ThrottleClient for ServiceThrottle {
-    fn set_max_da_size(
-        &self,
-        max_tx_size: u64,
-        max_block_size: u64,
-    ) -> BoxFuture<'_, Result<(), Box<dyn std::error::Error + Send + Sync>>> {
-        match self {
-            Self::Noop(n) => n.set_max_da_size(max_tx_size, max_block_size),
-            Self::Rpc(r) => r.set_max_da_size(max_tx_size, max_block_size),
-        }
-    }
-}
 
 /// Concrete driver type produced by [`BatcherService::setup`].
 ///
@@ -73,7 +50,6 @@ type ServiceDriver = BatchDriver<
     BatchEncoder,
     PollingBlockSource<RpcPollingSource, TokioRuntime>,
     SimpleTxManager<RootProvider>,
-    ServiceThrottle,
     HybridL1HeadSource<RpcL1HeadPollingSource>,
 >;
 
@@ -89,7 +65,7 @@ pub struct ReadyBatcher {
     #[debug(skip)]
     admin_server: Option<AdminServer>,
     #[debug(skip)]
-    background_tasks: Vec<(&'static str, JoinHandle<()>)>,
+    background_tasks: Vec<(&'static str, BoxFuture<'static, eyre::Result<()>>)>,
     #[debug(skip)]
     cancellation: CancellationToken,
 }
@@ -103,19 +79,15 @@ impl ReadyBatcher {
         let background_task_exit = async move {
             let mut background_tasks = background_tasks
                 .into_iter()
-                .map(|(task_name, handle)| async move { (task_name, handle.await) })
+                .map(|(task_name, task)| async move { (task_name, task.await) })
                 .collect::<FuturesUnordered<_>>();
             tokio::select! {
                 biased;
                 () = background_cancellation.cancelled() => {}
                 Some((task_name, result)) = background_tasks.next(), if !background_tasks.is_empty() => {
                     match result {
-                        Ok(()) => {
-                            eyre::bail!("{task_name} exited unexpectedly")
-                        }
-                        Err(error) => {
-                            eyre::bail!("{task_name} task failed: {error}")
-                        }
+                        Ok(()) => eyre::bail!("{task_name} exited unexpectedly"),
+                        Err(error) => eyre::bail!("{task_name} failed: {error}"),
                     }
                 }
             }
@@ -238,46 +210,9 @@ impl BatcherService {
             .boxed()
     }
 
-    /// Try each URL in order, returning the first that connects.
-    ///
-    /// Logs each failed attempt with the endpoint that produced it so operators
-    /// can tell whether failover occurred. Returns an error containing the last
-    /// failure if every endpoint fails. The list must be non-empty.
-    async fn connect_first<T, F, Fut, E>(
-        urls: &[Url],
-        label: &'static str,
-        mut build: F,
-    ) -> eyre::Result<T>
-    where
-        F: FnMut(&Url) -> Fut,
-        Fut: std::future::Future<Output = Result<T, E>>,
-        E: std::fmt::Display,
-    {
-        let mut last_err: Option<String> = None;
-        for url in urls {
-            match build(url).await {
-                Ok(t) => {
-                    info!(endpoint = %label, url = %url, "connected to endpoint");
-                    return Ok(t);
-                }
-                Err(e) => {
-                    warn!(endpoint = %label, url = %url, error = %e, "endpoint connection failed, trying next");
-                    last_err = Some(e.to_string());
-                }
-            }
-        }
-        Err(eyre::eyre!(
-            "failed to connect to any {label} endpoint ({} candidate(s)): {}",
-            urls.len(),
-            last_err.unwrap_or_else(|| "no candidates".to_string()),
-        ))
-    }
-
     /// Retry a one-shot startup RPC until it succeeds or `timeout` elapses.
     ///
-    /// Uses [`RetryConfig`] for exponential backoff with jitter. URL failover
-    /// stays in [`connect_first`]: this retries the whole attempt, including
-    /// walking the endpoint list again.
+    /// Uses [`RetryConfig`] for exponential backoff with jitter.
     async fn rpc_retry<T, E, F, Fut>(
         op: &'static str,
         retry: RetryConfig,
@@ -391,15 +326,6 @@ impl BatcherService {
                  start it because the admin JSON-RPC server is not enabled"
             );
         }
-        if self.config.l1_rpc_url.is_empty() {
-            eyre::bail!("at least one L1 RPC endpoint is required");
-        }
-        if self.config.l2_rpc_url.is_empty() {
-            eyre::bail!("at least one L2 RPC endpoint is required");
-        }
-        if self.config.rollup_rpc_url.is_empty() {
-            eyre::bail!("at least one rollup RPC endpoint is required");
-        }
         if self.config.check_recent_txs_depth > MAX_CHECK_RECENT_TXS_DEPTH {
             eyre::bail!(
                 "check_recent_txs_depth {} exceeds maximum of {}",
@@ -424,9 +350,6 @@ impl BatcherService {
         let signer_address = signer_config.address();
 
         info!(
-            l1_rpc_count = self.config.l1_rpc_url.len(),
-            l2_rpc_count = self.config.l2_rpc_url.len(),
-            rollup_rpc_count = self.config.rollup_rpc_url.len(),
             l1_ws = self.config.l1_ws_url.as_ref().map(|u| u.as_str()),
             "starting batcher service"
         );
@@ -434,48 +357,28 @@ impl BatcherService {
         let retry = RetryConfig::unbounded(self.config.poll_interval, DEFAULT_UNBOUNDED_MAX_DELAY);
         let rpc_timeout = self.config.wait_node_sync_timeout;
 
-        // Connect to the L2 RPC endpoint, with connection-time failover across
-        // the configured endpoint list.
         let l2_provider: Arc<dyn Provider<Base> + Send + Sync> = Arc::new(
             Self::rpc_retry("l2-rpc", retry, rpc_timeout, || {
-                Self::connect_first(&self.config.l2_rpc_url, "l2-rpc", |url| {
-                    let url = url.clone();
-                    async move {
-                        ProviderBuilder::new()
-                            .disable_recommended_fillers()
-                            .network::<Base>()
-                            .connect(url.as_str())
-                            .await
-                    }
-                })
+                ProviderBuilder::new()
+                    .disable_recommended_fillers()
+                    .network::<Base>()
+                    .connect(self.config.l2_rpc_url.as_str())
             })
             .await?,
         );
 
-        // Connect to the rollup node using a typed jsonrpsee HTTP client so that
-        // `optimism_rollupConfig` and `optimism_syncStatus` are called through the
-        // generated `RollupNodeApiClient` trait rather than raw JSON requests.
-        // `HttpClientBuilder::build` is sync but only validates the URL; the first
-        // real RPC (`rollup_config`) is what actually exercises the endpoint, so
-        // that call both drives failover and supplies the config used below.
-        let (rollup_client, rollup_config) =
-            Self::rpc_retry("rollup-rpc", retry, rpc_timeout, || {
-                Self::connect_first(&self.config.rollup_rpc_url, "rollup-rpc", |url| {
-                    let url = url.clone();
-                    async move {
-                        let client = HttpClientBuilder::default()
-                            .build(url.as_str())
-                            .map_err(|e| eyre::eyre!("failed to build rollup RPC client: {e}"))?;
-                        let config = client
-                            .rollup_config()
-                            .await
-                            .map_err(|e| eyre::eyre!("optimism_rollupConfig RPC failed: {e}"))?;
-                        eyre::Ok((client, config))
-                    }
-                })
+        // A typed jsonrpsee client calls `optimism_rollupConfig` and `optimism_syncStatus`
+        // through the generated `RollupNodeApiClient` trait. Building it only parses the URL,
+        // so the rollup config read is the first call that reaches the node.
+        let rollup_client = HttpClientBuilder::default()
+            .build(self.config.rollup_rpc_url.as_str())
+            .map_err(|e| eyre::eyre!("failed to build rollup RPC client: {e}"))?;
+        let rollup_config = Arc::new(
+            Self::rpc_retry("optimism_rollupConfig", retry, rpc_timeout, || {
+                rollup_client.rollup_config()
             })
-            .await?;
-        let rollup_config = Arc::new(rollup_config);
+            .await?,
+        );
         let batch_inbox = self.config.batch_inbox(rollup_config.batch_inbox_address)?;
         if self.config.batch_inbox_override.is_some() {
             warn!(inbox = %batch_inbox, "shadow mode, posting to the shadow batch inbox");
@@ -484,16 +387,11 @@ impl BatcherService {
         }
 
         let validator_provider = if let Some(url) = &self.config.parity_validator_l2_rpc_url {
-            let url = url.clone();
             let provider = Self::rpc_retry("parity-validator-l2-rpc", retry, rpc_timeout, || {
-                let url = url.clone();
-                async move {
-                    ProviderBuilder::new()
-                        .disable_recommended_fillers()
-                        .network::<Base>()
-                        .connect(url.as_str())
-                        .await
-                }
+                ProviderBuilder::new()
+                    .disable_recommended_fillers()
+                    .network::<Base>()
+                    .connect(url.as_str())
             })
             .await?;
             let provider: Arc<dyn Provider<Base> + Send + Sync> = Arc::new(provider);
@@ -504,12 +402,9 @@ impl BatcherService {
 
         // Connect to L1 before the optional node-sync gate.
         let l1_provider: RootProvider = Self::rpc_retry("l1-rpc", retry, rpc_timeout, || {
-            Self::connect_first(&self.config.l1_rpc_url, "l1-rpc", |url| {
-                let url = url.clone();
-                async move {
-                    ProviderBuilder::new().disable_recommended_fillers().connect(url.as_str()).await
-                }
-            })
+            ProviderBuilder::new()
+                .disable_recommended_fillers()
+                .connect(self.config.l1_rpc_url.as_str())
         })
         .await?;
 
@@ -601,7 +496,7 @@ impl BatcherService {
                     }
                 }
             });
-            background_tasks.push(("balance monitor relay", balance_handle));
+            background_tasks.push(("balance monitor relay", balance_handle.err_into().boxed()));
             info!(
                 address = %signer_address,
                 "batcher balance monitor started"
@@ -618,7 +513,7 @@ impl BatcherService {
                 ),
             )
             .spawn(cancellation.clone());
-            background_tasks.push(("derived L2 block parity monitor", handle));
+            background_tasks.push(("derived L2 block parity monitor", handle.err_into().boxed()));
         }
 
         let poller = RpcPollingSource::new(Arc::clone(&l2_provider));
@@ -631,38 +526,15 @@ impl BatcherService {
         let encoder =
             BatchEncoder::new(Arc::clone(&rollup_config), self.config.encoder_config.clone())?;
 
-        // Build the throttle controller and the appropriate client. The throttle
-        // RPC uses the L2 endpoint(s); `RpcThrottleClient` rotates per-call
-        // across the full L2 endpoint list so a single dead L2 RPC does not
-        // silently disable throttle delivery to the sequencer.
-        let throttle_client = match &self.config.throttle {
-            None => ServiceThrottle::Noop(NoopThrottleClient),
-            Some(_) => {
-                let urls: Vec<&str> = self.config.l2_rpc_url.iter().map(Url::as_str).collect();
-                ServiceThrottle::Rpc(RpcThrottleClient::new(&urls)?)
-            }
-        };
-        let throttle =
+        let throttle = DaThrottle::new(
             self.config.throttle.clone().map_or_else(ThrottleController::disabled, |cfg| {
                 ThrottleController::new(cfg, ThrottleStrategy::Linear)
-            });
+            }),
+        );
 
         // Build the L1 head source: a hybrid of optional WS subscription + polling.
         let l1_head_stream = Self::build_l1_head_stream(self.config.l1_ws_url.as_ref()).await;
-        let l1_head_poller = RpcL1HeadPollingSource::new(Arc::new(
-            Self::rpc_retry("l1-rpc-poller", retry, rpc_timeout, || {
-                Self::connect_first(&self.config.l1_rpc_url, "l1-rpc-poller", |url| {
-                    let url = url.clone();
-                    async move {
-                        ProviderBuilder::new()
-                            .disable_recommended_fillers()
-                            .connect(url.as_str())
-                            .await
-                    }
-                })
-            })
-            .await?,
-        ));
+        let l1_head_poller = RpcL1HeadPollingSource::new(Arc::new(l1_provider.clone()));
         let l1_head_source = HybridL1HeadSource::new(
             TokioRuntime::new(),
             l1_head_stream,
@@ -685,6 +557,15 @@ impl BatcherService {
         .await
         .map_err(|e| eyre::eyre!("failed to create tx manager: {e}"))?;
 
+        // Push the DA limits to the L2 endpoint, whose block builder applies them. A disabled
+        // throttle has nothing to push.
+        if self.config.throttle.is_some() {
+            let pusher = ThrottlePusher::new(&self.config.l2_rpc_url, throttle.subscribe())?;
+            let handle = tokio::spawn(pusher.run(runtime.clone()));
+            background_tasks
+                .push(("throttle pusher", handle.err_into().map(Result::flatten).boxed()));
+        }
+
         let (derivation_status_tx, derivation_status_rx) = mpsc::channel(1);
 
         let derivation_status_handle = tokio::spawn(
@@ -696,7 +577,8 @@ impl BatcherService {
             )
             .run(runtime.clone()),
         );
-        background_tasks.push(("derivation status poller", derivation_status_handle));
+        background_tasks
+            .push(("derivation status poller", derivation_status_handle.err_into().boxed()));
 
         // Build the driver.
         let (admin_handle, admin_rx) = AdminHandle::channel();
@@ -711,7 +593,7 @@ impl BatcherService {
                 force_blobs_when_throttling: self.config.force_blobs_when_throttling,
                 stopped: self.config.stopped,
             },
-            DaThrottle::new(throttle, throttle_client),
+            throttle,
             BatchDriverInputs {
                 source,
                 l1_head_source,
@@ -778,9 +660,9 @@ mod tests {
     fn mocked_config(server: &MockServer, signer: Address) -> BatcherConfig {
         let url: Url = server.url("/").parse().unwrap();
         BatcherConfig {
-            l1_rpc_url: vec![url.clone()],
-            l2_rpc_url: vec![url.clone()],
-            rollup_rpc_url: vec![url.clone()],
+            l1_rpc_url: url.clone(),
+            l2_rpc_url: url.clone(),
+            rollup_rpc_url: url.clone(),
             signer: Some(SignerConfig::Remote { endpoint: url, address: signer }),
             poll_interval: Duration::from_millis(10),
             wait_node_sync_timeout: Duration::from_millis(200),
@@ -849,18 +731,6 @@ mod tests {
         BatcherConfig { stopped: true, ..BatcherConfig::default() },
         "--stopped requires --admin-port: the batcher would start stopped with no way to start \
          it because the admin JSON-RPC server is not enabled"
-    )]
-    #[case::no_l1_rpc_endpoint(
-        BatcherConfig { l1_rpc_url: Vec::new(), ..BatcherConfig::default() },
-        "at least one L1 RPC endpoint is required"
-    )]
-    #[case::no_l2_rpc_endpoint(
-        BatcherConfig { l2_rpc_url: Vec::new(), ..BatcherConfig::default() },
-        "at least one L2 RPC endpoint is required"
-    )]
-    #[case::no_rollup_rpc_endpoint(
-        BatcherConfig { rollup_rpc_url: Vec::new(), ..BatcherConfig::default() },
-        "at least one rollup RPC endpoint is required"
     )]
     #[case::invalid_throttle(
         BatcherConfig {

@@ -737,9 +737,10 @@ mod tests {
 
     use crate::{
         BuildRequest, EngineActorRequest, EngineClientError, EngineProcessor,
-        EngineRequestReceiver, MockConductor, NodeMode, NoopCheckpointWriter, ResetRequest,
-        SequencerEngineRequestCoordinator, SequencerEngineState, ShadowReconciliationGate,
-        ValidatorEngineRequestHandler, actors::engine::client::MockEngineDerivationClient,
+        EngineRequestReceiver, MockConductor, NodeMode, NodeOperatingMode, NoopCheckpointWriter,
+        ResetRequest, SequencerEngineRequestCoordinator, SequencerEngineState,
+        ShadowReconciliationGate, ValidatorEngineRequestHandler,
+        actors::engine::client::MockEngineDerivationClient,
     };
 
     /// Test-only [`ForkchoiceCheckpointReader`] that returns pre-seeded safe/finalized heads.
@@ -966,10 +967,19 @@ mod tests {
         );
         let (unsafe_head_tx, mut unsafe_head_rx) = watch::channel(L2BlockInfo::default());
         let (request_tx, request_rx) = mpsc::channel(4);
-        let mut coordinator =
-            SequencerEngineRequestCoordinator::new(processor, shadow, None, shadow, unsafe_head_tx);
+        let mut coordinator = SequencerEngineRequestCoordinator::new(
+            processor,
+            if shadow {
+                NodeOperatingMode::ShadowSequencer { blocks_per_cycle: std::num::NonZeroU64::MIN }
+            } else {
+                NodeOperatingMode::Sequencer
+            },
+            None,
+            shadow,
+            unsafe_head_tx,
+        );
         *coordinator.sequencer_state_mut() =
-            SequencerEngineState::CatchingUp { shadow, catchup: Default::default() };
+            SequencerEngineState::CatchingUp { catchup: Default::default() };
         let handle = coordinator.start(request_rx);
 
         tokio::time::timeout(
@@ -1246,9 +1256,14 @@ mod tests {
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
-        let handle =
-            SequencerEngineRequestCoordinator::new(processor, false, None, false, unsafe_head_tx)
-                .start(req_rx);
+        let handle = SequencerEngineRequestCoordinator::new(
+            processor,
+            NodeOperatingMode::Sequencer,
+            None,
+            false,
+            unsafe_head_tx,
+        )
+        .start(req_rx);
 
         // probe_el_sync calls state_sender.send_replace with el_sync_finished=true during
         // the bootstrap, before the main loop starts. wait_for resolves as soon as the watch
@@ -1308,9 +1323,14 @@ mod tests {
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
-        let handle =
-            SequencerEngineRequestCoordinator::new(processor, false, None, false, unsafe_head_tx)
-                .start(req_rx);
+        let handle = SequencerEngineRequestCoordinator::new(
+            processor,
+            NodeOperatingMode::Sequencer,
+            None,
+            false,
+            unsafe_head_tx,
+        )
+        .start(req_rx);
 
         // In the Syncing path, seed_state sets unsafe_head to reth's reported latest block.
         // Wait for that state to be published before sending the Reset.
@@ -1388,7 +1408,7 @@ mod tests {
         let (req_tx, req_rx) = mpsc::channel(8);
         let handle = SequencerEngineRequestCoordinator::new(
             processor,
-            false,
+            NodeOperatingMode::Sequencer,
             Some(Arc::new(mock_conductor)),
             false,
             unsafe_head_tx,
@@ -1463,7 +1483,7 @@ mod tests {
         let (req_tx, req_rx) = mpsc::channel(8);
         let handle = SequencerEngineRequestCoordinator::new(
             processor,
-            true,
+            NodeOperatingMode::ShadowSequencer { blocks_per_cycle: std::num::NonZeroU64::MIN },
             Some(Arc::new(mock_conductor)),
             false,
             unsafe_head_tx,
@@ -1524,8 +1544,13 @@ mod tests {
         let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
         let processor = EngineProcessor::new(Arc::clone(&client), cfg, mock_derivation, engine);
         let (req_tx, req_rx) = mpsc::channel(8);
-        let mut handler =
-            SequencerEngineRequestCoordinator::new(processor, true, None, false, unsafe_head_tx);
+        let mut handler = SequencerEngineRequestCoordinator::new(
+            processor,
+            NodeOperatingMode::ShadowSequencer { blocks_per_cycle: std::num::NonZeroU64::MIN },
+            None,
+            false,
+            unsafe_head_tx,
+        );
         *handler.sequencer_state_mut() = SequencerEngineState::ShadowActive(Box::new(
             ShadowReconciliationGate::new(genesis_l2_info),
         ));
@@ -1614,8 +1639,13 @@ mod tests {
             EngineProcessor::new(client, Arc::new(RollupConfig::default()), derivation, engine);
         let (unsafe_head_tx, _) = watch::channel(private_unsafe);
         let (request_tx, request_rx) = mpsc::channel(8);
-        let mut coordinator =
-            SequencerEngineRequestCoordinator::new(processor, true, None, false, unsafe_head_tx);
+        let mut coordinator = SequencerEngineRequestCoordinator::new(
+            processor,
+            NodeOperatingMode::ShadowSequencer { blocks_per_cycle: std::num::NonZeroU64::MIN },
+            None,
+            false,
+            unsafe_head_tx,
+        );
         *coordinator.sequencer_state_mut() =
             SequencerEngineState::ShadowActive(Box::new(ShadowReconciliationGate::new(anchor)));
         let mut handle = coordinator.start(request_rx);

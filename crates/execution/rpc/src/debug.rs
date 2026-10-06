@@ -55,6 +55,7 @@ use crate::{
     CanonicalPayloadAttributes, WitnessCache, WitnessCacheConfig,
     metrics::{DebugApiExtMetrics, DebugApis, WitnessCacheMetrics},
     state::BaseStateProviderFactory,
+    witness::MAX_CONCURRENT_PAYLOAD_EXECUTIONS,
 };
 
 /// Payload version used to derive payload IDs for `debug_executePayload`.
@@ -178,7 +179,7 @@ where
             eth_api,
             evm_config,
             task_spawner,
-            semaphore: Semaphore::new(3),
+            semaphore: Semaphore::new(MAX_CONCURRENT_PAYLOAD_EXECUTIONS),
             witness_cache,
             _attrs: PhantomData,
         }

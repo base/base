@@ -86,6 +86,10 @@ transactions:
 # validity:
 #   ratio: 0.25                 # fraction of senders routed to the validity endpoint
 #   predicates:
+#     - type: balance
+#       address: sender          # sender | recipient | 0x-literal
+#       op: ">="
+#       value: "0"
 #     - type: storage
 #       address: "0x1234567890123456789012345678901234567890"
 #       slot:

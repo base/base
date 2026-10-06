@@ -8,10 +8,17 @@ async fn main() {
 
     tracing::info!("starting challenger E2E test");
 
+    // `verdict` matches the field the per-phase logs use, so one Datadog query
+    // covers both the run and its phases: `@data.message.fields.verdict:fail`.
     if let Err(e) = base_challenger_e2e::ChallengerE2e::run().await {
-        tracing::error!(error = %e, error_debug = ?e, "challenger E2E test failed");
+        tracing::error!(
+            verdict = "fail",
+            error = %e,
+            error_debug = ?e,
+            "challenger E2E test failed"
+        );
         std::process::exit(1);
     }
 
-    tracing::info!("challenger E2E test passed");
+    tracing::info!(verdict = "pass", "challenger E2E test passed");
 }

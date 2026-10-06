@@ -95,3 +95,6 @@ base-precompile-storage.workspace = true
 
 # tokio
 tokio = { workspace = true, features = ["rt", "macros"] }
+
+# testing
+rstest.workspace = true

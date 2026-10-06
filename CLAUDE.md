@@ -19,6 +19,7 @@
 
 ## Documentation and Lints
 
+- Find docs through [llms.txt](llms.txt) (one-line summary per doc) rather than grepping the tree. After adding, moving, deleting, or editing any Markdown doc, follow `.agents/skills/update-docs-index/SKILL.md`; CI fails on a stale index.
 - Use `#![doc = include_str!("../README.md")]` for crate documentation in `lib.rs`; never use `//!` comments there.
 - Begin every `mod.rs` file with a `//!` module doc comment describing its contents.
 - Do not suppress Clippy warnings with `#![allow(missing_docs)]` or other allow-lints. Fix the underlying issue.

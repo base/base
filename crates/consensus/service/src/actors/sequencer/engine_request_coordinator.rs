@@ -19,12 +19,15 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-use super::{CanonicalUnsafeCatchup, Conductor, SequencerEngineState, ShadowReconciliationGate};
+use super::{
+    CanonicalUnsafeCatchup, Conductor, SequencerEngineState, SequencerKind,
+    ShadowReconciliationGate,
+};
 use crate::{
     BuildRequest, EngineActorRequest, EngineClientError, EngineDerivationClient, EngineError,
     EngineProcessor, EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest, Metrics,
-    ReconcileShadowRequest, ResetOrigin, ResetRequest, ResetRequestOutcome,
-    actors::engine::ResetOutcome,
+    NodeOperatingMode, ReconcileShadowRequest, ResetOrigin, ResetReason, ResetRequest,
+    ResetRequestOutcome, actors::engine::ResetOutcome,
 };
 
 const MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP: u64 = 300;
@@ -34,6 +37,56 @@ const SEQUENCER_EL_SYNC_PROBE_INTERVAL: Duration = Duration::from_secs(5);
 enum BootstrapRole {
     ActiveSequencer,
     ConductorFollower,
+}
+
+/// Records the outcome metric for one engine reset request and replies to its caller.
+#[derive(Debug)]
+pub struct ResetResponder {
+    result_tx: mpsc::Sender<Result<(), EngineClientError>>,
+    origin: ResetOrigin,
+    reason: ResetReason,
+    started: Instant,
+    unsafe_before: base_protocol::L2BlockInfo,
+}
+
+impl ResetResponder {
+    /// Starts timing `request`, whose unsafe head was `unsafe_before` when it arrived.
+    pub fn new(request: ResetRequest, unsafe_before: base_protocol::L2BlockInfo) -> Self {
+        Self {
+            result_tx: request.result_tx,
+            origin: request.origin,
+            reason: request.reason,
+            started: Instant::now(),
+            unsafe_before,
+        }
+    }
+
+    /// Replies without recording a reset metric. Returns whether the caller received the reply.
+    pub async fn reply(&self, response: Result<(), EngineClientError>) -> bool {
+        let delivered = self.result_tx.send(response).await.is_ok();
+        if !delivered {
+            warn!(target: "engine", origin = ?self.origin, "Sending reset response failed");
+        }
+        delivered
+    }
+
+    /// Records the reset `outcome` and replies. Returns whether the caller received the reply.
+    pub async fn finish(
+        &self,
+        outcome: ResetRequestOutcome,
+        unsafe_after: base_protocol::L2BlockInfo,
+        response: Result<(), EngineClientError>,
+    ) -> bool {
+        Metrics::record_engine_reset(
+            self.origin,
+            self.reason,
+            outcome,
+            self.started.elapsed(),
+            self.unsafe_before,
+            unsafe_after,
+        );
+        self.reply(response).await
+    }
 }
 
 /// Owns the engine processor and routes sequencer catch-up and shadow reconciliation requests.
@@ -48,8 +101,7 @@ where
     sequencer_state: SequencerEngineState,
     conductor: Option<Arc<dyn Conductor>>,
     sequencer_stopped: bool,
-    /// Whether the sequencer stops following the canonical chain once catch-up completes.
-    isolated: bool,
+    sequencer_kind: SequencerKind,
     unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
 }
 
@@ -59,44 +111,21 @@ where
     EngineClient_: EngineClient,
     DerivationClient: EngineDerivationClient,
 {
-    /// Creates a request handler with optional shadow request routing.
+    /// Creates a request handler for the given operating mode.
     pub fn new(
         processor: EngineProcessor<EngineClient_, DerivationClient>,
-        shadow_mode: bool,
+        mode: NodeOperatingMode,
         conductor: Option<Arc<dyn Conductor>>,
         sequencer_stopped: bool,
         unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
     ) -> Self {
-        let sequencer_state = if shadow_mode {
-            SequencerEngineState::CatchingUp {
-                shadow: true,
-                catchup: CanonicalUnsafeCatchup::default(),
-            }
-        } else {
-            SequencerEngineState::Regular
-        };
         Self {
             processor,
-            sequencer_state,
+            sequencer_state: SequencerEngineState::Regular,
             conductor,
             sequencer_stopped,
-            isolated: false,
+            sequencer_kind: mode.into(),
             unsafe_head_tx,
-        }
-    }
-
-    /// Configures the coordinator as an isolated sequencer.
-    pub const fn with_isolated(mut self, isolated: bool) -> Self {
-        self.isolated = isolated;
-        self
-    }
-
-    /// Returns the state entered once a non-shadow sequencer has caught up to the canonical tip.
-    const fn caught_up_state(&self) -> SequencerEngineState {
-        if self.isolated {
-            SequencerEngineState::IsolatedActive
-        } else {
-            SequencerEngineState::Regular
         }
     }
 
@@ -147,7 +176,7 @@ where
             return Err(EngineClientError::ELSyncing);
         }
 
-        if let SequencerEngineState::CatchingUp { catchup, .. } = &self.sequencer_state {
+        if let SequencerEngineState::CatchingUp { catchup } = &self.sequencer_state {
             if catchup.is_faulted() {
                 return Err(EngineClientError::ShadowBufferFaulted);
             }
@@ -161,18 +190,13 @@ where
             self.sequencer_state,
             SequencerEngineState::Regular | SequencerEngineState::CatchingUp { .. }
         ) {
-            self.sequencer_state = self.caught_up_state();
+            self.sequencer_state = self.sequencer_kind.completed_state(head);
         }
         Ok(())
     }
 
-    /// Returns whether this handler is configured as a shadow sequencer.
     const fn is_shadow_sequencer(&self) -> bool {
-        matches!(
-            self.sequencer_state,
-            SequencerEngineState::CatchingUp { shadow: true, .. }
-                | SequencerEngineState::ShadowActive(_)
-        )
+        matches!(self.sequencer_kind, SequencerKind::Shadow)
     }
 
     const fn active_shadow_gate(&mut self) -> Option<&mut ShadowReconciliationGate> {
@@ -187,7 +211,7 @@ where
     }
 
     async fn resolve_bootstrap_role(&self) -> BootstrapRole {
-        if self.sequencer_stopped || self.isolated || self.is_shadow_sequencer() {
+        if self.sequencer_stopped || self.sequencer_kind != SequencerKind::Regular {
             return BootstrapRole::ConductorFollower;
         }
         match &self.conductor {
@@ -203,10 +227,163 @@ where
         }
     }
 
+    async fn handle_catching_up_reset(
+        &mut self,
+        origin: ResetOrigin,
+        responder: &ResetResponder,
+    ) -> Result<bool, EngineError> {
+        let sync_state = self.processor.engine_state().sync_state;
+        let head = sync_state.unsafe_head();
+
+        let (kind, faulted, complete) = match &self.sequencer_state {
+            SequencerEngineState::CatchingUp { catchup } => (
+                self.sequencer_kind,
+                catchup.is_faulted(),
+                catchup.is_complete(head, sync_state.safe_head()),
+            ),
+            _ => return Ok(false),
+        };
+
+        match (kind, faulted, complete) {
+            (_, true, _) => {
+                error!(target: "engine", "Canonical catch-up payload buffer is faulted");
+                responder
+                    .finish(
+                        ResetRequestOutcome::Failed,
+                        head,
+                        Err(EngineClientError::ShadowBufferFaulted),
+                    )
+                    .await;
+            }
+            (_, _, false) => {
+                warn!(target: "engine", "Deferring sequencer reset until canonical catch-up completes");
+                responder
+                    .finish(ResetRequestOutcome::Deferred, head, Err(EngineClientError::ELSyncing))
+                    .await;
+            }
+            (SequencerKind::Shadow, _, _) if origin != ResetOrigin::ShadowCycleCoordinated => {
+                responder
+                    .finish(
+                        ResetRequestOutcome::Failed,
+                        head,
+                        Err(EngineClientError::ShadowReconciliationDisabled),
+                    )
+                    .await;
+            }
+            (SequencerKind::Shadow, _, _) => {
+                info!(
+                    target: "engine",
+                    canonical_head = head.block_info.number,
+                    canonical_hash = %head.block_info.hash,
+                    "Shadow canonical catch-up completed"
+                );
+                self.sequencer_state = kind.completed_state(head);
+                self.unsafe_head_tx.send_replace(head);
+                responder
+                    .finish(ResetRequestOutcome::from_unsafe_heads(head, head), head, Ok(()))
+                    .await;
+            }
+            (SequencerKind::Regular | SequencerKind::Isolated, _, _) => {
+                info!(
+                    target: "engine",
+                    canonical_head = head.block_info.number,
+                    canonical_hash = %head.block_info.hash,
+                    "Sequencer canonical catch-up completed"
+                );
+                self.sequencer_state = kind.completed_state(head);
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    async fn handle_reset_request(
+        &mut self,
+        reset_request: ResetRequest,
+    ) -> Result<(), EngineError> {
+        let origin = reset_request.origin;
+        let unsafe_before = self.processor.engine_state().sync_state.unsafe_head();
+        let responder = ResetResponder::new(reset_request, unsafe_before);
+
+        if origin == ResetOrigin::Derivation && self.is_isolated_active() {
+            debug!(target: "engine", "Isolated sequencer ignoring derivation reset");
+            responder.reply(Ok(())).await;
+            return Ok(());
+        }
+
+        if matches!(origin, ResetOrigin::Sequencer | ResetOrigin::ShadowCycleCoordinated)
+            && self.handle_catching_up_reset(origin, &responder).await?
+        {
+            return Ok(());
+        }
+
+        if !self.processor.engine_state().el_sync_finished {
+            warn!(target: "engine", "Deferring engine reset: EL sync not yet complete");
+            responder
+                .finish(
+                    ResetRequestOutcome::Deferred,
+                    self.processor.engine_state().sync_state.unsafe_head(),
+                    Err(EngineClientError::ELSyncing),
+                )
+                .await;
+            return Ok(());
+        }
+
+        warn!(target: "engine", "Received reset request");
+
+        let reset_res = self.processor.reset_engine_state().await;
+        if let Ok(safe_head) = &reset_res {
+            let anchor = self.processor.engine_state().sync_state.unsafe_head();
+            match &mut self.sequencer_state {
+                SequencerEngineState::ShadowActive(gate) => gate.reanchor(anchor),
+                SequencerEngineState::CatchingUp { catchup } => {
+                    *catchup = CanonicalUnsafeCatchup::default();
+                }
+                SequencerEngineState::Regular | SequencerEngineState::IsolatedActive => {}
+            }
+            self.unsafe_head_tx.send_replace(anchor);
+            if let Err(error) = self.processor.notify_derivation_of_reset(*safe_head).await {
+                responder
+                    .finish(
+                        ResetRequestOutcome::DerivationNotificationFailed,
+                        self.processor.engine_state().sync_state.unsafe_head(),
+                        Err(EngineClientError::ResetForkchoiceError(error.to_string())),
+                    )
+                    .await;
+                if self.is_shadow_active() {
+                    return Err(error);
+                }
+                return Ok(());
+            }
+        }
+
+        let unsafe_after = self.processor.engine_state().sync_state.unsafe_head();
+        let reset_outcome = if reset_res.is_ok() {
+            ResetRequestOutcome::from_unsafe_heads(unsafe_before, unsafe_after)
+        } else {
+            ResetRequestOutcome::Failed
+        };
+        let response_payload = reset_res
+            .as_ref()
+            .map(|_| ())
+            .map_err(|e| EngineClientError::ResetForkchoiceError(e.to_string()));
+        let reset_succeeded = reset_res.is_ok();
+        if !responder.finish(reset_outcome, unsafe_after, response_payload).await {
+            reset_res?;
+        }
+        if reset_succeeded
+            && self.is_shadow_active()
+            && origin != ResetOrigin::ShadowCycleCoordinated
+        {
+            return Err(EngineError::ShadowInternalReset);
+        }
+        Ok(())
+    }
+
     async fn advance_canonical_catchup(&mut self) -> Result<(), EngineError> {
         let anchor = self.processor.engine_state().sync_state.unsafe_head();
         let payloads = match &mut self.sequencer_state {
-            SequencerEngineState::CatchingUp { catchup, .. } => catchup.contiguous_payloads(anchor),
+            SequencerEngineState::CatchingUp { catchup } => catchup.contiguous_payloads(anchor),
             _ => return Ok(()),
         };
         if payloads.is_empty() {
@@ -230,8 +407,7 @@ where
             .await
         {
             Ok(head) => {
-                if let SequencerEngineState::CatchingUp { catchup, .. } = &mut self.sequencer_state
-                {
+                if let SequencerEngineState::CatchingUp { catchup } = &mut self.sequencer_state {
                     catchup.commit(head);
                 }
             }
@@ -293,18 +469,18 @@ where
                 .is_none_or(|head| head.block_info.hash == self.processor.rollup().genesis.l2.hash);
 
             let bootstrap_role = self.resolve_bootstrap_role().await;
-            if bootstrap_role == BootstrapRole::ConductorFollower
-                && !at_genesis
-                && matches!(self.sequencer_state, SequencerEngineState::Regular)
-            {
-                self.sequencer_state = SequencerEngineState::CatchingUp {
-                    shadow: false,
-                    catchup: CanonicalUnsafeCatchup::default(),
+            if matches!(self.sequencer_state, SequencerEngineState::Regular) {
+                self.sequencer_state = match (self.sequencer_kind, bootstrap_role, at_genesis) {
+                    (SequencerKind::Shadow, _, _)
+                    | (_, BootstrapRole::ConductorFollower, false) => {
+                        SequencerEngineState::CatchingUp {
+                            catchup: CanonicalUnsafeCatchup::default(),
+                        }
+                    }
+                    (kind, _, _) => {
+                        kind.completed_state(self.processor.engine_state().sync_state.unsafe_head())
+                    }
                 };
-            }
-            // At genesis there is no canonical chain to catch up to.
-            if self.isolated && matches!(self.sequencer_state, SequencerEngineState::Regular) {
-                self.sequencer_state = SequencerEngineState::IsolatedActive;
             }
             match bootstrap_role {
                 BootstrapRole::ConductorFollower => {
@@ -341,14 +517,14 @@ where
                 // A genuine drain reset invalidates shadow reconciliation state and is fatal. The
                 // one-time `InitialELSyncReset` (a cold-start bootstrap reset) is deliberately
                 // tolerated: it carries no reconciliation state and cannot recur.
-                if drain_outcome == ResetOutcome::Reset && self.is_shadow_active() {
-                    return Err(EngineError::ShadowInternalReset);
-                }
-                if drain_outcome == ResetOutcome::Reset
-                    && let SequencerEngineState::CatchingUp { catchup, .. } =
-                        &mut self.sequencer_state
-                {
-                    *catchup = CanonicalUnsafeCatchup::default();
+                if drain_outcome == ResetOutcome::Reset {
+                    if self.is_shadow_active() {
+                        return Err(EngineError::ShadowInternalReset);
+                    }
+                    if let SequencerEngineState::CatchingUp { catchup } = &mut self.sequencer_state
+                    {
+                        *catchup = CanonicalUnsafeCatchup::default();
+                    }
                 }
 
                 self.advance_canonical_catchup().await?;
@@ -356,7 +532,11 @@ where
                 // If the unsafe head has updated, propagate it to the outbound channels.
                 self.unsafe_head_tx.send_if_modified(|val| {
                     let new_head = self.processor.engine_state().sync_state.unsafe_head();
-                    (*val != new_head).then(|| *val = new_head).is_some()
+                    if *val == new_head {
+                        return false;
+                    }
+                    *val = new_head;
+                    true
                 });
 
                 // Wait for the next processing request.
@@ -507,7 +687,7 @@ where
                     }
                     EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
                         match &mut self.sequencer_state {
-                            SequencerEngineState::CatchingUp { catchup, .. } => {
+                            SequencerEngineState::CatchingUp { catchup } => {
                                 catchup.buffer_payload(*envelope);
                             }
                             SequencerEngineState::ShadowActive(gate) => {
@@ -554,7 +734,9 @@ where
                     }
                     EngineActorRequest::ProcessAdminUnsafeL2BlockRequest(envelope) => {
                         match self.sequencer_state {
-                            SequencerEngineState::CatchingUp { shadow: true, .. } => {
+                            SequencerEngineState::CatchingUp { .. }
+                                if self.is_shadow_sequencer() =>
+                            {
                                 warn!(target: "engine", "Ignoring admin unsafe payload during canonical catch-up");
                             }
                             SequencerEngineState::ShadowActive(_) => {
@@ -564,7 +746,7 @@ where
                                 warn!(target: "engine", "Ignoring admin unsafe payload on isolated sequencer");
                             }
                             SequencerEngineState::Regular
-                            | SequencerEngineState::CatchingUp { shadow: false, .. } => {
+                            | SequencerEngineState::CatchingUp { .. } => {
                                 self.processor.handle_admin_unsafe_l2_block(*envelope);
                             }
                         }
@@ -608,207 +790,7 @@ where
                         }
                     }
                     EngineActorRequest::ResetRequest(reset_request) => {
-                        let reset_started = Instant::now();
-                        let ResetRequest { result_tx, origin, reason } = *reset_request;
-                        let sync_state = self.processor.engine_state().sync_state;
-                        let head = sync_state.unsafe_head();
-                        let unsafe_before = head;
-                        // Derivation follows the canonical chain, so its resets would rewind the
-                        // private chain. Acknowledge them without touching forkchoice.
-                        if origin == ResetOrigin::Derivation && self.is_isolated_active() {
-                            debug!(target: "engine", "Isolated sequencer ignoring derivation reset");
-                            if result_tx.send(Ok(())).await.is_err() {
-                                warn!(target: "engine", "Sending reset response failed");
-                            }
-                            continue;
-                        }
-                        if origin != ResetOrigin::Derivation
-                            && let SequencerEngineState::CatchingUp { shadow, catchup } =
-                                &self.sequencer_state
-                        {
-                            let shadow = *shadow;
-                            if catchup.is_faulted() {
-                                error!(target: "engine", "Canonical catch-up payload buffer is faulted");
-                                Metrics::record_engine_reset(
-                                    origin,
-                                    reason,
-                                    ResetRequestOutcome::Failed,
-                                    reset_started.elapsed(),
-                                    unsafe_before,
-                                    self.processor.engine_state().sync_state.unsafe_head(),
-                                );
-                                if result_tx
-                                    .send(Err(EngineClientError::ShadowBufferFaulted))
-                                    .await
-                                    .is_err()
-                                {
-                                    warn!(target: "engine", "Sending catch-up fault response failed");
-                                }
-                                continue;
-                            }
-                            if !catchup.is_complete(head, sync_state.safe_head()) {
-                                warn!(target: "engine", "Deferring sequencer reset until canonical catch-up completes");
-                                Metrics::record_engine_reset(
-                                    origin,
-                                    reason,
-                                    ResetRequestOutcome::Deferred,
-                                    reset_started.elapsed(),
-                                    unsafe_before,
-                                    self.processor.engine_state().sync_state.unsafe_head(),
-                                );
-                                if result_tx.send(Err(EngineClientError::ELSyncing)).await.is_err()
-                                {
-                                    warn!(target: "engine", "Sending ELSyncing response failed");
-                                }
-                                continue;
-                            }
-                            if shadow {
-                                if origin != ResetOrigin::ShadowCycleCoordinated {
-                                    Metrics::record_engine_reset(
-                                        origin,
-                                        reason,
-                                        ResetRequestOutcome::Failed,
-                                        reset_started.elapsed(),
-                                        unsafe_before,
-                                        self.processor.engine_state().sync_state.unsafe_head(),
-                                    );
-                                    if result_tx
-                                        .send(Err(EngineClientError::ShadowReconciliationDisabled))
-                                        .await
-                                        .is_err()
-                                    {
-                                        warn!(target: "engine", "Sending shadow activation response failed");
-                                    }
-                                    continue;
-                                }
-                                info!(
-                                    target: "engine",
-                                    canonical_head = head.block_info.number,
-                                    canonical_hash = %head.block_info.hash,
-                                    "Shadow canonical catch-up completed"
-                                );
-                                // Catch-up already advanced the EL to this canonical head. This
-                                // coordinated request activates shadow production rather than
-                                // issuing a second forkchoice reset that could rewind it.
-                                self.sequencer_state = SequencerEngineState::ShadowActive(
-                                    Box::new(ShadowReconciliationGate::new(head)),
-                                );
-                                self.unsafe_head_tx.send_replace(head);
-                                Metrics::record_engine_reset(
-                                    origin,
-                                    reason,
-                                    ResetRequestOutcome::from_unsafe_heads(unsafe_before, head),
-                                    reset_started.elapsed(),
-                                    unsafe_before,
-                                    head,
-                                );
-                                if result_tx.send(Ok(())).await.is_err() {
-                                    warn!(target: "engine", "Sending shadow activation response failed");
-                                }
-                                continue;
-                            }
-                            info!(
-                                target: "engine",
-                                canonical_head = head.block_info.number,
-                                canonical_hash = %head.block_info.hash,
-                                "Sequencer canonical catch-up completed"
-                            );
-                            self.sequencer_state = self.caught_up_state();
-                        }
-                        // Do not reset the engine while the EL is still syncing. A Reset sends a
-                        // forkchoice_updated to reth pointing at the sync-start block, which will
-                        // return Valid and cause reth to set that stale block as canonical,
-                        // aborting any in-progress snap sync. Defer until el_sync_finished=true.
-                        if !self.processor.engine_state().el_sync_finished {
-                            warn!(target: "engine", "Deferring engine reset: EL sync not yet complete");
-                            Metrics::record_engine_reset(
-                                origin,
-                                reason,
-                                ResetRequestOutcome::Deferred,
-                                reset_started.elapsed(),
-                                unsafe_before,
-                                self.processor.engine_state().sync_state.unsafe_head(),
-                            );
-                            if result_tx.send(Err(EngineClientError::ELSyncing)).await.is_err() {
-                                warn!(target: "engine", "Sending ELSyncing response failed");
-                            }
-                            continue;
-                        }
-
-                        warn!(target: "engine", "Received reset request");
-
-                        let reset_res = self.processor.reset_engine_state().await;
-                        if let Ok(safe_head) = &reset_res {
-                            let anchor = self.processor.engine_state().sync_state.unsafe_head();
-                            match &mut self.sequencer_state {
-                                SequencerEngineState::ShadowActive(gate) => gate.reanchor(anchor),
-                                SequencerEngineState::CatchingUp { catchup, .. } => {
-                                    *catchup = CanonicalUnsafeCatchup::default();
-                                }
-                                SequencerEngineState::Regular
-                                | SequencerEngineState::IsolatedActive => {}
-                            }
-                            self.unsafe_head_tx.send_replace(anchor);
-                            if let Err(error) =
-                                self.processor.notify_derivation_of_reset(*safe_head).await
-                            {
-                                Metrics::record_engine_reset(
-                                    origin,
-                                    reason,
-                                    ResetRequestOutcome::DerivationNotificationFailed,
-                                    reset_started.elapsed(),
-                                    unsafe_before,
-                                    self.processor.engine_state().sync_state.unsafe_head(),
-                                );
-                                if result_tx
-                                    .send(Err(EngineClientError::ResetForkchoiceError(
-                                        error.to_string(),
-                                    )))
-                                    .await
-                                    .is_err()
-                                {
-                                    warn!(target: "engine", "Sending reset response failed");
-                                }
-                                if self.is_shadow_active() {
-                                    return Err(error);
-                                }
-                                continue;
-                            }
-                        }
-
-                        let unsafe_after = self.processor.engine_state().sync_state.unsafe_head();
-                        let reset_outcome = if reset_res.is_ok() {
-                            ResetRequestOutcome::from_unsafe_heads(unsafe_before, unsafe_after)
-                        } else {
-                            ResetRequestOutcome::Failed
-                        };
-                        Metrics::record_engine_reset(
-                            origin,
-                            reason,
-                            reset_outcome,
-                            reset_started.elapsed(),
-                            unsafe_before,
-                            unsafe_after,
-                        );
-
-                        // Send the result.
-                        let response_payload = reset_res
-                            .as_ref()
-                            .map(|_| ())
-                            .map_err(|e| EngineClientError::ResetForkchoiceError(e.to_string()));
-                        let reset_succeeded = reset_res.is_ok();
-                        if result_tx.send(response_payload).await.is_err() {
-                            warn!(target: "engine", "Sending reset response failed");
-                            // If there was an error and we couldn't notify the caller to handle it,
-                            // return the error.
-                            reset_res?;
-                        }
-                        if reset_succeeded
-                            && self.is_shadow_active()
-                            && origin != ResetOrigin::ShadowCycleCoordinated
-                        {
-                            return Err(EngineError::ShadowInternalReset);
-                        }
+                        self.handle_reset_request(*reset_request).await?;
                     }
                 }
             }
@@ -836,7 +818,7 @@ mod tests {
     use super::{BootstrapRole, SequencerEngineRequestCoordinator, SequencerEngineState};
     use crate::{
         CanonicalUnsafeCatchup, Conductor, ConductorError, EngineProcessor, MockConductor,
-        MockEngineDerivationClient, ShadowReconciliationGate,
+        MockEngineDerivationClient, NodeOperatingMode, ShadowReconciliationGate,
     };
 
     fn coordinator(
@@ -844,6 +826,11 @@ mod tests {
         stopped: bool,
         conductor: Option<Arc<dyn Conductor>>,
     ) -> SequencerEngineRequestCoordinator<MockEngineClient, MockEngineDerivationClient> {
+        let mode = if shadow {
+            NodeOperatingMode::ShadowSequencer { blocks_per_cycle: std::num::NonZeroU64::MIN }
+        } else {
+            NodeOperatingMode::Sequencer
+        };
         let (state_tx, _) = watch::channel(EngineState::default());
         let (queue_tx, _) = watch::channel(0usize);
         let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
@@ -854,13 +841,7 @@ mod tests {
             engine,
         );
         let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
-        SequencerEngineRequestCoordinator::new(
-            processor,
-            shadow,
-            conductor,
-            stopped,
-            unsafe_head_tx,
-        )
+        SequencerEngineRequestCoordinator::new(processor, mode, conductor, stopped, unsafe_head_tx)
     }
 
     #[tokio::test]
@@ -959,8 +940,13 @@ mod tests {
             Engine::new(state, state_tx, queue_tx),
         );
         let (head_tx, _) = watch::channel(head);
+        let mode = if shadow {
+            NodeOperatingMode::ShadowSequencer { blocks_per_cycle: std::num::NonZeroU64::MIN }
+        } else {
+            NodeOperatingMode::Sequencer
+        };
         let mut coordinator =
-            SequencerEngineRequestCoordinator::new(processor, shadow, None, true, head_tx);
+            SequencerEngineRequestCoordinator::new(processor, mode, None, true, head_tx);
         let mut catchup = CanonicalUnsafeCatchup::default();
         for &(number, hash) in observations {
             catchup.buffer_payload(BaseExecutionPayloadEnvelope {
@@ -984,7 +970,7 @@ mod tests {
             });
         }
         catchup.commit(head);
-        *coordinator.sequencer_state_mut() = SequencerEngineState::CatchingUp { shadow, catchup };
+        *coordinator.sequencer_state_mut() = SequencerEngineState::CatchingUp { catchup };
 
         let result = coordinator.prepare_sequencer_start(B256::with_last_byte(requested_hash));
         assert_eq!(result.is_ok(), accepted, "{result:?}");
@@ -992,12 +978,10 @@ mod tests {
             matches!(coordinator.sequencer_state(), SequencerEngineState::Regular),
             accepted && !shadow
         );
+        // Shadow starts never leave catch-up; other starts leave it only when accepted.
         assert_eq!(
-            matches!(
-                coordinator.sequencer_state(),
-                SequencerEngineState::CatchingUp { shadow: true, .. }
-            ),
-            shadow
+            matches!(coordinator.sequencer_state(), SequencerEngineState::CatchingUp { .. }),
+            shadow || !accepted
         );
         // Acceptance must remain idempotent; refusal must not discard the blocking evidence.
         assert_eq!(
@@ -1005,18 +989,36 @@ mod tests {
             accepted
         );
 
-        *coordinator.sequencer_state_mut() =
-            SequencerEngineState::ShadowActive(Box::new(ShadowReconciliationGate::new(head)));
-        assert_eq!(
-            coordinator.prepare_sequencer_start(B256::with_last_byte(requested_hash)).is_ok(),
-            requested_hash == 100
-        );
-        assert!(matches!(coordinator.sequencer_state(), SequencerEngineState::ShadowActive(_)));
+        if shadow {
+            *coordinator.sequencer_state_mut() =
+                SequencerEngineState::ShadowActive(Box::new(ShadowReconciliationGate::new(head)));
+            assert_eq!(
+                coordinator.prepare_sequencer_start(B256::with_last_byte(requested_hash)).is_ok(),
+                requested_hash == 100
+            );
+            assert!(matches!(coordinator.sequencer_state(), SequencerEngineState::ShadowActive(_)));
+        }
     }
 
     #[tokio::test]
     async fn isolated_sequencer_bootstraps_as_follower() {
-        let coordinator = coordinator(false, false, None).with_isolated(true);
+        let (state_tx, _) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let processor = EngineProcessor::new(
+            Arc::new(test_engine_client_builder().build()),
+            Arc::new(RollupConfig::default()),
+            MockEngineDerivationClient::new(),
+            engine,
+        );
+        let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
+        let coordinator = SequencerEngineRequestCoordinator::new(
+            processor,
+            NodeOperatingMode::IsolatedSequencer,
+            None,
+            false,
+            unsafe_head_tx,
+        );
         assert_eq!(coordinator.resolve_bootstrap_role().await, BootstrapRole::ConductorFollower);
     }
 
@@ -1049,9 +1051,13 @@ mod tests {
             Engine::new(state, state_tx, queue_tx),
         );
         let (head_tx, _) = watch::channel(head);
-        let mut coordinator =
-            SequencerEngineRequestCoordinator::new(processor, false, None, true, head_tx)
-                .with_isolated(true);
+        let mut coordinator = SequencerEngineRequestCoordinator::new(
+            processor,
+            NodeOperatingMode::IsolatedSequencer,
+            None,
+            true,
+            head_tx,
+        );
         let mut catchup = CanonicalUnsafeCatchup::default();
         for &(number, hash) in observations {
             catchup.buffer_payload(BaseExecutionPayloadEnvelope {
@@ -1075,8 +1081,7 @@ mod tests {
             });
         }
         catchup.commit(head);
-        *coordinator.sequencer_state_mut() =
-            SequencerEngineState::CatchingUp { shadow: false, catchup };
+        *coordinator.sequencer_state_mut() = SequencerEngineState::CatchingUp { catchup };
 
         assert_eq!(coordinator.prepare_sequencer_start(head.block_info.hash).is_ok(), accepted);
         assert_eq!(

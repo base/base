@@ -60,12 +60,6 @@ pub struct ProofRequest {
     /// the actual `msg.sender` (gameCreator).
     #[cfg_attr(feature = "serde", serde(default))]
     pub proposer: Address,
-    /// Number of L2 blocks between intermediate output root checkpoints.
-    ///
-    /// Used by the enclave to sample the correct intermediate roots when
-    /// constructing the aggregate proof journal.
-    #[cfg_attr(feature = "serde", serde(default))]
-    pub intermediate_block_interval: u64,
     /// Block number of the L1 head.
     ///
     /// Stored alongside `l1_head` (the hash) so the enclave can reference the
