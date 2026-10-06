@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Offline launcher tests."""
 
+import copy
+import json
 import os
 from pathlib import Path
+import shutil
 import socket
 import stat
 import subprocess
@@ -14,13 +17,47 @@ from unittest.mock import patch
 import snapshot_devnet as devnet
 
 
+def snapshot():
+    head = {"block_info": {"number": 123, "hash": "0x123", "timestamp": 1234,
+                           "l1origin": {"number": 19, "hash": "0x19"}},
+            "system_config": {"batcherAddr": "0xb"}}
+    return {"chain_id": 8453, "rollup_config": {"l1_chain_id": 1},
+            "latest": copy.deepcopy(head), "safe": copy.deepcopy(head), "finalized": copy.deepcopy(head)}
+
+
+def manifest():
+    return {
+        "version": 2, "project": "snapshot-fixture", "phase": "prepared", "port": 19545,
+        "fork": {"number": "0x64", "hash": "0xf", "timestamp": "0x4d8", "parentHash": "0xe"},
+        "images": {name: "sha256:" + "a" * 64 for name in ("base", "anvil", "batcher")},
+        "datadirs": {"sequencer": "/unused-sequencer", "validator": "/unused-validator"},
+        "epoch_slots": 3, "slot_seconds": 12, "protocol_versions": devnet.PROTOCOL_VERSIONS,
+        "beacon_genesis": {"genesis_time": "1000"},
+        "upstreams": {"execution": "TEST_EXECUTION_URL", "beacon": "TEST_BEACON_URL"},
+        "accounts": {"batcher": "0x" + "b" * 40, "signer": "0x" + "c" * 40, "user": "0x" + "d" * 40},
+        "operations": {},
+        "contracts": {},
+    }
+
+
+def container(service, address="10.9.0.2", project="snapshot-fixture", networks=None, running=True):
+    """One `docker inspect` record for a Compose-managed container."""
+    return {
+        "Config": {"Labels": {"com.docker.compose.project": project, "com.docker.compose.service": service}},
+        "State": {"Running": running},
+        "NetworkSettings": {"Networks": networks if networks is not None
+                            else {project + "_private": {"IPAddress": address}}},
+    }
+
+
 class SnapshotTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        self.fork = devnet.SnapshotFork(self.root / "fork")
+        self.fork = devnet.SnapshotFork(self.root / "fork", timeout=1)
         self.fork.directory.mkdir()
+        self.fork.manifest = manifest()
 
     def datadir(self, name):
         path = self.root / name
@@ -148,6 +185,283 @@ class SnapshotTests(unittest.TestCase):
         self.assertIn("history unavailable", str(caught.exception))
         for secret in ("rpc.invalid", "token-123", "pw@"):
             self.assertNotIn(secret, str(caught.exception))
+
+    def test_upstream_write_is_rejected_before_transport(self):
+        with patch.object(devnet, "request_json") as transport:
+            for method in ("eth_sendRawTransaction", "eth_sendTransaction", "anvil_setBalance",
+                           "optimism_safeHeadAtL1Block", "optimism_rollupConfig"):
+                with self.assertRaisesRegex(RuntimeError, "upstream write"):
+                    devnet.rpc("https://secret.invalid/key", method, upstream=True)
+            transport.assert_not_called()
+
+    def test_provider_failure_does_not_print_secret(self):
+        with patch.object(devnet, "request_json", return_value={"error": {"message": "secret-api-key"}}):
+            with self.assertRaises(RuntimeError) as caught:
+                devnet.rpc("https://secret.invalid/key", "eth_call", upstream=True)
+        self.assertNotIn("secret-api-key", str(caught.exception))
+        self.assertNotIn("secret.invalid", str(caught.exception))
+
+    def test_malformed_endpoint_failure_does_not_print_secret(self):
+        # http.client rejects the space before connecting, so the request stays offline.
+        endpoint = "http://127.0.0.1:1/secret-key path"
+        for request in (lambda: devnet.request_json(endpoint), lambda: devnet.rpc(endpoint, "eth_chainId")):
+            with self.assertRaises(devnet.Unavailable) as caught:
+                request()
+            self.assertEqual(str(caught.exception), "RPC/Beacon request failed (endpoint redacted)")
+
+    def test_endpoint_keeps_a_credential_ending_in_a_slash(self):
+        with patch.dict(os.environ, {"TEST_EXECUTION_URL": "https://rpc.invalid/v2?key=abc/"}):
+            self.assertEqual(self.fork.endpoint("execution"), "https://rpc.invalid/v2?key=abc/")
+
+    def test_l1_url_uses_published_loopback_port_without_docker_lookup(self):
+        with patch.object(devnet, "run") as run:
+            self.assertEqual(self.fork.url("l1"), "http://127.0.0.1:19545")
+            run.assert_not_called()
+
+    def test_execution_url_selects_running_inspection_or_production_container(self):
+        for service in ("inspect-sequencer", "sequencer"):
+            with patch.object(self.fork, "containers",
+                              return_value=[container(service, "10.9.0.7"), container("validator", "10.9.0.8")]):
+                self.assertEqual(self.fork.url("sequencer"), "http://10.9.0.7:8545")
+                self.assertEqual(self.fork.url("validator"), "http://10.9.0.8:8545")
+        with patch.object(self.fork, "containers", return_value=[container("sequencer", "10.9.0.7")]):
+            self.assertEqual(self.fork.url("sequencer-cl"), "http://10.9.0.7:9545")
+
+    def test_unavailable_role_is_retryable_but_ambiguous_identity_is_not(self):
+        cases = {
+            "stopped": ([container("sequencer", running=False)], "sequencer", devnet.Unavailable),
+            "inspection has no consensus RPC": ([container("inspect-sequencer")], "sequencer-cl", devnet.Unavailable),
+            "other project": ([container("sequencer", project="snapshot-other")], "sequencer", devnet.Unavailable),
+            "inspection and production": ([container("sequencer"), container("inspect-sequencer", "10.9.0.3")],
+                                          "sequencer", RuntimeError),
+            "duplicate service": ([container("validator"), container("validator", "10.9.0.3")],
+                                  "validator-cl", RuntimeError),
+        }
+        for name, (containers, role, error) in cases.items():
+            with self.subTest(name), patch.object(self.fork, "containers", return_value=containers):
+                with self.assertRaises(error) as caught:
+                    self.fork.url(role)
+                if error is RuntimeError:
+                    self.assertNotIsInstance(caught.exception, devnet.Unavailable)
+                    self.assertIn("ambiguous", str(caught.exception))
+
+    def test_l2_rpc_resolves_only_through_the_internal_network(self):
+        cases = (
+            {"snapshot-fixture_private": {"IPAddress": "10.9.0.2"}, "bridge": {"IPAddress": "172.17.0.2"}},
+            {"bridge": {"IPAddress": "172.17.0.2"}},
+            {"snapshot-fixture_private": {"IPAddress": ""}},
+        )
+        for networks in cases:
+            with self.subTest(networks=networks), \
+                    patch.object(self.fork, "containers", return_value=[container("sequencer", networks=networks)]):
+                with self.assertRaisesRegex(RuntimeError, "internal network"):
+                    self.fork.url("sequencer")
+
+    def test_container_lookup_is_project_scoped_and_refreshed_by_lifecycle_commands(self):
+        commands = []
+        def docker(*args, **_):
+            commands.append(args)
+            return "abc" if args[1] == "ps" else json.dumps([container("sequencer")])
+        with patch.object(devnet, "run", side_effect=docker), patch.object(self.fork, "compose_env", return_value={}):
+            self.fork.url("sequencer")
+            self.fork.url("sequencer-cl")
+            self.assertEqual(len(commands), 2)
+            self.assertIn("label=com.docker.compose.project=snapshot-fixture", commands[0])
+            self.fork.compose("stop", "sequencer")
+            self.fork.url("sequencer")
+            self.assertEqual(len(commands), 5)
+
+    def test_discovery_runs_only_on_sequencer_with_normalized_credentials(self):
+        self.fork.manifest["upstreams"] = {"execution": "CUSTOM_EXECUTION", "beacon": "CUSTOM_BEACON"}
+        calls = []
+        def inspector(*args, env=None, timeout=None, secrets=None):
+            if "--help" in args:
+                return ""
+            calls.append((args, env, timeout, secrets))
+            result = snapshot()
+            if "--find-fork" in args:
+                result["fork"] = {"number": 100, "hash": "0xf", "timestamp": 1240, "parentHash": "0xe"}
+            return json.dumps(result)
+        environment = {"CUSTOM_EXECUTION": "https://execution.invalid/key", "CUSTOM_BEACON": "https://beacon.invalid/key",
+                       "SNAPSHOT_UPSTREAM_EXECUTION": "https://wrong.invalid"}
+        with patch.dict(os.environ, environment), patch.object(self.fork, "compose"), \
+                patch.object(self.fork, "await_rpc"), patch.object(self.fork, "containers", return_value=[]), \
+                patch.object(self.fork, "url", side_effect=lambda role: f"http://{role}.private:8545"), \
+                patch.object(devnet, "run", side_effect=inspector), patch("builtins.print"):
+            result = self.fork.inspect(discover=True)
+        (sequencer, sequencer_env, timeout, secrets), (validator, validator_env, _, _) = calls
+        self.assertEqual(sequencer[sequencer.index("--rpc-url") + 1], "http://sequencer.private:8545")
+        self.assertEqual(sequencer[sequencer.index("--timeout") + 1], str(self.fork.timeout))
+        self.assertIn("--find-fork", sequencer)
+        self.assertGreater(timeout, self.fork.timeout)
+        self.assertEqual(sequencer_env["SNAPSHOT_UPSTREAM_EXECUTION"], "https://execution.invalid/key")
+        self.assertEqual(sequencer_env["SNAPSHOT_UPSTREAM_BEACON"], "https://beacon.invalid/key")
+        self.assertIn("https://execution.invalid/key", secrets)
+        self.assertNotIn("--find-fork", validator)
+        self.assertNotIn("SNAPSHOT_UPSTREAM_EXECUTION", validator_env or {})
+        self.assertEqual(result[0]["fork"]["number"], 100)
+        self.assertNotIn("fork", result[1])
+
+    def test_failed_discovery_stops_inspection_nodes(self):
+        environment = {"TEST_EXECUTION_URL": "https://e.invalid", "TEST_BEACON_URL": "https://b.invalid"}
+        for output, pattern in ((json.dumps(snapshot()), "fork"), (RuntimeError("base-devnet failed"), "base-devnet")):
+            with self.subTest(pattern=pattern), patch.dict(os.environ, environment), \
+                    patch.object(self.fork, "compose") as compose, patch.object(self.fork, "await_rpc"), \
+                    patch.object(self.fork, "containers", return_value=[]), \
+                    patch.object(self.fork, "url", return_value="http://10.9.0.2:8545"), \
+                    patch.object(devnet, "run", side_effect=["", output]), patch("builtins.print"):
+                with self.assertRaisesRegex(RuntimeError, pattern):
+                    self.fork.inspect(discover=True)
+                self.assertEqual(compose.call_args.args,
+                                 ("--profile", "inspect", "stop", "inspect-sequencer", "inspect-validator"))
+
+    def test_inspection_refuses_datadirs_held_by_production_nodes(self):
+        with patch.object(self.fork, "containers", return_value=[container("validator")]), \
+                patch.object(self.fork, "compose") as compose:
+            with self.assertRaisesRegex(RuntimeError, "production"):
+                self.fork.inspect()
+            compose.assert_not_called()
+
+    def test_missing_or_incompatible_inspector_fails_before_starting_containers(self):
+        incompatible = self.root / "old-base-devnet"
+        incompatible.write_text("#!/bin/sh\nexit 2\n")
+        incompatible.chmod(0o700)
+        for inspector in (self.root / "missing", incompatible):
+            with self.subTest(inspector=inspector.name), \
+                    patch.dict(os.environ, {"BASE_SNAPSHOT_INSPECTOR": str(inspector)}), \
+                    patch.object(self.fork, "containers", return_value=[]), \
+                    patch.object(self.fork, "compose") as compose:
+                with self.assertRaisesRegex(RuntimeError, "cargo build .*base-devnet.* BASE_SNAPSHOT_INSPECTOR"):
+                    self.fork.inspect()
+                compose.assert_not_called()
+
+    def test_execution_rpc_wait_has_no_deadline_and_keeps_reporting(self):
+        self.fork.timeout = 60
+        for role, service in (("sequencer", "inspect-sequencer"), ("validator", "validator")):
+            with self.subTest(role=role):
+                attempts = 0
+
+                def request(*args):
+                    nonlocal attempts
+                    attempts += 1
+                    self.assertTrue(output.called, "announce the wait before the first RPC request")
+                    if attempts == 4:
+                        self.assertGreaterEqual(output.call_count, 2, "report again during a long wait")
+                        return "0x2105"
+                    raise devnet.Unavailable("provider-secret")
+
+                with patch.object(self.fork, "url", return_value="https://rpc.invalid/provider-secret"), \
+                        patch.object(devnet, "rpc", side_effect=request), \
+                        patch.object(self.fork, "containers", return_value=[container(service)]), \
+                        patch.object(self.fork, "rpc_startup_status", return_value=f"{service}: repairing history indexes"), \
+                        patch.object(devnet.time, "monotonic", side_effect=[0, 1, 31, 10801]), \
+                        patch.object(devnet.time, "sleep") as sleep, patch("builtins.print") as output:
+                    self.fork.await_rpc(role)
+                    self.assertEqual(attempts, 4)
+                    self.assertEqual([call.args for call in sleep.call_args_list], [(5,)] * 3)
+                    self.assertIn(f"{role} execution RPC", str(output.call_args_list))
+                    self.assertIn(f"{service}: repairing history indexes", str(output.call_args_list))
+                    self.assertIn("10801s elapsed", str(output.call_args_list))
+                    self.assertNotIn("remaining", str(output.call_args_list))
+                    self.assertNotIn("provider-secret", str(output.call_args_list))
+                    self.assertTrue(all(call.kwargs.get("flush") for call in output.call_args_list))
+                    self.assertTrue(all(call.kwargs.get("file") is sys.stderr for call in output.call_args_list))
+
+    def test_execution_rpc_wait_fails_if_container_exits_or_disappears(self):
+        for service in ("inspect-sequencer", "sequencer"):
+            for records in ([container(service, running=False)], []):
+                with self.subTest(service=service, records=records):
+                    # A previously cached running container must not hide its exit.
+                    self.fork._containers = [container(service)]
+                    with patch.object(devnet, "run", side_effect=["container-id" if records else "", json.dumps(records)]), \
+                            patch.object(devnet, "rpc", side_effect=devnet.Unavailable("provider-secret")), \
+                            patch.object(devnet.time, "monotonic", side_effect=[0, 1]), \
+                            patch.object(devnet.time, "sleep") as sleep, patch("builtins.print"):
+                        with self.assertRaisesRegex(RuntimeError, "sequencer execution container exited or is missing"):
+                            self.fork.await_rpc("sequencer")
+                        sleep.assert_not_called()
+
+    def test_l1_rpc_wait_keeps_its_deadline(self):
+        self.fork.timeout = 60
+        with patch.object(self.fork, "containers", return_value=[container("l1")]), \
+                patch.object(devnet, "rpc", side_effect=devnet.Unavailable("provider-secret")), \
+                patch.object(devnet.time, "monotonic", side_effect=[0, 1, 61]), \
+                patch.object(devnet.time, "sleep"), patch("builtins.print") as output:
+            with self.assertRaisesRegex(RuntimeError, "timed out: l1 execution RPC"):
+                self.fork.await_rpc("l1")
+            self.assertIn("59s remaining", str(output.call_args_list))
+
+    def test_rpc_startup_status_reports_current_container_history_work_without_raw_logs(self):
+        record = container("inspect-sequencer")
+        record["Id"] = "sequencer-container"
+        record["State"]["StartedAt"] = "2026-10-05T22:51:20Z"
+        logs = (
+            "2026-10-05T22:51:24Z INFO StoragesHistory: healing via changesets checkpoint=50945326\n"
+            "2026-10-05T22:56:03Z INFO StoragesHistory: unwinding batch "
+            "\x1b[3mbatch_num\x1b[0m=8 total_batches=124 batch_start=51015327 batch_end=51025326 "
+            "upstream=https://secret.invalid/key token=provider-secret\n"
+            "unrelated log with another-secret\n")
+        with patch.object(self.fork, "containers", return_value=[container("validator"), record]) as containers, \
+                patch.object(devnet.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout=logs)) as read:
+            message = self.fork.rpc_startup_status("sequencer")
+            self.assertIn("inspect-sequencer", message)
+            self.assertIn("repairing storage-history indexes", message)
+            self.assertIn("batch 8/124", message)
+            self.assertIn("51015327", message)
+            self.assertIn("51025326", message)
+            self.assertIn("2026-10-05T22:56:03Z", message)
+            self.assertNotIn("secret", message)
+            self.assertNotIn("\x1b", message)
+            args = read.call_args.args[0]
+            self.assertEqual(args[args.index("--since") + 1], record["State"]["StartedAt"])
+            self.assertIn(record["Id"], args)
+            self.assertEqual(read.call_args.kwargs["stderr"], subprocess.STDOUT)
+            self.assertLessEqual(read.call_args.kwargs["timeout"], 5)
+
+            containers.return_value.append(container("sequencer", running=False))
+            self.assertIn("batch 8/124", self.fork.rpc_startup_status("sequencer"))
+            containers.return_value.pop()
+            read.return_value.stdout += "2026-10-05T22:57:00Z INFO Collecting indices processed_blocks=21385 current_block=50966711\n"
+            message = self.fork.rpc_startup_status("sequencer")
+            self.assertIn("rebuilding history indexes", message)
+            self.assertIn("50966711", message)
+            self.assertNotIn("batch 8/124", message)
+
+            read.return_value.stdout = "unrecognized output with provider-secret\n"
+            self.assertIn("no recognized startup progress", self.fork.rpc_startup_status("sequencer"))
+            read.side_effect = subprocess.TimeoutExpired("docker", 5)
+            self.assertIn("logs unavailable", self.fork.rpc_startup_status("sequencer"))
+            record["State"].update(Running=False, ExitCode=137)
+            read.reset_mock()
+            self.assertIn("exited (code 137)", self.fork.rpc_startup_status("sequencer"))
+            read.assert_not_called()
+
+    def test_compose_reports_service_actions_without_credentials_or_raw_output(self):
+        with patch.object(self.fork, "compose_env", return_value={"SNAPSHOT_BASE_IMAGE": "provider-secret"}), \
+                patch.object(devnet, "run", return_value="raw-output-secret") as run, \
+                patch("builtins.print") as output:
+            self.fork.compose("--profile", "inspect", "up", "-d", "--no-build", "inspect-sequencer")
+            run.assert_called_once()
+            self.assertTrue(output.called, "announce container startup instead of silently capturing Compose")
+            self.assertIn("inspect-sequencer", str(output.call_args_list))
+            self.assertNotIn("secret", str(output.call_args_list))
+            self.assertTrue(all(call.kwargs.get("flush") for call in output.call_args_list))
+            self.assertTrue(all(call.kwargs.get("file") is sys.stderr for call in output.call_args_list))
+
+    @unittest.skipUnless(shutil.which("docker"), "requires Docker Compose, but does not start containers")
+    def test_rendered_inspection_compose_is_private_and_uses_immutable_images(self):
+        config = json.loads(self.fork.compose("--profile", "inspect", "config", "--format", "json"))
+        self.assertTrue(config["networks"]["private"]["internal"])
+        self.assertEqual(set(config["services"]), {"inspect-sequencer", "inspect-validator"})
+        for name, service in config["services"].items():
+            self.assertTrue(service["image"].startswith("sha256:"))
+            self.assertEqual(set(service["networks"]), {"private"})
+            self.assertNotIn("ports", service)
+            self.assertNotIn("restart", service)
+            role = name.removeprefix("inspect-")
+            self.assertIn({"source": self.fork.manifest["datadirs"][role], "target": "/data"},
+                          [{key: volume[key] for key in ("source", "target")} for volume in service["volumes"]])
+            self.assertIn("--disable-discovery", service["command"])
 
 
 if __name__ == "__main__":
