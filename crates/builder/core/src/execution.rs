@@ -382,12 +382,13 @@ impl ExecutionInfo {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::test_utils::{builder_signer, sign_base_tx};
     use alloy_consensus::{Receipt, TxEip1559};
     use alloy_primitives::{Bytes, Log};
     use base_common_consensus::{BaseTypedTransaction, DepositReceipt};
     use base_common_evm::BaseUpgrade;
+
+    use super::*;
+    use crate::test_utils::{builder_signer, sign_base_tx};
 
     #[test]
     fn block_roots_follow_appended_transactions_and_receipt_logs() {
