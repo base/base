@@ -151,6 +151,12 @@ the command moves on to the remaining days, then retries the deferred
 attaches with exponential backoff (5s doubling to 60s between attempts) for
 up to an hour before failing. It never cancels other sessions' queries.
 
+The attach that completes a class index also validates the root index, which
+needs an `ACCESS EXCLUSIVE` lock on `transaction_events` itself. That attach
+locks the root table first so it cannot deadlock with reads, and waits at most
+2 seconds for it, since every insert and read queues behind the wait. It is
+retried like any other deferred attach.
+
 Monitor Postgres storage, read I/O, and ingest
 latency during the build. Do not run two index jobs against the same database;
 the command also holds the migration lock to serialize them.
