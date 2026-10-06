@@ -75,38 +75,21 @@ row. `event_id`, `tx_hash`, and `block_hash` use `COLLATE "C"`. Hashes are
 stored only as `0x` followed by 64 lowercase hex digits, which a `CHECK`
 enforces.
 
-### Legacy tree and cutover
+### Legacy tree
 
-Migration `003_transaction_events_v2.sql` creates the v2 tree beside the
-earlier `transaction_events` tree and does not copy rows. During a rolling
-deploy, pods on the previous release keep inserting into `transaction_events`
-while new pods insert into `transaction_events_v2`. Read APIs query both
-trees, so rows from either release stay visible.
+Migrations 001 and 002 created an earlier `transaction_events` tree.
+Migration 003 created `transaction_events_v2` beside it without copying rows.
+The service no longer reads, writes, or maintains the legacy tree, and a later
+migration drops it.
 
-Maintenance creates no new legacy day partitions. It drops legacy days on the
-same retention schedule as v2 days, so the legacy tree is empty once its last
-seeded day ages out: up to the cold window (30 days by default) plus the
-three seeded look-ahead days. A later migration can then drop it.
+### Direct reads and warehouse extraction
 
-An event retried across the cutover can be stored once in each tree. The
-bundle query collapses such pairs by `event_id`; the other queries return both
-rows.
-
-Rolling back to the previous release is safe for writes, but that release
-reads only `transaction_events`, so rows written to the v2 tree are hidden
-from its read APIs until the next roll forward.
-
-Consumers that read the tables directly must read both trees until the legacy
-tree drains. Ad hoc operator queries must name `transaction_events_v2` and
-`transaction_events` explicitly; in v2, filter hashes by their lowercase
-`0x` form, since no other form is stored. Incremental warehouse extraction needs its own pipeline on
-`transaction_events_v2`, started before the writer cutover. Migration 003
-grants `SELECT` on the `transaction_events_v2` parent to the `datapilot`
-extraction role when that role exists. Leaf partitions get no grants because
-reads through the parent need none. Rows ingested before a pipeline starts are
-still selected by an `ingested_at` watermark afterward, so a late start delays
-extraction without losing rows, as long as it happens before those rows age
-out.
+Ad hoc queries should filter hashes by their lowercase `0x` form, since no
+other form is stored. Migration 003 grants `SELECT` on the
+`transaction_events_v2` parent to the `datapilot` extraction role when that
+role exists. Leaf partitions get no grants because reads through the parent
+need none. Migration 003 builds BRIN indexes on `ingested_at` and `event_seq`,
+and each day partition gets both when it attaches.
 
 `event_seq` is a `BIGINT` identity column that numbers v2 rows in insertion
 order. Inserts through the parent take it from one sequence shared by every
@@ -143,17 +126,15 @@ later passes wait the retention interval, skipping missed ticks.
 
 Each pass, for each class:
 
-- creates missing v2 day partitions from the start of the retention window
+- creates missing day partitions from the start of the retention window
   through three days after today, so ingest keeps working for three days if
   maintenance stops
-- drops day partitions in either tree that are entirely older than the
+- drops day partitions that are entirely older than the
   retention window plus a one-hour grace period
 
 The runtime role does not own the tables, so partition DDL goes through
-`SECURITY DEFINER` functions created by
-`001_transaction_events_partitioned.sql` (legacy tree) and
-`003_transaction_events_v2.sql` (v2 tree), executable only by
-`audit_archiver`. Create uses `CREATE TABLE` + `ATTACH PARTITION`, which only
+`SECURITY DEFINER` functions created by `003_transaction_events_v2.sql`,
+executable only by `audit_archiver`. Create uses `CREATE TABLE` + `ATTACH PARTITION`, which only
 takes a `SHARE UPDATE EXCLUSIVE` lock on the class partition. Drop detaches
 first (a brief `ACCESS EXCLUSIVE` lock on the class partition, which queues
 inserts for that class) and then drops the detached table in a separate
@@ -169,7 +150,7 @@ partition, and one bad timestamp would otherwise fail the whole insert batch.
 Rejected events count toward `transaction_events_outside_retention_window`.
 
 Watch `transaction_event_partition_horizon_seconds`, which every replica
-refreshes from the v2 tree's catalog entries each pass, net of the one-hour future skew (alert
+refreshes from the catalog each pass, net of the one-hour future skew (alert
 well before it reaches zero), `transaction_event_partitions_created`,
 `transaction_event_partitions_dropped`,
 `transaction_event_partition_lock_timeouts`, and
@@ -182,70 +163,3 @@ well before it reaches zero), `transaction_event_partitions_created`,
 - `TIPS_AUDIT_TRANSACTION_EVENT_WARM_RETENTION_DAYS` (default `7`)
 - `TIPS_AUDIT_TRANSACTION_EVENT_COLD_RETENTION_DAYS` (default `30`, at most `90`)
 - `TIPS_AUDIT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS` (default `5000`): Postgres `lock_timeout` per partition create, detach, or drop
-
-## Incremental warehouse extraction index
-
-Migration `003_transaction_events_v2.sql` builds the v2 tree's
-`ingested_at` and `event_seq` BRIN indexes directly, because the tree is
-empty when it is created; v2 day partitions get both indexes when they
-attach. The rest of this section applies only to the legacy tree.
-
-Migration `002_transaction_events_ingested_at_index.sql` registers a BRIN index
-on the partitioned `transaction_events` table and its hot/warm/cold parents.
-It uses `ON ONLY`: `migrate up` creates metadata quickly but does **not** build
-indexes on existing day partitions. The root index remains invalid until the
-day indexes are built and attached. Future day partitions automatically get
-their index on attach, even while the parent index is being completed.
-
-After deploying the migrator, arrange a separate, monitored one-off run using
-the `audit_archiver_migration` database credential:
-
-```bash
-# TIPS_AUDIT_POSTGRES_URL must point at the target network database.
-audit-archiver index
-```
-
-The `index` command builds one BRIN index at a time with `CREATE INDEX
-CONCURRENTLY` and attaches it to the class index. It is intentionally separate
-from the chart's `migrate up` init container: production has many populated
-day partitions, and building them can take hours. Re-running the command is
-safe; it skips attached indexes and drops/rebuilds invalid indexes left by a
-canceled concurrent build.
-
-Attaching a day index needs an `ACCESS EXCLUSIVE` lock on it. Inserts only lock
-the day they write to, but queries that do not filter by `event_date` (the
-transaction, block, bundle, and rejection lookups) lock every day's indexes
-for as long as they run. Each attach waits up to 30 seconds for its lock; new
-queries that touch that day queue behind it meanwhile. If the wait times out,
-the command moves on to the remaining days, then retries the deferred
-attaches with exponential backoff (5s doubling to 60s between attempts) for
-up to an hour before failing. It never cancels other sessions' queries.
-
-The attach that completes a class index also validates the root index, which
-needs an `ACCESS EXCLUSIVE` lock on `transaction_events` itself. That attach
-locks the root table first so it cannot deadlock with reads, and waits at most
-2 seconds for it, since every insert and read queues behind the wait. It is
-retried like any other deferred attach.
-
-Monitor Postgres storage, read I/O, and ingest
-latency during the build. Do not run two index jobs against the same database;
-the command also holds the migration lock to serialize them.
-
-Check completion in each network database:
-
-```sql
-SELECT c.relname, i.indisvalid
-FROM pg_index i
-JOIN pg_class c ON c.oid = i.indexrelid
-WHERE c.relname IN (
-    'transaction_events_ingested_at_idx',
-    'transaction_events_hot_ingested_at_idx',
-    'transaction_events_warm_ingested_at_idx',
-    'transaction_events_cold_ingested_at_idx'
-);
-```
-
-All four should report `indisvalid = true`. The `ingested_at` BRIN index
-serves DataPilot's timestamp cutoff; it does not index an epoch expression or
-a hash used for parallel slicing, so each slice of the legacy tree reads the
-whole incremental window. Parallel extraction should use v2's `event_seq`.
