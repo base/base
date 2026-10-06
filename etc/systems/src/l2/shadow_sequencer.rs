@@ -126,6 +126,7 @@ impl ShadowSequencer {
             verifier_l1_confs: 0,
             shadow_blocks_per_cycle: Some(config.shadow_blocks_per_cycle),
             upgrade_signal: None,
+            execution_forwarding_endpoint: None,
         })
         .await
         .wrap_err("Failed to start shadow consensus")?;

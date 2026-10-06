@@ -56,7 +56,7 @@ digest = "6d0de36199"
 
 ["bin/base/README.md"]
 summary = "Unified base node binary: OTLP tracing options plus the batcher, rpc, sequencer and update subcommands, their flags and env vars, and chain selection."
-digest = "5c627602a3"
+digest = "b67d590f7d"
 
 ["bin/basectl/README.md"]
 summary = "basectl operator console reference: global options, TUI and scriptable commands (block, sync-status, p2p, txpool, conductor, sequencer, batcher, doctor, proofs), JSON output and examples."
@@ -151,8 +151,8 @@ summary = "base-blobs: EIP-4844 blob encoder and decoder for the batcher wire fo
 digest = "d1525977c0"
 
 ["crates/batcher/cli/README.md"]
-summary = "base-batcher-cli: arguments and startup for base batcher, including channel and DA config flags and shadow mode, where the batcher posts to a non-canonical inbox checked by a parity validator."
-digest = "beae72f1e4"
+summary = "base-batcher-cli: base batcher flags and startup, with sequencer endpoints and leader search, channel and DA config, and shadow mode posting to the inbox a parity validator derives its chain from."
+digest = "30a940cc09"
 
 ["crates/batcher/comp/README.md"]
 summary = "base-comp: incremental Brotli channel compression (CompressionStream, BrotliLevel) producing protocol-compatible channels; batch encoding and framing live in batcher-encoder."
@@ -688,7 +688,7 @@ digest = "49f6748dde"
 
 ["etc/docker/README.md"]
 summary = "Dockerfiles, Bake targets, published images (ghcr.io/base/node and single-binary images), and Compose setup for the local devnet and Rust services, including batcher topology and build profiles."
-digest = "e9f609b61d"
+digest = "3e735e31da"
 
 ["etc/systems/README.md"]
 summary = "Docs for base-system-tests: running the snapshot-backed mainnet devnet (builder and follow client), snapshot and transfer benchmarks, workload suite, 2s vs 200ms comparison, cleanup."
