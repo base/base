@@ -676,9 +676,10 @@ mod tests {
         vec,
         vec::Vec,
     };
+    use core::fmt::Debug;
 
     use alloy_primitives::{Address, B256, LogData, U256, keccak256};
-    use alloy_sol_types::SolEvent;
+    use alloy_sol_types::{SolError, SolEvent};
     use base_precompile_storage::{BasePrecompileError, Result};
     use k256::ecdsa::SigningKey;
 
@@ -967,6 +968,11 @@ mod tests {
 
     type Tok = B20StablecoinToken<FakeAccounting, FakePolicyAccounting>;
 
+    #[track_caller]
+    fn assert_reverts<T: Debug>(result: Result<T>, expected: impl SolError) {
+        assert_eq!(result.unwrap_err(), BasePrecompileError::revert(expected));
+    }
+
     fn token() -> Tok {
         B20StablecoinToken::with_storage_and_policy(
             FakeAccounting::new(),
@@ -1038,11 +1044,9 @@ mod tests {
     fn transfer_reverts_on_zero_receiver() {
         let mut tok = token();
         fund(&mut tok, ALICE, U256::from(10u64));
-        let err =
-            LOGIC.transfer(&mut tok, ALICE, Address::ZERO, U256::from(1u64), true).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
+        assert_reverts(
+            LOGIC.transfer(&mut tok, ALICE, Address::ZERO, U256::from(1u64), true),
+            IB20::InvalidReceiver { receiver: Address::ZERO },
         );
     }
 
@@ -1050,14 +1054,13 @@ mod tests {
     fn transfer_reverts_on_insufficient_balance() {
         let mut tok = token();
         fund(&mut tok, ALICE, U256::from(10u64));
-        let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(50u64), true).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::InsufficientBalance {
+        assert_reverts(
+            LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(50u64), true),
+            IB20::InsufficientBalance {
                 sender: ALICE,
                 balance: U256::from(10u64),
                 needed: U256::from(50u64),
-            })
+            },
         );
     }
 
@@ -1066,12 +1069,9 @@ mod tests {
         let mut tok = token();
         fund(&mut tok, ALICE, U256::from(10u64));
         LOGIC.pause(&mut tok, ADMIN, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
-        let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(1u64), true).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::ContractPaused {
-                feature: IB20::PausableFeature::TRANSFER,
-            })
+        assert_reverts(
+            LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(1u64), true),
+            IB20::ContractPaused { feature: IB20::PausableFeature::TRANSFER },
         );
     }
 
@@ -1118,15 +1118,13 @@ mod tests {
         let mut tok = token();
         fund(&mut tok, ALICE, U256::from(100u64));
         tok.accounting_mut().set_allowance(ALICE, BOB, U256::from(5u64)).unwrap();
-        let err =
-            LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::InsufficientAllowance {
+        assert_reverts(
+            LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true),
+            IB20::InsufficientAllowance {
                 spender: BOB,
                 allowance: U256::from(5u64),
                 needed: U256::from(30u64),
-            })
+            },
         );
     }
 
@@ -1143,10 +1141,9 @@ mod tests {
     #[test]
     fn approve_reverts_on_zero_spender() {
         let mut tok = token();
-        let err = LOGIC.approve(&mut tok, ALICE, Address::ZERO, U256::from(1u64)).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::InvalidSpender { spender: Address::ZERO })
+        assert_reverts(
+            LOGIC.approve(&mut tok, ALICE, Address::ZERO, U256::from(1u64)),
+            IB20::InvalidSpender { spender: Address::ZERO },
         );
     }
 
@@ -1166,26 +1163,21 @@ mod tests {
     fn mint_reverts_over_supply_cap() {
         let mut tok = token();
         tok.accounting_mut().set_supply_cap(U256::from(50u64)).unwrap();
-        let err = LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::SupplyCapExceeded {
-                cap: U256::from(50u64),
-                attempted: U256::from(100u64),
-            })
+        assert_reverts(
+            LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true),
+            IB20::SupplyCapExceeded { cap: U256::from(50u64), attempted: U256::from(100u64) },
         );
     }
 
     #[test]
     fn mint_unprivileged_requires_mint_role() {
         let mut tok = token();
-        let err = LOGIC.mint(&mut tok, ALICE, BOB, U256::from(1u64), false).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+        assert_reverts(
+            LOGIC.mint(&mut tok, ALICE, BOB, U256::from(1u64), false),
+            IB20::AccessControlUnauthorizedAccount {
                 account: ALICE,
                 neededRole: B20TokenRole::Mint.id(),
-            })
+            },
         );
     }
 
@@ -1195,13 +1187,12 @@ mod tests {
     fn burn_requires_role_then_decreases_supply() {
         let mut tok = token();
         fund(&mut tok, ALICE, U256::from(100u64));
-        let err = LOGIC.burn(&mut tok, ALICE, U256::from(1u64)).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+        assert_reverts(
+            LOGIC.burn(&mut tok, ALICE, U256::from(1u64)),
+            IB20::AccessControlUnauthorizedAccount {
                 account: ALICE,
                 neededRole: B20TokenRole::Burn.id(),
-            })
+            },
         );
         grant(&mut tok, B20TokenRole::Burn.id(), ALICE);
         LOGIC.burn(&mut tok, ALICE, U256::from(40u64)).unwrap();
@@ -1231,8 +1222,10 @@ mod tests {
         let mut tok = token();
         fund(&mut tok, ALICE, U256::from(100u64));
         // Default ALWAYS_ALLOW authorizes ALICE => not blocked.
-        let err = LOGIC.burn_blocked(&mut tok, ADMIN, ALICE, U256::from(1u64), true).unwrap_err();
-        assert_eq!(err, BasePrecompileError::revert(IB20::AccountNotBlocked { account: ALICE }));
+        assert_reverts(
+            LOGIC.burn_blocked(&mut tok, ADMIN, ALICE, U256::from(1u64), true),
+            IB20::AccountNotBlocked { account: ALICE },
+        );
     }
 
     // --- pause ---
@@ -1267,8 +1260,7 @@ mod tests {
     #[test]
     fn pause_reverts_on_empty_feature_set() {
         let mut tok = token();
-        let err = LOGIC.pause(&mut tok, ADMIN, vec![], true).unwrap_err();
-        assert_eq!(err, BasePrecompileError::revert(IB20::EmptyFeatureSet {}));
+        assert_reverts(LOGIC.pause(&mut tok, ADMIN, vec![], true), IB20::EmptyFeatureSet {});
     }
 
     #[test]
@@ -1300,13 +1292,12 @@ mod tests {
     fn update_supply_cap_reverts_below_current_supply() {
         let mut tok = token();
         fund(&mut tok, ALICE, U256::from(500u64));
-        let err = LOGIC.update_supply_cap(&mut tok, ADMIN, U256::from(100u64), true).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::InvalidSupplyCap {
+        assert_reverts(
+            LOGIC.update_supply_cap(&mut tok, ADMIN, U256::from(100u64), true),
+            IB20::InvalidSupplyCap {
                 currentSupply: U256::from(500u64),
                 proposedCap: U256::from(100u64),
-            })
+            },
         );
     }
 
@@ -1343,10 +1334,10 @@ mod tests {
     fn revoke_last_admin_is_rejected() {
         let mut tok = token();
         grant(&mut tok, B20TokenRole::DefaultAdmin.id(), ADMIN);
-        let err = LOGIC
-            .revoke_role(&mut tok, ADMIN, B20TokenRole::DefaultAdmin.id(), ADMIN, true)
-            .unwrap_err();
-        assert_eq!(err, BasePrecompileError::revert(IB20::LastAdminCannotRenounce {}));
+        assert_reverts(
+            LOGIC.revoke_role(&mut tok, ADMIN, B20TokenRole::DefaultAdmin.id(), ADMIN, true),
+            IB20::LastAdminCannotRenounce {},
+        );
     }
 
     #[test]
@@ -1375,20 +1366,19 @@ mod tests {
     #[test]
     fn update_policy_reverts_when_policy_missing() {
         let mut tok = token();
-        let err = LOGIC
-            .update_policy(&mut tok, ADMIN, B20PolicyType::TransferSender.id(), 99, true)
-            .unwrap_err();
-        assert_eq!(err, BasePrecompileError::revert(IB20::PolicyNotFound { policyId: 99 }));
+        assert_reverts(
+            LOGIC.update_policy(&mut tok, ADMIN, B20PolicyType::TransferSender.id(), 99, true),
+            IB20::PolicyNotFound { policyId: 99 },
+        );
     }
 
     #[test]
     fn policy_id_rejects_unsupported_scope() {
         let tok = token();
         let scope = B256::repeat_byte(0xEE);
-        let err = LOGIC.policy_id(&tok, scope).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyScope: scope })
+        assert_reverts(
+            LOGIC.policy_id(&tok, scope),
+            IB20::UnsupportedPolicyType { policyScope: scope },
         );
     }
 
@@ -1409,10 +1399,9 @@ mod tests {
         let mut tok = token();
         let owner = anvil_owner();
         let args = signed_permit(&tok, owner, BOB, U256::from(1u64), U256::from(10u64));
-        let err = LOGIC.permit(&mut tok, CHAIN_ID, U256::from(11u64), args).unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::ExpiredSignature { deadline: U256::from(10u64) })
+        assert_reverts(
+            LOGIC.permit(&mut tok, CHAIN_ID, U256::from(11u64), args),
+            IB20::ExpiredSignature { deadline: U256::from(10u64) },
         );
     }
 
