@@ -1,15 +1,20 @@
 //! Command-line launcher for development networks.
 
-use std::{num::NonZeroU64, path::PathBuf};
+use std::{num::NonZeroU64, path::PathBuf, sync::Arc};
 
 use alloy_primitives::{Address, B256};
+use base_common_chains::ChainConfig;
+use base_common_genesis::RollupConfig;
 use clap::{Args, Parser, Subcommand};
-use eyre::{Result, WrapErr};
+use eyre::{Result, WrapErr, ensure, eyre};
 use serde::Serialize;
+use tracing::debug;
+use url::Url;
 
 use crate::{
-    DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund, DevnetSnapshotHead, SharedL1,
-    SnapshotChainConfig, SnapshotL2Stack, SystemTestStackBuilder,
+    DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund, DevnetSnapshotHead,
+    ResolvedSnapshotChain, SharedL1, SnapshotChainConfig, SnapshotInspection, SnapshotL2Stack,
+    SystemTestStackBuilder,
 };
 
 /// Local Base development network launcher.
@@ -28,6 +33,24 @@ pub enum DevnetCommand {
     Snapshot(SnapshotArgs),
     /// Start a CI-scoped shared L1 and write its runtime manifest.
     SharedL1(SharedL1Args),
+    /// Print a snapshot source node's validated latest, safe, and finalized heads as JSON.
+    InspectSnapshot(InspectSnapshotArgs),
+}
+
+/// Arguments for read-only inspection of a snapshot source node over RPC.
+#[derive(Debug, Args)]
+pub struct InspectSnapshotArgs {
+    /// Execution JSON-RPC URL of the snapshot source node.
+    // Parsed in `run` because clap echoes rejected values, which can carry credentials.
+    #[arg(long)]
+    pub rpc_url: String,
+    /// Built-in Base chain name or path to a Base genesis JSON file.
+    #[arg(long, default_value = "mainnet")]
+    pub chain: String,
+    /// Effective rollup config, including locally scheduled upgrades, for decoding the heads.
+    /// Its chain and genesis identity must match the selected chain.
+    #[arg(long)]
+    pub rollup_config: Option<PathBuf>,
 }
 
 /// Arguments for a CI-scoped shared L1 fixture.
@@ -115,6 +138,7 @@ impl DevnetCli {
         match self.command {
             DevnetCommand::Snapshot(args) => args.run().await,
             DevnetCommand::SharedL1(args) => args.run().await,
+            DevnetCommand::InspectSnapshot(args) => args.run().await,
         }
     }
 }
@@ -127,6 +151,65 @@ impl SharedL1Args {
         println!("shared L1 ready: {}", self.runtime_file.display());
         tokio::signal::ctrl_c().await.wrap_err("failed to listen for Ctrl-C")?;
         stack.shutdown().await
+    }
+}
+
+impl InspectSnapshotArgs {
+    /// Resolves the chain and applies an explicit inspection schedule without changing identity.
+    pub fn resolved_chain(&self) -> Result<ResolvedSnapshotChain> {
+        let mut chain = SnapshotChainConfig {
+            chain: self.chain.clone(),
+            rollup_config: self.rollup_config.clone(),
+        }
+        .resolve()?;
+        if let Some(path) = &self.rollup_config {
+            let contents = std::fs::read(path).wrap_err_with(|| {
+                format!("failed to read snapshot rollup config {}", path.display())
+            })?;
+            let config: RollupConfig = serde_json::from_slice(&contents).wrap_err_with(|| {
+                format!("failed to parse snapshot rollup config {}", path.display())
+            })?;
+            ensure!(
+                config.l2_chain_id.id() == chain.l2_chain_id
+                    && config.l1_chain_id == chain.l1_chain_id
+                    && config.genesis == chain.rollup_config.genesis,
+                "inspection config changes chain or genesis identity"
+            );
+            chain.rollup_config = Arc::new(config);
+        }
+        // Built-in configs can use placeholder genesis values, but an explicit chain JSON
+        // supplies a header against which its effective rollup genesis can be checked.
+        if ChainConfig::by_any_name(&self.chain).is_none() {
+            let genesis = &chain.chain_spec.genesis_header;
+            let configured = chain.rollup_config.genesis;
+            ensure!(
+                configured.l2.hash == genesis.hash()
+                    && configured.l2.number == genesis.number
+                    && configured.l2_time == genesis.timestamp,
+                "inspection config changes chain or genesis identity"
+            );
+        }
+        Ok(chain)
+    }
+
+    /// Prints exactly one JSON object describing the node's labeled heads to stdout.
+    pub async fn run(self) -> Result<()> {
+        let inspection = async {
+            let rpc_url: Url =
+                self.rpc_url.parse().map_err(|error| eyre!("invalid --rpc-url: {error}"))?;
+            let chain = self.resolved_chain()?;
+            SnapshotInspection::read(rpc_url, chain.rollup_config, chain.l2_chain_id).await
+        }
+        .await
+        .map_err(|error| {
+            // Source errors can quote the RPC URL, including credentials, raw response bodies, or
+            // config file contents. Return only the inspector's own top-level reason; the full
+            // chain stays behind opt-in logs.
+            debug!(error = ?error, "snapshot inspection failed");
+            eyre!("{error}")
+        })?;
+        println!("{}", serde_json::to_string(&inspection)?);
+        Ok(())
     }
 }
 
@@ -201,12 +284,16 @@ impl SnapshotRuntime {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroU64;
+    use std::{net::TcpListener, num::NonZeroU64};
 
+    use alloy_genesis::Genesis;
+    use base_common_genesis::RollupConfig;
+    use base_execution_chainspec::BaseChainSpec;
     use clap::Parser;
+    use serde_json::json;
 
-    use super::{DevnetCli, DevnetCommand};
-    use crate::DevnetBlockInterval;
+    use super::{DevnetCli, DevnetCommand, InspectSnapshotArgs};
+    use crate::{DevnetBlockInterval, SnapshotChainConfig, test_utils::SnapshotRpcFixture};
 
     #[test]
     fn parses_snapshot_command() {
@@ -254,5 +341,197 @@ mod tests {
             panic!("expected snapshot command")
         };
         assert_eq!(args.block_gas_limit.map(NonZeroU64::get), Some(12_000_000_000));
+    }
+
+    #[test]
+    fn parses_inspect_snapshot_command() {
+        let cli = DevnetCli::try_parse_from([
+            "base-devnet",
+            "inspect-snapshot",
+            "--rpc-url",
+            "http://127.0.0.1:8545",
+        ])
+        .unwrap();
+
+        let DevnetCommand::InspectSnapshot(args) = cli.command else {
+            panic!("expected inspect-snapshot command")
+        };
+        assert_eq!(args.rpc_url, "http://127.0.0.1:8545");
+        assert_eq!(args.chain, "mainnet");
+        assert!(args.rollup_config.is_none());
+
+        let cli = DevnetCli::try_parse_from([
+            "base-devnet",
+            "inspect-snapshot",
+            "--rpc-url",
+            "http://node:8545",
+            "--chain",
+            "/tmp/genesis.json",
+            "--rollup-config",
+            "/tmp/rollup.json",
+        ])
+        .unwrap();
+        let DevnetCommand::InspectSnapshot(args) = cli.command else {
+            panic!("expected inspect-snapshot command")
+        };
+        assert_eq!(args.chain, "/tmp/genesis.json");
+        assert_eq!(args.rollup_config.unwrap().to_str(), Some("/tmp/rollup.json"));
+    }
+
+    #[test]
+    fn inspection_uses_local_schedule_without_changing_identity() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let args = InspectSnapshotArgs {
+            rpc_url: "http://127.0.0.1:8545".parse().unwrap(),
+            chain: "mainnet".to_string(),
+            rollup_config: None,
+        };
+        let mut config = (*args.resolved_chain().unwrap().rollup_config).clone();
+        config.upgrades.base.denim = Some(2_000_000_000);
+        std::fs::write(file.path(), serde_json::to_vec(&config).unwrap()).unwrap();
+        let args = InspectSnapshotArgs { rollup_config: Some(file.path().into()), ..args };
+        assert_eq!(
+            args.resolved_chain().unwrap().rollup_config.upgrades.base.denim,
+            Some(2_000_000_000)
+        );
+
+        let identity_changes: [fn(&mut RollupConfig); 3] = [
+            |config| config.l2_chain_id = 1.into(),
+            |config| config.l1_chain_id += 1,
+            |config| config.genesis.l2_time += 1,
+        ];
+        for change in identity_changes {
+            let mut changed = config.clone();
+            change(&mut changed);
+            std::fs::write(file.path(), serde_json::to_vec(&changed).unwrap()).unwrap();
+            let error = args.resolved_chain().unwrap_err();
+            assert!(error.to_string().contains("changes chain or genesis identity"), "{error:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn inspection_errors_do_not_expose_rpc_credentials() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let unreachable =
+            format!("http://secret-user:secret-password@{address}/secret-path?token=secret-query");
+        // Transport errors quote the request URL, and decode errors quote the raw response body.
+        let mut fixture = SnapshotRpcFixture::default();
+        fixture.blocks.insert("finalized".into(), json!({ "number": "secret-response" }));
+        let (served, handle) = fixture.serve(SnapshotRpcFixture::CHAIN_ID).await;
+
+        for (rpc_url, message) in [
+            (unreachable, "failed to read snapshot chain ID"),
+            (served.to_string(), "failed to read snapshot finalized block"),
+        ] {
+            let args =
+                InspectSnapshotArgs { rpc_url, chain: "mainnet".into(), rollup_config: None };
+            let diagnostic = format!("{:?}", args.run().await.unwrap_err());
+            assert!(diagnostic.contains(message), "{diagnostic}");
+            assert!(!diagnostic.contains("secret-"), "{diagnostic}");
+        }
+        handle.stop().unwrap();
+    }
+
+    #[test]
+    fn inspection_checks_custom_genesis_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let genesis_path = directory.path().join("genesis.json");
+        let rollup_path = directory.path().join("rollup.json");
+        let mut genesis = Genesis { timestamp: 10, ..Default::default() };
+        genesis.config.chain_id = 123_456;
+        std::fs::write(&genesis_path, serde_json::to_vec(&genesis).unwrap()).unwrap();
+        let spec = BaseChainSpec::try_from_genesis(genesis).unwrap();
+        let mut config = RollupConfig { l2_chain_id: 123_456.into(), ..Default::default() };
+        config.genesis.l2.hash = spec.genesis_header.hash();
+        config.genesis.l2.number = spec.genesis_header.number;
+        config.genesis.l2_time = 10;
+        std::fs::write(&rollup_path, serde_json::to_vec(&config).unwrap()).unwrap();
+        let args = InspectSnapshotArgs {
+            rpc_url: "http://127.0.0.1:8545".parse().unwrap(),
+            chain: genesis_path.to_string_lossy().into_owned(),
+            rollup_config: Some(rollup_path.clone()),
+        };
+        args.resolved_chain().expect("matching custom genesis must be accepted");
+        let mutations: [fn(&mut RollupConfig); 3] = [
+            |config| config.genesis.l2_time += 1,
+            |config| config.genesis.l2.number += 1,
+            |config| config.genesis.l2.hash = Default::default(),
+        ];
+        for mutate in mutations {
+            let mut changed = config.clone();
+            mutate(&mut changed);
+            std::fs::write(&rollup_path, serde_json::to_vec(&changed).unwrap()).unwrap();
+            assert!(args.resolved_chain().is_err(), "mismatched L2 genesis must be rejected");
+        }
+
+        let mut genesis = Genesis { timestamp: 10, ..Default::default() };
+        genesis.config.chain_id = 8453;
+        std::fs::write(&genesis_path, serde_json::to_vec(&genesis).unwrap()).unwrap();
+        let config = SnapshotChainConfig::default().resolve().unwrap().rollup_config;
+        std::fs::write(&rollup_path, serde_json::to_vec(&*config).unwrap()).unwrap();
+        assert!(args.resolved_chain().is_err(), "a built-in chain ID cannot mask another genesis");
+        let args = InspectSnapshotArgs { rollup_config: None, ..args };
+        assert!(
+            args.resolved_chain().is_err(),
+            "a genesis file must match without an override too"
+        );
+    }
+
+    #[tokio::test]
+    async fn inspection_rejects_malformed_urls_without_exposing_credentials() {
+        let diagnostic = match DevnetCli::try_parse_from([
+            "base-devnet",
+            "inspect-snapshot",
+            "--rpc-url",
+            "http://secret-user:secret-password@host:bad/secret-path?token=secret-query",
+        ]) {
+            Ok(cli) => format!("{:?}", cli.run().await.unwrap_err()),
+            Err(error) => error.to_string(),
+        };
+        assert!(diagnostic.contains("invalid --rpc-url: invalid port number"), "{diagnostic}");
+        assert!(!diagnostic.contains("secret-"), "{diagnostic}");
+    }
+
+    #[tokio::test]
+    async fn inspection_rollup_config_errors_name_the_file_step_only() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("rollup.json");
+        for (contents, message) in [
+            (None, "failed to read snapshot rollup config"),
+            (Some(r#"{"genesis":"secret-contents"}"#), "failed to parse snapshot rollup config"),
+        ] {
+            if let Some(contents) = contents {
+                std::fs::write(&path, contents).unwrap();
+            }
+            let args = InspectSnapshotArgs {
+                rpc_url: "http://127.0.0.1:8545".into(),
+                chain: "mainnet".into(),
+                rollup_config: Some(path.clone()),
+            };
+            let diagnostic = format!("{:?}", args.run().await.unwrap_err());
+            assert!(diagnostic.contains(message), "{diagnostic}");
+            assert!(!diagnostic.contains("secret-"), "{diagnostic}");
+        }
+    }
+
+    #[test]
+    fn inspection_accepts_builtin_placeholder_genesis() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let mut args = InspectSnapshotArgs {
+            rpc_url: "http://127.0.0.1:8545".into(),
+            chain: "dev".into(),
+            rollup_config: None,
+        };
+        let config = args.resolved_chain().unwrap().rollup_config;
+        std::fs::write(file.path(), serde_json::to_vec(&*config).unwrap()).unwrap();
+        args.rollup_config = Some(file.path().into());
+        args.resolved_chain().unwrap();
+    }
+
+    #[test]
+    fn rejects_inspect_snapshot_without_rpc_url() {
+        assert!(DevnetCli::try_parse_from(["base-devnet", "inspect-snapshot"]).is_err());
     }
 }

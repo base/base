@@ -691,8 +691,8 @@ summary = "Dockerfiles, Bake targets, published images (ghcr.io/base/node and si
 digest = "83a7d99bb5"
 
 ["etc/systems/README.md"]
-summary = "Docs for base-system-tests: running the snapshot-backed mainnet devnet (builder and follow client), snapshot and transfer benchmarks, workload suite, 2s vs 200ms comparison, cleanup."
-digest = "261a5e39c4"
+summary = "Docs for base-system-tests: snapshot-backed mainnet devnet (builder and follow client), inspect-snapshot head JSON, snapshot and transfer benchmarks, workload suite, 2s vs 200ms comparison, cleanup."
+digest = "c509920365"
 
 ["etc/tools/witness-diff/README.md"]
 summary = "witness-diff tool that compares two execution witnesses (from debug_executionWitness) to find differing trie nodes, bytecodes, or preimages. Use when debugging state root mismatches between nodes."

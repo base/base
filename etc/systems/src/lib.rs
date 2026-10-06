@@ -50,7 +50,9 @@ pub use docker::{
 };
 
 mod devnet_cli;
-pub use devnet_cli::{DevnetCli, DevnetCommand, SharedL1Args, SnapshotArgs, SnapshotRuntime};
+pub use devnet_cli::{
+    DevnetCli, DevnetCommand, InspectSnapshotArgs, SharedL1Args, SnapshotArgs, SnapshotRuntime,
+};
 
 mod host;
 pub use host::{host_address, with_host_port_if_needed};
