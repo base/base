@@ -120,6 +120,25 @@ To pin a run to a known snapshot boundary, pass all three of `--expected-head-nu
 `--expected-head-hash`, and `--expected-head-timestamp`. Startup fails before load generation if
 the captured boundary differs.
 
+## Inspect a snapshot source node
+
+Read a node's finalized, safe, and latest heads without touching any datadir:
+
+```bash
+cargo run -p base-system-tests --bin base-devnet -- inspect-snapshot \
+  --chain sepolia --rpc-url "$SOURCE_RPC" > /tmp/base-snapshot-heads.json
+```
+
+On success, stdout is exactly one JSON object with `chain_id`, `genesis`, `rollup_config`, and
+`finalized`, `safe`, and `latest`, each holding `block_info` and `system_config`. Diagnostics go to
+stderr. Because RPC URLs and node responses may carry credentials, errors name only the failed
+step or check and logs are off by default; set `RUST_LOG=debug` to log the full error chain. The
+command fails if the chain ID differs, a head is missing or pruned, or the heads are not ordered
+`finalized <= safe <= latest`. The genesis is copied from the chain configuration rather
+than fetched, because snapshot nodes may prune it. `--rollup-config` may supply an effective
+upgrade schedule for decoding the heads, but it must keep the selected chain's L1/L2 chain IDs and
+genesis.
+
 ## Run a snapshot benchmark
 
 ## Run a quick local transfer benchmark
