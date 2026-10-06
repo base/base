@@ -3078,6 +3078,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "base-common-consensus",
+ "base-common-flz",
  "base-common-genesis",
  "base-comp",
  "base-metrics",

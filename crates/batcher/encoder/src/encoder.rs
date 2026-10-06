@@ -5,6 +5,7 @@ use std::{collections::VecDeque, fmt, sync::Arc};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_flz::tx_estimated_size_fjord_bytes;
 use base_common_genesis::RollupConfig;
 use base_protocol::{BlockInfo, ChannelId};
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
@@ -91,13 +92,16 @@ impl BatchEncoder {
     }
 
     /// Estimate the DA bytes represented by non-deposit transactions in `block`.
+    ///
+    /// Uses the same per-transaction `FastLZ` estimate the block builder applies to
+    /// its DA limits, so the backlog and the throttle limits share one unit.
     fn block_da_backlog_bytes(block: &BaseBlock) -> u64 {
         block
             .body
             .transactions
             .iter()
             .filter(|tx| !matches!(tx, BaseTxEnvelope::Deposit(_)))
-            .map(|tx| tx.encode_2718_len() as u64)
+            .map(|tx| tx_estimated_size_fjord_bytes(&tx.encoded_2718()))
             .sum()
     }
 
@@ -949,6 +953,28 @@ mod tests {
         let backlog = encoder.da_backlog_bytes();
         // The backlog should only count the user tx, not the deposit.
         assert!(backlog > 0);
+    }
+
+    #[test]
+    fn test_da_backlog_uses_compressed_estimate() {
+        let mut encoder = default_encoder();
+        let signed = TxLegacy { input: Bytes::from(vec![0u8; 10_000]), ..Default::default() }
+            .into_signed(Signature::test_signature());
+        let user_tx = BaseTxEnvelope::Legacy(signed);
+        let raw_len = user_tx.encode_2718_len() as u64;
+        let block = BaseBlock {
+            header: Header::default(),
+            body: BlockBody {
+                transactions: vec![make_deposit_tx(), user_tx],
+                ..Default::default()
+            },
+        };
+        encoder.add_block(block).unwrap();
+
+        // A highly compressible tx counts its FastLZ estimate, not its raw size.
+        let backlog = encoder.da_backlog_bytes();
+        assert!(backlog > 0);
+        assert!(backlog < raw_len / 10, "backlog {backlog} vs raw {raw_len}");
     }
 
     #[test]
