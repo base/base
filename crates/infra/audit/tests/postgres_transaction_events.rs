@@ -8,6 +8,7 @@
 //! ```
 
 use std::{
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -27,7 +28,7 @@ use axum::{
 use base_observability_events::TransactionEvent;
 use chrono::Utc;
 use serde_json::{Value, json};
-use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
+use sqlx::{Executor, PgPool, migrate::Migrator, postgres::PgPoolOptions};
 use testcontainers::{ImageExt, core::ExecCommand, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 use tower::ServiceExt;
@@ -350,7 +351,67 @@ async fn postgres_fresh_database_runs_partitioned_migrations() -> anyhow::Result
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1, 2, 3]);
+    assert_eq!(versions, vec![1, 2, 3, 4]);
+
+    Ok(())
+}
+
+/// Copies the migrations up to and including `last_version` into a temporary
+/// directory, so a test can build a database at an older schema.
+fn migrations_through(last_version: i64) -> anyhow::Result<PathBuf> {
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    let target = std::env::temp_dir().join(format!("audit-migrations-{}", unique_event_id()));
+    std::fs::create_dir_all(&target)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let version: i64 = name.split('_').next().unwrap_or_default().parse()?;
+        if version <= last_version {
+            std::fs::copy(entry.path(), target.join(name))?;
+        }
+    }
+    Ok(target)
+}
+
+/// 004 drops the legacy tree, including a day left detached by a failed
+/// maintenance pass, and leaves v2 rows in place.
+#[tokio::test]
+async fn postgres_drop_migration_removes_legacy_tree() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    harness.create_grantee_roles().await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    Migrator::new(migrations_through(3)?).await?.run(&pool).await?;
+
+    let today = Utc::now().date_naive();
+    let detached_ok: bool =
+        sqlx::query_scalar("SELECT public.transaction_events_detach_partition('hot', $1)")
+            .bind(today)
+            .fetch_one(&pool)
+            .await?;
+    assert!(detached_ok);
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+    let event_id = unique_event_id();
+    sink.insert_events(&[event(&event_id)]).await?;
+
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+
+    let remaining: Vec<String> = sqlx::query_scalar(
+        "SELECT c.relname::text FROM pg_class c \
+         JOIN pg_namespace n ON n.oid = c.relnamespace \
+         WHERE n.nspname = 'public' AND c.relname ~ '^transaction_events_(hot|warm|cold)' \
+         UNION ALL \
+         SELECT 'transaction_events' WHERE to_regclass('public.transaction_events') IS NOT NULL \
+         UNION ALL \
+         SELECT p.proname::text FROM pg_proc p \
+         JOIN pg_namespace n ON n.oid = p.pronamespace \
+         WHERE n.nspname = 'public' AND p.proname ~ '^transaction_events_(create|detach|drop)'",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert!(remaining.is_empty(), "legacy objects remain: {remaining:?}");
+    sink.check_schema_ready().await?;
+    assert_eq!(sink.events_by_block_number(123, 10).await?.len(), 1);
+    harness.assert_schema_matches_snapshot().await?;
 
     Ok(())
 }
@@ -402,10 +463,6 @@ async fn postgres_schema_is_partitioned_by_class_then_day() -> anyhow::Result<()
         .fetch_all(&pool)
     };
     assert_eq!(
-        class_partitions("transaction_events").await?,
-        vec!["transaction_events_cold", "transaction_events_hot", "transaction_events_warm"]
-    );
-    assert_eq!(
         class_partitions("transaction_events_v2").await?,
         vec![
             "transaction_events_v2_cold",
@@ -427,19 +484,6 @@ async fn postgres_schema_is_partitioned_by_class_then_day() -> anyhow::Result<()
         .collect();
     assert_eq!(hot_partitions(&pool).await?, expected);
 
-    let dropped_indexes: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM pg_indexes \
-         WHERE schemaname = 'public' \
-           AND indexname IN ( \
-             'transaction_events_payload_id_event_time_idx', \
-             'transaction_events_producer_event_type_event_time_idx', \
-             'transaction_events_event_type_ingested_at_idx' \
-           )",
-    )
-    .fetch_one(&pool)
-    .await?;
-    assert_eq!(dropped_indexes, 0, "unused indexes are not recreated");
-
     Ok(())
 }
 
@@ -449,22 +493,17 @@ async fn postgres_rejected_index_includes_builder_expired() -> anyhow::Result<()
     PgTransactionEventSink::migrate(&harness.database_url).await?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
 
-    let indexdefs: Vec<String> = sqlx::query_scalar(
+    let indexdef: String = sqlx::query_scalar(
         "SELECT indexdef FROM pg_indexes \
          WHERE schemaname = 'public' \
-           AND indexname IN \
-               ('transaction_events_rejected_event_time_idx', \
-                'transaction_events_v2_rejected_event_time_idx')",
+           AND indexname = 'transaction_events_v2_rejected_event_time_idx'",
     )
-    .fetch_all(&pool)
+    .fetch_one(&pool)
     .await?;
-    assert_eq!(indexdefs.len(), 2, "both trees have the rejected index");
-    for indexdef in indexdefs {
-        assert!(
-            indexdef.contains("BUILDER_EXPIRED"),
-            "rejected index should include BUILDER_EXPIRED: {indexdef}"
-        );
-    }
+    assert!(
+        indexdef.contains("BUILDER_EXPIRED"),
+        "rejected index should include BUILDER_EXPIRED: {indexdef}"
+    );
 
     Ok(())
 }
