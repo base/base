@@ -77,6 +77,16 @@ impl SyncTargetState {
     }
 }
 
+impl SyncTargetState {
+    /// The first block to remove, if this state includes a revert.
+    pub const fn revert_to(&self) -> Option<BlockWithParent> {
+        match self {
+            Self::Revert { revert_to } | Self::RevertThenSync { revert_to, .. } => Some(*revert_to),
+            Self::SyncUpTo { .. } => None,
+        }
+    }
+}
+
 /// Returns the first block that must be unwound from two pending revert targets.
 const fn earliest_revert(current: &BlockWithParent, new: BlockWithParent) -> BlockWithParent {
     if current.block.number <= new.block.number { *current } else { new }
@@ -154,6 +164,24 @@ impl SyncTarget {
             }
             _ => {}
         }
+    }
+
+    /// Put back a state whose revert failed so the sync loop retries it.
+    ///
+    /// `failed` is merged with any state that arrived while it was being processed:
+    /// the newer sync target wins, but the revert target is the deeper of the two so
+    /// blocks the failed revert should have removed are never kept.
+    pub fn requeue(&self, failed: SyncTargetState) {
+        let mut state = self.state.lock().expect("SyncTarget lock poisoned");
+        let merged = match state.take() {
+            None => failed,
+            Some(newer) => {
+                let mut merged = failed;
+                merged.apply_next(newer);
+                merged
+            }
+        };
+        *state = Some(merged);
     }
 
     /// Check if there is a pending state without consuming it.
@@ -611,5 +639,35 @@ mod tests {
 
         let result = handle.await.expect("task should complete");
         assert!(matches!(result, Some(SyncTargetState::SyncUpTo { to: 42 })));
+    }
+
+    #[test]
+    fn requeue_keeps_deepest_revert_and_newest_sync_target() {
+        let target = SyncTarget::new();
+        let deep = block_with_parent(5);
+        let shallow = block_with_parent(8);
+
+        // A shallower reorg arrived while the deeper revert was failing.
+        target.update_state(SyncTargetState::RevertThenSync { revert_to: shallow, sync_to: 12 });
+        target.requeue(SyncTargetState::Revert { revert_to: deep });
+        assert!(matches!(
+            target.take_state(),
+            Some(SyncTargetState::RevertThenSync { revert_to, sync_to: 12 }) if revert_to.block.number == 5
+        ));
+
+        // A newer commit only moves the sync target.
+        target.update_state(SyncTargetState::SyncUpTo { to: 20 });
+        target.requeue(SyncTargetState::RevertThenSync { revert_to: deep, sync_to: 10 });
+        assert!(matches!(
+            target.take_state(),
+            Some(SyncTargetState::RevertThenSync { revert_to, sync_to: 20 }) if revert_to.block.number == 5
+        ));
+
+        // Nothing pending: the failed state comes back unchanged.
+        target.requeue(SyncTargetState::Revert { revert_to: deep });
+        assert!(matches!(
+            target.take_state(),
+            Some(SyncTargetState::Revert { revert_to }) if revert_to.block.number == 5
+        ));
     }
 }
