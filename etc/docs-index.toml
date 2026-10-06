@@ -8,7 +8,7 @@ digest = "e66bc30bc0"
 
 ["CLAUDE.md"]
 summary = "Repo coding conventions for agents: crate naming, lib.rs and module layout, Cargo manifest rules, doc and lint policy, tracing style, testing and mocking rules, review expectations."
-digest = "daa45d4733"
+digest = "f6c4fb2c76"
 
 ["CONTRIBUTING.md"]
 summary = "Contribution policy: open an issue first, work only on assigned issues, no typo or refactor PRs, dev setup (Rust, just, Foundry), run just ci, PR and bug report expectations."
