@@ -18,6 +18,10 @@ base_metrics::define_metrics! {
     total_block_built_duration: histogram,
     #[describe("Latest time taken to build a block")]
     total_block_built_gauge: gauge,
+    #[describe("Active wall-clock time of a successful block build, excluding scheduled flashblock waits")]
+    active_block_build_duration: histogram,
+    #[describe("End-to-end wall-clock time of a successful block build, including scheduled flashblock waits")]
+    block_build_wall_duration: histogram,
     #[describe("Histogram of the time taken to build a Flashblock")]
     flashblock_build_duration: histogram,
     #[describe("Histogram of the time taken to sync a Flashblock")]

@@ -160,6 +160,7 @@ base-builder-core = { path = ".", features = ["test-utils"] }
 
 # reth
 reth-ipc.workspace = true
+reth-node-metrics.workspace = true
 reth-testing-utils.workspace = true
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 

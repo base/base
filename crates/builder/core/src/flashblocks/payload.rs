@@ -252,6 +252,7 @@ where
         args: BuildArguments<BasePayloadBuilderAttributes<BaseTransactionSigned>, BaseBuiltPayload>,
     ) -> Result<BaseBuiltPayload, PayloadBuilderError> {
         let block_build_start_time = Instant::now();
+        let mut scheduled_wait = Duration::ZERO;
         let BuildArguments {
             mut cached_reads,
             execution_cache,
@@ -381,6 +382,8 @@ where
             let total_block_building_time = block_build_start_time.elapsed();
             BuilderMetrics::total_block_built_duration().record(total_block_building_time);
             BuilderMetrics::total_block_built_gauge().set(total_block_building_time);
+            BuilderMetrics::active_block_build_duration().record(total_block_building_time);
+            BuilderMetrics::block_build_wall_duration().record(total_block_building_time);
 
             return Ok(payload);
         }
@@ -466,7 +469,7 @@ where
         let mut executed_sender_nonces: HashMap<Address, u64> = HashMap::default();
 
         // Process flashblocks in a blocking loop
-        loop {
+        let result = loop {
             let flashblock_index = ctx.flashblock_index();
             let fb_span = if span.is_none() {
                 tracing::Span::none()
@@ -488,7 +491,7 @@ where
                     &span,
                     "Payload building complete, target flashblock count reached",
                 );
-                return self.finalize_payload(&mut state, &ctx, &mut info);
+                break self.finalize_payload(&mut state, &ctx, &mut info);
             }
 
             // build first flashblock immediately
@@ -514,7 +517,7 @@ where
                         &span,
                         "Payload building complete, job cancelled or target flashblock count reached",
                     );
-                    return self.finalize_payload(&mut state, &ctx, &mut info);
+                    break self.finalize_payload(&mut state, &ctx, &mut info);
                 }
                 Err(err) => {
                     error!(
@@ -528,11 +531,14 @@ where
                 }
             };
 
+            let wait_start = Instant::now();
             tokio::select! {
                 Some(fb_cancel) = rx.recv() => {
+                    scheduled_wait += wait_start.elapsed();
                     ctx = ctx.with_cancel(fb_cancel).with_extra_ctx(next_flashblocks_ctx);
                 },
                 _ = block_cancel.cancelled() => {
+                    scheduled_wait += wait_start.elapsed();
                     self.record_flashblocks_metrics(
                         &ctx,
                         &info,
@@ -540,10 +546,17 @@ where
                         &span,
                         "Payload building complete, channel closed or job cancelled",
                     );
-                    return self.finalize_payload(&mut state, &ctx, &mut info);
+                    break self.finalize_payload(&mut state, &ctx, &mut info);
                 }
             }
+        };
+        if result.is_ok() {
+            let wall_duration = block_build_start_time.elapsed();
+            BuilderMetrics::active_block_build_duration()
+                .record(wall_duration.saturating_sub(scheduled_wait));
+            BuilderMetrics::block_build_wall_duration().record(wall_duration);
         }
+        result
     }
 
     #[allow(clippy::too_many_arguments)]
