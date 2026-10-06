@@ -32,6 +32,16 @@ cargo run --package base-prover-nitro-host --features local -- local \
 
 The `just tee nitro-local-worker` recipe wraps the same command.
 
+Worker timing and concurrency options must be at least 1:
+`--prover-service-request-timeout-secs`, `--job-discovery-poll-interval-ms`,
+`--job-discovery-max-concurrent-jobs`, `--proof-generator-heartbeat-interval-secs`,
+and `--proof-generator-max-consecutive-heartbeat-failures`. Zero is rejected
+during argument parsing, including when supplied through the corresponding
+environment variables. Both `server` and `local` use these constraints.
+
+The claim and heartbeat lock-duration options still accept zero to request the
+prover service's default lock duration.
+
 ## Health checks
 
 The registrar-facing RPC server exposes:
