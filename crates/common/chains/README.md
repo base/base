@@ -10,6 +10,7 @@ Const chain configuration instances eliminate duplicated configuration across th
 
 Also provides the `BaseUpgrade` enum, `BaseUpgrades` trait, and `BaseChainUpgrades` for the
 Base upgrade sequence. See [`BaseUpgrade::EXECUTION_VARIANTS`]
+([source](https://github.com/base/base/blob/main/crates/common/genesis/src/chain/upgrade.rs))
 for the canonical execution fork ladder.
 
 ## Usage
