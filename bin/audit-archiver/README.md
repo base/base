@@ -90,7 +90,8 @@ other form is stored. Migration 003 grants `SELECT` on the
 `transaction_events_v2` parent to the `datapilot` extraction role when that
 role exists. Leaf partitions get no grants because reads through the parent
 need none. Migration 003 builds BRIN indexes on `ingested_at` and `event_seq`,
-and each day partition gets both when it attaches.
+and each day partition gets both when it attaches; see
+[BRIN summaries](#brin-summaries) for how they stay usable.
 
 `event_seq` is a `BIGINT` identity column that numbers v2 rows in insertion
 order. Inserts through the parent take it from one sequence shared by every
@@ -143,6 +144,41 @@ transaction. Each statement runs under
 `TIPS_AUDIT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS`; a statement that
 times out is skipped and retried on the next pass.
 
+### BRIN summaries
+
+A BRIN index covers a block range only once the range is summarized. Without
+`autosummarize`, only VACUUM summarizes, and autovacuum reaches insert-only day
+partitions rarely: on a busy day partition most blocks can stay unsummarized
+for hours. A bitmap scan reads every unsummarized block, so each `event_seq`
+slice of a DataPilot extract reads that whole unsummarized tail. Once a range
+is summarized, inserts keep its summary current.
+
+When `TIPS_AUDIT_POSTGRES_URL` is set, a second background worker summarizes
+new blocks in the BRIN indexes of yesterday's and today's day partition of
+every class, every `TIPS_AUDIT_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS`.
+Like partition maintenance it uses its own one-connection pool and advisory
+lock, so one replica summarizes at a time and a long pass does not delay
+maintenance. `autosummarize` is not used: it queues each filled range into a
+fixed-size autovacuum work list, which drops requests at production insert
+rates.
+
+The runtime role does not own the indexes, so it calls
+`transaction_events_v2_summarize_brin`, a `SECURITY DEFINER` function created
+by `005_transaction_events_v2_summarize_brin.sql` and executable only by
+`audit_archiver`. Summarizing takes a `SHARE UPDATE EXCLUSIVE` lock on the
+partition, which conflicts with VACUUM but not with inserts or reads. Each
+partition runs under a 200 ms `lock_timeout`, below the default 1 s
+`deadlock_timeout` after which a waiting lock request cancels an autovacuum.
+A partition held by a vacuum is skipped until the next pass; the vacuum
+summarizes it when it finishes.
+
+The API can roll out before migration 005: until the function exists, each
+pass logs a warning and summarizes nothing.
+
+Watch `transaction_event_brin_ranges_summarized`,
+`transaction_event_brin_summary_lock_timeouts`, and
+`transaction_event_brin_summary_failures`.
+
 ### Ingest admission
 
 Ingest rejects events whose `event_time` is older than their class's retention
@@ -164,3 +200,4 @@ well before it reaches zero), `transaction_event_partitions_created`,
 - `TIPS_AUDIT_TRANSACTION_EVENT_WARM_RETENTION_DAYS` (default `7`)
 - `TIPS_AUDIT_TRANSACTION_EVENT_COLD_RETENTION_DAYS` (default `30`, at most `90`)
 - `TIPS_AUDIT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS` (default `5000`): Postgres `lock_timeout` per partition create, detach, or drop
+- `TIPS_AUDIT_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS` (default `60`, at most `3600`, `0` disables): seconds between BRIN summary passes

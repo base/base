@@ -103,6 +103,45 @@ BEGIN
 END;
 $$;
 
+CREATE FUNCTION public.transaction_events_v2_summarize_brin(p_class text, p_day date) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    partition_oid REGCLASS;
+    index_oid OID;
+    summarized BIGINT := 0;
+BEGIN
+    IF p_class IS NULL OR p_class NOT IN ('hot', 'warm', 'cold') THEN
+        RAISE EXCEPTION 'unknown transaction event retention class: %', p_class;
+    END IF;
+    IF p_day IS NULL THEN
+        RAISE EXCEPTION 'transaction event partition day is required';
+    END IF;
+
+    partition_oid := to_regclass(format(
+        'public.%I',
+        'transaction_events_v2_' || p_class || '_' || to_char(p_day, 'YYYYMMDD')
+    ));
+    IF partition_oid IS NULL THEN
+        RETURN 0;
+    END IF;
+
+    FOR index_oid IN
+        SELECT i.indexrelid
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        JOIN pg_am a ON a.oid = c.relam
+        WHERE i.indrelid = partition_oid
+          AND a.amname = 'brin'
+        ORDER BY i.indexrelid
+    LOOP
+        summarized := summarized + brin_summarize_new_values(index_oid::regclass);
+    END LOOP;
+    RETURN summarized;
+END;
+$$;
+
 CREATE TABLE public.transaction_events_v2 (
     event_id text NOT NULL COLLATE pg_catalog."C",
     event_seq bigint NOT NULL,
@@ -348,6 +387,9 @@ GRANT ALL ON FUNCTION public.transaction_events_v2_detach_partition(p_class text
 
 REVOKE ALL ON FUNCTION public.transaction_events_v2_drop_detached_partition(p_class text, p_day date) FROM PUBLIC;
 GRANT ALL ON FUNCTION public.transaction_events_v2_drop_detached_partition(p_class text, p_day date) TO audit_archiver;
+
+REVOKE ALL ON FUNCTION public.transaction_events_v2_summarize_brin(p_class text, p_day date) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.transaction_events_v2_summarize_brin(p_class text, p_day date) TO audit_archiver;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.transaction_events_v2 TO audit_archiver;
 GRANT SELECT ON TABLE public.transaction_events_v2 TO datapilot;
