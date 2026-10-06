@@ -108,6 +108,26 @@ still selected by an `ingested_at` watermark afterward, so a late start delays
 extraction without losing rows, as long as it happens before those rows age
 out.
 
+`event_seq` is a `BIGINT` identity column that numbers v2 rows in insertion
+order. Inserts through the parent take it from one sequence shared by every
+partition, and the runtime role needs no grant on that sequence. Values are
+unique, but each connection reserves 100 at a time, so they can be out of
+order across connections and have gaps. It exists for parallel extraction:
+DataPilot splits each incremental window into `event_seq` ranges, and because
+`event_seq` grows with physical row order, the `event_seq` BRIN index lets
+each range read only its own blocks. A hash such as `event_id` would make
+every range read the whole window. The DataPilot table entry for v2 uses:
+
+```json
+{
+  "incremental_load_column": "ingested_at",
+  "split_by_int_column": "event_seq",
+  "overwrite_by_columns": ["event_id", "event_hour", "retention_class"]
+}
+```
+
+with a small `NUM_SLICES` (DataPilot recommends 2-16 for incremental loads).
+
 Classes: hot (high-volume proxy and builder-decision events), warm (ingress,
 simulation success, txpool-forward), and cold (failures, drops, inclusion,
 flashblocks). An event's class comes from its `event_type` at ingest and is
@@ -166,9 +186,9 @@ well before it reaches zero), `transaction_event_partitions_created`,
 ## Incremental warehouse extraction index
 
 Migration `003_transaction_events_v2.sql` builds the v2 tree's
-`ingested_at` BRIN index directly, because the tree is empty when it is
-created; v2 day partitions get the index when they attach. The rest of this
-section applies only to the legacy tree.
+`ingested_at` and `event_seq` BRIN indexes directly, because the tree is
+empty when it is created; v2 day partitions get both indexes when they
+attach. The rest of this section applies only to the legacy tree.
 
 Migration `002_transaction_events_ingested_at_index.sql` registers a BRIN index
 on the partitioned `transaction_events` table and its hot/warm/cold parents.
@@ -226,6 +246,6 @@ WHERE c.relname IN (
 ```
 
 All four should report `indisvalid = true`. The `ingested_at` BRIN index
-serves DataPilot's timestamp cutoff; it does not by itself index an epoch
-expression used for parallel slicing. Evaluate that expression's query plan
-separately before enabling `NUM_SLICES` on the production primary.
+serves DataPilot's timestamp cutoff; it does not index an epoch expression or
+a hash used for parallel slicing, so each slice of the legacy tree reads the
+whole incremental window. Parallel extraction should use v2's `event_seq`.

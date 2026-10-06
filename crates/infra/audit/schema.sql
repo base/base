@@ -263,6 +263,7 @@ PARTITION BY RANGE (event_date);
 
 CREATE TABLE public.transaction_events_v2 (
     event_id text NOT NULL COLLATE pg_catalog."C",
+    event_seq bigint NOT NULL,
     schema_version text NOT NULL,
     event_time timestamp with time zone NOT NULL,
     event_hour timestamp with time zone NOT NULL,
@@ -285,6 +286,7 @@ PARTITION BY LIST (retention_class);
 
 CREATE TABLE public.transaction_events_v2_cold (
     event_id text NOT NULL COLLATE pg_catalog."C",
+    event_seq bigint NOT NULL,
     schema_version text NOT NULL,
     event_time timestamp with time zone NOT NULL,
     event_hour timestamp with time zone NOT NULL,
@@ -305,8 +307,18 @@ CREATE TABLE public.transaction_events_v2_cold (
 )
 PARTITION BY RANGE (event_hour);
 
+ALTER TABLE public.transaction_events_v2 ALTER COLUMN event_seq ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.transaction_events_v2_event_seq_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 100
+);
+
 CREATE TABLE public.transaction_events_v2_hot (
     event_id text NOT NULL COLLATE pg_catalog."C",
+    event_seq bigint NOT NULL,
     schema_version text NOT NULL,
     event_time timestamp with time zone NOT NULL,
     event_hour timestamp with time zone NOT NULL,
@@ -329,6 +341,7 @@ PARTITION BY RANGE (event_hour);
 
 CREATE TABLE public.transaction_events_v2_warm (
     event_id text NOT NULL COLLATE pg_catalog."C",
+    event_seq bigint NOT NULL,
     schema_version text NOT NULL,
     event_time timestamp with time zone NOT NULL,
     event_hour timestamp with time zone NOT NULL,
@@ -458,6 +471,10 @@ CREATE INDEX transaction_events_v2_cold_block_hash_event_time_idx ON ONLY public
 
 CREATE INDEX transaction_events_v2_cold_block_number_event_time_idx ON ONLY public.transaction_events_v2_cold USING btree (block_number, event_time) WHERE (block_number IS NOT NULL);
 
+CREATE INDEX transaction_events_v2_event_seq_idx ON ONLY public.transaction_events_v2 USING brin (event_seq);
+
+CREATE INDEX transaction_events_v2_cold_event_seq_idx ON ONLY public.transaction_events_v2_cold USING brin (event_seq);
+
 CREATE INDEX transaction_events_v2_rejected_event_time_idx ON ONLY public.transaction_events_v2 USING btree (event_type, event_time DESC) WHERE (event_type = ANY (ARRAY['SIMULATION_FAILED'::text, 'BUILDER_REJECTED'::text, 'BUILDER_EXPIRED'::text]));
 
 CREATE INDEX transaction_events_v2_cold_event_type_event_time_idx ON ONLY public.transaction_events_v2_cold USING btree (event_type, event_time DESC) WHERE (event_type = ANY (ARRAY['SIMULATION_FAILED'::text, 'BUILDER_REJECTED'::text, 'BUILDER_EXPIRED'::text]));
@@ -478,6 +495,8 @@ CREATE INDEX transaction_events_v2_hot_block_hash_event_time_idx ON ONLY public.
 
 CREATE INDEX transaction_events_v2_hot_block_number_event_time_idx ON ONLY public.transaction_events_v2_hot USING btree (block_number, event_time) WHERE (block_number IS NOT NULL);
 
+CREATE INDEX transaction_events_v2_hot_event_seq_idx ON ONLY public.transaction_events_v2_hot USING brin (event_seq);
+
 CREATE INDEX transaction_events_v2_hot_event_type_event_time_idx ON ONLY public.transaction_events_v2_hot USING btree (event_type, event_time DESC) WHERE (event_type = ANY (ARRAY['SIMULATION_FAILED'::text, 'BUILDER_REJECTED'::text, 'BUILDER_EXPIRED'::text]));
 
 CREATE INDEX transaction_events_v2_hot_expr_event_time_idx ON ONLY public.transaction_events_v2_hot USING btree (((data ->> 'bundle_hash'::text)), event_time) WHERE (data ? 'bundle_hash'::text);
@@ -491,6 +510,8 @@ CREATE INDEX transaction_events_v2_hot_tx_hash_event_time_idx ON ONLY public.tra
 CREATE INDEX transaction_events_v2_warm_block_hash_event_time_idx ON ONLY public.transaction_events_v2_warm USING btree (block_hash, event_time) WHERE (block_hash IS NOT NULL);
 
 CREATE INDEX transaction_events_v2_warm_block_number_event_time_idx ON ONLY public.transaction_events_v2_warm USING btree (block_number, event_time) WHERE (block_number IS NOT NULL);
+
+CREATE INDEX transaction_events_v2_warm_event_seq_idx ON ONLY public.transaction_events_v2_warm USING brin (event_seq);
 
 CREATE INDEX transaction_events_v2_warm_event_type_event_time_idx ON ONLY public.transaction_events_v2_warm USING btree (event_type, event_time DESC) WHERE (event_type = ANY (ARRAY['SIMULATION_FAILED'::text, 'BUILDER_REJECTED'::text, 'BUILDER_EXPIRED'::text]));
 
@@ -552,6 +573,8 @@ ALTER INDEX public.transaction_events_v2_block_hash_event_time_idx ATTACH PARTIT
 
 ALTER INDEX public.transaction_events_v2_block_number_event_time_idx ATTACH PARTITION public.transaction_events_v2_cold_block_number_event_time_idx;
 
+ALTER INDEX public.transaction_events_v2_event_seq_idx ATTACH PARTITION public.transaction_events_v2_cold_event_seq_idx;
+
 ALTER INDEX public.transaction_events_v2_rejected_event_time_idx ATTACH PARTITION public.transaction_events_v2_cold_event_type_event_time_idx;
 
 ALTER INDEX public.transaction_events_v2_bundle_hash_event_time_idx ATTACH PARTITION public.transaction_events_v2_cold_expr_event_time_idx;
@@ -568,6 +591,8 @@ ALTER INDEX public.transaction_events_v2_block_hash_event_time_idx ATTACH PARTIT
 
 ALTER INDEX public.transaction_events_v2_block_number_event_time_idx ATTACH PARTITION public.transaction_events_v2_hot_block_number_event_time_idx;
 
+ALTER INDEX public.transaction_events_v2_event_seq_idx ATTACH PARTITION public.transaction_events_v2_hot_event_seq_idx;
+
 ALTER INDEX public.transaction_events_v2_rejected_event_time_idx ATTACH PARTITION public.transaction_events_v2_hot_event_type_event_time_idx;
 
 ALTER INDEX public.transaction_events_v2_bundle_hash_event_time_idx ATTACH PARTITION public.transaction_events_v2_hot_expr_event_time_idx;
@@ -583,6 +608,8 @@ ALTER INDEX public.transaction_events_v2_tx_hash_event_time_idx ATTACH PARTITION
 ALTER INDEX public.transaction_events_v2_block_hash_event_time_idx ATTACH PARTITION public.transaction_events_v2_warm_block_hash_event_time_idx;
 
 ALTER INDEX public.transaction_events_v2_block_number_event_time_idx ATTACH PARTITION public.transaction_events_v2_warm_block_number_event_time_idx;
+
+ALTER INDEX public.transaction_events_v2_event_seq_idx ATTACH PARTITION public.transaction_events_v2_warm_event_seq_idx;
 
 ALTER INDEX public.transaction_events_v2_rejected_event_time_idx ATTACH PARTITION public.transaction_events_v2_warm_event_type_event_time_idx;
 

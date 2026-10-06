@@ -1201,10 +1201,25 @@ async fn postgres_runtime_role_maintains_partitions_through_definer_functions() 
     sink.insert_events(&[event(&event_id)]).await?;
     assert_eq!(sink.events_by_block_number(123, 10).await?.len(), 1);
 
+    // The runtime role has no grant on the event_seq identity sequence, which
+    // the migration role owns, and inserts through the parent still number
+    // their rows. One connection draws from one cached range, so a later
+    // insert gets a larger value.
+    let later_event_id = unique_event_id();
+    sink.insert_events(&[event(&later_event_id)]).await?;
+    let runtime = PgPoolOptions::new().max_connections(1).connect(&runtime_url).await?;
+    let event_seqs: Vec<i64> = sqlx::query_scalar(
+        "SELECT event_seq FROM transaction_events_v2 WHERE event_id = ANY($1) ORDER BY ingested_at",
+    )
+    .bind([event_id.as_str(), later_event_id.as_str()])
+    .fetch_all(&runtime)
+    .await?;
+    assert_eq!(event_seqs.len(), 2);
+    assert!(event_seqs[0] < event_seqs[1], "event_seq follows insertion order: {event_seqs:?}");
+
     let later = sink.maintain_partitions_at(Utc::now() + chrono::Duration::days(5)).await?;
     assert!(later.partitions_dropped > 0, "runtime role can drop expired partitions");
 
-    let runtime = PgPoolOptions::new().max_connections(1).connect(&runtime_url).await?;
     let partition = format!(
         "transaction_events_v2_hot_{}",
         (Utc::now().date_naive() + chrono::Duration::days(3)).format("%Y%m%d")
@@ -1260,6 +1275,14 @@ async fn postgres_datapilot_role_reads_v2_parent() -> anyhow::Result<()> {
             .fetch_one(&datapilot)
             .await?;
     assert_eq!(count, 1, "datapilot reads leaf rows through the v2 parent");
+
+    // DataPilot splits each incremental window into event_seq ranges.
+    let event_seq: Option<i64> =
+        sqlx::query_scalar("SELECT event_seq FROM transaction_events_v2 WHERE event_id = $1")
+            .bind(&event_id)
+            .fetch_one(&datapilot)
+            .await?;
+    assert!(event_seq.is_some(), "rows in function-created leaves get an event_seq");
 
     let leaf_read = datapilot.execute(format!("SELECT 1 FROM {leaf} LIMIT 1").as_str()).await;
     assert!(leaf_read.is_err(), "datapilot has no grant on leaf partitions");

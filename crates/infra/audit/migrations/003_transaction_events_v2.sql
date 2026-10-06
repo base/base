@@ -25,8 +25,17 @@
 -- producer that re-emits the same event_id with a new event_time in the same
 -- UTC hour still dedupes; re-emissions that straddle an hour boundary store a
 -- second row.
+--
+-- event_seq numbers rows in insertion order. Warehouse extraction splits each
+-- incremental window into ranges of event_seq and fetches them in parallel,
+-- which an ingested_at cutoff alone cannot do. Rows are inserted through the
+-- parent, which assigns the value from one identity sequence shared by every
+-- partition. CACHE lets each connection reserve 100 values per sequence
+-- access, so concurrent ingest does not serialize on it; values are unique but
+-- may be out of order across connections and have gaps.
 CREATE TABLE transaction_events_v2 (
     event_id TEXT COLLATE "C" NOT NULL,
+    event_seq BIGINT GENERATED ALWAYS AS IDENTITY (CACHE 100),
     schema_version TEXT NOT NULL,
     event_time TIMESTAMPTZ NOT NULL,
     event_hour TIMESTAMPTZ NOT NULL,
@@ -57,9 +66,11 @@ CREATE TABLE transaction_events_v2_warm PARTITION OF transaction_events_v2
 CREATE TABLE transaction_events_v2_cold PARTITION OF transaction_events_v2
     FOR VALUES IN ('cold') PARTITION BY RANGE (event_hour);
 
--- The same read-API indexes as the legacy tree, plus the ETL ingested_at BRIN.
--- The tree is empty here, so the BRIN index is built directly rather than
--- through the separate `audit-archiver index` command.
+-- The same read-API indexes as the legacy tree, plus BRIN indexes on
+-- ingested_at and event_seq for warehouse extraction. Both columns grow with
+-- insertion order within a day partition, so block ranges summarize them
+-- tightly. The tree is empty here, so the BRIN indexes are built directly
+-- rather than through the separate `audit-archiver index` command.
 CREATE INDEX transaction_events_v2_tx_hash_event_time_idx
     ON transaction_events_v2 (tx_hash, event_time)
     WHERE tx_hash IS NOT NULL;
@@ -87,11 +98,16 @@ CREATE INDEX transaction_events_v2_bundle_id_event_time_idx
 CREATE INDEX transaction_events_v2_ingested_at_idx
     ON transaction_events_v2 USING brin (ingested_at);
 
+CREATE INDEX transaction_events_v2_event_seq_idx
+    ON transaction_events_v2 USING brin (event_seq);
+
 -- Day partition DDL for this tree, with the same SECURITY DEFINER contract as
 -- the legacy functions in 001. Bounds are UTC midnights written as ISO
 -- literals with an explicit offset, so they do not depend on the session's
 -- TimeZone or DateStyle. INCLUDING CONSTRAINTS copies the CHECK constraints,
--- which ATTACH PARTITION requires.
+-- which ATTACH PARTITION requires. The LIKE omits INCLUDING IDENTITY because
+-- ATTACH PARTITION rejects a table with its own identity column; once
+-- attached, the partition takes event_seq from the parent's sequence.
 CREATE FUNCTION transaction_events_v2_create_partition(p_class TEXT, p_day DATE)
 RETURNS BOOLEAN
 LANGUAGE plpgsql
