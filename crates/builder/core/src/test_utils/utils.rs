@@ -245,6 +245,7 @@ pub fn create_test_db(config: NodeConfig<BaseChainSpec>) -> Arc<TempDatabase<Dat
 /// builder's type bounds. This is required when applying node extensions whose hooks are typed
 /// against the concrete node types. The returned [`PathBuf`] is the temporary directory backing the
 /// database; the caller is responsible for removing it once the database has been dropped.
+/// Caller-specified maximum database size is honored; small fixtures default to 4 MiB.
 pub fn create_test_db_env(
     config: NodeConfig<BaseChainSpec>,
 ) -> eyre::Result<(DatabaseEnv, PathBuf)> {
@@ -257,7 +258,7 @@ pub fn create_test_db_env(
         data_dir.db().as_path(),
         DatabaseArguments::new(ClientVersion::default())
             .with_max_read_transaction_duration(Some(MaxReadTransactionDuration::Unbounded))
-            .with_geometry_max_size(Some(4 * MEGABYTE))
+            .with_geometry_max_size(Some(db_config.db.max_size.unwrap_or(4 * MEGABYTE)))
             .with_growth_step(Some(4 * KILOBYTE)),
     )?;
     Ok((db, root))

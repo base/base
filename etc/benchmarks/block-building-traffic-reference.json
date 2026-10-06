@@ -1,0 +1,130 @@
+[
+  {
+    "number": 52240170,
+    "hash": "0x97126de7880831ab39a622e1a1ad45ccaa22bfe0224345f21e9ad4def3a22b5e",
+    "timestamp": 1791269687,
+    "gas_used": 48643120,
+    "gas_limit": 400000000,
+    "transactions": 174
+  },
+  {
+    "number": 52240171,
+    "hash": "0x67ccc904aa8f77d2bb2e426361e2265c2884bf71a531adecbdbc20822b8e2b5e",
+    "timestamp": 1791269689,
+    "gas_used": 30647612,
+    "gas_limit": 400000000,
+    "transactions": 166
+  },
+  {
+    "number": 52240172,
+    "hash": "0x8c1b5f26d5dbe775e19a3b08010e5893b56347dbc6ab051b9f68c4ca9e769a22",
+    "timestamp": 1791269691,
+    "gas_used": 38162132,
+    "gas_limit": 400000000,
+    "transactions": 147
+  },
+  {
+    "number": 52240173,
+    "hash": "0xc013ffe7d5402cb8bc433084487cbd29bfbe1853b2c9d060cafa8285223b2e24",
+    "timestamp": 1791269693,
+    "gas_used": 23760606,
+    "gas_limit": 400000000,
+    "transactions": 128
+  },
+  {
+    "number": 52240174,
+    "hash": "0x56c315a9e38151a22e6e21457b51d82a3ffa5db0d8ea93b5384994c499ae3944",
+    "timestamp": 1791269695,
+    "gas_used": 60159048,
+    "gas_limit": 400000000,
+    "transactions": 164
+  },
+  {
+    "number": 52240175,
+    "hash": "0xbf2e5074095d3a8afad8239b8835b9c12199e2968db10e008fbc40f6f06e1ac9",
+    "timestamp": 1791269697,
+    "gas_used": 34420218,
+    "gas_limit": 400000000,
+    "transactions": 131
+  },
+  {
+    "number": 52240176,
+    "hash": "0x3f477591059db4a408da32e0331e7fc5e6f57736aac9518b7a557457da140c18",
+    "timestamp": 1791269699,
+    "gas_used": 21059158,
+    "gas_limit": 400000000,
+    "transactions": 123
+  },
+  {
+    "number": 52240177,
+    "hash": "0xc0cb891567cdd3793ec16b3853a443ff48659eb5e5e99218cd9d0cc4dda64a9e",
+    "timestamp": 1791269701,
+    "gas_used": 36344640,
+    "gas_limit": 400000000,
+    "transactions": 134
+  },
+  {
+    "number": 52240178,
+    "hash": "0x660af69594eddbc01b75ad5de1c1348e6562d7df9eef5699834788ba988a77b5",
+    "timestamp": 1791269703,
+    "gas_used": 43482057,
+    "gas_limit": 400000000,
+    "transactions": 237
+  },
+  {
+    "number": 52240179,
+    "hash": "0x38aad228b046a4c0c8b2920eb704bc63e7d9a895172488111942695a1fae5a0a",
+    "timestamp": 1791269705,
+    "gas_used": 20535902,
+    "gas_limit": 400000000,
+    "transactions": 143
+  },
+  {
+    "number": 52240180,
+    "hash": "0xd5ddb5743c76dd9eb9d491aa9fb029caf8e125927bd7e7c6b6ec5eabc57afdaf",
+    "timestamp": 1791269707,
+    "gas_used": 38933124,
+    "gas_limit": 400000000,
+    "transactions": 131
+  },
+  {
+    "number": 52240181,
+    "hash": "0xf81f01118562f83cba399bde517b92b95ac70700fe311d24790b42b11dfd5100",
+    "timestamp": 1791269709,
+    "gas_used": 24475550,
+    "gas_limit": 400000000,
+    "transactions": 141
+  },
+  {
+    "number": 52240182,
+    "hash": "0x5c824d997ec0ebb1d08edf9a862adc002a3e54ac241093a21ef77f2b78dae162",
+    "timestamp": 1791269711,
+    "gas_used": 37904360,
+    "gas_limit": 400000000,
+    "transactions": 144
+  },
+  {
+    "number": 52240183,
+    "hash": "0x5e7a0e827455b5b88a92818cc2863b18f299d23ed7b62512f925bedccc0db39d",
+    "timestamp": 1791269713,
+    "gas_used": 23809428,
+    "gas_limit": 400000000,
+    "transactions": 132
+  },
+  {
+    "number": 52240184,
+    "hash": "0xf78e87b31b61e7db3b1dadaca37352ccc6980408399159db94ed30a50fbf6730",
+    "timestamp": 1791269715,
+    "gas_used": 31393421,
+    "gas_limit": 400000000,
+    "transactions": 138
+  },
+  {
+    "number": 52240185,
+    "hash": "0x149dd82ce6a5d30b2c8788ac2fe3ffcf3d7d9fa990ab59a7dc09841fbb8b8db9",
+    "timestamp": 1791269717,
+    "gas_used": 38313363,
+    "gas_limit": 400000000,
+    "transactions": 137
+  }
+]

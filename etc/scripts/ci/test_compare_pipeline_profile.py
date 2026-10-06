@@ -23,6 +23,7 @@ class PipelineComparisonTests(unittest.TestCase):
                               "driver_wall_seconds": 1.0, "published_flashblocks": 6,
                               "observations": {ACTIVE: 1, WALL: 1},
                               "timings": {ACTIVE: [active], WALL: [1.0]}}
+                    sample["deadlines"] = {"payload_job_expirations": 0, "missing_flashblocks": 0, "reduced_flashblocks": 0, "build_wall_budget_seconds": 1.5, "build_wall_budget_missed": False}
                     (directory / f"{name}.json").write_text(json.dumps([sample] * 10))
                     (directory / f"{name}.log").write_text("100000 maximum resident set size\n")
 
@@ -71,6 +72,26 @@ class PipelineComparisonTests(unittest.TestCase):
         result = compare(self.baseline, self.candidate)
         self.assertFalse(result["passed"])
         self.assertTrue(any("driver_p95_ms" in failure for failure in result["failures"]))
+
+    def test_rejects_missing_deadline_observations(self):
+        self.change_candidate("deadlines", None)
+        with self.assertRaises(ValueError):
+            compare(self.baseline, self.candidate)
+
+    def test_rejects_real_deadline_expiration(self):
+        self.change_candidate("deadlines", {"payload_job_expirations": 1, "missing_flashblocks": 0, "reduced_flashblocks": 0, "build_wall_budget_seconds": 1.5, "build_wall_budget_missed": False})
+        with self.assertRaises(ValueError):
+            compare(self.baseline, self.candidate)
+
+    def test_coverage_cannot_waive_reference_target(self):
+        with self.assertRaises(ValueError):
+            compare(self.baseline, self.candidate, coverage=True)
+
+    def test_rejects_background_persistence_failure(self):
+        path = self.candidate / "01-transfer-legacy.log"
+        path.write_text(path.read_text() + "Persistence service failed\n")
+        with self.assertRaises(ValueError):
+            compare(self.baseline, self.candidate)
 
     def test_rejects_insufficient_repetitions(self):
         for directory in (self.baseline, self.candidate):

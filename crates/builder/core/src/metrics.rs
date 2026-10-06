@@ -10,6 +10,8 @@ base_metrics::define_metrics! {
     struct = BuilderMetrics,
     #[describe("Block built success")]
     block_built_success: counter,
+    #[describe("Payload jobs that expired at their configured availability deadline")]
+    payload_job_deadline_misses: counter,
     #[describe("Block synced success")]
     block_synced_success: counter,
     #[describe("Number of flashblocks added to block (Total per block)")]
