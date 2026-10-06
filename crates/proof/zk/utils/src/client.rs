@@ -9,14 +9,13 @@ use anyhow::Result;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope, OpTxType};
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::{Pipeline, PipelineError, PipelineErrorKind, Signal, SignalReceiver};
+/// Fixed interval (in blocks) at which the ZK range program records intermediate output roots.
+pub use base_proof::INTERMEDIATE_BLOCK_INTERVAL as INTERMEDIATE_ROOT_INTERVAL;
 use base_proof::{HintType, OracleProviderError};
 use base_proof_driver::{Driver, DriverError, DriverPipeline, DriverResult, Executor, TipCursor};
 use base_proof_preimage::{CommsClient, PreimageKey};
 use base_protocol::L2BlockInfo;
 use tracing::{error, info, warn};
-
-/// Fixed interval (in blocks) at which the ZK range program records intermediate output roots.
-pub const INTERMEDIATE_ROOT_INTERVAL: u64 = 300;
 
 /// Fetches the safe head hash of the L2 chain based on the agreed upon L2 output root in the
 /// [`BootInfo`].
