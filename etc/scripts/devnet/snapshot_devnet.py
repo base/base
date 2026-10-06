@@ -1386,6 +1386,12 @@ class SnapshotFork:
               + (f"Activation in {remaining}s (~{remaining // 60}m{remaining % 60:02d}s) by wall clock."
                  if remaining > 0 else f"Activation time passed {-remaining}s ago by wall clock."), flush=True)
 
+    def deposit(self, amount):
+        require(amount > 0, "deposit amount must be positive")
+        user = self.manifest["accounts"]["user"]
+        return self.send("fund-user", user, self.manifest["portal"],
+                         "depositTransaction(address,uint256,uint64,bool,bytes)", user, amount, 100000, "false", "0x", value=amount)
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -1413,6 +1419,8 @@ def main():
     schedule = commands.add_parser("schedule-denim", parents=[common])
     schedule.add_argument("timestamp", type=int, nargs="?",
                           help="L2 timestamp; defaults to the earliest the contract notice allows")
+    deposit = commands.add_parser("deposit", parents=[common])
+    deposit.add_argument("--wei", type=int, default=10**18)
     args = parser.parse_args()
     require(args.timeout > 0, "timeout must be positive")
     if args.command == "setup":
@@ -1450,6 +1458,8 @@ def main():
                 print(f"Preserved fork state at {destination}; restore fresh working datadirs before init.")
             elif args.command == "schedule-denim":
                 fork.schedule_denim(args.timestamp)
+            elif args.command == "deposit":
+                print(json.dumps(fork.deposit(args.wei), indent=2))
             else:
                 getattr(fork, args.command)()
 
