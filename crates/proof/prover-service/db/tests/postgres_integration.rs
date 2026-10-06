@@ -73,7 +73,6 @@ fn compressed_request_at_with_backend(
             number_of_blocks_to_prove: 5,
             sequence_window: Some(50),
             l1_head: None,
-            intermediate_root_interval: None,
             schedule_l2_block_number: None,
             zk_vm: ZkVm::Sp1,
             zk_backend,
@@ -90,7 +89,6 @@ fn compressed_request_with_l1_head(l1_head: &str) -> CreateProofRequest {
             number_of_blocks_to_prove: 5,
             sequence_window: Some(50),
             l1_head: Some(l1_head.parse().expect("valid hash")),
-            intermediate_root_interval: None,
             schedule_l2_block_number: None,
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
@@ -112,7 +110,6 @@ fn snark_request() -> CreateProofRequest {
                         .parse()
                         .expect("valid hash"),
                 ),
-                intermediate_root_interval: None,
                 schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
@@ -267,9 +264,9 @@ async fn test_legacy_rollout_request_without_protocol_storage_is_readable_and_re
         r#"
         INSERT INTO proof_requests (
             id, start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, status,
-            prover_address, l1_head, intermediate_root_interval
+            prover_address, l1_head
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         "#,
     )
     .bind(explicit_id)
@@ -280,7 +277,6 @@ async fn test_legacy_rollout_request_without_protocol_storage_is_readable_and_re
     .bind(ProofStatus::Created.as_str())
     .bind(&req.prover_address)
     .bind(&req.l1_head)
-    .bind(req.intermediate_root_interval.map(|value| i64::try_from(value).unwrap()))
     .execute(&pool)
     .await
     .unwrap();

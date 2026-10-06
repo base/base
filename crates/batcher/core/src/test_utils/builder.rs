@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::Header;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use base_batcher_encoder::{BatchPipeline, BlobPayload, SubmissionPayload};
 use base_batcher_source::{L1HeadSource, UnsafeBlockSource};
 use base_common_consensus::BaseBlock;
@@ -14,11 +14,11 @@ use tokio::sync::mpsc;
 
 use crate::{
     AdminHandle, BatchDriver, BatchDriverConfig, BatchDriverInputs, DaThrottle, DerivationStatus,
-    NoopThrottleClient, ThrottleClient, ThrottleController,
+    ThrottleController,
     test_utils::{PendingL1HeadSource, PendingSource},
 };
 
-/// Factory for empty L2 block stubs used in driver tests.
+/// Factory for the empty L2 blocks and the block references used in driver tests.
 #[derive(Debug)]
 pub struct BlockStub;
 
@@ -27,6 +27,11 @@ impl BlockStub {
     /// or the driver drops it as already safe.
     pub fn with_number(number: u64) -> BaseBlock {
         BaseBlock { header: Header { number, ..Default::default() }, body: Default::default() }
+    }
+
+    /// Returns a [`BlockInfo`] numbered `number`, with a hash derived from that number.
+    pub fn info(number: u64) -> BlockInfo {
+        BlockInfo { hash: B256::with_last_byte(number as u8), number, ..Default::default() }
     }
 }
 
@@ -52,26 +57,21 @@ impl SubmissionStub {
 /// dropping the derivation sender is fatal to the driver, dropping the admin handle silences
 /// its admin arm.
 #[derive(Debug)]
-pub struct DriverFixture<
-    R,
-    P,
-    TM,
-    S = PendingSource,
-    L = PendingL1HeadSource,
-    TC = Arc<NoopThrottleClient>,
-> where
-    TC: ThrottleClient,
-{
+pub struct DriverFixture<R, P, TM, S = PendingSource, L = PendingL1HeadSource> {
     runtime: R,
     pipeline: P,
     tx_manager: TM,
     source: S,
     l1_head_source: L,
-    throttle: DaThrottle<TC>,
+    throttle: DaThrottle,
     max_pending: usize,
     initial_l1_head: u64,
     safe_head: BlockInfo,
+    force_blobs_when_throttling: bool,
 }
+
+/// How long a fixture-built driver waits for its in-flight submissions on cancellation.
+pub const DRAIN_TIMEOUT: Duration = Duration::from_millis(10);
 
 /// The sending sides of a fixture-built driver's channels.
 #[derive(Debug)]
@@ -91,25 +91,25 @@ impl<R: Runtime, P: BatchPipeline, TM: TxManager> DriverFixture<R, P, TM> {
             tx_manager,
             source: PendingSource,
             l1_head_source: PendingL1HeadSource,
-            throttle: DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
+            throttle: DaThrottle::new(ThrottleController::disabled()),
             max_pending: 1,
             initial_l1_head: 0,
             safe_head: BlockInfo::default(),
+            force_blobs_when_throttling: true,
         }
     }
 }
 
-impl<R, P, TM, S, L, TC> DriverFixture<R, P, TM, S, L, TC>
+impl<R, P, TM, S, L> DriverFixture<R, P, TM, S, L>
 where
     R: Runtime,
     P: BatchPipeline,
     TM: TxManager,
     S: UnsafeBlockSource,
     L: L1HeadSource,
-    TC: ThrottleClient,
 {
     /// Replace the L2 block source.
-    pub fn source<S2: UnsafeBlockSource>(self, source: S2) -> DriverFixture<R, P, TM, S2, L, TC> {
+    pub fn source<S2: UnsafeBlockSource>(self, source: S2) -> DriverFixture<R, P, TM, S2, L> {
         DriverFixture {
             runtime: self.runtime,
             pipeline: self.pipeline,
@@ -120,6 +120,7 @@ where
             max_pending: self.max_pending,
             initial_l1_head: self.initial_l1_head,
             safe_head: self.safe_head,
+            force_blobs_when_throttling: self.force_blobs_when_throttling,
         }
     }
 
@@ -127,7 +128,7 @@ where
     pub fn l1_head_source<L2: L1HeadSource>(
         self,
         l1_head_source: L2,
-    ) -> DriverFixture<R, P, TM, S, L2, TC> {
+    ) -> DriverFixture<R, P, TM, S, L2> {
         DriverFixture {
             runtime: self.runtime,
             pipeline: self.pipeline,
@@ -138,25 +139,14 @@ where
             max_pending: self.max_pending,
             initial_l1_head: self.initial_l1_head,
             safe_head: self.safe_head,
+            force_blobs_when_throttling: self.force_blobs_when_throttling,
         }
     }
 
-    /// Replace the DA throttle.
-    pub fn throttle<TC2: ThrottleClient>(
-        self,
-        throttle: DaThrottle<TC2>,
-    ) -> DriverFixture<R, P, TM, S, L, TC2> {
-        DriverFixture {
-            runtime: self.runtime,
-            pipeline: self.pipeline,
-            tx_manager: self.tx_manager,
-            source: self.source,
-            l1_head_source: self.l1_head_source,
-            throttle,
-            max_pending: self.max_pending,
-            initial_l1_head: self.initial_l1_head,
-            safe_head: self.safe_head,
-        }
+    /// Replace the DA throttle. Subscribe to it first to watch the limits the driver publishes.
+    pub fn throttle(mut self, throttle: DaThrottle) -> Self {
+        self.throttle = throttle;
+        self
     }
 
     /// Set `max_pending_transactions`.
@@ -177,8 +167,14 @@ where
         self
     }
 
+    /// Set whether throttling forces blob submissions.
+    pub const fn force_blobs_when_throttling(mut self, force_blobs_when_throttling: bool) -> Self {
+        self.force_blobs_when_throttling = force_blobs_when_throttling;
+        self
+    }
+
     /// Build the driver and the handles that feed it.
-    pub fn build(self) -> (BatchDriver<R, P, S, TM, TC, L>, DriverHandles) {
+    pub fn build(self) -> (BatchDriver<R, P, S, TM, L>, DriverHandles) {
         let (admin, admin_rx) = AdminHandle::channel();
         let (derivation_status_tx, derivation_status_rx) = mpsc::channel(1);
         let driver = BatchDriver::new(
@@ -188,8 +184,8 @@ where
             BatchDriverConfig {
                 inbox: Address::ZERO,
                 max_pending_transactions: self.max_pending,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
+                drain_timeout: DRAIN_TIMEOUT,
+                force_blobs_when_throttling: self.force_blobs_when_throttling,
                 stopped: false,
             },
             self.throttle,

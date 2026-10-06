@@ -32,7 +32,7 @@ pub use l2_block_parity::{
 };
 
 mod throttle;
-pub use throttle::RpcThrottleClient;
+pub use throttle::ThrottlePusher;
 
 mod derivation_status_poller;
 pub use derivation_status_poller::{DerivationStatusPoller, DerivationStatusProvider};

@@ -49,7 +49,7 @@ async fn eip8130_batch_is_dropped_before_everest() {
     // 3 (ts = 6) carries an EIP-8130 transaction whose batch the verifier must
     // drop because Everest is not active until ts = 8.
     let mut eip8130_block_hash = B256::ZERO;
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg);
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg);
     for i in 1u64..=3 {
         if i == 3 {
             let tx = EverestTestEnv::eip8130_user_tx(chain_id, 0);

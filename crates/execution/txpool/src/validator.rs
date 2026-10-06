@@ -1274,16 +1274,13 @@ where
         } else {
             U256::ZERO
         };
-        // Calls move `call.value` out of the sender, not the payer. A self-paying
-        // sender reserves it alongside gas; a sponsored sender must hold it alone.
-        let call_value = signed.tx().sender_call_value(sender);
-        let payer_max_cost = gas_charge
-            .saturating_add(additional_fee)
-            .saturating_add(if payer == sender { call_value } else { U256::ZERO });
-        let sender_obligation = if payer == sender { payer_max_cost } else { call_value };
-        if sender_account.balance < sender_obligation {
+        // Admission only requires the payer to cover the transaction's fees.
+        // `call.value` is not reserved: a call whose value the sender cannot
+        // cover reverts at execution, and the fees are still paid.
+        let payer_max_cost = gas_charge.saturating_add(additional_fee);
+        if payer_account.balance < payer_max_cost {
             return Err(InvalidTransactionError::InsufficientFunds(
-                GotExpected { got: sender_account.balance, expected: sender_obligation }.into(),
+                GotExpected { got: payer_account.balance, expected: payer_max_cost }.into(),
             )
             .into());
         }
@@ -3741,22 +3738,19 @@ mod tests {
         assert!(watches_keystore(&zenith));
     }
 
-    /// A self-paying sender reserves its call value on top of gas, and is
-    /// rejected when its balance cannot cover both.
+    /// Admission reserves only the transaction's fees: call value is not
+    /// reserved, so a call worth more than the sender's balance is admitted as
+    /// long as the payer can cover the fees.
     #[test]
-    fn eip8130_self_pay_reserves_call_value() {
+    fn eip8130_admission_ignores_call_value() {
         const BALANCE: u64 = 1_000_000_000_000;
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
         let recipient = Address::repeat_byte(0xee);
-        let signed_with_value = |value: u64| {
+        let signed_with_value = |value: U256| {
             let tx = TxEip8130 {
                 gas_limit: 100_000,
-                calls: vec![vec![Call {
-                    to: recipient,
-                    value: U256::from(value),
-                    data: Bytes::new(),
-                }]],
+                calls: vec![vec![Call { to: recipient, value, data: Bytes::new() }]],
                 ..minimal_valid_eoa_tx()
             };
             let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
@@ -3766,50 +3760,16 @@ mod tests {
             build_test_validator_with_account(sender, ExtendedAccount::new(0, U256::from(BALANCE)));
 
         let without_value = validator
-            .validate_eip8130_full(&signed_with_value(0), &validator.head())
-            .expect("gas alone is affordable");
+            .validate_eip8130_full(&signed_with_value(U256::ZERO), &validator.head())
+            .expect("fees are affordable");
         let with_value = validator
-            .validate_eip8130_full(&signed_with_value(BALANCE / 2), &validator.head())
-            .expect("gas plus half the balance is affordable");
-        assert_eq!(
-            with_value.payer_max_cost - without_value.payer_max_cost,
-            U256::from(BALANCE / 2),
-            "the call value is reserved on top of gas"
-        );
+            .validate_eip8130_full(
+                &signed_with_value(U256::from(BALANCE) * U256::from(10)),
+                &validator.head(),
+            )
+            .expect("call value beyond the balance does not block admission");
+        assert_eq!(with_value.payer_max_cost, without_value.payer_max_cost);
         assert_eq!(with_value.manifest.payer_max_cost(), with_value.payer_max_cost);
-
-        let err = validator
-            .validate_eip8130_full(&signed_with_value(BALANCE), &validator.head())
-            .expect_err("gas plus the whole balance is not affordable");
-        assert!(
-            matches!(
-                err,
-                InvalidPoolTransactionError::Consensus(InvalidTransactionError::InsufficientFunds(
-                    _
-                ))
-            ),
-            "expected InsufficientFunds, got {err:?}"
-        );
-
-        // Self-calls move nothing, so three of them whose sum exceeds the
-        // balance reserve only one call's value.
-        let self_call = Call { to: sender, value: U256::from(BALANCE / 2), data: Bytes::new() };
-        let tx = TxEip8130 {
-            gas_limit: 100_000,
-            calls: vec![vec![self_call.clone(), self_call.clone(), self_call]],
-            ..minimal_valid_eoa_tx()
-        };
-        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-        let self_calls =
-            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
-        let state = validator
-            .validate_eip8130_full(&self_calls, &validator.head())
-            .expect("repeated self-calls only need one call's value on hand");
-        assert_eq!(
-            state.payer_max_cost - without_value.payer_max_cost,
-            U256::from(BALANCE / 2),
-            "self-calls reserve their peak, not their sum"
-        );
     }
 
     #[test]

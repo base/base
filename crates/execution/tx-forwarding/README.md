@@ -11,6 +11,26 @@ This crate provides:
 - **Per-destination delivery**: Each builder has an independent bounded queue and deduplication cache
 - **Resend logic**: Automatically resends transactions that haven't been included after a configurable window
 
+## Forwarding order
+
+Each reader fills its builder's queue from two lanes. A configured percentage of picks
+(`--tx-forwarding-fifo-percent`, default 20) takes the oldest pending transaction. The rest take
+the highest tip-per-gas bid, ranked the same way as the builder's `coinbase-tip` pool ordering.
+Picks are interleaved, so at 20% every fifth transaction in a batch comes from the FIFO lane.
+
+- With no backlog, every pending transaction goes in the next batch and the lanes make no
+  difference.
+- During a burst, a high bid that arrives late still goes out in the next batch.
+- The FIFO lane keeps the oldest transactions moving at the configured share of throughput, so low
+  bids are delayed but never starved.
+- Only a sender's earliest unsent transaction is eligible in either lane, so a sender's
+  transactions are always forwarded in nonce order.
+
+A transaction's position is fixed once it enters the queue. The queue defaults to two batches
+(`--tx-forwarding-queue-capacity`), so the order is decided about one round trip before the send.
+Under a deep backlog the reader reuses a pool snapshot for up to 10ms rather than re-reading the
+pool for every free slot, so a new transaction can wait that long before it is considered.
+
 A slow builder backpressures only its own reader. Transactions are marked as recently sent only
 after that builder's queue accepts them, so another destination cannot suppress their delivery.
 Each forwarder sends an isolated request immediately, but drains any other requests already waiting
@@ -58,6 +78,8 @@ than a logged skip, so a caller never silently forwards to fewer destinations th
 | `--tx-forwarding-resend-after-ms` | u64 | 4000 | Resend-after window in ms (default: 2 blocks) |
 | `--tx-forwarding-batch-size` | usize | 100 | Forwarder batch size |
 | `--tx-forwarding-max-rps` | u32 | 200 | Maximum RPC requests per second per forwarder |
+| `--tx-forwarding-fifo-percent` | u8 | 20 | Percentage of picks taken oldest-first; the rest by highest tip (100 = pure FIFO) |
+| `--tx-forwarding-queue-capacity` | usize | 2x batch size | Per-builder queue capacity |
 
 ## Usage
 

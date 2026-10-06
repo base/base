@@ -47,8 +47,7 @@ for attempt in $(seq 1 60); do
       and has_event("base-reth-node"; [
         "TXPOOL_PENDING",
         "TXPOOL_QUEUED",
-        "TXPOOL_BUILDER_FORWARD_ATTEMPT",
-        "TXPOOL_BUILDER_FORWARD_SUCCESS"
+        "TXPOOL_BUILDER_CONSUMED"
       ])
       and has_event("base-builder"; [
         "BUILDER_CONSIDERED",

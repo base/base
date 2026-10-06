@@ -36,7 +36,7 @@ async fn azul_derivation_crosses_activation_boundary() {
         &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
+    let batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     node.initialize().await;
 
     for i in 1..=4u64 {

@@ -12,6 +12,13 @@ pub const DEFAULT_RESEND_AFTER_MS: u64 = 4000;
 pub const DEFAULT_MAX_BATCH_SIZE: usize = 100;
 /// Default maximum RPC requests per second per forwarder.
 pub const DEFAULT_MAX_RPS: u32 = 200;
+/// Default percentage of forwarding picks served oldest-first; the rest go to the highest bid.
+pub const DEFAULT_FIFO_PERCENT: u8 = 20;
+/// Default destination queue depth, in batches, when no capacity is configured.
+///
+/// Two batches keep one ready while another is in flight, and the order is decided roughly one
+/// round trip before the send.
+pub const DEFAULT_QUEUE_CAPACITY_BATCHES: usize = 2;
 /// Default number of in-process `meter_bundle` workers.
 pub const DEFAULT_INLINE_SIMULATION_WORKERS: usize = 16;
 /// Default capacity of the pre-sim queue.
@@ -32,6 +39,15 @@ pub struct TxForwardingConfig {
     pub max_batch_size: usize,
     /// Maximum RPC requests per second per forwarder (0 = unlimited).
     pub max_rps: u32,
+    /// Percentage of forwarding picks served oldest-first, from 0 to 100.
+    ///
+    /// The remaining picks go to the highest tip-per-gas bid. 100 is pure FIFO and 0 is pure
+    /// priority. With no backlog every pending transaction is sent in the next batch, so the
+    /// percentage only matters while a destination is behind.
+    pub fifo_percent: u8,
+    /// Per-destination queue capacity. [`None`] uses
+    /// [`DEFAULT_QUEUE_CAPACITY_BATCHES`] batches.
+    pub queue_capacity: Option<usize>,
     /// When true, `meter_bundle` runs on the mempool node before pool insert.
     ///
     /// Stored only until the sim-worker path is wired; forwarding behavior is
@@ -54,6 +70,8 @@ impl Default for TxForwardingConfig {
             resend_after_ms: DEFAULT_RESEND_AFTER_MS,
             max_batch_size: DEFAULT_MAX_BATCH_SIZE,
             max_rps: DEFAULT_MAX_RPS,
+            fifo_percent: DEFAULT_FIFO_PERCENT,
+            queue_capacity: None,
             inline_simulation: false,
             inline_simulation_workers: DEFAULT_INLINE_SIMULATION_WORKERS,
             inline_simulation_queue_capacity: DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY,
@@ -91,6 +109,18 @@ impl TxForwardingConfig {
         self
     }
 
+    /// Sets the percentage of forwarding picks served oldest-first.
+    pub const fn with_fifo_percent(mut self, percent: u8) -> Self {
+        self.fifo_percent = percent;
+        self
+    }
+
+    /// Sets the per-destination queue capacity.
+    pub const fn with_queue_capacity(mut self, capacity: Option<usize>) -> Self {
+        self.queue_capacity = capacity;
+        self
+    }
+
     /// Enables or disables in-process `meter_bundle` before pool insert.
     pub const fn with_inline_simulation(mut self, enabled: bool) -> Self {
         self.inline_simulation = enabled;
@@ -117,9 +147,17 @@ impl TxForwardingConfig {
 
     /// Builds the per-destination reader configuration.
     pub(crate) fn reader_config(&self) -> ReaderConfig {
+        let channel_capacity = self
+            .queue_capacity
+            .unwrap_or_else(|| {
+                DEFAULT_QUEUE_CAPACITY_BATCHES * self.forwarder_config().batch_limit()
+            })
+            .max(1);
         ReaderConfig {
             resend_after: Duration::from_millis(self.resend_after_ms),
-            ..Default::default()
+            channel_capacity,
+            poll_interval: ReaderConfig::POLL_INTERVAL,
+            fifo_percent: self.fifo_percent,
         }
     }
 
@@ -136,6 +174,22 @@ impl TxForwardingConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn queue_capacity_defaults_to_two_batches() {
+        let config = TxForwardingConfig::new(vec!["http://builder.test".parse().unwrap()])
+            .with_max_batch_size(50);
+
+        assert_eq!(config.reader_config().channel_capacity, 100);
+    }
+
+    #[test]
+    fn queue_capacity_override_wins_and_is_never_zero() {
+        let base = TxForwardingConfig::new(vec!["http://builder.test".parse().unwrap()]);
+
+        assert_eq!(base.clone().with_queue_capacity(Some(7)).reader_config().channel_capacity, 7);
+        assert_eq!(base.with_queue_capacity(Some(0)).reader_config().channel_capacity, 1);
+    }
 
     #[test]
     fn inline_simulation_defaults_off() {
