@@ -71,7 +71,7 @@ The `docker-compose.yml` orchestrates a complete local devnet environment with b
 - Unified Base sequencer and validator/RPC nodes on L2
 - The canonical Go `op-batcher` (`op-batcher` service) submitting L2 data to L1
 - The Rust `base batcher` (`base-batcher` service) running in **shadow mode**
-- A shadow validator (`base-shadow-validator` service) deriving the shadow DA
+- A shadow validator (`base-shadow-validator` service) deriving its chain from the shadow DA
 
 All services read configuration from `devnet-env` in this directory. The devnet stores chain data in `.devnet/` which is created on first run.
 

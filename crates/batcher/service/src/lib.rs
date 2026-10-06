@@ -8,7 +8,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod config;
-pub use config::BatcherConfig;
+pub use config::{BatcherConfig, ShadowConfig};
 
 mod metrics;
 pub use metrics::L2BlockParityMetrics;
