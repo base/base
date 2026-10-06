@@ -19,6 +19,7 @@ import unittest
 from unittest.mock import DEFAULT, Mock, patch
 
 import snapshot_devnet as devnet
+import snapshot_verify as verification
 
 
 def snapshot():
@@ -3073,13 +3074,17 @@ sys.exit(child.wait() or 1)
     @unittest.skipUnless(shutil.which("just"), "requires the just command dispatcher")
     def test_nested_just_commands_forward_arguments_without_starting_services(self):
         environment = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
-        for command in ("setup", "init", "up", "down", "start", "stop", "status", "reset", "schedule-denim"):
+        for command in ("setup", "init", "up", "down", "start", "stop", "status", "reset", "schedule-denim",
+                        "deposit", "verify"):
             with self.subTest(command=command):
                 result = subprocess.run(
                     ["just", "devnet", "snapshot", command, "--dir", str(self.root / "fork with spaces"), "--help"],
                     cwd=devnet.ROOT, capture_output=True, text=True, timeout=10, env=environment)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("usage:", result.stdout)
+                if command == "verify":
+                    for flag in ("--denim", "--restart", "--interrupt"):
+                        self.assertNotIn(flag, result.stdout)
                 self.assertFalse((self.root / "fork with spaces").exists())
         result = subprocess.run(
             ["just", "devnet", "snapshot", "status", "--dir", str(self.root / "fork with spaces"), "--timeout", "1"],
@@ -3093,10 +3098,10 @@ sys.exit(child.wait() or 1)
             with self.subTest(args=args):
                 result = subprocess.run(["just", *args], cwd=devnet.ROOT, capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                for command in ("setup", "init", "up", "down", "status", "reset", "schedule-denim", "test", "build-anvil"):
+                for command in ("setup", "init", "up", "down", "status", "reset", "schedule-denim", "test", "build-anvil",
+                                "deposit", "verify"):
                     self.assertIn(command, result.stdout)
-                for command in ("deposit", "verify"):
-                    self.assertNotIn(command, result.stdout)
+                self.assertNotIn("snapshot-verify", result.stdout)
         target = self.root / "fork with spaces"
         config_path = self.root / "input with spaces.json"
         devnet.write_json(config_path, self.preparation())
@@ -3111,6 +3116,260 @@ sys.exit(child.wait() or 1)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("init requires --allow-write", result.stderr)
         self.assertEqual([entry.name for entry in target.iterdir()], [".lock"])
+
+
+class QualificationTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.directory = Path(temporary.name)
+        self.fork = Mock(spec=devnet.SnapshotFork)
+        self.fork.directory, self.fork.timeout = self.directory, 1
+        self.fork.manifest = {**manifest(), "phase": "running"}
+        self.fork.url.side_effect = lambda role: role
+        sleep = patch.object(devnet.time, "sleep")
+        sleep.start()
+        self.addCleanup(sleep.stop)
+
+    def test_verify_funds_through_l1_then_requires_safe_derivation_and_local_blobs(self):
+        receipt = {"blockNumber": "0x7c", "blockHash": "0x124", "transactionHash": "0xtx", "status": "0x1"}
+        safe = {"number": "0x7c", "hash": "0x124", "stateRoot": "0xroot"}
+        for failure in ("derivation", None):
+            with self.subTest(failure=failure):
+                self.fork.reset_mock()
+                # The deposit reaches L2 on the second poll; L1 advances while the transaction is batched.
+                responses = {"eth_getBalance": iter([hex(0), hex(10**18)]), "eth_blockNumber": iter([hex(149), hex(152)])}
+                calls = []
+
+                def rpc(url, method, *args):
+                    if method == "admin_sequencerActive":
+                        return False
+                    self.fork.deposit.assert_called_once_with(10**18)
+                    calls.append(method)
+                    return next(responses[method])
+
+                with patch.object(verification, "rpc", side_effect=rpc), \
+                        patch.object(verification, "transact", side_effect=lambda fork: calls.append("send") or receipt), \
+                        patch.object(verification, "derived", return_value=safe,
+                                     side_effect=RuntimeError("state root mismatch") if failure else None) as derived, \
+                        patch.object(verification, "local_blobs", return_value=[{"path": "blob"}]) as blobs, \
+                        patch("builtins.print") as output:
+                    if failure:
+                        with self.assertRaisesRegex(RuntimeError, "state root mismatch"):
+                            verification.verify(self.fork)
+                        self.assertFalse((self.directory / "verification.json").exists())
+                        blobs.assert_not_called()
+                        continue
+                    verification.verify(self.fork)
+                # The funded deposit is visible before sending; blobs are searched from the next L1 block.
+                self.assertEqual(calls, ["eth_getBalance", "eth_getBalance", "eth_blockNumber", "send", "eth_blockNumber"])
+                derived.assert_called_once_with(self.fork, receipt)
+                blobs.assert_called_once_with(self.fork, 150, 152)
+                report = json.loads((self.directory / "verification.json").read_text())
+                self.assertEqual(report, {"blocks": [safe], "receipts": [receipt], "blobs": [{"path": "blob"}]})
+                for method in ("stop", "start", "compose", "peers", "schedule_denim"):
+                    getattr(self.fork, method).assert_not_called()
+                self.assertNotIn("Denim", str(output.call_args_list))
+
+    def test_verify_reuses_a_recorded_custom_deposit_and_never_skips_an_unresolved_submission(self):
+        fork = devnet.SnapshotFork(self.directory)
+        user, portal = manifest()["accounts"]["user"], "0x" + "e" * 40
+        # As journaled by an earlier `deposit --wei 5`, not the verifier's default 1 ETH.
+        recorded = {"from": user, "to": portal, "value": hex(5), "data": "0xcalldata", "nonce": "0x3", "gas": "0x1"}
+        for operation, error in (({"transaction": recorded, "hash": "0xdeposit"}, "L2 transaction reached"),
+                                 ({"transaction": recorded}, "reconcile its nonce manually")):
+            fork.manifest = {**manifest(), "phase": "running", "portal": portal,
+                             "operations": {"fund-user": copy.deepcopy(operation)}}
+
+            def rpc(url, method, *args):
+                responses = {"admin_sequencerActive": False, "eth_getBalance": hex(5), "eth_blockNumber": hex(149)}
+                if method == "eth_getTransactionReceipt":
+                    self.assertEqual((url, args), ("l1", ("0xdeposit",)))
+                    return {"status": "0x1"}
+                self.assertIn(method, responses, "a recorded deposit is reconciled, never sent again")
+                return responses[method]
+
+            with self.subTest(error=error), patch.multiple(fork, assert_local_l1=DEFAULT,
+                                                           validate_restored_contracts=DEFAULT), \
+                    patch.object(fork, "running_services", return_value=devnet.FORK_SERVICES), \
+                    patch.object(fork, "url", side_effect=lambda role: role), \
+                    patch.object(fork, "sync_status", return_value={"unsafe_l2": {"l1origin": {"number": 10}}}), \
+                    patch.object(devnet, "run", return_value="0xcalldata"), \
+                    patch.object(devnet, "rpc", side_effect=rpc), patch.object(verification, "rpc", side_effect=rpc), \
+                    patch.object(verification, "transact", side_effect=RuntimeError("L2 transaction reached")) as send, \
+                    patch("builtins.print"), self.assertRaisesRegex(RuntimeError, error):
+                verification.verify(fork)
+            self.assertEqual(fork.manifest["operations"]["fund-user"]["transaction"], recorded)
+            self.assertEqual(send.called, "hash" in operation)
+
+    def test_verify_rejects_a_transaction_whose_unsafe_block_was_replaced_before_it_became_safe(self):
+        receipt = {"blockNumber": "0x7c", "blockHash": "0xsubmitted", "transactionHash": "0xtx", "status": "0x1"}
+        # Both nodes agree at the receipt's height in every case; only the submitted hash proves inclusion.
+        for block_hash, validator_receipt, error in (
+                ("0xreplacement", None, "replaced"),
+                ("0xreplacement", {**receipt, "blockHash": "0xreplacement"}, "replaced"),
+                ("0xsubmitted", None, "validator lacks"),
+                ("0xsubmitted", {**receipt, "status": "0x0"}, "validator lacks"),
+                ("0xsubmitted", receipt, "derivation passed")):
+            header = {"number": "0x7c", "hash": block_hash, "stateRoot": "0xroot"}
+            responses = {"eth_getBalance": iter([hex(10**18)]), "eth_blockNumber": iter([hex(149), hex(152)])}
+
+            def rpc(url, method, *args):
+                if method == "admin_sequencerActive":
+                    return False
+                if method == "eth_getBlockByNumber":
+                    return header
+                if method == "eth_getTransactionReceipt":
+                    self.assertEqual((url, args), ("validator", ("0xtx",)))
+                    return validator_receipt
+                return next(responses[method])
+
+            with self.subTest(block_hash=block_hash, validator_receipt=validator_receipt), \
+                    patch.object(verification, "rpc", side_effect=rpc), \
+                    patch.object(verification, "transact", return_value=receipt), \
+                    patch.object(verification, "local_blobs", side_effect=RuntimeError("derivation passed")), \
+                    patch("builtins.print"), self.assertRaisesRegex(RuntimeError, error):
+                self.fork.sync_status.return_value = {"safe_l2": {"number": 124}, "unsafe_l2": {"l1origin": {"number": 10}}}
+                verification.verify(self.fork)
+
+    def test_verify_rejects_stopped_fork_or_sequencing_validator_before_deposit(self):
+        for phase, active in (("stopped", False), ("running", True)):
+            with self.subTest(phase=phase, active=active):
+                self.fork.manifest["phase"] = phase
+                with patch.object(verification, "rpc", return_value=active), patch("builtins.print"):
+                    with self.assertRaises(RuntimeError):
+                        verification.verify(self.fork)
+                self.fork.deposit.assert_not_called()
+
+    def test_verify_fails_promptly_without_a_running_batcher(self):
+        self.fork.require_batcher.side_effect = RuntimeError("batcher exited")
+        with patch.object(verification, "rpc", return_value=False), patch("builtins.print"), \
+                self.assertRaisesRegex(RuntimeError, "batcher exited"):
+            verification.verify(self.fork)
+        self.fork.deposit.assert_not_called()
+        self.fork.sync_status.assert_not_called()
+
+    def test_derivation_waits_for_safe_head_even_when_unsafe_has_advanced(self):
+        self.fork.sync_status.side_effect = [
+            {"safe_l2": {"number": 123}, "unsafe_l2": {"number": 130}},
+            {"safe_l2": {"number": 124}, "unsafe_l2": {"number": 130}},
+        ]
+        header = {"number": "0x7c", "hash": "canonical", "stateRoot": "root"}
+        receipt = {"blockNumber": "0x7c", "blockHash": "canonical", "transactionHash": "0xtx", "status": "0x1"}
+
+        def rpc(url, method, *args):
+            self.assertEqual(self.fork.sync_status.call_count, 2, "unsafe gossip is not proof of derivation")
+            if method == "eth_getTransactionReceipt":
+                return receipt
+            self.assertEqual((method, *args), ("eth_getBlockByNumber", "0x7c", False))
+            return header
+
+        with patch.object(verification, "rpc", side_effect=rpc), patch("builtins.print"):
+            self.assertEqual(verification.derived(self.fork, receipt), header)
+
+    def test_matching_height_is_not_parity(self):
+        with self.assertRaisesRegex(RuntimeError, "state root mismatch"):
+            verification.check_parity({"hash": "a", "stateRoot": "a"}, {"hash": "a", "stateRoot": "b"})
+        with self.assertRaisesRegex(RuntimeError, "hash/state root mismatch"):
+            verification.check_parity({"hash": "a", "stateRoot": "a"}, {"hash": "b", "stateRoot": "a"})
+
+    def test_transaction_must_succeed_on_the_sequencer(self):
+        devnet.write_json(self.directory / "keys.json", {"user": "0x" + "1" * 64})
+        for status in ("0x1", "0x0"):
+            with self.subTest(status=status), patch.object(verification, "run", return_value="0xtx") as send, \
+                    patch.object(verification, "rpc", return_value={"status": status}) as receipt, patch("builtins.print"):
+                if status == "0x0":
+                    with self.assertRaisesRegex(RuntimeError, "reverted"):
+                        verification.transact(self.fork)
+                else:
+                    self.assertEqual(verification.transact(self.fork), {"status": status})
+                self.assertEqual(send.call_args.args[send.call_args.args.index("--rpc-url") + 1], "sequencer")
+                receipt.assert_called_with("sequencer", "eth_getTransactionReceipt", "0xtx")
+
+    def test_local_blobs_require_batcher_blob_bytes_from_local_beacon(self):
+        batcher = self.fork.manifest["accounts"]["batcher"]
+        headers = {150: {"timestamp": hex(1060), "transactions": [
+                       {"from": "0x" + "9" * 40, "hash": "0xother", "blobVersionedHashes": ["0xh0"]},
+                       {"from": batcher.upper(), "hash": "0xcalldata"}]},
+                   151: {"timestamp": hex(1072), "transactions": [
+                       {"from": batcher.upper(), "hash": "0xbatch", "blobVersionedHashes": ["0xh1", "0xh2"]}]}}
+        path = "/eth/v1/beacon/blobs/6?versioned_hashes=0xh1,0xh2"
+        # The beacon filter silently omits unknown hashes, so one blob for two hashes is incomplete.
+        for payload, error in (({"data": [{"blob": "0x1"}, {"blob": "0x2"}]}, None), ({"data": []}, "unavailable"),
+                               ({"data": [{"blob": "0x1"}]}, "unavailable"),
+                               ({"data": [{"blob": "0x1"}, None]}, "unavailable"), (None, "no locally posted blob batch")):
+            # Block 150 has only another sender's blobs and a batcher calldata transaction.
+            last = 150 if payload is None else 151
+            with self.subTest(payload=payload), \
+                    patch.object(verification, "rpc", side_effect=lambda url, method, height, full: headers[int(height, 16)]), \
+                    patch.object(verification, "request_json", return_value=payload) as beacon:
+                if error:
+                    with self.assertRaisesRegex(RuntimeError, error):
+                        verification.local_blobs(self.fork, 150, last)
+                    continue
+                result = verification.local_blobs(self.fork, 150, last)
+            beacon.assert_called_once_with("l1" + path)
+            self.assertEqual([(item["path"], item["l1_block"], item["transaction"]) for item in result],
+                             [(path, 151, "0xbatch")])
+
+    def test_deposit_funds_the_user_once_through_the_l1_portal(self):
+        fork = devnet.SnapshotFork(self.directory)
+        fork.manifest = {**manifest(), "portal": "0x" + "e" * 40}
+        fork.save()
+        user = fork.manifest["accounts"]["user"]
+        with patch.object(fork, "send", return_value={"status": "0x1"}) as send:
+            for amount in (0, -1):
+                with self.assertRaisesRegex(RuntimeError, "positive"):
+                    fork.deposit(amount)
+            send.assert_not_called()
+            self.assertEqual(fork.deposit(5), {"status": "0x1"})
+        send.assert_called_once_with("fund-user", user, "0x" + "e" * 40,
+                                     "depositTransaction(address,uint256,uint64,bool,bytes)",
+                                     user, 5, 100000, "false", "0x", value=5)
+        with patch.object(sys, "argv", ["launcher", "deposit", "--dir", str(self.directory), "--wei", "7"]), \
+                patch.object(devnet.SnapshotFork, "deposit", return_value={"status": "0x1"}) as deposit, \
+                patch("builtins.print") as output:
+            devnet.main()
+        deposit.assert_called_once_with(7)
+        self.assertEqual(json.loads(output.call_args.args[0]), {"status": "0x1"})
+
+    def test_verify_command_uses_the_selected_fork_under_its_lock(self):
+        fork = devnet.SnapshotFork(self.directory / "fork")
+        fork.directory.mkdir()
+        fork.manifest = manifest()
+        fork.save()
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(self.directory / "config")}):
+            devnet.setup_path().parent.mkdir(parents=True)
+            devnet.write_json(devnet.setup_path(), {"directory": str(fork.directory)})
+
+            def locked_fork(*args):
+                # The manifest is read only while this command holds the fork lock.
+                with open(fork.directory / ".lock", "a") as other, self.assertRaises(BlockingIOError):
+                    fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return devnet.SnapshotFork(*args)
+
+            with patch.object(sys, "argv", ["verify"]), patch.object(verification, "verify") as verify, \
+                    patch.object(verification, "SnapshotFork", side_effect=locked_fork):
+                verification.main()
+                self.assertEqual(verify.call_args.args[0].directory, fork.directory)
+                self.assertEqual(verify.call_args.args[0].timeout, 7200)
+                verify.reset_mock()
+                with open(fork.directory / ".lock", "a") as lock:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    with self.assertRaises(BlockingIOError):
+                        verification.main()
+                verify.assert_not_called()
+                empty = self.directory / "empty"
+                empty.mkdir()
+                with patch.object(sys, "argv", ["verify", "--dir", str(empty)]), \
+                        self.assertRaisesRegex(RuntimeError, "missing manifest"):
+                    verification.main()
+                self.assertEqual(list(empty.iterdir()), [])
+
+    @unittest.skipUnless(os.environ.get("BASE_SNAPSHOT_FORK_DIR"), "opt-in real snapshot fork qualification")
+    def test_live_snapshot_fork(self):
+        command = [sys.executable, str(Path(verification.__file__)), "--dir", os.environ["BASE_SNAPSHOT_FORK_DIR"]]
+        subprocess.run(command, check=True)
 
 
 if __name__ == "__main__":

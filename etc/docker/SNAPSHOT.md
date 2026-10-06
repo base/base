@@ -162,6 +162,48 @@ just devnet snapshot schedule-denim --dir /data/snapshot/fork 1790000000
 The status countdown is not proof that a node activated it. A scheduling transaction interrupted
 before its hash was saved must have its nonce reconciled manually.
 
+## Send a test transaction
+
+Fund the generated throwaway user through the local L1 portal, then send on L2. Do not use
+production keys: this fork retains mainnet chain IDs.
+
+```sh
+just devnet snapshot deposit --dir /data/snapshot/fork
+SEQUENCER_RPC=$(just devnet snapshot status --dir /data/snapshot/fork | jq -r '.rpc_docker_host_only.sequencer')
+VALIDATOR_RPC=$(just devnet snapshot status --dir /data/snapshot/fork | jq -r '.rpc_docker_host_only.validator')
+USER_ADDRESS=$(jq -r '.accounts.user' /data/snapshot/fork/manifest.json)
+cast balance --rpc-url "$SEQUENCER_RPC" "$USER_ADDRESS"
+```
+
+Repeat the balance query until the deposit reaches L2 and the balance is nonzero, then:
+
+```sh
+cast send --rpc-url "$SEQUENCER_RPC" --chain-id 8453 \
+  --private-key "$(jq -r '.user' /data/snapshot/fork/keys.json)" --gas-limit 21000 --value 1 \
+  0x000000000000000000000000000000000000bEEF
+```
+
+`deposit` funds 1 ETH once; repeating it does not top up the account. Use the transaction hash
+from `cast send` with `cast receipt --rpc-url "$VALIDATOR_RPC" <transaction-hash>`; unsafe gossip
+can reach the validator before L1 batching makes the block safe.
+
+## Verify derivation (optional)
+
+```sh
+just devnet snapshot verify --dir /data/snapshot/fork
+```
+
+It requires a running batcher, deposits through the L1 portal (reconciling an earlier `deposit`
+at its recorded amount), sends a transaction, waits until the validator derives its block as safe
+from L1 batches, requires that safe block to be the transaction's own block with its receipt on
+the validator, compares the block's hash and state root on both nodes, and requires the batcher's
+blobs from local L1. Gossip stays connected; only derivation makes a block safe. It writes
+`verification.json` in the fork directory after these checks pass. It does not restart services or
+check Denim activation.
+
+`just devnet snapshot test` runs offline launcher tests instead; it does not verify a running
+devnet unless you explicitly set `BASE_SNAPSHOT_FORK_DIR` to opt into the live verifier.
+
 ## Where things live
 
 Under setup's working directory, `builder/` and `validator/` are the writable databases,

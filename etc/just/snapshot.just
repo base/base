@@ -36,7 +36,15 @@ reset *args:
 schedule-denim *args:
     python3 etc/scripts/devnet/snapshot_devnet.py schedule-denim "$@"
 
-# Offline launcher tests
+# Fund the local test user through the L1 portal
+deposit *args:
+    python3 etc/scripts/devnet/snapshot_devnet.py deposit "$@"
+
+# Verify a deposit, safe derivation and local batch blobs on a running fork
+verify *args:
+    python3 etc/scripts/devnet/snapshot_verify.py "$@"
+
+# Offline launcher tests (BASE_SNAPSHOT_FORK_DIR opts into live qualification)
 test:
     PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s etc/scripts/devnet -p test_snapshot_devnet.py -v
 
