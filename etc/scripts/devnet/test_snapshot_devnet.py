@@ -52,6 +52,14 @@ def container(service, address="10.9.0.2", project="snapshot-fixture", networks=
     }
 
 
+def sync_status(l1, safe=123, safe_hash="0x123", unsafe=None, unsafe_hash=None):
+    return {"current_l1": {"number": l1, "hash": f"0xl1{l1}"},
+            "safe_l2": {"number": safe, "hash": safe_hash},
+            "unsafe_l2": {"number": safe if unsafe is None else unsafe,
+                          "hash": safe_hash if unsafe_hash is None else unsafe_hash,
+                          "timestamp": 1234, "l1origin": {"number": 19}}}
+
+
 class SnapshotTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -298,7 +306,10 @@ class SnapshotTests(unittest.TestCase):
                     self.fork.url(role)
                 if error is RuntimeError:
                     self.assertNotIsInstance(caught.exception, devnet.Unavailable)
-                    self.assertIn("ambiguous", str(caught.exception))
+                    with self.assertRaisesRegex(RuntimeError, "ambiguous"):
+                        self.fork.consensus_ready(role.removesuffix("-cl"))
+                else:
+                    self.assertFalse(self.fork.consensus_ready("sequencer"))
 
     def test_l2_rpc_resolves_only_through_the_internal_network(self):
         cases = (
@@ -872,6 +883,163 @@ class SnapshotTests(unittest.TestCase):
         self.local_l1(apply_writes=False)
         with self.assertRaisesRegex(RuntimeError, "batcher update not applied"):
             self.fork.bootstrap()
+
+    def test_progress_extends_stall_timeout_and_reports_without_secrets(self):
+        clock = iter(range(0, 1000, 10))
+        polls = iter([False] * 6 + [True])
+        heads = iter(range(100))
+        printed = []
+        with patch.object(devnet.time, "monotonic", side_effect=lambda: next(clock)), \
+                patch.object(devnet.time, "sleep"), \
+                patch("builtins.print", side_effect=lambda *args, **_: printed.append(args)):
+            self.assertTrue(devnet.wait("catch-up", lambda: next(polls), 15,
+                                        progress=lambda: (next(heads), "head advanced"), report_interval=20))
+            self.assertTrue(printed)
+            with self.assertRaisesRegex(RuntimeError, "no progress for 15s.*head stuck"):
+                devnet.wait("catch-up", lambda: False, 15, progress=lambda: (1, "head stuck"))
+
+    def test_boundary_waits_until_both_nodes_leave_fork_block(self):
+        initial = snapshot()["latest"]["block_info"]
+        for statuses in (
+            {"sequencer": sync_status(100), "validator": sync_status(100)},
+            {"sequencer": sync_status(101), "validator": sync_status(100)},
+            {"sequencer": sync_status(99), "validator": sync_status(101)},
+        ):
+            self.assertIsNone(devnet.derived_boundary(statuses, 100, initial))
+        ready = {"sequencer": sync_status(101, safe=124, safe_hash="0x124"),
+                 "validator": sync_status(102, safe=124, safe_hash="0x124")}
+        self.assertEqual(devnet.derived_boundary(ready, 100, initial), {"number": 124, "hash": "0x124"})
+
+    def test_boundary_rejects_unsafe_tail_divergent_or_short_safe_heads(self):
+        initial = snapshot()["latest"]["block_info"]
+        for name, statuses in {
+            "unsafe": {"sequencer": sync_status(101, unsafe=124, unsafe_hash="0x124"), "validator": sync_status(101)},
+            "different": {"sequencer": sync_status(101), "validator": sync_status(101, safe_hash="0xother")},
+            "below": {"sequencer": sync_status(101, safe=122, safe_hash="0x122"),
+                      "validator": sync_status(101, safe=122, safe_hash="0x122")},
+        }.items():
+            with self.subTest(name), self.assertRaises(RuntimeError):
+                devnet.derived_boundary(statuses, 100, initial)
+
+    def boundary_gate(self, l1_head, canonical="0x123"):
+        self.fork.manifest["initial"] = [snapshot()]
+        statuses = iter([{"sequencer": sync_status(100), "validator": sync_status(100)},
+                         {"sequencer": sync_status(101), "validator": sync_status(100)},
+                         {"sequencer": sync_status(101), "validator": sync_status(101)}])
+        current = {}
+        def status(role):
+            if role == "sequencer":
+                current.update(next(statuses))
+            return current[role]
+        def node(url, method, *args):
+            if method == "eth_blockNumber":
+                return hex(l1_head)
+            if url == "http://l1":
+                self.assertEqual(args[0], hex(101))
+                return {"number": hex(101), "hash": "0xsuccessor", "parentHash": "0xf"}
+            self.assertEqual(args[0], hex(123))
+            return {"hash": canonical}
+        mine = patch.object(self.fork, "mine").start()
+        self.addCleanup(patch.stopall)
+        patch.object(self.fork, "sync_status", side_effect=status).start()
+        patch.object(self.fork, "url", side_effect=lambda role: "http://" + role).start()
+        patch.object(devnet, "rpc", side_effect=node).start()
+        patch.object(devnet.time, "sleep").start()
+        return mine
+
+    def test_boundary_gate_mines_one_successor_and_persists_the_derived_boundary(self):
+        mine = self.boundary_gate(100)
+        self.fork.wait_boundary()
+        mine.assert_called_once()
+        stored = devnet.SnapshotFork(self.fork.directory).manifest
+        self.assertTrue(stored["boundary_validated"])
+        self.assertEqual(stored["boundary"]["safe_l2"], {"number": 123, "hash": "0x123"})
+        self.assertEqual(stored["boundary"]["current_l1"]["validator"]["number"], 101)
+        self.assertEqual(stored["boundary"]["l1_successor"], {"number": "0x65", "hash": "0xsuccessor"})
+
+    def test_boundary_gate_resume_does_not_mine_a_second_successor(self):
+        mine = self.boundary_gate(101)
+        self.fork.wait_boundary()
+        mine.assert_not_called()
+
+    def test_boundary_gate_rejects_reorged_snapshot_head_without_persisting(self):
+        self.boundary_gate(100, canonical="0xother")
+        with self.assertRaisesRegex(RuntimeError, "no longer canonical"):
+            self.fork.wait_boundary()
+        self.assertFalse(self.fork.manifest.get("boundary_validated"))
+
+    def test_upgrade_gate_requires_both_nodes_ready_with_the_recorded_schedule(self):
+        self.fork.manifest["schedule"] = [100] * 12 + [800]
+        recorded = {upgrade + "_time": 100 for upgrade in devnet.UPGRADES[:devnet.LEGACY_UPGRADE_COUNT]}
+        recorded["base"] = {"azul": 100, "beryl": 100, "cobalt": 800}
+        stale = {**recorded, "base": {**recorded["base"], "cobalt": None}}
+        self.fork.timeout = 0.02
+        for config, ready, observed in ((recorded, True, True), (stale, True, False), (recorded, False, False)):
+            with self.subTest(config=config["base"], ready=ready), \
+                    patch.object(self.fork, "url", side_effect=lambda role: role), \
+                    patch.object(devnet, "rpc", side_effect=lambda url, method: (
+                        {"ready": url == "sequencer-cl" or ready} if method == "base_upgradeReadiness"
+                        else recorded if url == "sequencer-cl" else config)), \
+                    patch.object(devnet.time, "sleep"), patch("builtins.print"):
+                if observed:
+                    self.fork.wait_upgrades()
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "timed out: validator observing"):
+                        self.fork.wait_upgrades()
+
+    def test_gossip_connects_the_private_ip_of_the_other_node(self):
+        containers = [container("sequencer", "10.9.0.2"), container("validator", "10.9.0.3")]
+        calls = []
+        def node(url, method, *args):
+            calls.append((url, method, *args))
+            return {"peerID": "seq" if "10.9.0.2" in url else "val"}
+        with patch.object(self.fork, "containers", return_value=containers), patch.object(devnet, "rpc", side_effect=node):
+            self.fork.peers()
+        self.assertIn(("http://10.9.0.2:9545", "opp2p_connectPeer", "/ip4/10.9.0.3/tcp/9222/p2p/val"), calls)
+        self.assertIn(("http://10.9.0.3:9545", "opp2p_connectPeer", "/ip4/10.9.0.2/tcp/9222/p2p/seq"), calls)
+
+    def batching(self, safe_heads, alive, hashes):
+        """Patches start_batcher's collaborators: per-poll safe heads and batcher liveness."""
+        polls = iter(safe_heads)
+        liveness = iter(alive)
+        current = {}
+        calls = []
+
+        def status(role):
+            if role == "sequencer":
+                current.update(zip(devnet.ROLES, next(polls)))
+            return sync_status(101, safe=current[role], safe_hash=hex(current[role]))
+
+        def node(url, method, *args):
+            calls.append((url, method, *args))
+            # A node returns only blocks at or below its derived safe head.
+            return {"hash": hashes[url]} if current[url] >= devnet.number(args[0]) else None
+        self.addCleanup(patch.stopall)
+        patch.object(self.fork, "compose", side_effect=lambda *args: calls.append(args)).start()
+        patch.object(self.fork, "running_services",
+                     side_effect=lambda: {"l1", *devnet.ROLES} | ({"batcher"} if next(liveness) else set())).start()
+        patch.object(self.fork, "sync_status", side_effect=status).start()
+        patch.object(self.fork, "url", side_effect=lambda role: role).start()
+        patch.object(devnet, "rpc", side_effect=node).start()
+        patch.object(devnet.time, "sleep").start()
+        return calls
+
+    def test_batcher_start_waits_for_both_safe_heads_and_checks_common_canonical_hash(self):
+        calls = self.batching([(123, 123), (123, 123), (125, 123), (126, 124)], [True] * 3,
+                              {"sequencer": "0xsame", "validator": "0xsame"})
+        self.fork.start_batcher()
+        self.assertEqual(calls[0], ("up", "-d", "--no-build", "batcher"))
+        self.assertEqual(calls[1:], [(role, "eth_getBlockByNumber", hex(124), False) for role in devnet.ROLES])
+
+    def test_batcher_start_rejects_divergent_safe_block(self):
+        self.batching([(123, 123), (124, 124)], [True], {"sequencer": "0xa", "validator": "0xb"})
+        with self.assertRaisesRegex(RuntimeError, "disagree on canonical safe block 124"):
+            self.fork.start_batcher()
+
+    def test_batcher_start_fails_when_batcher_exits_cleanly_while_waiting(self):
+        self.batching([(123, 123), (123, 123)], [True, False], {})
+        with self.assertRaisesRegex(RuntimeError, "batcher exited.*code 0"):
+            self.fork.start_batcher()
 
     @unittest.skipUnless(shutil.which("just"), "requires the just command dispatcher")
     def test_snapshot_is_a_just_module_that_forwards_init_arguments_without_writes(self):
