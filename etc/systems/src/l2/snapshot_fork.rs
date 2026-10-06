@@ -19,7 +19,7 @@ use base_consensus_providers::{
     AlloyChainProvider, AlloyL2ChainProvider, BeaconClient, OnlineBeaconClient, OnlineBlobProvider,
     OnlinePipeline,
 };
-use base_protocol::{BlockInfo, L2BlockInfo};
+use base_protocol::{BatchValidationProvider, BlockInfo, L2BlockInfo};
 use eyre::{OptionExt, Result, WrapErr, bail, ensure, eyre};
 use tokio::{
     task::yield_now,
@@ -156,8 +156,9 @@ impl SnapshotForkMetadata {
 /// Finds the L1 block whose derivation covers a snapshot's unsafe tail with the production
 /// [`OnlinePipeline`].
 ///
-/// The snapshot safe head is trusted. Discovery resets the pipeline there, derives payload
-/// attributes only for `(safe, latest]`, and requires each to match the snapshot block with
+/// The snapshot safe head is trusted. Discovery resets the pipeline there, or at latest's parent
+/// when safe equals latest, derives payload attributes only for the blocks after that reset point
+/// through latest, and requires each to match the snapshot block with
 /// [`AttributesMatch::check`]; nothing is executed or written. The result proves the unsafe tail's
 /// provenance, not the validity of all history.
 #[derive(Debug, Clone)]
@@ -203,16 +204,20 @@ impl SnapshotForkFinder {
     /// Returns the canonical, finalized L1 block at which the latest snapshot block's batch is
     /// derived: the maximum L1 source among the attributes derived for the unsafe tail.
     ///
-    /// Requires safe < latest. L1 reads stop at [`SnapshotForkMetadata::l1_limit`]. Mismatching
-    /// attributes, reset, temporary or critical pipeline errors, an exhausted L1 range, a snapshot
-    /// latest block or L1 fork block that is no longer canonical, and the deadline are all fatal.
-    /// Errors never contain provider-supplied text; see [`Self::diagnostic`].
+    /// When safe equals latest, discovery starts from latest's parent so it still locates the
+    /// latest batch; that parent must retain its body and cannot be the rollup genesis. L1 reads
+    /// stop at [`SnapshotForkMetadata::l1_limit`]. Mismatching attributes, reset, temporary or
+    /// critical pipeline errors, an exhausted L1 range, a snapshot latest block or L1 fork block
+    /// that is no longer canonical, and the deadline are all fatal. Errors never contain
+    /// provider-supplied text; see [`Self::diagnostic`].
     pub async fn find(&self, inspection: &SnapshotInspection) -> Result<BlockInfo> {
         let deadline = Instant::now() + self.timeout;
         let latest = inspection.latest.block_info;
+        let from_parent = inspection.safe.block_info == latest;
         ensure!(
-            inspection.safe.block_info.block_info.number < latest.block_info.number,
-            "snapshot safe head is its latest L2 block {}; there is no unsafe tail to derive",
+            !from_parent || latest.block_info.number > inspection.genesis.l2.number + 1,
+            "cannot locate the batch for L2 block {}: its parent is the rollup genesis, which has \
+             no L1-info deposit",
             latest.block_info.number
         );
         let metadata = SnapshotForkMetadata::read(&self.source, inspection, deadline).await?;
@@ -229,12 +234,24 @@ impl SnapshotForkFinder {
                 Self::PROVIDER_CACHE_SIZE,
             );
             let snapshot = RootProvider::<Base>::new_http(self.rpc_url.clone());
-            let l2 = AlloyL2ChainProvider::new(
+            let mut l2 = AlloyL2ChainProvider::new(
                 snapshot.clone(),
                 Arc::clone(&config),
                 Self::PROVIDER_CACHE_SIZE,
             );
-            let start = inspection.safe.block_info;
+            let start = if from_parent {
+                stage = "reading the latest block's parent".into();
+                l2.l2_block_info_by_hash(latest.block_info.parent_hash).await.wrap_err_with(
+                    || {
+                        format!(
+                            "snapshot parent of L2 block {} is missing or pruned",
+                            latest.block_info.number
+                        )
+                    },
+                )?
+            } else {
+                inspection.safe.block_info
+            };
             let blobs = OnlineBlobProvider {
                 beacon_client: OnlineBeaconClient::new_http(self.source.beacon.to_string()),
                 genesis_time: metadata.genesis_time,
@@ -1000,13 +1017,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_snapshot_without_unsafe_tail() {
+    async fn locates_latest_batch_from_parent_when_safe_is_latest() {
         let chain = Chain::new(None);
 
-        let error =
-            chain.find(chain.snapshot([7, LATEST, LATEST]), chain.upstream(), TIMEOUT).await;
+        let fork = chain.find(chain.snapshot([7, LATEST, LATEST]), chain.upstream(), TIMEOUT).await;
+        assert_eq!(fork.unwrap(), chain.l1_info(BATCH_L1_BLOCK));
+    }
+
+    #[tokio::test]
+    async fn rejects_safe_latest_tail_rooted_at_genesis() {
+        let chain = Chain::new(None);
+
+        let error = chain.find(chain.snapshot([1, 1, 1]), chain.upstream(), TIMEOUT).await;
         let error = error.unwrap_err().to_string();
-        assert!(error.contains("there is no unsafe tail to derive"), "{error}");
+        assert!(error.contains("its parent is the rollup genesis"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn rejects_missing_or_pruned_parent_when_safe_is_latest() {
+        let chain = Chain::new(None);
+        let mut pruned = chain.l2[LATEST as usize - 1].clone();
+        pruned.body.transactions.clear();
+        for parent in [None, Some(SnapshotRpcFixture::rpc_block(pruned))] {
+            let mut snapshot = chain.snapshot([7, LATEST, LATEST]);
+            match parent {
+                Some(block) => snapshot.blocks.insert("0x8".to_string(), block),
+                None => snapshot.blocks.remove("0x8"),
+            };
+
+            let error = chain.find(snapshot, chain.upstream(), TIMEOUT).await.unwrap_err();
+            let expected = format!("snapshot parent of L2 block {LATEST} is missing or pruned");
+            assert!(error.to_string().contains(&expected), "{error:?}");
+        }
     }
 
     #[tokio::test]
