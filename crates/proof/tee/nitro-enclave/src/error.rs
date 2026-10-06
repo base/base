@@ -49,6 +49,16 @@ pub enum ProposalError {
     /// Intermediate block interval must not be zero.
     #[error("intermediate_block_interval must not be zero")]
     InvalidInterval,
+    /// Proven block count is not a multiple of the intermediate block interval.
+    #[error(
+        "block count {block_count} is not a multiple of intermediate_block_interval {interval}"
+    )]
+    UnalignedRange {
+        /// Number of blocks proven.
+        block_count: usize,
+        /// Intermediate block interval.
+        interval: u64,
+    },
     /// Signature verification failed at the given index.
     #[error("invalid signature at proposal index {index}: {reason}")]
     InvalidSignature {
