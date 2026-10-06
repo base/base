@@ -1235,13 +1235,15 @@ class SnapshotTests(unittest.TestCase):
     def test_first_start_runs_every_gate_in_order_before_sequencing_and_catch_up(self):
         calls = []
         with self.starting(), patch.multiple(self.fork, wait_checkpoints=DEFAULT, wait_boundary=DEFAULT,
-                                             bootstrap=DEFAULT, mine=DEFAULT, start_batcher=DEFAULT), \
+                                             bootstrap=DEFAULT, mine=DEFAULT, start_batcher=DEFAULT,
+                                             schedule_denim=DEFAULT), \
                 patch.object(self.fork, "sync_status", return_value=sync_status(101)), \
                 patch.object(devnet, "rpc", side_effect=lambda url, method, *args: calls.append(method) or (
                     {"hash": "0x123"} if method == "eth_getBlockByNumber" else method != "admin_sequencerActive")), \
                 patch("builtins.print"):
             for name in ("await_rpc", "assert_local_l1", "validate_restored_contracts", "inspect", "wait_checkpoints",
-                         "wait_boundary", "bootstrap", "wait_upgrades", "mine", "peers", "start_batcher"):
+                         "wait_boundary", "bootstrap", "wait_upgrades", "mine", "peers", "start_batcher",
+                         "schedule_denim"):
                 getattr(self.fork, name).side_effect = lambda *args, name=name: calls.append(name) or (
                     [] if name == "inspect" else None)
             self.fork.compose.side_effect = lambda *args: calls.append(args)
@@ -1252,7 +1254,7 @@ class SnapshotTests(unittest.TestCase):
             "wait_checkpoints", "wait_boundary", "bootstrap", ("stop", "sequencer", "validator"),
             ("up", "-d", "--no-build", "sequencer", "validator"), "await_rpc", "await_rpc", "wait_upgrades",
             "mine", "anvil_setIntervalMining", "peers", "miner_getMaxDASize", "eth_getBlockByNumber",
-            "admin_startSequencer", "start_batcher"])
+            "admin_startSequencer", "start_batcher", "schedule_denim"])
         stored = devnet.SnapshotFork(self.fork.directory).manifest
         self.assertEqual((stored["phase"], stored["bootstrapped"]), ("running", True))
 
@@ -1265,14 +1267,21 @@ class SnapshotTests(unittest.TestCase):
                 patch.object(self.fork, "consensus_ready", return_value=True), \
                 patch.object(self.fork, "url", return_value="http://sequencer-cl"), \
                 patch.object(devnet, "rpc", return_value=True) as active, \
+                patch.object(self.fork, "schedule_denim") as schedule, \
                 patch.object(self.fork, "stop") as stop, \
                 patch.object(self.fork, "inspect") as inspect, \
                 patch.object(devnet, "validate_paths", side_effect=RuntimeError("recovery reached")) as paths, \
                 patch("builtins.print"):
             self.fork.start()
+            schedule.assert_called_once()
             stop.assert_not_called()
             paths.assert_not_called()
             inspect.assert_not_called()
+            # A scheduling failure on an already-running fork leaves its services running.
+            schedule.side_effect = RuntimeError("Denim receipt timed out")
+            with self.assertRaisesRegex(RuntimeError, "receipt timed out"):
+                self.fork.start()
+            stop.assert_not_called()
             # A restarted container can be alive while its sequencer is still stopped.
             active.return_value = False
             with self.assertRaisesRegex(RuntimeError, "recovery reached"):
@@ -1394,7 +1403,7 @@ class SnapshotTests(unittest.TestCase):
                     effects.append(effect)
 
                 with self.starting(), \
-                        patch.object(self.fork, "start_batcher"), \
+                        patch.multiple(self.fork, start_batcher=DEFAULT, schedule_denim=DEFAULT), \
                         patch.object(self.fork, "mine", side_effect=lambda: enable("mine")), \
                         patch.object(self.fork, "sync_status", side_effect=status), \
                         patch.object(devnet.time, "sleep"), \
@@ -1477,6 +1486,7 @@ class SnapshotTests(unittest.TestCase):
                     return method != "admin_sequencerActive"
 
                 with self.starting(), patch.object(self.fork, "mine"), \
+                        patch.object(self.fork, "schedule_denim", side_effect=lambda: calls.append("denim")), \
                         patch.object(self.fork, "compose", side_effect=lambda *args: calls.append(args)), \
                         patch.object(self.fork, "running_services", side_effect=lambda: {
                             "l1", "sequencer", "validator"} | (set() if batcher_exits and polls else {"batcher"})), \
@@ -1499,7 +1509,10 @@ class SnapshotTests(unittest.TestCase):
                 if batcher_exits:
                     self.assertEqual(calls[-2:], [("stop", "batcher", "sequencer", "validator", "inspect-sequencer",
                                                    "inspect-validator"), ("stop", "l1")])
+                    self.assertNotIn("denim", calls)
                 else:
+                    self.assertIn("denim", calls, "up must schedule Denim without a separate manual step")
+                    self.assertLess(calls.index("catch-up"), calls.index("denim"))
                     # Hours of catch-up must not query Docker every second.
                     sleep.assert_called_once_with(5)
 
@@ -1515,12 +1528,280 @@ class SnapshotTests(unittest.TestCase):
                 else:
                     with self.assertRaisesRegex(RuntimeError, pattern):
                         self.fork.validate_restored_contracts()
+        self.fork.manifest["denim_timestamp"] = 9999
+        with patch.object(devnet, "call", return_value=[100] * 13 + [9998]):
+            with self.assertRaisesRegex(RuntimeError, "schedule differs"):
+                self.fork.validate_restored_contracts()
 
-    def test_inspection_uses_the_recorded_schedule_and_leaves_original_config_unchanged(self):
+    def test_resume_reconciles_mined_upgrade_without_sending_it_again(self):
+        self.fork.manifest.update(schedule=[100] * 13, pending_denim_timestamp=9000)
+        self.fork.manifest["operations"]["schedule-denim"] = {"hash": "0xtx"}
+        with patch.object(devnet, "call", return_value=[100] * 13 + [9000]), \
+                patch.object(devnet, "rpc", return_value={"status": "0x1"}) as transport:
+            self.fork.validate_restored_contracts()
+            transport.assert_called_once_with(self.fork.url("l1"), "eth_getTransactionReceipt", "0xtx")
+        restored = devnet.SnapshotFork(self.fork.directory)
+        self.assertEqual(restored.manifest["denim_timestamp"], 9000)
+        self.assertNotIn("pending_denim_timestamp", restored.manifest)
+
+    @contextlib.contextmanager
+    def protocol_versions(self, schedule, notice=3600, l1_time=1290, l2_time=1295, now=1293.4,
+                          cobalt=800, minimum_after="42"):
+        """A running fork whose fake ProtocolVersions applies sent Denim writes like the real contract."""
+        self.fork.manifest.update(phase="running", schedule=[100] * 12 + [cobalt])
+        contract = {"schedule": [100] * 12 + [cobalt] + list(schedule), "minimum": "42"}
+        sent, printed, receipts = [], [], []
+
+        def read(url, address, signature, *args, **_):
+            return {"getSchedule()(uint64[])": lambda: list(map(str, contract["schedule"])),
+                    "MIN_NOTICE()(uint64)": lambda: str(notice),
+                    "minimumProtocolVersion()(uint256)": lambda: contract["minimum"],
+                    "proxyAdminOwner()(address)": lambda: "0x" + "a" * 40}[signature]()
+
+        def send(name, sender, target, signature, *args):
+            sent.append((signature, *args))
+            self.fork.manifest["operations"].setdefault(name, {"hash": "0xsent"})
+            if signature.startswith("registerUpgrade"):
+                contract["schedule"].append(args[0])
+            else:
+                contract["schedule"][args[0]] = args[1]
+            contract["minimum"] = minimum_after
+
+        def node(url, method, *args):
+            if method == "eth_getTransactionReceipt":
+                receipts.append(args[0])
+                return {"status": "0x1"}
+            return {"timestamp": hex(l1_time if url == "l1" else l2_time)}
+
+        with patch.object(self.fork, "assert_local_l1"), patch.object(self.fork, "wait_upgrades") as observed, \
+                patch.object(self.fork, "url", side_effect=lambda role: role), \
+                patch.object(self.fork, "send", side_effect=send), \
+                patch.object(devnet, "call", side_effect=read), patch.object(devnet, "rpc", side_effect=node), \
+                patch.object(devnet.time, "time", return_value=now), \
+                patch("builtins.print", side_effect=lambda *args, **_: printed.append(" ".join(map(str, args)))):
+            yield {"sent": sent, "printed": printed, "receipts": receipts, "observed": observed}
+
+    def test_denim_defaults_to_earliest_timestamp_from_live_notice_and_latest_clock(self):
+        # max(L1, L2, wall) + MIN_NOTICE + slot is the contract floor, plus one more slot. Odd timestamps
+        # are valid: activation rounds forward to each chain's next block.
+        for notice, now, cobalt, expected in ((3600, 1293.4, 800, 4919), (7200, 1293.4, 800, 8519),
+                                              (3600, 1401, 800, 5025), (3600, 1293.4, 9001, 9001)):
+            with self.subTest(notice=notice, now=now, cobalt=cobalt):
+                self.fork.manifest = manifest()
+                with self.protocol_versions([], notice=notice, now=now, cobalt=cobalt) as fake:
+                    self.fork.schedule_denim()
+                self.assertEqual(fake["sent"], [("registerUpgrade(uint64,uint256)", expected, 0)])
+                fake["observed"].assert_called_once_with()
+                stored = devnet.SnapshotFork(self.fork.directory).manifest
+                self.assertEqual(stored["denim_timestamp"], expected)
+                self.assertNotIn("pending_denim_timestamp", stored)
+                output = "\n".join(fake["printed"])
+                self.assertIn(f"{notice}s notice", output)
+                self.assertIn(f"Activation in {expected - int(now)}s", output)
+                self.assertNotIn("://", output)
+
+    def test_denim_explicit_timestamp_keeps_notice_and_cobalt_validations(self):
+        # Contract floor: max(1290, 1295, 1293) + 3600 + 12 = 4907.
+        for timestamp, schedule, cobalt, error in (
+            (4906, [], 800, "3600s notice"),
+            (4908, [], 0, "Cobalt must already be scheduled"), (4908, [], 5000, "Cobalt must already be scheduled"),
+            (4907, [], 800, None), (4908, [], 800, None), (4909, [0], 800, None),
+        ):
+            with self.subTest(timestamp=timestamp, schedule=schedule, cobalt=cobalt):
+                self.fork.manifest = manifest()
+                with self.protocol_versions(schedule, cobalt=cobalt) as fake:
+                    if error:
+                        with self.assertRaisesRegex(RuntimeError, error):
+                            self.fork.schedule_denim(timestamp)
+                        self.assertEqual(fake["sent"], [])
+                        self.assertNotIn("pending_denim_timestamp", self.fork.manifest)
+                    else:
+                        self.fork.schedule_denim(timestamp)
+                        self.assertEqual(fake["sent"], [("setTimestamp(uint256,uint64)", 13, timestamp) if schedule
+                                                        else ("registerUpgrade(uint64,uint256)", timestamp, 0)])
+                        self.assertEqual(self.fork.manifest["denim_timestamp"], timestamp)
+
+    def test_denim_write_must_retain_the_minimum_protocol_version(self):
+        with self.protocol_versions([], minimum_after="43"):
+            with self.assertRaisesRegex(RuntimeError, "minimum protocol version"):
+                self.fork.schedule_denim()
+        self.assertNotIn("denim_timestamp", self.fork.manifest)
+
+    def test_denim_preserves_scheduled_active_or_external_schedule_without_writes(self):
+        for name, recorded, schedule, timestamp, outcome in (
+            ("scheduled", 4920, [4920], None, "Activation in 3627s"),
+            ("same explicit", 4920, [4920], 4920, "Activation in 3627s"),
+            ("active", 1200, [1200], None, "passed 93s ago"),
+            ("external", None, [4920], None, "Activation in 3627s"),
+            ("move", 4920, [4920], 5000, "refusing to move"),
+            ("move active", 1200, [1200], 4920, "refusing to move"),
+            ("lost", 4920, [], None, "differs from manifest"),
+        ):
+            with self.subTest(name):
+                self.fork.manifest = manifest()
+                if recorded:
+                    self.fork.manifest["denim_timestamp"] = recorded
+                with self.protocol_versions(schedule) as fake:
+                    if outcome.startswith(("Activation", "passed")):
+                        self.fork.schedule_denim(timestamp)
+                        self.assertIn(outcome, "\n".join(fake["printed"]))
+                        fake["observed"].assert_called_once_with()
+                        self.assertEqual(self.fork.manifest["denim_timestamp"], schedule[0])
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, outcome):
+                            self.fork.schedule_denim(timestamp)
+                    self.assertEqual(fake["sent"], [])
+
+    def test_denim_resumes_journaled_submission_without_duplicate_writes(self):
+        for name, operation, schedule, timestamp, sent in (
+            ("mined", {"hash": "0xtx"}, [4920], None, []),
+            ("unmined", {"hash": "0xtx"}, [], None, [("registerUpgrade(uint64,uint256)", 4920, 0)]),
+            ("never sent", None, [], None, [("registerUpgrade(uint64,uint256)", 4919, 0)]),
+            ("different", {"hash": "0xtx"}, [], 5000, "already pending at 4000"),
+        ):
+            with self.subTest(name):
+                self.fork.manifest = manifest()
+                # A never-sent journal holds a stale timestamp and is rescheduled at the earliest default,
+                # 4919; the others already submitted 4920.
+                self.fork.manifest["pending_denim_timestamp"] = 4920 if operation and timestamp is None else 4000
+                if operation:
+                    self.fork.manifest["operations"]["schedule-denim"] = operation
+                with self.protocol_versions(schedule) as fake:
+                    if isinstance(sent, str):
+                        with self.assertRaisesRegex(RuntimeError, sent):
+                            self.fork.schedule_denim(timestamp)
+                        self.assertEqual(fake["sent"], [])
+                        continue
+                    self.fork.schedule_denim(timestamp)
+                # send() itself only awaits the receipt of an operation that records a hash.
+                self.assertEqual(fake["sent"], sent)
+                self.assertEqual(fake["receipts"], ["0xtx" if operation else "0xsent"])
+                stored = devnet.SnapshotFork(self.fork.directory).manifest
+                self.assertEqual(stored["denim_timestamp"], 4919 if operation is None else 4920)
+                self.assertNotIn("pending_denim_timestamp", stored)
+
+    def test_denim_notice_starts_from_the_latest_chain_clock(self):
+        # Floor = max(L1, L2, wall) + 3600 + 12; the default adds one slot.
+        for l1_time, l2_time, cobalt, default, exact in ((1500, 1295, 800, 5124, 5112), (1290, 1501, 800, 5125, 5113),
+                                                         (1290, 1296, 4908, 4920, 4908)):
+            for timestamp, error in ((None, None), (exact - 1, "notice"), (exact, None)):
+                with self.subTest(l1_time=l1_time, l2_time=l2_time, timestamp=timestamp):
+                    self.fork.manifest = manifest()
+                    with self.protocol_versions([], l1_time=l1_time, l2_time=l2_time, cobalt=cobalt) as fake:
+                        if error:
+                            with self.assertRaisesRegex(RuntimeError, error):
+                                self.fork.schedule_denim(timestamp)
+                            self.assertEqual(fake["sent"], [])
+                        else:
+                            self.fork.schedule_denim(timestamp)
+                            self.assertEqual(fake["sent"], [("registerUpgrade(uint64,uint256)", timestamp or default, 0)])
+
+    def test_denim_rejects_stopped_fork_and_unsupported_schedules_without_writes(self):
+        for name, schedule, error in (("stopped", [], "start the fork"), ("everest", [4920, 6000], "no implicit"),
+                                      ("historical", [], "historical schedule changed")):
+            with self.subTest(name):
+                self.fork.manifest = manifest()
+                with self.protocol_versions(schedule) as fake:
+                    if name == "stopped":
+                        self.fork.manifest["phase"] = "stopped"
+                    if name == "historical":
+                        self.fork.manifest["schedule"][3] = 99
+                    with self.assertRaisesRegex(RuntimeError, error):
+                        self.fork.schedule_denim()
+                self.assertEqual(fake["sent"], [])
+                self.assertNotIn("pending_denim_timestamp", self.fork.manifest)
+                self.assertNotIn("denim_timestamp", self.fork.manifest)
+
+    def test_ambiguous_denim_submission_is_never_resent(self):
+        owner = "0x" + "a" * 40
+        for mined in (False, True):
+            with self.subTest(mined=mined):
+                self.fork.manifest = manifest()
+                self.fork.manifest.update(phase="running", schedule=[100] * 12 + [800], pending_denim_timestamp=4920)
+                # Journaled with its nonce, but the send was interrupted before its hash was saved.
+                self.fork.manifest["operations"]["schedule-denim"] = {"transaction": {
+                    "from": owner, "to": devnet.PROTOCOL_VERSIONS, "value": "0x0", "data": "0xcalldata", "nonce": "0x4"}}
+                schedule = [100] * 12 + [800] + ([4920] if mined else [])
+                contract = {"getSchedule()(uint64[])": schedule, "minimumProtocolVersion()(uint256)": 42,
+                            "proxyAdminOwner()(address)": owner}
+                with patch.object(self.fork, "assert_local_l1"), patch.object(self.fork, "url", side_effect=lambda role: role), \
+                        patch.object(devnet, "call", side_effect=lambda url, address, signature, *a, **k: contract[signature]), \
+                        patch.object(devnet, "run", return_value="0xcalldata"), \
+                        patch.object(devnet, "rpc") as transport:
+                    with self.assertRaisesRegex(RuntimeError, "reconcile its nonce"):
+                        self.fork.schedule_denim()
+                    if mined:
+                        with self.assertRaisesRegex(RuntimeError, "reconcile its nonce"):
+                            self.fork.validate_restored_contracts()
+                    transport.assert_not_called()
+                self.assertEqual(self.fork.manifest["pending_denim_timestamp"], 4920)
+                self.assertNotIn("denim_timestamp", self.fork.manifest)
+
+    def test_restored_pending_denim_requires_its_successful_receipt(self):
+        for receipt in (None, {"status": "0x0"}):
+            with self.subTest(receipt=receipt):
+                self.fork.manifest = manifest()
+                self.fork.manifest.update(schedule=[100] * 13, pending_denim_timestamp=9000)
+                self.fork.manifest["operations"]["schedule-denim"] = {"hash": "0xtx"}
+                with patch.object(devnet, "call", return_value=[100] * 13 + [9000]), \
+                        patch.object(devnet, "rpc", return_value=receipt):
+                    with self.assertRaisesRegex(RuntimeError, "missing from restored L1"):
+                        self.fork.validate_restored_contracts()
+                self.assertEqual(self.fork.manifest["pending_denim_timestamp"], 9000)
+                self.assertNotIn("denim_timestamp", self.fork.manifest)
+
+    def test_status_does_not_claim_activation_from_wall_clock_without_rpc(self):
+        for fields, expected in (
+            ({}, {"state": "unscheduled"}),
+            ({"pending_denim_timestamp": 4920}, {"state": "submission pending", "pending_timestamp": 4920}),
+            ({"denim_timestamp": 4920}, {"state": "scheduled", "timestamp": 4920, "utc": "1970-01-01T01:22:00Z",
+                                         "seconds_until_activation": 3627}),
+            ({"denim_timestamp": 1200}, {"state": "activation time reached", "timestamp": 1200, "utc": "1970-01-01T00:20:00Z",
+                                         "seconds_until_activation": 0}),
+        ):
+            with self.subTest(fields=fields):
+                self.fork.manifest = {**manifest(), **fields}
+                with patch.object(self.fork, "containers", return_value=[]), \
+                        patch.object(devnet.time, "time", return_value=1293.4), \
+                        patch.object(devnet, "rpc") as transport:
+                    self.assertEqual(self.fork.status()["denim"], expected)
+                    transport.assert_not_called()
+
+    def test_schedule_denim_command_timestamp_is_optional(self):
+        self.fork.save()
+        for args, expected in (([], None), (["4920"], 4920)):
+            with self.subTest(args=args), \
+                    patch.object(sys, "argv", ["launcher", "schedule-denim", "--dir", str(self.fork.directory), *args]), \
+                    patch.object(devnet.SnapshotFork, "schedule_denim") as schedule:
+                devnet.main()
+                schedule.assert_called_once_with(expected)
+
+    def test_denim_scheduling_failure_after_start_keeps_the_running_fork(self):
+        self.fork.manifest.update(boundary_validated=True, bootstrapped=True)
+        calls = []
+
+        def transport(url, method, *args):
+            if method == "eth_getBlockByNumber":
+                return {"number": "0x7b", "hash": "0x123"}
+            return method != "admin_sequencerActive"
+
+        with self.starting(), \
+                patch.multiple(self.fork, wait_checkpoints=DEFAULT, mine=DEFAULT, start_batcher=DEFAULT), \
+                patch.object(self.fork, "schedule_denim", side_effect=RuntimeError("Denim receipt timed out")), \
+                patch.object(self.fork, "compose", side_effect=lambda *args: calls.append(args)), \
+                patch.object(self.fork, "sync_status", return_value=sync_status(101)), \
+                patch.object(devnet, "rpc", side_effect=transport), patch("builtins.print"):
+            with self.assertRaisesRegex(RuntimeError, "running but Denim.*receipt timed out.*rerun schedule-denim"):
+                self.fork.start()
+        self.assertEqual(devnet.SnapshotFork(self.fork.directory).manifest["phase"], "running")
+        self.assertFalse([call for call in calls if call[0] == "stop"])
+
+    def test_inspection_uses_the_recorded_schedule_and_persisted_denim_without_changing_the_config(self):
         config = {"genesis": {"l2_time": 100}, "base": {"cobalt": None}}
         (self.fork.directory / "config").mkdir()
         devnet.write_json(self.fork.directory / "config/rollup.json", config)
-        self.fork.manifest.update(initial=[{"rollup_config": config}], schedule=[100] * 12 + [9000])
+        self.fork.manifest.update(initial=[{"rollup_config": config}], schedule=[100] * 12 + [9000],
+                                  denim_timestamp=9500)
         with patch.object(self.fork, "compose"), patch.object(self.fork, "await_rpc"), \
                 patch.object(self.fork, "containers", return_value=[]), \
                 patch.object(self.fork, "url", return_value="http://10.9.0.2:8545"), \
@@ -1529,7 +1810,7 @@ class SnapshotTests(unittest.TestCase):
             self.assertIn("--rollup-config", inspect.call_args.args)
             self.assertNotIn("--find-fork", inspect.call_args.args)
         inspection = json.loads((self.fork.directory / "config/inspection.json").read_text())
-        self.assertEqual((inspection["base"]["cobalt"], inspection["base"]["denim"]), (9000, None))
+        self.assertEqual((inspection["base"]["cobalt"], inspection["base"]["denim"]), (9000, 9500))
         self.assertEqual(json.loads((self.fork.directory / "config/rollup.json").read_text()), config)
 
     def test_status_reports_missing_batcher_as_degraded_even_after_successful_start(self):
@@ -1677,7 +1958,7 @@ class SnapshotTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("just"), "requires the just command dispatcher")
     def test_nested_just_commands_forward_arguments_without_starting_services(self):
         environment = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
-        for command in ("init", "up", "down", "start", "stop", "status", "reset"):
+        for command in ("init", "up", "down", "start", "stop", "status", "reset", "schedule-denim"):
             with self.subTest(command=command):
                 result = subprocess.run(
                     ["just", "devnet", "snapshot", command, "--dir", str(self.root / "fork with spaces"), "--help"],
@@ -1697,9 +1978,9 @@ class SnapshotTests(unittest.TestCase):
             with self.subTest(args=args):
                 result = subprocess.run(["just", *args], cwd=devnet.ROOT, capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                for command in ("init", "up", "down", "status", "reset", "test"):
+                for command in ("init", "up", "down", "status", "reset", "schedule-denim", "test"):
                     self.assertIn(command, result.stdout)
-                for command in ("setup", "deposit", "schedule-denim", "verify"):
+                for command in ("setup", "deposit", "verify"):
                     self.assertNotIn(command, result.stdout)
         target = self.root / "fork with spaces"
         config_path = self.root / "input with spaces.json"

@@ -86,23 +86,41 @@ just devnet snapshot down --dir /data/snapshot/fork    # alias: stop
    slot grid, connects the nodes' gossip and starts sequencing and the batcher. Both nodes must
    then derive the same newly batched safe block; any batcher exit, even with code 0, fails.
 5. Keeps batching while the sequencer catches up to wall time, then prints the L2 RPC addresses.
+6. Schedules Denim (below) and waits until both nodes observe it. A scheduling failure leaves the
+   running fork in place; rerun `schedule-denim` to resume.
 
-`up` sends no upgrade-schedule transactions. Execution RPC startup waits without a deadline while
-its container runs. Derivation, batching and catch-up fail after `--timeout` seconds (default
-7200) without head progress; other readiness checks after `--timeout` in total. On any failure or
-interrupt, `up` stops the batcher and all nodes, then L1, attempting each stop even if an earlier
-one fails, and keeps all data; rerun `up` to resume.
+Execution RPC startup waits without a deadline while its container runs. Derivation, batching and
+catch-up fail after `--timeout` seconds (default 7200) without head progress; other readiness
+checks after `--timeout` in total. On any failure or interrupt before scheduling, `up` stops the
+batcher and all nodes, then L1, attempting each stop even if an earlier one fails, and keeps all
+data; rerun `up` to resume.
 
-`status` reports the phase, container states and L2 RPC addresses without probing RPCs, even
-while `up` runs; a running fork missing a service is `degraded`. L2 RPC addresses are internal
-container IPs, reachable only from the Docker host, and change when containers are recreated.
-`down` stops sequencing, the batcher, both nodes and finally L1, attempting each stop even if an
-earlier one fails. It records each node's sync status as the checkpoints the next `up` must
-restore; a node that is stopped, uninitialized or still re-deriving its earlier checkpoints keeps them.
+`status` reports the phase, container states, the journaled Denim schedule and L2 RPC addresses
+without probing RPCs, even while `up` runs; a running fork missing a service is `degraded`. L2 RPC
+addresses are internal container IPs, reachable only from the Docker host, and change when
+containers are recreated. `down` stops sequencing, the batcher, both nodes and finally L1,
+attempting each stop even if an earlier one fails. It records each node's sync status as the
+checkpoints the next `up` must restore; a node that is stopped, uninitialized or still re-deriving
+its earlier checkpoints keeps them.
 
 To retire a stopped fork, run `just devnet snapshot reset --dir ... --confirm-project <project>`.
 It renames the fork directory to `<dir>.retired-<suffix>` and leaves the datadirs, which the fork
 has modified, untouched. Supply fresh snapshot copies before another `init`.
+
+## Schedule Denim
+
+Denim honors the ProtocolVersions contract's live minimum notice (currently one hour), measured
+from the latest L1, L2 and wall-clock time; there is no activation bypass. An existing or
+externally recorded schedule is kept, never moved, and the minimum protocol version is unchanged.
+To choose a later activation, pass an L2 timestamp. As in production, any timestamp the notice
+allows is valid; each chain activates Denim at its first pre-Denim block slot at or after it:
+
+```sh
+just devnet snapshot schedule-denim --dir /data/snapshot/fork 1790000000
+```
+
+The status countdown is not proof that a node activated it. A scheduling transaction interrupted
+before its hash was saved must have its nonce reconciled manually.
 
 ## Where things live
 

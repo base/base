@@ -20,13 +20,17 @@ up *args:
 down *args:
     python3 etc/scripts/devnet/snapshot_devnet.py down "$@"
 
-# Show fork phase, containers and private RPC addresses
+# Show fork phase, containers, private RPC addresses and Denim scheduling
 status *args:
     python3 etc/scripts/devnet/snapshot_devnet.py status "$@"
 
 # Retire a stopped fork directory without deleting its datadirs
 reset *args:
     python3 etc/scripts/devnet/snapshot_devnet.py reset "$@"
+
+# Schedule Denim at the earliest permitted time or a supplied timestamp
+schedule-denim *args:
+    python3 etc/scripts/devnet/snapshot_devnet.py schedule-denim "$@"
 
 # Offline launcher tests
 test:
