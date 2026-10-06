@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Non-destructive, mainnet-identity snapshot fork. Requires Python 3.11+, Docker and cast."""
 
+import http.client
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -8,14 +10,30 @@ import re
 import secrets
 import socket
 import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
 
 
+ROOT = Path(__file__).resolve().parents[3]
+COMPOSE = ROOT / "etc/docker/docker-compose.snapshot.yml"
+DEFAULT_TIMEOUT = 7200
 PROTOCOL_VERSIONS = "0x7480Afc8D99a5c645c247dB5A1e4a4f440e6e095"
+READ_METHODS = {
+    "eth_chainId", "eth_getBlockByNumber", "eth_getBlockByHash", "eth_call", "eth_getCode", "eth_getStorageAt",
+}
 ROLES = ("sequencer", "validator")
+EXECUTION_RPC_PORT = 8545
+CONSENSUS_RPC_PORT = 9545
 OBSOLETE_CONFIG = {
     "fork_block": "init discovers F from the sequencer snapshot; remove it",
     "rollup_env": "no Base rollup endpoint is used; remove it",
 }
+
+
+class Unavailable(RuntimeError):
+    """A local or upstream service is not reachable yet; callers may poll again."""
 
 
 def require(condition, message):
@@ -64,6 +82,60 @@ def write_json(path, value):
         os.close(descriptor)
 
 
+def request_json(url, body=None):
+    try:
+        request = urllib.request.Request(
+            url, data=None if body is None else json.dumps(body).encode(),
+            headers={"Content-Type": "application/json", "User-Agent": "base-snapshot-devnet"},
+        )
+        # Do not forward localhost traffic through an inherited HTTP proxy.
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
+            request, timeout=20
+        ) as response:
+            payload = response.read(32 * 1024 * 1024 + 1)
+        require(len(payload) <= 32 * 1024 * 1024, "RPC response exceeds 32 MiB")
+        return json.loads(payload)
+    except (OSError, ValueError, http.client.HTTPException, urllib.error.URLError) as error:
+        raise Unavailable("RPC/Beacon request failed (endpoint redacted)") from error
+
+
+def rpc(url, method, *params, upstream=False):
+    require(not upstream or method in READ_METHODS, "refusing an upstream write")
+    response = request_json(url, {"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+    if not isinstance(response, dict) or "error" in response or "result" not in response:
+        raise Unavailable(f"{method} failed (provider response redacted)")
+    return response["result"]
+
+
+def wait(description, check, timeout, poll_interval=1, report_interval=30, diagnostics=None):
+    """Polls `check` until truthy.
+
+    `timeout=None` waits without a deadline; otherwise `timeout` bounds the whole wait. The
+    description is printed before the first poll and with the elapsed time at each report.
+    Optional `diagnostics` describes the first failed poll and each report, without extending waits.
+    """
+    print(f"waiting for {description}", file=sys.stderr, flush=True)
+    started = time.monotonic()
+    deadline = None if timeout is None else started + timeout
+    next_report = started if diagnostics is not None else started + report_interval
+    while True:
+        result = check()
+        if result:
+            return result
+        now = time.monotonic()
+        if now >= next_report:
+            detail = f"{int(now - started)}s elapsed"
+            if diagnostics is not None:
+                if deadline is not None:
+                    detail += f" ({max(0, int(deadline - now))}s remaining)"
+                detail += f"; {diagnostics()}"
+            print(f"waiting for {description}: {detail}", file=sys.stderr, flush=True)
+            next_report = now + report_interval
+        require(deadline is None or now < deadline,
+                f"timed out: {description}; data preserved, rerun start to resume")
+        time.sleep(poll_interval)
+
+
 def validate_paths(directory, paths):
     resolved = [directory.resolve(), *(Path(p).expanduser().resolve(strict=True) for p in paths)]
     for index, left in enumerate(resolved):
@@ -81,14 +153,179 @@ def validate_paths(directory, paths):
     return resolved[1:]
 
 
+def private_address(project, services, containers):
+    """Returns the service and internal-network IPv4 of the one running project container among `services`.
+
+    Only the Docker host can route to it, and it changes when the container is recreated.
+    """
+    matches = [container for container in containers if container["State"]["Running"]
+               and container["Config"]["Labels"].get("com.docker.compose.project") == project
+               and container["Config"]["Labels"].get("com.docker.compose.service") in services]
+    if not matches:
+        raise Unavailable(f"{' or '.join(services)} is not running")
+    require(len(matches) == 1, f"ambiguous running containers for {' / '.join(services)}; "
+            "inspection and production nodes must never share a datadir, stop the project and retry")
+    network = project + "_private"
+    networks = matches[0]["NetworkSettings"]["Networks"] or {}
+    require(set(networks) == {network}, "L2 containers must be attached only to the project's internal network")
+    try:
+        address = ipaddress.ip_address(networks[network]["IPAddress"])
+    except ValueError as error:
+        raise RuntimeError("container has no IPv4 address on the project's internal network") from error
+    require(address.version == 4 and address.is_private, "unexpected address on the project's internal network")
+    return matches[0]["Config"]["Labels"]["com.docker.compose.service"], str(address)
+
+
 class SnapshotFork:
-    def __init__(self, directory):
+    def __init__(self, directory, timeout=DEFAULT_TIMEOUT):
         self.directory = Path(directory).expanduser().resolve()
+        self.timeout = timeout
         path = self.directory / "manifest.json"
         self.manifest = json.loads(path.read_text()) if path.exists() else None
+        self._containers = None
 
     def save(self):
         write_json(self.directory / "manifest.json", self.manifest)
+
+    def containers(self):
+        """This project's container records, cached until the next compose command."""
+        if self._containers is None:
+            ids = run("docker", "ps", "--all", "--quiet", "--no-trunc",
+                      "--filter", f"label=com.docker.compose.project={self.manifest['project']}").split()
+            self._containers = json.loads(run("docker", "inspect", *ids)) if ids else []
+        return self._containers
+
+    def running_services(self):
+        return {container["Config"]["Labels"].get("com.docker.compose.service")
+                for container in self.containers() if container["State"]["Running"]}
+
+    def url(self, role):
+        """L1 uses its loopback-published port. Docker ignores published ports of internal-only
+        networks, so L2 RPCs use the container's internal-network IP, reachable only from this host."""
+        if role == "l1":
+            return f"http://127.0.0.1:{self.manifest['port']}"
+        node, consensus = role.removesuffix("-cl"), role.endswith("-cl")
+        # Both kinds running at once is ambiguous; inspection nodes only expose execution RPC.
+        service, address = private_address(self.manifest["project"], ("inspect-" + node, node), self.containers())
+        if consensus and service != node:
+            raise Unavailable(f"{node} consensus RPC is not running")
+        return f"http://{address}:{CONSENSUS_RPC_PORT if consensus else EXECUTION_RPC_PORT}"
+
+    def endpoint(self, name):
+        variable = self.manifest["upstreams"][name]
+        value = os.environ.get(variable, "")
+        require(value.startswith(("http://", "https://")), f"set {variable} to an HTTP(S) endpoint")
+        return value
+
+    def compose_env(self):
+        manifest = self.manifest
+        values = {"DIR": self.directory, "UID": os.getuid(), "GID": os.getgid(),
+                  "BASE_IMAGE": manifest["images"]["base"]}
+        for role in ROLES:
+            values[role.upper() + "_DATADIR"] = manifest["datadirs"][role]
+        return {**os.environ, **{"SNAPSHOT_" + key: str(value) for key, value in values.items()}}
+
+    def compose(self, *args):
+        # Announce lifecycle actions only; Compose output and its environment may carry credentials.
+        for action, verb in (("up", "Starting"), ("stop", "Stopping")):
+            if action in args:
+                services = [arg for arg in args[args.index(action) + 1:] if not arg.startswith("-")]
+                print(f"{verb} containers: {', '.join(services)}", file=sys.stderr, flush=True)
+        self._containers = None
+        return run("docker", "compose", "--project-name", self.manifest["project"],
+                   "--file", str(COMPOSE), *args, env=self.compose_env(), timeout=self.timeout)
+
+    def rpc_startup_status(self, role):
+        """Summarizes current-run startup logs using only known stages and numeric progress fields."""
+        service = role
+        try:
+            matches = [item for item in self.containers()
+                       if item["Config"]["Labels"]["com.docker.compose.service"] in (role, "inspect-" + role)]
+            matches = [item for item in matches if item["State"]["Running"]] or matches
+            if len(matches) != 1:
+                return f"{role}: no unique container found; check snapshot status"
+            item = matches[0]
+            service = item["Config"]["Labels"]["com.docker.compose.service"]
+            if not item["State"]["Running"]:
+                return f"{service}: exited (code {item['State']['ExitCode']}); inspect container logs"
+            if role == "l1":
+                return "l1: container running, Anvil RPC not ready"
+            result = subprocess.run(
+                ["docker", "logs", "--since", item["State"]["StartedAt"], "--tail", "50", item["Id"]],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=True, timeout=5)
+            stages = {
+                "StoragesHistory:": "repairing storage-history indexes",
+                "AccountsHistory:": "repairing account-history indexes",
+                "Collecting indices": "rebuilding history indexes",
+                "Writing indices": "writing history indexes",
+                "Healing static file inconsistencies": "repairing snapshot consistency",
+                "Opening database": "opening snapshot database",
+            }
+            # Never forward raw logs: provider URLs, keys, or tokens may appear even on progress lines.
+            for line in reversed(re.sub(r"\x1b\[[0-9;]*m", "", result.stdout).splitlines()):
+                stage = next((label for marker, label in stages.items() if marker in line), None)
+                if stage is None:
+                    continue
+                fields = dict(re.findall(
+                    r"\b(batch_num|total_batches|batch_start|batch_end|current_block|processed_blocks|progress|checkpoint|target)="
+                    r"(\d+(?:\.\d+)?%?)", line))
+                if "batch_num" in fields and "total_batches" in fields:
+                    stage += f"; batch {fields.pop('batch_num')}/{fields.pop('total_batches')} started"
+                if fields:
+                    stage += "; " + ", ".join(f"{key}={value}" for key, value in fields.items())
+                timestamp = re.match(r"\d{4}-\d{2}-\d{2}T[\d:.]+Z", line)
+                return f"{service}: last startup log" + (f" {timestamp[0]}" if timestamp else "") + f": {stage}"
+            return f"{service}: container running; no recognized startup progress in recent logs"
+        except (RuntimeError, OSError, subprocess.SubprocessError):
+            return f"{service}: startup logs unavailable; still waiting for RPC"
+
+    def await_rpc(self, role):
+        def ready():
+            try:
+                return rpc(self.url(role), "eth_chainId")
+            except Unavailable:
+                self._containers = None
+                require(self.running_services() & {role, "inspect-" + role},
+                        f"{role} execution container exited or is missing; inspect container logs; data preserved")
+                return False
+        # Snapshot index repair can take hours before RPC is available. Only container failure or
+        # operator cancellation ends this wait; individual RPC and Docker calls remain bounded.
+        wait(f"{role} execution RPC", ready, None if role in ROLES else self.timeout, poll_interval=5,
+             diagnostics=lambda: self.rpc_startup_status(role))
+
+    def inspect(self, discover=False):
+        """Inspects both datadirs; with `discover`, the sequencer inspection also finds F."""
+        inspector = os.environ.get("BASE_SNAPSHOT_INSPECTOR", str(ROOT / "target/debug/base-devnet"))
+        result = []
+        require(not self.running_services() & set(ROLES),
+                "production nodes are running on these datadirs; stop them before inspection")
+        try:
+            run(inspector, "inspect-snapshot", "--help")
+        except RuntimeError as error:
+            raise RuntimeError(f"snapshot inspector {inspector} is missing or lacks inspect-snapshot; build it with "
+                               "`cargo build --locked -p base-system-tests --bin base-devnet` or set "
+                               "BASE_SNAPSHOT_INSPECTOR") from error
+        try:
+            self.compose("--profile", "inspect", "up", "-d", "--no-build", "inspect-sequencer", "inspect-validator")
+            for role in ROLES:
+                self.await_rpc(role)
+                command, env, timeout, secrets = [inspector, "inspect-snapshot", "--rpc-url",
+                                                  self.url(role)], None, self.timeout, ()
+                if discover and role == "sequencer":
+                    # The inspector reads the standard names; config may name other variables.
+                    upstreams = {"SNAPSHOT_UPSTREAM_" + name.upper(): self.endpoint(name)
+                                 for name in ("execution", "beacon")}
+                    env, secrets = {**os.environ, **upstreams}, tuple(upstreams.values())
+                    command += ["--find-fork", "--timeout", str(self.timeout)]
+                    timeout = self.timeout + 60  # Let the inspector report its own timeout first.
+                print(f"Inspecting {role} snapshot" + (" and discovering L1 fork block F" if env else ""),
+                      file=sys.stderr, flush=True)
+                inspection = json.loads(run(*command, env=env, timeout=timeout, secrets=secrets))
+                require(not env or "fork" in inspection, "inspector did not report a fork block")
+                result.append(inspection)
+        finally:
+            self.compose("--profile", "inspect", "stop", "inspect-sequencer", "inspect-validator")
+        return result
 
     def prepare(self, config):
         """Persists the fork's identity and keys; returns False once initialization has completed."""
