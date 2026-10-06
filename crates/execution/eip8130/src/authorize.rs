@@ -259,6 +259,7 @@ mod tests {
     use p256::ecdsa::{
         Signature as P256Sig, SigningKey as P256SigningKey, signature::hazmat::PrehashSigner,
     };
+    use rstest::rstest;
 
     use super::*;
 
@@ -444,27 +445,92 @@ mod tests {
         });
     }
 
-    #[test]
-    fn explicit_k1_resolves_bound_actor_surface() {
-        let key = k1_key(0x22);
-        let id = actor_id(k1_address(&key));
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
+    struct BoundActor {
+        authenticator: Address,
+        auth: Vec<u8>,
+        actor_id: B256,
+    }
+
+    fn bound_k1(byte: u8) -> BoundActor {
+        let key = k1_key(byte);
+        BoundActor {
+            authenticator: Eip8130Constants::K1_AUTHENTICATOR,
+            auth: blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH)),
+            actor_id: actor_id(k1_address(&key)),
+        }
+    }
+
+    fn bound_p256(byte: u8) -> BoundActor {
+        let key = p256_key(byte);
+        let (data, id) = p256_blob(&key, HASH);
+        BoundActor {
+            authenticator: Eip8130Contracts::P256_AUTHENTICATOR,
+            auth: blob(Eip8130Contracts::P256_AUTHENTICATOR, &data),
+            actor_id: id,
+        }
+    }
+
+    fn bound_delegate_self(byte: u8) -> BoundActor {
+        let key = k1_key(byte);
+        let account = k1_address(&key);
+        BoundActor {
+            authenticator: Eip8130Contracts::DELEGATE_AUTHENTICATOR,
+            auth: delegate_auth(account, &key),
+            actor_id: actor_id(account),
+        }
+    }
+
+    enum Outcome {
+        Resolved,
+        Expired,
+    }
+
+    #[rstest]
+    #[case::explicit_k1_resolves_bound_actor_surface(
+        bound_k1(0x22),
+        0x04,
+        0,
+        NOW,
+        Outcome::Resolved
+    )]
+    #[case::expiry_is_ok_at_the_boundary(bound_k1(0x22), 0, 500, 500, Outcome::Resolved)]
+    #[case::expiry_is_enforced_against_now(bound_k1(0x22), 0, 500, 501, Outcome::Expired)]
+    #[case::p256_resolves_keccak_xy_actor(bound_p256(0x33), 0x02, 0, NOW, Outcome::Resolved)]
+    // Nested signer recovers to the delegate account's live default EOA, not a bound actor.
+    #[case::delegate_accepts_nested_default_eoa_self(
+        bound_delegate_self(0x55),
+        0x08,
+        0,
+        NOW,
+        Outcome::Resolved
+    )]
+    fn resolves_bound_actor_surface(
+        #[case] bound: BoundActor,
+        #[case] scope: u16,
+        #[case] expiry: u64,
+        #[case] now: u64,
+        #[case] outcome: Outcome,
+    ) {
         with_storage(|acc| {
             acc.actors
-                .at_mut(&id)
+                .at_mut(&bound.actor_id)
                 .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0x04, 0))
+                .write(pack(bound.authenticator, scope, expiry))
                 .unwrap();
-            let resolved =
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
-            assert_eq!(
-                resolved,
-                ResolvedActor {
-                    actor_id: id,
-                    scope: 0x04,
+            let expected = match outcome {
+                Outcome::Resolved => Ok(ResolvedActor {
+                    actor_id: bound.actor_id,
+                    scope,
                     policy_target: Address::ZERO,
-                    expiry: 0,
+                    expiry,
+                }),
+                Outcome::Expired => {
+                    Err(AuthorizeError::ActorExpired { actor_id: bound.actor_id, expiry })
                 }
+            };
+            assert_eq!(
+                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &bound.auth, now),
+                expected,
             );
         });
     }
@@ -486,27 +552,6 @@ mod tests {
     }
 
     #[test]
-    fn expiry_is_enforced_against_now() {
-        let key = k1_key(0x22);
-        let id = actor_id(k1_address(&key));
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
-        with_storage(|acc| {
-            acc.actors
-                .at_mut(&id)
-                .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 500))
-                .unwrap();
-            // Valid at/under expiry.
-            assert!(ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, 500).is_ok());
-            // Expired once now > expiry.
-            assert_eq!(
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, 501),
-                Err(AuthorizeError::ActorExpired { actor_id: id, expiry: 500 }),
-            );
-        });
-    }
-
-    #[test]
     fn gated_actor_resolves_policy_manager_target() {
         let key = k1_key(0x22);
         let id = actor_id(k1_address(&key));
@@ -523,31 +568,6 @@ mod tests {
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
             assert!(resolved.is_policy_gated());
             assert_eq!(resolved.policy_target, manager);
-        });
-    }
-
-    #[test]
-    fn p256_resolves_keccak_xy_actor() {
-        let key = p256_key(0x33);
-        let (data, id) = p256_blob(&key, HASH);
-        let auth = blob(Eip8130Contracts::P256_AUTHENTICATOR, &data);
-        with_storage(|acc| {
-            acc.actors
-                .at_mut(&id)
-                .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Contracts::P256_AUTHENTICATOR, 0x02, 0))
-                .unwrap();
-            let resolved =
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
-            assert_eq!(
-                resolved,
-                ResolvedActor {
-                    actor_id: id,
-                    scope: 0x02,
-                    policy_target: Address::ZERO,
-                    expiry: 0,
-                }
-            );
         });
     }
 
@@ -703,36 +723,6 @@ mod tests {
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
                 Err(AuthorizeError::Authenticate(AuthError::NestedDelegate)),
-            );
-        });
-    }
-
-    #[test]
-    fn delegate_accepts_nested_default_eoa_self() {
-        // EOA as parent: nested k1 recovers to the delegate account itself,
-        // with no `actor_config` entry — only the live inline default EOA.
-        // `DelegateAuthenticator` → `authenticateActor` must honor that path;
-        // bare `resolve_bound` would incorrectly return AuthenticatorMismatch.
-        let nested_key = k1_key(0x55);
-        let delegate_account = k1_address(&nested_key);
-        let outer_id = actor_id(delegate_account);
-        let auth = delegate_auth(delegate_account, &nested_key);
-        with_storage(|acc| {
-            acc.actors
-                .at_mut(&outer_id)
-                .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Contracts::DELEGATE_AUTHENTICATOR, 0x08, 0))
-                .unwrap();
-            let resolved =
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
-            assert_eq!(
-                resolved,
-                ResolvedActor {
-                    actor_id: outer_id,
-                    scope: 0x08,
-                    policy_target: Address::ZERO,
-                    expiry: 0,
-                }
             );
         });
     }
