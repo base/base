@@ -64,6 +64,7 @@ impl ProverServiceServer {
         let outcome_label = match &result {
             Ok(CreateProofRequestOutcome::RetryNotAllowed(_)) => "retry_not_allowed",
             Ok(CreateProofRequestOutcome::RetryExhausted(_)) => "retry_exhausted",
+            Ok(CreateProofRequestOutcome::Cancelled(_)) => "cancelled",
             Ok(CreateProofRequestOutcome::Created(_)) => "created",
             Ok(CreateProofRequestOutcome::Requeued(_)) => "requeued",
             Ok(CreateProofRequestOutcome::Replayed(_)) => "replayed",
@@ -118,6 +119,16 @@ impl ProverServiceServer {
                 );
                 return Err(resource_exhausted(format!(
                     "session_id {session_id}: proof request retry budget exhausted; use get_proof for the stored terminal result",
+                )));
+            }
+            CreateProofRequestOutcome::Cancelled(id) => {
+                warn!(
+                    proof_request_id = %id,
+                    session_id = %session_id,
+                    "rejected ProveBlockRange: proof request was cancelled",
+                );
+                return Err(failed_precondition(format!(
+                    "session_id {session_id} was cancelled; delete it with deleteProofRequest before proving it again",
                 )));
             }
             CreateProofRequestOutcome::Created(id) => {

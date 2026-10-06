@@ -118,6 +118,11 @@ pub trait ZkProver: Send + Sync + std::fmt::Debug {
     /// Poll the backend session, returning its current state.
     async fn poll(&self, backend_session_id: &str) -> Result<ZkSessionState, ZkProverError>;
 
+    /// Request cancellation of a running backend session.
+    async fn cancel(&self, _backend_session_id: &str) -> Result<(), ZkProverError> {
+        Err(ZkProverError::Unimplemented)
+    }
+
     /// Download the completed proof for a backend session.
     async fn download(
         &self,
