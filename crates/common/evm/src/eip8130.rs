@@ -1874,13 +1874,13 @@ impl Eip8130Executor {
         Ok((intrinsic, execution_gas_available))
     }
 
-    /// ABI-encodes the `ActorPolicyViolation(bytes32 actorId, address target)`
-    /// protocol revert: the 4-byte selector followed by the two 32-byte words.
     /// The rejection for an EIP-8130 transaction under a spec before Everest.
     fn not_active_error() -> BaseTransactionError {
         BaseTransactionError::eip8130("EIP-8130 transactions are not active before Everest")
     }
 
+    /// ABI-encodes the `ActorPolicyViolation(bytes32 actorId, address target)`
+    /// protocol revert: the 4-byte selector followed by the two 32-byte words.
     fn actor_policy_violation_data(actor_id: B256, target: Address) -> Bytes {
         // `keccak256(b"ActorPolicyViolation(bytes32,address)")[..4]`, hardcoded to
         // avoid hashing on every policy-gate revert. The
