@@ -18,7 +18,6 @@ base-common-genesis.workspace = true
 # alloy
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
-alloy-genesis.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-rpc-types-engine.workspace = true
@@ -31,7 +30,6 @@ base-common-rpc-types-engine.workspace = true
 # misc
 tracing.workspace = true
 thiserror.workspace = true
-ambassador.workspace = true
 async-trait.workspace = true
 unsigned-varint.workspace = true
 derive_more = { workspace = true, features = ["display"] }
@@ -89,7 +87,6 @@ test-utils = [
 std = [
 	"alloy-consensus/std",
 	"alloy-eips/std",
-	"alloy-genesis/std",
 	"alloy-primitives/std",
 	"alloy-rlp/std",
 	"alloy-rpc-types-engine/std",

@@ -1,22 +1,13 @@
 //! Test utilities for consumers of `base-batcher-core`.
 
-mod throttle;
-pub use throttle::{ThrottleCallLog, TrackingThrottleClient};
-
 mod pipeline;
-pub use pipeline::{Recorded, ReorgPipeline, TrackingPipeline};
+pub use pipeline::{PipelineCall, Recorded, TrackingPipeline};
 
-#[cfg(any(test, feature = "test-utils"))]
 mod source;
-#[cfg(any(test, feature = "test-utils"))]
-pub use source::{OneBlockSource, PendingL1HeadSource, PendingSource, TrackingSource};
+pub use source::{PendingL1HeadSource, PendingSource, TrackingSource};
 
-#[cfg(any(test, feature = "test-utils"))]
 mod builder;
-#[cfg(any(test, feature = "test-utils"))]
-pub use builder::{DriverFixture, SubmissionStub};
+pub use builder::{BlockStub, DRAIN_TIMEOUT, DriverFixture, DriverHandles, SubmissionStub};
 
-#[cfg(any(test, feature = "test-utils"))]
 mod tx_manager;
-#[cfg(any(test, feature = "test-utils"))]
-pub use tx_manager::{ImmediateConfirmTxManager, ImmediateFailTxManager, NeverConfirmTxManager};
+pub use tx_manager::{Script, ScriptedTxManager, SendOutcome};

@@ -2,53 +2,38 @@
 
 use std::time::Duration;
 
-use base_batcher_encoder::{BatchPipeline, DerivationReconciliation, StepError, StepResult};
-use base_batcher_source::{
-    L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
-};
+use base_batcher_encoder::{BatchPipeline, BatcherMetrics, DerivationReconciliation, StepResult};
+use base_batcher_source::{L1HeadSource, L2BlockEvent, UnsafeBlockSource};
 use base_common_consensus::BaseBlock;
 use base_protocol::BlockInfo;
 use base_runtime::Runtime;
 use base_tx_manager::TxManager;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    AdminCommand, BatchDriverConfig, BatchDriverError, BatcherStatus, DaThrottle, DerivationStatus,
-    SubmissionQueue, ThrottleClient, ThrottleController, event::DriverEvent,
+    AdminCommand, AdminError, BatchDriverConfig, BatchDriverError, BatcherStatus, DaThrottle,
+    DerivationStatus, SubmissionQueue, ThrottleController,
 };
 
-/// Initial L1 and derivation inputs consumed by a [`BatchDriver`].
+/// Encoding steps per CPU phase.
+const STEP_BUDGET: usize = 128;
+
+/// The sources a [`BatchDriver`] listens to, and the L1 head and safe L2 head it starts from.
 #[derive(Debug)]
-pub struct BatchDriverHeads<L> {
+pub struct BatchDriverInputs<S, L> {
+    /// Source of unsafe L2 blocks and reorg signals.
+    pub source: S,
     /// Source of live L1 head updates.
-    l1_head_source: L,
-    /// Live L1 head used to seed channel deadlines.
-    initial_l1_head: Option<u64>,
-    /// Initial derivation status and its ordered update stream.
-    derivation_feed: Option<(DerivationStatus, mpsc::Receiver<DerivationStatus>)>,
-}
-
-impl<L> BatchDriverHeads<L> {
-    /// Creates production head inputs from independent live and derivation clocks.
-    pub const fn new(
-        l1_head_source: L,
-        initial_l1_head: u64,
-        initial_status: DerivationStatus,
-        derivation_status_rx: mpsc::Receiver<DerivationStatus>,
-    ) -> Self {
-        Self {
-            l1_head_source,
-            initial_l1_head: Some(initial_l1_head),
-            derivation_feed: Some((initial_status, derivation_status_rx)),
-        }
-    }
-
-    /// Creates head inputs without derivation tracking for tests.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub const fn without_derivation(l1_head_source: L) -> Self {
-        Self { l1_head_source, initial_l1_head: None, derivation_feed: None }
-    }
+    pub l1_head_source: L,
+    /// Live L1 head at startup.
+    pub initial_l1_head: u64,
+    /// Safe L2 head at startup.
+    pub initial_safe_head: BlockInfo,
+    /// Ordered derivation-status updates.
+    pub derivation_status_rx: mpsc::Receiver<DerivationStatus>,
+    /// Admin commands; see [`AdminHandle::channel`](crate::AdminHandle::channel).
+    pub admin_rx: mpsc::Receiver<AdminCommand>,
 }
 
 /// Async orchestration loop for the batcher.
@@ -57,180 +42,114 @@ impl<L> BatchDriverHeads<L> {
 /// an [`L1HeadSource`] (L1 chain head tracking), ordered [`DerivationStatus`] updates,
 /// and a [`TxManager`] (L1 submission) into a single `tokio::select!` task.
 ///
-/// Uses [`SubmissionQueue`] for concurrent receipt tracking and semaphore backpressure,
-/// and [`DaThrottle`] for DA backlog throttle management.
+/// Uses [`SubmissionQueue`] to send submissions and track their receipts, and
+/// [`DaThrottle`] for DA backlog throttle management.
 #[derive(Debug)]
-pub struct BatchDriver<R, P, S, TM, TC, L>
+pub struct BatchDriver<R, P, S, TM, L>
 where
     R: Runtime,
     P: BatchPipeline,
     S: UnsafeBlockSource,
     TM: TxManager,
-    TC: ThrottleClient,
     L: L1HeadSource,
 {
-    /// Runtime providing cancellation (and future clock/spawn use).
+    /// Runtime providing cancellation and the shutdown drain timer.
     runtime: R,
     /// The encoding pipeline.
     pipeline: P,
     /// The L2 block source.
     source: S,
-    /// Submission lifecycle manager (tx manager, in-flight tracking, semaphore, txpool state).
+    /// Submission lifecycle manager (tx manager, in-flight tracking).
     submissions: SubmissionQueue<TM>,
-    /// DA backlog throttle (controller, client, dedup cache).
-    throttle: DaThrottle<TC>,
+    /// DA backlog throttle, which publishes the limits the block builders apply.
+    throttle: DaThrottle,
     /// L1 head source for chain head advancement.
-    ///
-    /// Set to `None` after the source returns [`SourceError::Exhausted`] or
-    /// [`SourceError::Closed`], causing the driver to park that select arm forever.
-    l1_head_source: Option<L>,
+    l1_head_source: L,
     /// Last trusted L2 safe head.
-    safe_head: Option<BlockInfo>,
+    safe_head: BlockInfo,
     /// Ordered derivation-progress snapshots.
-    derivation_status_rx: Option<mpsc::Receiver<DerivationStatus>>,
+    derivation_status_rx: mpsc::Receiver<DerivationStatus>,
     /// Maximum wall-clock time to wait for in-flight submissions to settle
-    /// when draining on cancellation or source exhaustion.
+    /// when draining on cancellation.
     drain_timeout: Duration,
-    /// Whether block ingestion is currently stopped (paused via admin or `--stopped` flag).
+    /// Whether block ingestion is currently stopped (via admin or the `--stopped` flag).
     stopped: bool,
-    /// Admin command channel, wired in via [`Self::with_admin_rx`].
-    admin_rx: Option<mpsc::Receiver<AdminCommand>>,
+    /// Admin command channel. Once every [`AdminHandle`](crate::AdminHandle) is dropped, the
+    /// arm goes quiet.
+    admin_rx: mpsc::Receiver<AdminCommand>,
     /// When `true`, the driver toggles a blob-DA override on the pipeline
     /// whenever DA-backlog throttling activates. Lifted from
     /// [`BatchDriverConfig::force_blobs_when_throttling`].
     force_blobs_when_throttling: bool,
-    /// Acknowledgements for in-progress flushes, fired once encoding and submission both
-    /// report no further ready work for the current channel (see [`Self::run`]).
-    pending_flush_acks: Vec<oneshot::Sender<()>>,
 }
 
-impl<R, P, S, TM, TC, L> BatchDriver<R, P, S, TM, TC, L>
+impl<R, P, S, TM, L> BatchDriver<R, P, S, TM, L>
 where
     R: Runtime,
     P: BatchPipeline,
     S: UnsafeBlockSource,
     TM: TxManager,
-    TC: ThrottleClient,
     L: L1HeadSource,
 {
-    /// Maximum number of encoding steps to run synchronously per outer loop iteration
-    /// before yielding to the tokio executor. Prevents a large block backlog from
-    /// starving receipt processing and cancellation checks.
-    pub const STEP_BUDGET: usize = 128;
-
-    /// Create a [`BatchDriver`] from live L1 and derivation inputs.
+    /// Create a [`BatchDriver`].
     ///
-    /// Advances the pipeline to the initial L1 tip before the event loop starts
-    /// so channel duration is measured from that tip, not from block 0.
+    /// Advances the pipeline to the initial L1 head, so channel duration is measured from
+    /// the live L1 tip rather than from block 0.
     pub fn new(
         runtime: R,
         mut pipeline: P,
-        source: S,
         tx_manager: TM,
         config: BatchDriverConfig,
-        throttle: DaThrottle<TC>,
-        heads: BatchDriverHeads<L>,
+        throttle: DaThrottle,
+        inputs: BatchDriverInputs<S, L>,
     ) -> Self {
-        let (initial_status, derivation_status_rx) = heads.derivation_feed.unzip();
-        if let Some(initial_l1_head) = heads.initial_l1_head {
-            pipeline.advance_l1_head(initial_l1_head);
-        }
+        pipeline.advance_l1_head(inputs.initial_l1_head);
         Self {
             runtime,
             pipeline,
-            source,
+            source: inputs.source,
             submissions: SubmissionQueue::new(
                 tx_manager,
                 config.inbox,
                 config.max_pending_transactions,
             ),
             throttle,
-            l1_head_source: Some(heads.l1_head_source),
-            safe_head: initial_status.map(|status| status.safe_l2),
-            derivation_status_rx,
+            l1_head_source: inputs.l1_head_source,
+            safe_head: inputs.initial_safe_head,
+            derivation_status_rx: inputs.derivation_status_rx,
             drain_timeout: config.drain_timeout,
-            stopped: false,
-            admin_rx: None,
+            stopped: config.stopped,
+            admin_rx: inputs.admin_rx,
             force_blobs_when_throttling: config.force_blobs_when_throttling,
-            pending_flush_acks: Vec::new(),
         }
-    }
-
-    /// Create a driver without derivation-status tracking for tests that do not exercise it.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn new_without_derivation_status(
-        runtime: R,
-        pipeline: P,
-        source: S,
-        tx_manager: TM,
-        config: BatchDriverConfig,
-        throttle: DaThrottle<TC>,
-        l1_head_source: L,
-    ) -> Self {
-        Self::new(
-            runtime,
-            pipeline,
-            source,
-            tx_manager,
-            config,
-            throttle,
-            BatchDriverHeads::without_derivation(l1_head_source),
-        )
-    }
-
-    /// Attach a derivation-status feed to a test driver created without one.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn with_derivation_status_rx(
-        mut self,
-        initial: DerivationStatus,
-        rx: mpsc::Receiver<DerivationStatus>,
-    ) -> Self {
-        self.safe_head = Some(initial.safe_l2);
-        self.derivation_status_rx = Some(rx);
-        self
-    }
-
-    /// Wire an admin command channel into the driver.
-    ///
-    /// When set, the driver processes admin commands as part of its main
-    /// `select!` loop. When absent, the admin arm is permanently pending and
-    /// the driver behaves as if no admin server is configured.
-    pub fn with_admin_rx(mut self, rx: mpsc::Receiver<AdminCommand>) -> Self {
-        self.admin_rx = Some(rx);
-        self
-    }
-
-    /// Start the driver in a stopped state, deferring block ingestion until
-    /// [`AdminCommand::Resume`] is received via the admin API.
-    ///
-    /// Equivalent to the batcher starting normally and immediately receiving
-    /// a pause command, but without discarding any in-flight submissions.
-    /// Use this when the `--stopped` flag is set at startup.
-    pub const fn with_stopped(mut self, stopped: bool) -> Self {
-        self.stopped = stopped;
-        self
     }
 
     /// Run the batch driver loop.
     ///
     /// Each iteration has two phases:
-    /// 1. **CPU phase**: drain encoding, apply throttle, recover txpool, submit pending frames.
-    /// 2. **I/O phase**: block on `tokio::select!` until one external event fires.
+    /// 1. **CPU phase** (`work`): drain encoding, apply throttle, submit ready submissions up
+    ///    to the in-flight limit.
+    /// 2. **I/O phase**: block on a biased `tokio::select!` until an event fires, and apply it.
     ///
-    /// When shutting down (after cancellation or source exhaustion), the I/O phase is
-    /// replaced by a bounded drain of all in-flight receipts.
+    /// Every event is therefore followed by a CPU phase before the driver waits again, so the
+    /// work an event releases is done before the next one. Encoding is done in slices of
+    /// `STEP_BUDGET` steps: when a slice is not enough, the I/O phase yields once instead of
+    /// waiting, serves whatever became ready, then the next CPU phase continues encoding. A
+    /// large backlog therefore delays no other task by more than a slice, and no event by
+    /// more than a CPU phase. The two sources are not polled until the backlog is encoded:
+    /// their next block or head would only add to it, and a poll the next slice abandons
+    /// would waste an RPC.
     ///
-    /// If a [`DriverEvent::Flush`] carried an acknowledgement, it fires as soon as a later
-    /// CPU phase reports both encoding and submission fully drained (i.e. the flush's frames
-    /// have all been handed to the tx manager) — see the `pending_flush_acks` field.
+    /// The I/O phase polls its arms in priority order: cancellation, admin commands,
+    /// derivation status, receipts, L2 blocks, L1 heads. Admin commands come before the
+    /// source so control-plane operations (stop, start, flush) are never starved by sustained
+    /// block throughput. Derivation-status changes come before unsafe blocks so pruning and
+    /// recovery cannot be starved by sequential catchup. Receipts come before unsafe blocks so
+    /// a failed submission is resent before anything a block ready at the same wait releases. A
+    /// stopped batcher does not poll its source at all.
     ///
-    /// This "fully drained" check is global, not scoped to the triggering flush: it's the
-    /// weakest condition that's still always *sufficient* (the flush's own frames can never be
-    /// dequeued before this fires) but not *tight* — if further `Block` events keep arriving
-    /// and producing fresh encoding/submission work while the ack is outstanding, it's delayed
-    /// until that work drains too, and under sustained continuous ingestion may not fire at
-    /// all. Callers that need a precise, always-terminating signal must ensure the source is
-    /// otherwise quiesced before flushing (as the action-test harness does).
+    /// Cancellation ends the loop with a bounded drain of the in-flight submissions; see
+    /// `shutdown`.
     pub async fn run(mut self) -> Result<(), BatchDriverError> {
         if self.stopped {
             info!(
@@ -239,137 +158,132 @@ where
             );
         }
 
-        let mut shutting_down = false;
-        let mut shutdown_flush_error: Option<StepError> = None;
         loop {
-            if !shutting_down {
-                self.apply_pending_derivation_status_updates()?;
-            }
+            let encoding_left = self.work().await?;
 
-            let encoding_idle = self.drain_encoding()?;
-            let is_throttling = self.throttle.apply(self.pipeline.da_backlog_bytes()).await;
-            if self.force_blobs_when_throttling {
-                self.pipeline.set_blob_override(is_throttling);
-            }
-            self.submissions.recover_txpool().await;
-            let submissions_idle = self.submissions.submit_pending(&mut self.pipeline).await;
+            tokio::select! {
+                biased;
 
-            if encoding_idle && submissions_idle && !self.pending_flush_acks.is_empty() {
-                debug!(
-                    acks = %self.pending_flush_acks.len(),
-                    "flush settled: encoding and submission fully drained"
-                );
-                for ack in self.pending_flush_acks.drain(..) {
-                    let _ = ack.send(());
+                _ = self.runtime.cancelled() => break,
+
+                Some(cmd) = self.admin_rx.recv() => self.on_admin(cmd)?,
+
+                status = self.derivation_status_rx.recv() => match status {
+                    Some(status) => self.on_derivation_status(status),
+                    None => return Err(BatchDriverError::DerivationStatusSourceClosed),
+                },
+
+                Some((id, outcome)) = self.submissions.next_settled() => {
+                    self.submissions.handle_outcome(&mut self.pipeline, id, outcome);
                 }
-            }
 
-            if shutting_down {
-                self.submissions
-                    .drain(&mut self.pipeline, self.runtime.sleep(self.drain_timeout))
-                    .await;
-                if let Some(error) = shutdown_flush_error {
-                    return Err(error.into());
-                }
-                return Ok(());
-            }
-
-            match self.next_event().await? {
-                DriverEvent::Shutdown => {
-                    info!(
-                        in_flight = %self.submissions.in_flight_count(),
-                        "batcher shutting down, draining in-flight submissions"
-                    );
-                    if let Err(error) = self.pipeline.flush() {
-                        warn!(error = %error, "flush failed during shutdown");
-                        shutdown_flush_error = Some(error);
+                event = self.source.next(), if !self.stopped && !encoding_left => match event {
+                    L2BlockEvent::Block(block) => self.on_block(block),
+                    L2BlockEvent::Reorg => {
+                        warn!("L2 reorg detected, resetting pipeline and catching up from safe head");
+                        self.reset_to_safe_head(BatcherMetrics::RESET_SOURCE_REORG);
                     }
-                    shutting_down = true;
+                },
+
+                head = self.l1_head_source.next(), if !encoding_left => {
+                    self.pipeline.advance_l1_head(head);
+                    debug!(l1_head = %head, "L1 head advanced via source");
                 }
-                DriverEvent::Block(b) => {
-                    self.on_block(b);
-                }
-                DriverEvent::Flush(ack) => {
-                    self.pipeline.flush()?;
-                    if let Some(ack) = ack {
-                        self.pending_flush_acks.push(ack);
-                    }
-                    debug!("flush signal received, released channel artifacts");
-                }
-                DriverEvent::Reorg => {
-                    warn!("L2 reorg detected, resetting pipeline and catching up from safe head");
-                    self.reset_to_safe_head();
-                }
-                DriverEvent::Receipt(ids, o) => {
-                    self.submissions.handle_outcome(&mut self.pipeline, ids, o);
-                }
-                DriverEvent::L1Head(n) => {
-                    self.pipeline.advance_l1_head(n);
-                    debug!(l1_head = %n, "L1 head advanced via source");
-                }
-                DriverEvent::DerivationStatus(status) => {
-                    self.on_derivation_status(status);
-                }
-                DriverEvent::L1SourceClosed => {
-                    debug!("L1 head source closed, disabling arm");
-                    self.l1_head_source = None;
-                }
+
+                // Yield once, so other tasks run and the arms above get another look, then
+                // continue encoding.
+                () = tokio::task::yield_now(), if encoding_left => {}
             }
         }
+
+        self.shutdown().await
     }
 
-    /// Drain encoding steps synchronously up to [`Self::STEP_BUDGET`].
+    /// The CPU phase: encode what is buffered, apply the DA throttle and submit ready
+    /// submissions up to the in-flight limit.
     ///
-    /// Returns `Ok(true)` if the pipeline reached [`StepResult::Idle`] (nothing left to
-    /// encode), or `Ok(false)` if the step budget ran out first. Returns `Err` on a fatal
-    /// [`StepError`](base_batcher_encoder::StepError).
+    /// Returns `true` when the encoding step budget ran out, so encoding must continue. Fails
+    /// on a fatal encoding error or a blob submission that cannot be built.
+    async fn work(&mut self) -> Result<bool, BatchDriverError> {
+        let encoding_left = self.drain_encoding()?;
+
+        let is_throttling = self.throttle.publish_limits(self.pipeline.da_backlog_bytes());
+        if self.force_blobs_when_throttling {
+            self.pipeline.set_blob_override(is_throttling);
+        }
+
+        self.submissions.submit_pending(&mut self.pipeline).await?;
+        Ok(encoding_left)
+    }
+
+    /// Flush the current channel, submit what it released, then wait for the in-flight
+    /// submissions to settle, up to the drain timeout.
+    ///
+    /// The drain always runs; an error from the flush or the final CPU phase is reported
+    /// afterwards.
+    async fn shutdown(mut self) -> Result<(), BatchDriverError> {
+        info!(
+            in_flight = %self.submissions.in_flight_count(),
+            "batcher shutting down, draining in-flight submissions"
+        );
+
+        let flushed = self.pipeline.flush().inspect_err(|error| {
+            warn!(error = %error, "flush failed during shutdown");
+        });
+        let worked = self.work().await;
+
+        self.submissions.drain(&mut self.pipeline, self.runtime.sleep(self.drain_timeout)).await;
+
+        flushed?;
+        worked?;
+        Ok(())
+    }
+
+    /// Run up to `STEP_BUDGET` encoding steps.
+    ///
+    /// Returns `Ok(true)` when the budget ran out before [`StepResult::Idle`], `Err` on a
+    /// fatal [`StepError`](base_batcher_encoder::StepError).
     fn drain_encoding(&mut self) -> Result<bool, BatchDriverError> {
-        let mut budget = Self::STEP_BUDGET;
-        let mut steps = 0usize;
-        let idle = loop {
+        for encoded in 0..STEP_BUDGET {
             match self.pipeline.step() {
-                Ok(StepResult::Idle) => break true,
-                Ok(StepResult::BlockEncoded | StepResult::ChannelClosed) => {
-                    steps += 1;
-                    budget -= 1;
-                    if budget == 0 {
-                        debug!(steps = %steps, "encoding step budget exhausted, yielding");
-                        break false;
+                Ok(StepResult::Idle) => {
+                    if encoded > 0 {
+                        debug!(steps = %encoded, "completed encoding drain");
                     }
+                    return Ok(false);
                 }
+                Ok(StepResult::BlockEncoded | StepResult::ChannelClosed) => {}
                 Err(e) => {
                     error!(error = %e, "fatal encoding step error, batcher halting");
                     return Err(e.into());
                 }
             }
-        };
-        if steps > 0 {
-            debug!(steps = %steps, "completed encoding drain");
         }
-        Ok(idle)
+        debug!(steps = %STEP_BUDGET, "encoding step budget exhausted");
+        Ok(true)
+    }
+
+    /// Drop buffered pipeline state, recording why it was dropped.
+    fn reset_pipeline(&mut self, reason: &'static str) {
+        BatcherMetrics::pipeline_reset_total(reason).increment(1);
+        self.pipeline.reset();
     }
 
     /// Reset volatile state and restart delivery above the latest safe head.
-    fn reset_to_safe_head(&mut self) {
-        self.submissions.discard();
-        self.pipeline.reset();
-
-        if let Some(safe_head) = self.safe_head {
-            self.source.reset_catchup(safe_head);
-        }
-
-        self.discard_pending_flush_acks();
+    fn reset_to_safe_head(&mut self, reason: &'static str) {
+        self.reset_pipeline(reason);
+        self.source.reset_catchup(self.safe_head);
     }
 
     /// Reconcile buffered state with an ordered derivation-progress snapshot.
     fn on_derivation_status(&mut self, status: DerivationStatus) {
         let head = status.safe_l2;
-        let previous = self.safe_head.replace(head);
+        let previous = self.safe_head;
+        self.safe_head = head;
 
-        if let Some(previous) = previous.filter(|previous| {
-            head.number < previous.number
-                || (head.number == previous.number && head.hash != previous.hash)
-        }) {
+        if head.number < previous.number
+            || (head.number == previous.number && head.hash != previous.hash)
+        {
             warn!(
                 previous_safe_l2 = %previous.number,
                 previous_safe_hash = %previous.hash,
@@ -377,14 +291,11 @@ where
                 safe_hash = %head.hash,
                 "safe L2 head changed chain, resetting pipeline"
             );
-            self.reset_to_safe_head();
+            self.reset_to_safe_head(BatcherMetrics::RESET_SAFE_HEAD_REORG);
             return;
         }
 
-        match self
-            .pipeline
-            .reconcile_derivation(head, status.current_l1.map(|current_l1| current_l1.number))
-        {
+        match self.pipeline.reconcile_derivation(head, status.current_l1.number) {
             DerivationReconciliation::Consistent => {}
             DerivationReconciliation::SafeHeadMismatch => {
                 warn!(
@@ -392,35 +303,15 @@ where
                     safe_hash = %head.hash,
                     "safe L2 head does not match buffered chain, resetting pipeline"
                 );
-                self.reset_to_safe_head();
+                self.reset_to_safe_head(BatcherMetrics::RESET_SAFE_HEAD_MISMATCH);
             }
             DerivationReconciliation::StalledChannel => {
                 warn!(
-                    current_l1 = ?status.current_l1.map(|current_l1| current_l1.number),
+                    current_l1 = %status.current_l1.number,
                     safe_l2 = %head.number,
                     "rollup node passed a fully confirmed channel without deriving it, resetting pipeline"
                 );
-                self.reset_to_safe_head();
-            }
-        }
-    }
-
-    /// Apply derivation-status updates that arrived before the next CPU phase.
-    fn apply_pending_derivation_status_updates(&mut self) -> Result<(), BatchDriverError> {
-        loop {
-            let Some(rx) = self.derivation_status_rx.as_mut() else {
-                return Ok(());
-            };
-
-            match rx.try_recv() {
-                Ok(status) => self.on_derivation_status(status),
-                Err(mpsc::error::TryRecvError::Empty) => return Ok(()),
-                Err(mpsc::error::TryRecvError::Disconnected) if self.runtime.is_cancelled() => {
-                    return Ok(());
-                }
-                Err(mpsc::error::TryRecvError::Disconnected) => {
-                    return Err(BatchDriverError::DerivationStatusSourceClosed);
-                }
+                self.reset_to_safe_head(BatcherMetrics::RESET_STALLED_CHANNEL);
             }
         }
     }
@@ -428,12 +319,11 @@ where
     /// Ingest a new L2 block into the pipeline.
     ///
     /// If the pipeline signals a reorg via `add_block` (parent-hash mismatch),
-    /// discards in-flight submissions, resets the pipeline, and restarts
-    /// sequential catchup from `safe_head + 1`. The triggering block will be
-    /// re-delivered by the sequential poller.
+    /// resets the pipeline and restarts sequential catchup from `safe_head + 1`.
+    /// The triggering block will be re-delivered by the sequential poller.
     fn on_block(&mut self, block: Box<BaseBlock>) {
         let number = block.header.number;
-        if self.safe_head.is_some_and(|safe_head| number <= safe_head.number) {
+        if number <= self.safe_head.number {
             return;
         }
 
@@ -447,947 +337,455 @@ where
                     error = %e,
                     "reorg detected during block ingestion, resetting pipeline and catching up from safe head"
                 );
-                self.reset_to_safe_head();
+                self.reset_to_safe_head(BatcherMetrics::RESET_INGEST_REORG);
             }
         }
     }
 
-    /// Drop any outstanding flush acknowledgements without firing them.
+    /// Stop block ingestion and drop the buffered pipeline state.
     ///
-    /// Called whenever the pipeline is reset: the blocks a pending flush was waiting on no
-    /// longer exist, so firing the ack would falsely report settlement. Dropping the sender
-    /// surfaces as a closed-channel error to the waiter.
-    fn discard_pending_flush_acks(&mut self) {
-        self.pending_flush_acks.clear();
+    /// Submissions already in flight keep settling.
+    fn on_admin_stop(&mut self) {
+        // Leave a stopped batcher alone. It holds nothing to reset.
+        if self.stopped {
+            return;
+        }
+
+        self.reset_pipeline(BatcherMetrics::RESET_ADMIN_STOP);
+        self.stopped = true;
+        info!(stopped = true, "batcher stopped via admin");
     }
 
-    /// Block on the next external event using a biased `tokio::select!`.
-    ///
-    /// Admin commands are handled inline in the loop — only non-admin events
-    /// are returned to the caller. Admin commands are placed before the source
-    /// arm so control-plane operations (pause, resume, flush) are never starved
-    /// by sustained block throughput.
-    /// Derivation-status changes are also handled before unsafe blocks so pruning and
-    /// recovery cannot be starved by sequential catchup.
-    ///
-    /// [`AdminCommand::Pause`] immediately discards in-flight submissions and
-    /// resets the pipeline, then drops `Block` and `Flush` source events until
-    /// [`AdminCommand::Resume`] is received. Reorg events propagate regardless
-    /// of pause state. On resume the source is reset to catch up sequentially
-    /// from the last known safe L2 head.
-    ///
-    /// Non-fatal L1 head source errors loop internally to avoid polluting the
-    /// return type with a no-op variant.
-    async fn next_event(&mut self) -> Result<DriverEvent, BatchDriverError> {
-        loop {
-            let event = tokio::select! {
-                biased;
-
-                _ = self.runtime.cancelled() => DriverEvent::Shutdown,
-
-                cmd = Self::next_admin_cmd(&mut self.admin_rx) => {
-                    match cmd {
-                        AdminCommand::Flush { ack } => return Ok(DriverEvent::Flush(ack)),
-                        AdminCommand::Pause => {
-                            self.submissions.discard();
-                            self.pipeline.reset();
-                            self.stopped = true;
-                            self.discard_pending_flush_acks();
-                            info!(stopped = true, "batcher paused via admin");
-                        }
-                        AdminCommand::Resume => {
-                            if let Some(safe_head) = self.safe_head {
-                                self.source.reset_catchup(safe_head);
-                                info!(
-                                    stopped = false,
-                                    safe_l2 = %safe_head.number,
-                                    "batcher resumed via admin, catching up from safe head"
-                                );
-                            } else {
-                                info!(stopped = false, "batcher resumed via admin");
-                            }
-                            self.stopped = false;
-                        }
-                        AdminCommand::SetThrottle { strategy, config } => {
-                            self.throttle.set_controller(
-                                ThrottleController::new(config, strategy)
-                            );
-                            info!("throttle controller replaced via admin");
-                        }
-                        AdminCommand::ResetThrottle => {
-                            self.throttle.reset();
-                            info!("throttle controller reset via admin");
-                        }
-                        AdminCommand::GetThrottleInfo { reply } => {
-                            let _ = reply.send(
-                                self.throttle.snapshot(self.pipeline.da_backlog_bytes())
-                            );
-                        }
-                        AdminCommand::GetStatus { reply } => {
-                            let _ = reply.send(BatcherStatus {
-                                stopped: self.stopped,
-                                in_flight: self.submissions.in_flight_count(),
-                                da_backlog_bytes: self.pipeline.da_backlog_bytes(),
-                            });
-                        }
-                    }
-                    // All commands except Flush loop to await the next real event.
-                    continue;
-                }
-
-                derivation_status = async {
-                    if let Some(ref mut rx) = self.derivation_status_rx {
-                        rx.recv().await
-                    } else {
-                        std::future::pending::<Option<DerivationStatus>>().await
-                    }
-                } => {
-                    match derivation_status {
-                        Some(status) => DriverEvent::DerivationStatus(status),
-                        None => return Err(BatchDriverError::DerivationStatusSourceClosed),
-                    }
-                }
-
-                event = self.source.next() => match event {
-                    Ok(L2BlockEvent::Block(_)) if self.stopped => {
-                        continue;
-                    }
-                    Ok(L2BlockEvent::Flush { ack }) if self.stopped => {
-                        // Drop (rather than fire) any ack: the batcher is paused, so this
-                        // flush produces no frames and firing would falsely report
-                        // settlement. The waiter observes a closed-channel error instead of
-                        // a silent, indefinite-looking drop.
-                        if ack.is_some() {
-                            debug!("flush ack dropped: batcher is stopped, flush produces no frames");
-                        }
-                        continue;
-                    }
-                    Ok(L2BlockEvent::Block(block)) => DriverEvent::Block(block),
-                    Ok(L2BlockEvent::Flush { ack }) => DriverEvent::Flush(ack),
-                    Ok(L2BlockEvent::Reorg) => DriverEvent::Reorg,
-                    Err(SourceError::Exhausted) => DriverEvent::Shutdown,
-                    Err(e) => return Err(e.into()),
-                },
-
-                Some((ids, outcome)) = self.submissions.next_settled() => {
-                    DriverEvent::Receipt(ids, outcome)
-                }
-
-                l1_event = async {
-                    if let Some(ref mut src) = self.l1_head_source {
-                        src.next().await
-                    } else {
-                        std::future::pending::<Result<L1HeadEvent, SourceError>>().await
-                    }
-                } => match l1_event {
-                    Ok(L1HeadEvent::NewHead(n)) => DriverEvent::L1Head(n),
-                    Err(SourceError::Exhausted | SourceError::Closed) => DriverEvent::L1SourceClosed,
-                    Err(e) => {
-                        warn!(error = %e, "L1 head source error");
-                        continue;
-                    }
-                }
-            };
-            return Ok(event);
+    /// Start block ingestion again from the safe head.
+    fn on_admin_start(&mut self) {
+        // Leave a running batcher alone. Re-anchoring its source would replay blocks the
+        // pipeline already holds.
+        if !self.stopped {
+            return;
         }
+
+        self.source.reset_catchup(self.safe_head);
+        info!(
+            stopped = false,
+            safe_l2 = %self.safe_head.number,
+            "batcher started via admin, catching up from safe head"
+        );
+        self.stopped = false;
     }
 
-    /// Returns the next admin command, or parks forever if no channel is wired.
-    ///
-    /// Takes only the `Option<Receiver>` to avoid a full `&mut self` borrow
-    /// conflicting with the other `select!` arms.
-    async fn next_admin_cmd(rx: &mut Option<mpsc::Receiver<AdminCommand>>) -> AdminCommand {
-        match rx {
-            Some(rx) => match rx.recv().await {
-                Some(cmd) => cmd,
-                None => std::future::pending().await,
-            },
-            None => std::future::pending().await,
+    /// Apply an admin command and answer it.
+    fn on_admin(&mut self, cmd: AdminCommand) -> Result<(), BatchDriverError> {
+        match cmd {
+            AdminCommand::Flush { reply } if self.stopped => {
+                let _ = reply.send(Err(AdminError::Stopped));
+            }
+            AdminCommand::Flush { reply } => {
+                self.pipeline.flush()?;
+                let _ = reply.send(Ok(()));
+                debug!("admin flush applied, released channel artifacts");
+            }
+            AdminCommand::Stop { reply } => {
+                self.on_admin_stop();
+                let _ = reply.send(());
+            }
+            AdminCommand::Start { reply } => {
+                self.on_admin_start();
+                let _ = reply.send(());
+            }
+            AdminCommand::SetThrottle { strategy, config, reply } => {
+                self.throttle.set_controller(ThrottleController::new(config, strategy));
+                let _ = reply.send(());
+                info!("throttle controller replaced via admin");
+            }
+            AdminCommand::GetThrottleInfo { reply } => {
+                let _ = reply.send(self.throttle.snapshot(self.pipeline.da_backlog_bytes()));
+            }
+            AdminCommand::GetStatus { reply } => {
+                let _ = reply.send(BatcherStatus {
+                    stopped: self.stopped,
+                    in_flight: self.submissions.in_flight_count(),
+                    da_backlog_bytes: self.pipeline.da_backlog_bytes(),
+                });
+            }
         }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::VecDeque,
-        sync::{
-            Arc, Mutex,
-            atomic::{AtomicU64, Ordering},
-        },
-        time::Duration,
-    };
+    use std::{sync::Arc, time::Duration};
 
-    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
-    use alloy_primitives::{Address, B256, Bloom, Bytes};
-    use alloy_rpc_types_eth::TransactionReceipt;
     use base_batcher_encoder::{
-        BatchSubmission, BlobPayload, FrameEncoder, SubmissionId, SubmissionPayload,
+        BlobPayload, ChannelLimit, FrameEncoder, StepError, SubmissionId, SubmissionPayload,
     };
     use base_batcher_source::{
-        L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
+        L2BlockEvent,
+        test_utils::{ChannelBlockSource, ChannelL1HeadSource},
     };
     use base_blobs::{BlobDecoder, BlobEncoder};
-    use base_protocol::{BlockInfo, Frame};
+    use base_protocol::Frame;
     use base_runtime::{
         Cancellation, Clock, Spawner,
         deterministic::{Config, Runner},
     };
-    use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
-    use tokio::sync::{mpsc, oneshot};
 
+    use super::STEP_BUDGET;
     use crate::{
-        AdminCommand, BatchDriver, BatchDriverConfig, BatchDriverHeads, DaThrottle,
-        DerivationStatus, NoopThrottleClient, ThrottleController,
-        event::DriverEvent,
+        BatchDriverError, BatchTxCandidateError, DerivationStatus,
         test_utils::{
-            DriverFixture, ImmediateConfirmTxManager, ImmediateFailTxManager,
-            NeverConfirmTxManager, Recorded, SubmissionStub, TrackingPipeline,
+            BlockStub, DriverFixture, PipelineCall, ScriptedTxManager, SendOutcome, SubmissionStub,
+            TrackingPipeline,
         },
     };
 
-    #[derive(Debug)]
-    struct QueuedSource {
-        events: VecDeque<Result<L2BlockEvent, SourceError>>,
-    }
-
-    impl QueuedSource {
-        fn new(events: impl IntoIterator<Item = Result<L2BlockEvent, SourceError>>) -> Self {
-            Self { events: events.into_iter().collect() }
+    /// Sources that deliver the given blocks and L1 heads, then park.
+    fn queued_sources(
+        blocks: impl IntoIterator<Item = u64>,
+        l1_heads: impl IntoIterator<Item = u64>,
+    ) -> (ChannelBlockSource, ChannelL1HeadSource) {
+        let (source, source_tx) = ChannelBlockSource::new();
+        for number in blocks {
+            source_tx.send(L2BlockEvent::Block(Box::new(BlockStub::with_number(number)))).unwrap();
         }
-    }
-
-    #[async_trait::async_trait]
-    impl UnsafeBlockSource for QueuedSource {
-        async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
-            match self.events.pop_front() {
-                Some(event) => event,
-                None => std::future::pending().await,
-            }
+        let (l1_head_source, l1_head_tx) = ChannelL1HeadSource::new();
+        for head in l1_heads {
+            l1_head_tx.send(head).unwrap();
         }
-
-        fn reset_catchup(&mut self, _: BlockInfo) {}
+        (source, l1_head_source)
     }
 
-    #[derive(Debug)]
-    struct QueuedL1HeadSource {
-        events: VecDeque<Result<L1HeadEvent, SourceError>>,
-    }
-
-    impl QueuedL1HeadSource {
-        fn new(events: impl IntoIterator<Item = Result<L1HeadEvent, SourceError>>) -> Self {
-            Self { events: events.into_iter().collect() }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl L1HeadSource for QueuedL1HeadSource {
-        async fn next(&mut self) -> Result<L1HeadEvent, SourceError> {
-            match self.events.pop_front() {
-                Some(event) => event,
-                None => std::future::pending().await,
-            }
-        }
-    }
-
-    fn safe_head(number: u64) -> BlockInfo {
-        BlockInfo { hash: B256::with_last_byte(number as u8), number, ..Default::default() }
-    }
-
+    /// The pipeline starts from the live L1 head, so channel duration is not measured from
+    /// block 0.
     #[test]
     fn new_driver_seeds_pipeline_from_live_l1_head() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-            let (_status_tx, status_rx) = mpsc::channel(1);
-            let status = DerivationStatus::new(safe_head(10), safe_head(42));
+            let pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
 
-            let _driver = BatchDriver::new(
-                ctx,
-                pipeline,
-                QueuedSource::new(std::iter::empty()),
-                NeverConfirmTxManager,
-                BatchDriverConfig {
-                    inbox: Address::ZERO,
-                    max_pending_transactions: 1,
-                    drain_timeout: Duration::from_millis(10),
-                    force_blobs_when_throttling: true,
-                },
-                DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
-                BatchDriverHeads::new(
-                    QueuedL1HeadSource::new(std::iter::empty()),
-                    50,
-                    status,
-                    status_rx,
-                ),
+            let (_driver, _handles) = DriverFixture::new(ctx, pipeline, ScriptedTxManager::new([]))
+                .initial_l1_head(50)
+                .build();
+
+            assert_eq!(recorded.lock().unwrap().l1_heads(), [50]);
+        });
+    }
+
+    /// Blocks at or below the safe head are already derived, so the driver drops them instead
+    /// of batching them again.
+    #[test]
+    fn run_drops_blocks_at_or_below_the_safe_head() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
+            let (source, l1_head_source) = queued_sources([4, 5, 6], []);
+            let (driver, _handles) =
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                    .source(source)
+                    .l1_head_source(l1_head_source)
+                    .safe_head(BlockStub::info(5))
+                    .build();
+
+            let handle = ctx.spawn(driver.run());
+            ctx.sleep(Duration::from_millis(10)).await;
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok());
+
+            assert_eq!(
+                recorded.lock().unwrap().calls,
+                [PipelineCall::AddBlock(6), PipelineCall::Flush]
             );
-
-            assert_eq!(recorded.lock().unwrap().l1_heads, vec![50]);
         });
     }
 
-    /// Build a [`BatchSubmission`] whose single frame exactly fills one blob payload,
-    /// leaving no room for any additional frame alongside it.
-    ///
-    /// `payload = 1 (DERIVATION_VERSION_0) + FRAME_OVERHEAD + data.len() = BLOB_MAX_DATA_SIZE`
-    fn blob_filling_submission(id: u64) -> BatchSubmission {
-        blob_filling_submission_with_frames(id, 1)
+    /// A fatal encoding error stops the driver with that error, instead of dropping the block and
+    /// leaving a gap in the L2 chain posted to L1.
+    #[test]
+    fn run_halts_on_a_fatal_step_error() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let pipeline =
+                TrackingPipeline::new().with_step_error(StepError::BlockExceedsChannelLimit {
+                    cursor: 0,
+                    limit: ChannelLimit::RlpBytes { required: 1, maximum: 0 },
+                });
+            let (driver, _handles) =
+                DriverFixture::new(ctx, pipeline, ScriptedTxManager::confirming_at(1)).build();
+
+            assert!(matches!(
+                driver.run().await,
+                Err(BatchDriverError::Step(StepError::BlockExceedsChannelLimit { .. }))
+            ));
+        });
     }
 
-    fn blob_filling_submission_with_frames(id: u64, frame_count: usize) -> BatchSubmission {
-        let data_len = BlobEncoder::BLOB_MAX_DATA_SIZE - 1 - BlobEncoder::FRAME_OVERHEAD;
-        BatchSubmission::blobs(
-            SubmissionId(id),
-            (0..frame_count)
-                .map(|number| {
-                    BlobPayload::new(vec![Arc::new(Frame {
-                        number: number.try_into().expect("frame number fits in u16"),
-                        data: vec![0u8; data_len],
-                        ..Frame::default()
-                    })])
+    // The loop polls its arms in priority order. Each test in this group makes several arms
+    // ready at once and checks which one the driver serves first. Every call log ends with the
+    // shutdown flush.
+
+    /// A cancelled driver shuts down without serving the admin flush, block and L1 head already
+    /// waiting, and the flush call fails.
+    #[test]
+    fn run_prioritizes_cancellation_over_ready_admin() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
+            let (source, l1_head_source) = queued_sources([1], [9]);
+            let (driver, handles) =
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                    .source(source)
+                    .l1_head_source(l1_head_source)
+                    .build();
+
+            // Queue a flush, then cancel before the driver runs.
+            let admin = handles.admin.clone();
+            let flush = ctx.spawn(async move { admin.flush().await });
+            ctx.sleep(Duration::from_millis(1)).await;
+            ctx.cancel();
+
+            assert!(driver.run().await.is_ok());
+            assert!(flush.await.unwrap().is_err(), "a cancelled driver must not serve the flush");
+            // Only the shutdown flush is recorded, so neither the admin flush, the block nor the
+            // head was served.
+            assert_eq!(recorded.lock().unwrap().calls, [PipelineCall::Flush]);
+        });
+    }
+
+    /// On cancellation the derivation-status poller exits too and closes its channel, so the
+    /// driver can see both at once. It must shut down cleanly, not fail with
+    /// `DerivationStatusSourceClosed`.
+    #[test]
+    fn run_prioritizes_cancellation_over_closed_derivation_status() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (driver, handles) = DriverFixture::new(
+                ctx.clone(),
+                TrackingPipeline::new(),
+                ScriptedTxManager::confirming_at(1),
+            )
+            .build();
+
+            ctx.cancel();
+            drop(handles);
+            assert!(driver.run().await.is_ok());
+        });
+    }
+
+    /// A ready admin command is served before a ready L2 block, so a steady block stream cannot
+    /// hold back a stop, start or flush.
+    #[test]
+    fn run_prioritizes_admin_before_source() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
+            let (source, l1_head_source) = queued_sources([1], []);
+            let (driver, handles) =
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                    .source(source)
+                    .l1_head_source(l1_head_source)
+                    .build();
+
+            // Queue a flush before the driver runs.
+            let admin = handles.admin.clone();
+            let flush = ctx.spawn(async move { admin.flush().await });
+            ctx.sleep(Duration::from_millis(1)).await;
+
+            let handle = ctx.spawn(driver.run());
+            ctx.sleep(Duration::from_millis(10)).await;
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok());
+            assert!(flush.await.unwrap().is_ok());
+
+            assert_eq!(
+                recorded.lock().unwrap().calls,
+                [PipelineCall::Flush, PipelineCall::AddBlock(1), PipelineCall::Flush]
+            );
+        });
+    }
+
+    /// A new safe head is reconciled before a ready L2 block, so pruning and reorg recovery are
+    /// not held back by a stream of blocks to encode.
+    #[test]
+    fn run_prioritizes_derivation_status_before_source() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
+            let (source, l1_head_source) = queued_sources([6], []);
+            let (driver, handles) =
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                    .source(source)
+                    .l1_head_source(l1_head_source)
+                    .build();
+            handles
+                .derivation_status_tx
+                .send(DerivationStatus {
+                    safe_l2: BlockStub::info(5),
+                    current_l1: BlockStub::info(1),
                 })
-                .collect(),
-        )
-    }
+                .await
+                .unwrap();
 
-    const fn stub_receipt(block_number: u64) -> TransactionReceipt {
-        let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
-            receipt: Receipt {
-                status: Eip658Value::Eip658(true),
-                cumulative_gas_used: 21_000,
-                logs: vec![],
-            },
-            logs_bloom: Bloom::ZERO,
+            let handle = ctx.spawn(driver.run());
+            ctx.sleep(Duration::from_millis(10)).await;
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok());
+
+            assert_eq!(
+                recorded.lock().unwrap().calls,
+                [
+                    PipelineCall::ReconcileDerivation { safe_l2: 5, current_l1: 1 },
+                    PipelineCall::AddBlock(6),
+                    PipelineCall::Flush,
+                ]
+            );
         });
-        TransactionReceipt {
-            inner,
-            transaction_hash: B256::ZERO,
-            transaction_index: Some(0),
-            block_hash: Some(B256::ZERO),
-            block_number: Some(block_number),
-            gas_used: 21_000,
-            effective_gas_price: 1_000_000_000,
-            blob_gas_used: None,
-            blob_gas_price: None,
-            from: Address::ZERO,
-            to: Some(Address::ZERO),
-            contract_address: None,
-        }
     }
 
-    fn driver_for_next_event<R: base_runtime::Runtime, TM: TxManager>(
-        runtime: R,
-        source_events: impl IntoIterator<Item = Result<L2BlockEvent, SourceError>>,
-        l1_events: impl IntoIterator<Item = Result<L1HeadEvent, SourceError>>,
-        tx_manager: TM,
-    ) -> BatchDriver<
-        R,
-        TrackingPipeline,
-        QueuedSource,
-        TM,
-        Arc<NoopThrottleClient>,
-        QueuedL1HeadSource,
-    > {
-        BatchDriver::new_without_derivation_status(
-            runtime,
-            TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default()))),
-            QueuedSource::new(source_events),
-            tx_manager,
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
-            QueuedL1HeadSource::new(l1_events),
-        )
+    /// A failed submission is resent before any submission a new block releases, even when the
+    /// failure and the block arrive together.
+    #[test]
+    fn run_resends_a_failed_submission_before_a_block_releases_newer_ones() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let mut pipeline = TrackingPipeline::new();
+            let recorded = pipeline.recorded();
+            // Submitted by the first CPU phase, so its failure is ready at the first wait,
+            // along with the block.
+            pipeline.submissions.push_back(SubmissionStub::stub());
+            let (source, l1_head_source) = queued_sources([1], []);
+            let (driver, _handles) = DriverFixture::new(
+                ctx.clone(),
+                pipeline,
+                ScriptedTxManager::new([SendOutcome::Failed]),
+            )
+            .source(source)
+            .l1_head_source(l1_head_source)
+            .build();
+
+            let handle = ctx.spawn(driver.run());
+            ctx.sleep(Duration::from_millis(10)).await;
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok());
+
+            assert_eq!(
+                recorded.lock().unwrap().calls,
+                [
+                    PipelineCall::Dequeue(SubmissionId(0)),
+                    PipelineCall::Requeue(SubmissionId(0)),
+                    PipelineCall::Dequeue(SubmissionId(1)),
+                    PipelineCall::AddBlock(1),
+                    PipelineCall::Flush,
+                ]
+            );
+        });
     }
 
-    #[derive(Debug, Default)]
-    struct TxpoolBlockedState {
-        sends: AtomicU64,
-        cancellations: AtomicU64,
+    // Encoding runs in slices of `STEP_BUDGET` steps. The tests below check what happens
+    // between two slices.
+
+    /// A backlog larger than one encoding slice is finished without any external event.
+    #[test]
+    fn run_finishes_a_backlog_larger_than_one_slice_without_events() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let blocks = 2 * STEP_BUDGET + 5;
+            let pipeline = TrackingPipeline::new().with_encoding_steps(blocks);
+            let recorded = pipeline.recorded();
+            let (driver, _handles) =
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::new([])).build();
+
+            let handle = ctx.spawn(driver.run());
+            ctx.sleep(Duration::from_millis(10)).await;
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok());
+
+            assert_eq!(recorded.lock().unwrap().encoded_steps(), blocks);
+        });
     }
 
-    #[derive(Debug, Clone)]
-    struct TxpoolBlockedOnceTxManager {
-        state: Arc<TxpoolBlockedState>,
-    }
+    /// The driver yields to other tasks between encoding slices, so a task can send an admin
+    /// command in the middle of a backlog and have it served before the backlog is done.
+    #[test]
+    fn run_yields_to_other_tasks_between_encoding_slices() {
+        let config = Config { cycle_limit: Some(1_000_000), ..Config::seeded(0) };
+        Runner::start(config, |ctx| async move {
+            let pipeline = TrackingPipeline::new().with_encoding_steps(3 * STEP_BUDGET);
+            let recorded = pipeline.recorded();
+            let (driver, handles) =
+                DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::new([])).build();
 
-    impl TxManager for TxpoolBlockedOnceTxManager {
-        async fn send(&self, _: TxCandidate) -> SendResponse {
-            Err(TxManagerError::AlreadyReserved)
-        }
-
-        fn send_async(
-            &self,
-            _: TxCandidate,
-        ) -> impl std::future::Future<Output = SendHandle> + Send {
-            self.state.sends.fetch_add(1, Ordering::SeqCst);
-            let (tx, rx) = oneshot::channel();
-            let _ = tx.send(Err(TxManagerError::AlreadyReserved));
-            std::future::ready(SendHandle::new(rx))
-        }
-
-        fn cancel_tx(
-            &self,
-        ) -> impl std::future::Future<Output = base_tx_manager::TxManagerResult<()>> + Send
-        {
-            let state = Arc::clone(&self.state);
-            async move {
-                state.cancellations.fetch_add(1, Ordering::SeqCst);
-                Ok(())
+            let handle = ctx.spawn(driver.run());
+            // Send the stop once the first slice is done, which this task only sees if the driver
+            // yields.
+            while recorded.lock().unwrap().encoded_steps() < STEP_BUDGET {
+                tokio::task::yield_now().await;
             }
-        }
+            handles.admin.stop().await.unwrap();
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok());
 
-        fn sender_address(&self) -> Address {
-            Address::ZERO
-        }
+            let encoded = recorded.lock().unwrap().encoded_steps();
+            assert!(encoded < 3 * STEP_BUDGET, "the stop must not wait for the whole backlog");
+        });
     }
 
-    #[derive(Debug)]
-    struct RecordedCandidate {
-        tx_data: Bytes,
-        decoded_blob_payloads: Vec<Bytes>,
+    // The tests below check how ready submissions become L1 transactions.
+
+    /// A blob submission that cannot be built into a transaction is fatal, because a retry would
+    /// fail the same way and hold back every submission behind it.
+    #[test]
+    fn test_blob_encoding_failure_is_fatal() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let mut pipeline = TrackingPipeline::new();
+            // A frame as large as a whole blob no longer fits once framed.
+            pipeline.submissions.push_back(SubmissionPayload::Blobs(vec![BlobPayload::new(vec![
+                Arc::new(Frame {
+                    data: vec![0u8; BlobEncoder::BLOB_MAX_DATA_SIZE],
+                    ..Frame::default()
+                }),
+            ])]));
+
+            let (driver, _handles) =
+                DriverFixture::new(ctx, pipeline, ScriptedTxManager::confirming_at(1)).build();
+
+            let result = driver.run().await;
+            assert!(
+                matches!(
+                    result,
+                    Err(BatchDriverError::Blob(BatchTxCandidateError::BlobEncoding(_)))
+                ),
+                "got {result:?}"
+            );
+        });
     }
 
-    #[derive(Debug, Clone)]
-    struct RecordingConfirmTxManager {
-        l1_block: u64,
-        candidates: Arc<Mutex<Vec<RecordedCandidate>>>,
-    }
+    /// Each blob payload of a submission becomes its own blob of one L1 transaction, in order,
+    /// even when all their frames would fit in one blob.
+    #[test]
+    fn run_sends_each_blob_payload_as_its_own_blob() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let mut pipeline = TrackingPipeline::new();
+            let frames: Vec<_> =
+                (0..3).map(|number| Arc::new(Frame { number, ..Frame::default() })).collect();
+            pipeline.submissions.push_back(SubmissionPayload::Blobs(
+                frames.iter().map(|frame| BlobPayload::new(vec![Arc::clone(frame)])).collect(),
+            ));
+            let tx_manager = ScriptedTxManager::confirming_at(10);
+            let (driver, _handles) =
+                DriverFixture::new(ctx.clone(), pipeline, tx_manager.clone()).build();
 
-    impl TxManager for RecordingConfirmTxManager {
-        async fn send(&self, _: TxCandidate) -> SendResponse {
-            unreachable!()
-        }
+            let handle = ctx.spawn(driver.run());
+            ctx.sleep(Duration::from_millis(10)).await;
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok());
 
-        fn send_async(
-            &self,
-            candidate: TxCandidate,
-        ) -> impl std::future::Future<Output = SendHandle> + Send {
-            let decoded_blob_payloads = candidate
+            let candidates = tx_manager.candidates();
+            assert_eq!(candidates.len(), 1);
+            assert!(candidates[0].tx_data.is_empty(), "a blob transaction carries no calldata");
+            let blobs: Vec<_> = candidates[0]
                 .blobs
                 .iter()
-                .map(|blob| BlobDecoder::decode(blob).expect("blob payload should decode"))
+                .map(|blob| BlobDecoder::decode(blob).expect("the blob decodes"))
                 .collect();
-            self.candidates
-                .lock()
-                .unwrap()
-                .push(RecordedCandidate { tx_data: candidate.tx_data, decoded_blob_payloads });
-            let l1_block = self.l1_block;
-            let (tx, rx) = oneshot::channel();
-            let _ = tx.send(Ok(stub_receipt(l1_block)));
-            std::future::ready(SendHandle::new(rx))
-        }
-
-        fn sender_address(&self) -> Address {
-            Address::ZERO
-        }
-    }
-
-    #[test]
-    fn next_event_prioritizes_cancellation_over_ready_admin() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let (admin_tx, admin_rx) = mpsc::channel(1);
-            admin_tx
-                .send(AdminCommand::Flush { ack: None })
-                .await
-                .expect("admin receiver should be open");
-
-            let mut driver = driver_for_next_event(
-                ctx.clone(),
-                [Ok(L2BlockEvent::Flush { ack: None })],
-                [Ok(L1HeadEvent::NewHead(9))],
-                ImmediateConfirmTxManager { l1_block: 1 },
-            )
-            .with_admin_rx(admin_rx);
-
-            ctx.cancel();
-
-            let event = driver.next_event().await.expect("next_event should succeed");
-            assert!(matches!(event, DriverEvent::Shutdown));
-        });
-    }
-
-    #[test]
-    fn next_event_prioritizes_admin_before_source() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let (admin_tx, admin_rx) = mpsc::channel(1);
-            admin_tx
-                .send(AdminCommand::Flush { ack: None })
-                .await
-                .expect("admin receiver should be open");
-
-            let mut driver = driver_for_next_event(
-                ctx,
-                [Ok(L2BlockEvent::Block(Box::default()))],
-                [Ok(L1HeadEvent::NewHead(9))],
-                ImmediateConfirmTxManager { l1_block: 1 },
-            )
-            .with_admin_rx(admin_rx);
-
-            let event = driver.next_event().await.expect("next_event should succeed");
-            assert!(matches!(event, DriverEvent::Flush(_)));
-        });
-    }
-
-    #[test]
-    fn next_event_prioritizes_source_before_receipts_and_heads() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let (_status_tx, status_rx) = mpsc::channel(1);
-            let mut driver = driver_for_next_event(
-                ctx,
-                [Ok(L2BlockEvent::Flush { ack: None })],
-                [Ok(L1HeadEvent::NewHead(9))],
-                ImmediateConfirmTxManager { l1_block: 1 },
-            )
-            .with_derivation_status_rx(DerivationStatus::from_safe_l2(safe_head(0)), status_rx);
-            driver.pipeline.submissions.push_back(SubmissionStub::stub());
-            driver.submissions.submit_pending(&mut driver.pipeline).await;
-
-            let event = driver.next_event().await.expect("next_event should succeed");
-            assert!(matches!(event, DriverEvent::Flush(_)));
-        });
-    }
-
-    #[test]
-    fn next_event_prioritizes_derivation_status_before_source_and_receipts() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let (status_tx, status_rx) = mpsc::channel(1);
-            status_tx
-                .send(DerivationStatus::from_safe_l2(safe_head(5)))
-                .await
-                .expect("derivation-status receiver should be open");
-
-            let mut driver = driver_for_next_event(
-                ctx,
-                [Ok(L2BlockEvent::Flush { ack: None })],
-                [Ok(L1HeadEvent::NewHead(9))],
-                ImmediateConfirmTxManager { l1_block: 42 },
-            )
-            .with_derivation_status_rx(DerivationStatus::from_safe_l2(safe_head(0)), status_rx);
-            driver.pipeline.submissions.push_back(SubmissionStub::stub());
-            driver.submissions.submit_pending(&mut driver.pipeline).await;
-
-            let event = driver.next_event().await.expect("next_event should succeed");
-            assert!(matches!(
-                event,
-                DriverEvent::DerivationStatus(status) if status.safe_l2.number == 5
-            ));
-        });
-    }
-
-    #[test]
-    fn next_event_prioritizes_derivation_status_before_l1_head() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let (status_tx, status_rx) = mpsc::channel(1);
-            status_tx
-                .send(DerivationStatus::from_safe_l2(safe_head(5)))
-                .await
-                .expect("derivation-status receiver should be open");
-
-            let mut driver = driver_for_next_event(
-                ctx,
-                [],
-                [Ok(L1HeadEvent::NewHead(9))],
-                ImmediateConfirmTxManager { l1_block: 1 },
-            )
-            .with_derivation_status_rx(DerivationStatus::from_safe_l2(safe_head(0)), status_rx);
-
-            let event = driver.next_event().await.expect("next_event should succeed");
-            assert!(matches!(
-                event,
-                DriverEvent::DerivationStatus(status) if status.safe_l2.number == 5
-            ));
-        });
-    }
-
-    /// `advance_l1_head` must be called with the confirmed L1 block on every
-    /// confirmation so the encoder can detect channel timeouts.
-    #[test]
-    fn test_advance_l1_head_called_on_confirmation() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-            pipeline.submissions.push_back(SubmissionStub::stub());
-
-            let handle = ctx.spawn(
-                DriverFixture::build(
-                    ctx.clone(),
-                    pipeline,
-                    ImmediateConfirmTxManager { l1_block: 42 },
-                )
-                .run(),
-            );
-
-            ctx.sleep(Duration::from_millis(50)).await;
-            ctx.cancel();
-
-            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
-            assert_eq!(
-                recorded.lock().unwrap().l1_heads,
-                vec![42],
-                "advance_l1_head must be called with the confirmed L1 block"
-            );
-        });
-    }
-
-    /// `advance_l1_head` must NOT be called when a submission fails — we have no
-    /// confirmed L1 block to report.
-    #[test]
-    fn test_advance_l1_head_not_called_on_failure() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-            pipeline.submissions.push_back(SubmissionStub::stub());
-
-            let handle = ctx
-                .spawn(DriverFixture::build(ctx.clone(), pipeline, ImmediateFailTxManager).run());
-
-            ctx.sleep(Duration::from_millis(50)).await;
-            ctx.cancel();
-
-            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
-            assert!(
-                recorded.lock().unwrap().l1_heads.is_empty(),
-                "advance_l1_head must NOT be called on submission failure"
-            );
-        });
-    }
-
-    /// When blob encoding fails, the submission has already been dequeued and its frames marked
-    /// pending. Without a requeue those frames never become ready again, so the driver must
-    /// requeue the submission before retrying.
-    #[test]
-    fn test_blob_encoding_failure_requeues_submission() {
-        // Blob submission encoding feeds DERIVATION_VERSION_0 (1) + frame.encode()
-        // (23 + data.len()) into BlobEncoder::encode. It fails when > BLOB_MAX_DATA_SIZE
-        // (130_044), so data.len() >= 130_021 guarantees DataTooLarge.
-        const OVERSIZED: usize = 130_021;
-
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-            pipeline.submissions.push_back(BatchSubmission::blobs(
-                SubmissionId(0),
-                vec![BlobPayload::new(vec![Arc::new(Frame {
-                    data: vec![0u8; OVERSIZED],
-                    ..Frame::default()
-                })])],
-            ));
-
-            let handle = ctx.spawn(
-                DriverFixture::build(
-                    ctx.clone(),
-                    pipeline,
-                    ImmediateConfirmTxManager { l1_block: 1 },
-                )
-                .run(),
-            );
-
-            ctx.sleep(Duration::from_millis(50)).await;
-            ctx.cancel();
-
-            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
-
-            let recorded = recorded.lock().unwrap();
-            assert_eq!(
-                recorded.requeued,
-                vec![SubmissionId(0)],
-                "requeue must be called when blob encoding fails so the channel is not stuck"
-            );
-            assert!(
-                recorded.l1_heads.is_empty(),
-                "advance_l1_head must not be called when blob encoding fails"
-            );
-        });
-    }
-
-    /// The submission loop must submit each pipeline submission as one L1 tx. The
-    /// pipeline is responsible for choosing the frames that belong in a transaction.
-    #[test]
-    fn test_submission_loop_submits_each_pipeline_submission_as_one_tx() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let candidates = Arc::new(Mutex::new(Vec::new()));
-            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-            pipeline.submissions.push_back(SubmissionStub::with_id(0));
-            pipeline.submissions.push_back(SubmissionStub::with_id(1));
-
-            let handle = ctx.spawn(
-                DriverFixture::build_with_max_pending(
-                    ctx.clone(),
-                    pipeline,
-                    RecordingConfirmTxManager { l1_block: 10, candidates: Arc::clone(&candidates) },
-                    2,
-                )
-                .run(),
-            );
-
-            ctx.sleep(Duration::from_millis(50)).await;
-            ctx.cancel();
-
-            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
-            let recorded = recorded.lock().unwrap();
-            assert_eq!(recorded.dequeued.len(), 2, "both submissions must be dequeued");
-            assert_eq!(
-                recorded.l1_heads,
-                vec![10, 10],
-                "each pipeline submission should produce its own confirmation"
-            );
-            assert_eq!(
-                candidates.lock().unwrap().len(),
-                2,
-                "separate pipeline submissions must not be coalesced into one L1 tx"
-            );
-        });
-    }
-
-    /// A single submission may contain multiple blob-filling frames when
-    /// `max_blobs_per_tx > 1`. Each frame becomes its own blob in the same L1
-    /// transaction.
-    #[test]
-    fn test_multi_frame_blob_submission_maps_frames_to_blobs() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let candidates = Arc::new(Mutex::new(Vec::new()));
-            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-            let submission = blob_filling_submission_with_frames(0, 3);
-            let SubmissionPayload::Blobs(payloads) = submission.payload() else {
-                panic!("helper must create blob payloads");
-            };
-            let expected_blob_payloads: Vec<_> = payloads
-                .iter()
-                .map(|payload| FrameEncoder::to_calldata(&payload.frames()[0]))
-                .collect();
-            pipeline.submissions.push_back(submission);
-
-            let handle = ctx.spawn(
-                DriverFixture::build(
-                    ctx.clone(),
-                    pipeline,
-                    RecordingConfirmTxManager { l1_block: 10, candidates: Arc::clone(&candidates) },
-                )
-                .run(),
-            );
-
-            ctx.sleep(Duration::from_millis(50)).await;
-            ctx.cancel();
-
-            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
-            let recorded = recorded.lock().unwrap();
-            assert_eq!(recorded.dequeued, vec![SubmissionId(0)], "submission must be dequeued");
-            assert!(
-                recorded.requeued.is_empty(),
-                "multi-frame blob submission must not be requeued by blob encoding"
-            );
-            assert_eq!(
-                recorded.l1_heads,
-                vec![10],
-                "multi-frame blob submission should confirm in one L1 tx"
-            );
-            let candidates = candidates.lock().unwrap();
-            assert_eq!(candidates.len(), 1, "multi-frame submission should use one L1 tx");
-            assert!(
-                candidates[0].tx_data.is_empty(),
-                "blob transactions must not also carry calldata"
-            );
-            assert_eq!(
-                candidates[0].decoded_blob_payloads, expected_blob_payloads,
-                "each frame in the submission must become its own blob payload"
-            );
-        });
-    }
-
-    /// The semaphore must prevent more concurrent in-flight L1 txs than
-    /// `max_pending_transactions`. With max=1 and two submissions, the second
-    /// submission must not be dequeued while the first tx still holds the permit.
-    #[test]
-    fn test_semaphore_prevents_excess_concurrent_submissions() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-            pipeline.submissions.push_back(blob_filling_submission(0));
-            pipeline.submissions.push_back(blob_filling_submission(1));
-
-            let handle = ctx.spawn(
-                DriverFixture::build_with_max_pending(
-                    ctx.clone(),
-                    pipeline,
-                    NeverConfirmTxManager,
-                    1,
-                )
-                .run(),
-            );
-
-            ctx.sleep(Duration::from_millis(50)).await;
-            ctx.cancel();
-
-            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
-            let recorded = recorded.lock().unwrap();
-            assert_eq!(recorded.dequeued, vec![SubmissionId(0)], "only one permit is available");
-            assert!(recorded.requeued.is_empty(), "blocked submissions must not be dequeued");
-            // The semaphore (max=1) is occupied by blob 1 — no second tx was submitted.
-            assert!(recorded.l1_heads.is_empty(), "no confirmation while semaphore is full");
-        });
-    }
-
-    /// With `max_pending_transactions`=1 and blob-filling submissions, the second
-    /// blob tx is only submitted once the first is confirmed (freeing the permit).
-    #[test]
-    fn test_second_blob_tx_submitted_after_permit_freed() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-            pipeline.submissions.push_back(blob_filling_submission(0));
-            pipeline.submissions.push_back(blob_filling_submission(1));
-            pipeline.submissions.push_back(blob_filling_submission(2));
-
-            let handle = ctx.spawn(
-                DriverFixture::build_with_max_pending(
-                    ctx.clone(),
-                    pipeline,
-                    ImmediateConfirmTxManager { l1_block: 7 },
-                    1,
-                )
-                .run(),
-            );
-
-            ctx.sleep(Duration::from_millis(50)).await;
-            ctx.cancel();
-
-            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
-            assert_eq!(
-                recorded.lock().unwrap().l1_heads,
-                vec![7, 7, 7],
-                "each queued submission must confirm as permits are freed"
-            );
-        });
-    }
-
-    /// `AlreadyReserved` means another transaction owns the sender nonce slot.
-    /// The driver must requeue the submission, mark the txpool blocked, and
-    /// call `cancel_tx` before accepting more submissions.
-    #[test]
-    fn test_txpool_blocked_requeues_and_attempts_recovery() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-            pipeline.submissions.push_back(SubmissionStub::stub());
-
-            let state = Arc::new(TxpoolBlockedState::default());
-            let tx_manager = TxpoolBlockedOnceTxManager { state: Arc::clone(&state) };
-
-            let handle = ctx.spawn(DriverFixture::build(ctx.clone(), pipeline, tx_manager).run());
-
-            ctx.sleep(Duration::from_millis(50)).await;
-            ctx.cancel();
-
-            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
-            assert_eq!(
-                recorded.lock().unwrap().requeued,
-                vec![SubmissionId(0)],
-                "txpool-blocked submissions must be requeued"
-            );
-            assert_eq!(
-                state.sends.load(Ordering::SeqCst),
-                1,
-                "driver must stop submitting while txpool is blocked"
-            );
-            assert_eq!(
-                state.cancellations.load(Ordering::SeqCst),
-                1,
-                "driver must attempt txpool recovery with cancel_tx"
-            );
-        });
-    }
-
-    /// A flush acknowledgement must not fire until every ready submission has been dequeued
-    /// and handed to the tx manager — not just the first. Regression test for a race where a
-    /// caller could observe the ack after only the first frame of a multi-frame flush was
-    /// queued, then mine an L1 block missing the later frames.
-    #[test]
-    fn test_flush_ack_waits_for_all_ready_submissions() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-            pipeline.submissions.push_back(SubmissionStub::with_id(0));
-            pipeline.submissions.push_back(SubmissionStub::with_id(1));
-
-            let (admin_tx, admin_rx) = mpsc::channel(1);
-            let (ack_tx, ack_rx) = oneshot::channel();
-            admin_tx
-                .send(AdminCommand::Flush { ack: Some(ack_tx) })
-                .await
-                .expect("admin receiver should be open");
-
-            let handle = ctx.spawn(
-                DriverFixture::build_with_max_pending(
-                    ctx.clone(),
-                    pipeline,
-                    ImmediateConfirmTxManager { l1_block: 1 },
-                    2,
-                )
-                .with_admin_rx(admin_rx)
-                .run(),
-            );
-
-            ack_rx.await.expect("flush ack must fire");
-            assert_eq!(
-                recorded.lock().unwrap().dequeued.len(),
-                2,
-                "ack must not fire until both ready submissions are dequeued"
-            );
-
-            ctx.cancel();
-            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
-        });
-    }
-
-    /// If a ready submission can't fit within semaphore capacity, the flush ack must not
-    /// fire — firing early would let a caller believe the flush fully settled before every
-    /// frame was actually handed to the tx manager.
-    #[test]
-    fn test_flush_ack_does_not_fire_while_backpressured() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-            pipeline.submissions.push_back(SubmissionStub::with_id(0));
-            pipeline.submissions.push_back(SubmissionStub::with_id(1));
-
-            let (admin_tx, admin_rx) = mpsc::channel(1);
-            let (ack_tx, mut ack_rx) = oneshot::channel();
-            admin_tx
-                .send(AdminCommand::Flush { ack: Some(ack_tx) })
-                .await
-                .expect("admin receiver should be open");
-
-            let handle = ctx.spawn(
-                DriverFixture::build_with_max_pending(
-                    ctx.clone(),
-                    pipeline,
-                    NeverConfirmTxManager,
-                    1,
-                )
-                .with_admin_rx(admin_rx)
-                .run(),
-            );
-
-            ctx.sleep(Duration::from_millis(50)).await;
-            assert!(
-                ack_rx.try_recv().is_err(),
-                "ack must not fire while a ready submission is still waiting on semaphore capacity"
-            );
-            assert_eq!(
-                recorded.lock().unwrap().dequeued.len(),
-                1,
-                "only the single available permit should have been used"
-            );
-
-            ctx.cancel();
-            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
+            let frames: Vec<_> =
+                frames.iter().map(|frame| FrameEncoder::to_calldata(frame)).collect();
+            assert_eq!(blobs, frames);
         });
     }
 }

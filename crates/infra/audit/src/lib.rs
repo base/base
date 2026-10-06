@@ -7,155 +7,27 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-mod archiver;
-pub use archiver::AuditArchiver;
-
 mod metrics;
 pub use metrics::Metrics;
 
-mod publisher;
-pub use publisher::{BundleEventPublisher, LoggingBundleEventPublisher};
-
-mod reader;
-pub use reader::{Event, EventReader};
-
 mod rpc;
 pub use rpc::{AuditArchiverApiServer, AuditArchiverRpc};
-
-mod rpc_publisher;
-pub use rpc_publisher::{DEFAULT_RPC_TIMEOUT, RpcBundleEventPublisher};
-
-mod rpc_reader;
-pub use rpc_reader::RpcEventReader;
-
-mod storage;
-pub use storage::{
-    BundleEventS3Reader, BundleHistory, BundleHistoryEvent, EventWriter, S3EventReaderWriter,
-    S3Key, TransactionMetadata,
-};
 
 mod transaction_events;
 pub use transaction_events::{
     DEFAULT_TRANSACTION_EVENT_BATCH_PATH, DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS,
     DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS, DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE,
     DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES,
-    DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES, DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT,
-    DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE,
+    DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
+    DEFAULT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS, DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT,
     DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS,
-    DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES,
-    DEFAULT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS,
-    DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE,
-    MAX_TRANSACTION_EVENT_QUERY_LIMIT, PgTransactionEventSink, RejectedTransactionEventQuery,
+    DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, MAX_TRANSACTION_EVENT_FUTURE_SKEW_SECS,
+    MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE, MAX_TRANSACTION_EVENT_QUERY_LIMIT,
+    MAX_TRANSACTION_EVENT_RETENTION_DAYS, MAX_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS,
+    PgTransactionEventSink, RejectedTransactionEventQuery, TRANSACTION_EVENT_PARTITION_DAYS_AHEAD,
     TransactionEventBatchResponse, TransactionEventBatchStatus, TransactionEventIngestConfig,
     TransactionEventInsertOutcome, TransactionEventItemResult, TransactionEventItemStatus,
     TransactionEventRecord, TransactionEventRetentionClass, TransactionEventRetentionConfig,
     TransactionEventRetentionOutcome, TransactionEventSchemaReadinessError, TransactionEventSink,
     TransactionEventStorageError,
 };
-
-mod types;
-use core::time::Duration;
-
-use tokio::{
-    sync::mpsc,
-    time::{Instant, sleep_until},
-};
-use tracing::{error, trace};
-pub use types::{BundleEvent, BundleId, DropReason, Transaction, TransactionId};
-
-/// Connects bundle event receivers to publishers.
-#[derive(Debug)]
-pub struct AuditConnector;
-
-impl AuditConnector {
-    /// Connects a bundle event receiver to a publisher, batching events and
-    /// forwarding them in groups via [`BundleEventPublisher::publish_all`].
-    ///
-    /// The batching policy is "deadline per batch": when the first event of an
-    /// otherwise-empty buffer arrives, a deadline of `now + batch_max_wait` is
-    /// established. The buffer is flushed when either:
-    ///
-    /// - the buffer reaches `batch_max_size`, or
-    /// - the deadline elapses with at least one buffered event.
-    ///
-    /// On flush, the deadline is dropped and the next incoming event starts a
-    /// fresh deadline. When `event_rx` is closed, any remaining buffered events
-    /// are flushed before the spawned task exits.
-    ///
-    /// Publish failures are logged and the offending batch is dropped; the
-    /// connector does not retry and does not apply backpressure to `event_rx`.
-    pub fn connect_batched<P>(
-        event_rx: mpsc::Receiver<BundleEvent>,
-        publisher: P,
-        batch_max_size: usize,
-        batch_max_wait: Duration,
-    ) where
-        P: BundleEventPublisher + 'static,
-    {
-        tokio::spawn(async move {
-            let mut event_rx = event_rx;
-            let mut buffer: Vec<BundleEvent> = Vec::with_capacity(batch_max_size);
-            let mut deadline: Option<Instant> = None;
-
-            loop {
-                let recv_result = match deadline {
-                    Some(d) => {
-                        tokio::select! {
-                            maybe_event = event_rx.recv() => maybe_event,
-                            () = sleep_until(d) => {
-                                Self::flush(&publisher, &mut buffer).await;
-                                deadline = None;
-                                continue;
-                            }
-                        }
-                    }
-                    None => event_rx.recv().await,
-                };
-
-                match recv_result {
-                    Some(event) => {
-                        buffer.push(event);
-                        if deadline.is_none() {
-                            deadline = Some(Instant::now() + batch_max_wait);
-                        }
-                        if buffer.len() >= batch_max_size {
-                            Self::flush(&publisher, &mut buffer).await;
-                            deadline = None;
-                        }
-                    }
-                    None => {
-                        // Channel closed: flush any remaining events and exit.
-                        if !buffer.is_empty() {
-                            Self::flush(&publisher, &mut buffer).await;
-                        }
-                        break;
-                    }
-                }
-            }
-        });
-    }
-
-    /// Drains `buffer` and ships it via `publisher.publish_all`. Errors are
-    /// logged and swallowed; the batch is dropped.
-    async fn flush<P>(publisher: &P, buffer: &mut Vec<BundleEvent>)
-    where
-        P: BundleEventPublisher,
-    {
-        if buffer.is_empty() {
-            return;
-        }
-        let batch: Vec<BundleEvent> = std::mem::take(buffer);
-        let batch_size = batch.len();
-        match publisher.publish_all(batch).await {
-            Ok(()) => trace!(batch_size, "Flushed bundle event batch"),
-            Err(e) => {
-                error!(
-                    error = %e,
-                    batch_size,
-                    "Failed to publish bundle event batch; batch dropped"
-                );
-                Metrics::rpc_publish_failures("rpc_error").increment(1);
-            }
-        }
-    }
-}

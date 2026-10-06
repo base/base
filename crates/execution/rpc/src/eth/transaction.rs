@@ -27,7 +27,8 @@ use reth_rpc_eth_api::{
 };
 use reth_rpc_eth_types::{EthApiError, TransactionSource, block::convert_transaction_receipt};
 use reth_storage_api::{
-    BlockReaderIdExt, ProviderTx, ReceiptProvider, TransactionsProvider, errors::ProviderError,
+    BlockReader, BlockReaderIdExt, ProviderTx, ReceiptProvider, TransactionsProvider,
+    errors::ProviderError,
 };
 use reth_transaction_pool::{
     AddedTransactionOutcome, PoolTransaction, TransactionOrigin, TransactionPool,
@@ -65,7 +66,7 @@ where
         let (tx, pool_transaction) = tx.split();
 
         if pool_transaction.consensus_ref().ty() == EIP8130_TX_TYPE_ID
-            && !self.is_cobalt_active_at_latest()?
+            && !self.is_everest_active_at_latest()?
         {
             return Err(BaseInvalidTransactionError::Eip8130NotAccepted.into());
         }
@@ -80,15 +81,14 @@ where
             },
         );
 
-        // broadcast raw transaction to subscribers if there is any.
         self.eth_api().broadcast_raw_transaction(tx.clone());
 
         // On Base, transactions are forwarded directly to the sequencer to be included in
         // blocks that it builds.
         if let Some(client) = self.raw_tx_forwarder().as_ref() {
-            debug!(target: "rpc::eth", hash = %pool_transaction.hash(), "forwarding raw transaction to sequencer");
+            debug!(target: "rpc::eth", hash = %tx_hash, "forwarding raw transaction to sequencer");
             let hash = client.forward_raw_transaction(&tx).await.inspect_err(|err| {
-                    debug!(target: "rpc::eth", error = %err, hash=% *pool_transaction.hash(), "failed to forward raw transaction");
+                    debug!(target: "rpc::eth", error = %err, hash = %tx_hash, "failed to forward raw transaction");
                 })?;
 
             // Retain tx in local tx pool after forwarding, for local RPC usage.
@@ -99,10 +99,10 @@ where
             return Ok(hash);
         }
 
-        // submit the transaction to the pool with the given origin
         let AddedTransactionOutcome { hash, .. } = self
-            .pool()
-            .add_transaction(origin, pool_transaction)
+            .inner
+            .eth_api
+            .add_pool_transaction(origin, pool_transaction)
             .await
             .map_err(Self::Error::from_eth_err)?;
 
@@ -131,6 +131,12 @@ where
             // Subscribe before submission so immediate inclusion cannot race the receipt listener.
             let mut canonical_stream = this.provider().canonical_state_stream();
             let hash = EthTransactions::send_raw_transaction(&this, tx).await?;
+            let confirmation_timeout = || {
+                Self::Error::from_eth_err(EthApiError::TransactionConfirmationTimeout {
+                    hash,
+                    duration: timeout_duration,
+                })
+            };
 
             tokio::time::timeout(timeout_duration, async {
                 while let Some(notification) = canonical_stream.next().await {
@@ -149,18 +155,10 @@ where
                         return Ok(receipt);
                     }
                 }
-                Err(Self::Error::from_eth_err(EthApiError::TransactionConfirmationTimeout {
-                    hash,
-                    duration: timeout_duration,
-                }))
+                Err(confirmation_timeout())
             })
             .await
-            .unwrap_or_else(|_elapsed| {
-                Err(Self::Error::from_eth_err(EthApiError::TransactionConfirmationTimeout {
-                    hash,
-                    duration: timeout_duration,
-                }))
-            })
+            .unwrap_or_else(|_elapsed| Err(confirmation_timeout()))
         }
     }
 
@@ -241,11 +239,11 @@ where
     N::Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>,
     Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
-    fn is_cobalt_active_at_latest(&self) -> Result<bool, BaseEthApiError> {
+    fn is_everest_active_at_latest(&self) -> Result<bool, BaseEthApiError> {
         let Some(header) = self.provider().latest_header()? else {
             return Ok(false);
         };
-        Ok(self.provider().chain_spec().is_cobalt_active_at_timestamp(header.timestamp()))
+        Ok(self.provider().chain_spec().is_everest_active_at_timestamp(header.timestamp()))
     }
 }
 
@@ -253,15 +251,10 @@ where
 ///
 /// For deposits, receipt is fetched to extract `deposit_nonce` and `deposit_receipt_version`.
 /// Otherwise, it works like regular Ethereum implementation, i.e. uses [`TransactionInfo`].
+#[derive(Clone)]
 pub struct BaseTxInfoMapper<Provider> {
     provider: Provider,
     base_time: BaseTimeCache,
-}
-
-impl<Provider: Clone> Clone for BaseTxInfoMapper<Provider> {
-    fn clone(&self) -> Self {
-        Self { provider: self.provider.clone(), base_time: self.base_time.clone() }
-    }
 }
 
 impl<Provider> Debug for BaseTxInfoMapper<Provider> {
@@ -280,7 +273,7 @@ impl<Provider> BaseTxInfoMapper<Provider> {
 impl<T, Provider> TxInfoMapper<T> for BaseTxInfoMapper<Provider>
 where
     T: BaseTransaction + SignedTransaction,
-    Provider: TransactionsProvider<Transaction = T> + ReceiptProvider<Receipt: DepositReceiptExt>,
+    Provider: BlockReader<Transaction = T> + ReceiptProvider<Receipt: DepositReceiptExt>,
 {
     type Out = BaseTransactionInfo;
     type Err = ProviderError;

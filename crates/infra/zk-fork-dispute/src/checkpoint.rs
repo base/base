@@ -86,6 +86,16 @@ impl Checkpoint {
         Ok(checkpoint)
     }
 
+    /// Restores this checkpoint's canonical root on an Anvil fork.
+    pub async fn restore(
+        self,
+        config: &Config,
+        verifier: &AggregateVerifierContractClient,
+    ) -> Result<()> {
+        let roots = verifier.intermediate_output_roots(config.game_address).await?;
+        AnvilPatch::apply(config, verifier, &roots, self.index, self.expected_root).await
+    }
+
     /// Finds an already-invalid intermediate root by comparing on-chain vs canonical.
     pub async fn find(config: &Config, verifier: &AggregateVerifierContractClient) -> Result<Self> {
         let roots = verifier.intermediate_output_roots(config.game_address).await?;
@@ -195,7 +205,6 @@ impl Checkpoint {
                 number_of_blocks_to_prove: self.block_count,
                 sequence_window: None,
                 l1_head: Some(l1_head),
-                intermediate_root_interval: Some(self.interval),
                 schedule_l2_block_number: Some(game_l2_block_number),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: config.zk_backend,
@@ -387,7 +396,7 @@ impl AnvilPatch {
             invalid_index = index,
             from = %original_root,
             to = %patched_root,
-            "patched invalid intermediate root on fork"
+            "updated intermediate output root on fork"
         );
         Ok(())
     }
@@ -724,6 +733,26 @@ mod tests {
                 &after[args_start + 20..args_start + 52],
                 roots[2].as_slice(),
                 "rootClaim must remain unchanged"
+            );
+
+            let restored = patch_cwia_root_in_bytecode(
+                after.as_ref(),
+                1000,
+                parent,
+                &after_roots,
+                index,
+                current_roots[index],
+            )
+            .expect("restore CWIA root");
+            provider
+                .client()
+                .request::<_, ()>("anvil_setCode", (game, Bytes::from(restored)))
+                .await
+                .expect("set restored game code");
+            let restored = provider.get_code_at(game).await.expect("read restored game code");
+            assert_eq!(
+                read_cwia_roots(restored.as_ref(), 1000, parent, roots.len()),
+                current_roots
             );
         }
     }

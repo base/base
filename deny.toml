@@ -138,6 +138,8 @@ skip = [
     "nix",
     "num_enum",
     "num_enum_derive",
+    # prometheus-scraper requires nom 8.x while existing dependencies retain nom 7.x.
+    "nom",
     "ordered-float",
     "proc-macro-crate",
     "gloo-timers",

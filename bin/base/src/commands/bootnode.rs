@@ -49,7 +49,7 @@ impl BootnodeCommand {
 
             let mut consensus_bootnode =
                 tokio::spawn(Self::run_consensus(self.consensus, chain_id));
-            let mut execution_bootnode = tokio::spawn(Self::run_execution(self.execution));
+            let mut execution_bootnode = tokio::spawn(self.execution.execute());
 
             tokio::select! {
                 result = &mut consensus_bootnode => {
@@ -95,10 +95,6 @@ impl BootnodeCommand {
 
         warn!(target: "rollup_node::bootnode", "Discovery ENR stream closed");
         Ok(())
-    }
-
-    async fn run_execution(execution: ExecutionBootnodeCommand) -> eyre::Result<()> {
-        execution.execute().await
     }
 
     async fn stop_task(

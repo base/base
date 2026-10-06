@@ -59,6 +59,12 @@ responses; the rename is breaking and there are no legacy aliases.
   `TX_EFFECT_ETH_TRANSFER_TO_EXISTING_ACCOUNT`, and
   `TX_EFFECT_ETH_SELF_TRANSFER`. These are zero-gas classifiers, not intrinsic
   buckets.
+- Net post-state effects from post-tx `EvmState`, counted from `original → present`
+  rather than journal size: `STATE_NEW_STORAGE_SLOT`,
+  `STATE_CHANGED_STORAGE_SLOT`, `STATE_CLEARED_STORAGE_SLOT`,
+  `STATE_TOUCHED_ACCOUNT`, and `STATE_CHANGED_ACCOUNT`. These are zero-gas
+  counts, not `SSTORE`. `STATE_CHANGED_STORAGE_SLOT` is a superset of new slots
+  and clears. Loaded but unwritten accounts and slots are omitted.
 
 Standard-transaction values are calculated from the active revm gas schedule,
 including calldata, creation, initcode, access-list, authorization, and floor

@@ -1,6 +1,9 @@
 //! op-deployer container wrapper.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use alloy_primitives::{Address, B256};
 use alloy_signer_local::PrivateKeySigner;
@@ -21,6 +24,7 @@ use crate::{
 const OUTPUT_DIR: &str = "/output";
 const WORKDIR: &str = "/op-deployer";
 const INTENT_PATH: &str = "/config/intent.toml";
+const DEPLOYMENT_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Role address configuration for the deployment.
 #[derive(Debug, Clone, Copy)]
@@ -126,12 +130,13 @@ impl DeployerContainer {
 
         let image = GenericImage::new(image_name, image_tag)
             .with_entrypoint("sh")
-            .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)));
+            .with_wait_for(WaitFor::exit(ExitWaitStrategy::default()));
 
         let cmd = vec!["-c".to_string(), script];
         let output_dir = self.output_dir.to_string_lossy().to_string();
         let mut request = image
             .with_cmd(cmd)
+            .with_startup_timeout(DEPLOYMENT_TIMEOUT)
             .with_env_var("L1_RPC_URL", self.l1_rpc_url.to_string())
             .with_env_var("L1_CHAIN_ID", self.l1_chain_id.to_string())
             .with_env_var("L2_CHAIN_ID", self.l2_chain_id.to_string())
@@ -143,7 +148,20 @@ impl DeployerContainer {
             request = request.with_network(network.clone());
         }
 
-        let _container = request.start().wrap_err("Failed to run op-deployer container")?;
+        let container = request.start().wrap_err("Failed to run op-deployer container")?;
+        let exit_code = container
+            .exit_code()
+            .wrap_err("Failed to read op-deployer container exit code")?
+            .ok_or_else(|| eyre!("op-deployer container was still running after exit wait"))?;
+        if exit_code != 0 {
+            let stdout_bytes = container.stdout_to_vec()?;
+            let stderr_bytes = container.stderr_to_vec()?;
+            let stdout = String::from_utf8_lossy(&stdout_bytes);
+            let stderr = String::from_utf8_lossy(&stderr_bytes);
+            return Err(eyre!(
+                "op-deployer container exited with code {exit_code}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+            ));
+        }
 
         self.artifacts().wrap_err("Failed to load deployment artifacts")
     }
@@ -181,45 +199,45 @@ fn deploy_script() -> String {
     format!(
         r#"set -e
 
-WORKDIR=\"{WORKDIR}\"
-OUTPUT_DIR=\"{OUTPUT_DIR}\"
-INTENT_PATH=\"{INTENT_PATH}\"
+WORKDIR="{WORKDIR}"
+OUTPUT_DIR="{OUTPUT_DIR}"
+INTENT_PATH="{INTENT_PATH}"
 
-mkdir -p \"$WORKDIR\" \"$OUTPUT_DIR\"
+mkdir -p "$WORKDIR" "$OUTPUT_DIR"
 
-if [ -f \"$OUTPUT_DIR/genesis.json\" ] && [ -f \"$OUTPUT_DIR/rollup.json\" ] && [ -f \"$OUTPUT_DIR/l1-addresses.json\" ]; then
-  echo \"Deployment artifacts already exist, skipping op-deployer\"
+if [ -f "$OUTPUT_DIR/genesis.json" ] && [ -f "$OUTPUT_DIR/rollup.json" ] && [ -f "$OUTPUT_DIR/l1-addresses.json" ]; then
+  echo "Deployment artifacts already exist, skipping op-deployer"
   exit 0
 fi
 
 op-deployer init \
-  --l1-chain-id \"$L1_CHAIN_ID\" \
-  --l2-chain-ids \"$L2_CHAIN_ID\" \
+  --l1-chain-id "$L1_CHAIN_ID" \
+  --l2-chain-ids "$L2_CHAIN_ID" \
   --intent-type custom \
-  --workdir \"$WORKDIR\"
+  --workdir "$WORKDIR"
 
-cp \"$INTENT_PATH\" \"$WORKDIR/intent.toml\"
+cp "$INTENT_PATH" "$WORKDIR/intent.toml"
 
 op-deployer apply \
-  --workdir \"$WORKDIR\" \
+  --workdir "$WORKDIR" \
   --deployment-target live \
-  --l1-rpc-url \"$L1_RPC_URL\" \
-  --private-key \"$DEPLOYER_KEY\"
+  --l1-rpc-url "$L1_RPC_URL" \
+  --private-key "$DEPLOYER_KEY"
 
 op-deployer inspect genesis \
-  --workdir \"$WORKDIR\" \
-  \"$L2_CHAIN_ID\" \
-  > \"$OUTPUT_DIR/genesis.json\"
+  --workdir "$WORKDIR" \
+  "$L2_CHAIN_ID" \
+  > "$OUTPUT_DIR/genesis.json"
 
 op-deployer inspect rollup \
-  --workdir \"$WORKDIR\" \
-  \"$L2_CHAIN_ID\" \
-  > \"$OUTPUT_DIR/rollup.json\"
+  --workdir "$WORKDIR" \
+  "$L2_CHAIN_ID" \
+  > "$OUTPUT_DIR/rollup.json"
 
 op-deployer inspect l1 \
-  --workdir \"$WORKDIR\" \
-  \"$L2_CHAIN_ID\" \
-  > \"$OUTPUT_DIR/l1-addresses.json\"
+  --workdir "$WORKDIR" \
+  "$L2_CHAIN_ID" \
+  > "$OUTPUT_DIR/l1-addresses.json"
 "#,
     )
 }
