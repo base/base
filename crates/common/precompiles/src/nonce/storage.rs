@@ -1,8 +1,9 @@
 //! Storage layout and constants for the EIP-8130 2D nonce manager precompile.
 
-use alloy_primitives::{Address, B256, U256, address};
+use alloy_primitives::{Address, B256, U256};
+use base_common_eip8130::NonceManagerSlots;
 use base_precompile_macros::contract;
-use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result, StorageKey};
+use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result};
 
 use crate::INonceManager;
 
@@ -47,18 +48,24 @@ impl NonceManagerStorage<'_> {
     ///
     /// Pinned to `NONCE_MANAGER_ADDRESS` from the EIP-8130 constant table
     /// (`0x8130…aa01`, in the `0x8130…` / EIP-number namespace for EIP-8130
-    /// system precompiles).
-    pub const ADDRESS: Address = address!("813000000000000000000000000000000000aa01");
+    /// system precompiles). Sourced from the engine-neutral [`NonceManagerSlots`]
+    /// so the precompile and the revm/EVM2 engines share one address.
+    pub const ADDRESS: Address = NonceManagerSlots::ADDRESS;
 
     /// Base storage slot of the `nonces` mapping under this contract's
     /// ERC-7201 namespace.
     ///
-    /// Re-exported from the macro-generated `slots` module so off-chain
-    /// readers (e.g. RPC) can derive `nonces[account][nonce_key]` slots
-    /// without instantiating the precompile. Pair with [`Self::nonce_slot`].
-    pub const NONCES_BASE_SLOT: U256 = slots::NONCES;
+    /// Sourced from the engine-neutral [`NonceManagerSlots`] so off-chain readers
+    /// (e.g. RPC) can derive `nonces[account][nonce_key]` slots without
+    /// instantiating the precompile, and so the revm and EVM2 engines share one
+    /// slot layout. The `nonce_slot_matches_handler_chain` and
+    /// `expiring_nonce_seen_slot_matches_handler_chain` tests pin the
+    /// macro-generated storage layout to these shared constants. Pair with
+    /// [`Self::nonce_slot`].
+    pub const NONCES_BASE_SLOT: U256 = NonceManagerSlots::NONCES_BASE_SLOT;
     /// Base storage slot of the nonce-free replay mapping.
-    pub const EXPIRING_NONCE_SEEN_BASE_SLOT: U256 = slots::EXPIRING_NONCE_SEEN;
+    pub const EXPIRING_NONCE_SEEN_BASE_SLOT: U256 =
+        NonceManagerSlots::EXPIRING_NONCE_SEEN_BASE_SLOT;
 
     /// Fixed capacity of the nonce-free `replay_id` ring buffer
     /// (`REPLAY_BUFFER_CAPACITY` in the EIP-8130 constant table).
@@ -82,7 +89,7 @@ impl NonceManagerStorage<'_> {
     pub const NONCE_FREE_EXPIRY_WINDOW: u64 = 30_000;
 
     /// Nonce key reserved for the protocol nonce, which is held in account state.
-    const PROTOCOL_NONCE_KEY: U256 = U256::ZERO;
+    const PROTOCOL_NONCE_KEY: U256 = NonceManagerSlots::PROTOCOL_NONCE_KEY;
 
     /// Returns the current 2D nonce for `account` at `nonce_key`.
     ///
@@ -110,15 +117,13 @@ impl NonceManagerStorage<'_> {
     /// - [`INonceManager::ProtocolNonceNotSupported`] — `nonce_key` is `0`, the
     ///   protocol nonce, which is stored in account state and must be read from there.
     pub fn nonce_slot(account: Address, nonce_key: U256) -> Result<U256> {
-        if nonce_key == Self::PROTOCOL_NONCE_KEY {
-            return Err(BasePrecompileError::revert(INonceManager::ProtocolNonceNotSupported {}));
-        }
-        Ok(nonce_key.mapping_slot(account.mapping_slot(Self::NONCES_BASE_SLOT)))
+        NonceManagerSlots::nonce_slot(account, nonce_key)
+            .ok_or_else(|| BasePrecompileError::revert(INonceManager::ProtocolNonceNotSupported {}))
     }
 
     /// Returns the storage slot holding the expiry recorded for `replay_id`.
     pub fn expiring_nonce_seen_slot(replay_id: B256) -> U256 {
-        U256::from_be_bytes(replay_id.0).mapping_slot(Self::EXPIRING_NONCE_SEEN_BASE_SLOT)
+        NonceManagerSlots::expiring_nonce_seen_slot(replay_id)
     }
 
     /// Increments the 2D nonce for `account` at `nonce_key`, returning the new
@@ -489,6 +494,21 @@ mod tests {
             let inner_base = mgr.nonces.at(&ACCOUNT_A).slot();
             let expected = nonce_key.mapping_slot(inner_base);
             assert_eq!(NonceManagerStorage::nonce_slot(ACCOUNT_A, nonce_key).unwrap(), expected);
+        });
+    }
+
+    #[test]
+    fn expiring_nonce_seen_slot_matches_handler_chain() {
+        // Pins the shared-crate slot derivation (now the source of
+        // `expiring_nonce_seen_slot` and `EXPIRING_NONCE_SEEN_BASE_SLOT`) to the
+        // macro-generated storage layout the precompile actually writes to, so the
+        // two cannot diverge.
+        let mut storage = HashMapStorageProvider::new(1);
+        let replay_id = B256::repeat_byte(0x5a);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mgr = NonceManagerStorage::new(ctx);
+            let expected = mgr.expiring_nonce_seen.at(&replay_id).slot();
+            assert_eq!(NonceManagerStorage::expiring_nonce_seen_slot(replay_id), expected);
         });
     }
 

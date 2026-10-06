@@ -375,6 +375,13 @@ pub struct MonitoringConfig {
     /// config, via `BASECTL_PROVER_RPC`, or with `--prover-rpc`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prover_rpc: Option<Url>,
+    /// Optional batcher admin JSON-RPC endpoint URL.
+    ///
+    /// Used by the `basectl batcher` command group. The built-in presets leave
+    /// this unset because the batcher admin server is internal; set it in your
+    /// YAML config, via `BASECTL_BATCHER_RPC`, or with `--batcher-rpc`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batcher_rpc: Option<Url>,
     /// Live rollup upgrade configuration fetched from the consensus node when available.
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "hardforks")]
     pub upgrades: Option<UpgradeConfig>,
@@ -433,6 +440,19 @@ impl MonitoringConfig {
             command_name,
             config_name: self.name.clone(),
         })
+    }
+
+    /// Resolves the batcher admin RPC URL from the flag override or this config.
+    pub fn resolve_batcher_rpc(
+        &self,
+        override_url: Option<&Url>,
+    ) -> Result<Url, crate::MissingBatcherRpcError> {
+        if let Some(url) = override_url {
+            return Ok(url.clone());
+        }
+        self.batcher_rpc
+            .clone()
+            .ok_or_else(|| crate::MissingBatcherRpcError { config_name: self.name.clone() })
     }
 
     /// Returns the block explorer base URL for this chain, if known.
@@ -529,6 +549,7 @@ struct MonitoringConfigOverride {
     consensus_node_rpc: Option<Url>,
     chain_id: Option<u64>,
     prover_rpc: Option<Url>,
+    batcher_rpc: Option<Url>,
     #[serde(alias = "hardforks")]
     upgrades: Option<UpgradeConfig>,
     #[serde(default)]
@@ -581,6 +602,7 @@ impl MonitoringConfig {
             consensus_node_rpc: Some(Url::parse("http://127.0.0.1:9545").unwrap()),
             chain_id: Some(8453),
             prover_rpc: None,
+            batcher_rpc: None,
             upgrades: Some(rollup.upgrades),
             system_config: rollup.l1_system_config_address,
             batcher_address: Some("0x5050F69a9786F081509234F1a7F4684b5E5b76C9".parse().unwrap()),
@@ -609,6 +631,7 @@ impl MonitoringConfig {
             consensus_node_rpc: Some(Url::parse("http://127.0.0.1:9545").unwrap()),
             chain_id: Some(84532),
             prover_rpc: None,
+            batcher_rpc: None,
             upgrades: Some(rollup.upgrades),
             system_config: rollup.l1_system_config_address,
             batcher_address: Some("0xfc56E7272EEBBBA5bC6c544e159483C4a38f8bA3".parse().unwrap()),
@@ -644,6 +667,7 @@ impl MonitoringConfig {
             // Populated from optimism_rollupConfig in load_devnet.
             chain_id: None,
             prover_rpc: None,
+            batcher_rpc: None,
             upgrades: None,
             // These will be populated by fetch_rollup_config
             system_config: Address::ZERO,
@@ -823,6 +847,7 @@ impl MonitoringConfig {
             consensus_node_rpc: overrides.consensus_node_rpc.or(base.consensus_node_rpc),
             chain_id: overrides.chain_id.or(base.chain_id),
             prover_rpc: overrides.prover_rpc.or(base.prover_rpc),
+            batcher_rpc: overrides.batcher_rpc.or(base.batcher_rpc),
             upgrades: overrides.upgrades.or(base.upgrades),
             system_config: overrides.system_config.unwrap_or(base.system_config),
             batcher_address: overrides.batcher_address.or(base.batcher_address),
@@ -884,6 +909,32 @@ mod tests {
         let error = config.resolve_cl_rpc(None, "sync-status").unwrap_err();
 
         assert_eq!(error.command_name, "sync-status");
+        assert_eq!(error.config_name, "mainnet");
+    }
+
+    #[test]
+    fn resolve_batcher_rpc_prefers_override() {
+        let config = MonitoringConfig::mainnet();
+        let override_url = Url::parse("http://127.0.0.1:16545").unwrap();
+
+        assert_eq!(config.resolve_batcher_rpc(Some(&override_url)).unwrap(), override_url);
+    }
+
+    #[test]
+    fn resolve_batcher_rpc_falls_back_to_config() {
+        let mut config = MonitoringConfig::sepolia();
+        let configured = Url::parse("http://127.0.0.1:16545").unwrap();
+        config.batcher_rpc = Some(configured.clone());
+
+        assert_eq!(config.resolve_batcher_rpc(None).unwrap(), configured);
+    }
+
+    #[test]
+    fn resolve_batcher_rpc_errors_without_config() {
+        let config = MonitoringConfig::mainnet();
+
+        let error = config.resolve_batcher_rpc(None).unwrap_err();
+
         assert_eq!(error.config_name, "mainnet");
     }
 

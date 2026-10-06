@@ -102,10 +102,6 @@ impl RegistrarConfig {
     /// Returns an error if service initialization fails or the registration
     /// driver exits with an error.
     pub async fn run(self) -> Result<()> {
-        self.log_config
-            .init_tracing_subscriber()
-            .map_err(|e| RegistrarError::Service(e.to_string()))?;
-
         let _ = rustls::crypto::ring::default_provider().install_default();
 
         info!(version = env!("CARGO_PKG_VERSION"), "Registrar starting");

@@ -1,5 +1,6 @@
 use std::{fmt::Debug, sync::Arc};
 
+use alloy_primitives::B256;
 use alloy_rpc_types_engine::PayloadId;
 use async_trait::async_trait;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
@@ -21,6 +22,10 @@ use crate::{
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait SequencerEngineClient: Debug + Send + Sync {
+    /// Atomically validates the expected engine head and prepares sequencer request routing.
+    /// Shadow starts validate the head without changing catch-up or reconciliation state.
+    async fn prepare_sequencer_start(&self, expected_hash: B256) -> EngineClientResult<()>;
+
     /// Resets the engine's forkchoice, awaiting confirmation that it succeeded or returning the
     /// error in performing the reset.
     async fn reset_engine_forkchoice(&self, reason: ResetReason) -> EngineClientResult<()>;
@@ -82,6 +87,10 @@ pub trait SequencerEngineClient: Debug + Send + Sync {
 /// methods without any additional wrapping.
 #[async_trait]
 impl<T: SequencerEngineClient> SequencerEngineClient for Arc<T> {
+    async fn prepare_sequencer_start(&self, expected_hash: B256) -> EngineClientResult<()> {
+        (**self).prepare_sequencer_start(expected_hash).await
+    }
+
     async fn reset_engine_forkchoice(&self, reason: ResetReason) -> EngineClientResult<()> {
         (**self).reset_engine_forkchoice(reason).await
     }
@@ -170,6 +179,17 @@ impl QueuedSequencerEngineClient {
 
 #[async_trait]
 impl SequencerEngineClient for QueuedSequencerEngineClient {
+    async fn prepare_sequencer_start(&self, expected_hash: B256) -> EngineClientResult<()> {
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        self.engine_actor_request_tx
+            .send(EngineActorRequest::PrepareSequencerStart { expected_hash, result_tx })
+            .await
+            .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
+        result_rx.recv().await.ok_or_else(|| {
+            EngineClientError::ResponseError("response channel closed.".to_string())
+        })?
+    }
+
     async fn get_unsafe_head(&self) -> EngineClientResult<L2BlockInfo> {
         Ok(*self.unsafe_head_rx.borrow())
     }

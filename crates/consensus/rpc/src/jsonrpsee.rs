@@ -310,7 +310,7 @@ pub trait AdminApi {
     async fn admin_refresh_upgrade_signal(&self) -> RpcResult<UpgradeSignalApplySummary>;
 }
 
-/// The admin namespace for the consensus node.
+/// The healthcheck API for the consensus node.
 #[cfg_attr(not(feature = "client"), rpc(server))]
 #[cfg_attr(feature = "client", rpc(server, client))]
 pub trait HealthzApi {

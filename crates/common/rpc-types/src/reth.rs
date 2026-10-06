@@ -105,7 +105,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        Eip8130AuthScheme,
+        Eip8130AuthScheme, Eip8130SimulationRequestError,
         eip8130::{MAX_AUTH_SIZE, STUB_AUTH_FILL},
     };
 
@@ -157,35 +157,33 @@ mod tests {
     }
 
     #[test]
-    fn prefixed_p256_auth_is_priced_verbatim() {
-        let tx = sim_tx(json!({
+    fn prefixed_p256_sender_auth_is_priced() {
+        let req: BaseTransactionRequest = serde_json::from_value(json!({
             "sender": SENDER,
             "calls": [],
             "senderAuth": blob(Some(Eip8130Contracts::P256_AUTHENTICATOR), 128),
-        }));
+        }))
+        .expect("valid request");
+        let tx = req
+            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
+            .expect("a canonical authenticator is priced");
         let s = signed(&tx);
-        assert_eq!(s.tx().sender, Some(SENDER));
-        let auth = s.sender_auth();
-        assert_eq!(
-            &auth[..20],
-            Eip8130Contracts::P256_AUTHENTICATOR.as_slice(),
-            "the caller's blob is priced verbatim, prefix intact",
-        );
-        assert_eq!(auth.len(), 20 + 128, "selector + supplied data length");
+        assert_eq!(s.tx().sender, Some(SENDER), "the blob selects the configured path");
     }
 
     #[test]
-    fn prefixed_webauthn_auth_is_priced_verbatim() {
-        let tx = sim_tx(json!({
+    fn prefixed_webauthn_sender_auth_is_priced() {
+        let req: BaseTransactionRequest = serde_json::from_value(json!({
             "sender": SENDER,
             "calls": [],
             "senderAuth": blob(Some(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR), 512),
-        }));
+        }))
+        .expect("valid request");
+        let tx = req
+            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
+            .expect("a canonical authenticator is priced");
         let s = signed(&tx);
-        assert_eq!(s.tx().sender, Some(SENDER));
-        let auth = s.sender_auth();
-        assert_eq!(&auth[..20], Eip8130Contracts::WEBAUTHN_AUTHENTICATOR.as_slice());
-        assert_eq!(auth.len(), 20 + 512, "the WebAuthn blob is priced at its supplied size");
+        assert_eq!(s.tx().sender, Some(SENDER), "the blob selects the configured path");
     }
 
     #[test]
@@ -222,7 +220,7 @@ mod tests {
         let tx = sim_tx(json!({
             "from": FROM,
             "calls": [],
-            "senderAuth": blob(Some(Eip8130Contracts::P256_AUTHENTICATOR), 128),
+            "senderAuth": blob(Some(Eip8130Constants::K1_AUTHENTICATOR), 65),
         }));
         assert_eq!(
             signed(&tx).tx().sender,
@@ -263,53 +261,47 @@ mod tests {
     }
 
     #[test]
-    fn delegate_prefixed_sender_auth_is_the_configured_path() {
-        // `DELEGATE_AUTHENTICATOR` is a recognized prefix even though it isn't
-        // an `Eip8130AuthScheme` variant (it's a structured 3-segment blob, not
-        // a flat leaf) — `is_prefixed_auth` must still select the
-        // configured-account path for it, so a delegate-authenticated sender
-        // isn't misclassified as a bare EOA and flat-priced at k1.
+    fn delegate_prefixed_sender_auth_is_priced() {
         let delegate_account = address!("0x00000000000000000000000000000000000000d4");
         let mut nested = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
         nested.extend_from_slice(&[STUB_AUTH_FILL; 65]);
         let mut blob = Eip8130Contracts::DELEGATE_AUTHENTICATOR.to_vec();
         blob.extend_from_slice(delegate_account.as_slice());
         blob.extend_from_slice(&nested);
-        let tx = sim_tx(json!({
+        let req: BaseTransactionRequest = serde_json::from_value(json!({
             "sender": SENDER,
             "calls": [],
             "senderAuth": alloy_primitives::hex::encode_prefixed(&blob),
-        }));
+        }))
+        .expect("valid request");
+        let tx = req
+            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
+            .expect("a canonical authenticator is priced");
         let s = signed(&tx);
-        assert_eq!(
-            s.tx().sender,
-            Some(SENDER),
-            "a delegate-prefixed blob selects the configured-account path",
-        );
-        assert_eq!(s.sender_auth().as_ref(), blob.as_slice(), "priced verbatim");
+        assert_eq!(s.tx().sender, Some(SENDER), "the blob selects the configured path");
     }
 
     #[test]
-    fn delegate_prefixed_payer_auth_is_accepted() {
-        // Mirrors the sender-side case: a delegate-authenticated payer is a
-        // recognized prefix and must not be rejected as an unrecognized
-        // authenticator selector.
+    fn delegate_prefixed_payer_auth_is_priced() {
         let payer = address!("0x00000000000000000000000000000000000000b2");
         let delegate_account = address!("0x00000000000000000000000000000000000000d4");
-        let mut nested = Eip8130Contracts::P256_AUTHENTICATOR.to_vec();
-        nested.extend_from_slice(&[STUB_AUTH_FILL; 128]);
+        let mut nested = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
+        nested.extend_from_slice(&[STUB_AUTH_FILL; 65]);
         let mut blob = Eip8130Contracts::DELEGATE_AUTHENTICATOR.to_vec();
         blob.extend_from_slice(delegate_account.as_slice());
         blob.extend_from_slice(&nested);
-        let tx = sim_tx(json!({
+        let req: BaseTransactionRequest = serde_json::from_value(json!({
             "sender": SENDER,
             "calls": [],
             "payer": payer,
             "payerAuth": alloy_primitives::hex::encode_prefixed(&blob),
-        }));
+        }))
+        .expect("valid request");
+        let tx = req
+            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
+            .expect("a canonical authenticator is priced");
         let s = signed(&tx);
-        assert_eq!(s.tx().payer, Some(payer));
-        assert_eq!(s.payer_auth().as_ref(), blob.as_slice(), "priced verbatim");
+        assert_eq!(s.tx().payer, Some(payer), "the payer is set on the transaction");
     }
 
     #[test]
@@ -320,8 +312,9 @@ mod tests {
             "calls": [],
         }))
         .expect("valid request");
-        assert!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
+        assert_eq!(
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(Eip8130SimulationRequestError::SenderFromMismatch),
             "a `from`/`sender` mismatch is rejected rather than guessing the account",
         );
     }
@@ -346,8 +339,9 @@ mod tests {
         // rather than defaulting the account to the zero address.
         let req: BaseTransactionRequest =
             serde_json::from_value(json!({ "calls": [] })).expect("valid request");
-        assert!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
+        assert_eq!(
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(Eip8130SimulationRequestError::MissingSender),
             "an 8130 request with no account is rejected",
         );
     }
@@ -368,7 +362,7 @@ mod tests {
         let tx = sim_tx(json!({
             "sender": SENDER,
             "calls": [],
-            "senderAuth": blob(Some(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR), MAX_AUTH_SIZE as usize),
+            "senderAuth": blob(Some(Eip8130Constants::K1_AUTHENTICATOR), MAX_AUTH_SIZE as usize),
         }));
         let auth = signed(&tx).sender_auth();
         assert_eq!(
@@ -394,11 +388,12 @@ mod tests {
         let req: BaseTransactionRequest = serde_json::from_value(json!({
             "sender": SENDER,
             "calls": [],
-            "senderAuth": blob(Some(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR), MAX_AUTH_SIZE as usize + 1),
+            "senderAuth": blob(Some(Eip8130Constants::K1_AUTHENTICATOR), MAX_AUTH_SIZE as usize + 1),
         }))
         .expect("valid request");
-        assert!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
+        assert_eq!(
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(Eip8130SimulationRequestError::SenderAuthTooLarge),
             "an over-cap sender auth blob is rejected rather than priced",
         );
     }
@@ -413,7 +408,10 @@ mod tests {
             "senderAuth": blob(None, MAX_AUTH_SIZE as usize + 1),
         }))
         .expect("valid request");
-        assert!(req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none());
+        assert_eq!(
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(Eip8130SimulationRequestError::SenderAuthTooLarge)
+        );
     }
 
     #[test]
@@ -423,11 +421,12 @@ mod tests {
             "sender": SENDER,
             "calls": [],
             "payer": payer,
-            "payerAuth": blob(Some(Eip8130Contracts::P256_AUTHENTICATOR), MAX_AUTH_SIZE as usize + 1),
+            "payerAuth": blob(Some(Eip8130Constants::K1_AUTHENTICATOR), MAX_AUTH_SIZE as usize + 1),
         }))
         .expect("valid request");
-        assert!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
+        assert_eq!(
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(Eip8130SimulationRequestError::PayerAuthTooLarge),
             "an over-cap payer auth blob is rejected rather than priced",
         );
     }
@@ -439,13 +438,55 @@ mod tests {
             "sender": SENDER,
             "calls": [],
             "payer": payer,
-            "payerAuth": blob(Some(Eip8130Contracts::P256_AUTHENTICATOR), 128),
+            "payerAuth": blob(Some(Eip8130Constants::K1_AUTHENTICATOR), 65),
         }));
         let s = signed(&tx);
         assert_eq!(s.tx().payer, Some(payer), "the payer is set on the transaction");
         let auth = s.payer_auth();
-        assert_eq!(&auth[..20], Eip8130Contracts::P256_AUTHENTICATOR.as_slice());
-        assert_eq!(auth.len(), 20 + 128);
+        assert_eq!(&auth[..20], Eip8130Constants::K1_AUTHENTICATOR.as_slice());
+        assert_eq!(auth.len(), 20 + 65);
+    }
+
+    /// An open payer request is estimated before any payer has signed, so an
+    /// absent `payer_auth` is priced as a 65-byte signature that never recovers
+    /// (the payer stays unknown, never the sender); a supplied one is used
+    /// verbatim.
+    #[test]
+    fn open_payer_without_payer_auth_prices_a_signature() {
+        let tx = sim_tx(json!({
+            "sender": SENDER,
+            "calls": [],
+            "payer": Eip8130Constants::OPEN_PAYER,
+        }));
+        let s = signed(&tx);
+        assert_eq!(s.tx().payer, Some(Eip8130Constants::OPEN_PAYER));
+        assert_eq!(s.payer_auth().len(), 65, "priced as a raw secp256k1 signature");
+        assert!(s.resolved_payer(SENDER).is_err(), "the stub never recovers");
+
+        let tx = sim_tx(json!({
+            "sender": SENDER,
+            "calls": [],
+            "payer": Eip8130Constants::OPEN_PAYER,
+            "payerAuth": blob(None, 65),
+        }));
+        assert_eq!(signed(&tx).payer_auth().len(), 65, "the supplied signature is used verbatim");
+    }
+
+    #[test]
+    fn prefixed_p256_payer_auth_is_priced() {
+        let payer = address!("0x00000000000000000000000000000000000000b2");
+        let req: BaseTransactionRequest = serde_json::from_value(json!({
+            "sender": SENDER,
+            "calls": [],
+            "payer": payer,
+            "payerAuth": blob(Some(Eip8130Contracts::P256_AUTHENTICATOR), 128),
+        }))
+        .expect("valid request");
+        let tx = req
+            .to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP)
+            .expect("a canonical authenticator is priced");
+        let s = signed(&tx);
+        assert_eq!(s.tx().payer, Some(payer), "the payer is set on the transaction");
     }
 
     #[test]
@@ -462,8 +503,9 @@ mod tests {
             "payerAuth": blob(Some(unrecognized), 65),
         }))
         .expect("valid request");
-        assert!(
-            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
+        assert_eq!(
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(Eip8130SimulationRequestError::UnrecognizedPayerAuthenticator),
             "an unrecognized payer authenticator selector is rejected rather than priced",
         );
     }
