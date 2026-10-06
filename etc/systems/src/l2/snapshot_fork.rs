@@ -21,7 +21,10 @@ use base_consensus_providers::{
 };
 use base_protocol::{BatchValidationProvider, BlockInfo, L2BlockInfo};
 use eyre::{OptionExt, Result, WrapErr, bail, ensure, eyre};
-use tokio::time::{Instant, sleep, timeout_at};
+use tokio::{
+    task::yield_now,
+    time::{sleep, timeout},
+};
 use url::Url;
 
 use super::SnapshotInspection;
@@ -113,243 +116,238 @@ impl SnapshotForkFinder {
     /// window. Mismatching attributes, reset or critical pipeline errors, an exhausted L1 range,
     /// and the deadline are all fatal.
     pub async fn find(&self, inspection: &SnapshotInspection) -> Result<BlockInfo> {
-        let deadline = Instant::now() + self.timeout;
-        let config = Arc::new(inspection.rollup_config.clone());
-        let genesis = config.genesis;
-        let latest = inspection.latest.block_info;
-        let timed_out =
-            |stage: &str| eyre!("fork discovery timed out after {:?} {stage}", self.timeout);
+        let mut stage = String::new();
+        let mut last_transient = None;
+        let discovery = async {
+            let config = Arc::new(inspection.rollup_config.clone());
+            let genesis = config.genesis;
+            let latest = inspection.latest.block_info;
 
-        let l1_config = L1_CONFIGS.get(&config.l1_chain_id).cloned().ok_or_else(|| {
-            eyre!("no built-in L1 chain config for L1 chain ID {}", config.l1_chain_id)
-        })?;
-        let mut l1 =
-            AlloyChainProvider::new_http(self.source.execution.clone(), Self::PROVIDER_CACHE_SIZE);
-        let l1_chain_id = timeout_at(deadline, l1.chain_id())
-            .await
-            .map_err(|_| timed_out("reading the upstream L1 chain ID"))?
-            .map_err(|_| eyre!("failed to read the upstream L1 chain ID"))?;
-        ensure!(
-            l1_chain_id == config.l1_chain_id,
-            "upstream L1 chain ID {l1_chain_id} does not match rollup L1 chain ID {}",
-            config.l1_chain_id
-        );
-        let finalized =
-            timeout_at(deadline, l1.inner.get_block_by_number(BlockNumberOrTag::Finalized))
+            let l1_config = L1_CONFIGS.get(&config.l1_chain_id).cloned().ok_or_else(|| {
+                eyre!("no built-in L1 chain config for L1 chain ID {}", config.l1_chain_id)
+            })?;
+            let mut l1 = AlloyChainProvider::new_http(
+                self.source.execution.clone(),
+                Self::PROVIDER_CACHE_SIZE,
+            );
+            stage = "reading the upstream L1 chain ID".into();
+            let l1_chain_id = l1
+                .chain_id()
                 .await
-                .map_err(|_| timed_out("reading the upstream finalized L1 block"))?
+                .map_err(|_| eyre!("failed to read the upstream L1 chain ID"))?;
+            ensure!(
+                l1_chain_id == config.l1_chain_id,
+                "upstream L1 chain ID {l1_chain_id} does not match rollup L1 chain ID {}",
+                config.l1_chain_id
+            );
+            stage = "reading the upstream finalized L1 block".into();
+            let finalized = l1
+                .inner
+                .get_block_by_number(BlockNumberOrTag::Finalized)
+                .await
                 .map_err(|_| eyre!("failed to read the upstream finalized L1 block"))?
                 .ok_or_eyre("upstream L1 has no finalized block")?
                 .header
                 .number;
-        ensure!(
-            finalized >= latest.l1_origin.number,
-            "upstream finalized L1 block {finalized} is behind latest snapshot L1 origin {}",
-            latest.l1_origin.number
-        );
-        let l1_limit =
-            latest.l1_origin.number.saturating_add(config.seq_window_size).min(finalized);
-
-        let snapshot = RootProvider::<Base>::new_http(self.rpc_url.clone());
-        let mut l2 = AlloyL2ChainProvider::new(
-            snapshot.clone(),
-            Arc::clone(&config),
-            Self::PROVIDER_CACHE_SIZE,
-        );
-        let start = if inspection.safe.block_info == latest {
             ensure!(
-                latest.block_info.number > genesis.l2.number + 1,
-                "cannot locate the batch for L2 block {}: its parent is the rollup genesis, which \
-                 has no L1-info deposit",
-                latest.block_info.number
+                finalized >= latest.l1_origin.number,
+                "upstream finalized L1 block {finalized} is behind latest snapshot L1 origin {}",
+                latest.l1_origin.number
             );
-            timeout_at(deadline, l2.l2_block_info_by_hash(latest.block_info.parent_hash))
+            let l1_limit =
+                latest.l1_origin.number.saturating_add(config.seq_window_size).min(finalized);
+
+            let snapshot = RootProvider::<Base>::new_http(self.rpc_url.clone());
+            let mut l2 = AlloyL2ChainProvider::new(
+                snapshot.clone(),
+                Arc::clone(&config),
+                Self::PROVIDER_CACHE_SIZE,
+            );
+            let start = if inspection.safe.block_info == latest {
+                ensure!(
+                    latest.block_info.number > genesis.l2.number + 1,
+                    "cannot locate the batch for L2 block {}: its parent is the rollup genesis, which \
+                 has no L1-info deposit",
+                    latest.block_info.number
+                );
+                stage = "reading the latest block's parent".into();
+                l2.l2_block_info_by_hash(latest.block_info.parent_hash).await.wrap_err_with(
+                    || {
+                        format!(
+                            "snapshot parent of L2 block {} is missing or pruned",
+                            latest.block_info.number
+                        )
+                    },
+                )?
+            } else {
+                inspection.safe.block_info
+            };
+
+            let beacon = OnlineBeaconClient::new_http(self.source.beacon.to_string());
+            // Construct from fallible reads instead of `init`, which panics with provider error text.
+            stage = "reading upstream Beacon genesis".into();
+            let genesis_time = beacon
+                .genesis_time()
                 .await
-                .map_err(|_| timed_out("reading the latest block's parent"))?
-                .wrap_err_with(|| {
-                    format!(
-                        "snapshot parent of L2 block {} is missing or pruned",
-                        latest.block_info.number
-                    )
-                })?
-        } else {
-            inspection.safe.block_info
-        };
+                .map_err(|_| eyre!("failed to read upstream Beacon genesis time"))?
+                .data
+                .genesis_time;
+            stage = "reading upstream Beacon slot duration".into();
+            let slot_interval = beacon
+                .slot_interval()
+                .await
+                .map_err(|_| eyre!("failed to read upstream Beacon slot duration"))?
+                .data
+                .seconds_per_slot;
+            ensure!(slot_interval > 0, "upstream Beacon slot duration must be positive");
+            let blobs = OnlineBlobProvider { beacon_client: beacon, genesis_time, slot_interval };
 
-        let beacon = OnlineBeaconClient::new_http(self.source.beacon.to_string());
-        // Construct from fallible reads instead of `init`, which panics with provider error text.
-        let genesis_time = timeout_at(deadline, beacon.genesis_time())
-            .await
-            .map_err(|_| timed_out("reading upstream Beacon genesis"))?
-            .map_err(|_| eyre!("failed to read upstream Beacon genesis time"))?
-            .data
-            .genesis_time;
-        let slot_interval = timeout_at(deadline, beacon.slot_interval())
-            .await
-            .map_err(|_| timed_out("reading upstream Beacon slot duration"))?
-            .map_err(|_| eyre!("failed to read upstream Beacon slot duration"))?
-            .data
-            .seconds_per_slot;
-        ensure!(slot_interval > 0, "upstream Beacon slot duration must be positive");
-        let blobs = OnlineBlobProvider { beacon_client: beacon, genesis_time, slot_interval };
-
-        let mut pipeline = OnlinePipeline::new_polled(
-            Arc::clone(&config),
-            Arc::new(l1_config),
-            blobs,
-            l1.clone(),
-            l2,
-            Arc::new(AtomicU64::new(l1_limit + 1)),
-            Self::L1_LIMIT_CONFIRMATIONS,
-        );
-        let mut last_transient = None;
-        loop {
-            let reset =
-                timeout_at(deadline, pipeline.signal(ResetSignal { l2_safe_head: start }.signal()))
-                    .await
-                    .map_err(|_| {
-                        timed_out(&format!(
-                            "resetting derivation at L2 block {} (last transient error: {})",
-                            start.block_info.number,
-                            last_transient.as_deref().unwrap_or("none")
-                        ))
-                    })?;
-            match reset {
-                Ok(()) => break,
-                Err(PipelineErrorKind::Temporary(error)) => {
-                    let error = self.source.redact(error);
-                    timeout_at(deadline, sleep(Self::TRANSIENT_RETRY_DELAY)).await.map_err(
-                        |_| timed_out(&format!("retrying the derivation reset after: {error}")),
-                    )?;
-                    last_transient = Some(error);
+            let mut pipeline = OnlinePipeline::new_polled(
+                Arc::clone(&config),
+                Arc::new(l1_config),
+                blobs,
+                l1.clone(),
+                l2,
+                Arc::new(AtomicU64::new(l1_limit + 1)),
+                Self::L1_LIMIT_CONFIRMATIONS,
+            );
+            loop {
+                stage = format!("resetting derivation at L2 block {}", start.block_info.number);
+                match pipeline.signal(ResetSignal { l2_safe_head: start }.signal()).await {
+                    Ok(()) => break,
+                    Err(PipelineErrorKind::Temporary(error)) => {
+                        stage = "retrying the derivation reset".into();
+                        last_transient = Some(self.source.redact(error));
+                        sleep(Self::TRANSIENT_RETRY_DELAY).await;
+                    }
+                    Err(error) => bail!(
+                        "failed to reset derivation at L2 block {}: {}",
+                        start.block_info.number,
+                        self.source.redact(error)
+                    ),
                 }
-                Err(error) => bail!(
-                    "failed to reset derivation at L2 block {}: {}",
-                    start.block_info.number,
-                    self.source.redact(error)
-                ),
-            }
-        }
-
-        let mut cursor = start;
-        let mut origin = pipeline.origin().map_or(0, |origin| origin.number);
-        let mut fork: Option<BlockInfo> = None;
-        while cursor.block_info.number < latest.block_info.number {
-            let next = cursor.block_info.number + 1;
-            // Steps that complete without awaiting I/O never yield to `timeout_at`.
-            if Instant::now() >= deadline {
-                return Err(timed_out(&format!(
-                    "deriving L2 block {next} at L1 origin {origin} (last transient error: {})",
-                    last_transient.as_deref().unwrap_or("none")
-                )));
             }
 
-            if let Some(attributes) = pipeline.next() {
-                let block = timeout_at(deadline, snapshot.get_block_by_number(next.into()).full())
-                    .await
-                    .map_err(|_| timed_out(&format!("reading snapshot L2 block {next}")))?
-                    .wrap_err_with(|| format!("failed to read snapshot L2 block {next}"))?
-                    .ok_or_else(|| eyre!("snapshot node has no L2 block {next}"))?
-                    .map_header(|header| header.into_inner());
-                if let AttributesMatch::Mismatch(mismatch) =
-                    AttributesMatch::check(&config, &attributes, &block)
-                {
-                    bail!(
-                        "attributes derived for L2 block {next} do not match the snapshot block: \
+            let mut cursor = start;
+            let mut origin = pipeline.origin().map_or(0, |origin| origin.number);
+            let mut fork: Option<BlockInfo> = None;
+            while cursor.block_info.number < latest.block_info.number {
+                let next = cursor.block_info.number + 1;
+                stage = format!("deriving L2 block {next} at L1 origin {origin}");
+                // Cached pipeline steps may complete without I/O; yield so the deadline still fires.
+                yield_now().await;
+
+                if let Some(attributes) = pipeline.next() {
+                    stage = format!("reading snapshot L2 block {next}");
+                    let block = snapshot
+                        .get_block_by_number(next.into())
+                        .full()
+                        .await
+                        .wrap_err_with(|| format!("failed to read snapshot L2 block {next}"))?
+                        .ok_or_else(|| eyre!("snapshot node has no L2 block {next}"))?
+                        .map_header(|header| header.into_inner());
+                    if let AttributesMatch::Mismatch(mismatch) =
+                        AttributesMatch::check(&config, &attributes, &block)
+                    {
+                        bail!(
+                            "attributes derived for L2 block {next} do not match the snapshot block: \
                          {mismatch:?}"
-                    );
-                }
-                let derived_from = attributes
-                    .derived_from
-                    .ok_or_else(|| eyre!("attributes for L2 block {next} have no L1 source"))?;
-                if fork.is_none_or(|fork| derived_from.number > fork.number) {
-                    fork = Some(derived_from);
-                }
-                let block =
-                    block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner());
-                cursor = L2BlockInfo::from_block_and_genesis(&block, &genesis)
-                    .wrap_err_with(|| format!("failed to decode snapshot L2 block {next}"))?;
-                continue;
-            }
-
-            let step = timeout_at(deadline, pipeline.step(cursor)).await.map_err(|_| {
-                timed_out(&format!(
-                    "deriving L2 block {next} at L1 origin {origin} (last transient error: {})",
-                    last_transient.as_deref().unwrap_or("none")
-                ))
-            })?;
-            let (error, advancing_origin) = match step {
-                StepResult::PreparedAttributes => continue,
-                StepResult::AdvancedOrigin => {
-                    origin = pipeline.origin().ok_or_eyre("derivation lost its L1 origin")?.number;
+                        );
+                    }
+                    let derived_from = attributes
+                        .derived_from
+                        .ok_or_else(|| eyre!("attributes for L2 block {next} have no L1 source"))?;
+                    if fork.is_none_or(|fork| derived_from.number > fork.number) {
+                        fork = Some(derived_from);
+                    }
+                    let block =
+                        block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner());
+                    cursor = L2BlockInfo::from_block_and_genesis(&block, &genesis)
+                        .wrap_err_with(|| format!("failed to decode snapshot L2 block {next}"))?;
                     continue;
                 }
-                StepResult::OriginAdvanceErr(error) => (error, true),
-                StepResult::StepFailed(error) => (error, false),
-            };
-            match error {
-                PipelineErrorKind::Temporary(PipelineError::NotEnoughData) => {}
-                // The confirmation-depth gate refuses every block past the limit.
-                PipelineErrorKind::Temporary(_) if advancing_origin && origin >= l1_limit => bail!(
-                    "no batch derives L2 block {next} through L1 block {l1_limit} (latest L1 \
-                     origin {} plus sequencer window {}, upstream finalized {finalized})",
-                    latest.l1_origin.number,
-                    config.seq_window_size
-                ),
-                PipelineErrorKind::Temporary(error) => {
-                    let error = self.source.redact(error);
-                    timeout_at(deadline, sleep(Self::TRANSIENT_RETRY_DELAY)).await.map_err(
-                        |_| {
-                            timed_out(&format!(
-                                "retrying derivation of L2 block {next} after: {error}"
-                            ))
-                        },
-                    )?;
-                    last_transient = Some(error);
-                }
-                // Crossing Holocene activation is a deterministic in-place transition, not a reset.
-                PipelineErrorKind::Reset(ResetError::HoloceneActivation) => {
-                    timeout_at(
-                        deadline,
-                        pipeline.signal(ActivationSignal { l2_safe_head: cursor }.signal()),
-                    )
-                    .await
-                    .map_err(|_| timed_out("activating Holocene derivation"))?
-                    .map_err(|error| {
-                        eyre!(
-                            "failed to activate Holocene derivation: {}",
-                            self.source.redact(error)
-                        )
-                    })?;
-                }
-                error => bail!(
-                    "derivation of L2 block {next} failed at L1 origin {origin}: {}",
-                    self.source.redact(error)
-                ),
-            }
-        }
-        ensure!(
-            cursor.block_info.hash == latest.block_info.hash,
-            "snapshot L2 block {} changed during fork discovery",
-            latest.block_info.number
-        );
 
-        let fork = fork.ok_or_eyre("fork discovery derived no attributes")?;
-        let header = timeout_at(deadline, l1.inner.get_block_by_number(fork.number.into()))
-            .await
-            .map_err(|_| timed_out(&format!("reading upstream L1 block {}", fork.number)))?
-            .map_err(|_| eyre!("failed to read upstream L1 block {}", fork.number))?
-            .ok_or_else(|| eyre!("upstream L1 has no block {}", fork.number))?
-            .header
-            .into_consensus();
-        let canonical =
-            BlockInfo::new(header.hash_slow(), header.number, header.parent_hash, header.timestamp);
-        ensure!(
-            canonical.hash == fork.hash,
-            "L1 block {} that derives the latest snapshot block is no longer canonical",
-            fork.number
-        );
-        Ok(canonical)
+                let (error, advancing_origin) = match pipeline.step(cursor).await {
+                    StepResult::PreparedAttributes => continue,
+                    StepResult::AdvancedOrigin => {
+                        origin =
+                            pipeline.origin().ok_or_eyre("derivation lost its L1 origin")?.number;
+                        continue;
+                    }
+                    StepResult::OriginAdvanceErr(error) => (error, true),
+                    StepResult::StepFailed(error) => (error, false),
+                };
+                match error {
+                    PipelineErrorKind::Temporary(PipelineError::NotEnoughData) => {}
+                    // The confirmation-depth gate refuses every block past the limit.
+                    PipelineErrorKind::Temporary(_) if advancing_origin && origin >= l1_limit => {
+                        bail!(
+                            "no batch derives L2 block {next} through L1 block {l1_limit} (latest L1 \
+                     origin {} plus sequencer window {}, upstream finalized {finalized})",
+                            latest.l1_origin.number,
+                            config.seq_window_size
+                        )
+                    }
+                    PipelineErrorKind::Temporary(error) => {
+                        stage = format!("retrying derivation of L2 block {next}");
+                        last_transient = Some(self.source.redact(error));
+                        sleep(Self::TRANSIENT_RETRY_DELAY).await;
+                    }
+                    // Crossing Holocene activation is a deterministic in-place transition, not a reset.
+                    PipelineErrorKind::Reset(ResetError::HoloceneActivation) => {
+                        stage = "activating Holocene derivation".into();
+                        pipeline
+                            .signal(ActivationSignal { l2_safe_head: cursor }.signal())
+                            .await
+                            .map_err(|error| {
+                            eyre!(
+                                "failed to activate Holocene derivation: {}",
+                                self.source.redact(error)
+                            )
+                        })?;
+                    }
+                    error => bail!(
+                        "derivation of L2 block {next} failed at L1 origin {origin}: {}",
+                        self.source.redact(error)
+                    ),
+                }
+            }
+            ensure!(
+                cursor.block_info.hash == latest.block_info.hash,
+                "snapshot L2 block {} changed during fork discovery",
+                latest.block_info.number
+            );
+
+            let fork = fork.ok_or_eyre("fork discovery derived no attributes")?;
+            stage = format!("reading upstream L1 block {}", fork.number);
+            let header = l1
+                .inner
+                .get_block_by_number(fork.number.into())
+                .await
+                .map_err(|_| eyre!("failed to read upstream L1 block {}", fork.number))?
+                .ok_or_else(|| eyre!("upstream L1 has no block {}", fork.number))?
+                .header
+                .into_consensus();
+            let canonical = BlockInfo::new(
+                header.hash_slow(),
+                header.number,
+                header.parent_hash,
+                header.timestamp,
+            );
+            ensure!(
+                canonical.hash == fork.hash,
+                "L1 block {} that derives the latest snapshot block is no longer canonical",
+                fork.number
+            );
+            Ok(canonical)
+        };
+        timeout(self.timeout, discovery).await.map_err(|_| {
+            eyre!(
+                "fork discovery timed out after {:?} {stage} (last transient error: {})",
+                self.timeout,
+                last_transient.as_deref().unwrap_or("none")
+            )
+        })?
     }
 }
 
@@ -867,6 +865,18 @@ mod tests {
 
         let fork = fixture.find(TIMEOUT).await.unwrap();
         assert_eq!(fork.number, BATCH_L1_BLOCK);
+    }
+
+    #[tokio::test]
+    async fn transient_retries_share_the_discovery_deadline() {
+        let mut fixture = Fixture::new();
+        fixture.failing_receipts = 4;
+
+        // Each retry sleeps 500ms, less than this budget; giving each operation a fresh
+        // deadline would eventually succeed instead of bounding the whole discovery.
+        let error = fixture.find(Duration::from_millis(900)).await.unwrap_err().to_string();
+        assert!(error.contains("timed out"), "{error}");
+        assert!(error.contains("retrying"), "{error}");
     }
 
     #[tokio::test]

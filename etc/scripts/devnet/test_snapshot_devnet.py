@@ -77,6 +77,21 @@ class SnapshotTests(unittest.TestCase):
         (path / "db/mdbx.dat").write_bytes(b"untouched")
         return path
 
+    @contextlib.contextmanager
+    def starting(self):
+        """Ready local services; each scenario supplies RPC responses and lifecycle failures."""
+        with patch.object(devnet, "validate_paths"), \
+                patch.multiple(self.fork, endpoint=DEFAULT, await_rpc=DEFAULT, assert_local_l1=DEFAULT,
+                               validate_restored_contracts=DEFAULT, wait_upgrades=DEFAULT, peers=DEFAULT), \
+                patch.object(self.fork, "running", return_value=False), \
+                patch.object(self.fork, "compose"), \
+                patch.object(self.fork, "inspect", return_value=[]), \
+                patch.object(self.fork, "running_services", return_value=devnet.FORK_SERVICES), \
+                patch.object(self.fork, "consensus_ready", return_value=True), \
+                patch.object(self.fork, "url", side_effect=lambda role: role), \
+                patch.object(devnet.time, "time", return_value=1234):
+            yield
+
     def test_up_and_down_dispatch_to_nondestructive_lifecycle(self):
         self.fork.save()
         for command, method in (("up", "start"), ("down", "stop")):
@@ -167,6 +182,48 @@ class SnapshotTests(unittest.TestCase):
                     devnet.main()
                 prompt.assert_not_called()
                 command.assert_not_called()
+
+    def test_setup_builds_missing_defaults_pulls_remote_and_preserves_custom_images(self):
+        image_id = "sha256:" + "f" * 64
+        for source in ("cached", "missing", "remote", "custom", "pinned"):
+            with self.subTest(source=source):
+                work = self.root / source
+                work.mkdir()
+                fork = devnet.SnapshotFork(work / "fork")
+                args = Mock(anvil_image="base-anvil:snapshot-24ec5e47", batcher_image="op-batcher:local")
+                if source in ("remote", "custom", "pinned"):
+                    args.anvil_image = {"remote": "ghcr.io/example/anvil:custom", "custom": "anvil:custom",
+                                        "pinned": image_id}[source]
+                commands = []
+
+                def command(*command, lock_fd):
+                    self.assertEqual(lock_fd, lock.fileno())
+                    if command[0] == "cargo":
+                        raise RuntimeError("inspector interrupted")
+                    commands.append(command)
+
+                def docker(*command):
+                    if len(command) == 4 and source in ("missing", "custom"):
+                        raise RuntimeError("image missing")
+                    return image_id
+
+                with tempfile.TemporaryFile() as lock, \
+                        patch.object(devnet.shutil, "which", return_value="/usr/bin/tool"), \
+                        patch.object(devnet, "run", side_effect=docker), \
+                        patch.object(devnet, "setup_command", side_effect=command), patch("builtins.print"):
+                    with self.assertRaisesRegex(RuntimeError, "image missing" if source == "custom" else "inspector interrupted"):
+                        devnet.prepare_snapshot(args, fork, work, lock)
+                self.assertEqual(commands[0][:3], ("docker", "buildx", "bake"))
+                if source == "missing":
+                    self.assertEqual(commands[1], ("just", "devnet", "snapshot", "build-anvil"))
+                    self.assertEqual(commands[2][:4], ("docker", "build", "-f", "etc/docker/Dockerfile.op-batcher"))
+                elif source == "remote":
+                    self.assertEqual(commands[1], ("docker", "pull", "ghcr.io/example/anvil:custom"))
+                else:
+                    self.assertEqual(len(commands), 1)
+                images = json.loads((work / "setup.json").read_text())["images"]
+                self.assertEqual(images["base"], image_id)
+                self.assertEqual(images["anvil"], "anvil:custom" if source == "custom" else image_id)
 
     def test_setup_downloads_once_copies_with_progress_and_pins_images_before_init(self):
         home = self.root / "home with spaces"
@@ -736,19 +793,10 @@ class SnapshotTests(unittest.TestCase):
                     self.assertEqual(checked, {125, 129}, "must verify both saved hashes before enabling writes")
                     effects.append(effect)
 
-                with patch.object(devnet, "validate_paths"), \
-                        patch.multiple(self.fork, endpoint=DEFAULT, await_rpc=DEFAULT, assert_local_l1=DEFAULT,
-                                       validate_restored_contracts=DEFAULT, wait_upgrades=DEFAULT,
-                                       peers=DEFAULT, start_batcher=DEFAULT, schedule_denim=DEFAULT), \
-                        patch.object(self.fork, "running", return_value=False), \
-                        patch.object(self.fork, "compose"), \
-                        patch.object(self.fork, "inspect", return_value=[]), \
-                        patch.object(self.fork, "running_services", return_value=devnet.FORK_SERVICES), \
-                        patch.object(self.fork, "consensus_ready", return_value=True), \
+                with self.starting(), \
+                        patch.multiple(self.fork, start_batcher=DEFAULT, schedule_denim=DEFAULT), \
                         patch.object(self.fork, "mine", side_effect=lambda: enable("mine")), \
-                        patch.object(self.fork, "url", side_effect=lambda role: role), \
                         patch.object(self.fork, "sync_status", side_effect=status), \
-                        patch.object(devnet.time, "time", return_value=1234), \
                         patch.object(devnet.time, "sleep"), \
                         patch.object(devnet, "rpc", side_effect=transport), patch("builtins.print"):
                     if outcome in ("recovered", "unavailable"):
@@ -789,22 +837,11 @@ class SnapshotTests(unittest.TestCase):
                         return {"number": "0x7b", "hash": "0x123"}
                     return True
 
-                with patch.object(devnet, "validate_paths"), \
-                        patch.object(self.fork, "running", return_value=False), \
-                        patch.object(self.fork, "endpoint"), \
+                with self.starting(), \
                         patch.object(self.fork, "compose", side_effect=lambda *args: calls.append(args)), \
-                        patch.object(self.fork, "await_rpc"), \
-                        patch.object(self.fork, "assert_local_l1"), \
-                        patch.object(self.fork, "validate_restored_contracts"), \
-                        patch.object(self.fork, "inspect", return_value=[]), \
                         patch.object(self.fork, "running_services", return_value={"l1", "sequencer", "validator"}), \
-                        patch.object(self.fork, "consensus_ready", return_value=True), \
-                        patch.object(self.fork, "wait_upgrades"), \
                         patch.object(self.fork, "mine"), \
-                        patch.object(self.fork, "peers"), \
-                        patch.object(self.fork, "url", side_effect=lambda role: role), \
                         patch.object(self.fork, "sync_status", return_value=sync_status(101)), \
-                        patch.object(devnet.time, "time", return_value=1234), \
                         patch.object(devnet, "wait", side_effect=waiting), \
                         patch.object(devnet, "rpc", side_effect=transport):
                     with self.assertRaisesRegex(RuntimeError, "miner" if missing_miner else "batcher"):
@@ -842,21 +879,13 @@ class SnapshotTests(unittest.TestCase):
                         return {"number": "0x7b", "hash": "0x123"}
                     return method != "admin_sequencerActive"
 
-                with patch.object(devnet, "validate_paths"), \
-                        patch.multiple(self.fork, endpoint=DEFAULT, await_rpc=DEFAULT, assert_local_l1=DEFAULT,
-                                       validate_restored_contracts=DEFAULT, wait_upgrades=DEFAULT,
-                                       mine=DEFAULT, peers=DEFAULT), \
+                with self.starting(), patch.object(self.fork, "mine"), \
                         patch.object(self.fork, "schedule_denim", side_effect=lambda: calls.append("denim")), \
-                        patch.object(self.fork, "running", return_value=False), \
                         patch.object(self.fork, "compose", side_effect=lambda *args: calls.append(args)), \
-                        patch.object(self.fork, "inspect", return_value=[]), \
                         patch.object(self.fork, "running_services", side_effect=lambda: {
                             "l1", "sequencer", "validator"} | (set() if batcher_exits and polls else {"batcher"})), \
-                        patch.object(self.fork, "consensus_ready", return_value=True), \
                         patch.object(self.fork, "start_batcher", side_effect=lambda: calls.append("batched")), \
-                        patch.object(self.fork, "url", side_effect=lambda role: role), \
                         patch.object(self.fork, "sync_status", side_effect=status), \
-                        patch.object(devnet.time, "time", return_value=1234), \
                         patch.object(devnet.time, "sleep"), \
                         patch.object(devnet, "wait", side_effect=waiting), \
                         patch.object(devnet, "rpc", side_effect=transport), \
@@ -1122,18 +1151,11 @@ class SnapshotTests(unittest.TestCase):
                 return {"number": "0x7b", "hash": "0x123"}
             return method != "admin_sequencerActive"
 
-        with patch.object(devnet, "validate_paths"), \
-                patch.multiple(self.fork, endpoint=DEFAULT, await_rpc=DEFAULT, assert_local_l1=DEFAULT,
-                               validate_restored_contracts=DEFAULT, inspect=DEFAULT, wait_upgrades=DEFAULT,
-                               wait_checkpoints=DEFAULT, mine=DEFAULT, peers=DEFAULT, start_batcher=DEFAULT), \
+        with self.starting(), \
+                patch.multiple(self.fork, wait_checkpoints=DEFAULT, mine=DEFAULT, start_batcher=DEFAULT), \
                 patch.object(self.fork, "schedule_denim", side_effect=RuntimeError("Denim receipt timed out")), \
-                patch.object(self.fork, "running", return_value=False), \
                 patch.object(self.fork, "compose", side_effect=lambda *args: calls.append(args)), \
-                patch.object(self.fork, "running_services", return_value=devnet.FORK_SERVICES), \
-                patch.object(self.fork, "consensus_ready", return_value=True), \
-                patch.object(self.fork, "url", side_effect=lambda role: role), \
                 patch.object(self.fork, "sync_status", return_value=sync_status(101)), \
-                patch.object(devnet.time, "time", return_value=1234), \
                 patch.object(devnet, "rpc", side_effect=transport), patch("builtins.print"):
             with self.assertRaisesRegex(RuntimeError, "running but Denim.*receipt timed out.*rerun schedule-denim"):
                 self.fork.start()
@@ -1273,6 +1295,15 @@ class SnapshotTests(unittest.TestCase):
             self.fork.compose("stop", "sequencer")
             self.fork.url("sequencer")
             self.assertEqual(len(commands), 5)
+
+    def test_running_refreshes_container_state_without_compose_or_keys(self):
+        self.fork._containers = []
+        with patch.object(devnet, "run", side_effect=[
+                "abc", json.dumps([container("inspect-validator")]),
+                "abc", json.dumps([container("inspect-validator", running=False)]),
+        ]):
+            self.assertTrue(self.fork.running())
+            self.assertFalse(self.fork.running())
 
     def test_gossip_connects_the_private_ip_of_the_other_node(self):
         containers = [container("sequencer", "10.9.0.2"), container("validator", "10.9.0.3")]

@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[3]
 COMPOSE = ROOT / "etc/docker/docker-compose.snapshot.yml"
 DEFAULT_TIMEOUT = 7200
 DEFAULT_DOWNLOAD_CONCURRENCY = 16
+DEFAULT_IMAGES = {"base": "base:local", "anvil": "base-anvil:snapshot-24ec5e47", "batcher": "op-batcher:local"}
 SNAPSHOT_INDEX = "https://chain.base.org/api/snapshots"
 PROTOCOL_VERSIONS = "0x7480Afc8D99a5c645c247dB5A1e4a4f440e6e095"
 IMPLEMENTATION_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
@@ -35,6 +36,7 @@ UPGRADES = (
     "regolith", "canyon", "delta", "ecotone", "fjord", "granite", "holocene",
     "pectra_blob_schedule", "isthmus", "jovian", "azul", "beryl", "cobalt", "denim", "everest",
 )
+LEGACY_UPGRADE_COUNT = UPGRADES.index("azul")
 READ_METHODS = {
     "eth_chainId", "eth_getBlockByNumber", "eth_getBlockByHash", "eth_call", "eth_getCode", "eth_getStorageAt",
 }
@@ -217,7 +219,7 @@ def prepare_snapshot(args, fork, work, lock):
     state = json.loads(journal.read_text()) if journal.exists() else None
     config = json.loads(config_path.read_text()) if config_path.exists() else None
     if state is None:
-        images = {"base": "base:local", "anvil": args.anvil_image, "batcher": args.batcher_image}
+        images = {**DEFAULT_IMAGES, "anvil": args.anvil_image, "batcher": args.batcher_image}
         phase = "build"
         if config is not None:
             # Older setup versions saved input.json but no completion marker. Never rerun
@@ -248,26 +250,30 @@ def prepare_snapshot(args, fork, work, lock):
     require(shutil.which("docker") and shutil.which("cast") and shutil.which("rsync"),
             "setup requires Docker Compose, Foundry cast and rsync")
     if state["phase"] == "build":
+        builds = {
+            "base": ("docker", "buildx", "bake", "-f", "etc/docker/docker-bake.hcl", "base",
+                     "--set", "base.args.PROFILE=release", "--load"),
+            "anvil": ("just", "devnet", "snapshot", "build-anvil"),
+            "batcher": ("docker", "build", "-f", "etc/docker/Dockerfile.op-batcher", "-t", DEFAULT_IMAGES["batcher"], "."),
+        }
         for role, image in images.items():
             if image.startswith("sha256:"):
                 continue
+            command = None
             if role == "base":
                 print("Building Base from the current checkout (including local changes).", flush=True)
-                setup_command("docker", "buildx", "bake", "-f", "etc/docker/docker-bake.hcl", "base",
-                              "--set", "base.args.PROFILE=release", "--load", lock_fd=lock.fileno())
+                command = builds[role]
             elif image.startswith("ghcr.io/"):
-                setup_command("docker", "pull", image, lock_fd=lock.fileno())
+                command = ("docker", "pull", image)
             else:
                 try:
                     run("docker", "image", "inspect", image)
                 except RuntimeError:
-                    if role == "anvil" and image == "base-anvil:snapshot-24ec5e47":
-                        setup_command("just", "devnet", "snapshot", "build-anvil", lock_fd=lock.fileno())
-                    elif role == "batcher" and image == "op-batcher:local":
-                        setup_command("docker", "build", "-f", "etc/docker/Dockerfile.op-batcher", "-t", image, ".",
-                                      lock_fd=lock.fileno())
-                    else:
+                    if image != DEFAULT_IMAGES[role]:
                         raise
+                    command = builds[role]
+            if command is not None:
+                setup_command(*command, lock_fd=lock.fileno())
             images[role] = run("docker", "image", "inspect", "--format", "{{.Id}}", image)
             write_json(journal, state)
         if "BASE_SNAPSHOT_INSPECTOR" in os.environ:
@@ -500,16 +506,29 @@ def derived_boundary(statuses, fork_number, initial_latest):
     return {"number": height, "hash": block_hash}
 
 
+def upgrade_times(config):
+    return [config.get(upgrade + "_time") if index < LEGACY_UPGRADE_COUNT else config.get("base", {}).get(upgrade)
+            for index, upgrade in enumerate(UPGRADES)]
+
+
 def validate_schedule(config, schedule, head_timestamp):
     require(COBALT_ID < len(schedule) <= len(UPGRADES), "unsupported ProtocolVersions layout")
-    for index, upgrade in enumerate(UPGRADES):
-        activation = (config.get("base", {}).get(upgrade) if index >= 10
-                      else config.get(upgrade + "_time"))
+    for index, activation in enumerate(upgrade_times(config)):
         expected = config["genesis"]["l2_time"] if activation == 0 else activation
         actual = schedule[index] if index < len(schedule) else 0
         if (expected is not None and expected <= head_timestamp) or (0 < actual <= head_timestamp):
             require(actual == expected,
-                    f"contract would change historical {upgrade} activation")
+                    f"contract would change historical {UPGRADES[index]} activation")
+
+
+def validate_origins(inspections, url, *, upstream=False):
+    for inspection in inspections:
+        for label in ("latest", "safe", "finalized"):
+            origin = inspection[label]["block_info"]["l1origin"]
+            header = rpc(url, "eth_getBlockByNumber", hex(origin["number"]), False, upstream=upstream)
+            require(header and header["hash"] == origin["hash"],
+                    "snapshot has a noncanonical L1 origin" if upstream
+                    else "restored L2 refers to missing/conflicting L1 history")
 
 
 class SnapshotFork:
@@ -615,7 +634,8 @@ class SnapshotFork:
                    "--file", str(COMPOSE), *args, env=self.compose_env(), timeout=self.timeout)
 
     def running(self):
-        return bool(self.compose("--profile", "inspect", "ps", "--status", "running", "--quiet"))
+        self._containers = None
+        return bool(self.running_services())
 
     def rpc_startup_status(self, role):
         """Summarizes current-run startup logs using only known stages and numeric progress fields."""
@@ -682,12 +702,10 @@ class SnapshotFork:
         if "initial" in self.manifest:
             config = json.loads((self.directory / "config/rollup.json").read_text())
             require(config == self.manifest["initial"][0]["rollup_config"], "pinned rollup config changed")
-            schedule = list(self.manifest["schedule"])
-            if "denim_timestamp" in self.manifest:
-                schedule = schedule[:DENIM_ID] + [self.manifest["denim_timestamp"]]
+            schedule = self.expected_schedule()
             for index, upgrade in enumerate(UPGRADES):
                 timestamp = schedule[index] if index < len(schedule) else 0
-                if index >= 10:
+                if index >= LEGACY_UPGRADE_COUNT:
                     config.setdefault("base", {})[upgrade] = timestamp or None
                 else:
                     config[upgrade + "_time"] = timestamp or None
@@ -793,11 +811,7 @@ class SnapshotFork:
         fork = {key: header[key] for key in ("number", "hash", "timestamp", "parentHash")}
         validate_boundary(inspections, discovered["number"])
         config = inspections[0]["rollup_config"]
-        for inspection in inspections:
-            for label in ("latest", "safe", "finalized"):
-                origin = inspection[label]["block_info"]["l1origin"]
-                origin_header = rpc(execution, "eth_getBlockByNumber", hex(origin["number"]), False, upstream=True)
-                require(origin_header and origin_header["hash"] == origin["hash"], "snapshot has a noncanonical L1 origin")
+        validate_origins(inspections, execution, upstream=True)
         contract = self.manifest["protocol_versions"]
         schedule = list(map(number, call(execution, contract, "getSchedule()(uint64[])",
                                          block=fork["number"], upstream=True)))
@@ -888,16 +902,18 @@ class SnapshotFork:
         rpc(url, "anvil_setBalance", batcher, hex(100 * 10**18))
         self.save()
 
+    def expected_schedule(self):
+        schedule = self.manifest["schedule"]
+        return (schedule[:DENIM_ID] + [self.manifest["denim_timestamp"]]
+                if "denim_timestamp" in self.manifest else list(schedule))
+
     def validate_restored_contracts(self):
         url = self.url("l1")
         actual = list(map(number, call(url, self.manifest["protocol_versions"], "getSchedule()(uint64[])")))
-        expected = list(self.manifest["schedule"])
         pending = self.manifest.get("pending_denim_timestamp")
-        if pending is not None and actual == expected[:DENIM_ID] + [pending]:
+        if pending is not None and actual == self.manifest["schedule"][:DENIM_ID] + [pending]:
             self.record_denim(pending)
-        if "denim_timestamp" in self.manifest:
-            expected = expected[:DENIM_ID] + [self.manifest["denim_timestamp"]]
-        require(actual == expected, "restored upgrade schedule differs from manifest")
+        require(actual == self.expected_schedule(), "restored upgrade schedule differs from manifest")
         for address, implementation in self.manifest["contracts"].items():
             require(rpc(url, "eth_getStorageAt", address, IMPLEMENTATION_SLOT, "latest") == implementation,
                     "restored contract implementation differs from manifest")
@@ -913,18 +929,12 @@ class SnapshotFork:
         return rpc(self.url(role + "-cl"), "optimism_syncStatus")
 
     def wait_upgrades(self):
-        expected = list(self.manifest["schedule"])
-        if "denim_timestamp" in self.manifest:
-            expected = expected[:DENIM_ID] + [self.manifest["denim_timestamp"]]
+        expected = [timestamp or None for timestamp in self.expected_schedule()]
         for role in ("sequencer", "validator"):
             def observed():
                 config = rpc(self.url(role + "-cl"), "optimism_rollupConfig")
                 ready = rpc(self.url(role + "-cl"), "base_upgradeReadiness")
-                return ready["ready"] and all(
-                    (config.get("base", {}).get(upgrade) if index >= 10 else config.get(upgrade + "_time"))
-                    == (expected[index] or None)
-                    for index, upgrade in enumerate(UPGRADES[:len(expected)])
-                )
+                return ready["ready"] and upgrade_times(config)[:len(expected)] == expected
             wait(role + " observing the recorded upgrade schedule", observed, self.timeout)
 
     def wait_boundary(self):
@@ -1032,6 +1042,12 @@ class SnapshotFork:
         require(len(hashes) == 1 and None not in hashes,
                 f"sequencer and validator disagree on canonical safe block {target}; data preserved")
 
+    def start_nodes(self):
+        self.compose("up", "-d", "--no-build", *ROLES)
+        for role in ROLES:
+            self.await_rpc(role)
+            wait(role + " consensus RPC", lambda: self.consensus_ready(role), self.timeout)
+
     def start(self):
         require(self.manifest["phase"] in ("prepared", "stopped", "running", "starting"), "init did not complete")
         print("Starting snapshot devnet: checking containers.", file=sys.stderr, flush=True)
@@ -1060,17 +1076,10 @@ class SnapshotFork:
             self.assert_local_l1()
             self.validate_restored_contracts()
             inspections = self.inspect()
-            for snapshot in inspections:
-                for label in ("latest", "safe", "finalized"):
-                    origin = snapshot[label]["block_info"]["l1origin"]
-                    header = rpc(self.url("l1"), "eth_getBlockByNumber", hex(origin["number"]), False)
-                    require(header and header["hash"] == origin["hash"], "restored L2 refers to missing/conflicting L1 history")
+            validate_origins(inspections, self.url("l1"))
             require(not self.running_services() & {"inspect-" + role for role in ROLES},
                     "inspection nodes still hold the datadirs")
-            self.compose("up", "-d", "--no-build", "sequencer", "validator")
-            for role in ROLES:
-                self.await_rpc(role)
-                wait(role + " consensus RPC", lambda: self.consensus_ready(role), self.timeout)
+            self.start_nodes()
             require(not rpc(self.url("validator-cl"), "admin_sequencerActive"),
                     "validator must remain stopped and derive independently")
             self.wait_checkpoints()
@@ -1080,10 +1089,7 @@ class SnapshotFork:
                 self.bootstrap()
                 # The startup signer read must use the new local SystemConfig.
                 self.compose("stop", "sequencer", "validator")
-                self.compose("up", "-d", "--no-build", "sequencer", "validator")
-                for role in ROLES:
-                    self.await_rpc(role)
-                    wait(role + " consensus RPC", lambda: self.consensus_ready(role), self.timeout)
+                self.start_nodes()
                 self.manifest["bootstrapped"] = True
                 self.save()
             self.wait_upgrades()
@@ -1279,8 +1285,8 @@ def main():
     prepare.add_argument("--workdir", help="new or interrupted working directory (remembered on retry)")
     prepare.add_argument("--download-concurrency", type=int, default=DEFAULT_DOWNLOAD_CONCURRENCY,
                          help="maximum simultaneous HTTP downloads, including file chunks (default: %(default)s)")
-    prepare.add_argument("--anvil-image", default="base-anvil:snapshot-24ec5e47")
-    prepare.add_argument("--batcher-image", default="op-batcher:local")
+    prepare.add_argument("--anvil-image", default=DEFAULT_IMAGES["anvil"])
+    prepare.add_argument("--batcher-image", default=DEFAULT_IMAGES["batcher"])
     init = commands.add_parser("init", parents=[common])
     init.add_argument("--config", required=True)
     init.add_argument("--allow-write", action="store_true")
