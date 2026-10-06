@@ -8,9 +8,9 @@ pub use mock_prover::{MockProofRequests, MockProver};
 
 mod mock_verifier;
 
-mod metrics;
-
 mod progress;
+
+mod metrics;
 pub use metrics::Scrape;
 
 mod challenger_e2e;
