@@ -3,9 +3,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-const WINDOW: Duration = Duration::from_secs(5);
+const WINDOW: Duration = Duration::from_secs(10);
 
-/// A rolling 5-second window for computing instantaneous TPS, GPS, and latency percentiles.
+/// A rolling 10-second window for computing instantaneous TPS, GPS, and latency percentiles.
 #[derive(Debug)]
 pub struct RollingWindow {
     gas_events: VecDeque<(Instant, u64)>,
@@ -40,10 +40,10 @@ impl RollingWindow {
     /// Returns the transactions-per-second rate over the rolling window.
     pub fn tps(&mut self) -> f64 {
         self.prune();
-        let count = self.gas_events.len();
-        if count == 0 {
+        let Some((oldest, _)) = self.gas_events.front() else {
             return 0.0;
-        }
+        };
+        let count = self.gas_events.iter().filter(|(at, _)| at > oldest).count();
         let window = self.elapsed_window_secs();
         if window <= 0.0 { 0.0 } else { count as f64 / window }
     }
@@ -51,10 +51,15 @@ impl RollingWindow {
     /// Returns the gas-per-second rate over the rolling window.
     pub fn gps(&mut self) -> f64 {
         self.prune();
-        if self.gas_events.is_empty() {
+        let Some((oldest, _)) = self.gas_events.front() else {
             return 0.0;
-        }
-        let total_gas: u64 = self.gas_events.iter().map(|(_, g)| *g).sum();
+        };
+        // Confirmations arrive in one batch per observed block. The oldest batch marks the start
+        // of the measured interval, so its gas belongs to the preceding interval and must not be
+        // divided by time that starts at the same observation. Including it makes three 200 Mgas
+        // blocks observed two seconds apart report 600 / 4 = 150 Mgas/s instead of 400 / 4 = 100.
+        let total_gas: u64 =
+            self.gas_events.iter().filter(|(at, _)| at > oldest).map(|(_, gas)| *gas).sum();
         let window = self.elapsed_window_secs();
         if window <= 0.0 { 0.0 } else { total_gas as f64 / window }
     }
@@ -83,7 +88,7 @@ impl RollingWindow {
         }
     }
 
-    /// Actual elapsed time covered by the oldest event in the window (clamped to 30s).
+    /// Actual elapsed time covered by the oldest event in the window (clamped to 10 seconds).
     fn elapsed_window_secs(&self) -> f64 {
         match self.gas_events.front() {
             Some((oldest, _)) => oldest.elapsed().as_secs_f64().min(WINDOW.as_secs_f64()),
@@ -95,5 +100,35 @@ impl RollingWindow {
 impl Default for RollingWindow {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::RollingWindow;
+
+    #[test]
+    fn block_batched_gas_excludes_the_interval_start_batch() {
+        let now = Instant::now();
+        let mut rolling = RollingWindow::new();
+        rolling.push_gas(200_000_000, now - Duration::from_secs(8));
+        rolling.push_gas(200_000_000, now - Duration::from_secs(6));
+        rolling.push_gas(200_000_000, now - Duration::from_secs(4));
+        rolling.push_gas(200_000_000, now - Duration::from_secs(2));
+        rolling.push_gas(200_000_000, now);
+
+        let gps = rolling.gps();
+        assert!((99_000_000.0..=101_000_000.0).contains(&gps), "unexpected GPS: {gps}");
+    }
+
+    #[test]
+    fn one_confirmation_batch_does_not_imply_a_rate() {
+        let mut rolling = RollingWindow::new();
+        rolling.push_gas(200_000_000, Instant::now());
+
+        assert_eq!(rolling.gps(), 0.0);
+        assert_eq!(rolling.tps(), 0.0);
     }
 }

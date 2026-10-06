@@ -4,7 +4,7 @@ use alloy_primitives::{Address, B256, FixedBytes, U256, keccak256};
 use alloy_sol_types::SolValue;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::IB20;
+use crate::{IB20, TokenAccounting};
 
 /// ERC-5267 `eip712Domain()` return tuple: (fields, name, version, chainId, verifyingContract, salt, extensions).
 pub type Eip712Domain = (FixedBytes<1>, String, String, U256, Address, B256, Vec<U256>);
@@ -44,6 +44,13 @@ impl PermitArgs {
     pub const RECOVERY_ID_EVEN_Y: u8 = 27;
     /// Legacy `v` value for odd-Y ECDSA recovery (`ecrecover`).
     pub const RECOVERY_ID_ODD_Y: u8 = 28;
+
+    /// Native gas charged for the secp256k1 signer recovery in a metered `permit`.
+    ///
+    /// Priced to the EVM `ECRECOVER` precompile base cost (`ISTANBUL_SIGNATURE`, 3000 gas), which
+    /// charges the same flat amount up front regardless of whether recovery succeeds. Part of the
+    /// gas-used commitment, so it must be identical across all Base execution clients.
+    pub const RECOVER_GAS: u64 = 3000;
 
     /// Hashes the EIP-2612 `Permit` struct for `nonce`.
     pub fn struct_hash(&self, nonce: U256) -> B256 {
@@ -98,6 +105,48 @@ impl PermitArgs {
                 owner: self.owner,
             })
         })
+    }
+
+    /// [`Self::struct_hash`], charging the keccak work against `accounting` before hashing.
+    pub fn metered_struct_hash(
+        &self,
+        accounting: &impl TokenAccounting,
+        nonce: U256,
+    ) -> Result<B256> {
+        accounting.metered_keccak256(
+            &(Self::TYPEHASH, self.owner, self.spender, self.value, nonce, self.deadline)
+                .abi_encode(),
+        )
+    }
+
+    /// [`Self::signing_hash`], charging both keccak rounds (struct hash and digest) against
+    /// `accounting` before hashing.
+    pub fn metered_signing_hash(
+        &self,
+        accounting: &impl TokenAccounting,
+        domain_separator: B256,
+        nonce: U256,
+    ) -> Result<B256> {
+        let struct_hash = self.metered_struct_hash(accounting, nonce)?;
+        let mut buf = [0u8; 66];
+        buf[..2].copy_from_slice(&Self::EIP712_SIGNING_PREFIX);
+        buf[2..34].copy_from_slice(domain_separator.as_slice());
+        buf[34..66].copy_from_slice(struct_hash.as_slice());
+        accounting.metered_keccak256(&buf)
+    }
+
+    /// [`Self::recover_signer`], charging the fixed [`Self::RECOVER_GAS`] recovery cost against
+    /// `accounting` before recovery.
+    ///
+    /// Mirrors the EVM `ECRECOVER` precompile: the flat cost is charged up front, before the `v`
+    /// validity check, so a caller cannot avoid the charge by supplying an out-of-range `v`.
+    pub fn metered_recover_signer(
+        &self,
+        accounting: &impl TokenAccounting,
+        signing_hash: B256,
+    ) -> Result<Address> {
+        accounting.deduct_gas(Self::RECOVER_GAS)?;
+        self.recover_signer(signing_hash)
     }
 }
 

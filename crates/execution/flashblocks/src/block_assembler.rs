@@ -69,10 +69,14 @@ impl BlockAssembler {
     /// Returns an error if:
     /// - The flashblocks slice is empty
     /// - The first flashblock is missing its base payload
+    /// - The base payload refers to genesis, which has no parent state
     /// - Block conversion fails
     pub fn assemble(flashblocks: &[Flashblock]) -> Result<AssembledBlock> {
         let first = flashblocks.first().ok_or(ProtocolError::EmptyFlashblocks)?;
         let base = first.base.clone().ok_or(ProtocolError::MissingBase)?;
+        if base.block_number == 0 {
+            return Err(ProtocolError::GenesisFlashblock.into());
+        }
         let latest_flashblock = flashblocks.last().ok_or(ProtocolError::EmptyFlashblocks)?;
 
         let transactions: Vec<Bytes> = flashblocks
@@ -299,6 +303,16 @@ mod tests {
         assert!(matches!(
             result,
             Err(crate::StateProcessorError::Protocol(ProtocolError::MissingBase))
+        ));
+    }
+
+    #[test]
+    fn assemble_rejects_genesis_base_even_with_nonzero_metadata() {
+        let mut flashblock = create_test_flashblock(0, true);
+        flashblock.base.as_mut().unwrap().block_number = 0;
+        assert!(matches!(
+            BlockAssembler::assemble(&[flashblock]),
+            Err(crate::StateProcessorError::Protocol(ProtocolError::GenesisFlashblock))
         ));
     }
 }

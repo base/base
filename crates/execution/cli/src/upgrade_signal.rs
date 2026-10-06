@@ -11,7 +11,7 @@ use base_upgrade_signal::{
     UpgradeSignalRefresher, UpgradeSignalRuntimeApplier, UpgradeSignalSchedule,
 };
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
-use reth_chainspec::{EthChainSpec, ForkFilter, ForkId, Head};
+use reth_chainspec::{ChainHardforks, ChainSpec, EthChainSpec, ForkFilter, ForkId, Head};
 use reth_discv5::NetworkStackId;
 use reth_ethereum_forks::EnrForkIdEntry;
 use reth_network::{NetworkHandle, NetworkPrimitives};
@@ -73,71 +73,33 @@ impl ExecutionUpgradeSignal {
         Ok(summary.applied_upgrades)
     }
 
-    /// Rebuilds the runtime-aware P2P [`ForkFilter`](reth_chainspec::ForkFilter) for `head` and
-    /// installs it on the network, returning the freshly advertised [`ForkId`].
-    ///
-    /// reth builds its `ForkFilter` once at startup and only advances its head, so a node that adopts
-    /// an L1-signalled fork schedule at runtime keeps advertising the fork id it cached before the
-    /// schedule changed. It then looks stale to fresh peers once the fork activates and gets
-    /// partitioned even though it enforces the new rules. Re-deriving the filter from the updated
-    /// chain spec and installing it through [`RuntimeForkFilterNetwork::install_fork_filter`] keeps
-    /// the node's advertised fork identity — across both the devp2p session layer and the discovery
-    /// ENR — aligned with the rules it now enforces.
-    ///
-    /// Returns an error if the network install fails to refresh the advertised discovery entry, so
-    /// the caller can leave its baseline unadvanced and retry rather than record a stale install.
-    pub fn install_runtime_fork_filter<Net: RuntimeForkFilterNetwork>(
-        chain_spec: &BaseChainSpec,
-        head: Head,
-        network: &Net,
-    ) -> eyre::Result<ForkId> {
-        let fork_filter = chain_spec.fork_filter(head);
-        let fork_id = fork_filter.current();
-        network.install_fork_filter(fork_filter)?;
-        Ok(fork_id)
-    }
-
-    /// A fork id that folds in the entire runtime schedule, used as a change signal for runtime
-    /// schedule updates.
-    ///
-    /// It is [`BaseChainSpec::fork_id`] evaluated at a far-future head, so every scheduled fork is
-    /// active regardless of the node's current head. It therefore changes exactly when the runtime
-    /// schedule changes, not as the chain advances between forks. Unlike
-    /// [`BaseChainSpec::latest_fork_id`] it never panics on a spec whose newest fork is still
-    /// unscheduled (`Never`) — the normal state of a running node before an upgrade.
-    pub fn schedule_fork_id(chain_spec: &BaseChainSpec) -> ForkId {
-        chain_spec.fork_id(&Head { number: u64::MAX, timestamp: u64::MAX, ..Default::default() })
-    }
-
     /// Reinstalls the P2P fork filter if the runtime schedule changed since it was last installed,
     /// returning the newly advertised [`ForkId`] (or `None` when the schedule is unchanged).
     ///
-    /// This is the per-poll routine the runtime monitor runs after every schedule read. A runtime
-    /// schedule update lands via the auto-apply path or the manual `admin_refreshUpgradeSignal` RPC;
-    /// both mutate the same runtime registry that [`Self::schedule_fork_id`] reads, so a single
-    /// check covers both. `schedule_id` tracks the last installed schedule and is advanced only when
-    /// a new filter is installed successfully, so the network message is sent once per change rather
-    /// than every block, and a failed install leaves the baseline unadvanced so the next poll
-    /// retries instead of advertising a stale fork id. A `None` `schedule_id` has no last-installed
-    /// baseline yet and therefore always installs, forcing the initial install after startup.
+    /// `chain_spec` must be a snapshot from [`BaseChainSpec::runtime_chain_spec`], so the comparison
+    /// and installed filter use the same schedule even if the registry changes concurrently. Compare
+    /// the full hardfork schedule: the EIP-2124 CRC32 hash can collide for different schedules.
+    ///
+    /// `installed_schedule` advances only after a successful network install, including discovery
+    /// ENR refresh, so failures retry on the next poll. `None` forces the initial install at startup.
     pub fn refresh_advertised_fork_filter<Net: RuntimeForkFilterNetwork>(
-        chain_spec: &BaseChainSpec,
+        chain_spec: &ChainSpec,
         head: Head,
         network: &Net,
-        schedule_id: &mut Option<ForkId>,
+        installed_schedule: &mut Option<ChainHardforks>,
     ) -> Option<ForkId> {
-        let current = Self::schedule_fork_id(chain_spec);
-        if *schedule_id == Some(current) {
+        if installed_schedule.as_ref() == Some(&chain_spec.hardforks) {
             return None;
         }
 
-        match Self::install_runtime_fork_filter(chain_spec, head, network) {
-            Ok(fork_id) => {
-                *schedule_id = Some(current);
+        let fork_filter = chain_spec.fork_filter(head);
+        let fork_id = fork_filter.current();
+        match network.install_fork_filter(fork_filter) {
+            Ok(()) => {
+                *installed_schedule = Some(chain_spec.hardforks.clone());
                 Some(fork_id)
             }
-            // Leave `schedule_id` unadvanced so the next poll retries; the advertised discovery fork
-            // id is still stale, so recording this schedule as installed would suppress that retry.
+            // Leave the baseline unadvanced so the next poll retries the stale discovery fork id.
             Err(error) => {
                 warn!(
                     target: "upgrade_signal",
@@ -154,7 +116,7 @@ impl ExecutionUpgradeSignal {
     ///
     /// Shared by the monitor's per-poll tick and the immediate wake-up an `admin_refreshUpgradeSignal`
     /// call triggers, so a manual refresh reinstalls the filter right away instead of lagging by up
-    /// to the finalized poll interval. A `None` `schedule_id` forces an install, so the first call
+    /// to the finalized poll interval. A `None` `installed_schedule` forces an install, so the first call
     /// after startup always advertises a filter derived from the live registry — even if a schedule
     /// change landed (via the admin RPC, which comes up before this task) before the baseline was
     /// taken.
@@ -162,22 +124,26 @@ impl ExecutionUpgradeSignal {
         chain_spec: &BaseChainSpec,
         provider: &Provider,
         network: &Net,
-        schedule_id: &mut Option<ForkId>,
+        installed_schedule: &mut Option<ChainHardforks>,
     ) where
         Provider: BlockNumReader + HeaderProvider,
         Net: RuntimeForkFilterNetwork,
     {
-        // The cheap schedule-fork-id compare guards the provider read so an unchanged schedule never
+        // Comparing the schedule guards the provider read so an unchanged schedule never
         // reads the head or logs a spurious head-read failure. `None` skips the guard and installs.
-        if *schedule_id == Some(Self::schedule_fork_id(chain_spec)) {
+        let snapshot = chain_spec.runtime_chain_spec();
+        if installed_schedule.as_ref() == Some(&snapshot.hardforks) {
             return;
         }
 
         match Self::current_head(provider) {
             Ok(head) => {
-                if let Some(fork_id) =
-                    Self::refresh_advertised_fork_filter(chain_spec, head, network, schedule_id)
-                {
+                if let Some(fork_id) = Self::refresh_advertised_fork_filter(
+                    &snapshot,
+                    head,
+                    network,
+                    installed_schedule,
+                ) {
                     info!(
                         target: "upgrade_signal",
                         fork_id = ?fork_id,
@@ -418,7 +384,7 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
                         // has no installed baseline yet, so the forced initial reconcile below always
                         // installs — closing the race where an admin refresh mutates the schedule
                         // (the RPC comes up before this task) before the baseline would be taken.
-                        let mut schedule_id: Option<ForkId> = None;
+                        let mut installed_schedule = None;
 
                         // Force an initial install so the advertised filter reflects the live
                         // registry at startup, independent of the first L1 poll.
@@ -426,7 +392,7 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
                             chain_spec.as_ref(),
                             &provider,
                             &network,
-                            &mut schedule_id,
+                            &mut installed_schedule,
                         );
 
                         loop {
@@ -439,7 +405,7 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
                                         chain_spec.as_ref(),
                                         &provider,
                                         &network,
-                                        &mut schedule_id,
+                                        &mut installed_schedule,
                                     );
                                 }
                                 _ = interval.tick() => {
@@ -475,7 +441,7 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
                                         chain_spec.as_ref(),
                                         &provider,
                                         &network,
-                                        &mut schedule_id,
+                                        &mut installed_schedule,
                                     );
                                 }
                             }
@@ -502,8 +468,9 @@ impl FromExtensionConfig for ExecutionUpgradeSignalRuntimeExtension {
 mod tests {
     use alloy_primitives::Address;
     use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation};
+    use base_execution_chainspec::BaseChainSpecBuilder;
     use base_upgrade_signal::UpgradeSignalDefaults;
-    use reth_chainspec::{ChainSpec, EthereumHardfork, ForkCondition};
+    use reth_chainspec::{Chain, EthereumHardfork, ForkCondition};
 
     use super::*;
 
@@ -676,9 +643,6 @@ mod tests {
     /// runtime schedule changes, is a no-op while it is unchanged, and is idempotent afterwards.
     #[test]
     fn refresh_advertised_fork_filter_tracks_runtime_schedule_changes() {
-        use base_execution_chainspec::BaseChainSpecBuilder;
-        use reth_chainspec::Chain;
-
         // A unique chain id keeps this test's runtime-registry mutation from racing the sibling
         // chain-spec tests, which read fork conditions through the same process-global registry
         // under the shared devnet chain id.
@@ -700,15 +664,15 @@ mod tests {
         let network = RecordingNetwork::default();
         // Start from an installed baseline equal to the current (empty) schedule, so the change
         // detection below is exercised in isolation from the forced-initial-install behaviour.
-        let mut schedule_id = Some(ExecutionUpgradeSignal::schedule_fork_id(&spec));
+        let mut installed_schedule = Some(spec.runtime_hardforks());
 
         // Nothing scheduled yet: the routine must not touch the network.
         assert_eq!(
             ExecutionUpgradeSignal::refresh_advertised_fork_filter(
-                &spec,
+                &spec.runtime_chain_spec(),
                 head,
                 &network,
-                &mut schedule_id,
+                &mut installed_schedule,
             ),
             None
         );
@@ -721,10 +685,10 @@ mod tests {
         // and advances the schedule baseline to the new schedule.
         let restarted = spec.fork_filter(head);
         let installed_id = ExecutionUpgradeSignal::refresh_advertised_fork_filter(
-            &spec,
+            &spec.runtime_chain_spec(),
             head,
             &network,
-            &mut schedule_id,
+            &mut installed_schedule,
         )
         .expect("a runtime schedule change must reinstall the fork filter");
         let running = network.installed();
@@ -733,15 +697,15 @@ mod tests {
         assert_eq!(running.current(), restarted.current());
         assert!(running.validate(restarted.current()).is_ok());
         assert!(restarted.validate(running.current()).is_ok());
-        assert_eq!(schedule_id, Some(ExecutionUpgradeSignal::schedule_fork_id(&spec)));
+        assert_eq!(installed_schedule, Some(spec.runtime_hardforks()));
 
         // Idempotent: with no further schedule change, the routine stays a no-op.
         assert_eq!(
             ExecutionUpgradeSignal::refresh_advertised_fork_filter(
-                &spec,
+                &spec.runtime_chain_spec(),
                 head,
                 &network,
-                &mut schedule_id,
+                &mut installed_schedule,
             ),
             None
         );
@@ -754,9 +718,6 @@ mod tests {
     /// the race where an admin refresh mutates the schedule before the monitor takes its baseline.
     #[test]
     fn refresh_advertised_fork_filter_forces_initial_install_when_uninstalled() {
-        use base_execution_chainspec::BaseChainSpecBuilder;
-        use reth_chainspec::Chain;
-
         let chain_id = 9_100_101;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
 
@@ -769,29 +730,29 @@ mod tests {
 
         let head = Head { timestamp: 43, ..Default::default() };
         let network = RecordingNetwork::default();
-        let mut schedule_id: Option<ForkId> = None;
+        let mut installed_schedule = None;
 
         // Even with nothing scheduled, an uninstalled baseline installs the current filter and
         // advances the baseline to it.
         let installed_id = ExecutionUpgradeSignal::refresh_advertised_fork_filter(
-            &spec,
+            &spec.runtime_chain_spec(),
             head,
             &network,
-            &mut schedule_id,
+            &mut installed_schedule,
         )
         .expect("a None baseline must force an initial install");
 
         assert_eq!(installed_id, spec.fork_filter(head).current());
-        assert_eq!(schedule_id, Some(ExecutionUpgradeSignal::schedule_fork_id(&spec)));
+        assert_eq!(installed_schedule, Some(spec.runtime_hardforks()));
         assert!(network.installed_opt().is_some());
 
         // A second call with the baseline now set is a no-op.
         assert_eq!(
             ExecutionUpgradeSignal::refresh_advertised_fork_filter(
-                &spec,
+                &spec.runtime_chain_spec(),
                 head,
                 &network,
-                &mut schedule_id,
+                &mut installed_schedule,
             ),
             None
         );
@@ -804,9 +765,6 @@ mod tests {
     /// install as complete and suppressing reconciliation until another schedule change.
     #[test]
     fn refresh_advertised_fork_filter_retries_after_failed_install() {
-        use base_execution_chainspec::BaseChainSpecBuilder;
-        use reth_chainspec::Chain;
-
         let chain_id = 9_100_102;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
 
@@ -819,7 +777,7 @@ mod tests {
 
         let head = Head { timestamp: 43, ..Default::default() };
         let network = RecordingNetwork::default();
-        let mut schedule_id = Some(ExecutionUpgradeSignal::schedule_fork_id(&spec));
+        let mut installed_schedule = Some(spec.runtime_hardforks());
 
         // A runtime schedule change lands, but the discovery ENR refresh fails.
         RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Azul, 42);
@@ -828,30 +786,103 @@ mod tests {
         // The failed install advertises nothing new and, crucially, does not advance the baseline.
         assert_eq!(
             ExecutionUpgradeSignal::refresh_advertised_fork_filter(
-                &spec,
+                &spec.runtime_chain_spec(),
                 head,
                 &network,
-                &mut schedule_id,
+                &mut installed_schedule,
             ),
             None
         );
         assert!(network.installed_opt().is_none());
-        assert_ne!(schedule_id, Some(ExecutionUpgradeSignal::schedule_fork_id(&spec)));
+        assert_ne!(installed_schedule, Some(spec.runtime_hardforks()));
 
         // The next poll retries because the baseline still reflects the pre-change schedule; this
         // time the install succeeds and the baseline advances to the new schedule.
         network.set_failing(false);
         let installed_id = ExecutionUpgradeSignal::refresh_advertised_fork_filter(
-            &spec,
+            &spec.runtime_chain_spec(),
             head,
             &network,
-            &mut schedule_id,
+            &mut installed_schedule,
         )
         .expect("the retry after a failed install must reinstall the fork filter");
 
         assert_eq!(installed_id, spec.fork_filter(head).current());
-        assert_eq!(schedule_id, Some(ExecutionUpgradeSignal::schedule_fork_id(&spec)));
+        assert_eq!(installed_schedule, Some(spec.runtime_hardforks()));
         assert!(network.installed_opt().is_some());
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn refresh_advertised_fork_filter_detects_colliding_fork_ids() {
+        let chain_id = 9_100_103;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        let spec = BaseChainSpecBuilder::default()
+            .chain(Chain::from_id(chain_id))
+            .genesis(Default::default())
+            .with_fork(BaseUpgrade::Cobalt, ForkCondition::Never)
+            .with_fork(BaseUpgrade::Denim, ForkCondition::Never)
+            .build();
+
+        // These two timestamp pairs have equal terminal CRC32 hashes for any common genesis
+        // prefix, but different intermediate fork IDs. No probabilistic search runs in this test.
+        RuntimeUpgradeRegistry::set_activation_timestamp(
+            chain_id,
+            BaseUpgrade::Cobalt,
+            1_800_368_390,
+        );
+        RuntimeUpgradeRegistry::set_activation_timestamp(
+            chain_id,
+            BaseUpgrade::Denim,
+            1_810_477_965,
+        );
+        let old = spec.runtime_chain_spec();
+        let before = Head { timestamp: 1_799_999_999, ..Default::default() };
+        let head = Head { timestamp: 1_805_000_000, ..Default::default() };
+        let terminal = Head { number: u64::MAX, timestamp: u64::MAX, ..Default::default() };
+        let network = RecordingNetwork::default();
+        let mut installed_schedule = None;
+        ExecutionUpgradeSignal::refresh_advertised_fork_filter(
+            &old,
+            before,
+            &network,
+            &mut installed_schedule,
+        )
+        .expect("install the old schedule");
+
+        RuntimeUpgradeRegistry::set_activation_timestamp(
+            chain_id,
+            BaseUpgrade::Cobalt,
+            1_800_034_297,
+        );
+        RuntimeUpgradeRegistry::set_activation_timestamp(
+            chain_id,
+            BaseUpgrade::Denim,
+            1_810_307_780,
+        );
+        let updated = spec.runtime_chain_spec();
+        assert_eq!(old.fork_id(&terminal), updated.fork_id(&terminal));
+        assert_ne!(old.hardforks, updated.hardforks);
+
+        let mut stale = network.installed();
+        stale.set_head(head);
+        let restarted = spec.fork_filter(head);
+        assert!(stale.validate(restarted.current()).is_err());
+        assert!(restarted.validate(stale.current()).is_err());
+
+        ExecutionUpgradeSignal::refresh_advertised_fork_filter(
+            &updated,
+            head,
+            &network,
+            &mut installed_schedule,
+        )
+        .expect("a terminal CRC32 collision must not suppress refresh");
+        let running = network.installed();
+        assert_eq!(running.current(), restarted.current());
+        assert!(running.validate(restarted.current()).is_ok());
+        assert!(restarted.validate(running.current()).is_ok());
+        assert_eq!(installed_schedule, Some(updated.hardforks));
 
         RuntimeUpgradeRegistry::clear_chain(chain_id);
     }

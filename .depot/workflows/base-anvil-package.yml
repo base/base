@@ -15,17 +15,22 @@ on:
       base_anvil_ref:
         description: "base/base-anvil ref to build from"
         required: false
-        default: 3983d1f5c13592c5074bb47df67fa58f1295d758
+        default: 98e7839c65f64aee9627b69a9b98b79afaeb1fae
       base_std_ref:
         description: "base/base-std ref to smoke test against"
         required: false
         default: main
+      base_upgrade:
+        description: "base upgrade passed to anvil --base"
+        required: false
+        default: denim
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 env:
-  BASE_ANVIL_REF: ${{ github.event.inputs.base_anvil_ref || '3983d1f5c13592c5074bb47df67fa58f1295d758' }}
+  BASE_ANVIL_REF: ${{ github.event.inputs.base_anvil_ref || '98e7839c65f64aee9627b69a9b98b79afaeb1fae' }}
   BASE_STD_REF: ${{ github.event.inputs.base_std_ref || 'main' }}
+  BASE_UPGRADE: ${{ github.event.inputs.base_upgrade || 'denim' }}
   CARGO_TERM_COLOR: always
   REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/base-anvil
   RUSTC_WRAPPER: "sccache"
@@ -105,25 +110,15 @@ jobs:
       - name: Resolve base-std ref
         id: base-std
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.BASE_STD_TOKEN }}
         run: |
           set -euo pipefail
 
-          if base_std_sha="$(gh api repos/base/base-std/git/ref/heads/"$BASE_STD_REF" --jq '.object.sha' 2>/dev/null)" \
-            && [[ -n "$base_std_sha" ]]; then
-            :
-          elif base_std_sha="$(gh api repos/base/base-std/git/ref/tags/"$BASE_STD_REF" --jq '.object.sha' 2>/dev/null)" \
-            && [[ -n "$base_std_sha" ]]; then
-            :
-          else
-            base_std_sha="$(gh api "repos/base/base-std/git/ref/$BASE_STD_REF" --jq '.object.sha')"
-          fi
-
-          if [[ -z "$base_std_sha" ]]; then
-            echo "::error::Unable to resolve base-std ref $BASE_STD_REF"
-            exit 1
-          fi
+          resolve_dir="$RUNNER_TEMP/base-std-resolve"
+          rm -rf "$resolve_dir"
+          git init "$resolve_dir"
+          git -C "$resolve_dir" remote add origin https://github.com/base/base-std.git
+          git -C "$resolve_dir" fetch --depth 1 origin "$BASE_STD_REF"
+          base_std_sha="$(git -C "$resolve_dir" rev-parse FETCH_HEAD)"
 
           echo "sha=$base_std_sha" >> "$GITHUB_OUTPUT"
       - name: Build patched base-anvil binaries
@@ -148,7 +143,6 @@ jobs:
         if: matrix.settings.smoke_test
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.BASE_STD_TOKEN }}
           BASE_STD_SHA: ${{ steps.base-std.outputs.sha }}
         run: |
           set -euo pipefail
@@ -157,8 +151,8 @@ jobs:
           base_std_dir="$workdir/base-std"
           mkdir -p "$workdir"
 
-          gh auth setup-git
-          gh repo clone base/base-std "$base_std_dir" -- --filter=blob:none --no-checkout
+          git clone --filter=blob:none --no-checkout \
+            https://github.com/base/base-std.git "$base_std_dir"
           git -C "$base_std_dir" fetch --depth 1 origin "$BASE_STD_SHA"
           git -C "$base_std_dir" checkout --detach FETCH_HEAD
           git -C "$base_std_dir" submodule update --init --recursive --depth 1
@@ -187,6 +181,7 @@ jobs:
           ANVIL_BIN="$BASE_ANVIL_DIR/target/release/anvil" \
             FORGE_BIN="$BASE_ANVIL_DIR/target/release/forge" \
             ANVIL_LOG="$RUNNER_TEMP/base-std-anvil.log" \
+            BASE_UPGRADE="$BASE_UPGRADE" \
             make fork-tests
       - name: Upload anvil log
         if: always() && matrix.settings.smoke_test
@@ -232,12 +227,14 @@ jobs:
             --arg std_repo "base/base-std" \
             --arg std_ref "$BASE_STD_REF" \
             --arg std_sha "$BASE_STD_SHA" \
+            --arg base_upgrade "$BASE_UPGRADE" \
             --argjson smoke_tested "$SMOKE_TESTED" \
             '{
               package: $package,
               platform: $platform,
               base: {repo: $base_repo, ref: $base_ref, sha: $base_sha},
               base_anvil: {repo: $anvil_repo, ref: $anvil_ref, sha: $anvil_sha},
+              base_upgrade: $base_upgrade,
               base_std: {
                 repo: $std_repo,
                 ref: $std_ref,
@@ -329,7 +326,7 @@ jobs:
           primary_tag="sha-$GITHUB_SHA"
           tags=("$REGISTRY_IMAGE:$primary_tag")
 
-          if [[ "$GITHUB_REF_NAME" == "main" && "$BASE_ANVIL_REF" == "3983d1f5c13592c5074bb47df67fa58f1295d758" && "$BASE_STD_REF" == "main" ]]; then
+          if [[ "$GITHUB_REF_NAME" == "main" && "$BASE_ANVIL_REF" == "98e7839c65f64aee9627b69a9b98b79afaeb1fae" && "$BASE_STD_REF" == "main" && "$BASE_UPGRADE" == "denim" ]]; then
             tags+=("$REGISTRY_IMAGE:main")
             tags+=("$REGISTRY_IMAGE:main-$commit_date-$short_sha")
           else

@@ -138,6 +138,7 @@ Besides tests, `just ci` / `just pr` run several static checks:
 | `no_std` (proof) | `etc/scripts/ci/check-no-std-proof.sh` | Same, for bare-metal FPVM proof crates |
 | Feature flags | `zepter format features && zepter` | Validates Cargo feature propagation across the workspace |
 | Links | `lychee --config ./lychee.toml .` | Checks for dead links across the repo |
+| Docs index | `python3 etc/scripts/local/docs-index.py check` | Confirms every Markdown doc is listed, with a reviewed summary, in `llms.txt` and `llms-full.txt`, and that both are up to date |
 
 Each has a `just check::<name>` recipe (e.g. `just check::clippy`, `just check::udeps`) — run
 `just check` to list them all. `just fix` auto-fixes formatting, clippy, and zepter issues where

@@ -19,7 +19,9 @@ reth-execution-types.workspace = true
 reth-execution-errors.workspace = true
 reth-primitives-traits.workspace = true
 
+reth-errors = { workspace = true, optional = true }
 reth-rpc-eth-api = { workspace = true, optional = true }
+reth-rpc-eth-types = { workspace = true, optional = true }
 
 # ethereum
 alloy-evm.workspace = true
@@ -76,4 +78,10 @@ std = [
 	"thiserror/std",
 ]
 portable = [ "base-common-evm/portable", "reth-revm/portable", "revm/portable" ]
-rpc = [ "alloy-evm/rpc", "alloy-rpc-types-eth", "reth-rpc-eth-api" ]
+rpc = [
+	"alloy-evm/rpc",
+	"alloy-rpc-types-eth",
+	"reth-errors",
+	"reth-rpc-eth-api",
+	"reth-rpc-eth-types",
+]

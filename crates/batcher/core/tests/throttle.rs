@@ -1,334 +1,170 @@
 //! Integration tests for DA throttle behaviour in [`BatchDriver`].
 
 use std::{
-    sync::{Arc, Mutex},
+    sync::{Arc, atomic::Ordering},
     time::Duration,
 };
 
-use alloy_primitives::Address;
-use async_trait::async_trait;
 use base_batcher_core::{
-    BatchDriver, BatchDriverConfig, DaThrottle, ThrottleConfig, ThrottleController,
-    ThrottleStrategy,
-    test_utils::{
-        ImmediateConfirmTxManager, PendingL1HeadSource, PendingSource, Recorded, TrackingPipeline,
-        TrackingThrottleClient,
-    },
+    DaLimits, DaThrottle, ThrottleConfig, ThrottleController, ThrottleStrategy,
+    test_utils::{BlockStub, DriverFixture, ScriptedTxManager, TrackingPipeline},
 };
-use base_batcher_encoder::{
-    BatchPipeline, BatchSubmission, DerivationReconciliation, ReorgError, StepError, StepResult,
-    SubmissionId,
+use base_batcher_source::{
+    L2BlockEvent,
+    test_utils::{ChannelBlockSource, ChannelL1HeadSource},
 };
-use base_batcher_source::{L2BlockEvent, SourceError, UnsafeBlockSource};
-use base_common_consensus::BaseBlock;
-use base_protocol::BlockInfo;
 use base_runtime::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
 };
-use tokio::sync::mpsc;
 
-/// When the DA backlog exceeds the threshold, the driver must call
-/// `set_max_da_size` on the throttle client with reduced limits.
-#[test]
-fn test_throttle_client_called_on_high_backlog() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        // 2 MB backlog — above the default 1 MB threshold.
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(2_000_000);
-
-        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
-        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
-
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            pipeline,
-            PendingSource,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(throttle, Arc::new(throttle_client)),
-            PendingL1HeadSource,
-        );
-        let handle = ctx.spawn(driver.run());
-
-        ctx.sleep(Duration::from_millis(50)).await;
-        ctx.cancel();
-        assert!(handle.await.unwrap().is_ok());
-
-        let calls = throttle_recorded.lock().unwrap();
-        assert!(!calls.is_empty(), "throttle client must be called when backlog is high");
-        let (max_tx_size, max_block_size) = calls[0];
-        assert!(
-            max_block_size < 130_000,
-            "max_block_size should be below upper limit when throttled, got {max_block_size}"
-        );
-        assert!(
-            max_tx_size < 20_000,
-            "max_tx_size should be below upper limit when throttled, got {max_tx_size}"
-        );
-    });
+/// The limits applied when not throttling.
+const fn upper_limits(config: &ThrottleConfig) -> DaLimits {
+    DaLimits {
+        max_tx_size: config.tx_size_upper_limit,
+        max_block_size: config.block_size_upper_limit,
+    }
 }
 
-/// When the DA backlog is zero (below threshold), the driver must call
-/// `set_max_da_size` with the upper limits to reset any previous throttle.
-#[test]
-fn test_throttle_client_called_with_upper_limits_on_zero_backlog() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(0);
-
-        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
-        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
-
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            pipeline,
-            PendingSource,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(throttle, Arc::new(throttle_client)),
-            PendingL1HeadSource,
-        );
-        let handle = ctx.spawn(driver.run());
-
-        ctx.sleep(Duration::from_millis(50)).await;
-        ctx.cancel();
-        assert!(handle.await.unwrap().is_ok());
-
-        let calls = throttle_recorded.lock().unwrap();
-        assert!(!calls.is_empty(), "throttle client must be called even with zero backlog");
-        let (max_tx_size, max_block_size) = calls[0];
-        assert_eq!(
-            max_block_size, 130_000,
-            "max_block_size should be the upper limit when not throttling"
-        );
-        assert_eq!(
-            max_tx_size, 20_000,
-            "max_tx_size should be the upper limit when not throttling"
-        );
-    });
+/// The limits applied at full intensity.
+const fn lower_limits(config: &ThrottleConfig) -> DaLimits {
+    DaLimits {
+        max_tx_size: config.tx_size_lower_limit,
+        max_block_size: config.block_size_lower_limit,
+    }
 }
 
-/// `set_max_da_size` must be called exactly once when limits do not change
-/// between driver loop iterations.
-#[test]
-fn test_throttle_not_called_redundantly() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(0);
-
-        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
-        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
-
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            pipeline,
-            PendingSource,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(throttle, Arc::new(throttle_client)),
-            PendingL1HeadSource,
-        );
-        let handle = ctx.spawn(driver.run());
-
-        // Run for 100ms to allow multiple loop iterations.
-        ctx.sleep(Duration::from_millis(100)).await;
-        ctx.cancel();
-        assert!(handle.await.unwrap().is_ok());
-
-        let calls = throttle_recorded.lock().unwrap();
-        assert_eq!(
-            calls.len(),
-            1,
-            "set_max_da_size must be called exactly once when limits do not change, got {}",
-            calls.len()
-        );
-    });
-}
-
-/// With the Step strategy and full intensity, when backlog is above the
-/// threshold, the driver must apply the lower DA limits.
-#[test]
-fn test_step_strategy_full_intensity_applies_lower_limits() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        // Backlog of 100 — above threshold of 1.
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(100);
-
-        let config =
-            ThrottleConfig { threshold_bytes: 1, max_intensity: 1.0, ..Default::default() };
-        let throttle = ThrottleController::new(config, ThrottleStrategy::Step);
-        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
-
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            pipeline,
-            PendingSource,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(throttle, Arc::new(throttle_client)),
-            PendingL1HeadSource,
-        );
-        let handle = ctx.spawn(driver.run());
-
-        ctx.sleep(Duration::from_millis(50)).await;
-        ctx.cancel();
-        assert!(handle.await.unwrap().is_ok());
-
-        let calls = throttle_recorded.lock().unwrap();
-        assert!(!calls.is_empty(), "throttle client must be called with Step strategy");
-        let (max_tx_size, max_block_size) = calls[0];
-        assert_eq!(
-            max_block_size, 2_000,
-            "Step strategy at full intensity must apply block_size_lower_limit"
-        );
-        assert_eq!(
-            max_tx_size, 150,
-            "Step strategy at full intensity must apply tx_size_lower_limit"
-        );
-    });
-}
-
-/// Verifies that when the DA backlog transitions from above the threshold
-/// (throttle active) to zero (throttle inactive), the driver makes exactly
-/// two RPC calls: one with reduced limits and one resetting to upper limits.
+/// A backlog at twice the threshold publishes the lower limits and forces blob submissions. Once
+/// the backlog is gone, the upper limits are published again and blobs are no longer forced.
 #[test]
 fn test_throttle_transitions_from_active_to_inactive() {
-    // Pipeline whose DA backlog is controlled from the test via a shared lock.
-    struct DynamicPipeline {
-        backlog: Arc<Mutex<u64>>,
-    }
-
-    impl BatchPipeline for DynamicPipeline {
-        fn add_block(&mut self, _: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)> {
-            Ok(())
-        }
-
-        fn step(&mut self) -> Result<StepResult, StepError> {
-            Ok(StepResult::Idle)
-        }
-
-        fn next_submission(&mut self) -> Option<BatchSubmission> {
-            None
-        }
-
-        fn has_ready_submission(&self) -> bool {
-            false
-        }
-
-        fn confirm(&mut self, _: SubmissionId, _: u64) {}
-        fn requeue(&mut self, _: SubmissionId) {}
-        fn flush(&mut self) -> Result<(), StepError> {
-            Ok(())
-        }
-        fn advance_l1_head(&mut self, _: u64) {}
-        fn reconcile_derivation(
-            &mut self,
-            _: BlockInfo,
-            _: Option<u64>,
-        ) -> DerivationReconciliation {
-            DerivationReconciliation::Consistent
-        }
-        fn reset(&mut self) {}
-
-        fn da_backlog_bytes(&self) -> u64 {
-            *self.backlog.lock().unwrap()
-        }
-    }
-
-    // Source driven by an mpsc channel so the test can wake the driver loop
-    // by sending a dummy block event after changing the backlog.
-    struct ChannelSource {
-        rx: mpsc::UnboundedReceiver<L2BlockEvent>,
-    }
-
-    #[async_trait]
-    impl UnsafeBlockSource for ChannelSource {
-        async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
-            match self.rx.recv().await {
-                Some(event) => Ok(event),
-                // Channel closed: park until the driver is cancelled.
-                None => std::future::pending().await,
-            }
-        }
-    }
-
     Runner::start(Config::seeded(0), |ctx| async move {
-        let (source_tx, source_rx) = mpsc::unbounded_channel();
+        let (source, source_tx) = ChannelBlockSource::new();
 
-        // Start with 2 MB backlog — above the default 1 MB threshold.
-        let backlog = Arc::new(Mutex::new(2_000_000u64));
-        let pipeline = DynamicPipeline { backlog: Arc::clone(&backlog) };
+        let config = ThrottleConfig::default();
+        let pipeline = TrackingPipeline::new().with_da_backlog(2 * config.threshold_bytes);
+        let backlog = Arc::clone(&pipeline.da_backlog_bytes);
+        let blob_override = Arc::clone(&pipeline.blob_override);
 
-        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
-        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
+        let throttle =
+            DaThrottle::new(ThrottleController::new(config.clone(), ThrottleStrategy::Linear));
+        let limits = throttle.subscribe();
 
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            pipeline,
-            ChannelSource { rx: source_rx },
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(throttle, Arc::new(throttle_client)),
-            PendingL1HeadSource,
-        );
+        let (driver, _handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                .source(source)
+                .throttle(throttle)
+                .build();
         let handle = ctx.spawn(driver.run());
 
-        // First iteration fires immediately on startup; give it time to complete.
+        // The first iteration runs at startup, so give it time to complete.
         ctx.sleep(Duration::from_millis(30)).await;
+        assert_eq!(
+            *limits.borrow(),
+            lower_limits(&config),
+            "twice the threshold is full intensity"
+        );
+        assert!(blob_override.load(Ordering::SeqCst), "throttling forces blobs");
 
         // Drop the backlog to zero, then wake the driver by delivering a dummy
         // block so the select! arm fires and the loop re-runs the throttle check.
-        *backlog.lock().unwrap() = 0;
-        source_tx.send(L2BlockEvent::Block(Box::default())).unwrap();
+        backlog.store(0, Ordering::SeqCst);
+        source_tx.send(L2BlockEvent::Block(Box::new(BlockStub::with_number(1)))).unwrap();
 
         ctx.sleep(Duration::from_millis(30)).await;
         ctx.cancel();
         assert!(handle.await.unwrap().is_ok());
 
-        let calls = throttle_recorded.lock().unwrap();
-        assert!(
-            calls.len() >= 2,
-            "expected at least 2 throttle calls (activate + deactivate), got {}",
-            calls.len()
-        );
+        assert_eq!(*limits.borrow(), upper_limits(&config));
+        assert!(!blob_override.load(Ordering::SeqCst), "blobs are no longer forced");
+    });
+}
 
-        // First call must have reduced limits (throttle active, backlog was high).
-        let (first_tx, first_block) = calls[0];
-        assert!(
-            first_block < 130_000,
-            "first call should apply throttled block limit, got {first_block}"
-        );
-        assert!(first_tx < 20_000, "first call should apply throttled tx limit, got {first_tx}");
+/// A throttle controller set over the admin API publishes its limits for the current backlog.
+#[test]
+fn test_admin_set_throttle_publishes_the_new_limits() {
+    Runner::start(Config::seeded(0), |ctx| async move {
+        let config = ThrottleConfig::default();
+        let pipeline = TrackingPipeline::new().with_da_backlog(2 * config.threshold_bytes);
+        let throttle = DaThrottle::new(ThrottleController::disabled());
+        let mut limits = throttle.subscribe();
 
-        // Last call must reset to upper limits (throttle deactivated).
-        let (last_tx, last_block) = *calls.last().unwrap();
-        assert_eq!(last_block, 130_000, "last call should reset block limit to upper bound");
-        assert_eq!(last_tx, 20_000, "last call should reset tx limit to upper bound");
+        let (driver, handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                .throttle(throttle)
+                .build();
+        let handle = ctx.spawn(driver.run());
+
+        handles.admin.set_throttle(ThrottleStrategy::Linear, config.clone()).await.unwrap();
+        ctx.sleep(Duration::from_millis(10)).await;
+        assert!(limits.has_changed().unwrap(), "the new limits are published");
+        assert_eq!(*limits.borrow_and_update(), lower_limits(&config));
+
+        ctx.cancel();
+        assert!(handle.await.unwrap().is_ok());
+    });
+}
+
+/// With blob forcing off, throttling publishes the lower limits but leaves the DA type alone.
+#[test]
+fn test_throttling_without_blob_forcing_keeps_the_da_type() {
+    Runner::start(Config::seeded(0), |ctx| async move {
+        let config = ThrottleConfig::default();
+        let pipeline = TrackingPipeline::new().with_da_backlog(2 * config.threshold_bytes);
+        let blob_override = Arc::clone(&pipeline.blob_override);
+        let throttle =
+            DaThrottle::new(ThrottleController::new(config.clone(), ThrottleStrategy::Linear));
+        let limits = throttle.subscribe();
+
+        let (driver, _handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                .throttle(throttle)
+                .force_blobs_when_throttling(false)
+                .build();
+        let handle = ctx.spawn(driver.run());
+
+        ctx.sleep(Duration::from_millis(10)).await;
+        ctx.cancel();
+        assert!(handle.await.unwrap().is_ok());
+
+        assert_eq!(*limits.borrow(), lower_limits(&config));
+        assert!(!blob_override.load(Ordering::SeqCst), "the DA type is left alone");
+    });
+}
+
+/// Without a backlog the throttle starts on the upper limits and publishes nothing while the
+/// backlog stays the same.
+#[test]
+fn test_upper_limits_are_published_once_while_the_backlog_is_unchanged() {
+    Runner::start(Config::seeded(0), |ctx| async move {
+        let pipeline = TrackingPipeline::new();
+        let recorded = pipeline.recorded();
+        let (l1_head_source, l1_head_tx) = ChannelL1HeadSource::new();
+
+        let config = ThrottleConfig::default();
+        let throttle =
+            DaThrottle::new(ThrottleController::new(config.clone(), ThrottleStrategy::Linear));
+        let limits = throttle.subscribe();
+        assert_eq!(*limits.borrow(), upper_limits(&config));
+
+        let (driver, _handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                .l1_head_source(l1_head_source)
+                .throttle(throttle)
+                .build();
+        let handle = ctx.spawn(driver.run());
+
+        // Each L1 head wakes the loop for another iteration with the same backlog.
+        for l1_head in 1..=3 {
+            l1_head_tx.send(l1_head).unwrap();
+        }
+        ctx.sleep(Duration::from_millis(10)).await;
+        assert_eq!(recorded.lock().unwrap().l1_heads(), [1, 2, 3]);
+
+        // Check the publication while the driver runs, since a stopped driver drops the sender.
+        assert!(!limits.has_changed().unwrap(), "unchanged limits are not published again");
+
+        ctx.cancel();
+        assert!(handle.await.unwrap().is_ok());
     });
 }

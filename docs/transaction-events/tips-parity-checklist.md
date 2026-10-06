@@ -34,9 +34,6 @@ against audit-archiver/Postgres.
 - `audit-archiver` has `TIPS_AUDIT_POSTGRES_URL` set and serves both JSON-RPC
   and transaction-event HTTP ingest on the audit service port. Vector posts
   NDJSON to `/v1/transaction-events/batch` on that same port.
-- `ingress-rpc` has `TIPS_INGRESS_TRANSACTION_EVENTS_ENABLED=true` only in the
-  environment being tested, with the JSONL file path matching the Vector
-  sidecar mount.
 - The UI has `TIPS_UI_QUERY_BACKEND=audit` and `TIPS_UI_AUDIT_RPC_URL` pointed at
   the audit service.
 - S3 objects are still being written during the comparison window.

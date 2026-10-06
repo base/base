@@ -697,3 +697,119 @@ fn test_rocksdb_exact_lookup_returns_none_when_versions_are_above_bound()
 
     Ok(())
 }
+
+/// Point lookups must return exactly the newest live version at or below the bound, and must not
+/// fall through to a neighbor when the target is missing, tombstoned, zero, or only newer. The
+/// layout places misses next to a key whose many versions end in a tombstone, which is the shape
+/// that made range-cursor seeks walk dead history.
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[serial]
+fn test_point_lookups_match_exact_seek_semantics<
+    S: BaseProofsStore + BaseProofsInitialStateStore,
+>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    const DEAD_KEY_LIVE_BLOCKS: u64 = 50;
+    const DEAD_KEY_TOMBSTONE_BLOCK: u64 = DEAD_KEY_LIVE_BLOCKS + 1;
+    const UPDATE_BLOCK: u64 = 55;
+    const LAST_BLOCK: u64 = 60;
+
+    let left = B256::repeat_byte(0x10);
+    let miss_before_dead = B256::repeat_byte(0x18);
+    let dead = B256::repeat_byte(0x20);
+    let miss_after_dead = B256::repeat_byte(0x28);
+    let right = B256::repeat_byte(0x30);
+    let updated = B256::repeat_byte(0x50);
+    let newer_only = B256::repeat_byte(0x60);
+    let hashed_address = B256::repeat_byte(0xA0);
+
+    let account_v1 = create_test_account_with_values(1, 100, 0xAA);
+    let account_v2 = create_test_account_with_values(2, 200, 0xBB);
+
+    let mut parent = B256::ZERO;
+    for block in 1..=LAST_BLOCK {
+        let mut post_state = HashedPostState::default();
+        let mut hashed_storage = HashedStorage::default();
+        if block == 1 {
+            post_state.accounts.insert(left, Some(account_v1));
+            post_state.accounts.insert(right, Some(account_v1));
+            post_state.accounts.insert(updated, Some(account_v1));
+            hashed_storage.storage.insert(left, U256::from(100));
+            hashed_storage.storage.insert(right, U256::from(300));
+            hashed_storage.storage.insert(updated, U256::from(7));
+        }
+        if block <= DEAD_KEY_LIVE_BLOCKS {
+            post_state
+                .accounts
+                .insert(dead, Some(create_test_account_with_values(block, block, 0xDD)));
+            hashed_storage.storage.insert(dead, U256::from(block));
+        }
+        if block == DEAD_KEY_TOMBSTONE_BLOCK {
+            post_state.accounts.insert(dead, None);
+            hashed_storage.storage.insert(dead, U256::ZERO);
+        }
+        if block == UPDATE_BLOCK {
+            post_state.accounts.insert(updated, Some(account_v2));
+            post_state.accounts.insert(newer_only, Some(account_v2));
+            hashed_storage.storage.insert(updated, U256::ZERO);
+            hashed_storage.storage.insert(newer_only, U256::from(600));
+        }
+        post_state.storages.insert(hashed_address, hashed_storage);
+
+        let block_ref =
+            BlockWithParent::new(parent, NumHash::new(block, B256::with_last_byte(block as u8)));
+        storage.store_trie_updates(
+            block_ref,
+            BlockStateDiff {
+                sorted_trie_updates: TrieUpdatesSorted::default(),
+                sorted_post_state: post_state.into_sorted(),
+            },
+        )?;
+        parent = block_ref.block.hash;
+    }
+
+    let tx = storage.ro_tx()?;
+    let account = |key, max_block| storage.hashed_account_with_tx(&tx, key, max_block);
+    let slot = |key, max_block| storage.hashed_storage_with_tx(&tx, hashed_address, key, max_block);
+
+    let before_update = UPDATE_BLOCK - 1;
+    assert_eq!(account(left, before_update)?, Some(account_v1));
+    assert_eq!(account(right, before_update)?, Some(account_v1));
+    assert_eq!(account(updated, before_update)?, Some(account_v1));
+    assert_eq!(account(updated, LAST_BLOCK)?, Some(account_v2));
+    assert_eq!(account(newer_only, before_update)?, None);
+    assert_eq!(account(newer_only, LAST_BLOCK)?, Some(account_v2));
+    assert_eq!(
+        account(dead, DEAD_KEY_LIVE_BLOCKS)?,
+        Some(create_test_account_with_values(DEAD_KEY_LIVE_BLOCKS, DEAD_KEY_LIVE_BLOCKS, 0xDD))
+    );
+    assert_eq!(account(dead, LAST_BLOCK)?, None);
+    assert_eq!(account(miss_before_dead, LAST_BLOCK)?, None);
+    assert_eq!(account(miss_after_dead, LAST_BLOCK)?, None);
+
+    assert_eq!(slot(left, before_update)?, Some(U256::from(100)));
+    assert_eq!(slot(right, before_update)?, Some(U256::from(300)));
+    assert_eq!(slot(updated, before_update)?, Some(U256::from(7)));
+    assert_eq!(slot(updated, LAST_BLOCK)?, None);
+    assert_eq!(slot(newer_only, before_update)?, None);
+    assert_eq!(slot(newer_only, LAST_BLOCK)?, Some(U256::from(600)));
+    assert_eq!(slot(dead, DEAD_KEY_LIVE_BLOCKS)?, Some(U256::from(DEAD_KEY_LIVE_BLOCKS)));
+    assert_eq!(slot(dead, LAST_BLOCK)?, None);
+    assert_eq!(slot(miss_before_dead, LAST_BLOCK)?, None);
+    assert_eq!(slot(miss_after_dead, LAST_BLOCK)?, None);
+
+    // Point lookups agree with the equality-checked range seek they replace.
+    for key in [left, miss_before_dead, dead, miss_after_dead, right, updated, newer_only] {
+        for max_block in [0, 1, DEAD_KEY_LIVE_BLOCKS, before_update, UPDATE_BLOCK, LAST_BLOCK] {
+            assert_eq!(account(key, max_block)?, account_exact(&storage, key, max_block)?);
+            assert_eq!(
+                slot(key, max_block)?,
+                storage_exact(&storage, hashed_address, key, max_block)?
+            );
+        }
+    }
+
+    Ok(())
+}

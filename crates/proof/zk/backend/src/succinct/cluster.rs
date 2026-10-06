@@ -11,7 +11,7 @@ use std::{
 
 use async_trait::async_trait;
 use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
-use base_proof_zk_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
+use base_proof_zk_utils::INTERMEDIATE_ROOT_INTERVAL;
 use base_prover_service_protocol::{
     ProofResult, SessionType, SnarkPlonkProofRequest, SnarkPlonkProofResult, ZkProofRequest,
     ZkProofResult, ZkVm,
@@ -584,8 +584,6 @@ impl ClusterZkProver {
             .ok_or_else(|| backend_error!("proof range end block overflowed u64"))?;
         let sequence_window =
             request.sequence_window.unwrap_or(self.config.default_sequence_window);
-        let intermediate_root_interval =
-            request.intermediate_root_interval.unwrap_or(DEFAULT_INTERMEDIATE_ROOT_INTERVAL);
 
         info!(
             proof_id = %proof_id,
@@ -593,7 +591,7 @@ impl ClusterZkProver {
             end_block = end_block,
             number_of_blocks = request.number_of_blocks_to_prove,
             sequence_window = sequence_window,
-            intermediate_root_interval = intermediate_root_interval,
+            intermediate_root_interval = INTERMEDIATE_ROOT_INTERVAL,
             l1_head = ?request.l1_head,
             "starting SP1 cluster range proof generation"
         );
@@ -612,7 +610,6 @@ impl ClusterZkProver {
                     },
                     L1HeadSource::Pinned,
                 ),
-                intermediate_root_interval,
                 schedule_l2_block_number: request.schedule_l2_block_number,
             })
             .await

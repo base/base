@@ -24,6 +24,8 @@ pub enum BatchDropReason {
     EpochTooFarInFuture,
     /// Batch epoch hash does not match the L1 origin.
     EpochHashMismatch,
+    /// Batch changes L1 origin within a whole second after Denim activation.
+    SameSecondOriginChange,
 
     // === Timestamp/origin relationship drops ===
     /// Batch timestamp is before the L1 origin timestamp.
@@ -42,8 +44,8 @@ pub enum BatchDropReason {
     DepositTransaction,
     /// EIP-7702 transaction included before Isthmus activation.
     Eip7702PreIsthmus,
-    /// EIP-8130 transaction included before Cobalt activation.
-    Eip8130PreCobalt,
+    /// EIP-8130 transaction included before Everest activation.
+    Eip8130PreEverest,
     /// Non-empty batch in Jovian transition block.
     NonEmptyTransitionBlock,
 
@@ -86,6 +88,9 @@ impl core::fmt::Display for BatchDropReason {
             Self::EpochTooOld => write!(f, "batch epoch is too old"),
             Self::EpochTooFarInFuture => write!(f, "batch epoch is too far in the future"),
             Self::EpochHashMismatch => write!(f, "batch epoch hash does not match L1 origin"),
+            Self::SameSecondOriginChange => {
+                write!(f, "batch changes L1 origin within the same whole second")
+            }
             Self::TimestampBeforeL1Origin => {
                 write!(f, "batch timestamp is before L1 origin timestamp")
             }
@@ -97,7 +102,7 @@ impl core::fmt::Display for BatchDropReason {
             Self::EmptyTransaction => write!(f, "batch contains empty transaction"),
             Self::DepositTransaction => write!(f, "batch contains deposit transaction"),
             Self::Eip7702PreIsthmus => write!(f, "EIP-7702 transaction before Isthmus activation"),
-            Self::Eip8130PreCobalt => write!(f, "EIP-8130 transaction before Cobalt activation"),
+            Self::Eip8130PreEverest => write!(f, "EIP-8130 transaction before Everest activation"),
             Self::NonEmptyTransitionBlock => write!(f, "non-empty batch in transition block"),
             Self::SpanBatchPreDelta => write!(f, "span batch received before Delta upgrade"),
             Self::SpanBatchPostDenim => write!(f, "span batch received after Denim activation"),
