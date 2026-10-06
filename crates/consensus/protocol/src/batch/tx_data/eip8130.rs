@@ -56,41 +56,14 @@ impl SpanBatchEip8130TransactionData {
     /// before any copy is attempted.
     pub const MAX_AUTH_PROOF_BYTES: u64 = Channel::MAX_RLP_BYTES;
 
-    /// Encodes an `Option<Address>` as a zero-length byte string when `None` and
-    /// a 20-byte string when `Some`.
-    fn encode_address_opt(addr: &Option<Address>, out: &mut dyn BufMut) {
-        match addr {
-            None => Bytes::new().encode(out),
-            Some(a) => Bytes::copy_from_slice(a.as_slice()).encode(out),
-        }
-    }
-
-    /// Length contribution of an `Option<Address>` under [`Self::encode_address_opt`].
-    const fn address_opt_encoded_length(addr: &Option<Address>) -> usize {
-        match addr {
-            None => 1,
-            Some(_) => 21,
-        }
-    }
-
-    /// Decodes the [`Self::encode_address_opt`] wire format.
-    fn decode_address_opt(buf: &mut &[u8]) -> alloy_rlp::Result<Option<Address>> {
-        let raw = Bytes::decode(buf)?;
-        match raw.len() {
-            0 => Ok(None),
-            20 => Ok(Some(Address::from_slice(&raw))),
-            _ => Err(alloy_rlp::Error::Custom("invalid Option<Address> length")),
-        }
-    }
-
     fn rlp_encoded_fields_length(&self) -> usize {
-        Self::address_opt_encoded_length(&self.sender)
+        TxEip8130::address_opt_encoded_length(&self.sender)
             + self.nonce_key.length()
             + self.valid_after.length()
             + self.valid_before.length()
             + self.max_priority_fee_per_gas.length()
             + self.max_fee_per_gas.length()
-            + Self::address_opt_encoded_length(&self.payer)
+            + TxEip8130::address_opt_encoded_length(&self.payer)
             + self.account_changes.length()
             + self.calls.length()
             + self.metadata.length()
@@ -183,13 +156,13 @@ impl SpanBatchEip8130TransactionData {
 impl Encodable for SpanBatchEip8130TransactionData {
     fn encode(&self, out: &mut dyn BufMut) {
         Header { list: true, payload_length: self.rlp_encoded_fields_length() }.encode(out);
-        Self::encode_address_opt(&self.sender, out);
+        TxEip8130::encode_address_opt(&self.sender, out);
         self.nonce_key.encode(out);
         self.valid_after.encode(out);
         self.valid_before.encode(out);
         self.max_priority_fee_per_gas.encode(out);
         self.max_fee_per_gas.encode(out);
-        Self::encode_address_opt(&self.payer, out);
+        TxEip8130::encode_address_opt(&self.payer, out);
         self.account_changes.encode(out);
         self.calls.encode(out);
         self.metadata.encode(out);
@@ -206,13 +179,13 @@ impl Decodable for SpanBatchEip8130TransactionData {
         }
         let started = buf.len();
         let this = Self {
-            sender: Self::decode_address_opt(buf)?,
+            sender: TxEip8130::decode_address_opt(buf)?,
             nonce_key: Decodable::decode(buf)?,
             valid_after: Decodable::decode(buf)?,
             valid_before: Decodable::decode(buf)?,
             max_priority_fee_per_gas: Decodable::decode(buf)?,
             max_fee_per_gas: Decodable::decode(buf)?,
-            payer: Self::decode_address_opt(buf)?,
+            payer: TxEip8130::decode_address_opt(buf)?,
             account_changes: Decodable::decode(buf)?,
             calls: Decodable::decode(buf)?,
             metadata: Decodable::decode(buf)?,
