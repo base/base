@@ -644,7 +644,7 @@ digest = "b82a5a3590"
 
 ["crates/utilities/tx-manager/README.md"]
 summary = "Transaction lifecycle manager for EIP-1559/4844 txs: TxManager, fee bumping, nonce management, send state, error classification, blob sidecars, CLI config macros. Use when sending onchain txs."
-digest = "2b7de390c1"
+digest = "ffbb152cb0"
 
 ["crates/utilities/upgrade-signal/README.md"]
 summary = "Reads upgrade activation timestamps and minimum protocol version from the L1 ProtocolVersions contract; covers modes (metrics-only, startup-apply, runtime-admin), CLI flags, defaults, metrics."
