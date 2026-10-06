@@ -8,6 +8,10 @@ alias stop := down
 default:
     @just --justfile {{ source_file() }} --list --list-prefix '  just devnet snapshot '
 
+# Select an initialized fork and save its upstream endpoints privately
+setup *args:
+    python3 etc/scripts/devnet/snapshot_devnet.py setup "$@"
+
 # Initialize or resume a fork from existing writable snapshot copies
 init *args:
     python3 etc/scripts/devnet/snapshot_devnet.py init "$@"
