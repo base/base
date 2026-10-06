@@ -169,7 +169,7 @@ impl InProcessBuilder {
         let rollup_args = RollupArgs::default();
         let base_node = BaseNode::new(rollup_args.clone());
 
-        let addons: base_node_runner::BaseAddOns<
+        let addons: base_node_core::BaseAddOns<
             _,
             base_execution_rpc::BaseEthApiBuilder,
             base_node_core::BasePayloadValidatorBuilder,
