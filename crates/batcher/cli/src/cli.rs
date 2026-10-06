@@ -25,7 +25,8 @@ pub struct BatcherArgs {
 
     /// L2 HTTP RPC endpoint, the source of the unsafe blocks the batcher submits.
     ///
-    /// The DA throttle is also sent to this endpoint.
+    /// The DA limits are also pushed to this endpoint, so it must serve `miner_setMaxDASize`
+    /// unless `--no-throttle` is set. Otherwise the batcher stops.
     #[arg(long = "l2-rpc-url", env = "BASE_BATCHER_L2_RPC_URL")]
     pub l2_rpc_url: Url,
 
@@ -160,7 +161,7 @@ pub struct BatcherArgs {
     /// DA backlog threshold in bytes at which throttling activates.
     ///
     /// When the estimated unsubmitted DA backlog exceeds this value, the batcher
-    /// signals the sequencer to reduce block throughput.
+    /// pushes lower DA limits to the `--l2-rpc-url` endpoint.
     #[arg(
         long = "throttle-threshold",
         default_value = "1000000",

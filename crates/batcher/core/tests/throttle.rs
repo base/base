@@ -6,10 +6,8 @@ use std::{
 };
 
 use base_batcher_core::{
-    DaThrottle, ThrottleConfig, ThrottleController, ThrottleStrategy,
-    test_utils::{
-        BlockStub, DriverFixture, ScriptedTxManager, TrackingPipeline, TrackingThrottleClient,
-    },
+    DaLimits, DaThrottle, ThrottleConfig, ThrottleController, ThrottleStrategy,
+    test_utils::{BlockStub, DriverFixture, ScriptedTxManager, TrackingPipeline},
 };
 use base_batcher_source::{
     L2BlockEvent,
@@ -20,8 +18,24 @@ use base_runtime::{
     deterministic::{Config, Runner},
 };
 
-/// A backlog at twice the threshold pushes the lower limits and forces blob submissions. Once the
-/// backlog is gone, the upper limits are pushed back and blobs are no longer forced.
+/// The limits applied when not throttling.
+const fn upper_limits(config: &ThrottleConfig) -> DaLimits {
+    DaLimits {
+        max_tx_size: config.tx_size_upper_limit,
+        max_block_size: config.block_size_upper_limit,
+    }
+}
+
+/// The limits applied at full intensity.
+const fn lower_limits(config: &ThrottleConfig) -> DaLimits {
+    DaLimits {
+        max_tx_size: config.tx_size_lower_limit,
+        max_block_size: config.block_size_lower_limit,
+    }
+}
+
+/// A backlog at twice the threshold publishes the lower limits and forces blob submissions. Once
+/// the backlog is gone, the upper limits are published again and blobs are no longer forced.
 #[test]
 fn test_throttle_transitions_from_active_to_inactive() {
     Runner::start(Config::seeded(0), |ctx| async move {
@@ -32,20 +46,24 @@ fn test_throttle_transitions_from_active_to_inactive() {
         let backlog = Arc::clone(&pipeline.da_backlog_bytes);
         let blob_override = Arc::clone(&pipeline.blob_override);
 
-        let lower_limits = (config.tx_size_lower_limit, config.block_size_lower_limit);
-        let upper_limits = (config.tx_size_upper_limit, config.block_size_upper_limit);
-        let throttle = ThrottleController::new(config, ThrottleStrategy::Linear);
-        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
+        let throttle =
+            DaThrottle::new(ThrottleController::new(config.clone(), ThrottleStrategy::Linear));
+        let limits = throttle.subscribe();
 
         let (driver, _handles) =
             DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
                 .source(source)
-                .throttle(DaThrottle::new(throttle, Arc::new(throttle_client)))
+                .throttle(throttle)
                 .build();
         let handle = ctx.spawn(driver.run());
 
         // The first iteration runs at startup, so give it time to complete.
         ctx.sleep(Duration::from_millis(30)).await;
+        assert_eq!(
+            *limits.borrow(),
+            lower_limits(&config),
+            "twice the threshold is full intensity"
+        );
         assert!(blob_override.load(Ordering::SeqCst), "throttling forces blobs");
 
         // Drop the backlog to zero, then wake the driver by delivering a dummy
@@ -57,55 +75,50 @@ fn test_throttle_transitions_from_active_to_inactive() {
         ctx.cancel();
         assert!(handle.await.unwrap().is_ok());
 
-        // Twice the threshold is full intensity, so the lower limits first, then the upper
-        // limits once the backlog is gone.
-        assert_eq!(*throttle_recorded.lock().unwrap(), [lower_limits, upper_limits]);
+        assert_eq!(*limits.borrow(), upper_limits(&config));
         assert!(!blob_override.load(Ordering::SeqCst), "blobs are no longer forced");
     });
 }
 
-/// Setting or resetting the throttle controller over the admin API pushes its limits again,
-/// even when they did not change.
+/// A throttle controller set over the admin API publishes its limits for the current backlog.
 #[test]
-fn test_admin_set_and_reset_push_the_limits_again() {
+fn test_admin_set_throttle_publishes_the_new_limits() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let config = ThrottleConfig::default();
-        let upper_limits = (config.tx_size_upper_limit, config.block_size_upper_limit);
-        let throttle = ThrottleController::new(config.clone(), ThrottleStrategy::Linear);
-        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
-        let (driver, handles) = DriverFixture::new(
-            ctx.clone(),
-            TrackingPipeline::new(),
-            ScriptedTxManager::confirming_at(1),
-        )
-        .throttle(DaThrottle::new(throttle, Arc::new(throttle_client)))
-        .build();
+        let pipeline = TrackingPipeline::new().with_da_backlog(2 * config.threshold_bytes);
+        let throttle = DaThrottle::new(ThrottleController::disabled());
+        let mut limits = throttle.subscribe();
+
+        let (driver, handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                .throttle(throttle)
+                .build();
         let handle = ctx.spawn(driver.run());
 
-        handles.admin.set_throttle(ThrottleStrategy::Linear, config).await.unwrap();
-        handles.admin.reset_throttle().await.unwrap();
+        handles.admin.set_throttle(ThrottleStrategy::Linear, config.clone()).await.unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
+        assert!(limits.has_changed().unwrap(), "the new limits are published");
+        assert_eq!(*limits.borrow_and_update(), lower_limits(&config));
+
         ctx.cancel();
         assert!(handle.await.unwrap().is_ok());
-
-        assert_eq!(*throttle_recorded.lock().unwrap(), [upper_limits, upper_limits, upper_limits]);
     });
 }
 
-/// With blob forcing off, throttling pushes the lower limits but leaves the DA type alone.
+/// With blob forcing off, throttling publishes the lower limits but leaves the DA type alone.
 #[test]
 fn test_throttling_without_blob_forcing_keeps_the_da_type() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let config = ThrottleConfig::default();
         let pipeline = TrackingPipeline::new().with_da_backlog(2 * config.threshold_bytes);
         let blob_override = Arc::clone(&pipeline.blob_override);
-        let lower_limits = (config.tx_size_lower_limit, config.block_size_lower_limit);
-        let throttle = ThrottleController::new(config, ThrottleStrategy::Linear);
-        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
+        let throttle =
+            DaThrottle::new(ThrottleController::new(config.clone(), ThrottleStrategy::Linear));
+        let limits = throttle.subscribe();
 
         let (driver, _handles) =
             DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
-                .throttle(DaThrottle::new(throttle, Arc::new(throttle_client)))
+                .throttle(throttle)
                 .force_blobs_when_throttling(false)
                 .build();
         let handle = ctx.spawn(driver.run());
@@ -114,30 +127,30 @@ fn test_throttling_without_blob_forcing_keeps_the_da_type() {
         ctx.cancel();
         assert!(handle.await.unwrap().is_ok());
 
-        assert_eq!(*throttle_recorded.lock().unwrap(), [lower_limits]);
+        assert_eq!(*limits.borrow(), lower_limits(&config));
         assert!(!blob_override.load(Ordering::SeqCst), "the DA type is left alone");
     });
 }
 
-/// Without a backlog, the upper limits are pushed at startup, lifting any throttle left on the
-/// block builder. A push the block builder refuses is made again on the next iteration, and
-/// limits it accepted are not pushed again while they stay the same.
+/// Without a backlog the throttle starts on the upper limits and publishes nothing while the
+/// backlog stays the same.
 #[test]
-fn test_upper_limits_are_pushed_at_startup_until_accepted() {
+fn test_upper_limits_are_published_once_while_the_backlog_is_unchanged() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let pipeline = TrackingPipeline::new();
         let recorded = pipeline.recorded();
         let (l1_head_source, l1_head_tx) = ChannelL1HeadSource::new();
 
         let config = ThrottleConfig::default();
-        let upper_limits = (config.tx_size_upper_limit, config.block_size_upper_limit);
-        let throttle = ThrottleController::new(config, ThrottleStrategy::Linear);
-        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
+        let throttle =
+            DaThrottle::new(ThrottleController::new(config.clone(), ThrottleStrategy::Linear));
+        let limits = throttle.subscribe();
+        assert_eq!(*limits.borrow(), upper_limits(&config));
 
         let (driver, _handles) =
             DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
                 .l1_head_source(l1_head_source)
-                .throttle(DaThrottle::new(throttle, Arc::new(throttle_client.with_failures(1))))
+                .throttle(throttle)
                 .build();
         let handle = ctx.spawn(driver.run());
 
@@ -146,10 +159,12 @@ fn test_upper_limits_are_pushed_at_startup_until_accepted() {
             l1_head_tx.send(l1_head).unwrap();
         }
         ctx.sleep(Duration::from_millis(10)).await;
+        assert_eq!(recorded.lock().unwrap().l1_heads(), [1, 2, 3]);
+
+        // Check the publication while the driver runs, since a stopped driver drops the sender.
+        assert!(!limits.has_changed().unwrap(), "unchanged limits are not published again");
+
         ctx.cancel();
         assert!(handle.await.unwrap().is_ok());
-
-        assert_eq!(recorded.lock().unwrap().l1_heads(), [1, 2, 3]);
-        assert_eq!(*throttle_recorded.lock().unwrap(), [upper_limits, upper_limits]);
     });
 }
