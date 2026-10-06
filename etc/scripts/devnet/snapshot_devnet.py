@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Non-destructive, mainnet-identity snapshot fork. Requires Python 3.11+, Docker and cast."""
 
+import argparse
+import fcntl
 import http.client
 import ipaddress
 import json
@@ -13,6 +15,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -20,6 +23,13 @@ ROOT = Path(__file__).resolve().parents[3]
 COMPOSE = ROOT / "etc/docker/docker-compose.snapshot.yml"
 DEFAULT_TIMEOUT = 7200
 PROTOCOL_VERSIONS = "0x7480Afc8D99a5c645c247dB5A1e4a4f440e6e095"
+IMPLEMENTATION_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
+COBALT_ID = 12
+UPGRADES = (
+    "regolith", "canyon", "delta", "ecotone", "fjord", "granite", "holocene",
+    "pectra_blob_schedule", "isthmus", "jovian", "azul", "beryl", "cobalt", "denim", "everest",
+)
+LEGACY_UPGRADE_COUNT = UPGRADES.index("azul")
 READ_METHODS = {
     "eth_chainId", "eth_getBlockByNumber", "eth_getBlockByHash", "eth_call", "eth_getCode", "eth_getStorageAt",
 }
@@ -42,7 +52,11 @@ def require(condition, message):
 
 
 def number(value):
-    return int(value, 16) if isinstance(value, str) and value.startswith("0x") else int(value)
+    try:
+        return int(value, 16) if isinstance(value, str) and value.startswith("0x") else int(value)
+    except ValueError:
+        # Remote results may echo provider credentials; never repeat the value.
+        raise ValueError("expected a decimal or 0x-prefixed integer (value redacted)") from None
 
 
 def redact(text, secrets):
@@ -82,8 +96,12 @@ def write_json(path, value):
         os.close(descriptor)
 
 
-def request_json(url, body=None):
+def request_json(url, body=None, *, path=None):
     try:
+        if path is not None:
+            # Extend the endpoint's own path, keeping any provider query (such as an API key) last.
+            parts = urllib.parse.urlsplit(url)
+            url = parts._replace(path=parts.path.rstrip("/") + path).geturl()
         request = urllib.request.Request(
             url, data=None if body is None else json.dumps(body).encode(),
             headers={"Content-Type": "application/json", "User-Agent": "base-snapshot-devnet"},
@@ -105,6 +123,12 @@ def rpc(url, method, *params, upstream=False):
     if not isinstance(response, dict) or "error" in response or "result" not in response:
         raise Unavailable(f"{method} failed (provider response redacted)")
     return response["result"]
+
+
+def call(url, address, signature, *args, block="latest", upstream=False):
+    data = run("cast", "calldata", signature, *map(str, args))
+    encoded = rpc(url, "eth_call", {"to": address, "data": data}, block, upstream=upstream)
+    return json.loads(run("cast", "abi-decode", "--json", signature, encoded))[0]
 
 
 def wait(description, check, timeout, poll_interval=1, report_interval=30, diagnostics=None):
@@ -174,6 +198,54 @@ def private_address(project, services, containers):
         raise RuntimeError("container has no IPv4 address on the project's internal network") from error
     require(address.version == 4 and address.is_private, "unexpected address on the project's internal network")
     return matches[0]["Config"]["Labels"]["com.docker.compose.service"], str(address)
+
+
+def validate_fork(fork, header, finalized, genesis_time, slot_seconds):
+    """Checks the discovered fork BlockInfo against the canonical upstream header."""
+    require(header is not None and number(header["number"]) == fork["number"]
+            and header["hash"].lower() == fork["hash"].lower()
+            and header["parentHash"].lower() == fork["parentHash"].lower()
+            and number(header["timestamp"]) == fork["timestamp"],
+            "discovered fork block is not canonical upstream")
+    require(finalized is not None and fork["number"] <= number(finalized["number"]),
+            "discovered fork block is not finalized yet; retry init after finality")
+    require(slot_seconds > 0 and fork["timestamp"] >= genesis_time
+            and (fork["timestamp"] - genesis_time) % slot_seconds == 0,
+            "fork timestamp is not on the upstream Beacon slot grid")
+
+
+def validate_boundary(inspections, fork_number):
+    first, second = inspections
+    require(first["chain_id"] == second["chain_id"] == 8453, "expected Base mainnet snapshots")
+    require(first["rollup_config"] == second["rollup_config"], "snapshot configs differ")
+    require(first["latest"] == second["latest"], "snapshot heads or system configs differ")
+    for snapshot in inspections:
+        for label in ("latest", "safe", "finalized"):
+            require(snapshot[label]["block_info"]["l1origin"]["number"] <= fork_number,
+                    "snapshot L1 origin is after the fork")
+
+
+def upgrade_times(config):
+    return [config.get(upgrade + "_time") if index < LEGACY_UPGRADE_COUNT else config.get("base", {}).get(upgrade)
+            for index, upgrade in enumerate(UPGRADES)]
+
+
+def validate_schedule(config, schedule, head_timestamp):
+    require(COBALT_ID < len(schedule) <= len(UPGRADES), "unsupported ProtocolVersions layout")
+    for index, activation in enumerate(upgrade_times(config)):
+        expected = config["genesis"]["l2_time"] if activation == 0 else activation
+        actual = schedule[index] if index < len(schedule) else 0
+        if (expected is not None and expected <= head_timestamp) or (0 < actual <= head_timestamp):
+            require(actual == expected,
+                    f"contract would change historical {UPGRADES[index]} activation")
+
+
+def validate_origins(inspections, url):
+    for inspection in inspections:
+        for label in ("latest", "safe", "finalized"):
+            origin = inspection[label]["block_info"]["l1origin"]
+            header = rpc(url, "eth_getBlockByNumber", hex(origin["number"]), False, upstream=True)
+            require(header and header["hash"] == origin["hash"], "snapshot has a noncanonical L1 origin")
 
 
 class SnapshotFork:
@@ -328,7 +400,10 @@ class SnapshotFork:
         return result
 
     def prepare(self, config):
-        """Persists the fork's identity and keys; returns False once initialization has completed."""
+        """Persists the fork's identity and keys; returns False once initialization has completed.
+
+        Does not lock: the caller must hold the fork directory's exclusive `.lock`, as `main` does.
+        """
         for field, reason in OBSOLETE_CONFIG.items():
             require(field not in config, f"{field} is obsolete: {reason}")
         allowed = {"sequencer_datadir", "validator_datadir", "base_image", "anvil_image", "batcher_image",
@@ -378,3 +453,87 @@ class SnapshotFork:
                                      for role, key in keys.items()}
         self.save()
         return True
+
+    def initialize(self, config, allow_write):
+        """Prepares, inspects and validates the fork, marking it `prepared` only after every check.
+
+        Does not lock: the caller must hold the fork directory's exclusive `.lock`, as `main` does.
+        """
+        require(allow_write, "init requires --allow-write for the two disposable working datadirs")
+        if not self.prepare(config):
+            return
+        execution, beacon = self.endpoint("execution"), self.endpoint("beacon")
+        require(number(rpc(execution, "eth_chainId", upstream=True)) == 1, "expected Ethereum mainnet upstream")
+        genesis = request_json(beacon, path="/eth/v1/beacon/genesis")["data"]
+        duration = number(request_json(beacon, path="/eth/v1/config/spec")["data"]["SECONDS_PER_SLOT"])
+        require(self.manifest.get("beacon_genesis", genesis) == genesis
+                and self.manifest.get("slot_seconds", duration) == duration, "upstream Beacon identity changed")
+        self.manifest.update(beacon_genesis=genesis, slot_seconds=duration)
+        self.save()
+        # F is the L1 block whose canonical batches complete the snapshot's (safe, latest] tail.
+        inspections = self.inspect(discover=True)
+        discovered = inspections[0].pop("fork")
+        header = rpc(execution, "eth_getBlockByNumber", hex(discovered["number"]), False, upstream=True)
+        finalized = rpc(execution, "eth_getBlockByNumber", "finalized", False, upstream=True)
+        validate_fork(discovered, header, finalized, number(genesis["genesis_time"]), duration)
+        fork = {key: header[key] for key in ("number", "hash", "timestamp", "parentHash")}
+        validate_boundary(inspections, discovered["number"])
+        config = inspections[0]["rollup_config"]
+        validate_origins(inspections, execution)
+        contract = self.manifest["protocol_versions"]
+        schedule = list(map(number, call(execution, contract, "getSchedule()(uint64[])",
+                                         block=fork["number"], upstream=True)))
+        require(number(call(execution, contract, "minimumProtocolVersion()(uint256)",
+                            block=fork["number"], upstream=True)) > 0,
+                "ProtocolVersions must have a nonzero minimum protocol version")
+        validate_schedule(config, schedule, inspections[0]["latest"]["block_info"]["timestamp"])
+        system = config["l1_system_config_address"]
+        portal = call(execution, system, "optimismPortal()(address)", block=fork["number"], upstream=True)
+        owners = {system: call(execution, system, "owner()(address)", block=fork["number"], upstream=True),
+                  contract: call(execution, contract, "proxyAdminOwner()(address)", block=fork["number"], upstream=True)}
+        implementations = {}
+        for address in (system, contract, portal):
+            require(rpc(execution, "eth_getCode", address, fork["number"], upstream=True) != "0x",
+                    "required contract has no code at the fork boundary")
+            implementations[address] = rpc(execution, "eth_getStorageAt", address, IMPLEMENTATION_SLOT,
+                                           fork["number"], upstream=True)
+        write_json(self.directory / "config/rollup.json", config)
+        self.manifest.update(phase="prepared", fork=fork, initial=inspections, schedule=schedule,
+                             system_config=system, portal=portal, contracts=implementations, owners=owners)
+        self.save()
+        print(f"Prepared with L1 fork block {number(fork['number'])}; no local contracts changed.")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    init = commands.add_parser("init", help="initialize or resume a fork from existing writable snapshot copies")
+    init.add_argument("--dir", required=True, help="fork directory")
+    init.add_argument("--config", required=True)
+    init.add_argument("--allow-write", action="store_true")
+    init.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
+                      help="seconds per Compose command and snapshot inspection, including fork discovery "
+                           "(default: %(default)s); execution RPC startup waits without a deadline")
+    args = parser.parse_args()
+    require(args.timeout > 0, "timeout must be positive")
+    fork = SnapshotFork(args.dir, args.timeout)
+    require(not fork.directory.exists() or fork.manifest is not None
+            or {entry.name for entry in fork.directory.iterdir()} <= {".lock", "manifest.json.tmp"},
+            "init directory contains unrecognized data; existing data is never overwritten")
+    fork.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with open(fork.directory / ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # Re-read state persisted by the previous lock holder.
+        fork = SnapshotFork(args.dir, args.timeout)
+        fork.initialize(json.loads(Path(args.config).read_text()), args.allow_write)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("snapshot devnet: interrupted; data preserved, rerun the same command to continue", file=sys.stderr)
+        sys.exit(130)
+    except (RuntimeError, OSError, ValueError, KeyError) as error:
+        print(f"snapshot devnet: {error}", file=sys.stderr)
+        sys.exit(1)

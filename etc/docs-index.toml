@@ -688,7 +688,11 @@ digest = "49f6748dde"
 
 ["etc/docker/README.md"]
 summary = "Dockerfiles, Bake targets, published images (ghcr.io/base/node and single-binary images), and Compose setup for the local devnet and Rust services, including batcher topology and build profiles."
-digest = "83a7d99bb5"
+digest = "c5f0fe328e"
+
+["etc/docker/SNAPSHOT.md"]
+summary = "Experimental snapshot devnet guide: prerequisites, init config fields and `just devnet snapshot init --allow-write`, which inspects two Base snapshot copies and records L1 fork block F."
+digest = "b506285784"
 
 ["etc/systems/README.md"]
 summary = "Docs for base-system-tests: snapshot-backed mainnet devnet (builder and follow client), inspect-snapshot head JSON and L1 fork discovery, snapshot/transfer benchmarks, workloads, 2s vs 200ms, cleanup."

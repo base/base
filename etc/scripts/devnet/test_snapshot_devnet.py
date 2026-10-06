@@ -2,6 +2,8 @@
 """Offline launcher tests."""
 
 import copy
+import fcntl
+import io
 import json
 import os
 from pathlib import Path
@@ -12,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import snapshot_devnet as devnet
 
@@ -223,6 +225,48 @@ class SnapshotTests(unittest.TestCase):
     def test_endpoint_keeps_a_credential_ending_in_a_slash(self):
         with patch.dict(os.environ, {"TEST_EXECUTION_URL": "https://rpc.invalid/v2?key=abc/"}):
             self.assertEqual(self.fork.endpoint("execution"), "https://rpc.invalid/v2?key=abc/")
+
+    def test_beacon_paths_extend_the_endpoint_path_before_its_query(self):
+        requests = []
+        opener = Mock()
+        opener.open.side_effect = lambda request, timeout: requests.append(request) or io.BytesIO(
+            b'{"data": {"genesis_time": "1000", "SECONDS_PER_SLOT": "12"}}')
+        with patch.object(devnet.urllib.request, "build_opener", return_value=opener):
+            with patch.object(devnet, "run", side_effect=lambda *args, **_: "sha256:" + "d" * 64 if args[0] == "docker"
+                              else "0x" + args[-1][-40:]), \
+                    patch.dict(os.environ, {"TEST_EXECUTION_URL": "https://rpc.invalid/key",
+                                            "TEST_BEACON_URL": "https://beacon.invalid/path?token=secret"}), \
+                    patch.object(devnet, "rpc", return_value="0x1"), \
+                    patch.object(devnet.SnapshotFork, "inspect", side_effect=KeyboardInterrupt()), \
+                    patch("builtins.print"):
+                fork = devnet.SnapshotFork(self.root / "new")
+                fork.directory.mkdir()
+                with self.assertRaises(KeyboardInterrupt):
+                    fork.initialize(self.preparation(execution_env="TEST_EXECUTION_URL", beacon_env="TEST_BEACON_URL"),
+                                    allow_write=True)
+            self.assertEqual([request.full_url for request in requests],
+                             ["https://beacon.invalid/path/eth/v1/beacon/genesis?token=secret",
+                              "https://beacon.invalid/path/eth/v1/config/spec?token=secret"])
+            self.assertTrue(all(request.data is None for request in requests))
+            self.assertEqual(devnet.SnapshotFork(fork.directory).manifest["beacon_genesis"],
+                             {"genesis_time": "1000", "SECONDS_PER_SLOT": "12"})
+
+            spec = "/eth/v1/config/spec"
+            for endpoint, expected in (
+                    ("https://beacon.invalid/path/?token=secret",
+                     "https://beacon.invalid/path/eth/v1/config/spec?token=secret"),
+                    ("http://127.0.0.1:19545", "http://127.0.0.1:19545/eth/v1/config/spec")):
+                devnet.request_json(endpoint, path=spec)
+                self.assertEqual(requests[-1].full_url, expected)
+            # JSON-RPC bodies still go to the endpoint exactly as configured.
+            devnet.request_json("https://rpc.invalid/key?token=secret", {"method": "eth_chainId"})
+            self.assertEqual(requests[-1].full_url, "https://rpc.invalid/key?token=secret")
+            self.assertEqual(json.loads(requests[-1].data), {"method": "eth_chainId"})
+
+            opener.open.side_effect = devnet.urllib.error.URLError("https://beacon.invalid/path?token=secret")
+            with self.assertRaises(devnet.Unavailable) as caught:
+                devnet.request_json("https://beacon.invalid/path?token=secret", path=spec)
+            self.assertNotIn("secret", str(caught.exception))
 
     def test_l1_url_uses_published_loopback_port_without_docker_lookup(self):
         with patch.object(devnet, "run") as run:
@@ -473,6 +517,228 @@ class SnapshotTests(unittest.TestCase):
             self.assertIn({"source": self.fork.manifest["datadirs"][role], "target": "/data"},
                           [{key: volume[key] for key in ("source", "target")} for volume in service["volumes"]])
             self.assertIn("--disable-discovery", service["command"])
+
+    def test_init_retry_preserves_identity_and_keys_and_completed_init_is_a_noop(self):
+        config = self.preparation()
+        config_path = self.root / "input.json"
+        devnet.write_json(config_path, config)
+        initial = snapshot()
+        initial["rollup_config"]["l1_system_config_address"] = "0x" + "1" * 40
+        discovered = {"number": 100, "hash": "0xf", "timestamp": 1240, "parentHash": "0xe"}
+        header = {"number": "0x64", "hash": "0xf", "timestamp": "0x4d8", "parentHash": "0xe"}
+        minimum = iter([0, 1])
+
+        def transport(url, method, *args, **kwargs):
+            self.assertTrue(kwargs["upstream"])
+            if method == "eth_chainId":
+                return "0x1"
+            if method == "eth_getBlockByNumber":
+                return {"number": "0x13", "hash": "0x19"} if args[0] == "0x13" else header
+            return "0x01"
+
+        def contract(url, address, signature, *args, **kwargs):
+            if signature == "getSchedule()(uint64[])":
+                return [0] * 14
+            if signature == "minimumProtocolVersion()(uint256)":
+                return next(minimum)
+            return "0x" + "2" * 40
+
+        def inspection():
+            return [{**copy.deepcopy(initial), "fork": discovered}, copy.deepcopy(initial)]
+
+        with patch.object(sys, "argv", ["launcher", "init", "--dir", str(self.fork.directory),
+                                       "--config", str(config_path), "--allow-write"]), \
+                patch.object(devnet, "run", side_effect=lambda *args, **_: "sha256:" + "d" * 64 if args[0] == "docker"
+                             else "0x" + args[-1][-40:]), \
+                patch.dict(os.environ, {"SNAPSHOT_UPSTREAM_EXECUTION": "https://rpc.invalid/key",
+                                        "SNAPSHOT_UPSTREAM_BEACON": "https://rpc.invalid/key"}), \
+                patch.object(devnet, "rpc", side_effect=transport), \
+                patch.object(devnet, "call", side_effect=contract), \
+                patch.object(devnet, "request_json", return_value={"data": {"genesis_time": "1000", "SECONDS_PER_SLOT": "12"}}), \
+                patch.object(devnet.SnapshotFork, "inspect",
+                             side_effect=[KeyboardInterrupt(), inspection(), inspection()]) as inspect, \
+                patch("builtins.print"):
+            with self.assertRaises(KeyboardInterrupt):
+                devnet.main()
+            before = devnet.SnapshotFork(self.fork.directory).manifest
+            keys = (self.fork.directory / "keys.json").read_bytes()
+            self.assertEqual(before["phase"], "inspecting")
+            with self.assertRaisesRegex(RuntimeError, "nonzero minimum protocol version"):
+                devnet.main()
+            self.assertEqual(devnet.SnapshotFork(self.fork.directory).manifest["phase"], "inspecting")
+            self.assertFalse((self.fork.directory / "config/rollup.json").exists())
+            devnet.main()
+            after = devnet.SnapshotFork(self.fork.directory).manifest
+            self.assertEqual(after["phase"], "prepared")
+            self.assertEqual(after["fork"], header)
+            self.assertEqual(after["project"], before["project"])
+            self.assertEqual(after["accounts"], before["accounts"])
+            self.assertEqual((self.fork.directory / "keys.json").read_bytes(), keys)
+            self.assertEqual(json.loads((self.fork.directory / "config/rollup.json").read_text()),
+                             initial["rollup_config"])
+            devnet.main()
+            self.assertEqual(inspect.call_count, 3)
+            self.assertEqual(devnet.SnapshotFork(self.fork.directory).manifest, after)
+            devnet.write_json(config_path, {**config, "epoch_slots": 99})
+            with self.assertRaisesRegex(RuntimeError, "config changed"):
+                devnet.main()
+            self.assertEqual(devnet.SnapshotFork(self.fork.directory).manifest, after)
+
+    def test_init_refuses_to_mark_prepared_with_a_noncanonical_snapshot_origin(self):
+        initial = snapshot()
+        initial["rollup_config"]["l1_system_config_address"] = "0x" + "1" * 40
+        header = {"number": "0x64", "hash": "0xf", "timestamp": "0x4d8", "parentHash": "0xe"}
+        discovered = {"number": 100, "hash": "0xf", "timestamp": 1240, "parentHash": "0xe"}
+
+        def transport(url, method, *args, **kwargs):
+            if method == "eth_getBlockByNumber":
+                # Every other check passes: only the snapshot's L1 origin 0x13 was reorged upstream.
+                return {"number": "0x13", "hash": "0xreorged"} if args[0] == "0x13" else header
+            return "0x1" if method == "eth_chainId" else "0x01"
+
+        def contract(url, address, signature, *args, **kwargs):
+            return {"getSchedule()(uint64[])": [0] * 14, "minimumProtocolVersion()(uint256)": 1}.get(
+                signature, "0x" + "2" * 40)
+
+        with patch.object(devnet, "run", side_effect=lambda *args, **_: "sha256:" + "d" * 64 if args[0] == "docker"
+                          else "0x" + args[-1][-40:]), \
+                patch.dict(os.environ, {"TEST_EXECUTION_URL": "https://rpc.invalid/key",
+                                        "TEST_BEACON_URL": "https://rpc.invalid/key"}), \
+                patch.object(devnet, "rpc", side_effect=transport), \
+                patch.object(devnet, "call", side_effect=contract), \
+                patch.object(devnet, "request_json", return_value={"data": {"genesis_time": "1000", "SECONDS_PER_SLOT": "12"}}), \
+                patch.object(devnet.SnapshotFork, "inspect",
+                             return_value=[{**copy.deepcopy(initial), "fork": discovered}, copy.deepcopy(initial)]), \
+                patch("builtins.print"):
+            fork = devnet.SnapshotFork(self.root / "new")
+            fork.directory.mkdir()
+            with self.assertRaisesRegex(RuntimeError, "noncanonical L1 origin"):
+                fork.initialize(self.preparation(execution_env="TEST_EXECUTION_URL", beacon_env="TEST_BEACON_URL"),
+                                allow_write=True)
+        stored = devnet.SnapshotFork(fork.directory).manifest
+        self.assertEqual(stored["phase"], "inspecting")
+        self.assertFalse({"fork", "initial", "schedule"} & stored.keys())
+        self.assertFalse((fork.directory / "config/rollup.json").exists())
+
+    def test_malformed_remote_numbers_are_reported_without_their_value(self):
+        config_path = self.root / "input.json"
+        devnet.write_json(config_path, self.preparation())
+        for chain_id, slot in (("0xtoken-secret", "12"), ("0x1", "token-secret")):
+            with self.subTest(chain_id=chain_id, slot=slot), \
+                    patch.object(sys, "argv", ["launcher", "init", "--dir", str(self.root / "new"),
+                                               "--config", str(config_path), "--allow-write"]), \
+                    patch.object(devnet, "run", side_effect=lambda *args, **_: "sha256:" + "d" * 64
+                                 if args[0] == "docker" else "0x" + args[-1][-40:]), \
+                    patch.dict(os.environ, {"SNAPSHOT_UPSTREAM_EXECUTION": "https://rpc.invalid/key",
+                                            "SNAPSHOT_UPSTREAM_BEACON": "https://rpc.invalid/key"}), \
+                    patch.object(devnet, "rpc", return_value=chain_id), \
+                    patch.object(devnet, "request_json",
+                                 return_value={"data": {"genesis_time": "1000", "SECONDS_PER_SLOT": slot}}), \
+                    patch.object(devnet.SnapshotFork, "inspect") as inspect, patch("builtins.print"):
+                # main reports the exception text verbatim.
+                with self.assertRaises(ValueError) as caught:
+                    devnet.main()
+                self.assertNotIn("token-secret", str(caught.exception))
+                self.assertIn("value redacted", str(caught.exception))
+                inspect.assert_not_called()
+        self.assertEqual([devnet.number(value) for value in (12, "12", "0xc", "0xC")], [12] * 4)
+
+    def test_init_requires_opt_in_unused_directory_and_the_fork_lock_before_writes(self):
+        # The lock is main's contract: SnapshotFork.prepare/initialize assume their caller holds it.
+        config_path = self.root / "input.json"
+        devnet.write_json(config_path, self.preparation())
+        target = self.root / "new-fork"
+
+        def init(*extra):
+            with patch.object(sys, "argv", ["launcher", "init", "--dir", str(target), "--config", str(config_path),
+                                           *extra]), patch.object(devnet, "run") as run:
+                devnet.main()
+            run.assert_not_called()
+
+        with self.assertRaisesRegex(RuntimeError, "requires --allow-write"):
+            init()
+        self.assertEqual([entry.name for entry in target.iterdir()], [".lock"])
+        with open(target / ".lock") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            with self.assertRaises(BlockingIOError):
+                init("--allow-write")
+        (target / "notes.txt").write_text("unrelated")
+        with self.assertRaisesRegex(RuntimeError, "unrecognized data"):
+            init("--allow-write")
+        self.assertEqual(sorted(entry.name for entry in target.iterdir()), [".lock", "notes.txt"])
+
+    def test_boundary_requires_matching_snapshots_with_origins_before_fork(self):
+        initial = snapshot()
+        devnet.validate_boundary([initial, copy.deepcopy(initial)], 19)
+        with self.assertRaisesRegex(RuntimeError, "origin is after the fork"):
+            devnet.validate_boundary([initial, initial], 18)
+        other = copy.deepcopy(initial)
+        other["latest"]["system_config"]["batcherAddr"] = "0xother"
+        with self.assertRaisesRegex(RuntimeError, "heads or system configs"):
+            devnet.validate_boundary([initial, other], 19)
+
+    def test_snapshot_l1_origins_must_be_canonical_upstream(self):
+        initial = snapshot()
+        with patch.object(devnet, "rpc", return_value={"hash": "0x19"}):
+            devnet.validate_origins([initial], "https://rpc.invalid")
+        for header in ({"hash": "0xother"}, None):
+            with self.subTest(header=header), patch.object(devnet, "rpc", return_value=header):
+                with self.assertRaisesRegex(RuntimeError, "noncanonical L1 origin"):
+                    devnet.validate_origins([initial], "https://rpc.invalid")
+
+    def test_discovered_fork_must_match_canonical_finalized_header_on_slot_grid(self):
+        fork = {"number": 100, "hash": "0xf", "timestamp": 1240, "parentHash": "0xe"}
+        header = {"number": "0x64", "hash": "0xF", "timestamp": hex(1240), "parentHash": "0xe"}
+        devnet.validate_fork(fork, header, {"number": "0x64"}, 1000, 12)
+        for changed, finalized, pattern in (
+            ({"hash": "0xother"}, "0x65", "not canonical"),
+            ({"parentHash": "0xother"}, "0x65", "not canonical"),
+            ({"timestamp": hex(1241)}, "0x65", "not canonical"),
+            ({}, "0x63", "not finalized"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, pattern):
+                devnet.validate_fork(fork, {**header, **changed}, {"number": finalized}, 1000, 12)
+        with self.assertRaisesRegex(RuntimeError, "not canonical"):
+            devnet.validate_fork(fork, None, {"number": "0x65"}, 1000, 12)
+        with self.assertRaisesRegex(RuntimeError, "not finalized"):
+            devnet.validate_fork(fork, header, None, 1000, 12)
+        off_grid = {**fork, "timestamp": 1241}
+        with self.assertRaisesRegex(RuntimeError, "slot grid"):
+            devnet.validate_fork(off_grid, {**header, "timestamp": hex(1241)}, {"number": "0x65"}, 1000, 12)
+
+    def test_historical_schedule_cannot_be_cleared_or_retroactively_enabled(self):
+        config = {"genesis": {"l2_time": 100}, "regolith_time": 0,
+                  "canyon_time": 200, "base": {"cobalt": 800}}
+        schedule = [100, 200] + [0] * 10 + [800]
+        devnet.validate_schedule(config, schedule, 300)
+        for index, value in ((0, 0), (1, 201), (12, 250)):
+            changed = list(schedule)
+            changed[index] = value
+            with self.assertRaisesRegex(RuntimeError, "historical"):
+                devnet.validate_schedule(config, changed, 300)
+
+    @unittest.skipUnless(shutil.which("just"), "requires the just command dispatcher")
+    def test_snapshot_is_a_just_module_that_forwards_init_arguments_without_writes(self):
+        for args in (["devnet", "snapshot"], ["--list", "devnet", "snapshot"]):
+            with self.subTest(args=args):
+                result = subprocess.run(["just", *args], cwd=devnet.ROOT, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                for command in ("init", "test"):
+                    self.assertIn(command, result.stdout)
+        target = self.root / "fork with spaces"
+        config_path = self.root / "input with spaces.json"
+        devnet.write_json(config_path, self.preparation())
+        environment = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        result = subprocess.run(["just", "devnet", "snapshot", "init", "--dir", str(target), "--help"],
+                                cwd=devnet.ROOT, capture_output=True, text=True, timeout=10, env=environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--allow-write", result.stdout)
+        self.assertFalse(target.exists())
+        result = subprocess.run(["just", "devnet", "snapshot", "init", "--dir", str(target), "--config", str(config_path)],
+                                cwd=devnet.ROOT, capture_output=True, text=True, timeout=10, env=environment)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("init requires --allow-write", result.stderr)
+        self.assertEqual([entry.name for entry in target.iterdir()], [".lock"])
 
 
 if __name__ == "__main__":
