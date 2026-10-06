@@ -34,7 +34,9 @@ mod proof;
 pub use proof::{calculate_receipt_root, calculate_receipt_root_no_memo};
 
 pub mod validation;
-pub use validation::{canyon, isthmus, validate_base_time_metadata, validate_block_post_execution};
+pub use validation::{
+    canyon, holocene, isthmus, validate_base_time_metadata, validate_block_post_execution,
+};
 
 pub mod error;
 pub use error::BaseConsensusError;
@@ -192,6 +194,7 @@ impl HeaderValidator<Header> for BaseBeaconConsensus {
         validate_header_extra_data(header, self.max_extra_data_size)?;
         validate_header_gas(header)?;
         validate_header_base_fee(header, &self.chain_spec)?;
+        holocene::ensure_valid_extra_data(&self.chain_spec, header)?;
 
         // After Isthmus, every block header must carry `requests_hash = sha256("")`
         // (i.e. `EMPTY_REQUESTS_HASH`) because Base does not support EL-triggered execution
@@ -882,6 +885,8 @@ mod tests {
             excess_blob_gas: Some(0),
             timestamp: u64::MAX,
             requests_hash,
+            extra_data: HoloceneExtraData::encode(Default::default(), BaseFeeParams::optimism())
+                .unwrap(),
             ..Default::default()
         })
     }
@@ -942,6 +947,8 @@ mod tests {
             excess_blob_gas: Some(0),
             timestamp: u64::MAX,
             requests_hash: Some(EMPTY_REQUESTS_HASH),
+            extra_data: HoloceneExtraData::encode(Default::default(), BaseFeeParams::optimism())
+                .unwrap(),
             ..Default::default()
         });
 
