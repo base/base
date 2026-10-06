@@ -253,8 +253,8 @@ impl AlloyUpgradeSignalReader {
     /// The contract keys upgrades by ascending numeric registration id and keeps names offchain,
     /// so entries are aligned with [`BaseUpgrade::CONTRACT_VARIANTS`] by registration id: id `0`
     /// maps to the oldest contract-backed hardfork, and each following id maps to the next
-    /// hardfork in the ladder. This is a positional mapping by id, not a sort by timestamp, so the
-    /// timestamps need not be monotonic. Contract entries beyond the ladder
+    /// hardfork in the ladder. This is a positional mapping by id, not a sort by timestamp; ladder
+    /// order is enforced afterwards by [`UpgradeSignalSchedule::validate_ladder_order`]. Contract entries beyond the ladder
     /// belong to upgrades newer than this binary knows and are logged and ignored, and hardforks
     /// without a contract entry produce no signal. Every signal carries the contract's global
     /// minimum protocol version.
@@ -301,6 +301,11 @@ impl AlloyUpgradeSignalReader {
     /// activations; the live poller skips the apply (see
     /// [`read_schedule_tolerant`](Self::read_schedule_tolerant)); and the manual admin refresh
     /// surfaces it as an error instead of clearing overrides.
+    ///
+    /// A schedule whose execution forks are out of ladder order is rejected with
+    /// [`UpgradeSignalError::OutOfLadderOrder`] (see
+    /// [`UpgradeSignalSchedule::validate_ladder_order`]) and counted as a read error, so a
+    /// misordered contract write is never applied.
     pub async fn read_schedule(
         &self,
         metrics_layers: &[UpgradeSignalMetricLayer],
@@ -326,6 +331,10 @@ impl AlloyUpgradeSignalReader {
         if schedule.signals.is_empty() {
             UpgradeSignalMetrics::record_empty_schedule_reads_for_layers(metrics_layers);
             return Err(UpgradeSignalError::EmptySchedule);
+        }
+        if let Err(error) = schedule.validate_ladder_order() {
+            UpgradeSignalMetrics::record_l1_read_errors_for_layers(metrics_layers);
+            return Err(error);
         }
 
         Ok(schedule)
@@ -581,6 +590,25 @@ mod tests {
         let error = reader.read_schedule(&[]).await.unwrap_err();
 
         assert!(matches!(error, UpgradeSignalError::EmptySchedule));
+    }
+
+    #[tokio::test]
+    async fn rejects_schedule_out_of_ladder_order() {
+        // Regolith activates after Canyon.
+        let mut encoded = schedule_abi_header(U256::from(2));
+        encoded.extend_from_slice(&U256::from(20).to_be_bytes::<32>());
+        encoded.extend_from_slice(&U256::from(10).to_be_bytes::<32>());
+        let server = MockL1::schedule_server(encoded).await;
+        let reader = AlloyUpgradeSignalReader::new(
+            server.url("/").parse().unwrap(),
+            Address::ZERO,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        let error = reader.read_schedule(&[]).await.unwrap_err();
+
+        assert!(matches!(error, UpgradeSignalError::OutOfLadderOrder { .. }));
     }
 
     #[tokio::test]
