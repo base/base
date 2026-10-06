@@ -807,6 +807,8 @@ class SnapshotTests(unittest.TestCase):
                 devnet.validate_fork(fork, {**header, **changed}, {"number": finalized}, 1000, 12)
         with self.assertRaisesRegex(RuntimeError, "not canonical"):
             devnet.validate_fork(fork, None, {"number": "0x65"}, 1000, 12)
+        with self.assertRaisesRegex(RuntimeError, "not finalized"):
+            devnet.validate_fork(fork, header, None, 1000, 12)
         off_grid = {**fork, "timestamp": 1241}
         with self.assertRaisesRegex(RuntimeError, "slot grid"):
             devnet.validate_fork(off_grid, {**header, "timestamp": hex(1241)}, {"number": "0x65"}, 1000, 12)
