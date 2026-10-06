@@ -55,6 +55,7 @@ def container(service, address="10.9.0.2", project="snapshot-fixture", networks=
 def sync_status(l1, safe=123, safe_hash="0x123", unsafe=None, unsafe_hash=None):
     return {"current_l1": {"number": l1, "hash": f"0xl1{l1}"},
             "safe_l2": {"number": safe, "hash": safe_hash},
+            "finalized_l2": {"number": safe, "hash": safe_hash},
             "unsafe_l2": {"number": safe if unsafe is None else unsafe,
                           "hash": safe_hash if unsafe_hash is None else unsafe_hash,
                           "timestamp": 1234, "l1origin": {"number": 19}}}
@@ -1040,6 +1041,141 @@ class SnapshotTests(unittest.TestCase):
         self.batching([(123, 123), (123, 123)], [True, False], {})
         with self.assertRaisesRegex(RuntimeError, "batcher exited.*code 0"):
             self.fork.start_batcher()
+
+    def test_checkpoint_capture_saves_reachable_nodes_before_reporting_identity_failures(self):
+        validator = sync_status(101, safe=129, safe_hash="0x129")
+        for failure in (devnet.Unavailable("sequencer stopped"), RuntimeError("ambiguous running containers")):
+            with self.subTest(failure=failure):
+                self.fork.manifest["last_stop"] = {"sequencer": {"safe_l2": {"number": 1, "hash": "0xold"}}}
+                self.fork.save()
+                def status(role):
+                    if role == "sequencer":
+                        raise failure
+                    return validator
+                with patch.object(self.fork, "sync_status", side_effect=status):
+                    if isinstance(failure, devnet.Unavailable):
+                        self.fork.record_checkpoints()
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "ambiguous"):
+                            self.fork.record_checkpoints()
+                # The unreadable sequencer keeps its earlier checkpoint for the next start to restore.
+                self.assertEqual(devnet.SnapshotFork(self.fork.directory).manifest["last_stop"], {
+                    "sequencer": {"safe_l2": {"number": 1, "hash": "0xold"}}, "validator": validator})
+
+    def test_unrestored_or_unreachable_checkpoints_survive_repeated_stops_until_replayed(self):
+        recorded = {"safe_l2": {"number": 129, "hash": "0x129"}, "finalized_l2": {"number": 125, "hash": "0x125"}}
+        saved = {role: copy.deepcopy(recorded) for role in devnet.ROLES}
+        self.fork.manifest["last_stop"] = copy.deepcopy(saved)
+        self.fork.save()
+        # The validator's replay was interrupted at the persisted head 123; the sequencer is unreachable.
+        live = {"validator": sync_status(101, safe=123)}
+
+        def status(role):
+            if role not in live:
+                raise devnet.Unavailable(role + " consensus RPC stopped")
+            return live[role]
+
+        def node(url, method, height, full):
+            self.assertEqual(url, "validator")
+            return {"hash": "0x" + str(devnet.number(height))}
+
+        with patch.object(devnet.SnapshotFork, "sync_status", side_effect=status), \
+                patch.object(devnet.SnapshotFork, "url", side_effect=lambda role: role), \
+                patch.object(devnet, "rpc", side_effect=node), \
+                patch.object(devnet.time, "sleep"), patch("builtins.print"):
+            for _ in range(2):  # Stop mid-replay, restart, and stop mid-replay again.
+                self.fork.record_checkpoints()
+                restarted = devnet.SnapshotFork(self.fork.directory, timeout=0.02)
+                self.assertEqual(restarted.manifest["last_stop"], saved)
+                with self.assertRaisesRegex(RuntimeError, "no progress"):
+                    restarted.wait_checkpoints()
+            # Once the exact recorded hashes are restored, only that role's status is replaced.
+            live["validator"] = sync_status(101, safe=130, safe_hash="0x130")
+            self.fork.record_checkpoints()
+        self.assertEqual(devnet.SnapshotFork(self.fork.directory).manifest["last_stop"],
+                         {"sequencer": saved["sequencer"], "validator": live["validator"]})
+
+    def test_uninitialized_engine_status_never_becomes_a_checkpoint(self):
+        recorded = {"safe_l2": {"number": 129, "hash": "0x129"}, "finalized_l2": {"number": 125, "hash": "0x125"}}
+        self.fork.manifest["last_stop"] = {"validator": recorded}
+        # A consensus node reports zeroed heads until its engine state is initialized from the EL.
+        zero = sync_status(0, safe=0, safe_hash="0x" + "0" * 64)
+        with patch.object(self.fork, "sync_status", return_value=zero), \
+                patch.object(self.fork, "url", side_effect=lambda role: role), \
+                patch.object(devnet, "rpc", return_value={"hash": "0x" + "0" * 64}):
+            self.fork.record_checkpoints()
+        self.assertEqual(devnet.SnapshotFork(self.fork.directory).manifest["last_stop"], {"validator": recorded})
+
+    def test_higher_conflicting_safe_head_cannot_replace_recorded_checkpoints(self):
+        recorded = {"safe_l2": {"number": 129, "hash": "0x129"}, "finalized_l2": {"number": 125, "hash": "0x125"}}
+        self.fork.manifest["last_stop"] = {"validator": recorded}
+        statuses = {"sequencer": sync_status(101, safe=140, safe_hash="0x140"),
+                    "validator": sync_status(101, safe=140, safe_hash="0xother140")}
+
+        def node(url, method, height, full):
+            self.assertEqual(url, "validator")
+            return {"hash": "0xother" + str(devnet.number(height))}
+
+        with patch.object(self.fork, "sync_status", side_effect=statuses.get), \
+                patch.object(self.fork, "url", side_effect=lambda role: role), \
+                patch.object(devnet, "rpc", side_effect=node):
+            with self.assertRaisesRegex(RuntimeError, "validator derived a block conflicting with a recorded checkpoint"):
+                self.fork.record_checkpoints()
+        self.assertEqual(devnet.SnapshotFork(self.fork.directory).manifest["last_stop"],
+                         {"sequencer": statuses["sequencer"], "validator": recorded})
+
+    def test_inspection_defers_only_unpersisted_checkpoint_tail(self):
+        for height, actual, deferred in ((128, None, True), (123, None, False),
+                                         (122, None, False), (128, {"hash": "0xwrong"}, False)):
+            with self.subTest(height=height, actual=actual):
+                self.fork.manifest["last_stop"] = {
+                    "validator": {"safe_l2": {"number": height, "hash": "0xexpected"}}}
+                with patch.object(self.fork, "compose"), patch.object(self.fork, "await_rpc"), \
+                        patch.object(self.fork, "containers", return_value=[]), \
+                        patch.object(self.fork, "url", side_effect=lambda role: role), \
+                        patch.object(devnet, "run", return_value=json.dumps(snapshot())), \
+                        patch.object(devnet, "rpc", return_value=actual), patch("builtins.print"):
+                    if deferred:
+                        self.assertEqual(len(self.fork.inspect()), 2)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "checkpoint"):
+                            self.fork.inspect()
+
+    def test_checkpoint_replay_requires_exact_saved_hashes_after_safe_derivation_using_reads_only(self):
+        for outcome in ("recovered", "unavailable", "conflict", "stalled"):
+            with self.subTest(outcome=outcome):
+                # Block 129 is above the persisted head 123, so inspection deferred it to this gate.
+                self.fork.manifest["last_stop"] = {
+                    "validator": {"safe_l2": {"number": 129, "hash": "0xsafe"},
+                                  "finalized_l2": {"number": 125, "hash": "0xfinal"}}}
+                self.fork.timeout = 0.02
+                polls, methods = [], []
+
+                def status(role):
+                    self.assertEqual(role, "validator")
+                    polls.append(role)
+                    if outcome == "unavailable" and len(polls) == 1:
+                        raise devnet.Unavailable("validator consensus RPC restarting")
+                    return sync_status(101, safe=129 if len(polls) > 1 and outcome != "stalled" else 123, unsafe=130)
+
+                def node(url, method, height, full):
+                    methods.append(method)
+                    self.assertGreaterEqual(len(polls), 2, "compare hashes only once safe derivation reaches them")
+                    return {"hash": "0xwrong" if outcome == "conflict" else
+                            {129: "0xsafe", 125: "0xfinal"}[devnet.number(height)]}
+
+                with patch.object(self.fork, "sync_status", side_effect=status), \
+                        patch.object(self.fork, "url", side_effect=lambda role: role), \
+                        patch.object(devnet, "rpc", side_effect=node), \
+                        patch.object(devnet.time, "sleep"), patch("builtins.print"):
+                    if outcome in ("recovered", "unavailable"):
+                        self.fork.wait_checkpoints()
+                        self.assertEqual(methods, ["eth_getBlockByNumber"] * 2)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "conflicting with a recorded checkpoint"
+                                                    if outcome == "conflict" else "no progress"):
+                            self.fork.wait_checkpoints()
+                        self.assertEqual(set(methods), {"eth_getBlockByNumber"} if outcome == "conflict" else set())
 
     @unittest.skipUnless(shutil.which("just"), "requires the just command dispatcher")
     def test_snapshot_is_a_just_module_that_forwards_init_arguments_without_writes(self):
