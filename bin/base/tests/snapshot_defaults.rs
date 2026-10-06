@@ -85,6 +85,7 @@ fn snapshot_download_help_advertises_base_defaults() {
         "https://mainnet-v2-snapshots.base.org (--chain mainnet)",
         "https://sepolia-v2-snapshots.base.org (--chain sepolia)",
         "https://zeronet-v2-snapshots.base.org (--chain zeronet)",
+        "--prune-unlisted",
     ] {
         assert!(help.contains(expected), "snapshot download help is missing {expected:?}");
     }
