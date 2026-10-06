@@ -8,6 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import stat
@@ -1447,7 +1448,7 @@ class SnapshotTests(unittest.TestCase):
                         patch.object(devnet, "run", side_effect=docker), \
                         patch.object(devnet, "setup_command", side_effect=command), patch("builtins.print"):
                     with self.assertRaisesRegex(RuntimeError, "image missing" if source == "custom" else "inspector interrupted"):
-                        devnet.prepare_snapshot(args, work, lock)
+                        devnet.prepare_snapshot(args, devnet.SnapshotFork(work / "fork"), work, lock)
                 self.assertEqual(commands[0][:3], ("docker", "buildx", "bake"))
                 if source == "missing":
                     self.assertEqual(commands[1], ("just", "devnet", "snapshot", "build-anvil"))
@@ -1460,34 +1461,299 @@ class SnapshotTests(unittest.TestCase):
                 self.assertEqual(images["base"], image_id)
                 self.assertEqual(images["anvil"], "anvil:custom" if source == "custom" else image_id)
 
-    def test_setup_build_journal_never_repeats_completed_steps_and_rejects_unknown_phases(self):
-        work = self.root / "work"
-        work.mkdir()
-        args = Mock(anvil_image=devnet.DEFAULT_IMAGES["anvil"], batcher_image=devnet.DEFAULT_IMAGES["batcher"])
-        calls = []
+    @contextlib.contextmanager
+    def preparing(self, command, initialize, fetched):
+        """Mocked tools; later snapshot index reads offer a newer snapshot than the first."""
+        def metadata(url):
+            fetched.append(url)
+            if url == devnet.SNAPSHOT_INDEX:
+                block = 122 + fetched.count(url)
+                return [{"chainId": "8453", "block": str(block), "metadataUrl": f"https://snapshot.invalid/{block}/manifest.json"},
+                        {"chainId": 8453, "block": 90, "metadataUrl": "https://snapshot.invalid/90/manifest.json"},
+                        {"chainId": 1, "block": 999, "metadataUrl": "https://snapshot.invalid/999/manifest.json"}]
+            return {"chain_id": 8453, "block": int(url.split("/")[-2])}
 
-        def command(*command, lock_fd):
-            calls.append(command[0] if command[0] == "cargo" else command[:3])
-            if calls == [("docker", "buildx", "bake"), "cargo"]:
-                raise KeyboardInterrupt()
-
-        with tempfile.TemporaryFile() as lock, \
-                patch.object(devnet.shutil, "which", return_value="/usr/bin/docker"), \
+        with patch.object(devnet.shutil, "which", return_value="/usr/bin/tool"), \
                 patch.object(devnet, "run", return_value="sha256:" + "e" * 64), \
-                patch.object(devnet, "setup_command", side_effect=command), patch("builtins.print"):
-            with self.assertRaises(KeyboardInterrupt):
-                devnet.prepare_snapshot(args, work, lock)
-            devnet.prepare_snapshot(args, work, lock)
-            devnet.prepare_snapshot(args, work, lock)
-            self.assertEqual(calls, [("docker", "buildx", "bake"), "cargo", "cargo"])
-            completed = (work / "setup.json").read_bytes()
-            for name, change in (("download", {"phase": "download"}), ("copy", {"phase": "copy"}),
-                                 ("future version", {"version": 2})):
-                with self.subTest(journal=name):
-                    devnet.write_json(work / "setup.json", {**json.loads(completed), **change})
-                    with self.assertRaisesRegex(RuntimeError, "unsupported snapshot setup journal"):
-                        devnet.prepare_snapshot(args, work, lock)
-            self.assertEqual(len(calls), 3)
+                patch.object(devnet, "request_json", side_effect=metadata), \
+                patch.object(devnet, "setup_command", side_effect=command), \
+                patch.object(devnet.SnapshotFork, "initialize", autospec=True, side_effect=initialize), \
+                patch("builtins.print"):
+            yield
+
+    @unittest.skipUnless(shutil.which("rsync"), "requires rsync, but copies only temporary data")
+    def test_prepare_pins_snapshot_before_download_and_fully_copies_validator(self):
+        work = self.root / "experiment with spaces"
+        work.mkdir()
+        image = "sha256:" + "e" * 64
+        args = Mock(anvil_image=devnet.DEFAULT_IMAGES["anvil"], batcher_image=devnet.DEFAULT_IMAGES["batcher"],
+                    download_concurrency=devnet.DEFAULT_DOWNLOAD_CONCURRENCY)
+        commands, copied, fetched = [], [], []
+        pinned = {"chain_id": 8453, "block": 123, "base_url": "https://snapshot.invalid/123/"}
+
+        def command(*args, lock_fd):
+            self.assertEqual(lock_fd, lock.fileno())
+            commands.append(args)
+            if args[:2] == ("docker", "run"):
+                state = json.loads((work / "setup.json").read_text())
+                self.assertEqual(state["phase"], "download")
+                self.assertEqual(json.loads((work / "download-manifest.json").read_text()), pinned)
+                self.assertEqual(args[args.index("--name") + 1], state["download_container"])
+                self.assertIn(image, args)
+                self.assertEqual(args[args.index("--manifest-path") + 1], "/work/download-manifest.json")
+                self.assertEqual(args[args.index("--download-concurrency") + 1], "16")
+                self.assertNotIn("--full", args)
+                self.assertNotIn("--force", args)
+                for flag in ("--with-txs-distance", "--with-receipts-distance", "--with-state-history-distance"):
+                    self.assertEqual(args[args.index(flag) + 1], "1339200")
+                (work / "builder/db").mkdir(parents=True)
+                (work / "builder/db/mdbx.dat").write_bytes(b"snapshot-state")
+                (work / "builder/static_files").mkdir()
+                (work / "builder/static_files/headers").write_bytes(b"snapshot-history")
+            elif args[0] == "rsync":
+                copied.append(subprocess.run(args, check=True, capture_output=True, text=True).stdout)
+
+        def initialize(fork, config, allow_write):
+            self.assertTrue(allow_write)
+            self.assertEqual(config, json.loads((work / "input.json").read_text()))
+            for role in ("builder", "validator"):
+                self.assertEqual((work / role / "static_files/headers").read_bytes(), b"snapshot-history")
+            self.assertNotEqual((work / "builder/db/mdbx.dat").stat().st_ino,
+                                (work / "validator/db/mdbx.dat").stat().st_ino)
+            (work / "validator/db/mdbx.dat").write_bytes(b"validator-only-write")
+            self.assertEqual((work / "builder/db/mdbx.dat").read_bytes(), b"snapshot-state")
+
+        with tempfile.TemporaryFile() as lock, self.preparing(command, initialize, fetched):
+            devnet.prepare_snapshot(args, devnet.SnapshotFork(work / "fork"), work, lock)
+        self.assertEqual([args[:3] for args in commands if args[0] != "rsync"],
+                         [("docker", "buildx", "bake"), ("cargo", "build", "--locked"), ("docker", "run", "--rm")])
+        for option in ("etc/docker/docker-bake.hcl", "base.args.PROFILE=release", "--load"):
+            self.assertIn(option, commands[0], "always build this checkout's Base before downloading")
+        self.assertEqual(fetched, [devnet.SNAPSHOT_INDEX, "https://snapshot.invalid/123/manifest.json"])
+        self.assertIn("100%", copied[0], "the copy must report progress")
+        state = json.loads((work / "setup.json").read_text())
+        self.assertEqual({key: state[key] for key in ("version", "phase", "images", "inspector_built")},
+                         {"version": 1, "phase": "initialize", "inspector_built": True,
+                          "images": {role: image for role in ("base", "anvil", "batcher")}})
+        config = json.loads((work / "input.json").read_text())
+        self.assertEqual(config, {"sequencer_datadir": str(work / "builder"), "validator_datadir": str(work / "validator"),
+                                  "port": config["port"], **{role + "_image": image for role in ("base", "anvil", "batcher")}})
+        self.assertGreaterEqual(config["port"], 1024)
+
+    @unittest.skipUnless(shutil.which("rsync"), "requires rsync, but copies only temporary data")
+    def test_prepare_resumes_each_interruption_without_repeating_completed_steps(self):
+        write_json = devnet.write_json
+        for failure in ("build", "inspector", "pin", "download", "copy", "initialize"):
+            with self.subTest(failure=failure):
+                work = self.root / failure
+                work.mkdir()
+                args = Mock(anvil_image="sha256:" + "a" * 64, batcher_image="sha256:" + "b" * 64)
+                calls, fetched = [], []
+                interrupted = False
+
+                def step(phase):
+                    nonlocal interrupted
+                    calls.append(phase)
+                    if phase == failure and not interrupted:
+                        interrupted = True
+                        raise KeyboardInterrupt()
+
+                def command(*args, lock_fd):
+                    if args[:3] == ("docker", "buildx", "bake"):
+                        step("build")
+                    elif args[0] == "cargo":
+                        step("inspector")
+                    elif args[:2] == ("docker", "run"):
+                        self.assertEqual(json.loads((work / "download-manifest.json").read_text())["block"], 123)
+                        (work / "builder/db").mkdir(parents=True, exist_ok=True)
+                        (work / "builder/db/mdbx.dat").write_bytes(b"partial")
+                        step("download")
+                        (work / "builder/db/mdbx.dat").write_bytes(b"snapshot")
+                    elif args[0] == "rsync":
+                        (work / "validator/db").mkdir(parents=True, exist_ok=True)
+                        (work / "validator/db/mdbx.dat").write_bytes(b"partial-copy")
+                        step("copy")
+                        subprocess.run(args, check=True, capture_output=True)
+
+                def initialize(fork, config, allow_write):
+                    # A resumed initialization must see its own writes, never a fresh copy.
+                    self.assertEqual((work / "validator/db/mdbx.dat").read_bytes(),
+                                     b"opened-by-inspection" if fork.manifest else b"snapshot")
+                    fork.manifest = {**manifest(), "phase": "inspecting", "setup_input": config}
+                    fork.save()
+                    (work / "validator/db/mdbx.dat").write_bytes(b"opened-by-inspection")
+                    step("initialize")
+
+                def journal(path, value):
+                    # "pin": the snapshot manifest is saved but the journal has not yet advanced.
+                    if path.name == "setup.json" and value["phase"] == "download":
+                        step("pin")
+                    write_json(path, value)
+
+                (work / "fork").mkdir()
+                with tempfile.TemporaryFile() as lock, self.preparing(command, initialize, fetched), \
+                        patch.object(devnet, "write_json", side_effect=journal):
+                    with self.assertRaises(KeyboardInterrupt):
+                        devnet.prepare_snapshot(args, devnet.SnapshotFork(work / "fork"), work, lock)
+                    state = json.loads((work / "setup.json").read_text())
+                    self.assertEqual(state["phase"], {"inspector": "build", "pin": "build"}.get(failure, failure))
+                    self.assertEqual(state["images"]["base"].startswith("sha256:"), failure != "build")
+                    self.assertEqual(state.get("inspector_built", False), failure not in ("build", "inspector"))
+                    if failure in ("download", "copy"):
+                        self.assertEqual((work / "builder/db/mdbx.dat").read_bytes(),
+                                         b"partial" if failure == "download" else b"snapshot")
+                    devnet.prepare_snapshot(args, devnet.SnapshotFork(work / "fork"), work, lock)
+                self.assertEqual(calls, [phase for phase in ("build", "inspector", "pin", "download", "copy", "initialize")
+                                         for _ in range(2 if phase == failure else 1)])
+                self.assertEqual(fetched.count(devnet.SNAPSHOT_INDEX), 1, "retry must not select a newer snapshot")
+                self.assertEqual(json.loads((work / "download-manifest.json").read_text())["block"], 123)
+                self.assertEqual((work / "builder/db/mdbx.dat").read_bytes(), b"snapshot")
+                self.assertEqual((work / "validator/db/mdbx.dat").read_bytes(), b"opened-by-inspection")
+
+    def test_prepare_rejects_unsafe_saved_state_before_any_effect(self):
+        image = "sha256:" + "e" * 64
+        images = {role: image for role in ("base", "anvil", "batcher")}
+        journal = {"version": 1, "phase": "copy", "images": images, "download_container": "snapshot-download-x"}
+        args = Mock(anvil_image=devnet.DEFAULT_IMAGES["anvil"], batcher_image=devnet.DEFAULT_IMAGES["batcher"])
+        cases = {
+            "unknown phase": ({**journal, "phase": "verify"}, True, "unsupported snapshot setup journal"),
+            "future journal": ({**journal, "version": 2}, True, "unsupported snapshot setup journal"),
+            "missing input": (journal, False, "saved setup input is missing"),
+            "unjournaled input": (None, True, "unrecorded download"),
+            "changed image": ({**journal, "images": {**images, "anvil": "sha256:" + "f" * 64}}, True, "input changed"),
+            "moved datadir": (journal, {"validator_datadir": "/elsewhere"}, "input changed"),
+            "initialized": (journal, True, "initialization already began"),
+            "symlinked datadir": (journal, True, "must not be symlinks"),
+            "new symlinked datadir": (None, False, "must not be symlinks"),
+            "missing rsync": (journal, True, "rsync"),
+        }
+        for name, (state, saved_input, error) in cases.items():
+            with self.subTest(name=name):
+                work = self.root / name
+                fork = devnet.SnapshotFork(work / "fork")
+                builder = self.datadir(f"{name}/builder")
+                if state is not None:
+                    devnet.write_json(work / "setup.json", state)
+                if saved_input:
+                    devnet.write_json(work / "input.json", {
+                        "sequencer_datadir": str(builder), "validator_datadir": str(work / "validator"), "port": 30303,
+                        **{role + "_image": image for role in images}, **(saved_input if isinstance(saved_input, dict) else {})})
+                if name == "initialized":
+                    fork.manifest = {**manifest(), "phase": "inspecting"}
+                if "symlinked" in name:
+                    (work / "validator").symlink_to(builder)
+                before = {path: path.read_bytes() for path in work.rglob("*") if path.is_file()}
+                with tempfile.TemporaryFile() as lock, \
+                        patch.object(devnet.shutil, "which", side_effect=lambda tool: None if tool == "rsync" and name == "missing rsync" else "/usr/bin/tool"), \
+                        patch.object(devnet, "run") as run, patch.object(devnet, "request_json") as fetch, \
+                        patch.object(devnet, "setup_command") as command, \
+                        patch.object(devnet.SnapshotFork, "initialize") as initialize:
+                    with self.assertRaisesRegex(RuntimeError, error):
+                        devnet.prepare_snapshot(args, fork, work, lock)
+                for mock in (run, fetch, command, initialize):
+                    mock.assert_not_called()
+                self.assertEqual({path: path.read_bytes() for path in work.rglob("*") if path.is_file()}, before)
+
+    def test_prepare_never_echoes_malformed_snapshot_metadata(self):
+        work = self.root / "work"
+        args = Mock(anvil_image="sha256:" + "a" * 64, batcher_image="sha256:" + "b" * 64)
+        entry = {"chainId": 8453, "block": 123, "metadataUrl": "https://snapshot.invalid/123/manifest.json"}
+        for name, index, metadata in (
+                ("index chain", [{**entry, "chainId": "secret-token"}], {}),
+                ("index block", [{**entry, "block": "secret-token"}], {}),
+                ("manifest chain", [entry], {"chain_id": "secret-token", "block": 123}),
+                ("manifest block", [entry], {"chain_id": 8453, "block": "secret-token"})):
+            with self.subTest(name=name):
+                shutil.rmtree(work, ignore_errors=True)
+                work.mkdir()
+                with tempfile.TemporaryFile() as lock, \
+                        patch.dict(os.environ, {"BASE_SNAPSHOT_INSPECTOR": str(self.root / "base-devnet")}), \
+                        patch.object(devnet.shutil, "which", return_value="/usr/bin/tool"), \
+                        patch.object(devnet, "run", return_value="sha256:" + "e" * 64), \
+                        patch.object(devnet, "request_json", side_effect=[index, metadata]), \
+                        patch.object(devnet, "setup_command"), patch("builtins.print"):
+                    (self.root / "base-devnet").touch()
+                    with self.assertRaises(ValueError) as caught:
+                        devnet.prepare_snapshot(args, devnet.SnapshotFork(work / "fork"), work, lock)
+                self.assertNotIn("secret", str(caught.exception))
+                self.assertFalse((work / "download-manifest.json").exists())
+
+    def test_setup_commands_stream_progress_without_urls_and_report_failure(self):
+        program = ("import sys; print('downloading 40% https://archive.invalid/x?X-Amz-Signature=secret-sig', flush=True); "
+                   "print('progress 1/2 files', file=sys.stderr, flush=True); sys.exit(int(sys.argv[1]))")
+        for status in (0, 3):
+            with self.subTest(status=status), tempfile.TemporaryFile() as lock, \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                try:
+                    devnet.setup_command(sys.executable, "-c", program, status, lock_fd=lock.fileno())
+                except RuntimeError as error:
+                    self.assertTrue(status, error)
+                    self.assertIn("setup command failed", str(error))
+                else:
+                    self.assertFalse(status, "a failing command must be reported")
+            self.assertNotIn("secret", output.getvalue())
+            self.assertNotIn("archive.invalid", output.getvalue())
+            self.assertIn("downloading 40%", output.getvalue())
+            self.assertIn("progress 1/2 files", output.getvalue())
+
+    @unittest.skipUnless(shutil.which("rsync"), "requires rsync, but copies only temporary data")
+    def test_interrupted_copy_resumes_from_its_partial_database(self):
+        work, shims = self.root / "work", self.root / "shims"
+        (work / "builder/db").mkdir(parents=True)
+        source = os.urandom(1 << 22)
+        (work / "builder/db/mdbx.dat").write_bytes(source)
+        (work / "builder/reth.toml").write_text("complete\n")
+        devnet.write_json(work / "setup.json", {"version": 1, "phase": "copy", "download_container": "unused",
+                                                "images": {role: "sha256:" + "e" * 64 for role in devnet.DEFAULT_IMAGES}})
+        devnet.write_json(work / "input.json", {"sequencer_datadir": str(work / "builder"),
+                                                "validator_datadir": str(work / "validator"), "port": 30303,
+                                                **{role + "_image": "sha256:" + "e" * 64 for role in devnet.DEFAULT_IMAGES}})
+        # The first copy is throttled and interrupted once a database-sized file is partly written;
+        # the retry reports how much of it rsync reused.
+        shims.mkdir()
+        (shims / "rsync").write_text(f"""#!{sys.executable}
+import os, pathlib, signal, subprocess, sys, time
+rsync = {shutil.which("rsync")!r}
+database = pathlib.Path({str(work / "validator/db")!r})
+if os.path.exists({str(shims / "interrupted")!r}):
+    os.execv(rsync, [rsync, "--stats", *sys.argv[1:]])
+pathlib.Path({str(shims / "interrupted")!r}).touch()
+child = subprocess.Popen([rsync, "--bwlimit=256", *sys.argv[1:]])
+deadline = time.monotonic() + 30
+while not any(path.is_file() and path.stat().st_size >= 1 << 18
+              for path in (database.iterdir() if database.is_dir() else ())):
+    if time.monotonic() > deadline or child.poll() is not None:
+        sys.exit("copy finished before it could be interrupted")
+    time.sleep(0.01)
+child.send_signal(signal.SIGTERM)
+sys.exit(child.wait() or 1)
+""")
+        (shims / "rsync").chmod(0o700)
+        args = Mock(anvil_image="sha256:" + "e" * 64, batcher_image="sha256:" + "e" * 64)
+        with tempfile.TemporaryFile() as lock, patch.dict(os.environ, {"PATH": f"{shims}:{os.environ['PATH']}"}), \
+                patch.object(devnet.SnapshotFork, "initialize") as initialize, patch("builtins.print") as output:
+            with self.assertRaisesRegex(RuntimeError, "setup command failed"):
+                devnet.prepare_snapshot(args, devnet.SnapshotFork(work / "fork"), work, lock)
+            # The staging copy is written in place; nothing else holds the interrupted data.
+            copy = work / "validator/db/mdbx.dat"
+            self.assertEqual(os.listdir(work / "validator/db"), ["mdbx.dat"])
+            partial, inode = copy.read_bytes(), copy.stat().st_ino
+            self.assertTrue(0 < len(partial) < len(source) and source.startswith(partial))
+            initialize.assert_not_called()
+            output.reset_mock()
+            devnet.prepare_snapshot(args, devnet.SnapshotFork(work / "fork"), work, lock)
+            initialize.assert_called_once()
+        printed = "".join(str(call.args[0]) for call in output.call_args_list if call.args)
+        reused = int(re.search(r"Matched data: ([\d,]+)", printed)[1].replace(",", ""))
+        self.assertGreaterEqual(reused, len(partial) - (1 << 16), printed)
+        self.assertEqual(copy.read_bytes(), source)
+        # The same inode was completed: the retry wrote no second database-sized file to rename into place.
+        self.assertEqual(copy.stat().st_ino, inode)
+        self.assertEqual(copy.stat().st_nlink, 1)
+        self.assertNotEqual(copy.stat().st_ino, (work / "builder/db/mdbx.dat").stat().st_ino)
+        self.assertEqual((work / "builder/db/mdbx.dat").read_bytes(), source)
+        self.assertEqual(os.listdir(work / "validator/db"), ["mdbx.dat"])
+        self.assertEqual(json.loads((work / "setup.json").read_text())["phase"], "initialize")
 
     def test_concurrent_setups_each_pin_their_own_base_build(self):
         # Checkouts share Docker's tag namespace; a build finishing later must not replace another's pin.
@@ -1510,13 +1776,16 @@ class SnapshotTests(unittest.TestCase):
 
         def prepare(work):
             work.mkdir()
-            devnet.prepare_snapshot(Mock(anvil_image=devnet.DEFAULT_IMAGES["anvil"],
-                                         batcher_image=devnet.DEFAULT_IMAGES["batcher"]), work, lock)
+            with self.assertRaises(KeyboardInterrupt):  # Stop once the build phase is journaled.
+                devnet.prepare_snapshot(Mock(anvil_image=devnet.DEFAULT_IMAGES["anvil"],
+                                             batcher_image=devnet.DEFAULT_IMAGES["batcher"]),
+                                        devnet.SnapshotFork(work / "fork"), work, lock)
 
         first, second = self.root / "first", self.root / "second"
         with tempfile.TemporaryFile() as lock, patch.dict(os.environ, {"BASE_SNAPSHOT_INSPECTOR": str(inspector)}), \
                 patch.object(devnet.shutil, "which", return_value="/usr/bin/docker"), \
                 patch.object(devnet, "run", side_effect=docker), \
+                patch.object(devnet, "request_json", side_effect=KeyboardInterrupt), \
                 patch.object(devnet, "setup_command", side_effect=command), patch("builtins.print"):
             prepare(first)
         self.assertEqual([json.loads((work / "setup.json").read_text())["images"]["base"] for work in (first, second)],
@@ -1530,10 +1799,12 @@ class SnapshotTests(unittest.TestCase):
                 patch.object(devnet.shutil, "which", return_value="/usr/bin/docker"), \
                 patch.object(devnet, "run", return_value="sha256:" + "e" * 64), \
                 patch.object(devnet, "setup_command", side_effect=lambda *command, lock_fd: calls.append(command)), \
-                patch("builtins.print"):
+                patch.object(devnet, "request_json", side_effect=KeyboardInterrupt), patch("builtins.print"), \
+                self.assertRaises(KeyboardInterrupt):
             os.environ.pop("BASE_SNAPSHOT_INSPECTOR", None)
             devnet.prepare_snapshot(Mock(anvil_image=devnet.DEFAULT_IMAGES["anvil"],
-                                         batcher_image=devnet.DEFAULT_IMAGES["batcher"]), work, lock)
+                                         batcher_image=devnet.DEFAULT_IMAGES["batcher"]),
+                                    devnet.SnapshotFork(work / "fork"), work, lock)
         cargo = next(command for command in calls if command[0] == "cargo")
         self.assertEqual(cargo[cargo.index("--target-dir") + 1], "target")
 
