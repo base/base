@@ -12,7 +12,7 @@ default:
 setup *args:
     python3 etc/scripts/devnet/snapshot_devnet.py setup "$@"
 
-# Initialize or resume a fork from existing writable snapshot copies
+# Use an existing datadir in place; optionally add --validator-dir
 init *args:
     python3 etc/scripts/devnet/snapshot_devnet.py init "$@"
 
@@ -46,7 +46,7 @@ verify *args:
 
 # Offline launcher tests (BASE_SNAPSHOT_FORK_DIR opts into live qualification)
 test:
-    PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s etc/scripts/devnet -p test_snapshot_devnet.py -v
+    PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s etc/scripts/devnet -p 'test_snapshot_*.py' -v
 
 # Build the pinned fork-aware Beacon and durable-resume Anvil revision
 build-anvil:

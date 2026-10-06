@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -267,11 +268,11 @@ class SnapshotTests(unittest.TestCase):
                         result = subprocess.run(args, check=True, capture_output=True, text=True)
                         copy_output.append(result.stdout)
 
-                def initialize(fork, config, allow_write):
-                    self.assertTrue(allow_write)
+                def initialize(fork, config):
                     fork.manifest = manifest()
                     fork.manifest["upstreams"] = {"execution": "SNAPSHOT_UPSTREAM_EXECUTION",
                                                   "beacon": "SNAPSHOT_UPSTREAM_BEACON"}
+                    self.assertTrue(config["fast_denim"])
                     self.assertEqual(fork.endpoint("execution"), "https://rpc.invalid/new-key")
                     for role in ("base", "anvil", "batcher"):
                         self.assertEqual(config[role + "_image"], image)
@@ -371,7 +372,7 @@ class SnapshotTests(unittest.TestCase):
                         fail("copy")
                         subprocess.run(args, check=True, capture_output=True)
 
-                def initialize(fork, config, allow_write):
+                def initialize(fork, config):
                     initialized.append(config)
                     fork.manifest = {**manifest(), "phase": "inspecting", "setup_input": config}
                     fork.save()
@@ -422,7 +423,7 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(args[0], "rsync", "adoption must not rebuild or invoke the downloader")
             subprocess.run(args, check=True, capture_output=True)
 
-        def initialize(fork, saved, allow_write):
+        def initialize(fork, saved):
             self.assertEqual(saved, config)
             self.assertEqual((work / "validator/db/mdbx.dat").read_bytes(), b"untouched")
             fork.manifest = manifest()
@@ -486,11 +487,76 @@ class SnapshotTests(unittest.TestCase):
                 "import os, sys; assert os.fstat(int(sys.argv[1])).st_ino == int(sys.argv[2])",
                 str(lock.fileno()), str(os.fstat(lock.fileno()).st_ino), lock_fd=lock.fileno())
 
+    def test_direct_init_resumes_without_downloading_copying_or_changing_pruning(self):
+        for paired in (False, True):
+            with self.subTest(paired=paired):
+                source = self.datadir(f"data {paired}")
+                validator = self.datadir(f"validator {paired}") if paired else None
+                (source / "reth.toml").write_text("[prune.segments]\nreceipts = { distance = 1339200 }\n")
+                original = (source / "reth.toml").read_bytes()
+                work = source.with_name(source.name + "-devnet")
+                roles = {"sequencer": str(source), **({"validator": str(validator)} if paired else {})}
+                image = "sha256:" + "e" * 64
+                initialized = []
+
+                def initialize(fork, config):
+                    initialized.append(config)
+                    if len(initialized) == 1:
+                        raise RuntimeError("waiting for finalized L1")
+                    fork.manifest = {**manifest(), "datadirs": roles, "fast_denim": True, "setup_input": config}
+                    fork.save()
+
+                arguments = ["launcher", "init", "--dir", str(source)]
+                if validator:
+                    arguments += ["--validator-dir", str(validator)]
+                with patch.dict(os.environ, {"SNAPSHOT_UPSTREAM_EXECUTION": "https://rpc.invalid/key",
+                                              "SNAPSHOT_UPSTREAM_BEACON": "https://beacon.invalid/key"}), \
+                        patch.object(devnet, "rpc", return_value="0x1"), \
+                        patch.object(devnet, "request_json", return_value={"data": {"genesis_time": "1000", "SECONDS_PER_SLOT": "12"}}), \
+                        patch.object(devnet, "run", return_value=image), \
+                        patch.object(devnet.shutil, "which", side_effect=lambda tool: None if tool == "rsync" else tool), \
+                        patch.object(devnet, "setup_command") as commands, \
+                        patch.object(devnet.SnapshotFork, "initialize", autospec=True, side_effect=initialize), \
+                        patch("builtins.input", side_effect=AssertionError("datadir is already supplied")), \
+                        patch.object(devnet.getpass, "getpass", side_effect=AssertionError("endpoints already supplied")), \
+                        patch("builtins.print"):
+                    with patch.object(sys, "argv", arguments):
+                        with self.assertRaisesRegex(RuntimeError, "finalized L1"):
+                            devnet.main()
+                    built = commands.call_count
+                    with patch.object(sys, "argv", arguments):
+                        devnet.main()
+                        devnet.main()
+                    self.assertEqual(commands.call_count, built)
+                    self.assertEqual([c.args[0] for c in commands.call_args_list], ["docker", "cargo"])
+                    self.assertEqual(commands.call_args_list[0].args[1:3], ("buildx", "bake"))
+                self.assertEqual(initialized[0], initialized[1])
+                self.assertTrue(initialized[0]["fast_denim"])
+                self.assertEqual({k.removesuffix("_datadir"): v for k, v in initialized[0].items()
+                                  if k.endswith("_datadir")}, roles)
+                self.assertEqual(devnet.configured_directory(), work / "fork")
+                self.assertEqual((source / "reth.toml").read_bytes(), original)
+                self.assertEqual((source / "db/mdbx.dat").read_bytes(), b"untouched")
+                self.assertFalse((work / "download-manifest.json").exists())
+                self.assertFalse((work / "builder").exists())
+                self.assertFalse((work / "validator").exists())
+
     def test_init_retry_preserves_identity_and_keys_and_completed_init_is_a_noop(self):
-        builder, validator = self.datadir("builder"), self.datadir("validator")
+        self.check_init_retry(paired=True)
+
+    def test_single_node_init_defaults_to_mock_and_pins_it_across_interruption(self):
+        self.check_init_retry(paired=False)
+
+    def test_legacy_init_resume_keeps_original_contract_without_installing_mock(self):
+        self.check_init_retry(paired=True, legacy=True)
+
+    def check_init_retry(self, paired, legacy=False):
+        builder = self.datadir("builder")
         image = "sha256:" + "d" * 64
-        config = {"sequencer_datadir": str(builder), "validator_datadir": str(validator),
+        config = {"sequencer_datadir": str(builder),
                   **{role + "_image": image for role in ("base", "anvil", "batcher")}}
+        if paired:
+            config["validator_datadir"] = str(self.datadir("validator"))
         config_path = self.root / "input.json"
         devnet.write_json(config_path, config)
         initial = snapshot()
@@ -512,20 +578,35 @@ class SnapshotTests(unittest.TestCase):
                 return 1
             return "0x" + "2" * 40
 
+        def run(*args):
+            if args[0] == "docker":
+                return image
+            if args[0] == "forge":
+                return "0x6000"
+            return "0x" + args[-1][-40:]
+
+        inspections = [{**copy.deepcopy(initial), "fork": discovered}]
+        if paired:
+            inspections.append(copy.deepcopy(initial))
         with patch.object(sys, "argv", ["launcher", "init", "--dir", str(self.fork.directory),
-                                       "--config", str(config_path), "--allow-write"]), \
-                patch.object(devnet, "run", side_effect=lambda *args: image if args[0] == "docker" else "0x" + args[-1][-40:]), \
+                                       "--config", str(config_path)]), \
+                patch.object(devnet, "run", side_effect=run), \
                 patch.dict(os.environ, {"SNAPSHOT_UPSTREAM_EXECUTION": "https://rpc.invalid/key",
                                         "SNAPSHOT_UPSTREAM_BEACON": "https://rpc.invalid/key"}), \
                 patch.object(devnet, "rpc", side_effect=transport), \
                 patch.object(devnet, "call", side_effect=contract), \
                 patch.object(devnet, "request_json", return_value={"data": {"genesis_time": "1000", "SECONDS_PER_SLOT": "12"}}), \
-                patch.object(devnet.SnapshotFork, "inspect", side_effect=[KeyboardInterrupt(),
-                    [{**copy.deepcopy(initial), "fork": discovered}, copy.deepcopy(initial)]]) as inspect, \
+                patch.object(devnet.SnapshotFork, "inspect", side_effect=[KeyboardInterrupt(), inspections]) as inspect, \
                 patch("builtins.print"):
             with self.assertRaises(KeyboardInterrupt):
                 devnet.main()
             before = devnet.SnapshotFork(self.fork.directory).manifest
+            self.assertTrue(before["fast_denim"], "new init must use the mock without a flag or config field")
+            if legacy:
+                # An interrupted initialization from the old launcher has none of these fields.
+                for field in ("fast_denim", "local_protocol_versions", "upgrade_code"):
+                    del before[field]
+                devnet.write_json(self.fork.directory / "manifest.json", before)
             keys = (self.fork.directory / "keys.json").read_bytes()
             self.assertEqual(before["phase"], "inspecting")
             devnet.main()
@@ -534,11 +615,26 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(after["project"], before["project"])
             self.assertEqual(after["accounts"], before["accounts"])
             self.assertEqual((self.fork.directory / "keys.json").read_bytes(), keys)
+            if legacy:
+                self.assertNotIn("fast_denim", after)
+                self.assertNotIn("local_protocol_versions", after)
+                self.assertNotIn("upgrade_code", after)
+            else:
+                self.assertEqual(after["local_protocol_versions"], before["local_protocol_versions"])
+                self.assertNotEqual(after["local_protocol_versions"], after["protocol_versions"])
+                self.assertEqual(after["upgrade_code"], "0x6000")
+            if not paired:
+                self.assertEqual(set(after["datadirs"]), {"sequencer"})
+                self.assertFalse((self.fork.directory / "validator").exists())
             devnet.main()
             self.assertEqual(inspect.call_count, 2)
             self.assertEqual(devnet.SnapshotFork(self.fork.directory).manifest, after)
             devnet.write_json(config_path, {**config, "epoch_slots": 99})
             with self.assertRaisesRegex(RuntimeError, "config changed"):
+                devnet.main()
+            self.assertEqual(devnet.SnapshotFork(self.fork.directory).manifest, after)
+            devnet.write_json(config_path, {**config, "fast_denim": legacy})
+            with self.assertRaisesRegex(RuntimeError, "activation mode is pinned"):
                 devnet.main()
             self.assertEqual(devnet.SnapshotFork(self.fork.directory).manifest, after)
 
@@ -648,6 +744,9 @@ class SnapshotTests(unittest.TestCase):
 
     def test_boundary_requires_matching_snapshots_with_origins_before_fork(self):
         initial = snapshot()
+        devnet.validate_boundary([initial], 19)
+        with self.assertRaisesRegex(RuntimeError, "Base mainnet"):
+            devnet.validate_boundary([{**initial, "chain_id": 10}], 19)
         devnet.validate_boundary([initial, copy.deepcopy(initial)], 19)
         with self.assertRaisesRegex(RuntimeError, "origin is after the fork"):
             devnet.validate_boundary([initial, initial], 18)
@@ -678,7 +777,7 @@ class SnapshotTests(unittest.TestCase):
         for field in ("fork_block", "rollup_env"):
             with patch.object(devnet, "run") as run, patch.object(devnet, "validate_paths") as paths:
                 with self.assertRaisesRegex(RuntimeError, f"{field} is obsolete"):
-                    devnet.SnapshotFork(self.root / "new").initialize({field: 1}, allow_write=True)
+                    devnet.SnapshotFork(self.root / "new").initialize({field: 1})
                 run.assert_not_called()
                 paths.assert_not_called()
 
@@ -1057,6 +1156,77 @@ class SnapshotTests(unittest.TestCase):
                         self.assertEqual(fake["sent"], [("setTimestamp(uint256,uint64)", 13, 4908) if schedule
                                                         else ("registerUpgrade(uint64,uint256)", 4908, 0)])
                         self.assertEqual(self.fork.manifest["denim_timestamp"], 4908)
+
+    def test_single_node_start_batches_and_never_contacts_or_starts_a_validator(self):
+        del self.fork.manifest["datadirs"]["validator"]
+        self.fork.manifest.update(boundary_validated=True, bootstrapped=True)
+        heights = iter((123, 124, 124))
+
+        def node(url, method, *args):
+            self.assertNotIn("validator", url)
+            if method == "eth_getBlockByNumber":
+                return {"hash": "0x124", "timestamp": hex(1234)}
+            if method == "admin_sequencerActive":
+                return True
+            return None
+
+        with self.starting(), patch.object(self.fork, "mine"), \
+                patch.object(self.fork, "schedule_denim"), patch.object(devnet, "rpc", side_effect=node), \
+                patch.object(self.fork, "sync_status", side_effect=lambda role: sync_status(102, safe=next(heights))), \
+                patch("builtins.print"):
+            self.fork.start()
+            self.assertEqual(self.fork.manifest["phase"], "running")
+            self.assertIn(("up", "-d", "--no-build", "batcher"), [c.args for c in self.fork.compose.call_args_list])
+            self.assertNotIn("validator", str(self.fork.compose.call_args_list))
+        with patch.object(self.fork, "running", return_value=True), patch.object(self.fork, "compose") as compose, \
+                patch.object(self.fork, "url", side_effect=lambda role: role), \
+                patch.object(self.fork, "sync_status", return_value=sync_status(102, safe=124)), \
+                patch.object(devnet, "rpc", side_effect=node):
+            self.fork.peers()
+            self.fork.stop()
+            self.assertNotIn("validator", str(compose.call_args_list))
+        with patch.object(self.fork, "containers", return_value=[container(s) for s in ("l1", "sequencer", "batcher")]):
+            self.fork.manifest["phase"] = "running"
+            status = self.fork.status()
+            self.assertEqual(status["phase"], "running")
+            self.assertNotIn("validator", status["rpc_docker_host_only"])
+
+    def test_fast_denim_uses_only_local_mock_and_preserves_history_on_retry(self):
+        history = list(range(100, 113))
+        address = "0x" + "4" * 40
+        self.fork.manifest.update(phase="running", fast_denim=True, local_protocol_versions=address, schedule=history)
+        schedule = list(history)
+        sent = []
+
+        def call(url, contract, signature, *args):
+            self.assertEqual(contract, address)
+            if signature == "getSchedule()(uint64[])":
+                return schedule[:]
+            self.assertEqual(signature, "minimumProtocolVersion()(uint256)")
+            return 42
+
+        def send(name, sender, contract, signature, values):
+            self.assertEqual((name, contract, signature), ("schedule-denim", address, "setSchedule(uint64[])"))
+            schedule[:] = json.loads(values)
+            sent.append(values)
+            self.fork.manifest["operations"][name] = {"hash": "0xsent"}
+
+        def rpc(url, method, *args):
+            if method == "eth_getTransactionReceipt":
+                return {"status": "0x1"}
+            return {"timestamp": hex(1003 if url == "sequencer" else 1001)}
+
+        with patch.object(self.fork, "assert_local_l1"), patch.object(self.fork, "wait_upgrades"), \
+                patch.object(self.fork, "url", side_effect=lambda role: role), patch.object(self.fork, "send", side_effect=send), \
+                patch.object(devnet, "call", side_effect=call), patch.object(devnet, "rpc", side_effect=rpc), \
+                patch.object(devnet.time, "time", return_value=1002), patch("builtins.print"):
+            self.fork.schedule_denim()
+            self.fork.schedule_denim()
+            with self.assertRaisesRegex(RuntimeError, "refusing to move"):
+                self.fork.schedule_denim(1066)
+        self.assertEqual(schedule, history + [1064])
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(self.fork.manifest["denim_timestamp"], 1064)
 
     def test_denim_write_must_retain_the_minimum_protocol_version(self):
         with self.protocol_versions([], minimum_after="43"):
@@ -1609,6 +1779,13 @@ class SnapshotTests(unittest.TestCase):
         http_apis = next(arg.split("=", 1)[1].split(",") for arg in sequencer_command if arg.startswith("--http.api="))
         self.assertIn("miner", http_apis)
         self.assertEqual(config["services"]["batcher"]["stop_signal"], "SIGTERM")
+        del self.fork.manifest["datadirs"]["validator"]
+        single = json.loads(self.fork.compose("config", "--format", "json"))
+        self.assertEqual(set(single["services"]), {"l1", "sequencer", "batcher"})
+        for service in single["services"].values():
+            self.assertFalse(any("--full" in arg or "--prune." in arg for arg in service["command"]))
+        with self.assertRaisesRegex(RuntimeError, "no validator datadir"):
+            self.fork.compose("up", "inspect-validator")
 
 
 class QualificationTests(unittest.TestCase):
@@ -1622,6 +1799,7 @@ class QualificationTests(unittest.TestCase):
         for missing_window_transaction in (False, True):
             with self.subTest(missing_window_transaction=missing_window_transaction), tempfile.TemporaryDirectory() as directory:
                 fork = Mock(spec=devnet.SnapshotFork)
+                fork.roles = devnet.ROLES
                 fork.directory, fork.timeout = Path(directory), 1
                 fork.manifest = {**manifest(), "phase": "running", "denim_timestamp": 1000,
                                  "initial": [{"latest": {"block_info": {"number": 123}},
@@ -1673,6 +1851,7 @@ class QualificationTests(unittest.TestCase):
 
     def test_verify_rejects_missed_denim_window_before_deposit_or_restart(self):
         fork = Mock(spec=devnet.SnapshotFork)
+        fork.roles = devnet.ROLES
         fork.manifest = {"phase": "running", "denim_timestamp": 1000,
                          "initial": [{"rollup_config": {"genesis": {"l2_time": 0}, "block_time": 2}}]}
         fork.deposit.side_effect = AssertionError("must check activation before depositing")
@@ -1686,6 +1865,7 @@ class QualificationTests(unittest.TestCase):
 
     def test_derivation_waits_for_safe_head_even_when_unsafe_has_advanced(self):
         fork = Mock(spec=devnet.SnapshotFork)
+        fork.roles = devnet.ROLES
         fork.timeout = 1
         fork.url.side_effect = lambda role: role
         fork.sync_status.side_effect = [
@@ -1764,6 +1944,83 @@ class QualificationTests(unittest.TestCase):
     def test_live_snapshot_fork(self):
         command = [sys.executable, str(Path(verification.__file__)), "--dir", os.environ["BASE_SNAPSHOT_FORK_DIR"]]
         subprocess.run(command, check=True)
+
+
+@unittest.skipUnless(os.environ.get("BASE_SNAPSHOT_TEST_ANVIL"), "opt-in disposable local Anvil contract test")
+class FastDenimContractTests(unittest.TestCase):
+    def test_mock_seed_schedule_and_restore_use_real_transactions(self):
+        """Real EVM and persisted state; no production upstream or L2 node is used."""
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        with tempfile.TemporaryDirectory() as directory, subprocess.Popen(
+                ["anvil", "--silent", "--host", "127.0.0.1", "--port", str(port), "--no-mining", "--chain-id", "1"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as process:
+            try:
+                url = f"http://127.0.0.1:{port}"
+
+                def ready():
+                    self.assertIsNone(process.poll(), "disposable Anvil exited")
+                    try:
+                        return devnet.rpc(url, "eth_chainId") == "0x1"
+                    except devnet.Unavailable:
+                        return False
+
+                devnet.wait("disposable Anvil", ready, 10, poll_interval=0.1)
+                fork = devnet.SnapshotFork(directory, timeout=10)
+                code = devnet.run("forge", "inspect", "--root", str(devnet.ROOT / "crates/utilities/test-utils/contracts"),
+                                  "src/MockProtocolVersions.sol:MockProtocolVersions", "deployedBytecode")
+                history = list(range(100, 113))
+                fork.manifest = {**manifest(), "phase": "starting", "port": port, "fast_denim": True,
+                                 "local_protocol_versions": "0x" + "4" * 40, "upgrade_code": code,
+                                 "minimum_protocol_version": 42, "schedule": history}
+                sender, original = fork.manifest["accounts"]["user"], fork.manifest["protocol_versions"]
+                # Local Anvil stands in for both timestamp RPCs; L2 observation is checked separately.
+                with patch.object(fork, "assert_local_l1"), patch.object(fork, "url", return_value=url), \
+                        patch.object(fork, "mine", side_effect=lambda: devnet.rpc(url, "evm_mine")), \
+                        patch.object(fork, "wait_upgrades"):
+                    devnet.rpc(url, "anvil_setCode", original, code)
+                    fork.send("fixture-history", sender, original, "setSchedule(uint64[])", json.dumps(history))
+                    fork.send("fixture-version", sender, original, "setMinimumProtocolVersion(uint256)", 42)
+                    send = fork.send
+
+                    def interrupted(name, *args, **kwargs):
+                        if name == "seed-version":
+                            raise RuntimeError("interrupted seeding")
+                        return send(name, *args, **kwargs)
+
+                    with patch.object(fork, "send", side_effect=interrupted), self.assertRaisesRegex(RuntimeError, "interrupted"):
+                        fork.seed_upgrade_signal()
+                    nonce = devnet.number(devnet.rpc(url, "eth_getTransactionCount", sender, "latest"))
+                    fork.seed_upgrade_signal()
+                    self.assertEqual(devnet.number(devnet.rpc(url, "eth_getTransactionCount", sender, "latest")), nonce + 1)
+                    fork.seed_upgrade_signal()
+                    fork.manifest["phase"] = "running"
+                    devnet.rpc(url, "evm_setAutomine", True)
+                    fork.schedule_denim()
+                    timestamp = fork.manifest["denim_timestamp"]
+                    self.assertEqual(devnet.call(url, fork.upgrade_contract, "getSchedule()(uint64[])"), history + [timestamp])
+                    self.assertEqual(devnet.call(url, original, "getSchedule()(uint64[])"), history)
+                    receipt = fork.manifest["operations"]["schedule-denim"]["receipt"]
+                    self.assertEqual(devnet.number(receipt["status"]), 1)
+                    included = devnet.rpc(url, "eth_getBlockByNumber", receipt["blockNumber"], False)
+                    self.assertLess(timestamp - devnet.number(included["timestamp"]), 90)
+                    nonce = devnet.rpc(url, "eth_getTransactionCount", sender, "latest")
+                    state = devnet.rpc(url, "anvil_dumpState")
+                    devnet.rpc(url, "anvil_reset")
+                    devnet.rpc(url, "anvil_loadState", state)
+                    fork.manifest = devnet.SnapshotFork(directory).manifest
+                    fork.seed_upgrade_signal()
+                    fork.validate_restored_contracts()
+                    fork.schedule_denim()
+                    self.assertEqual(fork.manifest["denim_timestamp"], timestamp)
+                    self.assertEqual(devnet.rpc(url, "eth_getTransactionCount", sender, "latest"), nonce)
+                    fork.send("tamper-version", sender, fork.upgrade_contract, "setMinimumProtocolVersion(uint256)", 43)
+                    with self.assertRaisesRegex(RuntimeError, "minimum protocol version differs"):
+                        fork.validate_restored_contracts()
+            finally:
+                process.terminate()
+                process.wait(timeout=10)
 
 
 if __name__ == "__main__":

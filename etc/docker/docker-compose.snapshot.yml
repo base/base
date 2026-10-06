@@ -100,6 +100,7 @@ services:
 
   validator:
     <<: *node
+    profiles: [validator]
     # A pure RPC validator waits for fresh gossip before probing EL sync. A permanently stopped
     # sequencer probes the snapshot immediately and derives independently without producing blocks.
     command:

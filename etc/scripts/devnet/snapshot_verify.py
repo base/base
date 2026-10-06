@@ -14,9 +14,13 @@ from snapshot_devnet import DEFAULT_TIMEOUT, SnapshotFork, configured_directory,
 BASE_TIME = "0x4200000000000000000000000000000000000030"
 
 
-def check_parity(sequencer, validator):
-    require(sequencer["hash"] == validator["hash"] and sequencer["stateRoot"] == validator["stateRoot"],
-            "independently derived block hash/state root mismatch")
+def check_parity(sequencer, validator, message="independently derived block hash/state root mismatch"):
+    require(sequencer["hash"] == validator["hash"] and sequencer["stateRoot"] == validator["stateRoot"], message)
+
+
+def independent(fork):
+    """Whether a separate validator re-derives the sequencer's chain; single-node forks only self-derive."""
+    return "validator" in fork.roles
 
 
 def check_denim_window(before, blocks, timestamp):
@@ -52,11 +56,21 @@ def block(fork, role, height, full=False):
     return result
 
 
+def safe_role(fork):
+    """The node whose safe head proves derivation from local L1 batches."""
+    return "validator" if independent(fork) else "sequencer"
+
+
 def derived(fork, height):
-    wait("validator independently deriving safe block",
-         lambda: fork.sync_status("validator")["safe_l2"]["number"] >= height, fork.timeout)
+    """Waits for `height` to become safe. With a validator this is independent parity; without one it is
+    only the sequencer re-deriving its own batches from local L1."""
+    role = safe_role(fork)
+    wait("validator independently deriving safe block" if role == "validator"
+         else "sequencer safe head advancing from local L1 batches (no independent validator)",
+         lambda: fork.sync_status(role)["safe_l2"]["number"] >= height, fork.timeout)
     sequencer = block(fork, "sequencer", height)
-    check_parity(sequencer, block(fork, "validator", height))
+    if role == "validator":
+        check_parity(sequencer, block(fork, "validator", height))
     return {key: sequencer[key] for key in ("number", "hash", "stateRoot")}
 
 
@@ -96,14 +110,15 @@ def assert_retained(fork, report):
     fork.assert_local_l1()
     fork.validate_restored_contracts()
     for saved in report["blocks"]:
-        check_parity(saved, block(fork, "sequencer", number(saved["number"])))
-        check_parity(saved, block(fork, "validator", number(saved["number"])))
+        for role in fork.roles:
+            check_parity(saved, block(fork, role, number(saved["number"])),
+                         f"{role} block hash/state root changed across restart")
     for saved in report["blobs"]:
         actual = request_json(fork.url("l1") + saved["path"])
         require(hashlib.sha256(json.dumps(actual, sort_keys=True).encode()).hexdigest() == saved["sha256"],
                 "local blobs changed or disappeared across restart")
     for receipt in report["receipts"]:
-        for role in ("sequencer", "validator"):
+        for role in fork.roles:
             actual = rpc(fork.url(role), "eth_getTransactionReceipt", receipt["transactionHash"])
             require(actual and actual["blockHash"] == receipt["blockHash"] and number(actual["status"]) == 1,
                     "transaction receipt lost across restart")
@@ -122,18 +137,37 @@ def wait_denim_window(fork, timestamp):
         head.update(rpc(fork.url("sequencer"), "eth_getBlockByNumber", "latest", False))
         return number(head["timestamp"]) >= timestamp - 6
 
-    wait("Denim transaction window (real contract notice period, no clock warp)", approaching, fork.timeout,
+    wait("Denim transaction window (scheduled lead time, no clock warp)", approaching, fork.timeout,
          progress=lambda: (head["number"], f"L2 timestamp {number(head['timestamp'])}; Denim at {timestamp}"))
     require(number(head["timestamp"]) < timestamp - 2,
             "verification started too late to exercise the final pre-Denim block")
 
 
+def check_safety(fork, report, first_l1, initial_origin):
+    """A transaction becomes safe from locally posted blobs, and safe L1 origins cross two epochs."""
+    receipt = transact(fork)
+    report["receipts"].append(receipt)
+    report["blocks"].append(derived(fork, number(receipt["blockNumber"])))
+    report["blobs"] = local_blobs(fork, first_l1, number(rpc(fork.url("l1"), "eth_blockNumber")))
+    wait("L1 origins crossing two simulated epochs",
+         lambda: fork.sync_status(safe_role(fork))["safe_l2"]["l1origin"]["number"]
+         >= initial_origin + 2 * fork.manifest["epoch_slots"],
+         fork.timeout)
+
+
 def verify(fork):
     require(fork.manifest["phase"] == "running", "start the prepared fork first")
+    # Fast mode's local mock ProtocolVersions leaves too little lead for the pre-Denim checks and restart,
+    # so they run after activation instead; the transition window itself is never skipped.
+    fast = bool(fork.manifest.get("fast_denim"))
     fork.assert_local_l1()
     fork.validate_restored_contracts()
-    require(not rpc(fork.url("validator-cl"), "admin_sequencerActive"),
-            "validator must derive independently with sequencing stopped")
+    if independent(fork):
+        require(not rpc(fork.url("validator-cl"), "admin_sequencerActive"),
+                "validator must derive independently with sequencing stopped")
+    else:
+        print("No validator in this fork: safety checks use the sequencer's own derivation from local L1 "
+              "and are not independent verification.", flush=True)
     fork.schedule_denim()
     timestamp = denim_activation_time(fork.manifest["initial"][0]["rollup_config"], fork.manifest["denim_timestamp"])
     require(number(rpc(fork.url("sequencer"), "eth_getBlockByNumber", "latest", False)["timestamp"]) < timestamp - 2,
@@ -144,21 +178,15 @@ def verify(fork):
     user = fork.manifest["accounts"]["user"]
     wait("real L1 deposit reaching L2", lambda: number(rpc(fork.url("sequencer"), "eth_getBalance", user, "latest")) > 0, fork.timeout)
     # Keep normal gossip connected. Only L1 derivation can promote the transaction's block to safe.
-    report = {"blocks": [], "receipts": [], "blobs": []}
+    report = {"roles": list(fork.roles), "blocks": [], "receipts": [], "blobs": []}
     initial_origin = fork.sync_status("sequencer")["unsafe_l2"]["l1origin"]["number"]
     first_l1 = number(rpc(fork.url("l1"), "eth_blockNumber")) + 1
-    receipt = transact(fork)
-    report["receipts"].append(receipt)
-    report["blocks"].append(derived(fork, number(receipt["blockNumber"])))
-    last_l1 = number(rpc(fork.url("l1"), "eth_blockNumber"))
-    report["blobs"] = local_blobs(fork, first_l1, last_l1)
-    wait("L1 origins crossing two simulated epochs",
-         lambda: fork.sync_status("validator")["safe_l2"]["l1origin"]["number"] >= initial_origin + 2 * fork.manifest["epoch_slots"],
-         fork.timeout)
-    print("Verifying clean restart before Denim.", flush=True)
-    fork.stop()
-    fork.start()
-    assert_retained(fork, report)
+    if not fast:
+        check_safety(fork, report, first_l1, initial_origin)
+        print("Verifying clean restart before Denim.", flush=True)
+        fork.stop()
+        fork.start()
+        assert_retained(fork, report)
 
     print("Verifying transactions across Denim activation.", flush=True)
     wait_denim_window(fork, timestamp)
@@ -186,10 +214,14 @@ def verify(fork):
         require(header["hash"] in exercised,
                 "transaction generator missed an activation-window block; qualification incomplete")
         report["blocks"].append(derived(fork, number(header["number"])))
+    if fast:
+        check_safety(fork, report, first_l1, initial_origin)
     receipt = transact(fork)
     report["receipts"].append(receipt)
     report["blocks"].append(derived(fork, number(receipt["blockNumber"])))
     report["denim_timestamp"] = fork.manifest["denim_timestamp"]
+    report["denim_schedule"] = ("fast: local mock ProtocolVersions, short lead after startup" if fast
+                                else "restored ProtocolVersions contract notice period")
     report["activation_block_timestamp"] = timestamp
     report["blobs"] = local_blobs(fork, first_l1, number(rpc(fork.url("l1"), "eth_blockNumber")))
     print("Verifying clean restart after Denim.", flush=True)
@@ -204,11 +236,11 @@ def verify(fork):
         # reconstruct batching from the safe head rather than depend on a process queue.
         fork.compose("stop", "batcher")
         receipt = transact(fork)
-        require(fork.sync_status("validator")["safe_l2"]["number"] < number(receipt["blockNumber"]),
+        require(fork.sync_status(safe_role(fork))["safe_l2"]["number"] < number(receipt["blockNumber"]),
                 "pending-batch fixture unexpectedly became safe")
         if interrupt:
             # Only the dedicated project's containers; no host process or other devnet.
-            fork.compose("kill", "--signal", "SIGKILL", "sequencer", "validator")
+            fork.compose("kill", "--signal", "SIGKILL", *fork.roles)
             fork.compose("stop", "l1")
         else:
             fork.stop()
@@ -216,8 +248,17 @@ def verify(fork):
         report["receipts"].append(receipt)
         report["blocks"].append(derived(fork, number(receipt["blockNumber"])))
         assert_retained(fork, report)
+    if independent(fork):
+        report["independent_validator_check"] = "passed"
+        report["safety_checks"] = "validator re-derived every recorded block from local L1 with matching hash/state root"
+    else:
+        report["independent_validator_check"] = "not run: no validator in this fork"
+        report["safety_checks"] = ("single-node: sequencer safe head advanced from its own local L1 batches; "
+                                   "no independent parity")
     write_json(fork.directory / "verification.json", report)
-    print("Verified safe derivation, local blobs, Denim activation, clean restarts and interrupted recovery.")
+    print("Verified " + ("independent safe derivation" if independent(fork)
+                         else "single-node sequencer safe derivation (no independent validator)")
+          + ", local blobs, Denim activation, clean restarts and interrupted recovery.")
 
 
 def main():
