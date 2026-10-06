@@ -8,7 +8,41 @@ use base_consensus_engine::ConsolidateInput;
 use base_protocol::L2BlockInfo;
 use tracing::debug;
 
-use crate::{EngineClientError, SequencerConfig};
+use crate::{EngineClientError, NodeOperatingMode, SequencerConfig};
+
+/// The kind of sequencer a node runs as, fixed for the life of the process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SequencerKind {
+    /// Sequences on the canonical chain.
+    Regular,
+    /// Stops following canonical inputs after startup catch-up and produces a private chain.
+    Isolated,
+    /// Produces private blocks and reconciles them with the canonical chain.
+    Shadow,
+}
+
+impl From<NodeOperatingMode> for SequencerKind {
+    fn from(mode: NodeOperatingMode) -> Self {
+        match mode {
+            NodeOperatingMode::Validator | NodeOperatingMode::Sequencer => Self::Regular,
+            NodeOperatingMode::IsolatedSequencer => Self::Isolated,
+            NodeOperatingMode::ShadowSequencer { .. } => Self::Shadow,
+        }
+    }
+}
+
+impl SequencerKind {
+    /// Returns the engine state entered once catch-up completes at the canonical `head`.
+    pub fn completed_state(self, head: L2BlockInfo) -> SequencerEngineState {
+        match self {
+            Self::Regular => SequencerEngineState::Regular,
+            Self::Isolated => SequencerEngineState::IsolatedActive,
+            Self::Shadow => {
+                SequencerEngineState::ShadowActive(Box::new(ShadowReconciliationGate::new(head)))
+            }
+        }
+    }
+}
 
 /// Sequencer engine state while following canonical blocks or producing shadow blocks.
 #[derive(Debug)]
@@ -17,13 +51,14 @@ pub enum SequencerEngineState {
     Regular,
     /// The sequencer is following canonical safe derivation and unsafe gossip.
     CatchingUp {
-        /// Whether catch-up completion should activate private shadow production.
-        shadow: bool,
         /// Rolling canonical unsafe payload buffer shared by follower sequencers.
         catchup: CanonicalUnsafeCatchup,
     },
     /// Private block production is active and canonical inputs are buffered for reconciliation.
     ShadowActive(Box<ShadowReconciliationGate>),
+    /// An isolated sequencer finished startup catch-up and now drops all canonical inputs so
+    /// they cannot reorg its private chain.
+    IsolatedActive,
 }
 
 /// Rolling canonical unsafe payloads retained while safe derivation catches up.

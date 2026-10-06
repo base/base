@@ -2,7 +2,7 @@
 //!
 //! [`SequencerActor`]: super::SequencerActor
 
-use std::{num::NonZeroU64, time::Duration};
+use std::time::Duration;
 
 use url::Url;
 
@@ -20,12 +20,6 @@ pub struct SequencerConfig {
     pub sequencer_stopped: bool,
     /// Whether or not the sequencer is in recovery mode.
     pub sequencer_recovery_mode: bool,
-    /// Whether the sequencer runs without canonical-chain ingress or payload publication.
-    pub isolated: bool,
-    /// Number of private blocks to build per cycle when running as a shadow sequencer.
-    ///
-    /// When [`None`], the node runs as a normal sequencer.
-    pub shadow_blocks_per_cycle: Option<NonZeroU64>,
     /// Optional account funding for the first private block of each shadow cycle.
     pub shadow_funding: Option<ShadowFunding>,
     /// The [`Url`] for the conductor RPC endpoint. If [`Some`], enables the conductor service.
@@ -57,21 +51,6 @@ impl SequencerConfig {
     pub const MAX_SHADOW_BLOCKS_PER_CYCLE: u64 = 300;
     /// Default request timeout for L1 RPC calls on the sequencer block-production hot path.
     pub const DEFAULT_L1_RPC_TIMEOUT: Duration = Duration::from_millis(500);
-
-    /// Returns whether shadow sequencer mode is enabled.
-    pub const fn is_shadow_sequencer(&self) -> bool {
-        self.shadow_blocks_per_cycle.is_some()
-    }
-
-    /// Returns whether the consensus network actor should be constructed.
-    pub const fn network_enabled(&self) -> bool {
-        !self.isolated
-    }
-
-    /// Returns whether a derivation actor should be constructed.
-    pub const fn derivation_enabled(&self) -> bool {
-        !self.isolated
-    }
 }
 
 impl Default for SequencerConfig {
@@ -79,8 +58,6 @@ impl Default for SequencerConfig {
         Self {
             sequencer_stopped: false,
             sequencer_recovery_mode: false,
-            isolated: false,
-            shadow_blocks_per_cycle: None,
             shadow_funding: None,
             conductor_rpc_url: None,
             conductor_binary_commit: false,
@@ -89,18 +66,5 @@ impl Default for SequencerConfig {
             l1_rpc_timeout: Self::DEFAULT_L1_RPC_TIMEOUT,
             seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::SequencerConfig;
-
-    #[test]
-    fn isolated_disables_network_and_derivation_actor_construction() {
-        let config = SequencerConfig { isolated: true, ..Default::default() };
-
-        assert!(!config.network_enabled());
-        assert!(!config.derivation_enabled());
     }
 }

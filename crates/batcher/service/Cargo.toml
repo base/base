@@ -43,6 +43,7 @@ jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 
 [dev-dependencies]
 rstest.workspace = true
+mockall.workspace = true
 httpmock.workspace = true
 serde_json.workspace = true
 alloy-node-bindings.workspace = true

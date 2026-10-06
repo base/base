@@ -16,18 +16,20 @@ use reth_transaction_pool::{
     AddedTransactionOutcome, AllPoolTransactions, AllTransactionsEvents, BestTransactions,
     BestTransactionsAttributes, BlobStore, BlobStoreError, BlockInfo, FullTransactionEvent,
     GetPooledTransactionLimit, NewBlobSidecar, NewTransactionEvent, Pool, PoolResult, PoolSize,
-    PoolTransaction, PropagatedTransactions, SubPool, TransactionEvents, TransactionListenerKind,
-    TransactionOrigin, TransactionPool, TransactionPoolExt, TransactionValidationOutcome,
-    TransactionValidationTaskExecutor, TransactionValidator, ValidPoolTransaction,
+    PoolTransaction, PoolUpdateKind, PropagatedTransactions, SubPool, TransactionEvents,
+    TransactionListenerKind, TransactionOrigin, TransactionPool, TransactionPoolExt,
+    TransactionValidationOutcome, TransactionValidationTaskExecutor, TransactionValidator,
+    ValidPoolTransaction,
     pool::{AddedTransactionState, TransactionEvent},
 };
 use tokio::{spawn, sync::mpsc};
 use tracing::debug;
 
 use crate::{
-    Admission, BasePooledTx, BaseTransactionValidator, GuardLimits, GuardMetrics,
+    Admission, BasePooledTx, BaseTransactionValidator, FlashblockExpiry, GuardLimits, GuardMetrics,
     InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
-    ParkableTransactionPool, ParkedBestTransactions, StateDiffInvalidation, ValidityPoolMetrics,
+    ParkableTransactionPool, ParkedBestTransactions, PredicateContext, StateDiffInvalidation,
+    ValidityPoolMetrics, ValidityPredicate,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, TwoDNoncePool},
 };
@@ -91,13 +93,14 @@ pub struct BaseTransactionPool<
     listeners: Arc<RwLock<SidecarListeners<T>>>,
     /// Shared admission and invalidation ledger for EIP-8130 transactions.
     guard: Arc<RwLock<MempoolGuard>>,
-    /// Block-height expiry index for validity-predicate transactions, evicted as
-    /// the chain advances past a transaction's last valid block. Not gated on
-    /// transaction type, so it also covers the EIP-1559 advanced-submission path.
+    /// Block and flashblock deadline index for validity transactions, including
+    /// EIP-1559 advanced submissions.
     block_expiry: Arc<RwLock<crate::BlockExpiryIndex>>,
-    /// Serializes the short protocol-pool insertion/admission section so a
-    /// concurrent same-nonce replacement cannot leave a stale guard record.
-    /// Validation remains outside this lock.
+    /// Highest published position on the current branch; checked under `protocol_admission_lock`.
+    published_flashblock: Arc<RwLock<Option<PredicateContext>>>,
+    /// Serializes pool admission with successful flashblock publication and
+    /// deadline eviction, so a same-nonce submission cannot race the sweep.
+    /// Validation itself remains outside this lock.
     protocol_admission_lock: Arc<Mutex<()>>,
 }
 
@@ -132,6 +135,7 @@ where
             listeners: Arc::clone(&self.listeners),
             guard: Arc::clone(&self.guard),
             block_expiry: Arc::clone(&self.block_expiry),
+            published_flashblock: Arc::clone(&self.published_flashblock),
             protocol_admission_lock: Arc::clone(&self.protocol_admission_lock),
         }
     }
@@ -174,6 +178,7 @@ where
             listeners: Arc::new(RwLock::new(SidecarListeners::default())),
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             block_expiry: Arc::new(RwLock::new(crate::BlockExpiryIndex::new())),
+            published_flashblock: Arc::new(RwLock::new(None)),
             protocol_admission_lock: Arc::new(Mutex::new(())),
         }
     }
@@ -350,6 +355,40 @@ where
         )
     }
 
+    /// Optional flashblock upper bound, paired with the block bound for pool eviction.
+    fn validity_flashblock_expiry_bound(
+        validated: &TransactionValidationOutcome<T>,
+    ) -> Option<u64> {
+        let transaction = validated.as_valid_transaction()?;
+        ValidityPredicate::flashblock_expiry_bound(transaction.transaction().validity_predicates())
+    }
+
+    /// Rejects a late arrival whose deadline is behind the published position.
+    /// Called while holding `protocol_admission_lock`, including on the sidecar path.
+    fn ensure_not_published_expired(
+        &self,
+        hash: TxHash,
+        validated: &TransactionValidationOutcome<T>,
+    ) -> PoolResult<()> {
+        let published = *self.published_flashblock.read();
+        if let (Some(position), Some(transaction)) = (published, validated.as_valid_transaction()) {
+            let next = PredicateContext {
+                block_number: position.block_number,
+                flashblock_index: position.flashblock_index.saturating_add(1),
+            };
+            if ValidityPredicate::is_batch_expired(
+                transaction.transaction().validity_predicates(),
+                &next,
+            ) {
+                return Err(reth_transaction_pool::error::PoolError::other(
+                    hash,
+                    "validity deadline expired at published flashblock",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Records a transaction's last valid block in the block-expiry index,
     /// dropping any replaced transaction's stale entry in the same pass so a
     /// fee-bump replacement does not orphan the old hash until its expiry block.
@@ -357,6 +396,7 @@ where
         &self,
         hash: TxHash,
         last_valid_block: Option<u64>,
+        last_valid_flashblock: Option<u64>,
         replaced: Option<TxHash>,
     ) {
         if last_valid_block.is_none() && replaced.is_none() {
@@ -367,22 +407,20 @@ where
             block_expiry.remove(&replaced);
         }
         if let Some(last_valid_block) = last_valid_block {
-            block_expiry.insert(hash, last_valid_block);
+            block_expiry.insert_with_flashblock(hash, last_valid_block, last_valid_flashblock);
         }
     }
 
-    /// Evicts validity-predicate transactions whose last valid block is before
-    /// the newly committed `block_number`.
+    /// Evicts validity-predicate transactions whose last valid block is at or
+    /// before the newly committed `committed_block`, since the next block cannot include them.
     ///
-    /// This is the pool-side, block-granular half of validity expiry (the
-    /// builder enforces the finer flashblock deadline). Driven from
-    /// `on_canonical_state_change`, so eviction rides block cadence. Entries for
-    /// transactions removed by other paths (inclusion, replacement) are cleaned
-    /// up lazily when their own expiry block is reached, bounding index growth to
-    /// the furthest live block bound.
-    fn expire_by_block(&self, block_number: u64) {
+    /// Canonical-state maintenance catches block-only deadlines and transactions
+    /// missed by flashblock publication. Entries removed through inclusion or
+    /// replacement remain indexed until their deadline, bounding index growth
+    /// to the furthest accepted block bound.
+    fn expire_by_block(&self, committed_block: u64) {
         let _admission_guard = self.protocol_admission_lock.lock();
-        let expired = self.block_expiry.write().drain_expired(block_number);
+        let expired = self.block_expiry.write().drain_expired(committed_block);
         let removed = self.remove_dropped_across_pools(expired);
         // Release any guard slots directly rather than deferring to the
         // reconciliation sweep: an EIP-8130 transaction may carry block_number
@@ -393,10 +431,36 @@ where
             GuardMetrics::record_block_expiry_invalidations(removed.len());
             debug!(
                 count = removed.len(),
-                block = block_number,
+                block = committed_block,
                 "validity transactions invalidated by block expiry"
             );
         }
+    }
+
+    /// Evicts indexed deadlines while the admission lock is held.
+    fn expire_published_locked(&self, block_number: u64, flashblock_index: u64) -> usize {
+        let position = PredicateContext { block_number, flashblock_index };
+        let mut published = self.published_flashblock.write();
+        if published.is_some_and(|previous| {
+            (previous.block_number, previous.flashblock_index) >= (block_number, flashblock_index)
+        }) {
+            return 0;
+        }
+        *published = Some(position);
+        drop(published);
+        let expired = self.block_expiry.write().drain_published(block_number, flashblock_index);
+        let removed = self.remove_dropped_across_pools(expired);
+        self.release_from_guard(&removed);
+        GuardMetrics::record_block_expiry_invalidations(removed.len());
+        if !removed.is_empty() {
+            debug!(
+                block = block_number,
+                flashblock = flashblock_index,
+                count = removed.len(),
+                "validity transactions expired at published flashblock"
+            );
+        }
+        removed.len()
     }
 
     /// Returns whether a validated transaction carries validity predicates, for
@@ -506,6 +570,7 @@ where
         let _admission_guard = self.protocol_admission_lock.lock();
         // Reject stale validation before reth can replace the currently pooled transaction.
         self.ensure_protocol_classification_current(hash, &validated)?;
+        self.ensure_not_published_expired(hash, &validated)?;
         let replaced = self.protocol_replacement_hash(sender, nonce);
         // Reserve guard capacity before reth publishes insertion events. A
         // tracked replacement bypasses this check and is reaccounted after the
@@ -514,6 +579,7 @@ where
         // Capture the block-expiry bound and validity-lane flag before
         // `validated` is consumed below.
         let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
+        let flashblock_expiry_bound = Self::validity_flashblock_expiry_bound(&validated);
         let is_validity = Self::has_validity_predicates(&validated);
         let mut outcomes =
             self.protocol_pool.inner().add_transactions(origin, std::iter::once(validated));
@@ -536,7 +602,7 @@ where
             }
         };
         self.gate_protocol_admission(hash, replaced, pre_admitted)?;
-        self.register_block_expiry(hash, block_expiry_bound, replaced);
+        self.register_block_expiry(hash, block_expiry_bound, flashblock_expiry_bound, replaced);
         if is_validity {
             ValidityPoolMetrics::record_admission(replaced.is_some());
         }
@@ -641,6 +707,11 @@ where
         // passes; a finite 2D-nonce-channel sidecar has no time-based expiry, so
         // without this it would linger indefinitely.
         let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
+        let flashblock_expiry_bound = Self::validity_flashblock_expiry_bound(&validated);
+        let _admission_guard = self.protocol_admission_lock.lock();
+        if let Some(transaction) = validated.as_valid_transaction() {
+            self.ensure_not_published_expired(*transaction.transaction().hash(), &validated)?;
+        }
         match validated {
             TransactionValidationOutcome::Valid {
                 transaction,
@@ -722,7 +793,12 @@ where
                 let replaced_hash = outcome.replaced.as_ref().map(|replaced| *replaced.hash());
                 drop(listeners);
                 drop(nonce_pool);
-                self.register_block_expiry(inserted_hash, block_expiry_bound, replaced_hash);
+                self.register_block_expiry(
+                    inserted_hash,
+                    block_expiry_bound,
+                    flashblock_expiry_bound,
+                    replaced_hash,
+                );
                 Ok(outcome.outcome)
             }
             TransactionValidationOutcome::Invalid(transaction, error) => {
@@ -832,6 +908,28 @@ where
     }
 }
 
+impl<Client, S, Evm, T, O> FlashblockExpiry for BaseTransactionPool<Client, S, Evm, T, O>
+where
+    Client: 'static,
+    Evm: 'static,
+    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
+    O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
+    S: BlobStore + Clone,
+{
+    fn publish_and_expire<R, E>(
+        &self,
+        block_number: u64,
+        flashblock_index: u64,
+        publish: impl FnOnce() -> Result<R, E>,
+    ) -> Result<(R, usize), E> {
+        let _admission_guard = self.protocol_admission_lock.lock();
+        let result = publish()?;
+        let expired = self.expire_published_locked(block_number, flashblock_index);
+        Ok((result, expired))
+    }
+}
+
 impl<Client, S, Evm, T, O> TransactionPool for BaseTransactionPool<Client, S, Evm, T, O>
 where
     Client: 'static,
@@ -875,11 +973,13 @@ where
             let validated = self.validator().validate_transaction(origin, transaction).await;
             let _admission_guard = self.protocol_admission_lock.lock();
             self.ensure_protocol_classification_current(hash, &validated)?;
+            self.ensure_not_published_expired(hash, &validated)?;
             let replaced = self.protocol_replacement_hash(sender, nonce);
             let pre_admitted = self.pre_admit_protocol_transaction(hash, replaced, &validated)?;
             // Capture the block-expiry bound and validity-lane flag before
             // `validated` is consumed below.
             let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
+            let flashblock_expiry_bound = Self::validity_flashblock_expiry_bound(&validated);
             let is_validity = Self::has_validity_predicates(&validated);
             let events =
                 match self.protocol_pool.inner().add_transaction_and_subscribe(origin, validated) {
@@ -892,7 +992,7 @@ where
                     }
                 };
             self.gate_protocol_admission(hash, replaced, pre_admitted)?;
-            self.register_block_expiry(hash, block_expiry_bound, replaced);
+            self.register_block_expiry(hash, block_expiry_bound, flashblock_expiry_bound, replaced);
             if is_validity {
                 ValidityPoolMetrics::record_admission(replaced.is_some());
             }
@@ -1497,6 +1597,10 @@ where
         // consumes an admission slot even until its pool entry is pruned below.
         {
             let _admission_guard = self.protocol_admission_lock.lock();
+            if update.update_kind == PoolUpdateKind::Reorg {
+                // The new branch can rebuild an earlier block or restart its flashblock indices.
+                *self.published_flashblock.write() = None;
+            }
             let mut guard = self.guard.write();
             for hash in &mined_transactions {
                 guard.release(hash);
@@ -2086,6 +2190,10 @@ mod tests {
         );
     }
 
+    fn publish(pool: &IntegrationPool, block: u64, flashblock: u64) -> usize {
+        pool.publish_and_expire(block, flashblock, || Ok::<(), ()>(())).unwrap().1
+    }
+
     fn signed_1559(signer: &PrivateKeySigner, nonce: u64) -> BasePooledTransaction {
         let tx = TxEip1559 {
             chain_id: test_chain_id(),
@@ -2513,18 +2621,18 @@ mod tests {
         let new_hash = TxHash::repeat_byte(0x22);
 
         // Seed the index with the soon-to-be-replaced transaction.
-        pool.register_block_expiry(replaced, Some(100), None);
+        pool.register_block_expiry(replaced, Some(100), None, None);
         assert_eq!(pool.block_expiry.read().len(), 1);
 
         // A fee-bump replacement must evict the stale entry rather than
         // accumulate it, so the index does not grow per replacement.
-        pool.register_block_expiry(new_hash, Some(200), Some(replaced));
+        pool.register_block_expiry(new_hash, Some(200), None, Some(replaced));
         assert_eq!(pool.block_expiry.read().len(), 1);
 
         // Only the new hash remains, tracked at its own bound.
         let mut index = pool.block_expiry.write();
         assert!(index.drain_expired(150).is_empty());
-        assert_eq!(index.drain_expired(201), vec![new_hash]);
+        assert_eq!(index.drain_expired(200), vec![new_hash]);
     }
 
     #[test]
@@ -2533,12 +2641,237 @@ mod tests {
         let replaced = TxHash::repeat_byte(0x33);
         let new_hash = TxHash::repeat_byte(0x44);
 
-        pool.register_block_expiry(replaced, Some(100), None);
+        pool.register_block_expiry(replaced, Some(100), None, None);
         assert_eq!(pool.block_expiry.read().len(), 1);
 
         // An unbounded replacement still clears the replaced hash's stale entry.
-        pool.register_block_expiry(new_hash, None, Some(replaced));
+        pool.register_block_expiry(new_hash, None, None, Some(replaced));
         assert!(pool.block_expiry.read().is_empty());
+    }
+
+    #[tokio::test]
+    async fn published_flashblock_frees_unscanned_protocol_nonce_for_unbumped_transaction() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let original = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_000)
+            .with_validity_predicates(vec![
+                ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(100),
+                },
+                ValidityPredicate::FlashblockIndex {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(2),
+                },
+            ]);
+        let original_hash = *original.hash();
+        pool.add_transaction(TransactionOrigin::Local, original).await.unwrap();
+        assert_eq!(publish(&pool, 100, 1), 0);
+        assert!(pool.get(&original_hash).is_some());
+        assert!(
+            pool.add_transaction(TransactionOrigin::Local, signed_1559(&signer, 0)).await.is_err(),
+            "same-nonce unbumped transaction must conflict before the deadline"
+        );
+        // No selection iterator has examined the original transaction.
+        assert_eq!(publish(&pool, 100, 2), 1);
+        assert!(pool.get(&original_hash).is_none());
+        assert!(!pool.guard.read().contains(&original_hash));
+        let replacement = signed_1559(&signer, 0);
+        let replacement_hash = *replacement.hash();
+        pool.add_transaction(TransactionOrigin::Local, replacement).await.unwrap();
+        assert!(pool.get(&replacement_hash).is_some());
+        assert_eq!(publish(&pool, 100, 2), 0);
+        assert!(pool.get(&replacement_hash).is_some());
+    }
+
+    #[tokio::test]
+    async fn published_flashblock_expires_eip1559_validity_metadata() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let original = signed_1559(&signer, 0).with_validity_predicates(vec![
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::from(100),
+            },
+            ValidityPredicate::FlashblockIndex {
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::from(1),
+            },
+        ]);
+        let hash = *original.hash();
+        pool.add_transaction(TransactionOrigin::Local, original).await.unwrap();
+        assert_eq!(publish(&pool, 100, 1), 1);
+        assert!(pool.get(&hash).is_none());
+        pool.add_transaction(TransactionOrigin::Local, signed_1559(&signer, 0)).await.unwrap();
+        assert!(pool.get(&hash).is_some());
+    }
+
+    #[tokio::test]
+    async fn published_position_rejects_late_expired_admission_and_preserves_future_block() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let predicates = vec![
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::from(101),
+            },
+            ValidityPredicate::FlashblockIndex {
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::from(2),
+            },
+        ];
+        let original = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_000)
+            .with_validity_predicates(predicates.clone());
+        let original_hash = *original.hash();
+        pool.add_transaction(TransactionOrigin::Local, original).await.unwrap();
+        assert_eq!(publish(&pool, 100, 2), 0);
+        assert!(pool.get(&original_hash).is_some(), "index resets next block");
+        assert_eq!(publish(&pool, 101, 2), 1);
+        let late = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_001)
+            .with_validity_predicates(predicates);
+        let error = pool.add_transaction(TransactionOrigin::Local, late).await.unwrap_err();
+        assert!(error.to_string().contains("validity deadline expired"), "{error}");
+        assert!(pool.get(&original_hash).is_none());
+    }
+
+    #[tokio::test]
+    async fn canonical_reorg_restarts_flashblock_admission_and_expiry() {
+        for (new_tip, rebuilt_block) in [(99, 100), (100, 101)] {
+            for nonce_key in [U256::ZERO, U256::from(1)] {
+                let (pool, client) = build_integration_pool();
+                let signer = signer();
+                fund(&client, signer.address());
+                assert_eq!(publish(&pool, 101, 2), 0);
+
+                let block = SealedBlock::seal_slow(BaseBlock {
+                    header: alloy_consensus::Header {
+                        number: new_tip,
+                        gas_limit: pool.block_info().block_gas_limit,
+                        timestamp: INTEGRATION_POOL_NOW_SECS,
+                        ..Default::default()
+                    },
+                    body: Default::default(),
+                });
+                pool.on_canonical_state_change(CanonicalStateUpdate {
+                    new_tip: &block,
+                    pending_block_base_fee: 0,
+                    pending_block_blob_fee: None,
+                    changed_accounts: Vec::new(),
+                    mined_transactions: Vec::new(),
+                    update_kind: PoolUpdateKind::Reorg,
+                });
+                let transaction = self_paid_eoa_8130(&signer, nonce_key, 0, 0, 1_000)
+                    .with_validity_predicates(vec![
+                        ValidityPredicate::BlockNumber {
+                            op: ValidityOperator::LessThanOrEqual,
+                            value: U256::from(rebuilt_block),
+                        },
+                        ValidityPredicate::FlashblockIndex {
+                            op: ValidityOperator::LessThanOrEqual,
+                            value: U256::from(1),
+                        },
+                    ]);
+                let hash = *transaction.hash();
+                pool.add_transaction(TransactionOrigin::Local, transaction)
+                    .await
+                    .expect("orphaned publication must not reject a valid rebuilt-block deadline");
+                assert!(pool.get(&hash).is_some());
+
+                assert_eq!(publish(&pool, rebuilt_block, 1), 1);
+                assert!(pool.get(&hash).is_none());
+                assert!(!pool.guard.read().contains(&hash));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn canonical_commit_preserves_publication_ahead_of_committed_head() {
+        for nonce_key in [U256::ZERO, U256::from(1)] {
+            let (pool, client) = build_integration_pool();
+            let signer = signer();
+            fund(&client, signer.address());
+            assert_eq!(publish(&pool, 101, 2), 0);
+
+            // Canonical maintenance can lag publication of the block being built.
+            let block = SealedBlock::seal_slow(BaseBlock {
+                header: alloy_consensus::Header {
+                    number: 100,
+                    gas_limit: pool.block_info().block_gas_limit,
+                    timestamp: INTEGRATION_POOL_NOW_SECS,
+                    ..Default::default()
+                },
+                body: Default::default(),
+            });
+            pool.on_canonical_state_change(CanonicalStateUpdate {
+                new_tip: &block,
+                pending_block_base_fee: 0,
+                pending_block_blob_fee: None,
+                changed_accounts: Vec::new(),
+                mined_transactions: Vec::new(),
+                update_kind: PoolUpdateKind::Commit,
+            });
+            let transaction = self_paid_eoa_8130(&signer, nonce_key, 0, 0, 1_000)
+                .with_validity_predicates(vec![
+                    ValidityPredicate::BlockNumber {
+                        op: ValidityOperator::LessThanOrEqual,
+                        value: U256::from(101),
+                    },
+                    ValidityPredicate::FlashblockIndex {
+                        op: ValidityOperator::LessThanOrEqual,
+                        value: U256::from(1),
+                    },
+                ]);
+            let hash = *transaction.hash();
+            let error =
+                pool.add_transaction(TransactionOrigin::Local, transaction).await.unwrap_err();
+            assert!(error.to_string().contains("validity deadline expired"), "{error}");
+            assert!(pool.get(&hash).is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn published_flashblock_expires_sidecar_but_not_block_only_deadline() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let sidecar = self_paid_eoa_8130(&signer, U256::from(1), 0, 0, 1_000)
+            .with_validity_predicates(vec![
+                ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(100),
+                },
+                ValidityPredicate::FlashblockIndex {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(1),
+                },
+            ]);
+        let sidecar_hash = *sidecar.hash();
+        pool.add_transaction(TransactionOrigin::Local, sidecar).await.unwrap();
+        let block_only = signed_1559(&signer, 0).with_validity_predicates(vec![
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::LessThanOrEqual,
+                value: U256::from(100),
+            },
+        ]);
+        let block_only_hash = *block_only.hash();
+        pool.add_transaction(TransactionOrigin::Local, block_only).await.unwrap();
+        // A build that did not publish must not invalidate either transaction.
+        assert!(pool.get(&sidecar_hash).is_some());
+        let failed = pool.publish_and_expire(100, 1, || Err::<(), _>("publish failed"));
+        assert_eq!(failed, Err("publish failed"));
+        assert!(pool.get(&sidecar_hash).is_some());
+        assert_eq!(publish(&pool, 100, 1), 1);
+        assert!(pool.get(&sidecar_hash).is_none());
+        let continuation = signed_channel_tx(&signer, U256::from(1), 0, 1_000);
+        let continuation_hash = *continuation.hash();
+        pool.add_transaction(TransactionOrigin::Local, continuation).await.unwrap();
+        assert!(pool.get(&continuation_hash).is_some());
+        assert!(pool.get(&block_only_hash).is_some());
+        pool.expire_by_block(100);
+        assert!(pool.get(&block_only_hash).is_none());
     }
 
     #[tokio::test]
@@ -2563,10 +2896,22 @@ mod tests {
         assert_eq!(pool.block_expiry.read().len(), 1);
         assert!(pool.get(&hash).is_some());
 
-        // Once the last valid block is behind the tip, block-expiry eviction
-        // removes it and releases any guard capacity it held.
-        pool.expire_by_block(101);
-        assert!(pool.get(&hash).is_none());
-        assert!(!pool.guard.read().contains(&hash));
+        // Exercise canonical maintenance at the inclusive last-valid-block boundary.
+        for (committed_block, remains_live) in [(99, true), (100, false)] {
+            let block = SealedBlock::seal_slow(BaseBlock {
+                header: alloy_consensus::Header { number: committed_block, ..Default::default() },
+                body: Default::default(),
+            });
+            pool.on_canonical_state_change(CanonicalStateUpdate {
+                new_tip: &block,
+                pending_block_base_fee: 0,
+                pending_block_blob_fee: None,
+                changed_accounts: Vec::new(),
+                mined_transactions: Vec::new(),
+                update_kind: PoolUpdateKind::Commit,
+            });
+            assert_eq!(pool.get(&hash).is_some(), remains_live);
+            assert_eq!(pool.guard.read().contains(&hash), remains_live);
+        }
     }
 }

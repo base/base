@@ -11,6 +11,7 @@ use std::{
 
 use base_consensus_rpc::RpcBuilder;
 use clap::Parser;
+use url::Url;
 
 /// RPC CLI Arguments
 #[derive(Parser, Debug, Clone, PartialEq, Eq)]
@@ -51,6 +52,14 @@ pub struct RpcArgs {
         value_parser = clap::value_parser!(NonZeroUsize),
     )]
     pub max_concurrent_requests: NonZeroUsize,
+    /// HTTP RPC endpoint of the execution client to which the consensus RPC server forwards the
+    /// methods it does not serve. Every method of that endpoint becomes reachable through the
+    /// consensus RPC port. Disabled if not set.
+    #[arg(
+        long = "rpc.execution-forwarding-endpoint",
+        env = "BASE_NODE_RPC_EXECUTION_FORWARDING_ENDPOINT"
+    )]
+    pub execution_forwarding_endpoint: Option<Url>,
 }
 
 /// RPC CLI arguments for embedded consensus nodes.
@@ -92,6 +101,14 @@ pub struct EmbeddedRpcArgs {
         value_parser = clap::value_parser!(NonZeroUsize),
     )]
     pub max_concurrent_requests: NonZeroUsize,
+    /// HTTP RPC endpoint of the execution client to which the consensus RPC server forwards the
+    /// methods it does not serve. Every method of that endpoint becomes reachable through the
+    /// consensus RPC port. Disabled if not set.
+    #[arg(
+        long = "rpc.execution-forwarding-endpoint",
+        env = "BASE_NODE_RPC_EXECUTION_FORWARDING_ENDPOINT"
+    )]
+    pub execution_forwarding_endpoint: Option<Url>,
 }
 
 impl Default for RpcArgs {
@@ -123,6 +140,7 @@ impl From<EmbeddedRpcArgs> for RpcArgs {
             dev_enabled: args.dev_enabled,
             http_timeout_secs: args.http_timeout_secs,
             max_concurrent_requests: args.max_concurrent_requests,
+            execution_forwarding_endpoint: args.execution_forwarding_endpoint,
         }
     }
 }
@@ -141,6 +159,7 @@ impl From<RpcArgs> for Option<RpcBuilder> {
             dev_enabled: args.dev_enabled,
             http_timeout: Duration::from_secs(args.http_timeout_secs),
             max_concurrent_requests: args.max_concurrent_requests,
+            execution_forwarding_endpoint: args.execution_forwarding_endpoint,
         })
     }
 }
@@ -161,6 +180,7 @@ mod tests {
     #[case::set_port_alias(&["--rpc.port", "8743"], |args: &mut RpcArgs| { args.listen_port = 8743; })]
     #[case::enable_admin(&["--rpc.enable-admin"], |args: &mut RpcArgs| { args.enable_admin = true; })]
     #[case::admin_state(&["--rpc.admin-state", "/"], |args: &mut RpcArgs| { args.admin_persistence = Some(PathBuf::from("/")); })]
+    #[case::execution_forwarding_endpoint(&["--rpc.execution-forwarding-endpoint", "http://localhost:8545"], |args: &mut RpcArgs| { args.execution_forwarding_endpoint = Some("http://localhost:8545".parse().unwrap()); })]
     fn test_parse_rpc_args(#[case] args: &[&str], #[case] mutate: impl Fn(&mut RpcArgs)) {
         let args = [&["base-consensus"], args].concat();
         let cli = RpcArgs::parse_from(args);
@@ -176,6 +196,7 @@ mod tests {
     #[case::set_port(&["--rpc.port", "8743"], |args: &mut EmbeddedRpcArgs| { args.listen_port = 8743; })]
     #[case::enable_admin(&["--rpc.enable-admin"], |args: &mut EmbeddedRpcArgs| { args.enable_admin = true; })]
     #[case::admin_state(&["--rpc.admin-state", "/"], |args: &mut EmbeddedRpcArgs| { args.admin_persistence = Some(PathBuf::from("/")); })]
+    #[case::execution_forwarding_endpoint(&["--rpc.execution-forwarding-endpoint", "http://localhost:8545"], |args: &mut EmbeddedRpcArgs| { args.execution_forwarding_endpoint = Some("http://localhost:8545".parse().unwrap()); })]
     fn test_parse_embedded_rpc_args(
         #[case] args: &[&str],
         #[case] mutate: impl Fn(&mut EmbeddedRpcArgs),

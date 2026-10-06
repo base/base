@@ -16,12 +16,6 @@ pub(crate) struct SnapshotCommand {
     pub(crate) command: SnapshotSubcommand,
 }
 
-impl SnapshotCommand {
-    pub(crate) fn run(self) -> eyre::Result<()> {
-        self.command.run()
-    }
-}
-
 /// Subcommands for `base snapshot`.
 #[derive(Subcommand, Debug)]
 #[non_exhaustive]

@@ -208,22 +208,20 @@ where
         Ok(Some((header.number(), header.timestamp())))
     }
 
-    /// Returns the maximum permitted expiry distance in full blocks for the block being built.
-    fn max_validity_expiry_blocks(&self, latest_timestamp: u64) -> u64 {
+    /// Returns the full-block interval, in milliseconds, of the block being built.
+    fn block_interval_millis(&self, latest_timestamp: u64) -> u64 {
         // The target build can be the first Denim block even though the latest committed header
         // is pre-Denim. Check both its parent timestamp and the next legacy block timestamp so
         // the window uses Denim's 200ms full-block cadence at that transition.
         let next_legacy_timestamp =
             latest_timestamp.saturating_add(LEGACY_BLOCK_INTERVAL_MILLIS.saturating_div(1_000));
-        let block_interval_millis =
-            if self.provider.chain_spec().is_denim_active_at_timestamp(latest_timestamp)
-                || self.provider.chain_spec().is_denim_active_at_timestamp(next_legacy_timestamp)
-            {
-                RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
-            } else {
-                LEGACY_BLOCK_INTERVAL_MILLIS
-            };
-        self.max_validity_expiry_secs.saturating_mul(1_000).div_ceil(block_interval_millis)
+        if self.provider.chain_spec().is_denim_active_at_timestamp(latest_timestamp)
+            || self.provider.chain_spec().is_denim_active_at_timestamp(next_legacy_timestamp)
+        {
+            RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
+        } else {
+            LEGACY_BLOCK_INTERVAL_MILLIS
+        }
     }
 }
 
@@ -328,7 +326,8 @@ where
                 ValidityPredicate::validate_block_expiry_bounds(
                     &options.validity,
                     latest_block.saturating_add(1),
-                    self.max_validity_expiry_blocks(latest_timestamp),
+                    self.max_validity_expiry_secs,
+                    self.block_interval_millis(latest_timestamp),
                 )
             }
             // Before genesis is committed there is no build target from which to measure the
@@ -336,6 +335,9 @@ where
             None => ValidityPredicate::validate_has_block_expiry(&options.validity),
         };
         expiry_validation.map_err(|error| {
+            // The returned message omits the local head; keep it in the log for diagnosing
+            // ingress latency.
+            debug!(error = ?error, "rejected validity transaction block expiry");
             ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), error.to_string(), None::<()>)
         })?;
 
@@ -536,12 +538,12 @@ mod tests {
     }
 
     #[test]
-    fn max_validity_expiry_blocks_uses_the_active_full_block_cadence() {
+    fn block_interval_millis_uses_the_active_full_block_cadence() {
         let legacy = SendRawTransactionValidityApiImpl::new(
             pre_everest_provider(),
             test_transaction_sender(),
         );
-        assert_eq!(legacy.max_validity_expiry_blocks(0), 30);
+        assert_eq!(legacy.block_interval_millis(0), LEGACY_BLOCK_INTERVAL_MILLIS);
 
         let denim_provider = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::new(
@@ -552,7 +554,10 @@ mod tests {
             .with_genesis_block();
         let denim =
             SendRawTransactionValidityApiImpl::new(denim_provider, test_transaction_sender());
-        assert_eq!(denim.max_validity_expiry_blocks(0), 300);
+        assert_eq!(
+            denim.block_interval_millis(0),
+            RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
+        );
 
         let transition_provider = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::new(
@@ -563,7 +568,10 @@ mod tests {
             .with_genesis_block();
         let transition =
             SendRawTransactionValidityApiImpl::new(transition_provider, test_transaction_sender());
-        assert_eq!(transition.max_validity_expiry_blocks(0), 300);
+        assert_eq!(
+            transition.block_interval_millis(0),
+            RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
+        );
     }
 
     fn signed_eip1559(signer: &PrivateKeySigner, nonce: u64, priority_fee: u128) -> Bytes {
@@ -1027,6 +1035,14 @@ mod tests {
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
         assert!(error.message().contains("expires too far in the future"));
+        assert!(
+            error.message().contains("maximum validity window of 60 seconds"),
+            "message should state the window: {error}"
+        );
+        assert!(
+            !error.message().contains("131"),
+            "message must not expose the head-derived maximum: {error}"
+        );
     }
 
     #[tokio::test]
@@ -1178,6 +1194,10 @@ mod tests {
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
         assert!(error.message().contains("already expired"), "unexpected message: {error}");
+        assert!(
+            !error.message().contains("101"),
+            "message must not expose the local head: {error}"
+        );
     }
 
     #[tokio::test]
