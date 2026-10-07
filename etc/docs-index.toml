@@ -440,7 +440,7 @@ digest = "2bd45dbbc9"
 
 ["crates/infra/load-tests/README.md"]
 summary = "Load-testing framework (base-load-tests lib, base-load-tester bin): just/cargo commands, YAML config, tx mixes (precompile, B-20, swap, validity). Use to run or configure devnet/sepolia load tests."
-digest = "ca9c441a4b"
+digest = "bdd5c4caec"
 
 ["crates/infra/roxy/README.md"]
 summary = "Scaffold-only Rust JSON-RPC reverse proxy meant to replace the ProxyD fork; currently just a listen-address flag plus /healthz and /readyz probes, no proxying yet."

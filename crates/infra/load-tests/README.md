@@ -353,8 +353,8 @@ port 8545. Ingress must have forwarding configured as described below.
 
 A configurable fraction of *senders* can route their entire traffic through the
 `base_sendRawTransactionValidity` endpoint, attaching validity predicates to
-every transaction they submit. All four server predicate types are supported:
-the state-based `balance` and `storage` conditions, and the build-position
+every transaction they submit. All five server predicate types are supported:
+the state-based `balance`, `nonce`, and `storage` conditions, and the build-position
 `block_number` and `flashblock_index` conditions (compared against the block and
 flashblock currently being built). This exercises the sequencer and builder
 under congestion when validity predicates are in play. Set `validity.ratio` to
@@ -377,6 +377,10 @@ validity:
   predicates:
     - type: balance
       address: sender          # sender | recipient | 0x-literal
+      op: ">="
+      value: "0"
+    - type: nonce
+      address: sender
       op: ">="
       value: "0"
     - type: storage
@@ -402,12 +406,18 @@ validity:
       value: "0x0"                # absolute block number
     # ...or a runtime-resolved offset (current_block + offset at prepare time):
     - type: block_number
-      op: ">="
+      op: "<="                  # required block-number expiry bound
       offset: "10"
     - type: flashblock_index
       op: ">="
       value: "1"
 ```
+
+The `nonce` predicate compares the watched account's protocol nonce immediately
+before transaction execution, using the same operators and `address`, `op`, and
+`value` fields as `balance`. Absent accounts have nonce zero. It does not read
+EIP-8130 channel nonces; use a storage predicate for those. Like every validity
+submission, nonce predicates must be paired with a `block_number` upper bound.
 
 Predicate addresses resolve per transaction: `sender` → the tx `from`,
 `recipient` → the tx `to` (falling back to `from` for contract creation), or a

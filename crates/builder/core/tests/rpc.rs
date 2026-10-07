@@ -234,6 +234,11 @@ async fn test_send_raw_transaction_validity_accepted() -> eyre::Result<()> {
                             op: ValidityOperator::Equal,
                             value: U256::ZERO,
                         },
+                        ValidityPredicate::Nonce {
+                            address: Account::Alice.address(),
+                            op: ValidityOperator::Equal,
+                            value: U256::ZERO,
+                        },
                         ValidityPredicate::BlockNumber {
                             op: ValidityOperator::LessThanOrEqual,
                             value: U256::from(31),
