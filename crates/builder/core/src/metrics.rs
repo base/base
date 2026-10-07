@@ -189,6 +189,12 @@ base_metrics::define_metrics! {
     tx_accounts_modified: histogram,
     #[describe("Number of storage slots modified by a transaction (from EVM post-state)")]
     tx_storage_slots_modified: histogram,
+    #[describe("Resting validity transactions parked in the transaction iterator without reaching the build loop")]
+    resting_predicate_parked_total: counter,
+    #[describe("Resting validity transactions whose predicates matched when evaluated in shadow mode")]
+    resting_predicate_shadow_mismatches_total: counter,
+    #[describe("Time per flashblock spent handling validity transactions, from yield to the predicate gate decision, including resting transactions parked in the iterator, in seconds")]
+    validity_candidate_handling_duration: histogram,
     #[describe("Builder transaction events successfully enqueued")]
     #[label(event_type)]
     builder_transaction_events_emitted: counter,
