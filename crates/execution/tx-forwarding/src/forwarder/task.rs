@@ -241,9 +241,8 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         let tx_count = batch.len() as u64;
         let overall_start = Instant::now();
         for attempt in 0..=self.config.max_retries {
-            // The first attempt is not journaled: `TXPOOL_BUILDER_CONSUMED` already records the
-            // enqueue, and every send ends in a failure or drop event or a builder-side insert
-            // event. Only retries add information.
+            // The first attempt is not journaled: every send ends in a failure or drop event here
+            // or a builder-side insert event. Only retries add information.
             if attempt > 0 {
                 for (tx_hash, method) in tx_hashes.iter().zip(&methods) {
                     self.emit_forward_event(
@@ -737,8 +736,8 @@ mod tests {
             .collect()
     }
 
-    /// A send that succeeds on the first try journals nothing from the forwarder: the reader's
-    /// `TXPOOL_BUILDER_CONSUMED` and the builder's insert event already cover it.
+    /// A send that succeeds on the first try journals nothing from the forwarder: the builder's
+    /// insert event already covers it.
     #[tokio::test]
     async fn first_try_success_journals_no_forward_events() {
         let capture = TransactionEventCapture::install();
