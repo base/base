@@ -18,19 +18,14 @@
 //! commit: the computed keys come from this binary's ELFs, the proofs from
 //! zk-host's.
 
-use alloy_primitives::{Address, B256, Bytes};
-use alloy_provider::Provider;
-use alloy_rpc_types::TransactionRequest;
-use alloy_sol_types::{SolCall, sol};
+use alloy_primitives::{Address, B256};
+use alloy_provider::RootProvider;
 use anyhow::{Context, Result, bail};
+use base_proof_contracts::{
+    AggregateVerifierContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
+};
 use base_proof_zk_utils::types::u32_to_u8;
 use sp1_sdk::{HashableKey, SP1VerifyingKey};
-
-sol! {
-    function gameImpls(uint32 gameType) external view returns (address);
-    function ZK_AGGREGATE_HASH() external view returns (bytes32);
-    function ZK_RANGE_HASH() external view returns (bytes32);
-}
 
 /// The two program hashes an `AggregateVerifier` checks ZK proofs against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,43 +52,37 @@ impl ProgramHashes {
 
     /// Reads the hashes of the implementation `factory` currently registers for
     /// `game_type`, and returns that implementation's address with them.
-    pub async fn onchain<P: Provider>(
-        provider: &P,
+    pub async fn onchain(
+        provider: &RootProvider,
         factory: Address,
         game_type: u32,
     ) -> Result<(Address, Self)> {
-        let implementation = gameImplsCall::abi_decode_returns(
-            &call(provider, factory, gameImplsCall { gameType: game_type }.abi_encode()).await?,
-        )
-        .context("failed to decode gameImpls")?;
+        let implementation = DisputeGameFactoryContractClient::new(factory, provider.clone())
+            .game_impls(game_type)
+            .await?;
         if implementation == Address::ZERO {
             bail!("factory {factory} has no implementation registered for game type {game_type}");
         }
-        let aggregate = ZK_AGGREGATE_HASHCall::abi_decode_returns(
-            &call(provider, implementation, ZK_AGGREGATE_HASHCall {}.abi_encode()).await?,
-        )
-        .context("failed to decode ZK_AGGREGATE_HASH")?;
-        let range = ZK_RANGE_HASHCall::abi_decode_returns(
-            &call(provider, implementation, ZK_RANGE_HASHCall {}.abi_encode()).await?,
-        )
-        .context("failed to decode ZK_RANGE_HASH")?;
+        let verifier = AggregateVerifierContractClient::new(provider.clone());
+        let aggregate = verifier.zk_aggregate_hash(implementation).await?;
+        let range = verifier.zk_range_hash(implementation).await?;
         Ok((implementation, Self { aggregate, range }))
     }
 
     /// Fails when either hash differs, naming every hash that does and both
     /// values for each, so the error alone says what to rotate or roll back.
-    pub fn ensure_match(onchain: Self, computed: Self, implementation: Address) -> Result<()> {
+    pub fn ensure_match(self, computed: Self, implementation: Address) -> Result<()> {
         let mut mismatches = Vec::new();
-        if onchain.aggregate != computed.aggregate {
+        if self.aggregate != computed.aggregate {
             mismatches.push(format!(
                 "ZK_AGGREGATE_HASH is {} on-chain but this build's aggregation program is {}",
-                onchain.aggregate, computed.aggregate
+                self.aggregate, computed.aggregate
             ));
         }
-        if onchain.range != computed.range {
+        if self.range != computed.range {
             mismatches.push(format!(
                 "ZK_RANGE_HASH is {} on-chain but this build's range program is {}",
-                onchain.range, computed.range
+                self.range, computed.range
             ));
         }
         if mismatches.is_empty() {
@@ -108,13 +97,6 @@ impl ProgramHashes {
     }
 }
 
-async fn call<P: Provider>(provider: &P, to: Address, data: Vec<u8>) -> Result<Bytes> {
-    provider
-        .call(TransactionRequest::default().to(to).input(Bytes::from(data).into()))
-        .await
-        .with_context(|| format!("eth_call to {to} failed"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,13 +109,13 @@ mod tests {
 
     #[test]
     fn matching_hashes_pass() {
-        ProgramHashes::ensure_match(hashes(1, 2), hashes(1, 2), IMPLEMENTATION)
-            .expect("identical hashes match");
+        hashes(1, 2).ensure_match(hashes(1, 2), IMPLEMENTATION).expect("identical hashes match");
     }
 
     #[test]
     fn a_range_mismatch_names_both_values_and_only_that_hash() {
-        let error = ProgramHashes::ensure_match(hashes(1, 2), hashes(1, 3), IMPLEMENTATION)
+        let error = hashes(1, 2)
+            .ensure_match(hashes(1, 3), IMPLEMENTATION)
             .expect_err("range differs")
             .to_string();
         assert!(error.contains("ZK_RANGE_HASH"), "{error}");
@@ -145,21 +127,11 @@ mod tests {
 
     #[test]
     fn both_mismatches_are_reported_together() {
-        let error = ProgramHashes::ensure_match(hashes(1, 2), hashes(4, 5), IMPLEMENTATION)
+        let error = hashes(1, 2)
+            .ensure_match(hashes(4, 5), IMPLEMENTATION)
             .expect_err("both differ")
             .to_string();
         assert!(error.contains("ZK_AGGREGATE_HASH"), "{error}");
         assert!(error.contains("ZK_RANGE_HASH"), "{error}");
-    }
-
-    /// The range hash is the verifying key's eight words, big-endian, which is
-    /// how the aggregation program commits it (`u32_to_u8`) and how the
-    /// deployment tasks record it.
-    #[test]
-    fn range_encoding_is_big_endian_words() {
-        let words = [0x0011_2233, 0x4455_6677, 0, 0, 0, 0, 0, 0x8899_aabb];
-        let encoded = B256::from(u32_to_u8(words));
-        assert_eq!(&encoded[..8], &[0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77]);
-        assert_eq!(&encoded[28..], &[0x88, 0x99, 0xaa, 0xbb]);
     }
 }

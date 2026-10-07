@@ -109,9 +109,9 @@ impl SnarkE2e {
         };
 
         let (implementation, onchain) =
-            ProgramHashes::onchain(l1_provider, factory, game_type).await.with_context(|| {
-                format!("failed to read the verifier hashes for game type {game_type}")
-            })?;
+            ProgramHashes::onchain(l1_provider.root(), factory, game_type).await.with_context(
+                || format!("failed to read the verifier hashes for game type {game_type}"),
+            )?;
         let matches = onchain == computed;
         info!(
             factory = %factory,
@@ -124,7 +124,7 @@ impl SnarkE2e {
             matches,
             "compared this build's verifying keys with the on-chain verifier"
         );
-        ProgramHashes::ensure_match(onchain, computed, implementation)
+        onchain.ensure_match(computed, implementation)
     }
 
     /// Extract SNARK receipt bytes from a successful getProof response.

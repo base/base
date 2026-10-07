@@ -289,6 +289,10 @@ sol! {
         /// verification-key rotation registers a *new* implementation, and every
         /// clone created before it stays pinned to the old hash.
         function ZK_AGGREGATE_HASH() external view returns (bytes32);
+
+        /// Returns the SP1 range program hash the aggregation program must
+        /// commit in a ZK proof's journal. `immutable`, like `ZK_AGGREGATE_HASH`.
+        function ZK_RANGE_HASH() external view returns (bytes32);
     }
 }
 
@@ -540,6 +544,15 @@ impl AggregateVerifierContractClient {
         let contract = IAggregateVerifier::IAggregateVerifierInstance::new(address, &self.provider);
 
         contract_call!(contract.ZK_AGGREGATE_HASH().call(), "ZK_AGGREGATE_HASH failed")
+    }
+
+    /// Returns the SP1 range program hash a game or implementation expects the
+    /// aggregation program to commit. Reads through a CWIA clone, as
+    /// [`Self::zk_aggregate_hash`] does.
+    pub async fn zk_range_hash(&self, address: Address) -> Result<B256, ContractError> {
+        let contract = IAggregateVerifier::IAggregateVerifierInstance::new(address, &self.provider);
+
+        contract_call!(contract.ZK_RANGE_HASH().call(), "ZK_RANGE_HASH failed")
     }
 
     /// Returns whether a verifier has been nullified.
