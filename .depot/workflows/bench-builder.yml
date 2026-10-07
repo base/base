@@ -158,29 +158,39 @@ jobs:
         shell: bash
         run: git checkout --force --detach "$BASE_SHA"
 
-      - name: Run benchmarks (base)
+      # Separate steps so a base commit without the event test still reports instruction counts.
+      - name: Event counts (base)
         if: steps.affected.outputs.run == 'true'
         continue-on-error: true
         shell: bash
         run: |
           cargo test --profile bench -p base-builder-core --test flashblock_build_events \
             -- --nocapture --test-threads=1 > "$RUNNER_TEMP/base-events.txt" 2>&1
-          cargo bench -p base-builder-core --bench flashblock_build_iai > "$RUNNER_TEMP/base-iai.txt" 2>&1
+
+      - name: Instruction counts (base)
+        if: steps.affected.outputs.run == 'true'
+        continue-on-error: true
+        shell: bash
+        run: cargo bench -p base-builder-core --bench flashblock_build_iai > "$RUNNER_TEMP/base-iai.txt" 2>&1
 
       - name: Switch tree to head commit
         if: steps.affected.outputs.run == 'true'
         shell: bash
         run: git checkout --force --detach "$HEAD_SHA"
 
-      - name: Run benchmarks (head)
+      - name: Event counts (head)
         if: steps.affected.outputs.run == 'true'
         continue-on-error: true
         shell: bash
         run: |
-          set -o pipefail
           cargo test --profile bench -p base-builder-core --test flashblock_build_events \
             -- --nocapture --test-threads=1 2>&1 | tee "$RUNNER_TEMP/head-events.txt"
-          cargo bench -p base-builder-core --bench flashblock_build_iai 2>&1 | tee "$RUNNER_TEMP/head-iai.txt"
+
+      - name: Instruction counts (head)
+        if: steps.affected.outputs.run == 'true'
+        continue-on-error: true
+        shell: bash
+        run: cargo bench -p base-builder-core --bench flashblock_build_iai 2>&1 | tee "$RUNNER_TEMP/head-iai.txt"
 
       - name: Render comparison
         if: steps.affected.outputs.run == 'true'
