@@ -26,7 +26,7 @@ pub fn ensure_valid_extra_data<H: BlockHeader>(
     };
 
     if elasticity == 0 || denominator == 0 {
-        return Err(ConsensusError::other(EIP1559ParamError::InvalidParams));
+        return Err(ConsensusError::other(EIP1559ParamError::ZeroParams));
     }
 
     Ok(())
@@ -86,6 +86,8 @@ mod tests {
         assert!(!check(&spec, &HOLOCENE_VALID));
         assert!(!check(&spec, &[1; 9]));
         assert!(!check(&spec, &[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]));
+        assert!(!check(&spec, &[1, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 1]));
+        assert!(!check(&spec, &[1, 0, 0, 0, 250, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]));
     }
 
     #[test]
