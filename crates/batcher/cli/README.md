@@ -16,13 +16,12 @@ from the rollup config of the node whose derivation the batcher follows.
 
 `--sequencer-urls` / `BASE_BATCHER_SEQUENCER_URLS` takes the sequencer HTTP
 endpoints, comma-separated. The batcher submits the unsafe blocks of the leader,
-read with `eth_getBlockByNumber`. A read the endpoint does not answer within 10
-seconds fails and is retried at the next poll. A single endpoint is the leader.
-Among several, the leader is the first whose `admin_sequencerActive` answers
-`true`: an endpoint that answers `false`, answers an error or does not answer
-within 2 seconds is not active. The batcher waits for a leader at startup, up to
-`--wait-node-sync-timeout`, then looks for it again every `--poll-interval`, and
-keeps reading from the last one while none is.
+read with `eth_getBlockByNumber`. A single endpoint is the leader. Among several,
+the leader is the first whose `admin_sequencerActive` answers `true`, and one that
+answers anything else or does not answer is not active. The batcher waits for a
+leader at startup, up to `--wait-node-sync-timeout`, then looks for it again every
+`--poll-interval`, and keeps reading from the last one while none is. Every call
+to a sequencer times out, so one that stops answering never blocks the batcher.
 
 A canonical batcher also reads the rollup config of the leader
 (`optimism_rollupConfig`) and follows its derivation (`optimism_syncStatus`).
