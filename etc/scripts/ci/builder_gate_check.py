@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail the builder performance gate when a flashblock build exceeds its pinned budget.
+"""Fail the builder performance gate when a block build exceeds its pinned budget.
 
 Reads raw iai-callgrind output from `cargo bench -p base-builder-core --bench
 flashblock_build_iai` and the budgets in `etc/benchmarks/builder-gate-budgets.json`.
@@ -24,7 +24,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from iai_compare import IaiCompare  # noqa: E402
 
-BENCH_PREFIX = "flashblock_build_iai::flashblock_build::build_block/"
+# Benchmark function -> budget-key prefix, one per builder.
+BENCH_PREFIXES = {
+    "flashblock_build_iai::flashblock_build::build_block/": "flashblocks/",
+    "flashblock_build_iai::flashblock_build::build_native_block/": "native/",
+}
 
 
 class BuilderGate:
@@ -38,12 +42,13 @@ class BuilderGate:
 
     @staticmethod
     def load_measured(text: str) -> dict[str, int]:
-        """Map scenario name -> instruction count from iai-callgrind output."""
-        return {
-            bench.removeprefix(BENCH_PREFIX): count
-            for bench, count in IaiCompare.parse(text).items()
-            if bench.startswith(BENCH_PREFIX)
-        }
+        """Map `<builder>/<scenario>` -> instruction count from iai-callgrind output."""
+        measured = {}
+        for bench, count in IaiCompare.parse(text).items():
+            for prefix, key_prefix in BENCH_PREFIXES.items():
+                if bench.startswith(prefix):
+                    measured[key_prefix + bench.removeprefix(prefix)] = count
+        return measured
 
     def marginal(self, scenario: str, spec: dict) -> float | None:
         """Instructions per deferred candidate above the reference scenario, if budgeted."""
