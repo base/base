@@ -41,6 +41,7 @@ mod tests {
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use reth_consensus::HeaderValidator;
     use reth_primitives_traits::SealedHeader;
+    use rstest::rstest;
 
     use super::ensure_valid_extra_data;
     use crate::BaseBeaconConsensus;
@@ -59,48 +60,47 @@ mod tests {
         ensure_valid_extra_data(chain_spec, &header).is_ok()
     }
 
-    #[test]
-    fn pre_holocene_extra_data_is_unconstrained() {
-        let spec = builder().granite_activated().build();
-        assert!(check(&spec, &[]));
-        assert!(check(&spec, &[0xff; 32]));
+    #[rstest]
+    #[case::empty(&[])]
+    #[case::arbitrary(&[0xff; 32])]
+    fn pre_holocene_extra_data_is_unconstrained(#[case] extra_data: &[u8]) {
+        assert!(check(&builder().granite_activated().build(), extra_data));
     }
 
-    #[test]
-    fn holocene_extra_data_rules() {
-        let spec = builder().holocene_activated().build();
-        assert!(check(&spec, &HOLOCENE_VALID));
-        assert!(!check(&spec, &[]));
-        assert!(!check(&spec, &HOLOCENE_VALID[..8]));
-        assert!(!check(&spec, &[1, 0, 0, 0, 250, 0, 0, 0, 6]));
-        assert!(!check(&spec, &JOVIAN_VALID));
-        assert!(!check(&spec, &[0; 9]));
-        assert!(!check(&spec, &[0, 0, 0, 0, 0, 0, 0, 0, 6]));
-        assert!(!check(&spec, &[0, 0, 0, 0, 250, 0, 0, 0, 0]));
+    #[rstest]
+    #[case::valid(&HOLOCENE_VALID, true)]
+    #[case::empty(&[], false)]
+    #[case::truncated(&HOLOCENE_VALID[..8], false)]
+    #[case::wrong_version(&[1, 0, 0, 0, 250, 0, 0, 0, 6], false)]
+    #[case::jovian_layout(&JOVIAN_VALID, false)]
+    #[case::zero_both(&[0; 9], false)]
+    #[case::zero_denominator(&[0, 0, 0, 0, 0, 0, 0, 0, 6], false)]
+    #[case::zero_elasticity(&[0, 0, 0, 0, 250, 0, 0, 0, 0], false)]
+    fn holocene_extra_data_rules(#[case] extra_data: &[u8], #[case] valid: bool) {
+        assert_eq!(check(&builder().holocene_activated().build(), extra_data), valid);
     }
 
-    #[test]
-    fn jovian_extra_data_rules() {
-        let spec = builder().jovian_activated().build();
-        assert!(check(&spec, &JOVIAN_VALID));
-        assert!(!check(&spec, &HOLOCENE_VALID));
-        assert!(!check(&spec, &[1; 9]));
-        assert!(!check(&spec, &[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]));
-        assert!(!check(&spec, &[1, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 1]));
-        assert!(!check(&spec, &[1, 0, 0, 0, 250, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]));
+    #[rstest]
+    #[case::valid(&JOVIAN_VALID, true)]
+    #[case::holocene_layout(&HOLOCENE_VALID, false)]
+    #[case::wrong_length(&[1; 9], false)]
+    #[case::zero_both(&[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], false)]
+    #[case::zero_denominator(&[1, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 1], false)]
+    #[case::zero_elasticity(&[1, 0, 0, 0, 250, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], false)]
+    fn jovian_extra_data_rules(#[case] extra_data: &[u8], #[case] valid: bool) {
+        assert_eq!(check(&builder().jovian_activated().build(), extra_data), valid);
     }
 
-    #[test]
-    fn validate_header_rejects_zero_holocene_params() {
+    #[rstest]
+    #[case::valid(&HOLOCENE_VALID, true)]
+    #[case::zero_params(&[0; 9], false)]
+    fn validate_header_enforces_holocene_params(#[case] extra_data: &[u8], #[case] valid: bool) {
         let consensus = BaseBeaconConsensus::new(Arc::new(builder().holocene_activated().build()));
-        let header = |extra_data: &[u8]| {
-            SealedHeader::seal_slow(Header {
-                base_fee_per_gas: Some(1),
-                extra_data: Bytes::copy_from_slice(extra_data),
-                ..Default::default()
-            })
-        };
-        assert!(consensus.validate_header(&header(&HOLOCENE_VALID)).is_ok());
-        assert!(consensus.validate_header(&header(&[0; 9])).is_err());
+        let header = SealedHeader::seal_slow(Header {
+            base_fee_per_gas: Some(1),
+            extra_data: Bytes::copy_from_slice(extra_data),
+            ..Default::default()
+        });
+        assert_eq!(consensus.validate_header(&header).is_ok(), valid);
     }
 }
