@@ -28,5 +28,8 @@ pub use context::{
 
 mod payload;
 
+mod resting;
+pub use resting::{RestingPayloadTransactions, RestingStats};
+
 mod service;
 pub use service::FlashblocksServiceBuilder;
