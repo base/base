@@ -2,7 +2,7 @@
 
 The builder performance gate is a per-PR check that fails when a change makes the flashblock build path slower or noisier than its pinned budget. It runs in `.depot/workflows/bench-builder-gate.yml` as the `Builder performance gate` job.
 
-The gate exists because of the 2026-10-06 mainnet regression. Flashblock p90 build time rose from 30 ms to 100 ms, and `payload_transaction_simulation_duration` p90 rose from 26 ms to 86 ms. A backlog of about 4,700 validity transactions was deferred on every flashblock, and each deferral emitted `BUILDER_CONSIDERED` and `BUILDER_DEFERRED` events synchronously on the builder thread. No benchmark ran the build loop with the event writer on or with a resting backlog, so production monitor 171485195 was the first signal. #5623 removed `BUILDER_CONSIDERED` and dedupes `BUILDER_DEFERRED` per transaction and reason per block.
+The build path's cost depends on pool shape as much as on code. A backlog of validity transactions whose predicates stay unsatisfied is re-considered, re-evaluated, and re-parked on every flashblock, so any per-candidate cost on the builder thread (an event, an allocation, a redundant read) is multiplied by the backlog size and the flashblock count. Benchmarks that run with the transaction event writer off, or without a resting backlog, do not see that cost. The gate runs the real loop with events on against a fixed matrix of pool shapes, and fails when a change exceeds the pinned budgets.
 
 ## What it runs
 
@@ -21,15 +21,15 @@ The workloads live in `crates/builder/core/src/test_utils/flashblock_workload.rs
 | Scenario | Pool traffic per block | What it isolates |
 | --- | --- | --- |
 | `transfers` | 100 transfers arrive before each flashblock | Baseline cost of execution, payload assembly, state root, and accepted/included events |
-| `resting_backlog` | Baseline plus 4,500 single-predicate validity transactions that never become satisfied | The incident: 4,500 candidates re-considered, re-evaluated, and re-parked on every flashblock (45,000 deferrals) |
+| `resting_backlog` | Baseline plus 4,500 single-predicate validity transactions that never become satisfied | 4,500 candidates re-considered, re-evaluated, and re-parked on every flashblock (45,000 deferrals) |
 | `resting_backlog_multi_predicate` | Backlog with 8 predicates per transaction on unique accounts | Predicate evaluation cost and cold reads per candidate |
 | `resting_backlog_shared_state` | Backlog with 8 predicates per transaction over 16 shared accounts | Warm reads and crowded predicate-index buckets |
-| `wake_rescan` | 1,000 parked transactions on 16 shared accounts; every transfer pays one of them | Bucket wakeups, parked rescan, and re-park after each commit |
+| `wake_rescan` | 1,000 parked transactions on 125 shared accounts (8 per flat bucket); every transfer pays one of them | Bucket wakeups, parked rescan, and re-park after each commit |
 | `backlog_growth` | 1,500 resting at start, 300 more arrive before each flashblock | Pool churn and backlog growth within a block |
 | `congested` | 300 transfers arrive per flashblock, 100 fit | Gas-limit rejections of a growing overflow |
 | `satisfied_validity` | Baseline plus 50 validity transactions per flashblock whose 4 predicates hold | Predicate evaluation on the inclusion path |
 
-The event-type mix is pinned per scenario, not inherited from production volume. After #5623, mainnet event volume is about a tenth of the incident's, so the scenarios fix the backlog shape instead.
+The event-type mix is pinned per scenario rather than derived from production volume, so the budgets do not drift when production traffic changes.
 
 ## Measurement
 
@@ -40,7 +40,7 @@ The job measures two things, and both fail closed.
 **Instruction counts.** `crates/builder/core/benches/flashblock_build_iai.rs` runs each scenario under Valgrind Callgrind through iai-callgrind 0.16.1. Fixture construction runs in the unmeasured setup phase. Callgrind counts only the thread running the benchmark function, which is the builder thread; the event writer's background file I/O is not counted. `etc/scripts/ci/builder_gate_check.py` then checks two budgets per scenario:
 
 - `max_instructions`: the pinned baseline plus `headroom_pct` (5%).
-- `max_marginal_instructions_per_deferral`, for backlog scenarios: `(instructions(scenario) - instructions(transfers)) / deferrals_per_block`, plus `marginal_headroom_pct` (10%). This is the instruction-count analogue of the incident's "about 18 µs per deferred transaction". Because it subtracts the baseline from the same run, it is less sensitive to changes that shift every scenario.
+- `max_marginal_instructions_per_deferral`, for backlog scenarios: `(instructions(scenario) - instructions(transfers)) / deferrals_per_block`, plus `marginal_headroom_pct` (10%). It is the cost of one deferred candidate, the unit that a resting backlog multiplies. Because it subtracts the baseline from the same run, it is less sensitive to changes that shift every scenario.
 
 Instruction counts are deterministic for a fixed toolchain, dependency set, target, and Valgrind version, so they work on shared runners. Wall-clock measurement on shared runners is too noisy for a gate, which is why `bench-pr.yml` is manual only. Wall-clock control flow inside the loop would make counts nondeterministic under Valgrind, so the fixture disables the predicate evaluation cutoff (`predicate_eval_hard_cutoff = Duration::MAX`) and sizes the event writer's lossy queue so it never drops.
 
@@ -70,7 +70,7 @@ Event budgets per block:
 | `congested` | 1,000 | 1,000 | 0 | 11,000 | 1 |
 | `satisfied_validity` | 1,500 | 1,500 | 0 | 0 | 1 |
 
-`BUILDER_DEFERRED` is budgeted at one per resting transaction per block, which is the #5623 contract. `congested` pins today's behavior: gas-limit rejections are not deduplicated, so the overflow is re-rejected on every flashblock (200 + 400 + ... + 2,000 = 11,000 events for 1,000 inclusions). That is the same per-flashblock amplification pattern as the incident; the budget stops it from growing without endorsing it.
+`BUILDER_DEFERRED` is budgeted at one per resting transaction and reason per block, matching `BlockDeferrals`. `congested` pins today's behavior: gas-limit rejections are not deduplicated, so the overflow is re-rejected on every flashblock (200 + 400 + ... + 2,000 = 11,000 events for 1,000 inclusions). That is the same per-flashblock amplification a resting backlog has; the budget stops it from growing without endorsing it.
 
 Why 5%: counts are reproducible run to run on the same runner image, so headroom only has to absorb unrelated churn such as dependency bumps on `main` (a few percent at most). At 5%, `resting_backlog` fails on about 80 million added instructions per block, or about 1,800 instructions per deferred candidate. Today each deferral costs about 24,000 instructions above the baseline, so a 10% per-deferral regression also fails the marginal budget.
 
@@ -96,4 +96,4 @@ Making the check required is a branch-protection decision for the repository own
 - Lock contention, allocator behavior under concurrency, and I/O latency. Callgrind counts instructions, not time. Changes that only move work to another thread, such as a writer-thread deferral, show up as a builder-thread decrease, which is the latency-relevant direction.
 - Isthmus-and-later header work (withdrawals root) and blob fields; the synthetic chain activates only L1 forks through Cancun.
 - The native (non-flashblocks) payload builder in `crates/execution/payload`.
-- Cross-block backlog growth (600 to 1,300 new validity transactions per day on mainnet). The gate pins per-block cost at incident scale; production trend detection stays with the `flashblocks_high_p90_build_time` monitor.
+- Backlog growth across blocks. The gate pins per-block cost at a fixed backlog size; long-term trends in production build time need production monitoring.
