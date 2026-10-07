@@ -120,8 +120,6 @@ impl SequencerCommand {
             runner.install_ext::<SendRawTransactionValidityExtension>(
                 SendRawTransactionValidityConfig {
                     max_validity_predicates: builder_api_config.max_validity_predicates,
-                    experimental_override: builder_api_config
-                        .accept_experimental_validity_transactions,
                     ..Default::default()
                 },
             );
