@@ -423,7 +423,8 @@ where
                 self.pool.best_transactions_with_attributes_and_parking(best_txs_attributes),
             ),
             self.config.rejection_cache.clone(),
-        );
+        )
+        .with_resting_predicate_mode(self.config.resting_predicate_mode);
         let interval = self.config.flashblocks_interval;
         let (tx, mut rx) = mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
 
@@ -896,7 +897,7 @@ where
         block_hash: Option<B256>,
         data: F,
     ) where
-        D: Serialize,
+        D: Serialize + Send + 'static,
         F: FnOnce() -> D,
     {
         if GlobalTransactionEventWriter::get().is_none() {

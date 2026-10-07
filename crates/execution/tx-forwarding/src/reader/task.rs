@@ -5,13 +5,10 @@ use std::{
 };
 
 use alloy_eips::Encodable2718;
-use alloy_primitives::{Bytes, TxHash};
+use alloy_primitives::Bytes;
 use base_execution_txpool::{
     BasePooledTx, BestTransactionLane, NoExtensions, UnifiedTipOrdering, UnifiedTipPriority,
     ValidatedTransaction, ValidatedTransactionExtensions,
-};
-use base_observability_events::{
-    TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use reth_transaction_pool::{
     PoolTransaction, Priority, TransactionOrdering, TransactionPool, ValidPoolTransaction,
@@ -26,13 +23,10 @@ use super::{
 };
 use crate::forwarder::InsertValidatedTransaction;
 
-/// Pool transactions from one snapshot, tagged with their position in the pool iterator for
-/// transaction events, ranked by the builder's tip ordering and sequenced by nonce lane.
-type Snapshot<T> = LaneScheduler<
-    (Arc<ValidPoolTransaction<T>>, u64),
-    Priority<UnifiedTipPriority>,
-    BestTransactionLane,
->;
+/// Pool transactions from one snapshot, ranked by the builder's tip ordering and sequenced by
+/// nonce lane.
+type Snapshot<T> =
+    LaneScheduler<Arc<ValidPoolTransaction<T>>, Priority<UnifiedTipPriority>, BestTransactionLane>;
 
 /// Background reader that drains the pool for one destination.
 ///
@@ -141,7 +135,6 @@ where
                 return None;
             }
 
-            let iterator_index = txs_read;
             txs_read += 1;
             if self.recently_sent.was_recently_sent(tx.hash()) {
                 txs_ignored += 1;
@@ -151,7 +144,7 @@ where
             let sequence = BestTransactionLane::for_transaction(&tx);
             let arrived = tx.timestamp;
             let priority = ordering.priority(&tx.transaction, base_fee);
-            lanes.push((tx, iterator_index), sequence, arrived, priority);
+            lanes.push(tx, sequence, arrived, priority);
         }
 
         if txs_read > 0 {
@@ -176,13 +169,12 @@ where
     fn fill_queue(&mut self, lanes: &mut Snapshot<P::Transaction>) -> Option<u64> {
         let mut txs_sent: u64 = 0;
         while self.sender.capacity() > 0 {
-            let Some((tx, iterator_index)) = lanes.pop(self.lane_mix.next_lane()) else { break };
+            let Some(tx) = lanes.pop(self.lane_mix.next_lane()) else { break };
             let hash = *tx.hash();
             match self.try_enqueue(&tx) {
                 Ok(()) => {
                     self.recently_sent.mark_sent(hash);
                     txs_sent += 1;
-                    self.emit_builder_consumed_event(hash, iterator_index);
                 }
                 // Only this reader produces into the queue, so capacity cannot shrink between the
                 // check above and the send.
@@ -238,28 +230,6 @@ where
             tx_hash: *transaction.transaction.hash(),
         }
     }
-
-    fn emit_builder_consumed_event(&self, tx_hash: TxHash, iterator_index: u64) {
-        let _ = transaction_event!(
-            producer: TransactionEventProducer::BaseRethNode,
-            event_type: TransactionEventType::TxpoolBuilderConsumed,
-            tx_hash: tx_hash,
-            // Every destination's reader walks the same pool snapshot, so `iterator_index` alone
-            // collides across destinations.
-            id: {
-                "builder_url" => self.url_label.as_ref(),
-                "tx_hash" => format!("{tx_hash:#x}"),
-                "iterator_index" => iterator_index,
-            },
-            data: {
-                "source" => "best_transactions",
-                "target" => "builder_forwarder",
-                "builder_url" => self.builder_url.as_str(),
-                "iterator_index" => iterator_index,
-                "resend_after_ms" => self.config.resend_after.as_millis() as u64,
-            },
-        );
-    }
 }
 
 impl<P: TransactionPool, E> fmt::Debug for DestinationReader<P, E> {
@@ -274,13 +244,10 @@ impl<P: TransactionPool, E> fmt::Debug for DestinationReader<P, E> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
     use alloy_consensus::transaction::Recovered;
     use alloy_primitives::{Address, B256, TxKind, U256};
     use base_common_consensus::{BaseTransactionSigned, TxDeposit};
     use base_execution_txpool::BasePooledTransaction;
-    use base_observability_events::TransactionEventCapture;
     use reth_transaction_pool::{
         TransactionOrigin, identifier::TransactionId, noop::NoopTransactionPool,
     };
@@ -368,28 +335,6 @@ mod tests {
         assert!(matches!(reader.try_enqueue(&expected), Err(mpsc::error::TrySendError::Full(()))));
         assert_eq!(receiver.try_recv().unwrap().tx_hash, wire(0).tx_hash);
         assert!(receiver.try_recv().is_err());
-    }
-
-    /// Every destination's reader walks the same pool snapshot, so the same transaction is
-    /// consumed at the same iterator index for each destination. Those events must keep distinct
-    /// IDs, or the archive's ID dedupe keeps only one destination's.
-    #[test]
-    fn consumed_events_for_different_destinations_have_distinct_ids() {
-        let capture = TransactionEventCapture::install();
-        let hash = B256::repeat_byte(0xc1);
-        let destinations = ["http://builder-a.test", "http://builder-b.test"];
-        for url in destinations {
-            let (sender, _receiver) = mpsc::channel(1);
-            reader_for(url, sender, CancellationToken::new()).emit_builder_consumed_event(hash, 7);
-        }
-
-        let ids: HashSet<String> = capture
-            .events()
-            .into_iter()
-            .filter(|event| event.tx_hash == Some(hash))
-            .map(|event| event.event_id)
-            .collect();
-        assert_eq!(ids.len(), destinations.len());
     }
 
     #[test]

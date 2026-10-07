@@ -453,7 +453,7 @@ impl BasePayloadBuilderCtx {
         ordering_position: Option<u64>,
         data: F,
     ) where
-        D: Serialize,
+        D: Serialize + Send + 'static,
         F: FnOnce() -> D,
     {
         emit_builder_transaction_event(
@@ -699,61 +699,39 @@ impl BasePayloadBuilderCtx {
         Self::skip_pooled_current(best_txs, tx);
     }
 
-    /// Defers the current validity-gated candidate by parking it for a later flashblock, or, when
-    /// the iterator cannot park it, rejects it and closes the candidate. Emits the matching
-    /// builder-decision event and updates `diag`. Returns `true` when the transaction was parked.
+    /// Parks the current validity-gated candidate for a later position or flashblock, emits the
+    /// deferred builder-decision event, and counts it in `diag`.
     ///
     /// A parked transaction is re-evaluated on every later flashblock and after every promotion,
     /// so `BUILDER_DEFERRED` is emitted only when `deferrals` has not already recorded the same
     /// reason for it in this block. `diag` still counts every park.
-    fn defer_or_reject_current<B: PayloadTxsBounds>(
+    fn defer_current<B: PayloadTxsBounds>(
         &self,
         best_txs: &mut B,
         diag: &mut FlashblockDiagnostics,
         deferrals: &mut BlockDeferrals,
         cx: &DecisionContext<'_>,
-        tx: &B::Transaction,
+        tx_hash: TxHash,
         ordering_position: u64,
-    ) -> bool {
-        if best_txs.park_current() {
-            if deferrals.record(*tx.hash(), cx.reason) {
-                self.emit_builder_decision_event(
-                    cx.payload_id,
-                    TransactionEventType::BuilderDeferred,
-                    *tx.hash(),
-                    Some(ordering_position),
-                    || {
-                        BuilderDeferredEventData::new(
-                            cx.reason, cx.detail, cx.info, cx.limits, None,
-                        )
-                    },
-                );
-            }
-            diag.txs_deferred += 1;
-            true
-        } else {
+    ) {
+        best_txs.park_current();
+        if deferrals.record(tx_hash, cx.reason) {
             self.emit_builder_decision_event(
                 cx.payload_id,
-                TransactionEventType::BuilderRejected,
-                *tx.hash(),
+                TransactionEventType::BuilderDeferred,
+                tx_hash,
                 Some(ordering_position),
-                || {
-                    BuilderRejectedEventData::new(
-                        cx.reason, cx.detail, false, cx.info, cx.limits, None,
-                    )
-                },
+                || BuilderDeferredEventData::new(cx.reason, cx.detail, cx.info, cx.limits, None),
             );
-            diag.txs_rejected_other += 1;
-            Self::skip_pooled_current(best_txs, tx);
-            false
         }
+        diag.txs_deferred += 1;
     }
 
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Returns diagnostics summarizing transaction selection for the flashblock. `deferrals`
     /// must live for the whole block so deferral events are not repeated across flashblocks.
-    pub(super) fn execute_best_transactions(
+    pub fn execute_best_transactions(
         &self,
         info: &mut ExecutionInfo,
         deferrals: &mut BlockDeferrals,
@@ -802,6 +780,8 @@ impl BasePayloadBuilderCtx {
         let mut validity_candidates_evaluated = 0_u64;
         let mut validity_candidates_deferred = 0_u64;
         let mut predicate_eval_cutoff_hit = false;
+        // Time spent on validity candidates from yield to the predicate gate decision.
+        let mut validity_handling = Duration::ZERO;
 
         while let Some(tx) = best_txs.next(()) {
             if self.cancel.is_cancelled() {
@@ -817,6 +797,7 @@ impl BasePayloadBuilderCtx {
             let tx_hash = *tx.hash();
             let replay_independent = tx.eip8130_replay_id().is_some();
             let has_validity_predicates = !tx.validity_predicates().is_empty();
+            let validity_handling_start = has_validity_predicates.then(Instant::now);
             let coinbase_tip = tx.as_eip8130().and_then(|signed| CoinbaseTip::decode(signed.tx()));
             let has_coinbase_tip = coinbase_tip.is_some();
 
@@ -844,14 +825,9 @@ impl BasePayloadBuilderCtx {
                     .increment(1);
                 validity_candidates_deferred += 1;
                 predicate_eval_cutoff_hit = true;
-                self.defer_or_reject_current(
-                    best_txs,
-                    &mut diag,
-                    deferrals,
-                    &cx,
-                    &tx,
-                    ordering_position,
-                );
+                self.defer_current(best_txs, &mut diag, deferrals, &cx, tx_hash, ordering_position);
+                validity_handling +=
+                    validity_handling_start.map_or_else(Duration::default, |start| start.elapsed());
                 continue;
             }
 
@@ -900,6 +876,14 @@ impl BasePayloadBuilderCtx {
                     "matched"
                 };
                 ValidityMetrics::validity_predicate_evaluations_total(outcome).increment(1);
+                if outcome == "matched" && best_txs.is_resting(tx_hash, tx.validity_predicates()) {
+                    BuilderMetrics::resting_predicate_shadow_mismatches_total().increment(1);
+                    debug!(
+                        target: "payload_builder",
+                        tx_hash = ?tx_hash,
+                        "resting validity transaction matched when evaluated"
+                    );
+                }
             }
             if predicate_read_failed || blocking_predicate.is_some() {
                 let (reason, detail) = if predicate_read_failed {
@@ -929,7 +913,7 @@ impl BasePayloadBuilderCtx {
                 // transaction there could place it behind a lower-priority transaction even though
                 // its predicate may have already been satisfied at its first position. An expired
                 // position predicate is terminal too — no later position can satisfy it — so both
-                // are dropped rather than parked; only recoverable state mismatches are parked.
+                // are dropped rather than parked; state mismatches rely on the block expiry.
                 if predicate_read_failed {
                     // A read failure is only terminal for this scan, so it is not cached.
                     self.reject_current(best_txs, &mut diag, &cx, &tx, ordering_position);
@@ -940,24 +924,28 @@ impl BasePayloadBuilderCtx {
                     // not re-evaluated on subsequent flashblock rebuilds.
                     self.expire_current(best_txs, &mut diag, &cx, &tx, ordering_position);
                 } else {
-                    // Recoverable state mismatch: park under the current blocker to retry at a
-                    // later position or flashblock, or reject if the iterator cannot park it.
+                    // State mismatch: retry at a later position or flashblock. Passed nonce
+                    // bounds also stay parked until the required block-number expiry.
                     let (_, blocker_index) = blocking_predicate
                         .expect("unsatisfied, non-terminal predicate implies a blocking key");
-                    if self.defer_or_reject_current(
+                    self.defer_current(
                         best_txs,
                         &mut diag,
                         deferrals,
                         &cx,
-                        &tx,
+                        tx_hash,
                         ordering_position,
-                    ) {
-                        let predicate = tx.validity_predicates()[blocker_index].clone();
-                        predicate_index.park(tx_hash, tx, predicate);
-                    }
+                    );
+                    let predicate = tx.validity_predicates()[blocker_index].clone();
+                    best_txs.rest(tx_hash, &predicate);
+                    predicate_index.park(tx_hash, tx, predicate);
                 }
+                validity_handling +=
+                    validity_handling_start.map_or_else(Duration::default, |start| start.elapsed());
                 continue;
             }
+            validity_handling +=
+                validity_handling_start.map_or_else(Duration::default, |start| start.elapsed());
 
             if self.builder_config.manifest_precheck_enabled
                 && let Some(manifest) = tx.watch_manifest()
@@ -1414,6 +1402,7 @@ impl BasePayloadBuilderCtx {
                 predicate_index.affected_by_state(&state)
             };
             predicate_bucket_wakeups += state_change_effects.woken_buckets as u64;
+            best_txs.record_committed_state(&state);
 
             // commit changes
             evm.db_mut().commit(state);
@@ -1491,6 +1480,7 @@ impl BasePayloadBuilderCtx {
                     best_txs.discard_parked(*parked_hash);
                 } else if let Some((_, blocker_index)) = blocking_predicate {
                     let predicate = parked_transaction.validity_predicates()[blocker_index].clone();
+                    best_txs.rest(*parked_hash, &predicate);
                     predicate_index.reindex(*parked_hash, predicate);
                 } else {
                     predicate_index.remove(*parked_hash);
@@ -1549,6 +1539,14 @@ impl BasePayloadBuilderCtx {
         // the histogram is not flooded with zero observations.
         if let Some(predicate_eval_total) = predicate_eval_total {
             ValidityMetrics::record_predicate_eval_duration(predicate_eval_total);
+        }
+        let resting_stats = best_txs.take_resting_stats();
+        if resting_stats.parked > 0 {
+            BuilderMetrics::resting_predicate_parked_total().increment(resting_stats.parked);
+        }
+        let validity_handling = validity_handling + resting_stats.duration;
+        if !validity_handling.is_zero() {
+            BuilderMetrics::validity_candidate_handling_duration().record(validity_handling);
         }
         ValidityMetrics::record_predicate_evaluation_coverage(
             validity_candidates_evaluated,
@@ -1686,7 +1684,9 @@ mod tests {
     use reth_revm::{State, database::StateProviderDatabase};
 
     use super::*;
-    use crate::{ParkablePayloadTransactions, test_utils::sign_base_tx};
+    use crate::{
+        ParkablePayloadTransactions, RestingPayloadTransactions, test_utils::sign_base_tx,
+    };
 
     fn test_builder_context() -> BasePayloadBuilderCtx {
         let genesis: serde_json::Value = serde_json::json!({
@@ -1788,10 +1788,10 @@ mod tests {
         }
     }
 
+    impl RestingPayloadTransactions for LimitRejectionTransactions {}
+
     impl ParkablePayloadTransactions for LimitRejectionTransactions {
-        fn park_current(&mut self) -> bool {
-            false
-        }
+        fn park_current(&mut self) {}
 
         fn mark_current_committed(&mut self) {}
 
@@ -1822,10 +1822,10 @@ mod tests {
         }
     }
 
+    impl RestingPayloadTransactions for LifecycleRecorder {}
+
     impl ParkablePayloadTransactions for LifecycleRecorder {
-        fn park_current(&mut self) -> bool {
-            false
-        }
+        fn park_current(&mut self) {}
 
         fn mark_current_committed(&mut self) {
             self.committed += 1;
