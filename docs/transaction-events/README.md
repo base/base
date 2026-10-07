@@ -238,7 +238,6 @@ journal and remains visible through logs and metrics.
 
 Builder:
 
-- `BUILDER_CONSIDERED` (retired; no longer emitted)
 - `BUILDER_ACCEPTED`
 - `BUILDER_REJECTED`
 - `BUILDER_DEFERRED`

@@ -1,6 +1,4 @@
-use std::collections::HashMap;
-
-use alloy_primitives::TxHash;
+use alloy_primitives::{TxHash, map::B256Map};
 
 /// The defer reason last journaled as `BUILDER_DEFERRED` for each transaction in the block being
 /// built.
@@ -10,7 +8,7 @@ use alloy_primitives::TxHash;
 /// the journal something new. Create one per block build; it is never pruned during the build.
 #[derive(Debug, Default)]
 pub struct BlockDeferrals {
-    reasons: HashMap<TxHash, &'static str>,
+    reasons: B256Map<&'static str>,
 }
 
 impl BlockDeferrals {
