@@ -1413,6 +1413,8 @@ where
                 let Some(parked_transaction) = predicate_index.transaction(parked_hash) else {
                     continue;
                 };
+                // VALIDATION ONLY: injected per-candidate cost in the native parked rescan.
+                std::hint::black_box(alloy_primitives::keccak256(std::hint::black_box(parked_hash)));
                 let evaluation_start = Instant::now();
                 let evaluation = {
                     let mut recorder = PredicateReadRecorder::new(
