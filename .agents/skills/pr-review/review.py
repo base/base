@@ -54,6 +54,8 @@ SECRET_ENV = ("GH_TOKEN", "GITHUB_TOKEN")
 # The whole run must finish inside the CI job's timeout (90 minutes) with time left to post.
 DEFAULT_BUDGET_SECONDS = 4800
 MIN_STAGE_SECONDS = 60
+# A hung gh or git call must not eat the time reserved for posting results.
+GH_TIMEOUT_SECONDS = 90
 VOTE_TIMEOUT_SECONDS = 600
 
 MAX_DIFF_CHARS = 400_000
@@ -78,6 +80,22 @@ def log(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
 
 
+def describe_failure(result: subprocess.CompletedProcess) -> str:
+    """Why a command failed.
+
+    The claude CLI reports API errors as JSON on stdout and prints only a harmless model warning on
+    stderr, so stderr alone would hide the real cause.
+    """
+    try:
+        envelope = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        envelope = None
+    if isinstance(envelope, dict) and envelope.get("result"):
+        return str(envelope["result"])[:1000]
+    stderr = "\n".join(ln for ln in result.stderr.splitlines() if not ln.startswith("[claude-code:")).strip()
+    return (stderr or result.stdout.strip() or result.stderr.strip())[:1000]
+
+
 def run(cmd: list[str], *, input_text: str | None = None, cwd: Path | None = None,
         timeout: int | None = None, env: dict[str, str] | None = None) -> str:
     """Run a command and return stdout, raising ReviewError on failure."""
@@ -89,7 +107,7 @@ def run(cmd: list[str], *, input_text: str | None = None, cwd: Path | None = Non
     except subprocess.TimeoutExpired as exc:
         raise ReviewError(f"`{cmd[0]}` timed out after {timeout}s") from exc
     if result.returncode:
-        raise ReviewError(f"`{' '.join(cmd[:4])}` failed: {(result.stderr or result.stdout).strip()[:1000]}")
+        raise ReviewError(f"`{' '.join(cmd[:4])}` failed: {describe_failure(result)}")
     return result.stdout
 
 
@@ -287,11 +305,11 @@ class Context:
 
 
 def gh(args: list[str], input_text: str | None = None) -> str:
-    return run(["gh", *args], input_text=input_text)
+    return run(["gh", *args], input_text=input_text, timeout=GH_TIMEOUT_SECONDS)
 
 
 def git(args: list[str]) -> str:
-    return run(["git", *args])
+    return run(["git", *args], timeout=GH_TIMEOUT_SECONDS)
 
 
 def detect_base_ref() -> str:
@@ -550,6 +568,10 @@ class Plan:
     replies: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     unresolves: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     resolves: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    # Threads the decider judged fixed but GitHub would not let us resolve (the Actions token cannot).
+    fixed_open: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    # Fixed threads where an earlier run already asked a person to resolve, so we do not ask again.
+    asked: list[str] = dataclasses.field(default_factory=list)
     rejected: list[str] = dataclasses.field(default_factory=list)
     summary: str | None = None
 
@@ -580,6 +602,8 @@ def build_plan(decision: dict[str, Any], threads: list[dict[str, Any]],
         elif kind == "resolve":
             if thread["resolved"]:
                 plan.rejected.append(f"resolve: thread {thread['thread_id']} is already resolved")
+            elif any(c["author"] == BOT_LOGIN and RESOLVE_REQUEST in c["body"] for c in thread["comments"]):
+                plan.asked.append(thread["thread_id"])
             else:
                 plan.resolves.append({"thread_id": thread["thread_id"],
                                       "body": f"{render.MARKER}\n✅ **Fixed:** {body}"})
@@ -603,6 +627,8 @@ def build_plan(decision: dict[str, Any], threads: list[dict[str, Any]],
 
 REPLY_MUTATION = ("mutation($id: ID!, $body: String!) { addPullRequestReviewThreadReply("
                   "input: {pullRequestReviewThreadId: $id, body: $body}) { comment { id } } }")
+# Added to a "Fixed" reply when the token cannot resolve the thread; also how later runs recognize it.
+RESOLVE_REQUEST = "I could not resolve this thread automatically; please resolve it."
 UNRESOLVE_MUTATION = "mutation($id: ID!) { unresolveReviewThread(input: {threadId: $id}) { thread { id } } }"
 RESOLVE_MUTATION = "mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { id } } }"
 
@@ -617,12 +643,13 @@ def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None]
     repo, number = ctx.repo, ctx.pr_number
     problems: list[str] = []
 
-    def attempt(what: str, args: list[str], input_text: str | None = None) -> bool:
+    def attempt(what: str, args: list[str], input_text: str | None = None, *, essential: bool = True) -> bool:
         try:
             gh(args, input_text=input_text)
             return True
         except ReviewError as exc:
-            problems.append(f"{what}: {exc}")
+            if essential:
+                problems.append(f"{what}: {exc}")
             log(f"  could not post: {what}: {exc}")
             return False
 
@@ -638,9 +665,17 @@ def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None]
     # summary, and GitHub agree. A thread whose change failed stays as it was.
     plan.unresolves = [i for i in plan.unresolves
                        if attempt(f"reopen {i['thread_id']}", graphql(UNRESOLVE_MUTATION, id=i["thread_id"]))]
-    plan.resolves = [i for i in plan.resolves
-                     if attempt(f"resolve {i['thread_id']}", graphql(RESOLVE_MUTATION, id=i["thread_id"]))]
-    for item in plan.unresolves + plan.resolves:
+    resolved = []
+    for item in plan.resolves:
+        # The Actions token is refused here ("Resource not accessible by integration"), so a failure is
+        # expected, not an error: say the problem is fixed and ask a person to resolve the thread.
+        if attempt(f"resolve {item['thread_id']}", graphql(RESOLVE_MUTATION, id=item["thread_id"]),
+                   essential=False):
+            resolved.append(item)
+        else:
+            plan.fixed_open.append({**item, "body": f"{item['body']}\n\n{RESOLVE_REQUEST}"})
+    plan.resolves = resolved
+    for item in plan.unresolves + plan.resolves + plan.fixed_open:
         reply(item)
 
     if plan.new:
@@ -655,8 +690,14 @@ def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None]
 
     plan.summary = summarize(plan)
     if plan.summary is not None:
-        old_ids = gh(["api", f"repos/{repo}/issues/{number}/comments", "--paginate", "--jq",
-                      f'.[] | {BOT_COMMENT_JQ} | select(.body | startswith("{render.SUMMARY_MARKER}")) | .id']).split()
+        try:
+            old_ids = gh(["api", f"repos/{repo}/issues/{number}/comments", "--paginate", "--jq",
+                          f'.[] | {BOT_COMMENT_JQ} | select(.body | startswith("{render.SUMMARY_MARKER}")) | .id']).split()
+        except ReviewError as exc:
+            # Not finding the old summaries must not stop the new one from being posted.
+            problems.append(f"find old summaries: {exc}")
+            log(f"  could not list old summaries: {exc}")
+            old_ids = []
         # Post first so a failed post leaves the previous summary in place.
         gh(["pr", "comment", str(number), "--repo", repo, "--body-file", "-"], input_text=plan.summary)
         for comment_id in old_ids:
@@ -776,8 +817,17 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
         raise ReviewError("every reviewer failed")
 
     log("Decide")
-    decision = run_agent(decide_agent, decide_prompt(ctx, triage, reviews, failed), cwd, artifacts,
-                         model_override, budget=budget)
+    try:
+        decision = run_agent(decide_agent, decide_prompt(ctx, triage, reviews, failed), cwd, artifacts,
+                             model_override, budget=budget)
+    except ReviewError as exc:
+        # Without the decider there is nothing safe to post as comments (nothing checks the findings
+        # against the open threads), but the summary can still say that the review did not finish.
+        failed[decide_agent.name] = str(exc)
+        log(f"  decide failed ({exc}); posting a summary without findings")
+        decision = {"actions": [], "dropped": [],
+                    "overview": "The final step failed, so no findings were posted. "
+                                "The reviewers' output is in the job artifacts."}
     rows.append(row(decide_agent))
     return Outcome(triage, reviews, failed, decision, rows)
 
@@ -791,6 +841,7 @@ def build_summary(outcome: Outcome, plan: Plan, ctx: Context) -> str | None:
         overview=outcome.decision.get("overview"), new=plan.new, outside=plan.outside,
         threads=ctx.threads, reopened={u["thread_id"] for u in plan.unresolves},
         fixed={r["thread_id"] for r in plan.resolves},
+        fixed_open={r["thread_id"] for r in plan.fixed_open} | set(plan.asked),
         failed=list(outcome.failed), details=details, repo=ctx.repo, head_sha=ctx.head_sha,
         replace_existing=ctx.previous_summary is not None)
 
@@ -854,6 +905,8 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
         print(dumps(outcome.decision) if args.json else render_report(plan))
         log(f"Artifacts: {artifacts}")
+        if "decide" in outcome.failed:
+            return 1
     except ReviewError as exc:
         log(f"error: {exc}")
         return 1
