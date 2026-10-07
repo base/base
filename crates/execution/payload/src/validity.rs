@@ -173,6 +173,11 @@ impl<T> ParkedPredicateIndex<T> {
         self.transactions.get(&transaction_hash).map(|entry| &entry.transaction)
     }
 
+    /// Returns the predicate an indexed transaction is parked under.
+    pub fn predicate(&self, transaction_hash: TxHash) -> Option<&ValidityPredicate> {
+        self.transactions.get(&transaction_hash).map(|entry| &entry.predicate)
+    }
+
     /// Replaces a parked transaction's currently unsatisfied predicate.
     pub fn reindex(&mut self, transaction_hash: TxHash, predicate: ValidityPredicate) -> bool {
         let Some(previous) = self.transactions.get(&transaction_hash) else {
