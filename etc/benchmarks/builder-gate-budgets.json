@@ -6,8 +6,8 @@
     "toolchain": "1.96.0",
     "valgrind": "valgrind-3.22.0",
     "iai_callgrind": "0.16.1",
-    "commit": "0870a433f",
-    "run": "depot ci run vfrpbg74nh"
+    "commit": "85e62f74a",
+    "run": "depot ci run 4zhpnbcltn"
   },
   "headroom_pct": 5,
   "marginal_headroom_pct": 10,
@@ -18,8 +18,8 @@
         "BUILDER_INCLUDED": 1000,
         "BUILDER_PAYLOAD_FINALIZED": 1
       },
-      "baseline_instructions": 516566204,
-      "max_instructions": 542394515
+      "baseline_instructions": 517025825,
+      "max_instructions": 542877117
     },
     "flashblocks/resting_backlog": {
       "marginal_reference": "flashblocks/transfers",
@@ -30,10 +30,10 @@
         "BUILDER_PAYLOAD_FINALIZED": 1,
         "BUILDER_DEFERRED": 4500
       },
-      "baseline_instructions": 1599501861,
-      "max_instructions": 1679476955,
-      "baseline_marginal_instructions_per_deferral": 24065,
-      "max_marginal_instructions_per_deferral": 26472
+      "baseline_instructions": 1600352558,
+      "max_instructions": 1680370186,
+      "baseline_marginal_instructions_per_deferral": 24074,
+      "max_marginal_instructions_per_deferral": 26482
     },
     "flashblocks/resting_backlog_multi_predicate": {
       "marginal_reference": "flashblocks/transfers",
@@ -44,10 +44,10 @@
         "BUILDER_PAYLOAD_FINALIZED": 1,
         "BUILDER_DEFERRED": 4500
       },
-      "baseline_instructions": 2026455160,
-      "max_instructions": 2127777918,
-      "baseline_marginal_instructions_per_deferral": 33553,
-      "max_marginal_instructions_per_deferral": 36909
+      "baseline_instructions": 2030435889,
+      "max_instructions": 2131957684,
+      "baseline_marginal_instructions_per_deferral": 33631,
+      "max_marginal_instructions_per_deferral": 36995
     },
     "flashblocks/resting_backlog_shared_state": {
       "marginal_reference": "flashblocks/transfers",
@@ -58,10 +58,10 @@
         "BUILDER_PAYLOAD_FINALIZED": 1,
         "BUILDER_DEFERRED": 4500
       },
-      "baseline_instructions": 1721373284,
-      "max_instructions": 1807441949,
-      "baseline_marginal_instructions_per_deferral": 26773,
-      "max_marginal_instructions_per_deferral": 29451
+      "baseline_instructions": 1723238795,
+      "max_instructions": 1809400735,
+      "baseline_marginal_instructions_per_deferral": 26805,
+      "max_marginal_instructions_per_deferral": 29486
     },
     "flashblocks/wake_rescan": {
       "marginal_reference": "flashblocks/transfers",
@@ -72,10 +72,10 @@
         "BUILDER_PAYLOAD_FINALIZED": 1,
         "BUILDER_DEFERRED": 1000
       },
-      "baseline_instructions": 775079063,
-      "max_instructions": 813833017,
-      "baseline_marginal_instructions_per_deferral": 25851,
-      "max_marginal_instructions_per_deferral": 28437
+      "baseline_instructions": 776948093,
+      "max_instructions": 815795498,
+      "baseline_marginal_instructions_per_deferral": 25992,
+      "max_marginal_instructions_per_deferral": 28592
     },
     "flashblocks/backlog_growth": {
       "marginal_reference": "flashblocks/transfers",
@@ -86,10 +86,10 @@
         "BUILDER_PAYLOAD_FINALIZED": 1,
         "BUILDER_DEFERRED": 4500
       },
-      "baseline_instructions": 1395729471,
-      "max_instructions": 1465515945,
-      "baseline_marginal_instructions_per_deferral": 27910,
-      "max_marginal_instructions_per_deferral": 30701
+      "baseline_instructions": 1396342662,
+      "max_instructions": 1466159796,
+      "baseline_marginal_instructions_per_deferral": 27915,
+      "max_marginal_instructions_per_deferral": 30707
     },
     "flashblocks/congested": {
       "events": {
@@ -98,8 +98,8 @@
         "BUILDER_PAYLOAD_FINALIZED": 1,
         "BUILDER_REJECTED": 11000
       },
-      "baseline_instructions": 1931122363,
-      "max_instructions": 2027678482
+      "baseline_instructions": 1931979850,
+      "max_instructions": 2028578843
     },
     "flashblocks/satisfied_validity": {
       "events": {
@@ -107,54 +107,80 @@
         "BUILDER_INCLUDED": 1500,
         "BUILDER_PAYLOAD_FINALIZED": 1
       },
-      "baseline_instructions": 805186512,
-      "max_instructions": 845445838
+      "baseline_instructions": 806251146,
+      "max_instructions": 846563704
     },
     "native/transfers": {
-      "events": {}
+      "events": {},
+      "baseline_instructions": 147701859,
+      "max_instructions": 155086952
     },
     "native/resting_backlog": {
       "marginal_reference": "native/transfers",
       "deferrals_per_block": 4500,
       "events": {
         "BUILDER_DEFERRED": 4500
-      }
+      },
+      "baseline_instructions": 519606349,
+      "max_instructions": 545586667,
+      "baseline_marginal_instructions_per_deferral": 82645,
+      "max_marginal_instructions_per_deferral": 90910
     },
     "native/resting_backlog_multi_predicate": {
       "marginal_reference": "native/transfers",
       "deferrals_per_block": 4500,
       "events": {
         "BUILDER_DEFERRED": 4500
-      }
+      },
+      "baseline_instructions": 797658571,
+      "max_instructions": 837541500,
+      "baseline_marginal_instructions_per_deferral": 144435,
+      "max_marginal_instructions_per_deferral": 158879
     },
     "native/resting_backlog_shared_state": {
       "marginal_reference": "native/transfers",
       "deferrals_per_block": 4500,
       "events": {
         "BUILDER_DEFERRED": 4500
-      }
+      },
+      "baseline_instructions": 498044111,
+      "max_instructions": 522946317,
+      "baseline_marginal_instructions_per_deferral": 77854,
+      "max_marginal_instructions_per_deferral": 85640
     },
     "native/wake_rescan": {
       "marginal_reference": "native/transfers",
       "deferrals_per_block": 1000,
       "events": {
         "BUILDER_DEFERRED": 1000
-      }
+      },
+      "baseline_instructions": 244866994,
+      "max_instructions": 257110344,
+      "baseline_marginal_instructions_per_deferral": 97165,
+      "max_marginal_instructions_per_deferral": 106882
     },
     "native/backlog_growth": {
       "marginal_reference": "native/transfers",
       "deferrals_per_block": 4500,
       "events": {
         "BUILDER_DEFERRED": 4500
-      }
+      },
+      "baseline_instructions": 519367136,
+      "max_instructions": 545335493,
+      "baseline_marginal_instructions_per_deferral": 82592,
+      "max_marginal_instructions_per_deferral": 90852
     },
     "native/congested": {
-      "events": {}
+      "events": {},
+      "baseline_instructions": 290717933,
+      "max_instructions": 305253830
     },
     "native/satisfied_validity": {
       "events": {
         "BUILDER_ACCEPTED": 500
-      }
+      },
+      "baseline_instructions": 258278088,
+      "max_instructions": 271191993
     }
   }
 }
