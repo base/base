@@ -2,9 +2,11 @@
 """Unit tests for review.py and render.py. Run with `python3 .agents/skills/pr-review/test_review.py`."""
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import render
 import review
@@ -178,6 +180,15 @@ class FindingTests(unittest.TestCase):
         severity, text = render.thread_header(thread("t", body=body))
         self.assertEqual((severity, text), ("critical", finding.header()))
 
+    def test_thread_header_reads_the_first_versions_plain_label(self) -> None:
+        body = f"{render.MARKER}\n**Major:** This overlay does not stop a PR. Second sentence."
+        severity, text = render.thread_header(thread("t", body=body))
+        self.assertEqual((severity, text), ("major", "🟠 **Major** — This overlay does not stop a PR."))
+
+    def test_oversized_bodies_are_clipped_below_the_github_limit(self) -> None:
+        finding = render.Finding.from_action(comment(body="x" * 100_000, evidence="y" * 100_000))
+        self.assertLessEqual(len(finding.markdown()), render.MAX_BODY_CHARS)
+
     def test_thread_header_falls_back_for_old_comments(self) -> None:
         severity, text = render.thread_header(thread("t", body="Old style comment.\nMore."))
         self.assertEqual((severity, text), (None, "💬 Old style comment."))
@@ -227,6 +238,14 @@ class PlanTests(unittest.TestCase):
         self.assertIn("**Reopened:** still broken", plan.unresolves[0]["body"])
         self.assertEqual(plan.rejected, [])
 
+    def test_resolve_closes_an_open_bot_thread_only(self) -> None:
+        plan = self.plan({"type": "resolve", "thread_id": "open", "body": "fixed"},
+                         {"type": "resolve", "thread_id": "done", "body": "x"},
+                         {"type": "resolve", "thread_id": "human", "body": "x"})
+        self.assertEqual([r["thread_id"] for r in plan.resolves], ["open"])
+        self.assertIn("**Fixed:** fixed", plan.resolves[0]["body"])
+        self.assertEqual(len(plan.rejected), 2)
+
     def test_invalid_thread_actions_are_rejected(self) -> None:
         plan = self.plan({"type": "reply", "thread_id": "human", "body": "x"},
                          {"type": "reply", "thread_id": "missing", "body": "x"},
@@ -241,7 +260,8 @@ class SummaryTests(unittest.TestCase):
                 replace_existing: bool = False) -> str | None:
         return render.render_summary(
             overview="One panic path.", new=plan.new, outside=plan.outside, threads=threads or [],
-            reopened={u["thread_id"] for u in plan.unresolves}, failed=failed or [], details="Details.",
+            reopened={u["thread_id"] for u in plan.unresolves}, fixed={r["thread_id"] for r in plan.resolves},
+            failed=failed or [], details="Details.",
             repo="base/base", head_sha="abc123", replace_existing=replace_existing)
 
     def test_summary_lists_findings_with_links(self) -> None:
@@ -276,6 +296,26 @@ class SummaryTests(unittest.TestCase):
         text = self.summary(plan, [thread("done", resolved=True)])
         self.assertIn("### Reopened", text)
         self.assertNotIn("Open from earlier reviews", text)
+
+    def test_resolved_threads_are_listed_as_fixed_and_not_counted(self) -> None:
+        threads = [thread("a", body=f"{render.MARKER}\n**Major:** One."), thread("b")]
+        plan = review.build_plan({"actions": [{"type": "resolve", "thread_id": "a", "body": "gone"}]},
+                                 threads, set())
+        text = self.summary(plan, threads)
+        self.assertIn("### Fixed in this push", text)
+        self.assertIn("- ✅ 🟠 **Major** — One.", text)
+        self.assertIn("## 💬 1 open", text)
+
+    def test_open_outdated_threads_stay_in_the_summary(self) -> None:
+        outdated = {**thread("old", body=f"{render.MARKER}\n**Major:** Still broken."), "outdated": True}
+        text = self.summary(review.Plan(), [outdated])
+        self.assertIn("## 🟠 1 major", text)
+        self.assertIn("### Open from earlier reviews", text)
+
+    def test_summary_is_capped(self) -> None:
+        plan = review.build_plan({"actions": [comment(line=99, body="z" * 5000, title=f"t{i}")
+                                              for i in range(40)]}, [], review.diff_new_lines(DIFF))
+        self.assertLessEqual(len(self.summary(plan)), render.MAX_BODY_CHARS + 1)
 
     def test_failed_agents_are_called_out(self) -> None:
         self.assertIn("Incomplete review:** `council/x`", self.summary(review.Plan(), failed=["council/x"]))
@@ -318,22 +358,262 @@ class CouncilTests(unittest.TestCase):
 
 
 class ThreadTests(unittest.TestCase):
-    def test_parse_threads_marks_bot_ownership(self) -> None:
-        def node(thread_id: str, login: str, body: str) -> dict:
-            return {"id": thread_id, "isResolved": False, "isOutdated": False, "path": "a", "line": 1,
-                    "comments": {"nodes": [{"url": f"u/{thread_id}", "author": {"login": login},
-                                            "body": body}]}}
+    @staticmethod
+    def node(thread_id: str, login: str, body: str, typename: str = "Bot", extra: list | None = None) -> dict:
+        def c(url: str, who: str, text: str, kind: str) -> dict:
+            return {"url": url, "body": text, "author": {"login": who, "__typename": kind}}
 
-        payload = {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [
-            node("bot", "github-actions", "found a bug"),
-            node("marked", "someone", f"{render.MARKER}\nbug"),
-            node("human", "alice", "nit"),
-            {**node("empty", "x", ""), "comments": {"nodes": []}},
-        ]}}}}}
-        threads = review.parse_threads(payload)
+        first = c(f"u/{thread_id}", login, body, typename)
+        return {"id": thread_id, "isResolved": False, "isOutdated": False, "path": "a", "line": 1,
+                "root": {"nodes": [first]}, "recent": {"nodes": [first] + (extra or [])}}
+
+    def page(self, *nodes: dict) -> dict:
+        return {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": list(nodes)}}}}}
+
+    def test_ownership_is_decided_by_author_alone(self) -> None:
+        threads = review.parse_threads([self.page(
+            self.node("bot", "github-actions", "found a bug"),
+            self.node("quoted", "alice", f"{render.MARKER}\nquoting the bot", typename="User"),
+            self.node("lookalike", "github-actions", "x", typename="User"),
+            self.node("human", "alice", "nit", typename="User"),
+            {**self.node("empty", "x", ""), "root": {"nodes": []}, "recent": {"nodes": []}},
+        )])
         self.assertEqual({t["thread_id"]: t["owned_by_bot"] for t in threads},
-                         {"bot": True, "marked": True, "human": False})
+                         {"bot": True, "quoted": False, "lookalike": False, "human": False})
         self.assertEqual(threads[0]["url"], "u/bot")
+
+    def test_pages_are_concatenated(self) -> None:
+        threads = review.parse_threads([self.page(self.node("a", "github-actions", "x")),
+                                        self.page(self.node("b", "github-actions", "y"))])
+        self.assertEqual([t["thread_id"] for t in threads], ["a", "b"])
+
+    def test_first_comment_is_kept_when_the_recent_window_omits_it(self) -> None:
+        reply = {"url": "u/reply", "body": "fixed", "author": {"login": "alice", "__typename": "User"}}
+        node = self.node("a", "github-actions", "root", extra=[reply])
+        node["recent"]["nodes"] = [reply]
+        [thread] = review.parse_threads([self.page(node)])
+        self.assertEqual([c["body"] for c in thread["comments"]], ["root", "fixed"])
+
+    def test_diff_from_files_rebuilds_a_diff_that_anchors_comments(self) -> None:
+        files = [[{"filename": "src/a.rs", "status": "modified", "patch": "@@ -1,2 +1,3 @@\n keep\n+new\n tail"},
+                  {"filename": "b.bin", "status": "added"},
+                  {"filename": "new.rs", "previous_filename": "old.rs", "status": "renamed",
+                   "patch": "@@ -1 +1 @@\n-x\n+y"}]]
+        with mock.patch.object(review, "gh", return_value=json.dumps(files)):
+            diff = review.diff_from_files(1, "base/base")
+        self.assertEqual(review.diff_new_lines(diff), {("src/a.rs", 1), ("src/a.rs", 2), ("src/a.rs", 3),
+                                                       ("new.rs", 1)})
+        self.assertIn("diff --git a/old.rs b/new.rs", diff)
+
+
+class BudgetTests(unittest.TestCase):
+    def agent(self, timeout: int = 1000) -> review.Agent:
+        return review.Agent("a", "review", ("always",), "m", "high", "Read", timeout, None, "p", Path("a.md"))
+
+    def test_timeout_shrinks_to_leave_time_for_later_stages(self) -> None:
+        budget = review.Budget(2000)
+        self.assertEqual(budget.timeout_for(1000, "a"), 1000)
+        self.assertLessEqual(budget.timeout_for(1000, "a", reserve=1500), 500)
+
+    def test_stage_is_skipped_when_the_budget_is_spent(self) -> None:
+        with self.assertRaises(review.ReviewError):
+            review.Budget(100).timeout_for(1000, "a", reserve=90)
+
+    def test_worst_case_of_the_checked_in_agents_fits_the_ci_job(self) -> None:
+        agents = {a.name: a for a in review.load_agents()}
+        members = [a for a in agents.values() if a.stage == "council"]
+        worst = (agents["triage"].timeout_seconds + max(m.timeout_seconds for m in members)
+                 + review.VOTE_TIMEOUT_SECONDS + agents["council-chair"].timeout_seconds
+                 + agents["decide"].timeout_seconds)
+        job_limit = 90 * 60
+        # Leave ten minutes of the CI job to post the results and upload artifacts.
+        self.assertLessEqual(review.DEFAULT_BUDGET_SECONDS, job_limit - 600)
+        # With the budget, a worst-case run still ends with a decision; without it, it would not.
+        self.assertGreater(worst, review.MIN_STAGE_SECONDS)
+
+    def test_agents_do_not_inherit_github_credentials(self) -> None:
+        with mock.patch.dict(os.environ, {"GH_TOKEN": "x", "GITHUB_TOKEN": "y", "ANTHROPIC_API_KEY": "z"}):
+            env = review.agent_env()
+        self.assertEqual((env.get("GH_TOKEN"), env.get("GITHUB_TOKEN"), env.get("ANTHROPIC_API_KEY")),
+                         (None, None, "z"))
+
+
+class FakeGh:
+    """A stand-in for `gh` that records calls and fails the ones a test names."""
+
+    def __init__(self, fail: tuple[str, ...] = (), responses: dict[str, str] | None = None) -> None:
+        self.calls: list[list[str]] = []
+        self.inputs: list[str | None] = []
+        self.fail = fail
+        self.responses = responses or {}
+
+    def __call__(self, args: list[str], input_text: str | None = None) -> str:
+        self.calls.append(args)
+        self.inputs.append(input_text)
+        joined = " ".join(args)
+        for needle in self.fail:
+            if needle in joined:
+                raise review.ReviewError(f"boom: {needle}")
+        return next((v for k, v in self.responses.items() if k in joined), "")
+
+    def matching(self, needle: str) -> list[list[str]]:
+        return [c for c in self.calls if needle in " ".join(c)]
+
+
+class ApplyPlanTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.ctx = review.Context(description="d", title="t", files=["src/a.rs"], diff=DIFF, pr_number=7,
+                                  head_sha="abc", threads=[thread("open"), thread("done", resolved=True)])
+        decision = {"actions": [
+            comment(), {"type": "reply", "thread_id": "open", "body": "more"},
+            {"type": "resolve", "thread_id": "open", "body": "fixed in `run`"},
+            {"type": "unresolve", "thread_id": "done", "body": "still broken"}]}
+        self.plan = review.build_plan(decision, self.ctx.threads, review.diff_new_lines(DIFF))
+
+    def apply(self, gh: FakeGh) -> list[str]:
+        def summarize(plan: review.Plan) -> str | None:
+            return render.render_summary(
+                overview=None, new=plan.new, outside=plan.outside, threads=self.ctx.threads,
+                reopened={u["thread_id"] for u in plan.unresolves}, fixed={r["thread_id"] for r in plan.resolves},
+                failed=[], details="d", repo="base/base", head_sha="abc", replace_existing=True)
+
+        with mock.patch.object(review, "gh", gh):
+            return review.apply_plan(self.plan, self.ctx, summarize)
+
+    def test_everything_is_posted_and_the_old_summary_is_replaced_after_the_new_one(self) -> None:
+        gh = FakeGh(responses={"issues/7/comments": "11\n12\n"})
+        self.assertEqual(self.apply(gh), [])
+        self.assertEqual(len(gh.matching("pulls/7/reviews")), 1)
+        self.assertEqual(len(gh.matching("unresolveReviewThread")), 1)
+        self.assertEqual(len(gh.matching("{ resolveReviewThread(")), 1)
+        comment_calls = [i for i, c in enumerate(gh.calls) if c[:2] == ["pr", "comment"]]
+        deletes = [i for i, c in enumerate(gh.calls) if "DELETE" in c]
+        self.assertEqual(len(comment_calls), 1)
+        self.assertEqual(len(deletes), 2)
+        self.assertLess(comment_calls[0], min(deletes))
+
+    def test_summary_query_only_matches_the_bot(self) -> None:
+        gh = FakeGh()
+        self.apply(gh)
+        for call in gh.matching("startswith"):
+            self.assertIn('.user.login == "github-actions[bot]"', " ".join(call))
+            self.assertIn('.user.type == "Bot"', " ".join(call))
+
+    def test_a_rejected_inline_review_moves_findings_into_the_summary(self) -> None:
+        gh = FakeGh(fail=("pulls/7/reviews",))
+        problems = self.apply(gh)
+        self.assertEqual(len(problems), 1)
+        self.assertEqual((self.plan.new, len(self.plan.outside)), ([], 1))
+        [summary] = [i for c, i in zip(gh.calls, gh.inputs) if c[:2] == ["pr", "comment"]]
+        self.assertIn("### Outside the diff", summary)
+        self.assertIn("Panics on empty batch", summary)
+
+    def test_a_failed_resolve_or_reopen_is_not_reported_as_applied(self) -> None:
+        gh = FakeGh(fail=("{ resolveReviewThread(", "{ unresolveReviewThread("))
+        problems = self.apply(gh)
+        self.assertEqual(len(problems), 2)
+        self.assertEqual((self.plan.resolves, self.plan.unresolves), ([], []))
+        # No "Fixed" or "Reopened" reply for a change that did not happen.
+        replies = [" ".join(c) for c in gh.calls if "addPullRequestReviewThreadReply" in " ".join(c)]
+        self.assertEqual(len(replies), 1)
+        self.assertNotIn("Fixed", replies[0])
+        [summary] = [i for c, i in zip(gh.calls, gh.inputs) if c[:2] == ["pr", "comment"]]
+        self.assertNotIn("Fixed in this push", summary)
+        self.assertNotIn("### Reopened", summary)
+
+    def test_state_changes_come_before_their_explanations(self) -> None:
+        gh = FakeGh()
+        self.apply(gh)
+        text = [" ".join(c) for c in gh.calls]
+        reply = next(i for i, c in enumerate(text) if "Fixed" in c)
+        resolve = next(i for i, c in enumerate(text) if "{ resolveReviewThread(" in c)
+        self.assertLess(resolve, reply)
+
+    def test_a_failed_reply_does_not_stop_the_summary(self) -> None:
+        gh = FakeGh(fail=("addPullRequestReviewThreadReply",))
+        problems = self.apply(gh)
+        self.assertEqual(len(problems), 3)
+        self.assertEqual(len(gh.matching("pulls/7/reviews")), 1)
+        self.assertEqual(len([c for c in gh.calls if c[:2] == ["pr", "comment"]]), 1)
+
+    def test_a_failed_summary_post_keeps_the_old_summary(self) -> None:
+        gh = FakeGh(fail=("pr comment",), responses={"issues/7/comments": "11\n"})
+        with self.assertRaises(review.ReviewError):
+            self.apply(gh)
+        self.assertEqual(gh.matching("DELETE"), [])
+
+
+class PipelineFailureTests(unittest.TestCase):
+    """run_pipeline must still produce a decision when individual agents fail."""
+
+    def setUp(self) -> None:
+        self.ctx = review.Context(description="d", title="t", files=["src/a.rs"], diff=DIFF)
+        self.agents = review.load_agents()
+        self.calls: list[str] = []
+        self.failing: set[str] = set()
+        self.triage = {"depth": "deep", "block_production_sensitive": False, "reasoning": "r", "focus_areas": []}
+        self.finding = {"title": "t", "severity": "major", "category": "safety", "confidence": "high",
+                        "path": "src/a.rs", "line": 1, "explanation": "e"}
+
+    def fake_run_agent(self, agent, prompt, cwd, artifacts, model_override, *, schema=None, label=None,
+                       **_: object) -> dict:
+        label = label or agent.name
+        self.calls.append(label)
+        if label in self.failing:
+            raise review.ReviewError(f"{label} broke")
+        if agent.stage == "triage":
+            return self.triage
+        if schema == "votes":
+            return {"votes": []}
+        if agent.stage == "chair":
+            return {"findings": []}
+        if agent.stage == "decide":
+            return {"actions": [], "overview": None, "dropped": []}
+        return {"findings": [self.finding] if agent.name == "council-adversary" else []}
+
+    def run_pipeline(self) -> review.Outcome:
+        with mock.patch.object(review, "run_agent", self.fake_run_agent):
+            return review.run_pipeline(self.ctx, self.agents, Path("."), Path("."), None, review.Budget(10_000))
+
+    def test_deep_change_runs_council_votes_chair_and_decide(self) -> None:
+        outcome = self.run_pipeline()
+        self.assertEqual(outcome.failed, {})
+        self.assertIn("council-chair", self.calls)
+        self.assertIn("council-invariants.vote", self.calls)
+        self.assertEqual(self.calls[-1], "decide")
+
+    def test_standard_change_skips_the_council(self) -> None:
+        self.triage["depth"] = "standard"
+        self.run_pipeline()
+        self.assertFalse([c for c in self.calls if c.startswith("council")])
+
+    def test_triage_failure_runs_everything_and_says_so(self) -> None:
+        self.failing = {"triage"}
+        outcome = self.run_pipeline()
+        self.assertTrue(outcome.triage["block_production_sensitive"])
+        self.assertIn("Triage failed", outcome.triage["reasoning"])
+        self.assertIn("review-block-production", self.calls)
+        self.assertIn("council-chair", self.calls)
+
+    def test_chair_failure_passes_the_unmerged_findings_on(self) -> None:
+        self.failing = {"council-chair"}
+        outcome = self.run_pipeline()
+        self.assertIn("council/council-chair", outcome.failed)
+        [finding] = outcome.reviews["council"]["findings"]
+        self.assertNotIn("id", finding)
+        self.assertNotIn("reported_by", finding)
+        self.assertIn("council-adversary", finding["support"])
+
+    def test_one_member_failing_does_not_stop_the_council(self) -> None:
+        self.failing = {"council-tests"}
+        outcome = self.run_pipeline()
+        self.assertIn("council/council-tests", outcome.failed)
+        self.assertIn("council-chair", self.calls)
+
+    def test_every_reviewer_failing_is_an_error(self) -> None:
+        self.failing = {"review-general", "council-invariants", "council-adversary", "council-tests"}
+        with self.assertRaises(review.ReviewError):
+            self.run_pipeline()
 
 
 if __name__ == "__main__":

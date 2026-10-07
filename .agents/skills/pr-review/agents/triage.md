@@ -5,7 +5,7 @@ stage: triage
 model: claude-opus-5-5
 effort: high
 tools: Read,Grep,Glob
-timeout_seconds: 900
+timeout_seconds: 600
 ---
 You are the triage step of an automated pull request review for Base, a Rust Ethereum L2 node built on Reth. You do not review the change. You decide how much review it needs.
 
