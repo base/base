@@ -3,18 +3,21 @@
 
 Stages (each is a prompt file in agents/, see SKILL.md):
 
-  triage   decides review depth and block-production sensitivity
-  review   one or more reviewers, run in parallel, each selected by `when`
-  decide   reads every finding plus the PR's existing threads and returns actions
+  triage    decides review depth and block-production sensitivity
+  review    reviewers selected by `when`, run in parallel
+  council   on deep changes only: several members review, then vote on each
+            other's findings in parallel
+  chair     merges the council's findings using the votes
+  decide    reads every finding plus the PR's existing threads and returns actions
 
 Locally (default) the change is the current branch against the base branch and
 the result is printed; nothing is posted. In CI, `--pr N --post` reads the PR
 from GitHub and applies the decider's actions: new inline comments, replies on
 existing threads, un-resolving threads whose problem is still present, and a
-replacement summary comment.
+replacement summary comment. render.py turns actions into Markdown.
 
 Only the Python standard library, the `claude` CLI, and (for PR mode) `gh` are
-required. Reviewers get read-only tools; this script does all the posting.
+required. Agents get read-only tools; this script does all the posting.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import dataclasses
+import functools
 import json
 import os
 import re
@@ -29,17 +33,17 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+import render
 
 SKILL_DIR = Path(__file__).resolve().parent
 AGENTS_DIR = SKILL_DIR / "agents"
 SCHEMAS_DIR = SKILL_DIR / "schemas"
+FINDING_GUIDE = SKILL_DIR / "shared" / "finding-guide.md"
 
-# Every comment this pipeline posts starts with MARKER. The summary keeps the
-# marker used by the previous workflow so old summaries are still replaced.
-MARKER = "<!-- pr-review -->"
-SUMMARY_MARKER = "<!-- CLAUDE_REVIEW_SUMMARY -->"
 # Threads started by github-actions (including the previous workflow's) count as ours.
 BOT_LOGIN_PREFIX = "github-actions"
 
@@ -48,9 +52,13 @@ MAX_COMMENT_CHARS = 2_000
 MAX_INLINE_COMMENTS = 20
 DEFAULT_REPO = "base/base"
 
-STAGES = ("triage", "review", "decide")
+STAGES = ("triage", "review", "council", "chair", "decide")
 CONDITIONS = ("always", "deep", "block-production")
-SEVERITY_LABELS = {"critical": "**Critical:** ", "major": "**Major:** ", "minor": "**Minor:** "}
+# The output schema each stage must produce (schemas/<name>.json).
+SCHEMA_FOR_STAGE = {"triage": "triage", "review": "review", "council": "review",
+                    "chair": "chair", "decide": "decide"}
+# Stages that report or post findings get the shared vocabulary and writing guide appended.
+GUIDE_STAGES = frozenset({"review", "council", "chair", "decide"})
 
 
 class ReviewError(Exception):
@@ -135,14 +143,25 @@ def parse_agent(path: Path) -> Agent:
 
 
 def load_agents(directory: Path = AGENTS_DIR) -> list[Agent]:
-    """Load and validate every agent: exactly one triage and one decide, at least one review."""
+    """Load and validate the agent set.
+
+    Needs exactly one triage and one decide agent and at least one review agent. The
+    council is optional, but it needs at least two members and exactly one chair.
+    """
     agents = [parse_agent(p) for p in sorted(directory.glob("*.md"))]
+
+    def count(stage: str) -> int:
+        return sum(a.stage == stage for a in agents)
+
     for stage in ("triage", "decide"):
-        count = sum(a.stage == stage for a in agents)
-        if count != 1:
-            raise ReviewError(f"{directory}: need exactly one `{stage}` agent, found {count}")
-    if not any(a.stage == "review" for a in agents):
+        if count(stage) != 1:
+            raise ReviewError(f"{directory}: need exactly one `{stage}` agent, found {count(stage)}")
+    if not count("review"):
         raise ReviewError(f"{directory}: need at least one `review` agent")
+    if count("council") == 1:
+        raise ReviewError(f"{directory}: a council needs at least two `council` agents, found 1")
+    if count("chair") != (1 if count("council") else 0):
+        raise ReviewError(f"{directory}: need exactly one `chair` agent if and only if there is a council")
     return agents
 
 
@@ -156,37 +175,58 @@ def select_reviewers(agents: list[Agent], triage: dict[str, Any]) -> list[Agent]
     return [a for a in agents if a.stage == "review" and active.intersection(a.when)]
 
 
-def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path,
-              model_override: str | None) -> dict[str, Any]:
+def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path, model_override: str | None,
+              *, schema: str | None = None, label: str | None = None) -> dict[str, Any]:
     """Run one agent through the `claude` CLI and return its schema-validated output."""
-    schema = (SCHEMAS_DIR / f"{agent.stage}.json").read_text()
+    label = label or agent.name
+    schema_text = (SCHEMAS_DIR / f"{schema or SCHEMA_FOR_STAGE[agent.stage]}.json").read_text()
     model = model_override or agent.model
-    (artifacts / f"{agent.name}.prompt.md").write_text(
+    system_prompt = agent.prompt
+    if agent.stage in GUIDE_STAGES:
+        system_prompt += "\n\n" + FINDING_GUIDE.read_text().strip()
+    (artifacts / f"{label}.prompt.md").write_text(
         f"model: {model}\neffort: {agent.effort}\ntools: {agent.tools}\n\n"
-        f"# System prompt\n\n{agent.prompt}\n\n# User prompt\n\n{user_prompt}\n")
+        f"# System prompt\n\n{system_prompt}\n\n# User prompt\n\n{user_prompt}\n")
     cmd = [
         "claude", "-p", "--model", model, "--effort", agent.effort, "--tools", agent.tools,
         "--permission-mode", "dontAsk", "--permission-prompts", "none",
         "--setting-sources", "project", "--no-session-persistence",
-        "--output-format", "json", "--json-schema", schema,
-        "--append-system-prompt", agent.prompt,
+        "--output-format", "json", "--json-schema", schema_text,
+        "--append-system-prompt", system_prompt,
     ]
     if agent.max_budget_usd is not None:
         cmd += ["--max-budget-usd", str(agent.max_budget_usd)]
     started = time.monotonic()
     raw = run(cmd, input_text=user_prompt, cwd=cwd, timeout=agent.timeout_seconds)
-    (artifacts / f"{agent.name}.result.json").write_text(raw)
+    (artifacts / f"{label}.result.json").write_text(raw)
     try:
         envelope = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ReviewError(f"{agent.name}: claude did not return JSON") from exc
+        raise ReviewError(f"{label}: claude did not return JSON") from exc
     output = envelope.get("structured_output")
     if envelope.get("is_error") or not isinstance(output, dict):
-        raise ReviewError(f"{agent.name}: no structured output ({envelope.get('subtype')}): "
+        raise ReviewError(f"{label}: no structured output ({envelope.get('subtype')}): "
                           f"{str(envelope.get('result'))[:500]}")
-    log(f"  {agent.name}: {model}, {time.monotonic() - started:.0f}s, "
+    log(f"  {label}: {model}, {time.monotonic() - started:.0f}s, "
         f"${envelope.get('total_cost_usd', 0):.2f}")
     return output
+
+
+def run_parallel(jobs: dict[str, Callable[[], Any]]) -> tuple[dict[str, Any], dict[str, str]]:
+    """Run jobs concurrently; return results and error messages, each in the jobs' order."""
+    results: dict[str, Any] = {}
+    failures: dict[str, str] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(len(jobs), 1)) as pool:
+        futures = {pool.submit(job): name for name, job in jobs.items()}
+        for future in concurrent.futures.as_completed(futures):
+            name = futures[future]
+            try:
+                results[name] = future.result()
+            except ReviewError as exc:
+                failures[name] = str(exc)
+                log(f"  {name} failed: {exc}")
+    return ({n: results[n] for n in jobs if n in results},
+            {n: failures[n] for n in jobs if n in failures})
 
 
 # --------------------------------------------------------------------------- context
@@ -255,7 +295,7 @@ query($owner: String!, $name: String!, $number: Int!) {
       reviewThreads(first: 100) {
         nodes {
           id isResolved isOutdated path line
-          comments(first: 30) { nodes { author { login } body } }
+          comments(first: 30) { nodes { url author { login } body } }
         }
       }
     }
@@ -269,19 +309,20 @@ def parse_threads(payload: dict[str, Any]) -> list[dict[str, Any]]:
     nodes = payload["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
     threads = []
     for node in nodes:
-        comments = [{"author": (c["author"] or {}).get("login", "ghost"), "body": c["body"]}
-                    for c in node["comments"]["nodes"]]
+        comments = [{"author": (c["author"] or {}).get("login", "ghost"), "body": c["body"],
+                     "url": c.get("url")} for c in node["comments"]["nodes"]]
         if not comments:
             continue
         first = comments[0]
         threads.append({
             "thread_id": node["id"],
+            "url": first["url"],
             "resolved": node["isResolved"],
             "outdated": node["isOutdated"],
             "path": node["path"],
             "line": node["line"],
-            "owned_by_bot": MARKER in first["body"] or first["author"].startswith(BOT_LOGIN_PREFIX),
-            "comments": comments,
+            "owned_by_bot": render.MARKER in first["body"] or first["author"].startswith(BOT_LOGIN_PREFIX),
+            "comments": [{"author": c["author"], "body": c["body"]} for c in comments],
         })
     return threads
 
@@ -293,8 +334,8 @@ def pr_context(number: int, repo: str) -> Context:
     threads = parse_threads(json.loads(gh([
         "api", "graphql", "-f", f"query={THREADS_QUERY}", "-f", f"owner={owner}",
         "-f", f"name={name}", "-F", f"number={number}"])))
-    comments = gh(["api", f"repos/{repo}/issues/{number}/comments", "--paginate", "--jq",
-                   f'.[] | select(.body | startswith("{SUMMARY_MARKER}")) | .body'])
+    summaries = gh(["api", f"repos/{repo}/issues/{number}/comments", "--paginate", "--jq",
+                    f'.[] | select(.body | startswith("{render.SUMMARY_MARKER}")) | .body'])
     return Context(
         description=info["body"] or "(no description)",
         title=info["title"],
@@ -304,7 +345,7 @@ def pr_context(number: int, repo: str) -> Context:
         repo=repo,
         head_sha=info["headRefOid"],
         threads=threads,
-        previous_summary=comments.strip() or None,
+        previous_summary=summaries.strip() or None,
     )
 
 
@@ -339,6 +380,10 @@ def clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + f"\n[truncated at {limit} characters]"
 
 
+def dumps(value: Any) -> str:
+    return json.dumps(value, indent=2)
+
+
 def change_block(ctx: Context) -> str:
     diff = clip(ctx.diff, MAX_DIFF_CHARS)
     if diff != ctx.diff:
@@ -349,10 +394,6 @@ def change_block(ctx: Context) -> str:
         f"<changed_files>\n{chr(10).join(ctx.files)}\n</changed_files>\n\n<diff>\n{diff}\n</diff>\n")
 
 
-def dumps(value: Any) -> str:
-    return json.dumps(value, indent=2)
-
-
 def triage_prompt(ctx: Context) -> str:
     return change_block(ctx) + "\nTriage this change."
 
@@ -360,6 +401,42 @@ def triage_prompt(ctx: Context) -> str:
 def review_prompt(ctx: Context, triage: dict[str, Any]) -> str:
     return (change_block(ctx) + f"\n<triage>\n{dumps(triage)}\n</triage>\n\n"
             "Review this change and return your findings.")
+
+
+def merge_candidates(drafts: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Number every council finding so members can vote on it by id."""
+    candidates: list[dict[str, Any]] = []
+    for member, output in drafts.items():
+        for finding in output.get("findings", []):
+            candidates.append({"id": f"F{len(candidates) + 1}", "reported_by": member, **finding})
+    return candidates
+
+
+def ballot_prompt(ctx: Context, triage: dict[str, Any], member: str,
+                  candidates: list[dict[str, Any]]) -> str:
+    others = [c for c in candidates if c["reported_by"] != member]
+    return (
+        change_block(ctx) + f"\n<triage>\n{dumps(triage)}\n</triage>\n\n"
+        f"<findings_from_other_council_members>\n{dumps(others)}\n</findings_from_other_council_members>\n\n"
+        "You are now voting, not reviewing. For every finding above, check the claim against the code "
+        "yourself, then vote:\n"
+        "- `confirm`: the problem is real, and you can say why.\n"
+        "- `reject`: the claim is wrong, already handled elsewhere, or not a problem. Say what you found.\n"
+        "- `unsure`: you could not settle it either way.\n"
+        "Cast exactly one vote per finding id, with a one-sentence reason. Do not add new findings.")
+
+
+def chair_prompt(ctx: Context, triage: dict[str, Any], candidates: list[dict[str, Any]],
+                 votes: dict[str, list[dict[str, Any]]], failed: list[str]) -> str:
+    unavailable = ", ".join(failed) or "none"
+    return (
+        change_block(ctx) + f"\n<triage>\n{dumps(triage)}\n</triage>\n\n"
+        f"<candidate_findings>\n{dumps(candidates)}\n</candidate_findings>\n\n"
+        "Each member voted on the findings it did not report, so a finding's reporter counts as one "
+        "implicit confirm.\n"
+        f"<votes_by_member>\n{dumps(votes)}\n</votes_by_member>\n\n"
+        f"<council_members_that_failed>{unavailable}</council_members_that_failed>\n\n"
+        "Produce the council's final findings.")
 
 
 def decide_prompt(ctx: Context, triage: dict[str, Any], reviews: dict[str, dict[str, Any]],
@@ -373,7 +450,6 @@ def decide_prompt(ctx: Context, triage: dict[str, Any], reviews: dict[str, dict[
         + f"<reviewer_findings>\n{dumps(reviews)}\n</reviewer_findings>\n\n"
         + f"<reviewers_that_failed>\n{failures}</reviewers_that_failed>\n\n"
         + f"<existing_threads>\n{dumps(threads)}\n</existing_threads>\n\n"
-        + f"<previous_summary>\n{ctx.previous_summary or 'none'}\n</previous_summary>\n\n"
         + "Decide what to do on the pull request.")
 
 
@@ -384,43 +460,49 @@ def decide_prompt(ctx: Context, triage: dict[str, Any], reviews: dict[str, dict[
 class Plan:
     """The validated result of the decide stage."""
 
-    inline: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    new: list[render.Finding] = dataclasses.field(default_factory=list)
+    outside: list[render.Finding] = dataclasses.field(default_factory=list)
     replies: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     unresolves: list[dict[str, Any]] = dataclasses.field(default_factory=list)
-    unanchored: list[str] = dataclasses.field(default_factory=list)
     rejected: list[str] = dataclasses.field(default_factory=list)
     summary: str | None = None
 
-
-def comment_body(action: dict[str, Any]) -> str:
-    return f"{MARKER}\n{SEVERITY_LABELS.get(action.get('severity') or '', '')}{action['body'].strip()}"
+    def inline_comments(self) -> list[dict[str, Any]]:
+        return [{"path": f.path, "line": f.line, "body": f"{render.MARKER}\n{f.markdown()}"}
+                for f in self.new]
 
 
 def build_plan(decision: dict[str, Any], threads: list[dict[str, Any]],
                valid_lines: set[tuple[str, int]]) -> Plan:
     """Check the decider's actions against the diff and threads; demote what cannot be applied."""
     by_id = {t["thread_id"]: t for t in threads}
-    plan = Plan(summary=decision.get("summary"))
+    plan = Plan()
+    anchored: list[render.Finding] = []
     for action in decision.get("actions", []):
         kind = action["type"]
         if kind == "comment":
-            location = (action.get("path"), action.get("line"))
-            if location in valid_lines and len(plan.inline) < MAX_INLINE_COMMENTS:
-                plan.inline.append({"path": location[0], "line": location[1], "body": comment_body(action)})
-            else:
-                where = f"`{location[0]}:{location[1]}` " if location[0] else ""
-                plan.unanchored.append(f"- {where}{SEVERITY_LABELS.get(action.get('severity') or '', '')}"
-                                       f"{action['body'].strip()}")
+            finding = render.Finding.from_action(action)
+            (anchored if (finding.path, finding.line) in valid_lines else plan.outside).append(finding)
             continue
         thread = by_id.get(action.get("thread_id") or "")
+        body = action["body"].strip()
         if thread is None or not thread["owned_by_bot"]:
             plan.rejected.append(f"{kind}: unknown or foreign thread {action.get('thread_id')}")
         elif kind == "reply":
-            plan.replies.append({"thread_id": thread["thread_id"], "body": comment_body(action)})
+            plan.replies.append({"thread_id": thread["thread_id"],
+                                 "body": f"{render.MARKER}\n**Follow-up:** {body}"})
         elif not thread["resolved"]:
             plan.rejected.append(f"unresolve: thread {thread['thread_id']} is not resolved")
         else:
-            plan.unresolves.append({"thread_id": thread["thread_id"], "body": comment_body(action)})
+            plan.unresolves.append({"thread_id": thread["thread_id"],
+                                    "body": f"{render.MARKER}\n🔄 **Reopened:** {body}"})
+
+    def order(f: render.Finding) -> tuple[int, str, int]:
+        return render.severity_rank(f.severity), f.path or "", f.line or 0
+
+    anchored.sort(key=order)
+    plan.new = anchored[:MAX_INLINE_COMMENTS]
+    plan.outside = sorted(plan.outside + anchored[MAX_INLINE_COMMENTS:], key=order)
     return plan
 
 
@@ -440,64 +522,88 @@ def apply_plan(plan: Plan, ctx: Context) -> None:
             "-f", f"body={item['body']}"])
     for item in plan.unresolves:
         gh(["api", "graphql", "-f", f"query={unresolve_mutation}", "-f", f"id={item['thread_id']}"])
-    if plan.inline:
+    if plan.new:
         review = {"event": "COMMENT", "commit_id": ctx.head_sha, "body": "",
-                  "comments": [{**c, "side": "RIGHT"} for c in plan.inline]}
+                  "comments": [{**c, "side": "RIGHT"} for c in plan.inline_comments()]}
         gh(["api", "-X", "POST", f"repos/{repo}/pulls/{number}/reviews", "--input", "-"],
            input_text=json.dumps(review))
 
-    summary = plan.summary
-    if summary is not None:
-        if plan.unanchored:
-            summary += "\n\n**Findings outside the diff:**\n" + "\n".join(plan.unanchored)
+    if plan.summary is not None:
         old_ids = gh(["api", f"repos/{repo}/issues/{number}/comments", "--paginate", "--jq",
-                      f'.[] | select(.body | startswith("{SUMMARY_MARKER}")) | .id']).split()
+                      f'.[] | select(.body | startswith("{render.SUMMARY_MARKER}")) | .id']).split()
         # Post first so a failed post leaves the previous summary in place.
-        gh(["pr", "comment", str(number), "--repo", repo, "--body-file", "-"],
-           input_text=f"{SUMMARY_MARKER}\n\n{summary}")
+        gh(["pr", "comment", str(number), "--repo", repo, "--body-file", "-"], input_text=plan.summary)
         for comment_id in old_ids:
             gh(["api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment_id}"])
-    elif plan.unanchored:
-        gh(["pr", "comment", str(number), "--repo", repo, "--body-file", "-"],
-           input_text=f"{MARKER}\n**Findings outside the diff:**\n" + "\n".join(plan.unanchored))
-
-
-def render_report(triage: dict[str, Any], reviews: dict[str, dict[str, Any]],
-                  failed: dict[str, str], decision: dict[str, Any], plan: Plan) -> str:
-    """Human-readable result for local runs."""
-    out = [f"## Triage\n\n{triage['depth']} review"
-           f"{', block-production-sensitive' if triage['block_production_sensitive'] else ''}"
-           f"\n\n{triage['reasoning']}\n"]
-    for name, review in reviews.items():
-        out.append(f"- {name}: {len(review.get('findings', []))} finding(s)")
-    out += [f"- {name}: FAILED ({why})" for name, why in failed.items()]
-    out.append("\n## Comments to post\n")
-    for item in plan.inline:
-        out.append(f"**{item['path']}:{item['line']}**\n{item['body'].removeprefix(MARKER).strip()}\n")
-    out += plan.unanchored
-    if not plan.inline and not plan.unanchored:
-        out.append("none")
-    for heading, items in (("Replies", plan.replies), ("Threads to unresolve", plan.unresolves)):
-        if items:
-            out.append(f"\n## {heading}\n")
-            out += [f"{i['thread_id']}\n{i['body'].removeprefix(MARKER).strip()}\n" for i in items]
-    out.append(f"\n## Summary\n\n{plan.summary or '(none)'}")
-    if decision.get("dropped"):
-        out.append("\n## Dropped findings\n")
-        out += [f"- {d['title']}: {d['reason']}" for d in decision["dropped"]]
-    out += [f"\nRejected action: {r}" for r in plan.rejected]
-    return "\n".join(out)
 
 
 # --------------------------------------------------------------------------- pipeline
 
 
+@dataclasses.dataclass
+class Outcome:
+    """Everything the pipeline produced before the decider's actions were validated."""
+
+    triage: dict[str, Any]
+    reviews: dict[str, dict[str, Any]]
+    failed: dict[str, str]
+    decision: dict[str, Any]
+    rows: list[tuple[str, str, str]]
+
+
+def run_council(ctx: Context, triage: dict[str, Any], members: list[Agent], chair: Agent, cwd: Path,
+                artifacts: Path, model_override: str | None) -> tuple[dict[str, Any], dict[str, str], bool]:
+    """Members review, vote on each other's findings, and the chair merges.
+
+    Returns the council's findings, the names of failures, and whether the chair ran.
+    """
+    prompt = review_prompt(ctx, triage)
+    drafts, failed = run_parallel({
+        m.name: functools.partial(run_agent, m, prompt, cwd, artifacts, model_override) for m in members})
+    if not drafts:
+        raise ReviewError("every council member failed")
+    candidates = merge_candidates(drafts)
+    if not candidates:
+        return {"findings": []}, failed, False
+
+    voters = [m for m in members if m.name in drafts
+              and any(c["reported_by"] != m.name for c in candidates)]
+    ballots, vote_failed = run_parallel({
+        m.name: functools.partial(run_agent, m, ballot_prompt(ctx, triage, m.name, candidates), cwd,
+                                  artifacts, model_override, schema="votes", label=f"{m.name}.vote")
+        for m in voters})
+    failed.update({f"{name}.vote": why for name, why in vote_failed.items()})
+    votes: dict[str, list[dict[str, Any]]] = {}
+    for name, out in ballots.items():
+        if isinstance(out.get("votes"), list):
+            votes[name] = out["votes"]
+        else:
+            failed[f"{name}.vote"] = "ballot had no votes"
+
+    try:
+        merged = run_agent(chair, chair_prompt(ctx, triage, candidates, votes, list(failed)), cwd,
+                           artifacts, model_override)
+    except ReviewError as exc:
+        # Better to pass the unmerged findings on, flagged, than to lose the council's work.
+        failed[chair.name] = str(exc)
+        log(f"  {chair.name} failed ({exc}); passing the unmerged findings to the decider")
+        findings = [{**{k: v for k, v in c.items() if k not in ("id", "reported_by")},
+                     "support": f"reported by {c['reported_by']}; not cross-checked (chair failed)"}
+                    for c in candidates]
+        return {"findings": findings}, failed, False
+    return merged, failed, True
+
+
 def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
-                 model_override: str | None) -> tuple[dict[str, Any], dict[str, dict[str, Any]],
-                                                      dict[str, str], dict[str, Any]]:
-    """Run triage, the selected reviewers in parallel, then the decider."""
+                 model_override: str | None) -> Outcome:
+    """Run triage, the reviewers (and the council, on deep changes), then the decider."""
     triage_agent = next(a for a in agents if a.stage == "triage")
     decide_agent = next(a for a in agents if a.stage == "decide")
+    members = [a for a in agents if a.stage == "council"]
+    chair = next((a for a in agents if a.stage == "chair"), None)
+
+    def row(agent: Agent) -> tuple[str, str, str]:
+        return agent.stage, agent.name, model_override or agent.model
 
     log("Triage")
     try:
@@ -506,28 +612,65 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
         log(f"  triage failed ({exc}); running every reviewer")
         triage = {"depth": "deep", "block_production_sensitive": True, "focus_areas": [],
                   "reasoning": f"Triage failed, so every reviewer was run: {exc}"}
+    rows = [row(triage_agent)]
 
     reviewers = select_reviewers(agents, triage)
-    log(f"Review: {', '.join(a.name for a in reviewers)}")
-    reviews: dict[str, dict[str, Any]] = {}
-    failed: dict[str, str] = {}
+    use_council = triage["depth"] == "deep" and chair is not None
+    log(f"Review: {', '.join(a.name for a in reviewers)}" + (" + council" if use_council else ""))
     prompt = review_prompt(ctx, triage)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(reviewers)) as pool:
-        futures = {pool.submit(run_agent, a, prompt, cwd, artifacts, model_override): a for a in reviewers}
-        for future in concurrent.futures.as_completed(futures):
-            name = futures[future].name
-            try:
-                reviews[name] = future.result()
-            except ReviewError as exc:
-                failed[name] = str(exc)
-                log(f"  {name} failed: {exc}")
+    jobs: dict[str, Callable[[], Any]] = {
+        a.name: functools.partial(run_agent, a, prompt, cwd, artifacts, model_override) for a in reviewers}
+    if use_council:
+        jobs["council"] = functools.partial(run_council, ctx, triage, members, chair, cwd, artifacts,
+                                            model_override)
+    results, failed = run_parallel(jobs)
+    rows += [row(a) for a in reviewers]
+
+    reviews: dict[str, dict[str, Any]] = {}
+    for name, result in results.items():
+        if name == "council":
+            reviews[name], council_failed, chair_ran = result
+            failed.update({f"council/{n}": why for n, why in council_failed.items()})
+            rows += [row(m) for m in members] + ([row(chair)] if chair_ran else [])
+        else:
+            reviews[name] = result
     if not reviews:
         raise ReviewError("every reviewer failed")
 
     log("Decide")
     decision = run_agent(decide_agent, decide_prompt(ctx, triage, reviews, failed), cwd, artifacts,
                          model_override)
-    return triage, reviews, failed, decision
+    rows.append(row(decide_agent))
+    return Outcome(triage, reviews, failed, decision, rows)
+
+
+def build_summary(outcome: Outcome, plan: Plan, ctx: Context) -> str | None:
+    details = render.render_details(
+        triage=outcome.triage, rows=outcome.rows,
+        reported={name: len(r.get("findings", [])) for name, r in outcome.reviews.items()},
+        dropped=outcome.decision.get("dropped", []))
+    return render.render_summary(
+        overview=outcome.decision.get("overview"), new=plan.new, outside=plan.outside,
+        threads=ctx.threads, reopened={u["thread_id"] for u in plan.unresolves},
+        failed=list(outcome.failed), details=details, repo=ctx.repo, head_sha=ctx.head_sha,
+        replace_existing=ctx.previous_summary is not None)
+
+
+def render_report(plan: Plan) -> str:
+    """Human-readable result for local runs: the comments as they would be posted."""
+    out = [f"# Inline comments ({len(plan.new)})\n"]
+    for f in plan.new:
+        out.append(f"**{render.location('', None, f.path, f.line) or f'{f.path}:{f.line}'}**\n\n{f.markdown()}\n")
+    if not plan.new:
+        out.append("none\n")
+    for heading, items in (("Replies", plan.replies), ("Threads to reopen", plan.unresolves)):
+        if items:
+            out.append(f"# {heading}\n")
+            out += [f"{i['thread_id']}\n\n{i['body'].removeprefix(render.MARKER).strip()}\n" for i in items]
+    summary = plan.summary.removeprefix(render.SUMMARY_MARKER).strip() if plan.summary else None
+    out.append(f"# Summary comment\n\n{summary or '(none would be posted)'}")
+    out += [f"\nRejected action: {r}" for r in plan.rejected]
+    return "\n".join(out)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -555,14 +698,15 @@ def main(argv: list[str] | None = None) -> int:
         artifacts = args.artifacts_dir or Path(tempfile.mkdtemp(prefix="pr-review-"))
         artifacts.mkdir(parents=True, exist_ok=True)
         cwd = Path(git(["rev-parse", "--show-toplevel"]).strip())
-        triage, reviews, failed, decision = run_pipeline(ctx, agents, cwd, artifacts, args.model)
-        plan = build_plan(decision, ctx.threads, diff_new_lines(ctx.diff))
+        outcome = run_pipeline(ctx, agents, cwd, artifacts, args.model)
+        plan = build_plan(outcome.decision, ctx.threads, diff_new_lines(ctx.diff))
+        plan.summary = build_summary(outcome, plan, ctx)
         (artifacts / "plan.json").write_text(dumps(dataclasses.asdict(plan)))
         if args.post:
             apply_plan(plan, ctx)
-            log(f"Posted {len(plan.inline)} comment(s), {len(plan.replies)} reply(ies), "
-                f"{len(plan.unresolves)} unresolve(s)")
-        print(dumps(decision) if args.json else render_report(triage, reviews, failed, decision, plan))
+            log(f"Posted {len(plan.new)} comment(s), {len(plan.replies)} reply(ies), "
+                f"{len(plan.unresolves)} reopened thread(s)")
+        print(dumps(outcome.decision) if args.json else render_report(plan))
         log(f"Artifacts: {artifacts}")
     except ReviewError as exc:
         log(f"error: {exc}")

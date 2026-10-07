@@ -1,54 +1,26 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "findings"
-  ],
+  "required": ["findings"],
   "properties": {
     "findings": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "title",
-          "severity",
-          "confidence",
-          "path",
-          "line",
-          "explanation"
-        ],
+        "required": ["title", "severity", "category", "confidence", "path", "line", "explanation"],
         "properties": {
-          "title": {
-            "type": "string"
+          "title": {"type": "string"},
+          "severity": {"enum": ["critical", "major", "minor"]},
+          "category": {
+            "enum": ["block-production", "correctness", "concurrency", "error-handling", "safety",
+                     "performance", "compatibility", "design", "tests"]
           },
-          "severity": {
-            "enum": [
-              "critical",
-              "major",
-              "minor"
-            ]
-          },
-          "confidence": {
-            "enum": [
-              "high",
-              "medium",
-              "low"
-            ]
-          },
-          "path": {
-            "type": "string"
-          },
-          "line": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "explanation": {
-            "type": "string"
-          },
-          "suggested_fix": {
-            "type": "string"
-          }
+          "confidence": {"enum": ["high", "medium", "low"]},
+          "path": {"type": "string"},
+          "line": {"type": "integer", "minimum": 1},
+          "explanation": {"type": "string"},
+          "suggested_fix": {"type": "string"}
         }
       }
     }

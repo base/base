@@ -1,75 +1,39 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "actions",
-    "summary",
-    "dropped"
-  ],
+  "required": ["actions", "overview", "dropped"],
   "properties": {
     "actions": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "type",
-          "body"
-        ],
+        "required": ["type", "body"],
         "properties": {
-          "type": {
-            "enum": [
-              "comment",
-              "reply",
-              "unresolve"
-            ]
+          "type": {"enum": ["comment", "reply", "unresolve"]},
+          "title": {"type": "string"},
+          "body": {"type": "string"},
+          "severity": {"enum": ["critical", "major", "minor"]},
+          "category": {
+            "enum": ["block-production", "correctness", "concurrency", "error-handling", "safety",
+                     "performance", "compatibility", "design", "tests"]
           },
-          "body": {
-            "type": "string"
-          },
-          "severity": {
-            "enum": [
-              "critical",
-              "major",
-              "minor"
-            ]
-          },
-          "path": {
-            "type": "string"
-          },
-          "line": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "thread_id": {
-            "type": "string"
-          }
+          "suggestion": {"type": "string"},
+          "evidence": {"type": "string"},
+          "path": {"type": "string"},
+          "line": {"type": "integer", "minimum": 1},
+          "thread_id": {"type": "string"}
         }
       }
     },
-    "summary": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
+    "overview": {"type": ["string", "null"]},
     "dropped": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "title",
-          "reason"
-        ],
-        "properties": {
-          "title": {
-            "type": "string"
-          },
-          "reason": {
-            "type": "string"
-          }
-        }
+        "required": ["title", "reason"],
+        "properties": {"title": {"type": "string"}, "reason": {"type": "string"}}
       }
     }
   }
