@@ -432,12 +432,14 @@ pub(crate) fn emit_builder_transaction_event<D, F>(
     let event = data();
     let event_time = Utc::now();
     let result = writer.try_write_with(move |network| {
+        let data =
+            serialize_builder_event_data(BuilderEventData { context: ctx.event_data(), event });
         TransactionEventBuilder::new(TransactionEventProducer::BaseBuilder, event_type)
             .event_time(event_time)
             .tx_hash(tx_hash)
             .maybe_block_hash(ctx.block_hash)
             .block_number(ctx.block_number)
-            .payload_id(ctx.payload_id.clone())
+            .payload_id(ctx.payload_id)
             .id_part(
                 "flashblock_index",
                 ctx.flashblock_index.map(|index| index.to_string()).unwrap_or_default(),
@@ -446,10 +448,7 @@ pub(crate) fn emit_builder_transaction_event<D, F>(
                 "ordering_position",
                 ctx.ordering_position.map(|position| position.to_string()).unwrap_or_default(),
             )
-            .data(serialize_builder_event_data(BuilderEventData {
-                context: ctx.event_data(),
-                event,
-            }))
+            .data(data)
             .build_with_network(network)
     });
     record_builder_event_enqueue(event_type, Some(tx_hash), result);
@@ -474,19 +473,18 @@ pub(crate) fn emit_builder_payload_event<D, F>(
     let event = data();
     let event_time = Utc::now();
     let result = writer.try_write_with(move |network| {
+        let data =
+            serialize_builder_event_data(BuilderEventData { context: ctx.event_data(), event });
         TransactionEventBuilder::new(TransactionEventProducer::BaseBuilder, event_type)
             .event_time(event_time)
             .maybe_block_hash(ctx.block_hash)
             .block_number(ctx.block_number)
-            .payload_id(ctx.payload_id.clone())
+            .payload_id(ctx.payload_id)
             .id_part(
                 "flashblock_index",
                 ctx.flashblock_index.map(|index| index.to_string()).unwrap_or_default(),
             )
-            .data(serialize_builder_event_data(BuilderEventData {
-                context: ctx.event_data(),
-                event,
-            }))
+            .data(data)
             .build_with_network(network)
     });
     record_builder_event_enqueue(event_type, None, result);

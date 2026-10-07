@@ -226,14 +226,15 @@ impl TransactionEventBuilder {
 
     /// Emits the event through an explicit writer.
     ///
-    /// The event time is captured now; the event ID, validation, and serialization are deferred
-    /// to the writer (see [`TransactionEventWriter::try_write_with`]).
+    /// The event time defaults to now unless already set; the event ID, validation, and
+    /// serialization are deferred to the writer (see [`TransactionEventWriter::try_write_with`]).
     pub fn emit_to(
-        self,
+        mut self,
         writer: &TransactionEventWriter,
     ) -> Result<TransactionEventEmitOutcome, WriteEventError> {
         let event_type = self.event_type;
-        let builder = self.event_time(Utc::now());
+        self.event_time.get_or_insert_with(Utc::now);
+        let builder = self;
         let result = writer.try_write_with(move |network| builder.build_with_network(network));
         if let Err(err) = &result {
             debug!(error = %err, event_type = %event_type, "transaction event not written");
@@ -380,12 +381,13 @@ mod tests {
     use std::path::PathBuf;
 
     use alloy_primitives::{B256, TxHash};
+    use chrono::{TimeZone, Utc};
     use serde_json::{Map, json};
 
     use crate::{
         DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventBuilder,
-        TransactionEventEmitOutcome, TransactionEventProducer, TransactionEventType,
-        TransactionEventWriter, TransactionEventWriterConfig,
+        TransactionEventEmitOutcome, TransactionEventProducer, TransactionEventRecorder,
+        TransactionEventType, TransactionEventWriter, TransactionEventWriterConfig,
     };
 
     fn disabled_writer() -> TransactionEventWriter {
@@ -430,6 +432,27 @@ mod tests {
         assert_eq!(event.request_id.as_deref(), Some("request-1"));
         assert_eq!(event.data["event_index"], json!(7));
         assert!(event.event_id.starts_with("0x"));
+    }
+
+    #[test]
+    fn emit_to_preserves_explicit_event_time() {
+        let recorder = TransactionEventRecorder::new();
+        let writer = TransactionEventWriter::in_memory("base-devnet", recorder.clone());
+        let event_time = Utc.with_ymd_and_hms(2024, 1, 2, 3, 4, 5).unwrap();
+
+        let outcome = TransactionEventBuilder::new(
+            TransactionEventProducer::BaseRethNode,
+            TransactionEventType::Pending,
+        )
+        .tx_hash(TxHash::repeat_byte(0x11))
+        .event_time(event_time)
+        .emit_to(&writer)
+        .unwrap();
+
+        assert_eq!(outcome, TransactionEventEmitOutcome::Emitted);
+        let events = recorder.events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_time, event_time);
     }
 
     #[test]
