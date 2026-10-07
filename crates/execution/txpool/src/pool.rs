@@ -1908,19 +1908,20 @@ mod tests {
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         BaseBlock, BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives,
-        BaseTxEnvelope, Eip8130Constants, Eip8130Signed, TxEip8130,
+        BaseTransactionSigned, BaseTxEnvelope, Eip8130Constants, Eip8130Signed, TxDeposit,
+        TxEip8130,
     };
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use base_test_utils::build_test_genesis_everest;
     use futures::{StreamExt, future::join_all};
-    use reth_primitives_traits::SealedBlock;
+    use reth_primitives_traits::{SealedBlock, transaction::error::InvalidTransactionError};
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_tasks::Runtime;
     use reth_transaction_pool::{
         CanonicalStateUpdate, PoolConfig, PoolUpdateKind, PriceBumpConfig, TransactionOrigin,
-        blobstore::InMemoryBlobStore, identifier::TransactionId,
-        validate::EthTransactionValidatorBuilder,
+        blobstore::InMemoryBlobStore, error::InvalidPoolTransactionError,
+        identifier::TransactionId, validate::EthTransactionValidatorBuilder,
     };
 
     use super::*;
@@ -2146,6 +2147,12 @@ mod tests {
 
     fn build_integration_pool()
     -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
+        build_integration_pool_with_l1_data_gas_fee(false)
+    }
+
+    fn build_integration_pool_with_l1_data_gas_fee(
+        require_l1_data_gas_fee: bool,
+    ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
         let mut genesis = build_test_genesis_everest();
         genesis.config.chain_id = test_chain_id();
         let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
@@ -2168,7 +2175,7 @@ mod tests {
                 // clock writer rather than a second, unsynchronized setter.
                 let validator =
                     BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
-                        .require_l1_data_gas_fee(false);
+                        .require_l1_data_gas_fee(require_l1_data_gas_fee);
                 validator.update_l1_block_info::<_, TxEip1559>(
                     &alloy_consensus::Header {
                         timestamp: INTEGRATION_POOL_NOW_SECS,
@@ -2220,6 +2227,73 @@ mod tests {
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
         signed_8130(signer, nonce_key, nonce_sequence, expiry, max_fee_per_gas, 1_000_000)
+    }
+
+    /// L1 attribute deposit calldata with a non-zero L1 base fee and operator fee.
+    const ISTHMUS_L1_INFO_DATA_HEX: &str = concat!(
+        "098999be00000558000c5fc500000000000000030000000067a9f765",
+        "0000000000000029000000000000000000000000000000000000000000000000",
+        "00000000006a6d090000000000000000000000000000000000000000000000000000000000000001",
+        "72fcc8e8886636bdbe96ba0e4baab67ea7e7811633f52b52e8cf7a5123213b6f",
+        "000000000000000000000000d3f2c5afb2d76f5579f326b0cd7da5f5a4126c35",
+        "00004e2000000000000001f4",
+    );
+
+    /// Returns the cost Base admission requires for `transaction`, including L1 data and operator
+    /// fees, from the `InsufficientFunds` error reported when the sender holds only the L2 cost.
+    async fn full_admission_cost(
+        pool: &IntegrationPool,
+        client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+        transaction: BasePooledTransaction,
+    ) -> U256 {
+        client.add_account(transaction.sender(), ExtendedAccount::new(0, *transaction.cost()));
+        match pool.validator().validate_transaction(TransactionOrigin::External, transaction).await
+        {
+            TransactionValidationOutcome::Invalid(
+                _,
+                InvalidPoolTransactionError::Consensus(InvalidTransactionError::InsufficientFunds(
+                    got_expected,
+                )),
+            ) => got_expected.expected,
+            other => panic!("expected InsufficientFunds, got {other:?}"),
+        }
+    }
+
+    /// Each nonce is affordable alone, but the sender cannot pay both nonces' L1 data and operator
+    /// fees. The pool must queue nonce 1 instead of marking it pending.
+    #[tokio::test]
+    async fn queues_descendant_that_cannot_cover_l1_and_operator_fees() {
+        let (pool, client) = build_integration_pool_with_l1_data_gas_fee(true);
+        let l1_info_tx: BaseTransactionSigned = TxDeposit {
+            input: alloy_primitives::hex::decode(ISTHMUS_L1_INFO_DATA_HEX).unwrap().into(),
+            ..Default::default()
+        }
+        .into();
+        pool.validator().validator().update_l1_block_info(
+            &alloy_consensus::Header { timestamp: INTEGRATION_POOL_NOW_SECS, ..Default::default() },
+            Some(&l1_info_tx),
+        );
+
+        let signer = signer();
+        let tx0 = signed_1559(&signer, 0);
+        let tx1 = signed_1559(&signer, 1);
+        let (hash0, hash1) = (*tx0.hash(), *tx1.hash());
+        let l2_cost = *tx0.cost();
+        let full0 = full_admission_cost(&pool, &client, tx0.clone()).await;
+        let full1 = full_admission_cost(&pool, &client, tx1.clone()).await;
+        assert!(full0 > l2_cost, "fixture must charge L1 data and operator fees");
+
+        let balance = full0 + l2_cost + (full1 - l2_cost) / U256::from(2);
+        assert!(balance >= full1 && l2_cost + l2_cost <= balance && full0 + full1 > balance);
+        client.add_account(signer.address(), ExtendedAccount::new(0, balance));
+
+        pool.add_transaction(TransactionOrigin::External, tx0).await.unwrap();
+        pool.add_transaction(TransactionOrigin::External, tx1).await.unwrap();
+
+        let pending: Vec<_> = pool.pending_transactions().iter().map(|tx| *tx.hash()).collect();
+        let queued: Vec<_> = pool.queued_transactions().iter().map(|tx| *tx.hash()).collect();
+        assert_eq!(pending, vec![hash0]);
+        assert_eq!(queued, vec![hash1]);
     }
 
     #[tokio::test]
