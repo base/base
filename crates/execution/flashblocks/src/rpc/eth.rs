@@ -453,6 +453,19 @@ where
             state_overrides_builder.extend(state_overrides.unwrap_or_default());
         let final_overrides = state_overrides_builder.build();
 
+        // EIP-8130 request: run the EIP-8130 simulation, gated on the Everest
+        // fork. The standard call path cannot represent the transaction.
+        if transaction.as_eip8130().is_some() {
+            Eip8130EverestGate::check(&self.eth_api, block_id)?;
+            return Eip8130GasEstimator::call(
+                &self.eth_api,
+                transaction,
+                block_id,
+                EvmOverrides::new(Some(final_overrides), block_overrides),
+            )
+            .await;
+        }
+
         // Delegate to the underlying eth_api
         EthCall::call(
             &self.eth_api,

@@ -10,8 +10,8 @@ use alloy_network_primitives::TransactionBuilder7702;
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, TransactionInput, TransactionRequest};
 use base_common_consensus::{
-    AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, Eip8130Constants, Eip8130Contracts,
-    Eip8130PayerSerde, TxDeposit,
+    AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, EIP8130_TX_TYPE_ID,
+    Eip8130Constants, Eip8130Contracts, Eip8130PayerSerde, TxDeposit,
 };
 use serde::{Deserialize, Serialize};
 
@@ -225,9 +225,11 @@ pub struct BaseTransactionRequest {
 
 impl BaseTransactionRequest {
     /// The EIP-8130 simulation fields layered onto this request, if any are
-    /// present. Returns `None` for a plain (non-8130) transaction request.
-    pub const fn as_eip8130(&self) -> Option<&Eip8130RequestFields> {
-        if self.eip8130.is_some() { Some(&self.eip8130) } else { None }
+    /// present or the request declares `type: 0x79`. Returns `None` for a plain
+    /// (non-8130) transaction request.
+    pub fn as_eip8130(&self) -> Option<&Eip8130RequestFields> {
+        let declared = self.inner.transaction_type == Some(EIP8130_TX_TYPE_ID);
+        (declared || self.eip8130.is_some()).then_some(&self.eip8130)
     }
 }
 
@@ -330,9 +332,13 @@ impl BaseTransactionRequest {
     /// for more info.
     ///
     /// Note that EIP-4844 transactions are not supported on Base chains and will be converted into
-    /// EIP-1559 transactions.
+    /// EIP-1559 transactions. An EIP-8130 request is returned as an error: a typed transaction
+    /// cannot carry its fields.
     #[allow(clippy::result_large_err)]
     pub fn build_typed_tx(self) -> Result<BaseTypedTransaction, Self> {
+        if self.as_eip8130().is_some() {
+            return Err(self);
+        }
         let Self { inner, eip8130 } = self;
         let tx = match inner.build_typed_tx() {
             Ok(tx) => tx,
@@ -637,5 +643,19 @@ mod tests {
             req.as_eip8130().is_none(),
             "senderActorId alone must not classify the request as EIP-8130",
         );
+    }
+
+    #[test]
+    fn eip8130_type_alone_marks_request_as_eip8130() {
+        let json = r#"{"from":"0x0000000000000000000000000000000000000001","type":"0x79"}"#;
+        let req: BaseTransactionRequest = serde_json::from_str(json).unwrap();
+        assert!(req.as_eip8130().is_some(), "type 0x79 must route the request onto the AA path");
+    }
+
+    #[test]
+    fn eip8130_request_does_not_build_a_typed_tx() {
+        let json = r#"{"from":"0x0000000000000000000000000000000000000001","nonce":"0x0","gas":"0x5208","maxFeePerGas":"0x1","maxPriorityFeePerGas":"0x1","type":"0x79"}"#;
+        let req: BaseTransactionRequest = serde_json::from_str(json).unwrap();
+        assert!(req.build_typed_tx().is_err(), "an 8130 request must not become a plain tx");
     }
 }

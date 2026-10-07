@@ -3,8 +3,11 @@
 
 use alloy_eips::BlockId;
 use alloy_evm::EvmFactory;
-use alloy_primitives::{Address, U256};
-use alloy_rpc_types::state::{EvmOverrides, StateOverride};
+use alloy_primitives::{Address, Bytes, U256};
+use alloy_rpc_types::{
+    BlockOverrides,
+    state::{EvmOverrides, StateOverride},
+};
 use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_rpc_types::{BaseRpcTypes, BaseTransactionRequest};
 use base_execution_chainspec::BaseChainSpec;
@@ -67,6 +70,21 @@ pub trait Eip8130EthApiOverride {
         block_number: Option<BlockId>,
         state_overrides: Option<StateOverride>,
     ) -> RpcResult<U256>;
+
+    /// Executes a call.
+    ///
+    /// A request carrying EIP-8130 fields (or `type: 0x79`) runs the same
+    /// read-only EIP-8130 simulation as `eth_estimateGas` (gated on the Everest
+    /// fork) and returns the output of its final call. A plain request falls
+    /// through to the standard reth `eth_call` unchanged.
+    #[method(name = "call")]
+    async fn call(
+        &self,
+        request: BaseTransactionRequest,
+        block_number: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
+    ) -> RpcResult<Bytes>;
 }
 
 /// Standalone EIP-8130 `eth_getTransactionCount` extension.
@@ -163,5 +181,26 @@ where
             EvmOverrides::state(state_overrides),
         )
         .await
+    }
+
+    async fn call(
+        &self,
+        request: BaseTransactionRequest,
+        block_number: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
+    ) -> RpcResult<Bytes> {
+        let overrides = EvmOverrides::new(state_overrides, block_overrides);
+        if request.as_eip8130().is_none() {
+            return EthCall::call(&self.eth_api, request, block_number, overrides)
+                .await
+                .map_err(Into::into);
+        }
+
+        debug!(message = "rpc::eip8130::call", block_number = ?block_number);
+
+        let block_id = block_number.unwrap_or_default();
+        Eip8130EverestGate::check(&self.eth_api, block_id)?;
+        Eip8130GasEstimator::call(&self.eth_api, request, block_id, overrides).await
     }
 }
