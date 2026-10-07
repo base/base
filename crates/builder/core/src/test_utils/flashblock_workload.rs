@@ -3,8 +3,15 @@
 //! Each [`FlashblockWorkload`] describes one block of pool traffic: plain transfers that fill
 //! every flashblock, a backlog of validity transactions whose predicates stay unsatisfied (so the
 //! build loop re-considers, re-evaluates and re-parks them on every flashblock), arrivals between
-//! flashblocks, and optional satisfied validity transactions. [`FlashblockWorkloadFixture`] materializes a workload into a pool, a seeded
-//! in-memory proofs trie, and a builder context, then runs it through [`FlashblockBlockDriver`].
+//! flashblocks, and optional satisfied validity transactions. [`FlashblockWorkloadFixture`]
+//! materializes a workload into a pool, an MDBX database whose genesis funds every sender, and a
+//! builder context, then runs it through one of two builders:
+//!
+//! - [`FlashblockWorkloadFixture::run_block`] drives the flashblocks builder through
+//!   [`FlashblockBlockDriver`], adding each flashblock's arrivals before it is built.
+//! - [`FlashblockWorkloadFixture::run_native_block`] drives the native payload builder that
+//!   serves Denim blocks: one pass over the pool for the whole block, with every arrival already
+//!   in the pool and the block gas limit set to the workload's total gas target.
 //!
 //! Everything is deterministic: fixed senders, nonces, fees, and predicates, and the
 //! wall-clock predicate evaluation cutoff is disabled so control flow does not depend on how
@@ -15,9 +22,18 @@ use std::{path::Path, sync::Arc, time::Duration};
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{Address, Bytes, Signature, TxHash, TxKind, U256};
-use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, TxKind, U256};
+use alloy_rpc_types_engine::PayloadId;
+use base_common_chains::BaseUpgrade;
+use base_common_consensus::{BasePrimitives, BaseTransactionSigned, BaseTxEnvelope, Predeploys};
+use base_common_evm::BaseTime;
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_evm::BaseEvmConfig;
+use base_execution_payload_builder::{
+    builder::{BasePayloadBuilderCtx as NativePayloadBuilderCtx, Builder as NativeBuilder},
+    config::BaseBuilderConfig,
+    payload::{BasePayloadBuilderAttributes, EthPayloadBuilderAttributes},
+};
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, ParkedBestTransactions, ValidityOperator,
     ValidityPredicate,
@@ -26,7 +42,8 @@ use base_node_core::BaseNode;
 use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
 };
-use reth_chainspec::ChainSpec;
+use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
+use reth_chainspec::{ChainSpec, ForkCondition};
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_db_common::init::init_genesis;
 use reth_node_api::NodeTypesWithDBAdapter;
@@ -202,6 +219,12 @@ impl FlashblockWorkload {
             * Self::TRANSFER_GAS
     }
 
+    /// Gas target of the whole block: every flashblock's target, and the native builder's
+    /// block gas limit.
+    pub const fn block_gas_target(&self) -> u64 {
+        self.gas_per_flashblock() * Self::FLASHBLOCKS
+    }
+
     /// Transactions the block includes when the build loop behaves correctly.
     pub const fn expected_included(&self) -> u64 {
         (self.transfers_per_flashblock + self.satisfied_validity_per_flashblock) as u64
@@ -240,6 +263,15 @@ impl FlashblockWorkload {
     }
 }
 
+/// Result of one native payload build of a [`FlashblockWorkload`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NativeBlockOutcome {
+    /// Transactions in the built block.
+    pub included: u64,
+    /// State root of the built block.
+    pub state_root: B256,
+}
+
 /// A [`FlashblockWorkload`] materialized into a pool, arrivals, and seeded state.
 #[derive(Debug)]
 pub struct FlashblockWorkloadFixture {
@@ -255,6 +287,20 @@ impl FlashblockWorkloadFixture {
     /// Builds the pool, per-flashblock arrivals, and an MDBX database whose genesis funds every
     /// sender.
     pub fn new(workload: FlashblockWorkload) -> Self {
+        Self::with_denim(workload, false)
+    }
+
+    /// Builds the fixture for [`Self::run_native_block`]: every arrival is already in the pool,
+    /// and Denim is active at genesis with the `BaseTime` proxy it requires.
+    pub fn new_native(workload: FlashblockWorkload) -> Self {
+        let mut fixture = Self::with_denim(workload, true);
+        for transaction in fixture.arrivals.drain(..).flatten() {
+            fixture.pool.add_transaction(transaction, 0);
+        }
+        fixture
+    }
+
+    fn with_denim(workload: FlashblockWorkload, denim: bool) -> Self {
         let mut builder = FlashblockWorkloadBuilder::new(workload);
         let mut pool = PendingPool::new(Ordering::coinbase_tip());
         for _ in 0..workload.resting_at_start {
@@ -277,7 +323,7 @@ impl FlashblockWorkloadFixture {
                 arrivals
             })
             .collect();
-        let chain_spec = builder.chain_spec();
+        let chain_spec = builder.chain_spec(denim);
         let provider_factory =
             create_test_provider_factory_with_node_types::<BaseNode>(Arc::clone(&chain_spec));
         init_genesis(&provider_factory).expect("genesis initializes");
@@ -321,6 +367,66 @@ impl FlashblockWorkloadFixture {
             |_: &[TxHash]| {},
         )?;
         Ok(outcome)
+    }
+
+    /// Builds one block through the native payload builder: one pass over the pool, as a
+    /// Denim block is built, ending with the state root.
+    ///
+    /// The pool is read, not drained, so every call builds the same block. Taking `&mut self`
+    /// matches [`Self::run_block`], and returning the fixture keeps the database teardown out of a
+    /// caller's measured region.
+    pub fn run_native_block(&mut self) -> eyre::Result<NativeBlockOutcome> {
+        let ctx = self.native_builder_context();
+        let provider = self.provider_factory.latest()?;
+        let pool = &self.pool;
+        let outcome = NativeBuilder::new(|_| {
+            let mut best = pool.best();
+            best.no_updates();
+            ParkableBestPayloadTransactions::new(Box::new(ParkedBestTransactions::new(
+                best,
+                Ordering::coinbase_tip(),
+                0,
+            )))
+        })
+        .build(StateProviderDatabase::new(&provider), &provider, None, ctx)?;
+        let BuildOutcomeKind::Freeze(payload) = outcome else {
+            eyre::bail!("a Denim build must freeze its payload, got {outcome:?}");
+        };
+        let block = payload.block();
+        Ok(NativeBlockOutcome {
+            included: block.body().transactions.len() as u64,
+            state_root: block.header().state_root,
+        })
+    }
+
+    /// A native builder context on top of the genesis block, with the block gas limit set to
+    /// the workload's gas target and the wall-clock predicate cutoff disabled.
+    fn native_builder_context(&self) -> NativePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec> {
+        let parent = Arc::new(self.chain_spec.sealed_genesis_header());
+        let payload_id = PayloadId::new([0; 8]);
+        let attributes = BasePayloadBuilderAttributes::<BaseTransactionSigned> {
+            payload_attributes: EthPayloadBuilderAttributes {
+                id: payload_id,
+                parent: parent.hash(),
+                timestamp: parent.timestamp + 2,
+                parent_beacon_block_root: Some(B256::ZERO),
+                ..Default::default()
+            },
+            gas_limit: Some(self.workload.block_gas_target()),
+            ..Default::default()
+        };
+        NativePayloadBuilderCtx {
+            evm_config: BaseEvmConfig::<_, BasePrimitives>::base(Arc::clone(&self.chain_spec)),
+            // See `builder_context`: the wall-clock cutoff would make counts nondeterministic.
+            builder_config: BaseBuilderConfig {
+                predicate_eval_hard_cutoff: Duration::MAX,
+                ..Default::default()
+            },
+            chain_spec: Arc::clone(&self.chain_spec),
+            config: PayloadConfig::new(parent, attributes, payload_id),
+            cancel: Default::default(),
+            best_payload: None,
+        }
     }
 
     /// A builder context on top of the genesis block, with the wall-clock predicate cutoff
@@ -467,9 +573,10 @@ impl FlashblockWorkloadBuilder {
         })
     }
 
-    /// A Cancun-only chain whose genesis funds every sender and whose gas limit never binds
-    /// before the per-flashblock gas targets.
-    fn chain_spec(&self) -> Arc<BaseChainSpec> {
+    /// A Cancun chain whose genesis funds every sender and whose gas limit never binds before
+    /// the per-flashblock gas targets. With `denim`, Denim is active at genesis and the genesis
+    /// holds the `BaseTime` proxy that Denim's pre-execution step links.
+    fn chain_spec(&self, denim: bool) -> Arc<BaseChainSpec> {
         let genesis = Genesis {
             gas_limit: 1_000_000_000,
             config: serde_json::from_value(serde_json::json!({
@@ -485,11 +592,31 @@ impl FlashblockWorkloadBuilder {
                     .with_balance(U256::from(FlashblockWorkload::SENDER_BALANCE)),
             )
         }));
+        let genesis = if denim {
+            genesis.extend_accounts([(
+                Predeploys::BASE_TIME,
+                GenesisAccount::default().with_code(Some(BaseTime::proxy_bytecode())).with_storage(
+                    Some(
+                        [(
+                            B256::from(BaseTime::ADMIN_SLOT),
+                            B256::left_padding_from(Predeploys::PROXY_ADMIN.as_slice()),
+                        )]
+                        .into(),
+                    ),
+                ),
+            )])
+        } else {
+            genesis
+        };
         let chain_spec = ChainSpec::builder()
             .chain(FlashblockWorkload::CHAIN_ID.into())
             .genesis(genesis)
             .cancun_activated()
             .build();
-        Arc::new(BaseChainSpec::from(chain_spec))
+        let mut chain_spec = BaseChainSpec::from(chain_spec);
+        if denim {
+            chain_spec.inner.hardforks.insert(BaseUpgrade::Denim, ForkCondition::Timestamp(0));
+        }
+        Arc::new(chain_spec)
     }
 }
