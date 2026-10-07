@@ -28,6 +28,10 @@ This covers the native decision loop (candidate iteration, predicate evaluation,
 
 State comes from reth's MDBX test provider, seeded through genesis with every sender, so reads and the state root go through the same provider code as a node. Transaction events go to the production file writer (`TransactionEventWriter::from_config`), which serializes on the builder thread and hands lines to its writer thread.
 
+Both builders run with a per-transaction and per-block DA limit and, for flashblocks, an uncompressed block size limit, set far above the workload (`FlashblockWorkload::MAX_DA_TX_SIZE` and its siblings). The limit checks therefore run on every candidate, as on a builder with DA throttling enabled, without rejecting any. The flashblocks driver splits the DA target evenly across flashblocks, as `build_next_flashblock` does. The DA footprint limit stays off because the synthetic chain has no Jovian L1 block info.
+
+The pool is a bare `PendingPool` read through `ParkedBestTransactions::new(pool.best(), ...)` with `no_updates()`. Production wraps the protocol pool and the nonce-lane pool in `MergeBestTransactions` with the real base fee and accepts arrivals during a build; the gate has one lane, a zero base fee, and no arrivals mid-build. The rejection cache uses the production defaults (`REJECTION_CACHE_MAX_CAPACITY`, `REJECTION_CACHE_TTL`); no scenario produces permanent rejections today.
+
 The workloads live in `crates/builder/core/src/test_utils/flashblock_workload.rs`. All transactions are 21,000-gas transfers from unique senders. Validity transactions out-tip transfers, so every flashblock, and the native pass, reaches the whole backlog before the transfers.
 
 | Scenario | Pool traffic per block | What it isolates |
@@ -52,39 +56,39 @@ The job measures two things, and both fail closed.
 **Instruction counts.** `crates/builder/core/benches/flashblock_build_iai.rs` runs each scenario on both builders (`build_block` and `build_native_block`) under Valgrind Callgrind through iai-callgrind 0.16.1. Fixture construction runs in the unmeasured setup phase. Callgrind counts only the thread running the benchmark function, which is the builder thread; the event writer's background file I/O is not counted. `etc/scripts/ci/builder_gate_check.py` then checks two budgets per scenario:
 
 - `max_instructions`: the pinned baseline plus `headroom_pct` (5%).
-- `max_marginal_instructions_per_deferral`, for backlog scenarios: `(instructions(scenario) - instructions(transfers)) / deferrals_per_block`, against the same builder's `transfers`, plus `marginal_headroom_pct` (10%). It is the cost of one deferred candidate, the unit that a resting backlog multiplies. Because it subtracts the baseline from the same run, it is less sensitive to changes that shift every scenario.
+- `max_marginal_instructions_per_deferral`, for backlog scenarios: `(instructions(scenario) - instructions(transfers)) / deferrals_per_block`, against the same builder's `transfers`, plus `marginal_headroom_pct` (5%). It is the cost of one deferred candidate, the unit that a resting backlog multiplies. Because it subtracts the baseline from the same run, it is less sensitive to changes that shift every scenario.
 
 Instruction counts are deterministic for a fixed toolchain, dependency set, target, and Valgrind version, so they work on shared runners. Wall-clock measurement on shared runners is too noisy for a gate, which is why `bench-pr.yml` is manual only. Wall-clock control flow inside the loop would make counts nondeterministic under Valgrind, so the fixture disables the predicate evaluation cutoff (`predicate_eval_hard_cutoff = Duration::MAX`) and sizes the event writer's lossy queue so it never drops.
 
 ## Baselines and budgets
 
-Pinned on `x86_64-unknown-linux-gnu`, `depot-ubuntu-24.04-8`, Rust 1.96.0, Valgrind 3.22.0, at commit `85e62f74a` (Depot run `4zhpnbcltn`).
+Pinned on `x86_64-unknown-linux-gnu`, `depot-ubuntu-24.04-16`, Rust 1.96.0, Valgrind 3.22.0, at commit `b92ac3e0c` (Depot run `mvzp46ckqs`).
 
 Flashblocks builder (`deferrals_per_block`: 45,000 for `resting_*`, 10,000 for `wake_rescan`, 31,500 for `backlog_growth`):
 
 | Scenario | Baseline instructions | Budget | Marginal per deferral (budget) |
 | --- | ---: | ---: | ---: |
-| `transfers` | 517,025,825 | 542,877,117 |  |
-| `resting_backlog` | 1,600,352,558 | 1,680,370,186 | 24,074 (26,482) |
-| `resting_backlog_multi_predicate` | 2,030,435,889 | 2,131,957,684 | 33,631 (36,995) |
-| `resting_backlog_shared_state` | 1,723,238,795 | 1,809,400,735 | 26,805 (29,486) |
-| `wake_rescan` | 776,948,093 | 815,795,498 | 25,992 (28,592) |
-| `backlog_growth` | 1,396,342,662 | 1,466,159,796 | 27,915 (30,707) |
-| `congested` | 1,931,979,850 | 2,028,578,843 |  |
-| `satisfied_validity` | 806,251,146 | 846,563,704 |  |
+| `transfers` | 517,649,734 | 543,532,221 |  |
+| `resting_backlog` | 1,601,724,165 | 1,681,810,374 | 24,091 (25,296) |
+| `resting_backlog_multi_predicate` | 2,029,540,745 | 2,131,017,783 | 33,598 (35,278) |
+| `resting_backlog_shared_state` | 1,724,418,604 | 1,810,639,535 | 26,817 (28,158) |
+| `wake_rescan` | 776,858,233 | 815,701,145 | 25,921 (27,217) |
+| `backlog_growth` | 1,398,178,256 | 1,468,087,169 | 27,953 (29,351) |
+| `congested` | 1,935,233,484 | 2,031,995,159 |  |
+| `satisfied_validity` | 806,559,832 | 846,887,824 |  |
 
 Native builder (`deferrals_per_block`: 4,500 for `resting_*` and `backlog_growth`, 1,000 for `wake_rescan`):
 
 | Scenario | Baseline instructions | Budget | Marginal per deferral (budget) |
 | --- | ---: | ---: | ---: |
-| `transfers` | 147,701,859 | 155,086,952 |  |
-| `resting_backlog` | 519,606,349 | 545,586,667 | 82,645 (90,910) |
-| `resting_backlog_multi_predicate` | 797,658,571 | 837,541,500 | 144,435 (158,879) |
-| `resting_backlog_shared_state` | 498,044,111 | 522,946,317 | 77,854 (85,640) |
-| `wake_rescan` | 244,866,994 | 257,110,344 | 97,165 (106,882) |
-| `backlog_growth` | 519,367,136 | 545,335,493 | 82,592 (90,852) |
-| `congested` | 290,717,933 | 305,253,830 |  |
-| `satisfied_validity` | 258,278,088 | 271,191,993 |  |
+| `transfers` | 147,652,939 | 155,035,586 |  |
+| `resting_backlog` | 519,493,086 | 545,467,741 | 82,631 (86,763) |
+| `resting_backlog_multi_predicate` | 798,048,966 | 837,951,415 | 144,532 (151,760) |
+| `resting_backlog_shared_state` | 498,843,099 | 523,785,254 | 78,042 (81,945) |
+| `wake_rescan` | 244,571,597 | 256,800,177 | 96,919 (101,765) |
+| `backlog_growth` | 519,144,389 | 545,101,609 | 82,554 (86,682) |
+| `congested` | 290,670,659 | 305,204,192 |  |
+| `satisfied_validity` | 258,248,797 | 271,161,237 |  |
 
 A native deferral costs more than a flashblocks deferral (about 83,000 against 24,000 instructions) because every native deferral is a first evaluation with a `BUILDER_DEFERRED` event, while most flashblocks deferrals are cheap re-parks of a transaction already deferred in the block. `native/wake_rescan` also pays for about 8,000 rescans spread over its 1,000 deferrals.
 
@@ -103,20 +107,22 @@ Native event budgets per block: `BUILDER_DEFERRED` is 4,500 for `resting_*` and 
 
 `BUILDER_DEFERRED` is budgeted at one per resting transaction and reason per block on both builders, matching `BlockDeferrals`. `congested` pins today's behavior: gas-limit rejections are not deduplicated, so the overflow is re-rejected on every flashblock (200 + 400 + ... + 2,000 = 11,000 events for 1,000 inclusions). That is the same per-flashblock amplification a resting backlog has; the budget stops it from growing without endorsing it.
 
-Why 5%: counts are not bit-identical run to run, because hash maps use random seeds, but across four runs of the same commit every scenario stayed within 0.10% of its baseline. Headroom also has to absorb unrelated churn such as dependency bumps on `main`. At 5%, `flashblocks/resting_backlog` fails on about 80 million added instructions per block, or about 1,800 per deferred candidate, and `flashblocks/wake_rescan` on about 4,900 per rescanned candidate (about 8,000 rescans per block). On the native builder, `native/resting_backlog` fails on about 26 million per block, or about 5,800 per deferred candidate, and `native/wake_rescan` on about 1,500 per rescanned candidate. The marginal budgets add a second check at 10% of today's per-deferral cost.
+Why 5%: counts are not bit-identical run to run, because hash maps use random seeds, but across five runs of the same code every scenario stayed within 0.15% of its baseline. Headroom also has to absorb unrelated churn such as dependency bumps on `main`. At 5%, the marginal budgets fail `flashblocks/resting_backlog` on about 1,200 added instructions per deferred candidate (about 54 million per block) and `flashblocks/wake_rescan` on about 1,600 per rescanned candidate (about 8,000 rescans per block). On the native builder, `native/resting_backlog` fails on about 4,100 per deferred candidate (about 19 million per block) and `native/wake_rescan` on about 600 per rescanned candidate. The marginal budget is the tighter of the two for every backlog scenario: 5% of the backlog's own cost is less than 5% of the whole scenario, so it catches a per-deferral regression that the absolute budget would absorb, while the absolute budget catches regressions in the shared baseline. Marginal costs varied by less than 0.3% across runs of one commit.
 
 ## When the gate fails
 
 1. Read the job summary. It lists each scenario's count, budget, change from baseline, and marginal cost.
 2. If the regression is unintended, fix it. To reproduce the counts locally on Linux with Valgrind and `iai-callgrind-runner@0.16.1`, run `cargo bench -p base-builder-core --bench flashblock_build_iai`. On macOS, run `cargo test --profile bench -p base-builder-core --test flashblock_build_gate -- --nocapture` for event counts and wall-clock build times of both builders.
-3. If the cost is intended, or a toolchain or dependency bump moved every count, re-pin in the same PR. Dispatch the workflow on the branch with `pin: true` (`depot ci dispatch --repo base/base --workflow bench-builder-gate.yml --ref <branch> --input pin=true`), copy the re-pinned JSON from the job summary into `etc/benchmarks/builder-gate-budgets.json`, update `measured_on` and the tables in this doc, and explain the change in the PR description. Reviewers own whether the new budget is acceptable.
+3. If the cost is intended, or a toolchain or dependency bump moved every count, re-pin in the same PR. Dispatch the workflow on the branch with `pin: true` (`depot ci dispatch --repo base/base --workflow bench-builder-gate.yml --ref <branch> --input pin=true`), copy the re-pinned JSON from the job summary (or the `Re-pin budgets` step log) into `etc/benchmarks/builder-gate-budgets.json`, update the tables in this doc, and explain the change in the PR description. `--pin` records the target, runner, toolchain, Valgrind version, commit, and run in `measured_on`, and refuses to pin when a measured scenario has no entry in the budget file. A new scenario needs a budget entry (with its event budgets and, for backlog scenarios, `marginal_reference` and `deferrals_per_block`) before it can be pinned. Reviewers own whether the new budget is acceptable.
 4. When a change makes the build path cheaper, re-pin so the improvement becomes the new budget.
 
 ## CI wiring
 
-The workflow runs on `pull_request`, `merge_group`, and `workflow_dispatch`. On PRs, the measurement steps run only when `etc/scripts/local/affected-crates.py` reports `base-builder-core` as affected (a change to `base-execution-payload-builder` or another dependency affects it too), or a gate input changes (`Cargo.toml`, `Cargo.lock`, `.cargo/`, `rust-toolchain.toml`, the budget file, the checker scripts, the setup action, or the workflow). Otherwise the job reports success with a skip note, so it can be a required check without blocking unrelated PRs. Merge-queue and manual runs always measure.
+The workflow runs on `pull_request`, `merge_group`, and `workflow_dispatch`. On PRs, the measurement steps run only when `etc/scripts/local/affected-crates.py` reports `base-builder-core` as affected (a change to `base-execution-payload-builder` or another dependency affects it too), or a gate input changes (`Cargo.toml`, `Cargo.lock`, `.cargo/`, `rust-toolchain.toml`, the budget file, the checker scripts, the setup action, or the workflow). Otherwise the job reports success with a skip note, so it can be a required check without blocking unrelated PRs. Merge-queue and manual runs always measure. The path filter reads the PR's changed files through the REST API, so the workflow grants `pull-requests: read`.
 
-Cost per affected PR is one `depot-ubuntu-24.04-8` runner for about 11 minutes with a warm sccache, covering both builders, of which about 7 minutes is the bench-profile build and 2 to 3 minutes is Callgrind. The event-volume test shares the bench-profile artifacts.
+The checker fails closed on its inputs as well as its budgets: a benchmark id that matches no builder (for example after renaming a benchmark function), a scenario measured without a budget, a budget without a measurement, and a `marginal_reference` from another builder are all errors.
+
+Cost per affected PR is one `depot-ubuntu-24.04-16` runner for about 8 to 9 minutes, covering both builders, most of it the bench-profile build. Memory peaks at about 49% on this runner; the 8-vCPU runner peaked above 90% while building the bench profile, close enough to its limit that an out-of-memory kill would read as a gate failure. The event-volume test shares the bench-profile artifacts.
 
 Making the check required is a branch-protection decision for the repository owners. Add `Builder performance gate` to the required checks for `main` and the merge queue. Until then it runs on every affected PR and fails visibly, but does not block merges.
 
