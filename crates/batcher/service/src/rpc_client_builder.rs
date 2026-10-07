@@ -12,17 +12,18 @@ use url::Url;
 /// Every request of every client fails once the network timeout elapses, so an endpoint that
 /// stops answering never holds the batcher.
 #[derive(Debug, Clone, Copy)]
-pub struct RpcClients {
+pub struct RpcClientBuilder {
     network_timeout: Duration,
 }
 
-impl RpcClients {
+impl RpcClientBuilder {
     /// Creates a builder of clients whose requests time out after `network_timeout`.
     pub const fn new(network_timeout: Duration) -> Self {
         Self { network_timeout }
     }
 
-    /// An alloy provider of the HTTP endpoint at `url`.
+    /// An alloy provider of the HTTP endpoint at `url`, which carries the typed Ethereum API,
+    /// the `eth_*` methods.
     ///
     /// # Errors
     ///
@@ -40,7 +41,8 @@ impl RpcClients {
         Ok(RootProvider::new(RpcClient::new_http_with_client(http, url.clone())))
     }
 
-    /// A jsonrpsee client of the HTTP endpoint at `url`.
+    /// A jsonrpsee client of the HTTP endpoint at `url`, for the APIs defined as jsonrpsee
+    /// traits: `optimism_*`, `admin_*` and `miner_*`.
     ///
     /// # Errors
     ///
@@ -84,7 +86,7 @@ mod tests {
     async fn a_provider_request_fails_when_the_endpoint_never_answers() {
         let (silent_url, _silent) = silent_endpoint();
         let provider: RootProvider =
-            RpcClients::new(NETWORK_TIMEOUT).provider(&silent_url).unwrap();
+            RpcClientBuilder::new(NETWORK_TIMEOUT).provider(&silent_url).unwrap();
 
         let error = tokio::time::timeout(NETWORK_TIMEOUT * 2, provider.get_chain_id())
             .await
@@ -104,7 +106,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_client_request_fails_when_the_endpoint_never_answers() {
         let (silent_url, _silent) = silent_endpoint();
-        let client = RpcClients::new(NETWORK_TIMEOUT).client(&silent_url).unwrap();
+        let client = RpcClientBuilder::new(NETWORK_TIMEOUT).client(&silent_url).unwrap();
 
         let error = tokio::time::timeout(
             NETWORK_TIMEOUT * 2,
@@ -120,9 +122,9 @@ mod tests {
     /// A provider is only built for an HTTP URL, so a wrong scheme fails at startup instead of
     /// on every request.
     #[test]
-    fn provider_rejects_a_non_http_url() {
+    fn a_provider_is_refused_for_a_non_http_url() {
         let url: Url = "ws://127.0.0.1:1".parse().unwrap();
 
-        assert!(RpcClients::new(NETWORK_TIMEOUT).provider::<Ethereum>(&url).is_err());
+        assert!(RpcClientBuilder::new(NETWORK_TIMEOUT).provider::<Ethereum>(&url).is_err());
     }
 }

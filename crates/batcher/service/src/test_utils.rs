@@ -19,11 +19,11 @@ use jsonrpsee::{
 use serde_json::Value;
 use url::Url;
 
-use crate::{BatcherConfig, RpcClients};
+use crate::{BatcherConfig, RpcClientBuilder};
 
 /// A builder of clients with the network timeout of [`BatcherConfig::default`].
-pub fn rpc_clients() -> RpcClients {
-    RpcClients::new(BatcherConfig::default().network_timeout)
+pub fn rpc_client_builder() -> RpcClientBuilder {
+    RpcClientBuilder::new(BatcherConfig::default().network_timeout)
 }
 
 /// What a [`FakeSequencer`] answers to `admin_sequencerActive`.

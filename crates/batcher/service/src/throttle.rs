@@ -13,7 +13,7 @@ use tokio::sync::watch;
 use tracing::{debug, warn};
 use url::Url;
 
-use crate::RpcClients;
+use crate::RpcClientBuilder;
 
 /// Client-side jsonrpsee trait for the miner API extension.
 #[rpc(client, namespace = "miner")]
@@ -55,10 +55,10 @@ impl ThrottlePusher {
     pub fn new(
         url: &Url,
         limits: watch::Receiver<DaLimits>,
-        clients: RpcClients,
+        client_builder: RpcClientBuilder,
     ) -> eyre::Result<Self> {
         Ok(Self {
-            client: clients.client(url)?,
+            client: client_builder.client(url)?,
             origin: url.origin().ascii_serialization(),
             limits,
         })
@@ -125,7 +125,7 @@ mod tests {
     use httpmock::{Mock, prelude::*};
 
     use super::*;
-    use crate::test_utils::rpc_clients;
+    use crate::test_utils::rpc_client_builder;
 
     const LIMITS: DaLimits = DaLimits { max_tx_size: 150, max_block_size: 20_000 };
 
@@ -159,7 +159,7 @@ mod tests {
     fn pusher(server: &MockServer) -> (ThrottlePusher, watch::Sender<DaLimits>) {
         let (limits_tx, limits_rx) = watch::channel(LIMITS);
         let pusher =
-            ThrottlePusher::new(&server.url("/").parse().unwrap(), limits_rx, rpc_clients())
+            ThrottlePusher::new(&server.url("/").parse().unwrap(), limits_rx, rpc_client_builder())
                 .unwrap();
         (pusher, limits_tx)
     }
@@ -202,7 +202,7 @@ mod tests {
         let to_unreachable = ThrottlePusher::new(
             &"http://127.0.0.1:1".parse().unwrap(),
             unreachable_rx,
-            rpc_clients(),
+            rpc_client_builder(),
         )
         .unwrap();
 

@@ -6,7 +6,7 @@ use base_batcher_core::DerivationStatus;
 use base_consensus_rpc::RollupNodeApiClient;
 use jsonrpsee::http_client::HttpClient;
 
-use crate::{DerivationStatusProvider, RpcClients, Sequencers, ShadowConfig};
+use crate::{DerivationStatusProvider, RpcClientBuilder, Sequencers, ShadowConfig};
 
 /// The rollup node whose rollup config the batcher reads and whose derivation it follows.
 #[derive(Debug)]
@@ -27,11 +27,11 @@ impl RollupNode {
     pub fn new(
         shadow: Option<&ShadowConfig>,
         sequencers: Arc<Sequencers>,
-        clients: RpcClients,
+        client_builder: RpcClientBuilder,
     ) -> eyre::Result<Self> {
         match shadow {
             Some(shadow) => {
-                Ok(Self::ParityValidator(clients.client(&shadow.validator_rollup_rpc)?))
+                Ok(Self::ParityValidator(client_builder.client(&shadow.validator_rollup_rpc)?))
             }
             None => Ok(Self::Leader(sequencers)),
         }
@@ -65,7 +65,7 @@ mod tests {
     use jsonrpsee::{core::client::ClientT, rpc_params};
 
     use super::*;
-    use crate::test_utils::{Activity, FakeSequencer, rpc_clients};
+    use crate::test_utils::{Activity, FakeSequencer, rpc_client_builder};
 
     /// A canonical batcher's rollup node is the one of the current leader, so a request made
     /// after a leader change reaches the new leader.
@@ -74,10 +74,12 @@ mod tests {
         let first = FakeSequencer::start(Activity::Active, 1).await;
         let second = FakeSequencer::start(Activity::NotLeader, 2).await;
         let sequencers = Arc::new(
-            Sequencers::new(&[first.url.clone(), second.url.clone()], rpc_clients()).unwrap(),
+            Sequencers::new(&[first.url.clone(), second.url.clone()], rpc_client_builder())
+                .unwrap(),
         );
         sequencers.refresh_leader().await.unwrap();
-        let rollup_node = RollupNode::new(None, Arc::clone(&sequencers), rpc_clients()).unwrap();
+        let rollup_node =
+            RollupNode::new(None, Arc::clone(&sequencers), rpc_client_builder()).unwrap();
 
         first.set_activity(Activity::NotLeader);
         second.set_activity(Activity::Active);

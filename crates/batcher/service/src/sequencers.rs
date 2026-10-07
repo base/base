@@ -17,7 +17,7 @@ use jsonrpsee::{core::ClientError, http_client::HttpClient};
 use tracing::{info, warn};
 use url::Url;
 
-use crate::RpcClients;
+use crate::RpcClientBuilder;
 
 /// One sequencer endpoint, which serves both the rollup node methods and the L2 blocks.
 #[derive(derive_more::Debug)]
@@ -38,11 +38,11 @@ impl Sequencer {
     /// # Errors
     ///
     /// Returns an error when `url` is not an HTTP URL.
-    pub fn new(url: &Url, clients: RpcClients) -> eyre::Result<Self> {
+    pub fn new(url: &Url, client_builder: RpcClientBuilder) -> eyre::Result<Self> {
         Ok(Self {
             origin: url.origin().ascii_serialization(),
-            rollup_node_client: clients.client(url)?,
-            l2_provider: clients.provider(url)?,
+            rollup_node_client: client_builder.client(url)?,
+            l2_provider: client_builder.provider(url)?,
         })
     }
 }
@@ -72,12 +72,14 @@ impl Sequencers {
     /// # Errors
     ///
     /// Returns an error when `urls` is empty or one of them is not an HTTP URL.
-    pub fn new(urls: &[Url], clients: RpcClients) -> eyre::Result<Self> {
+    pub fn new(urls: &[Url], client_builder: RpcClientBuilder) -> eyre::Result<Self> {
         if urls.is_empty() {
             eyre::bail!("at least one sequencer URL is required");
         }
-        let sequencers =
-            urls.iter().map(|url| Sequencer::new(url, clients)).collect::<eyre::Result<_>>()?;
+        let sequencers = urls
+            .iter()
+            .map(|url| Sequencer::new(url, client_builder))
+            .collect::<eyre::Result<_>>()?;
         Ok(Self { sequencers, leader_index: AtomicUsize::new(0) })
     }
 
@@ -170,7 +172,7 @@ mod tests {
     use base_runtime::{Cancellation, TokioRuntime};
 
     use super::*;
-    use crate::test_utils::{Activity, FakeSequencer, rpc_clients};
+    use crate::test_utils::{Activity, FakeSequencer, rpc_client_builder};
 
     /// The leader is the active sequencer, which the reads go to. A sequencer that is stopped,
     /// one that is not the leader behind its conductor and one that is unreachable are passed
@@ -182,7 +184,7 @@ mod tests {
         let unreachable = "http://127.0.0.1:1".parse().unwrap();
         let active = FakeSequencer::start(Activity::Active, 3).await;
         let urls = [stopped.url.clone(), not_leader.url.clone(), unreachable, active.url.clone()];
-        let sequencers = Sequencers::new(&urls, rpc_clients()).unwrap();
+        let sequencers = Sequencers::new(&urls, rpc_client_builder()).unwrap();
 
         sequencers.refresh_leader().await.unwrap();
 
@@ -196,7 +198,8 @@ mod tests {
         let silent = TcpListener::bind("127.0.0.1:0").unwrap();
         let silent_url = format!("http://{}", silent.local_addr().unwrap()).parse().unwrap();
         let active = FakeSequencer::start(Activity::Active, 1).await;
-        let sequencers = Sequencers::new(&[silent_url, active.url.clone()], rpc_clients()).unwrap();
+        let sequencers =
+            Sequencers::new(&[silent_url, active.url.clone()], rpc_client_builder()).unwrap();
 
         tokio::time::timeout(
             Sequencers::SEQUENCER_ACTIVE_RPC_TIMEOUT * 2,
@@ -216,7 +219,8 @@ mod tests {
         let first = FakeSequencer::start(Activity::Stopped, 1).await;
         let second = FakeSequencer::start(Activity::Active, 2).await;
         let sequencers =
-            Sequencers::new(&[first.url.clone(), second.url.clone()], rpc_clients()).unwrap();
+            Sequencers::new(&[first.url.clone(), second.url.clone()], rpc_client_builder())
+                .unwrap();
         sequencers.refresh_leader().await.unwrap();
 
         second.set_activity(Activity::NotLeader);
@@ -240,7 +244,8 @@ mod tests {
         let first = FakeSequencer::start(Activity::Active, 1).await;
         let second = FakeSequencer::start(Activity::NotLeader, 2).await;
         let sequencers = Arc::new(
-            Sequencers::new(&[first.url.clone(), second.url.clone()], rpc_clients()).unwrap(),
+            Sequencers::new(&[first.url.clone(), second.url.clone()], rpc_client_builder())
+                .unwrap(),
         );
         let runtime = TokioRuntime::new();
         let tracking = tokio::spawn(

@@ -35,7 +35,7 @@ use url::Url;
 use crate::{
     BatcherConfig, DerivationStatusPoller, DerivationStatusProvider, L2BlockParityMonitor,
     L2BlockParityMonitorConfig, MAX_CHECK_RECENT_TXS_DEPTH, RecentTxSyncTarget, RollupNode,
-    RpcClients, RpcL1HeadPollingSource, RpcL2BlockProvider, RpcPollingSource, Sequencers,
+    RpcClientBuilder, RpcL1HeadPollingSource, RpcL2BlockProvider, RpcPollingSource, Sequencers,
     SystemConfigBatcher, ThrottlePusher,
 };
 
@@ -313,12 +313,12 @@ impl BatcherService {
         sequencer_urls: &[Url],
         throttle: &DaThrottle,
         runtime: &TokioRuntime,
-        clients: RpcClients,
+        client_builder: RpcClientBuilder,
     ) -> eyre::Result<Vec<BackgroundTask>> {
         sequencer_urls
             .iter()
             .map(|url| {
-                let pusher = ThrottlePusher::new(url, throttle.subscribe(), clients)?;
+                let pusher = ThrottlePusher::new(url, throttle.subscribe(), client_builder)?;
                 let handle = tokio::spawn(pusher.run(runtime.clone()));
                 Ok(("throttle pusher", handle.err_into().map(Result::flatten).boxed()))
             })
@@ -380,12 +380,12 @@ impl BatcherService {
             );
         }
 
-        let clients = RpcClients::new(self.config.network_timeout);
-        let sequencers = Arc::new(Sequencers::new(&self.config.sequencer_urls, clients)?);
+        let client_builder = RpcClientBuilder::new(self.config.network_timeout);
+        let sequencers = Arc::new(Sequencers::new(&self.config.sequencer_urls, client_builder)?);
         // A canonical batcher follows the leader's rollup node, a shadow batcher the parity
         // validator's.
         let rollup_node =
-            RollupNode::new(self.config.shadow.as_ref(), Arc::clone(&sequencers), clients)?;
+            RollupNode::new(self.config.shadow.as_ref(), Arc::clone(&sequencers), client_builder)?;
 
         let signer_config = self
             .config
@@ -438,13 +438,13 @@ impl BatcherService {
 
         let validator_provider = if let Some(shadow) = &self.config.shadow {
             let provider: Arc<dyn Provider<Base> + Send + Sync> =
-                Arc::new(clients.provider::<Base>(&shadow.validator_l2_rpc)?);
+                Arc::new(client_builder.provider::<Base>(&shadow.validator_l2_rpc)?);
             Some(RpcL2BlockProvider::new(provider))
         } else {
             None
         };
 
-        let l1_provider: RootProvider = clients.provider(&self.config.l1_rpc_url)?;
+        let l1_provider: RootProvider = client_builder.provider(&self.config.l1_rpc_url)?;
 
         // Derivation ignores batches from any other sender, so a wrong signer would only burn L1
         // fees. The shadow batcher posts with its own key on purpose.
@@ -606,7 +606,7 @@ impl BatcherService {
                 &self.config.sequencer_urls,
                 &throttle,
                 &runtime,
-                clients,
+                client_builder,
             )?);
         }
 
@@ -684,7 +684,7 @@ mod tests {
     use super::*;
     use crate::{
         ShadowConfig,
-        test_utils::{Activity, FakeSequencer, rpc_clients},
+        test_utils::{Activity, FakeSequencer, rpc_client_builder},
     };
 
     /// The `SystemConfig` address of the mocked rollup config.
@@ -997,7 +997,7 @@ mod tests {
             &sequencer_urls,
             &throttle,
             &runtime,
-            rpc_clients(),
+            rpc_client_builder(),
         )
         .unwrap();
 
