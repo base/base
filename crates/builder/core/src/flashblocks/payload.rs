@@ -29,7 +29,9 @@ use base_execution_payload_builder::{
     ValidityMetrics,
 };
 use base_execution_txpool::AccountStateDiff;
-use base_observability_events::{GlobalTransactionEventWriter, TransactionEventType};
+use base_observability_events::{
+    GlobalTransactionEventWriter, TransactionEventEmissionStats, TransactionEventType,
+};
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
@@ -583,6 +585,8 @@ where
             "Building flashblock",
         );
         let flashblock_build_start_time = Instant::now();
+        // Emission accounting is per-thread, so the window must not span an `.await`.
+        let emission_before = TransactionEventEmissionStats::current_thread();
         self.emit_flashblock_event(
             ctx,
             &payload_id,
@@ -643,6 +647,13 @@ where
         let diag = ctx
             .execute_best_transactions(info, deferrals, state, best_txs, &limits)
             .wrap_err("failed to execute best transactions")?;
+        let emission = TransactionEventEmissionStats::current_thread().since(emission_before);
+        if emission.attempts > 0 {
+            BuilderMetrics::flashblock_transaction_event_emission_duration()
+                .record(emission.duration);
+            BuilderMetrics::flashblock_transaction_event_attempts()
+                .record(emission.attempts as f64);
+        }
 
         // Extract last transactions
         let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..]
@@ -899,21 +910,21 @@ where
         D: Serialize,
         F: FnOnce() -> D,
     {
-        if GlobalTransactionEventWriter::get().is_none() {
-            return;
-        }
-        let event_ctx = BuilderTransactionEventContext {
-            payload_id: payload_id.to_string(),
-            block_number: ctx.block_number(),
-            block_hash,
-            parent_hash: ctx.parent_hash(),
-            flashblock_index: Some(ctx.flashblock_index()),
-            target_flashblock_count: ctx.target_flashblock_count(),
-            ordering_position: None,
-            builder_mode: "flashblocks",
-            source_queue: "flashblock_builder",
-        };
-        emit_builder_payload_event(event_ctx, event_type, data);
+        emit_builder_payload_event(
+            || BuilderTransactionEventContext {
+                payload_id: payload_id.to_string(),
+                block_number: ctx.block_number(),
+                block_hash,
+                parent_hash: ctx.parent_hash(),
+                flashblock_index: Some(ctx.flashblock_index()),
+                target_flashblock_count: ctx.target_flashblock_count(),
+                ordering_position: None,
+                builder_mode: "flashblocks",
+                source_queue: "flashblock_builder",
+            },
+            event_type,
+            data,
+        );
     }
 
     /// Do some logging and metric recording when we stop build flashblocks
@@ -1006,7 +1017,7 @@ where
             source_queue: "finalized_payload",
         };
         emit_builder_payload_event(
-            payload_event_ctx.clone(),
+            || payload_event_ctx.clone(),
             TransactionEventType::BuilderPayloadFinalized,
             || {
                 BuilderPayloadFinalizedEventData::new(
@@ -1020,10 +1031,11 @@ where
         );
 
         for (position, tx) in block.body().transactions.iter().enumerate() {
-            let mut event_ctx = payload_event_ctx.clone();
-            event_ctx.ordering_position = Some(position as u64);
             emit_builder_transaction_event(
-                event_ctx,
+                || BuilderTransactionEventContext {
+                    ordering_position: Some(position as u64),
+                    ..payload_event_ctx.clone()
+                },
                 TransactionEventType::BuilderIncluded,
                 tx.tx_hash(),
                 || BuilderIncludedEventData::new("builder_finalized_payload"),

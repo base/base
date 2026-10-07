@@ -20,6 +20,10 @@ base_metrics::define_metrics! {
     total_block_built_gauge: gauge,
     #[describe("Histogram of the time taken to build a Flashblock")]
     flashblock_build_duration: histogram,
+    #[describe("Builder-thread time spent emitting transaction events from flashblock start through transaction selection")]
+    flashblock_transaction_event_emission_duration: histogram,
+    #[describe("Transaction events constructed from flashblock start through transaction selection")]
+    flashblock_transaction_event_attempts: histogram,
     #[describe("Histogram of the time taken to sync a Flashblock")]
     flashblock_sync_duration: histogram,
     #[describe("Flashblock UTF8 payload byte size histogram")]

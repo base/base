@@ -5184,6 +5184,7 @@ dependencies = [
  "alloy-primitives",
  "base-metrics",
  "chrono",
+ "criterion",
  "eyre",
  "hex",
  "metrics",
@@ -5195,6 +5196,7 @@ dependencies = [
  "thiserror 2.0.19",
  "tracing",
  "tracing-appender",
+ "tracing-subscriber",
 ]
 
 [[package]]

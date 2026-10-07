@@ -457,7 +457,7 @@ impl BasePayloadBuilderCtx {
         F: FnOnce() -> D,
     {
         emit_builder_transaction_event(
-            self.builder_transaction_event_context(payload_id, ordering_position, None),
+            || self.builder_transaction_event_context(payload_id, ordering_position, None),
             event_type,
             tx_hash,
             data,

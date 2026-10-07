@@ -27,6 +27,9 @@ pub use id::EventIdBuilder;
 mod metrics;
 pub use metrics::Metrics;
 
+mod stats;
+pub use stats::{TransactionEventEmissionStats, TransactionEventEmissionTotals};
+
 mod writer;
 #[cfg(any(test, feature = "test-utils"))]
 pub use writer::TransactionEventRecorder;

@@ -24,6 +24,19 @@ stdout/stderr and the normal Kubernetes log pipeline.
   producer call sites that use the process-global transaction event writer while
   filling common envelope fields such as `event_time`, `network`, join keys,
   deterministic event IDs, and write-failure logging.
+  Both evaluate event fields lazily, so call sites pay nothing when no writer is
+  configured.
+- **`TransactionEventEmissionStats`**: Per-thread totals of events constructed
+  and the time spent building, validating, serializing, and enqueueing them.
+  Snapshot before and after a synchronous unit of work to attribute emission
+  cost to it.
+
+## Benchmarks
+
+`cargo bench -p base-observability-events --bench emit` measures the
+producer-thread cost of one builder-shaped event: each emission stage, the full
+path into a JSONL writer, and an ordinary `tracing` JSON log line with the same
+fields for comparison.
 
 ## Contract Notes
 

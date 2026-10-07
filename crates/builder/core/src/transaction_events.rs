@@ -2,8 +2,8 @@
 
 use alloy_primitives::{B256, TxHash};
 use base_observability_events::{
-    GlobalTransactionEventWriter, TransactionEventEmitOutcome, TransactionEventProducer,
-    TransactionEventType, transaction_event,
+    GlobalTransactionEventWriter, TransactionEventBuilder, TransactionEventEmitOutcome,
+    TransactionEventProducer, TransactionEventType,
 };
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -413,96 +413,90 @@ pub(crate) const fn rejection_reason_code(err: &TxnExecutionError) -> &'static s
 
 /// Emits one builder transaction event if a sink is configured.
 ///
-/// `data` is lazy so disabled writers skip hot-path payload construction.
-pub(crate) fn emit_builder_transaction_event<D, F>(
-    ctx: BuilderTransactionEventContext,
+/// `ctx` and `data` are lazy so disabled writers skip hot-path payload construction, and
+/// enabled writers count their construction in builder emission timing.
+pub(crate) fn emit_builder_transaction_event<C, D, F>(
+    ctx: C,
     event_type: TransactionEventType,
     tx_hash: TxHash,
     data: F,
 ) where
+    C: FnOnce() -> BuilderTransactionEventContext,
     D: Serialize,
     F: FnOnce() -> D,
 {
-    if GlobalTransactionEventWriter::get().is_none() {
-        return;
-    }
+    emit_builder_event(ctx, event_type, Some(tx_hash), data);
+}
 
-    let event_type_label = event_type.to_string();
-    let data =
-        serialize_builder_event_data(BuilderEventData { context: ctx.event_data(), event: data() });
+/// Emits one builder payload event if a sink is configured.
+///
+/// `ctx` and `data` are lazy so disabled writers skip hot-path payload construction, and
+/// enabled writers count their construction in builder emission timing.
+pub(crate) fn emit_builder_payload_event<C, D, F>(ctx: C, event_type: TransactionEventType, data: F)
+where
+    C: FnOnce() -> BuilderTransactionEventContext,
+    D: Serialize,
+    F: FnOnce() -> D,
+{
+    emit_builder_event(ctx, event_type, None, data);
+}
 
-    match transaction_event!(
-        producer: TransactionEventProducer::BaseBuilder,
-        event_type: event_type,
-        tx_hash: tx_hash,
-        maybe_block_hash: ctx.block_hash,
-        block_number: ctx.block_number,
-        payload_id: ctx.payload_id,
-        id: {
-            "flashblock_index" => ctx.flashblock_index.map(|index| index.to_string()).unwrap_or_default(),
-            "ordering_position" => ctx.ordering_position.map(|position| position.to_string()).unwrap_or_default(),
+/// Shared builder emission path; transaction events add `tx_hash` and ordering position to the
+/// event ID, payload events do not.
+fn emit_builder_event<C, D, F>(
+    ctx: C,
+    event_type: TransactionEventType,
+    tx_hash: Option<TxHash>,
+    data: F,
+) where
+    C: FnOnce() -> BuilderTransactionEventContext,
+    D: Serialize,
+    F: FnOnce() -> D,
+{
+    let result = TransactionEventBuilder::emit_with(
+        GlobalTransactionEventWriter::get(),
+        TransactionEventProducer::BaseBuilder,
+        event_type,
+        |builder| {
+            let ctx = ctx();
+            let data = serialize_builder_event_data(BuilderEventData {
+                context: ctx.event_data(),
+                event: data(),
+            });
+            let builder = builder
+                .maybe_tx_hash(tx_hash)
+                .maybe_block_hash(ctx.block_hash)
+                .block_number(ctx.block_number)
+                .payload_id(ctx.payload_id)
+                .id_part(
+                    "flashblock_index",
+                    ctx.flashblock_index.map(|index| index.to_string()).unwrap_or_default(),
+                );
+            let builder = if tx_hash.is_some() {
+                builder.id_part(
+                    "ordering_position",
+                    ctx.ordering_position.map(|position| position.to_string()).unwrap_or_default(),
+                )
+            } else {
+                builder
+            };
+            builder.data(data)
         },
-        data: data,
-    ) {
+    );
+
+    match result {
         Ok(TransactionEventEmitOutcome::Emitted) => {
-            BuilderMetrics::builder_transaction_events_emitted(event_type_label).increment(1);
+            BuilderMetrics::builder_transaction_events_emitted(event_type.to_string()).increment(1);
         }
         Ok(TransactionEventEmitOutcome::NotConfigured) => {}
         Err(err) => {
-            BuilderMetrics::builder_transaction_events_dropped(event_type_label, "write")
+            BuilderMetrics::builder_transaction_events_dropped(event_type.to_string(), "write")
                 .increment(1);
             warn!(
                 target: "payload_builder",
                 error = %err,
                 event_type = %event_type,
                 tx_hash = ?tx_hash,
-                "failed to enqueue builder transaction event"
-            );
-        }
-    }
-}
-
-/// Emits one builder payload event if a sink is configured.
-///
-/// `data` is lazy so disabled writers skip hot-path payload construction.
-pub(crate) fn emit_builder_payload_event<D, F>(
-    ctx: BuilderTransactionEventContext,
-    event_type: TransactionEventType,
-    data: F,
-) where
-    D: Serialize,
-    F: FnOnce() -> D,
-{
-    if GlobalTransactionEventWriter::get().is_none() {
-        return;
-    }
-
-    let event_type_label = event_type.to_string();
-    let data =
-        serialize_builder_event_data(BuilderEventData { context: ctx.event_data(), event: data() });
-
-    match transaction_event!(
-        producer: TransactionEventProducer::BaseBuilder,
-        event_type: event_type,
-        maybe_block_hash: ctx.block_hash,
-        block_number: ctx.block_number,
-        payload_id: ctx.payload_id,
-        id: {
-            "flashblock_index" => ctx.flashblock_index.map(|index| index.to_string()).unwrap_or_default(),
-        },
-        data: data,
-    ) {
-        Ok(TransactionEventEmitOutcome::Emitted) => {
-            BuilderMetrics::builder_transaction_events_emitted(event_type_label).increment(1);
-        }
-        Ok(TransactionEventEmitOutcome::NotConfigured) => {}
-        Err(err) => {
-            BuilderMetrics::builder_transaction_events_dropped(event_type_label, "write")
-                .increment(1);
-            warn!(
-                target: "payload_builder",
-                error = %err,
-                event_type = %event_type,
                 "failed to enqueue builder transaction event"
             );
         }

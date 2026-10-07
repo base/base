@@ -1,6 +1,9 @@
 //! Transaction event emission helpers and process-global writer access.
 
-use std::sync::{Mutex, OnceLock};
+use std::{
+    sync::{Mutex, OnceLock},
+    time::Instant,
+};
 
 use alloy_primitives::{B256, TxHash};
 use chrono::Utc;
@@ -8,8 +11,8 @@ use serde_json::{Map, Value};
 use tracing::debug;
 
 use crate::{
-    EventIdBuilder, TransactionEvent, TransactionEventProducer, TransactionEventType,
-    TransactionEventWriter, TransactionEventWriterConfig, WriteEventError,
+    EventIdBuilder, TransactionEvent, TransactionEventEmissionStats, TransactionEventProducer,
+    TransactionEventType, TransactionEventWriter, TransactionEventWriterConfig, WriteEventError,
 };
 
 static GLOBAL_TRANSACTION_EVENT_WRITER: OnceLock<TransactionEventWriter> = OnceLock::new();
@@ -236,9 +239,41 @@ impl TransactionEventBuilder {
         };
         self.emit_to(writer)
     }
+
+    /// Builds and emits one event through `writer`, recording producer-thread cost.
+    ///
+    /// Returns [`TransactionEventEmitOutcome::NotConfigured`] without calling
+    /// `build` when `writer` is `None`. Otherwise the time spent in `build`,
+    /// validation, serialization, and enqueueing is added to the calling thread's
+    /// [`TransactionEventEmissionStats`], whether or not the writer accepts the
+    /// event. This is the shared emission path behind
+    /// [`transaction_event!`](crate::transaction_event); producers with their own
+    /// payload construction should do that work inside `build` so it is measured.
+    pub fn emit_with(
+        writer: Option<&TransactionEventWriter>,
+        producer: TransactionEventProducer,
+        event_type: TransactionEventType,
+        build: impl FnOnce(Self) -> Self,
+    ) -> Result<TransactionEventEmitOutcome, WriteEventError> {
+        let Some(writer) = writer else {
+            return Ok(TransactionEventEmitOutcome::NotConfigured);
+        };
+        let start = Instant::now();
+        let result = build(Self::new(producer, event_type)).emit_to(writer);
+        TransactionEventEmissionStats::record(start.elapsed());
+        result
+    }
 }
 
-/// Emits a transaction event through the process-global writer.
+/// Emits a transaction event through the process-global writer, or through an
+/// explicit `writer: Option<&TransactionEventWriter>` when one is given.
+///
+/// All field and data expressions are evaluated lazily inside
+/// [`TransactionEventBuilder::emit_with`], so they cost nothing when no writer is
+/// configured and are included in [`TransactionEventEmissionStats`] timing when
+/// one is.
+///
+/// [`TransactionEventEmissionStats`]: crate::TransactionEventEmissionStats
 #[macro_export]
 macro_rules! transaction_event {
     (
@@ -256,18 +291,24 @@ macro_rules! transaction_event {
         $(, data: { $( $data_name:expr => $data_value:expr ),* $(,)? })?
         $(,)?
     ) => {{
-        let builder = $crate::TransactionEventBuilder::new($producer, $event_type)
-            $(.tx_hash($tx_hash))?
-            $(.maybe_tx_hash($maybe_tx_hash))?
-            $(.block_hash($block_hash))?
-            $(.maybe_block_hash($maybe_block_hash))?
-            $(.block_number($block_number))?
-            $(.maybe_block_number($maybe_block_number))?
-            $(.payload_id($payload_id))?
-            $(.request_id($request_id))?
-            $($(.id_part($id_name, $id_value))*)?
-            $($(.data_field($data_name, $crate::__private::json!($data_value)))*)?;
-        builder.emit_global()
+        $crate::TransactionEventBuilder::emit_with(
+            $crate::GlobalTransactionEventWriter::get(),
+            $producer,
+            $event_type,
+            |builder| {
+                builder
+                    $(.tx_hash($tx_hash))?
+                    $(.maybe_tx_hash($maybe_tx_hash))?
+                    $(.block_hash($block_hash))?
+                    $(.maybe_block_hash($maybe_block_hash))?
+                    $(.block_number($block_number))?
+                    $(.maybe_block_number($maybe_block_number))?
+                    $(.payload_id($payload_id))?
+                    $(.request_id($request_id))?
+                    $($(.id_part($id_name, $id_value))*)?
+                    $($(.data_field($data_name, $crate::__private::json!($data_value)))*)?
+            },
+        )
     }};
     (
         producer: $producer:expr,
@@ -284,18 +325,24 @@ macro_rules! transaction_event {
         , data: $data:expr
         $(,)?
     ) => {{
-        let builder = $crate::TransactionEventBuilder::new($producer, $event_type)
-            $(.tx_hash($tx_hash))?
-            $(.maybe_tx_hash($maybe_tx_hash))?
-            $(.block_hash($block_hash))?
-            $(.maybe_block_hash($maybe_block_hash))?
-            $(.block_number($block_number))?
-            $(.maybe_block_number($maybe_block_number))?
-            $(.payload_id($payload_id))?
-            $(.request_id($request_id))?
-            $($(.id_part($id_name, $id_value))*)?
-            .data($data);
-        builder.emit_global()
+        $crate::TransactionEventBuilder::emit_with(
+            $crate::GlobalTransactionEventWriter::get(),
+            $producer,
+            $event_type,
+            |builder| {
+                builder
+                    $(.tx_hash($tx_hash))?
+                    $(.maybe_tx_hash($maybe_tx_hash))?
+                    $(.block_hash($block_hash))?
+                    $(.maybe_block_hash($maybe_block_hash))?
+                    $(.block_number($block_number))?
+                    $(.maybe_block_number($maybe_block_number))?
+                    $(.payload_id($payload_id))?
+                    $(.request_id($request_id))?
+                    $($(.id_part($id_name, $id_value))*)?
+                    .data($data)
+            },
+        )
     }};
     (
         writer: $writer:expr,
@@ -313,21 +360,24 @@ macro_rules! transaction_event {
         $(, data: { $( $data_name:expr => $data_value:expr ),* $(,)? })?
         $(,)?
     ) => {{
-        let builder = $crate::TransactionEventBuilder::new($producer, $event_type)
-            $(.tx_hash($tx_hash))?
-            $(.maybe_tx_hash($maybe_tx_hash))?
-            $(.block_hash($block_hash))?
-            $(.maybe_block_hash($maybe_block_hash))?
-            $(.block_number($block_number))?
-            $(.maybe_block_number($maybe_block_number))?
-            $(.payload_id($payload_id))?
-            $(.request_id($request_id))?
-            $($(.id_part($id_name, $id_value))*)?
-            $($(.data_field($data_name, $crate::__private::json!($data_value)))*)?;
-        match $writer {
-            Some(writer) => builder.emit_to(writer),
-            None => Ok($crate::TransactionEventEmitOutcome::NotConfigured),
-        }
+        $crate::TransactionEventBuilder::emit_with(
+            $writer,
+            $producer,
+            $event_type,
+            |builder| {
+                builder
+                    $(.tx_hash($tx_hash))?
+                    $(.maybe_tx_hash($maybe_tx_hash))?
+                    $(.block_hash($block_hash))?
+                    $(.maybe_block_hash($maybe_block_hash))?
+                    $(.block_number($block_number))?
+                    $(.maybe_block_number($maybe_block_number))?
+                    $(.payload_id($payload_id))?
+                    $(.request_id($request_id))?
+                    $($(.id_part($id_name, $id_value))*)?
+                    $($(.data_field($data_name, $crate::__private::json!($data_value)))*)?
+            },
+        )
     }};
     (
         writer: $writer:expr,
@@ -345,21 +395,24 @@ macro_rules! transaction_event {
         , data: $data:expr
         $(,)?
     ) => {{
-        let builder = $crate::TransactionEventBuilder::new($producer, $event_type)
-            $(.tx_hash($tx_hash))?
-            $(.maybe_tx_hash($maybe_tx_hash))?
-            $(.block_hash($block_hash))?
-            $(.maybe_block_hash($maybe_block_hash))?
-            $(.block_number($block_number))?
-            $(.maybe_block_number($maybe_block_number))?
-            $(.payload_id($payload_id))?
-            $(.request_id($request_id))?
-            $($(.id_part($id_name, $id_value))*)?
-            .data($data);
-        match $writer {
-            Some(writer) => builder.emit_to(writer),
-            None => Ok($crate::TransactionEventEmitOutcome::NotConfigured),
-        }
+        $crate::TransactionEventBuilder::emit_with(
+            $writer,
+            $producer,
+            $event_type,
+            |builder| {
+                builder
+                    $(.tx_hash($tx_hash))?
+                    $(.maybe_tx_hash($maybe_tx_hash))?
+                    $(.block_hash($block_hash))?
+                    $(.maybe_block_hash($maybe_block_hash))?
+                    $(.block_number($block_number))?
+                    $(.maybe_block_number($maybe_block_number))?
+                    $(.payload_id($payload_id))?
+                    $(.request_id($request_id))?
+                    $($(.id_part($id_name, $id_value))*)?
+                    .data($data)
+            },
+        )
     }};
 }
 
@@ -372,8 +425,8 @@ mod tests {
 
     use crate::{
         DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventBuilder,
-        TransactionEventEmitOutcome, TransactionEventProducer, TransactionEventType,
-        TransactionEventWriter, TransactionEventWriterConfig,
+        TransactionEventEmissionStats, TransactionEventEmitOutcome, TransactionEventProducer,
+        TransactionEventType, TransactionEventWriter, TransactionEventWriterConfig,
     };
 
     fn disabled_writer() -> TransactionEventWriter {
@@ -491,6 +544,56 @@ mod tests {
         );
 
         assert_eq!(result.unwrap(), TransactionEventEmitOutcome::NotConfigured);
+    }
+
+    #[test]
+    fn macro_skips_argument_evaluation_without_a_writer() {
+        let mut evaluated = false;
+
+        let result = transaction_event!(
+            writer: Option::<&TransactionEventWriter>::None,
+            producer: TransactionEventProducer::BaseRethNode,
+            event_type: TransactionEventType::Pending,
+            tx_hash: {
+                evaluated = true;
+                TxHash::repeat_byte(0x11)
+            },
+        );
+
+        assert_eq!(result.unwrap(), TransactionEventEmitOutcome::NotConfigured);
+        assert!(!evaluated);
+    }
+
+    #[test]
+    fn emit_with_records_attempts_even_when_the_writer_rejects() {
+        let writer = disabled_writer();
+        let before = TransactionEventEmissionStats::current_thread();
+
+        let result = TransactionEventBuilder::emit_with(
+            Some(&writer),
+            TransactionEventProducer::BaseRethNode,
+            TransactionEventType::Pending,
+            |builder| builder.tx_hash(TxHash::repeat_byte(0x11)),
+        );
+
+        assert!(result.is_err());
+        let delta = TransactionEventEmissionStats::current_thread().since(before);
+        assert_eq!(delta.attempts, 1);
+    }
+
+    #[test]
+    fn emit_with_does_not_record_without_a_writer() {
+        let before = TransactionEventEmissionStats::current_thread();
+
+        let result = TransactionEventBuilder::emit_with(
+            None,
+            TransactionEventProducer::BaseRethNode,
+            TransactionEventType::Pending,
+            |builder| builder,
+        );
+
+        assert_eq!(result.unwrap(), TransactionEventEmitOutcome::NotConfigured);
+        assert_eq!(TransactionEventEmissionStats::current_thread().since(before).attempts, 0);
     }
 
     #[test]

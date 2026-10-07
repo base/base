@@ -28,6 +28,12 @@ tracing-appender.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+criterion.workspace = true
+tracing-subscriber = { workspace = true, features = ["json"] }
+
+[[bench]]
+name = "emit"
+harness = false
 
 [features]
 default = [ "metrics" ]
