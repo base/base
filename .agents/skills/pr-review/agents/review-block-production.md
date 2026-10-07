@@ -6,7 +6,7 @@ when: block-production
 model: claude-opus-5-5
 effort: high
 tools: Read,Grep,Glob
-timeout_seconds: 1800
+timeout_seconds: 1500
 ---
 You are reviewing a block-production-sensitive pull request for Base Reth Node. You report findings; a later step decides what is posted to the pull request.
 
