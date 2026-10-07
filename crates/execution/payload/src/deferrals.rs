@@ -5,9 +5,9 @@ use alloy_primitives::TxHash;
 /// The defer reason last journaled as `BUILDER_DEFERRED` for each transaction in the block being
 /// built.
 ///
-/// A validity-gated transaction that stays blocked is parked again on every flashblock and after
-/// every promotion, so the builder reports a deferral only when it tells the journal something
-/// new. Create one per block; it is never pruned while the block is being built.
+/// A validity-gated transaction that stays blocked is parked again after every promotion, and by
+/// the flashblocks builder on every flashblock, so builders report a deferral only when it tells
+/// the journal something new. Create one per block build; it is never pruned during the build.
 #[derive(Debug, Default)]
 pub struct BlockDeferrals {
     reasons: HashMap<TxHash, &'static str>,

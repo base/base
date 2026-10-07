@@ -238,7 +238,7 @@ journal and remains visible through logs and metrics.
 
 Builder:
 
-- `BUILDER_CONSIDERED` (native builder only)
+- `BUILDER_CONSIDERED` (retired; no longer emitted)
 - `BUILDER_ACCEPTED`
 - `BUILDER_REJECTED`
 - `BUILDER_DEFERRED`
@@ -253,14 +253,17 @@ Builder caveat: `BUILDER_ACCEPTED`, `BUILDER_REJECTED`, `BUILDER_DEFERRED`,
 and `BUILDER_EXPIRED` are emitted per payload-building attempt and include
 `payload_id`, `block_number`, and `flashblock_index` when applicable. The same
 transaction can therefore produce multiple decision events across flashblocks.
-The flashblocks builder does not emit `BUILDER_CONSIDERED`: every candidate
-gets one of the decision events above, which carries the same budget and
-position fields. Only the native builder emits it, for validity-gated
-candidates. A parked transaction is parked again on every later flashblock and
-after every promote-and-repark, but the flashblocks builder emits
-`BUILDER_DEFERRED` only the first time it defers a transaction in a block and
-again when the `defer_reason` changes; its `flashblock_index` and
-`ordering_position` are those of that deferral. Reindexing an already-parked
+Neither builder emits `BUILDER_CONSIDERED`: every candidate gets one of the
+decision events above, which carries the same budget and position fields. The
+native builder journals only validity-gated candidates; a candidate whose
+predicates pass but which is then skipped (block limits, resource metering,
+coinbase tip, nonce or EVM validation) gets `BUILDER_REJECTED`. A parked
+transaction is parked again on every later flashblock and after every
+promote-and-repark, but both builders emit `BUILDER_DEFERRED` only the first
+time they defer a transaction in a block build and again when the
+`defer_reason` changes; its `flashblock_index` and `ordering_position` are
+those of that deferral. The native builder tracks this per build attempt, so
+pre-Denim rebuilds of the same payload report a deferral again. Reindexing an already-parked
 transaction when its blocker changes does not emit another
 `BUILDER_DEFERRED`. `BUILDER_EXPIRED` is the terminal discard for builder-side
 windows that can never become valid again, such as an expired bundle validity

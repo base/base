@@ -2,15 +2,12 @@
 
 mod best_txs;
 pub use base_execution_payload_builder::{
-    FLOW_STANDARD, FLOW_VALIDITY, InclusionFlow, InclusionTracker, ParkableBestPayloadTransactions,
-    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadTransactionInvalidated,
-    PredicateLoadTracker, PredicateReadRecorder, StateChangeEffects, ValidityPredicateEvaluation,
-    ValidityPredicateKey,
+    BlockDeferrals, FLOW_STANDARD, FLOW_VALIDITY, InclusionFlow, InclusionTracker,
+    ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
+    PayloadTransactionInvalidated, PredicateLoadTracker, PredicateReadRecorder, StateChangeEffects,
+    ValidityPredicateEvaluation, ValidityPredicateKey,
 };
 pub use best_txs::BestFlashblocksTxs;
-
-mod deferrals;
-pub use deferrals::BlockDeferrals;
 
 mod deadline;
 pub use deadline::PayloadJobDeadline;
