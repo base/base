@@ -54,7 +54,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
 use crate::{
-    BlockDeferrals, BuilderConfig, BuilderMetrics, ExecutionInfo, PayloadBuilder, ResourceLimits,
+    BlockDeferrals, BlockRejections, BuilderConfig, BuilderMetrics, ExecutionInfo, PayloadBuilder,
+    ResourceLimits,
     flashblocks::{
         BasePayloadBuilderCtx, BestFlashblocksTxs, FlashblocksExtraCtx,
         ParkableBestPayloadTransactions, generator::BuildArguments,
@@ -466,6 +467,10 @@ where
         // Highest executed nonce per sender, updated incrementally per flashblock.
         let mut executed_sender_nonces: HashMap<Address, u64> = HashMap::default();
         let mut deferrals = BlockDeferrals::default();
+        // Per-block dedupe of `BUILDER_REJECTED`. The fallback block at flashblock index 0 is
+        // built from pre-steps only, so it never selects from the pool and every pool rejection
+        // in this block is recorded here. A new block build starts an empty journal.
+        let mut rejections = BlockRejections::default();
 
         // Process flashblocks in a blocking loop
         loop {
@@ -499,6 +504,7 @@ where
                     &ctx,
                     &mut info,
                     &mut deferrals,
+                    &mut rejections,
                     &mut state,
                     &mut best_txs,
                     &block_cancel,
@@ -558,6 +564,7 @@ where
         ctx: &BasePayloadBuilderCtx,
         info: &mut ExecutionInfo,
         deferrals: &mut BlockDeferrals,
+        rejections: &mut BlockRejections,
         state: &mut State<DB>,
         best_txs: &mut NextBestFlashblocksTxs<Pool>,
         block_cancel: &CancellationToken,
@@ -642,7 +649,7 @@ where
             block_uncompressed_size_limit: ctx.builder_config.max_uncompressed_block_size,
         };
         let diag = ctx
-            .execute_best_transactions(info, deferrals, state, best_txs, &limits)
+            .execute_best_transactions(info, deferrals, rejections, state, best_txs, &limits)
             .wrap_err("failed to execute best transactions")?;
 
         // Extract last transactions

@@ -45,9 +45,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Level, debug, span, trace, warn};
 
 use crate::{
-    BlockDeferrals, BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded,
-    ParkedPredicateIndex, PayloadTxsBounds, PredicateReadRecorder, ResourceLimits,
-    StateChangeEffects, TxResources, TxnExecutionError, TxnOutcome, ValidityPredicateEvaluation,
+    BlockDeferrals, BlockRejections, BuilderConfig, BuilderMetrics, ExecutionInfo,
+    ExecutionMeteringLimitExceeded, ParkedPredicateIndex, PayloadTxsBounds, PredicateReadRecorder,
+    ResourceLimits, StateChangeEffects, TxResources, TxnExecutionError, TxnOutcome,
+    ValidityPredicateEvaluation,
     transaction_events::{
         BuilderAcceptedEventData, BuilderDeferredEventData, BuilderExpiredEventData,
         BuilderRejectedEventData, BuilderTransactionEventContext, emit_builder_transaction_event,
@@ -658,23 +659,60 @@ impl BasePayloadBuilderCtx {
     }
 
     /// Emits rejected, counts an "other" rejection, and closes the current iterator candidate.
+    ///
+    /// The rejection event is emitted only when `rejections` has not already recorded the same
+    /// reason for this transaction in the block; the rejection count and skip still happen every
+    /// time.
     fn reject_current<B: PayloadTxsBounds>(
         &self,
         best_txs: &mut B,
         diag: &mut FlashblockDiagnostics,
+        rejections: &mut BlockRejections,
         cx: &DecisionContext<'_>,
         tx: &B::Transaction,
         ordering_position: u64,
     ) {
-        self.emit_builder_decision_event(
-            cx.payload_id,
-            TransactionEventType::BuilderRejected,
-            *tx.hash(),
-            Some(ordering_position),
-            || BuilderRejectedEventData::new(cx.reason, cx.detail, false, cx.info, cx.limits, None),
-        );
+        if rejections.record(*tx.hash(), cx.reason) {
+            self.emit_builder_decision_event(
+                cx.payload_id,
+                TransactionEventType::BuilderRejected,
+                *tx.hash(),
+                Some(ordering_position),
+                || {
+                    BuilderRejectedEventData::new(
+                        cx.reason, cx.detail, false, cx.info, cx.limits, None,
+                    )
+                },
+            );
+        }
         diag.txs_rejected_other += 1;
         Self::skip_pooled_current(best_txs, tx);
+    }
+
+    /// Emits a `BUILDER_REJECTED` event built by `data` unless `rejections` already recorded the
+    /// same reason for this transaction in the block. The rejection decision and the caller's skip
+    /// still happen every time.
+    fn reject_once<F>(
+        &self,
+        rejections: &mut BlockRejections,
+        payload_id: &str,
+        tx_hash: TxHash,
+        reason: &'static str,
+        ordering_position: u64,
+        data: F,
+    ) where
+        F: FnOnce() -> BuilderRejectedEventData,
+    {
+        if !rejections.record(tx_hash, reason) {
+            return;
+        }
+        self.emit_builder_decision_event(
+            payload_id,
+            TransactionEventType::BuilderRejected,
+            tx_hash,
+            Some(ordering_position),
+            data,
+        );
     }
 
     /// Emits expired, records a permanent rejection, and closes the current iterator candidate.
@@ -729,12 +767,14 @@ impl BasePayloadBuilderCtx {
 
     /// Executes the given best transactions and updates the execution info.
     ///
-    /// Returns diagnostics summarizing transaction selection for the flashblock. `deferrals`
-    /// must live for the whole block so deferral events are not repeated across flashblocks.
+    /// Returns diagnostics summarizing transaction selection for the flashblock. `deferrals` and
+    /// `rejections` must live for the whole block so deferral and rejection events are not
+    /// repeated across flashblocks.
     pub fn execute_best_transactions(
         &self,
         info: &mut ExecutionInfo,
         deferrals: &mut BlockDeferrals,
+        rejections: &mut BlockRejections,
         db: &mut State<impl Database>,
         best_txs: &mut impl PayloadTxsBounds,
         limits: &ResourceLimits,
@@ -916,7 +956,14 @@ impl BasePayloadBuilderCtx {
                 // are dropped rather than parked; state mismatches rely on the block expiry.
                 if predicate_read_failed {
                     // A read failure is only terminal for this scan, so it is not cached.
-                    self.reject_current(best_txs, &mut diag, &cx, &tx, ordering_position);
+                    self.reject_current(
+                        best_txs,
+                        &mut diag,
+                        rejections,
+                        &cx,
+                        &tx,
+                        ordering_position,
+                    );
                 } else if predicate_expired {
                     // A passed position bound can never be satisfied in any later
                     // block, so an expired predicate is permanently terminal:
@@ -961,6 +1008,7 @@ impl BasePayloadBuilderCtx {
                 self.reject_current(
                     best_txs,
                     &mut diag,
+                    rejections,
                     &DecisionContext {
                         payload_id: &payload_id,
                         info,
@@ -994,6 +1042,7 @@ impl BasePayloadBuilderCtx {
                         self.reject_current(
                             best_txs,
                             &mut diag,
+                            rejections,
                             &DecisionContext {
                                 payload_id: &payload_id,
                                 info,
@@ -1019,6 +1068,7 @@ impl BasePayloadBuilderCtx {
                 self.reject_current(
                     best_txs,
                     &mut diag,
+                    rejections,
                     &DecisionContext {
                         payload_id: &payload_id,
                         info,
@@ -1071,11 +1121,12 @@ impl BasePayloadBuilderCtx {
                         execution_time_us: None,
                         uncompressed_size: tx_uncompressed_size,
                     };
-                    self.emit_builder_decision_event(
+                    self.reject_once(
+                        rejections,
                         &payload_id,
-                        TransactionEventType::BuilderRejected,
                         tx_hash,
-                        Some(ordering_position),
+                        rejection_reason_code(&err),
+                        ordering_position,
                         || {
                             BuilderRejectedEventData::from_error(
                                 &err,
@@ -1138,11 +1189,12 @@ impl BasePayloadBuilderCtx {
                             diag.permanently_rejected_txs.push(tx_hash);
                         }
 
-                        self.emit_builder_decision_event(
+                        self.reject_once(
+                            rejections,
                             &payload_id,
-                            TransactionEventType::BuilderRejected,
                             tx_hash,
-                            Some(ordering_position),
+                            rejection_reason_code(&err),
+                            ordering_position,
                             || {
                                 BuilderRejectedEventData::from_error(
                                     &err,
@@ -1168,11 +1220,12 @@ impl BasePayloadBuilderCtx {
                         diag.permanently_rejected_txs.push(tx_hash);
                     }
 
-                    self.emit_builder_decision_event(
+                    self.reject_once(
+                        rejections,
                         &payload_id,
-                        TransactionEventType::BuilderRejected,
                         tx_hash,
-                        Some(ordering_position),
+                        rejection_reason_code(&err),
+                        ordering_position,
                         || {
                             BuilderRejectedEventData::from_error(
                                 &err,
@@ -1198,11 +1251,12 @@ impl BasePayloadBuilderCtx {
                 diag.record_rejection(&err);
                 let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                 record_rejected_tx_priority_fee(&err, priority_fee);
-                self.emit_builder_decision_event(
+                self.reject_once(
+                    rejections,
                     &payload_id,
-                    TransactionEventType::BuilderRejected,
                     tx_hash,
-                    Some(ordering_position),
+                    rejection_reason_code(&err),
+                    ordering_position,
                     || {
                         BuilderRejectedEventData::from_error(
                             &err,
@@ -1237,11 +1291,12 @@ impl BasePayloadBuilderCtx {
                             let priority_fee =
                                 tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                             record_rejected_tx_priority_fee(&diag_err, priority_fee);
-                            self.emit_builder_decision_event(
+                            self.reject_once(
+                                rejections,
                                 &payload_id,
-                                TransactionEventType::BuilderRejected,
                                 tx_hash,
-                                Some(ordering_position),
+                                rejection_reason_code(&diag_err),
+                                ordering_position,
                                 || {
                                     BuilderRejectedEventData::from_error(
                                         &diag_err,
@@ -1262,11 +1317,12 @@ impl BasePayloadBuilderCtx {
                             let priority_fee =
                                 tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                             record_rejected_tx_priority_fee(&diag_err, priority_fee);
-                            self.emit_builder_decision_event(
+                            self.reject_once(
+                                rejections,
                                 &payload_id,
-                                TransactionEventType::BuilderRejected,
                                 tx_hash,
-                                Some(ordering_position),
+                                rejection_reason_code(&diag_err),
+                                ordering_position,
                                 || {
                                     BuilderRejectedEventData::from_error(
                                         &diag_err,
@@ -1346,11 +1402,12 @@ impl BasePayloadBuilderCtx {
                 if err.is_permanent() {
                     diag.permanently_rejected_txs.push(tx_hash);
                 }
-                self.emit_builder_decision_event(
+                self.reject_once(
+                    rejections,
                     &payload_id,
-                    TransactionEventType::BuilderRejected,
                     tx_hash,
-                    Some(ordering_position),
+                    rejection_reason_code(&err),
+                    ordering_position,
                     || {
                         BuilderRejectedEventData::from_error(
                             &err,
@@ -1677,6 +1734,7 @@ mod tests {
     use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_txpool::BasePooledTransaction;
+    use base_observability_events::TransactionEventCapture;
     use reth_chainspec::ChainSpec;
     use reth_payload_util::PayloadTransactions;
     use reth_primitives_traits::{Recovered, SealedHeader, WithEncoded};
@@ -1863,6 +1921,7 @@ mod tests {
             .execute_best_transactions(
                 &mut info,
                 &mut BlockDeferrals::default(),
+                &mut BlockRejections::default(),
                 &mut state,
                 &mut best_txs,
                 &limits,
@@ -1892,6 +1951,7 @@ mod tests {
             .execute_best_transactions(
                 &mut info,
                 &mut BlockDeferrals::default(),
+                &mut BlockRejections::default(),
                 &mut state,
                 &mut best_txs,
                 &limits,
@@ -2081,5 +2141,136 @@ mod tests {
             .expect("invalid pre-include is skipped when no_tx_pool=false");
         assert_eq!(info.cumulative_gas_used, 0, "skipped tx should not consume gas");
         assert!(info.receipts.is_empty(), "skipped tx should not produce a receipt");
+    }
+
+    /// Yields the same over-limit transaction once per call and counts each skip without
+    /// cancelling, so two consecutive calls model the same transaction being re-yielded by the
+    /// refreshed pool iterator on the next flashblock.
+    #[derive(Debug)]
+    struct RepeatingRejectionTransactions {
+        transaction: BasePooledTransaction,
+        remaining: usize,
+        rejections: usize,
+    }
+
+    impl RepeatingRejectionTransactions {
+        fn new(transaction: BasePooledTransaction, remaining: usize) -> Self {
+            Self { transaction, remaining, rejections: 0 }
+        }
+    }
+
+    impl PayloadTransactions for RepeatingRejectionTransactions {
+        type Transaction = BasePooledTransaction;
+
+        fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
+            if self.remaining == 0 {
+                return None;
+            }
+            self.remaining -= 1;
+            Some(self.transaction.clone())
+        }
+
+        fn mark_invalid(&mut self, _sender: Address, _nonce: u64) {
+            self.rejections += 1;
+        }
+    }
+
+    impl RestingPayloadTransactions for RepeatingRejectionTransactions {}
+
+    impl ParkablePayloadTransactions for RepeatingRejectionTransactions {
+        fn park_current(&mut self) {}
+
+        fn mark_current_committed(&mut self) {}
+
+        fn promote(&mut self, _transaction_hash: TxHash) -> bool {
+            false
+        }
+
+        fn discard_parked(&mut self, _transaction_hash: TxHash) -> bool {
+            false
+        }
+    }
+
+    /// A transaction that overflows a flashblock's gas budget is re-yielded and re-rejected on
+    /// every later flashblock. The rejection decision and the pool skip must happen each time, but
+    /// `BUILDER_REJECTED` is emitted only once per (transaction, reason) per block. The next block
+    /// build starts an empty journal, so it reports the rejection again.
+    #[test]
+    fn repeated_gas_limit_rejection_emits_once_per_block() {
+        let capture = TransactionEventCapture::install();
+        let ctx = test_builder_context();
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let mut info = ExecutionInfo::default();
+        let limits = ResourceLimits { block_gas_limit: 0, ..Default::default() };
+        let over_limit = pooled_test_transaction();
+        let over_limit_hash = *over_limit.hash();
+        let mut rejections = BlockRejections::default();
+
+        let mut flashblock_n = RepeatingRejectionTransactions::new(over_limit.clone(), 1);
+        let first = ctx
+            .execute_best_transactions(
+                &mut info,
+                &mut BlockDeferrals::default(),
+                &mut rejections,
+                &mut state,
+                &mut flashblock_n,
+                &limits,
+            )
+            .expect("flashblock N selection should succeed");
+
+        // The next flashblock's refreshed iterator yields the same overflowing transaction again.
+        let mut flashblock_n1 = RepeatingRejectionTransactions::new(over_limit.clone(), 1);
+        let second = ctx
+            .execute_best_transactions(
+                &mut info,
+                &mut BlockDeferrals::default(),
+                &mut rejections,
+                &mut state,
+                &mut flashblock_n1,
+                &limits,
+            )
+            .expect("flashblock N + 1 selection should succeed");
+
+        // A new block build starts an empty journal, so the rejection is reported again.
+        let mut next_block_rejections = BlockRejections::default();
+        let mut flashblock_next_block = RepeatingRejectionTransactions::new(over_limit, 1);
+        let third = ctx
+            .execute_best_transactions(
+                &mut info,
+                &mut BlockDeferrals::default(),
+                &mut next_block_rejections,
+                &mut state,
+                &mut flashblock_next_block,
+                &limits,
+            )
+            .expect("the next block's selection should succeed");
+        assert_eq!(third.txs_rejected_gas, 1, "the next block must still reject the transaction");
+        assert_eq!(flashblock_next_block.rejections, 1, "the next block must still skip it");
+
+        assert_eq!(first.txs_rejected_gas, 1, "flashblock N must still reject the transaction");
+        assert_eq!(second.txs_rejected_gas, 1, "flashblock N + 1 must still reject it");
+        assert_eq!(flashblock_n.rejections, 1, "flashblock N must still skip the transaction");
+        assert_eq!(flashblock_n1.rejections, 1, "flashblock N + 1 must still skip it");
+
+        let rejected: Vec<_> = capture
+            .events()
+            .into_iter()
+            .filter(|event| {
+                event.tx_hash == Some(over_limit_hash)
+                    && event.event_type == TransactionEventType::BuilderRejected
+            })
+            .collect();
+        assert_eq!(
+            rejected.len(),
+            2,
+            "one BUILDER_REJECTED per (transaction, reason) per block, plus one for the next block"
+        );
+        for event in &rejected {
+            assert_eq!(
+                event.data.get("rejection_reason").and_then(|value| value.as_str()),
+                Some("transaction_gas_limit_exceeded")
+            );
+        }
     }
 }
