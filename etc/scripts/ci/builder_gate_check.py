@@ -10,7 +10,7 @@ above `max_marginal_instructions_per_deferral` all fail the gate.
 Instruction counts are deterministic for a given toolchain, dependency set, and target,
 so a count above budget reflects a code change. `--pin` prints a budget file re-pinned
 from the measured counts instead of checking, for intentional budget changes and
-toolchain bumps (see docs/builder-performance-gate.md).
+toolchain bumps (see docs/guides/BUILDER_PERFORMANCE_GATE.md).
 """
 
 from __future__ import annotations
@@ -116,7 +116,7 @@ class BuilderGate:
                 "",
                 "If the increase is intended, re-pin with `etc/scripts/ci/builder_gate_check.py "
                 "--pin` and justify the new budget in the PR. See "
-                "`docs/builder-performance-gate.md`.",
+                "`docs/guides/BUILDER_PERFORMANCE_GATE.md`.",
             ]
         return "\n".join(lines) + "\n"
 
