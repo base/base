@@ -19,7 +19,8 @@ pub use contracts::*;
 pub use driver::*;
 pub use external::*;
 pub use flashblock_workload::{
-    FlashblockWorkload, FlashblockWorkloadBuilder, FlashblockWorkloadFixture, PredicateState,
+    FlashblockWorkload, FlashblockWorkloadBuilder, FlashblockWorkloadFixture, NativeBlockOutcome,
+    PredicateState,
 };
 pub use instance::*;
 use k256::sha2::{Digest, Sha256};
