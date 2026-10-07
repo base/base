@@ -14,8 +14,9 @@ workspace = true
 [dependencies]
 # ethereum
 alloy-eips.workspace = true
+alloy-sol-types.workspace = true
 alloy-consensus.workspace = true
-alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+alloy-primitives = { workspace = true, features = ["k256", "map-foldhash"] }
 
 # reth
 reth-evm.workspace = true
@@ -63,7 +64,6 @@ jsonrpsee = { workspace = true, features = ["http-client", "server", "macros"] }
 
 [dev-dependencies]
 alloy-signer.workspace = true
-alloy-sol-types.workspace = true
 alloy-signer-local.workspace = true
 reth-tasks.workspace = true
 base-test-utils.workspace = true

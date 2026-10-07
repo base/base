@@ -15,6 +15,8 @@ use crate::{
 pub struct BuilderApiExtensionConfig {
     /// Maximum number of validity predicates accepted per transaction.
     pub max_validity_predicates: usize,
+    /// Require sender-signed validity predicates at both builder ingress endpoints.
+    pub require_validity_signature: bool,
     /// Shadow-only validity injection configuration.
     pub shadow_validity: ShadowValidityConfig,
 }
@@ -22,7 +24,17 @@ pub struct BuilderApiExtensionConfig {
 impl BuilderApiExtensionConfig {
     /// Creates a builder RPC configuration.
     pub const fn new(max_validity_predicates: usize) -> Self {
-        Self { max_validity_predicates, shadow_validity: ShadowValidityConfig::disabled() }
+        Self {
+            max_validity_predicates,
+            require_validity_signature: false,
+            shadow_validity: ShadowValidityConfig::disabled(),
+        }
+    }
+
+    /// Enables default-off sender-signature enforcement.
+    pub const fn with_required_validity_signature(mut self, required: bool) -> Self {
+        self.require_validity_signature = required;
+        self
     }
 
     /// Enables the supplied shadow validity injection configuration.

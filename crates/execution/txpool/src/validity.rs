@@ -611,11 +611,14 @@ pub struct TransactionValidity {
         deserialize_with = "deserialize_bounded_predicates"
     )]
     pub validity: Vec<ValidityPredicate>,
+    /// EIP-712 authorization by the transaction sender, required when enforcement is enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validity_signature: Option<alloy_primitives::Signature>,
 }
 
 impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidity {
     fn is_empty(&self) -> bool {
-        self.validity.is_empty()
+        self.validity.is_empty() && self.validity_signature.is_none()
     }
 
     fn validate(&self, max_items: usize) -> Result<(), ExtensionError> {
@@ -629,7 +632,10 @@ impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidi
     }
 
     fn extract(tx: &ValidPoolTransaction<BasePooledTransaction>) -> Self {
-        Self { validity: tx.transaction.validity_predicates().to_vec() }
+        Self {
+            validity: tx.transaction.validity_predicates().to_vec(),
+            validity_signature: tx.transaction.validity_signature(),
+        }
     }
 
     /// Applies the predicates to the builder-inbound transaction.
@@ -644,7 +650,7 @@ impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidi
         for (index, predicate) in self.validity.iter().enumerate() {
             predicate.validate_params(index).map_err(|e| ExtensionError(e.to_string()))?;
         }
-        Ok(tx.with_validity_predicates(self.validity))
+        Ok(tx.with_validity(self))
     }
 }
 
@@ -993,7 +999,8 @@ mod tests {
             op: ValidityOperator::Equal,
             value: U256::from(2),
         }];
-        let extension = TransactionValidity { validity: expected.clone() };
+        let extension =
+            TransactionValidity { validity: expected.clone(), validity_signature: None };
 
         let transaction = extension.apply(transaction).unwrap();
 
@@ -1068,6 +1075,7 @@ mod tests {
         // Submitted state-first; stored timing-first.
         let extension = TransactionValidity {
             validity: vec![state_predicate.clone(), timing_predicate.clone()],
+            validity_signature: None,
         };
 
         let transaction = extension.apply(transaction).unwrap();
@@ -1082,7 +1090,8 @@ mod tests {
             op: ValidityOperator::Equal,
             value: U256::ZERO,
         };
-        let extension = TransactionValidity { validity: vec![predicate; 3] };
+        let extension =
+            TransactionValidity { validity: vec![predicate; 3], validity_signature: None };
 
         let error = extension.validate(2).unwrap_err();
 
@@ -1228,6 +1237,7 @@ mod tests {
                 op: ValidityOperator::Equal,
                 value: U256::from(0x100),
             }],
+            validity_signature: None,
         };
 
         let error = extension.apply(transaction).unwrap_err();
@@ -1258,6 +1268,7 @@ mod tests {
                 op: ValidityOperator::Equal,
                 value: U256::ZERO,
             }],
+            validity_signature: None,
         };
 
         let error = extension.apply(transaction).unwrap_err();

@@ -10,8 +10,8 @@ use base_builder_core::{BuilderApiExtension, BuilderApiExtensionConfig};
 use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_txpool::{
-    DEFAULT_MAX_VALIDITY_PREDICATES, NoExtensions, TransactionValidity, ValidatedTransaction,
-    ValidityOperator, ValidityPredicate,
+    BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, NoExtensions, TransactionValidity,
+    ValidatedTransaction, ValidityAuthorization, ValidityOperator, ValidityPredicate,
 };
 use base_node_runner::test_utils::TestHarness;
 use base_test_utils::Account;
@@ -19,6 +19,7 @@ use base_txpool_rpc::{
     SendRawTransactionValidityConfig, SendRawTransactionValidityExtension,
     SendRawTransactionValidityOptions,
 };
+use reth_transaction_pool::PoolTransaction;
 
 /// Sets up a test harness with the `BuilderApiExtension` installed.
 async fn setup(max_validity_predicates: usize) -> eyre::Result<(TestHarness, RpcClient)> {
@@ -49,12 +50,16 @@ fn create_deposit_tx() -> (Address, Bytes) {
 /// Sets up a test harness with builder insertion and public validity ingress.
 async fn setup_with_validity_ingress(
     max_validity_predicates: usize,
+    require_validity_signature: bool,
 ) -> eyre::Result<(TestHarness, RpcClient)> {
-    let config = BuilderApiExtensionConfig::new(max_validity_predicates).with_noop_metering();
+    let config = BuilderApiExtensionConfig::new(max_validity_predicates)
+        .with_required_validity_signature(require_validity_signature)
+        .with_noop_metering();
     let harness = TestHarness::builder()
         .with_ext::<BuilderApiExtension>(config)
         .with_ext::<SendRawTransactionValidityExtension>(SendRawTransactionValidityConfig {
             max_validity_predicates,
+            require_validity_signature,
             ..Default::default()
         })
         .build()
@@ -184,6 +189,7 @@ async fn test_validity_transactions_accepted() -> eyre::Result<()> {
                 op: ValidityOperator::Equal,
                 value: U256::ZERO,
             }],
+            validity_signature: None,
         },
     };
     let result: Result<(), _> = client.request("base_insertValidatedTransaction", (tx,)).await;
@@ -205,7 +211,7 @@ async fn test_validity_transactions_enforce_configured_limit() -> eyre::Result<(
         sender,
         raw,
         metering: None,
-        extensions: TransactionValidity { validity: vec![predicate; 2] },
+        extensions: TransactionValidity { validity: vec![predicate; 2], validity_signature: None },
     };
 
     let result: Result<(), _> =
@@ -221,7 +227,7 @@ async fn test_validity_transactions_enforce_configured_limit() -> eyre::Result<(
 #[tokio::test]
 async fn test_send_raw_transaction_validity_accepted() -> eyre::Result<()> {
     let (enabled_harness, enabled_client) =
-        setup_with_validity_ingress(DEFAULT_MAX_VALIDITY_PREDICATES).await?;
+        setup_with_validity_ingress(DEFAULT_MAX_VALIDITY_PREDICATES, false).await?;
     let enabled: Result<TxHash, _> = enabled_client
         .request(
             "base_sendRawTransactionValidity",
@@ -244,6 +250,7 @@ async fn test_send_raw_transaction_validity_accepted() -> eyre::Result<()> {
                             value: U256::from(31),
                         },
                     ],
+                    validity_signature: None,
                 },
             ),
         )
@@ -256,7 +263,7 @@ async fn test_send_raw_transaction_validity_accepted() -> eyre::Result<()> {
 /// Verifies public validity ingress enforces the builder's configured predicate limit.
 #[tokio::test]
 async fn test_send_raw_transaction_validity_enforces_configured_limit() -> eyre::Result<()> {
-    let (harness, client) = setup_with_validity_ingress(1).await?;
+    let (harness, client) = setup_with_validity_ingress(1, false).await?;
     let predicate = ValidityPredicate::Balance {
         address: Account::Alice.address(),
         op: ValidityOperator::Equal,
@@ -267,7 +274,10 @@ async fn test_send_raw_transaction_validity_enforces_configured_limit() -> eyre:
             "base_sendRawTransactionValidity",
             (
                 signed_eip1559_tx(harness.chain_id()),
-                SendRawTransactionValidityOptions { validity: vec![predicate; 2] },
+                SendRawTransactionValidityOptions {
+                    validity: vec![predicate; 2],
+                    validity_signature: None,
+                },
             ),
         )
         .await;
@@ -275,5 +285,60 @@ async fn test_send_raw_transaction_validity_enforces_configured_limit() -> eyre:
 
     assert!(error.to_string().contains("too many validity predicates"));
     assert!(error.to_string().contains("maximum 1"));
+    Ok(())
+}
+
+/// Both real builder RPC boundaries reject unsigned/tampered sidecars and admit user-signed predicates.
+#[tokio::test]
+async fn signed_predicates_required_at_both_builder_endpoints() -> eyre::Result<()> {
+    for forwarded in [false, true] {
+        let (harness, client) =
+            setup_with_validity_ingress(DEFAULT_MAX_VALIDITY_PREDICATES, true).await?;
+        let raw = signed_eip1559_tx(harness.chain_id());
+        let pooled: BasePooledTransaction = BasePooledTransaction::recover_raw_transaction(&raw)?;
+        let validity = vec![ValidityPredicate::BlockNumber {
+            op: ValidityOperator::LessThanOrEqual,
+            value: U256::from(31),
+        }];
+        let signature = Account::Alice.signer().sign_hash_sync(
+            &ValidityAuthorization::signing_hash(harness.chain_id(), *pooled.hash(), &validity),
+        )?;
+        let signed = TransactionValidity { validity, validity_signature: Some(signature) };
+        let mut unsigned = signed.clone();
+        unsigned.validity_signature = None;
+        let mut tampered = signed.clone();
+        tampered.validity.push(ValidityPredicate::Balance {
+            address: Account::Alice.address(),
+            op: ValidityOperator::GreaterThan,
+            value: U256::ZERO,
+        });
+        for (sidecar, authorized) in [(unsigned, false), (tampered, false), (signed, true)] {
+            let result = if forwarded {
+                let tx = ValidatedTransaction {
+                    sender: Account::Alice.address(),
+                    raw: raw.clone(),
+                    metering: None,
+                    extensions: sidecar,
+                };
+                client.request::<_, ()>("base_insertValidatedTransaction", (tx,)).await
+            } else {
+                let options = SendRawTransactionValidityOptions {
+                    validity: sidecar.validity,
+                    validity_signature: sidecar.validity_signature,
+                };
+                client
+                    .request::<_, TxHash>("base_sendRawTransactionValidity", (raw.clone(), options))
+                    .await
+                    .map(|_| ())
+            };
+            if authorized {
+                result?;
+            } else {
+                let error =
+                    result.expect_err("unauthorized predicates must never enter the real pool");
+                assert!(error.to_string().contains("signature"), "{error}");
+            }
+        }
+    }
     Ok(())
 }

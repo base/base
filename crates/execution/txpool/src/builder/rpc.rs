@@ -24,7 +24,7 @@ use tracing::debug;
 use super::metrics::Metrics as BuilderApiMetrics;
 use crate::{
     BasePooledTransaction, NoExtensions, PoolRejectionLabel, ValidatedTransaction,
-    ValidatedTransactionExtensions,
+    ValidatedTransactionExtensions, ValidityAuthorization,
 };
 
 /// Host name of this builder, part of the validated-insert event ID.
@@ -68,6 +68,7 @@ pub struct BuilderApiImpl<P, E = NoExtensions> {
     pool: P,
     accept_extensions: bool,
     max_extension_items: usize,
+    require_validity_signature: bool,
     metering_cache: Option<Arc<dyn InsertMetering>>,
     _extensions: PhantomData<E>,
 }
@@ -85,6 +86,7 @@ impl<P> BuilderApiImpl<P, NoExtensions> {
             pool,
             accept_extensions: false,
             max_extension_items: 0,
+            require_validity_signature: false,
             metering_cache: None,
             _extensions: PhantomData,
         }
@@ -106,9 +108,18 @@ impl<P, E> BuilderApiImpl<P, E> {
             pool,
             accept_extensions,
             max_extension_items,
+            require_validity_signature: false,
             metering_cache: None,
             _extensions: PhantomData,
         }
+    }
+
+    /// Requires sender authorization for every non-empty validity sidecar.
+    /// Disabled by default; signed sidecars are rejected until explicitly enabled.
+    #[must_use]
+    pub const fn with_required_validity_signature(mut self, required: bool) -> Self {
+        self.require_validity_signature = required;
+        self
     }
 
     /// Writes inbound metering into the builder cache after the pool accepts the tx.
@@ -169,6 +180,18 @@ where
         // Attach any extension data carried on the wire. This is a no-op for
         // `NoExtensions`, the default payload.
         let pool_tx = tx.extensions.apply(pool_tx).map_err(|e| {
+            BuilderApiMetrics::extension_errors().increment(1);
+            ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), e.to_string(), None::<()>)
+        })?;
+        // Re-check authorization at the builder boundary, including the actual envelope
+        // sender: forwarding metadata alone must never authorize predicates.
+        ValidityAuthorization::validate(
+            &pool_tx,
+            pool_tx.validity_predicates(),
+            pool_tx.validity_signature().as_ref(),
+            self.require_validity_signature,
+        )
+        .map_err(|e| {
             BuilderApiMetrics::extension_errors().increment(1);
             ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), e.to_string(), None::<()>)
         })?;
@@ -248,15 +271,107 @@ impl<P, E> BuilderApiImpl<P, E> {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use alloy_consensus::TxEip1559;
+    use alloy_consensus::{SignableTransaction, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, Bytes, Signature, TxHash, TxKind, U256};
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
     use base_bundles::MeterBundleResponse;
     use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
     use reth_transaction_pool::noop::NoopTransactionPool;
 
     use super::*;
-    use crate::{BasePooledTransaction, NoExtensions, ValidatedTransaction};
+    use crate::{
+        BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, NoExtensions, TransactionValidity,
+        ValidatedTransaction, ValidityOperator, ValidityPredicate,
+    };
+
+    fn signed_validity_transaction() -> ValidatedTransaction<TransactionValidity> {
+        let signer = PrivateKeySigner::random();
+        let tx = TxEip1559 { chain_id: 8453, gas_limit: 21_000, ..Default::default() };
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let signed =
+            BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip1559(tx), signature);
+        let validity = vec![ValidityPredicate::BlockNumber {
+            op: ValidityOperator::LessThanOrEqual,
+            value: U256::from(31),
+        }];
+        let signature = signer
+            .sign_hash_sync(&ValidityAuthorization::signing_hash(8453, *signed.hash(), &validity))
+            .unwrap();
+        ValidatedTransaction {
+            sender: signer.address(),
+            raw: signed.encoded_2718().into(),
+            metering: None,
+            extensions: TransactionValidity { validity, validity_signature: Some(signature) },
+        }
+    }
+
+    #[tokio::test]
+    async fn signed_validity_builder_enforces_flag_and_preserves_ordinary_transactions() {
+        let handler = BuilderApiImpl::<_, TransactionValidity>::with_extensions(
+            NoopTransactionPool::<BasePooledTransaction>::new(),
+            true,
+            DEFAULT_MAX_VALIDITY_PREDICATES,
+        )
+        .with_required_validity_signature(true);
+        let tx = signed_validity_transaction();
+        let error = handler.insert_validated_transaction(tx.clone()).await.unwrap_err();
+        assert!(
+            error.message().starts_with("pool rejected transaction:"),
+            "authorized predicates should reach pool insertion: {error}"
+        );
+        let mut unsigned = tx.clone();
+        unsigned.extensions.validity_signature = None;
+        let error = handler.insert_validated_transaction(unsigned).await.unwrap_err();
+        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+        assert!(error.message().contains("require a sender signature"));
+        let mut ordinary = tx;
+        ordinary.extensions = TransactionValidity::default();
+        let error = handler.insert_validated_transaction(ordinary).await.unwrap_err();
+        assert!(error.message().starts_with("pool rejected transaction:"));
+    }
+
+    #[tokio::test]
+    async fn signed_validity_builder_rejects_tampering_and_untrusted_sender() {
+        let handler = BuilderApiImpl::<_, TransactionValidity>::with_extensions(
+            NoopTransactionPool::<BasePooledTransaction>::new(),
+            true,
+            DEFAULT_MAX_VALIDITY_PREDICATES,
+        )
+        .with_required_validity_signature(true);
+        let tx = signed_validity_transaction();
+        let mut changed = tx.clone();
+        changed.extensions.validity.push(ValidityPredicate::Balance {
+            address: Address::repeat_byte(0x11),
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        });
+        let mut forged = tx.clone();
+        forged.sender = Address::ZERO;
+        let mut replayed = tx;
+        replayed.raw = signed_validity_transaction().raw;
+        for altered in [changed, forged, replayed] {
+            let error = handler.insert_validated_transaction(altered).await.unwrap_err();
+            assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+            assert!(error.message().contains("signature") || error.message().contains("sender"));
+        }
+    }
+
+    #[tokio::test]
+    async fn signed_validity_builder_default_off_does_not_silently_downgrade_signatures() {
+        let handler = BuilderApiImpl::<_, TransactionValidity>::with_extensions(
+            NoopTransactionPool::<BasePooledTransaction>::new(),
+            true,
+            DEFAULT_MAX_VALIDITY_PREDICATES,
+        );
+        let mut tx = signed_validity_transaction();
+        let error = handler.insert_validated_transaction(tx.clone()).await.unwrap_err();
+        assert!(error.message().contains("signed validity predicates are disabled"));
+        tx.extensions.validity_signature = None;
+        let error = handler.insert_validated_transaction(tx).await.unwrap_err();
+        assert!(error.message().starts_with("pool rejected transaction:"));
+    }
 
     // ==========================================================================
     // Helper functions for creating test transactions

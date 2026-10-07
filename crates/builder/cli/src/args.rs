@@ -199,6 +199,14 @@ pub struct Args {
     )]
     pub validity_max_predicates: usize,
 
+    /// Require user-signed validity predicates on raw and forwarded submissions.
+    #[arg(
+        long = "validity-require-signature",
+        default_value = "false",
+        conflicts_with = "shadow_validity_injection_enabled"
+    )]
+    pub validity_require_signature: bool,
+
     /// Decorate sampled ordinary transactions with a behavior-preserving validity predicate.
     ///
     /// This must only be enabled on a shadow builder.
@@ -334,6 +342,7 @@ impl Default for Args {
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
             validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
+            validity_require_signature: false,
             shadow_validity_injection_enabled: false,
             shadow_validity_injection_sample_rate_bps: 100,
             max_uncompressed_block_size: None,
@@ -361,14 +370,19 @@ impl Args {
     ///
     /// # Errors
     ///
-    /// Returns an error when the shadow injection sample rate is out of range.
+    /// Returns an error for an invalid shadow sample rate or conflicting signature enforcement.
     pub fn builder_api_config(&self) -> eyre::Result<BuilderApiExtensionConfig> {
+        eyre::ensure!(
+            !self.validity_require_signature || !self.shadow_validity_injection_enabled,
+            "signed validity enforcement is incompatible with shadow validity injection"
+        );
         let shadow_validity = if self.shadow_validity_injection_enabled {
             ShadowValidityConfig::enabled(self.shadow_validity_injection_sample_rate_bps)?
         } else {
             ShadowValidityConfig::disabled()
         };
         Ok(BuilderApiExtensionConfig::new(self.validity_max_predicates)
+            .with_required_validity_signature(self.validity_require_signature)
             .with_shadow_validity(shadow_validity))
     }
 
@@ -455,6 +469,10 @@ mod tests {
     fn default_args_produce_valid_config() {
         let args = Args::default();
         assert_eq!(args.validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
+        assert!(!args.validity_require_signature);
+        assert!(!args.builder_api_config().unwrap().require_validity_signature);
+        let parsed = CommandParser::parse_from(["builder"]).args;
+        assert!(!parsed.validity_require_signature);
         assert!(!args.shadow_validity_injection_enabled);
         assert_eq!(args.shadow_validity_injection_sample_rate_bps, 100);
         assert!(!args.builder_api_config().unwrap().shadow_validity.is_enabled());
@@ -462,6 +480,30 @@ mod tests {
         assert_eq!(config.block_time, Duration::from_millis(1000));
         assert!(config.max_gas_per_txn.is_none());
         assert!(config.manifest_precheck_enabled);
+    }
+
+    #[test]
+    fn signed_validity_flag_enables_both_builder_ingress_policies() {
+        let args = CommandParser::parse_from(["builder", "--validity-require-signature"]).args;
+        assert!(args.builder_api_config().unwrap().require_validity_signature);
+    }
+
+    #[test]
+    fn signed_validity_conflicts_with_shadow_injection() {
+        assert!(
+            CommandParser::try_parse_from([
+                "builder",
+                "--validity-require-signature",
+                "--builder.shadow-validity-injection.enabled",
+            ])
+            .is_err()
+        );
+        let args = Args {
+            validity_require_signature: true,
+            shadow_validity_injection_enabled: true,
+            ..Default::default()
+        };
+        assert!(args.builder_api_config().is_err());
     }
 
     #[test]

@@ -361,6 +361,11 @@ pub struct RpcStandardNodeArgs {
     )]
     pub validity_max_predicates: usize,
 
+    /// Require user-signed validity predicates at local forwarding ingress.
+    /// Query nodes proxy the signature unchanged; the sequencer enforces its own policy.
+    #[arg(long = "validity-require-signature", default_value = "false")]
+    pub validity_require_signature: bool,
+
     /// Maximum lifetime, in seconds, for a validity transaction.
     #[arg(
         long = "validity-max-expiry-secs",
@@ -797,6 +802,7 @@ impl StandardBaseRethNode {
                 SendRawTransactionValidityConfig {
                     max_validity_predicates: args.rpc.validity_max_predicates,
                     max_validity_expiry_secs: args.rpc.validity_max_expiry_secs,
+                    require_validity_signature: args.rpc.validity_require_signature,
                     sequencer_url: args
                         .rpc
                         .rollup_args
@@ -1003,6 +1009,7 @@ mod tests {
             transaction_event_journal_path: None,
             enable_tx_forwarding: false,
             validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
+            validity_require_signature: false,
             validity_max_expiry_secs: DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
             builder_rpc_urls: Vec::new(),
             tx_forwarding_resend_after_ms: DEFAULT_RESEND_AFTER_MS,
@@ -1133,6 +1140,9 @@ mod tests {
         assert_eq!(standard_args.rpc.rollup_args.sequencer, None);
         assert_eq!(standard_args.rpc.validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
         assert_eq!(standard_args.rpc.validity_max_expiry_secs, DEFAULT_MAX_VALIDITY_EXPIRY_SECS);
+        assert!(!standard_args.rpc.validity_require_signature);
+        let parsed = CommandParser::<StandardNodeArgs>::parse_from(["base-reth"]).args;
+        assert!(!parsed.rpc.validity_require_signature);
         assert!(!config.enabled);
         assert!(config.builder_urls.is_empty());
         assert!(!config.inline_simulation);
@@ -1149,12 +1159,14 @@ mod tests {
             "8",
             "--validity-max-expiry-secs",
             "45",
+            "--validity-require-signature",
         ])
         .args;
 
         assert!(args.rpc.enable_tx_forwarding);
         assert_eq!(args.rpc.validity_max_predicates, 8);
         assert_eq!(args.rpc.validity_max_expiry_secs, 45);
+        assert!(args.rpc.validity_require_signature);
         assert_eq!(args.rpc.builder_rpc_urls.len(), 1);
     }
 

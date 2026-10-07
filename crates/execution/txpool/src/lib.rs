@@ -27,6 +27,12 @@ pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError, 
 
 mod best;
 
+mod validity_authorization;
+pub use validity_authorization::{
+    ValidityAuthorization, ValidityAuthorizationData, ValidityAuthorizationError,
+    ValidityPredicateData,
+};
+
 mod validity;
 pub use validity::{
     DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES, FIRST_POOL_FLASHBLOCK_INDEX,

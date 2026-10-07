@@ -123,6 +123,7 @@ async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre:
                 op: ValidityOperator::Equal,
                 value: U256::from_limbs([1, 0, 0, 0]),
             }],
+            validity_signature: None,
         },
     };
     driver
@@ -273,7 +274,10 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
                 sender: accounts[0].address(),
                 raw: first.encoded_2718().into(),
                 metering: None,
-                extensions: TransactionValidity { validity: always_satisfied.clone() },
+                extensions: TransactionValidity {
+                    validity: always_satisfied.clone(),
+                    validity_signature: None,
+                },
             },),
         )
         .await?;
@@ -295,7 +299,10 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
                 sender: accounts[1].address(),
                 raw: deferred.encoded_2718().into(),
                 metering: None,
-                extensions: TransactionValidity { validity: always_satisfied },
+                extensions: TransactionValidity {
+                    validity: always_satisfied,
+                    validity_signature: None,
+                },
             },),
         )
         .await?;

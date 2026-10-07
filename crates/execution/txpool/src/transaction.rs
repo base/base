@@ -61,6 +61,8 @@ pub struct BasePooledTransaction<
     /// State predicates that must hold before this transaction is eligible for
     /// inclusion.
     validity_predicates: Vec<crate::ValidityPredicate>,
+    /// Sender authorization retained for builder forwarding.
+    validity_signature: Option<alloy_primitives::Signature>,
     /// The set of on-chain state surfaces whose change invalidates this
     /// transaction, computed once during validation and consumed by the pool's
     /// invalidation index. Empty until set; see [`crate::WatchSet`].
@@ -104,6 +106,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             encoded_2718: Default::default(),
             received_at,
             validity_predicates: Vec::new(),
+            validity_signature: None,
             watch_set: OnceLock::new(),
             limit_class: OnceLock::new(),
             watch_manifest: OnceLock::new(),
@@ -135,6 +138,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     ) -> Self {
         crate::ValidityPredicate::sort_batch(&mut validity_predicates);
         self.validity_predicates = validity_predicates;
+        self.validity_signature = None;
         self
     }
 
@@ -142,6 +146,20 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     #[must_use]
     pub fn validity_predicates(&self) -> &[crate::ValidityPredicate] {
         &self.validity_predicates
+    }
+
+    /// Attaches a signed validity sidecar, retaining authorization while sorting
+    /// predicates for evaluation. Callers must verify authorization before admission.
+    #[must_use]
+    pub fn with_validity(mut self, validity: crate::TransactionValidity) -> Self {
+        self = self.with_validity_predicates(validity.validity);
+        self.validity_signature = validity.validity_signature;
+        self
+    }
+
+    /// Returns the sender's validity-sidecar signature, if any.
+    pub const fn validity_signature(&self) -> Option<alloy_primitives::Signature> {
+        self.validity_signature
     }
 
     /// Returns the estimated compressed size of a transaction in bytes.
