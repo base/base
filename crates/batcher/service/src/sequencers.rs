@@ -13,12 +13,11 @@ use base_common_network::Base;
 use base_consensus_rpc::AdminApiClient;
 use base_runtime::Runtime;
 use futures::future;
-use jsonrpsee::{
-    core::ClientError,
-    http_client::{HttpClient, HttpClientBuilder},
-};
+use jsonrpsee::{core::ClientError, http_client::HttpClient};
 use tracing::{info, warn};
 use url::Url;
+
+use crate::RpcClientBuilder;
 
 /// One sequencer endpoint, which serves both the rollup node methods and the L2 blocks.
 #[derive(derive_more::Debug)]
@@ -35,17 +34,16 @@ pub struct Sequencer {
 
 impl Sequencer {
     /// Creates the clients of the sequencer endpoint at `url`.
-    pub async fn new(url: &Url) -> eyre::Result<Self> {
-        let origin = url.origin().ascii_serialization();
-
-        let rollup_node_client = HttpClientBuilder::default()
-            .build(url.as_str())
-            .map_err(|e| eyre::eyre!("failed to build the rollup node client for {origin}: {e}"))?;
-        let l2_provider = RootProvider::connect(url.as_str())
-            .await
-            .map_err(|e| eyre::eyre!("failed to build the L2 provider for {origin}: {e}"))?;
-
-        Ok(Self { origin, rollup_node_client, l2_provider })
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `url` is not an HTTP URL.
+    pub fn new(url: &Url, client_builder: RpcClientBuilder) -> eyre::Result<Self> {
+        Ok(Self {
+            origin: url.origin().ascii_serialization(),
+            rollup_node_client: client_builder.client(url)?,
+            l2_provider: client_builder.provider(url)?,
+        })
     }
 }
 
@@ -74,11 +72,14 @@ impl Sequencers {
     /// # Errors
     ///
     /// Returns an error when `urls` is empty or one of them is not an HTTP URL.
-    pub async fn new(urls: &[Url]) -> eyre::Result<Self> {
+    pub fn new(urls: &[Url], client_builder: RpcClientBuilder) -> eyre::Result<Self> {
         if urls.is_empty() {
             eyre::bail!("at least one sequencer URL is required");
         }
-        let sequencers = future::try_join_all(urls.iter().map(Sequencer::new)).await?;
+        let sequencers = urls
+            .iter()
+            .map(|url| Sequencer::new(url, client_builder))
+            .collect::<eyre::Result<_>>()?;
         Ok(Self { sequencers, leader_index: AtomicUsize::new(0) })
     }
 
@@ -171,7 +172,7 @@ mod tests {
     use base_runtime::{Cancellation, TokioRuntime};
 
     use super::*;
-    use crate::test_utils::{Activity, FakeSequencer};
+    use crate::test_utils::{Activity, FakeSequencer, rpc_client_builder};
 
     /// The leader is the active sequencer, which the reads go to. A sequencer that is stopped,
     /// one that is not the leader behind its conductor and one that is unreachable are passed
@@ -183,7 +184,7 @@ mod tests {
         let unreachable = "http://127.0.0.1:1".parse().unwrap();
         let active = FakeSequencer::start(Activity::Active, 3).await;
         let urls = [stopped.url.clone(), not_leader.url.clone(), unreachable, active.url.clone()];
-        let sequencers = Sequencers::new(&urls).await.unwrap();
+        let sequencers = Sequencers::new(&urls, rpc_client_builder()).unwrap();
 
         sequencers.refresh_leader().await.unwrap();
 
@@ -197,7 +198,8 @@ mod tests {
         let silent = TcpListener::bind("127.0.0.1:0").unwrap();
         let silent_url = format!("http://{}", silent.local_addr().unwrap()).parse().unwrap();
         let active = FakeSequencer::start(Activity::Active, 1).await;
-        let sequencers = Sequencers::new(&[silent_url, active.url.clone()]).await.unwrap();
+        let sequencers =
+            Sequencers::new(&[silent_url, active.url.clone()], rpc_client_builder()).unwrap();
 
         tokio::time::timeout(
             Sequencers::SEQUENCER_ACTIVE_RPC_TIMEOUT * 2,
@@ -216,7 +218,9 @@ mod tests {
     async fn refresh_leader_fails_and_keeps_the_leader_when_no_sequencer_is_active() {
         let first = FakeSequencer::start(Activity::Stopped, 1).await;
         let second = FakeSequencer::start(Activity::Active, 2).await;
-        let sequencers = Sequencers::new(&[first.url.clone(), second.url.clone()]).await.unwrap();
+        let sequencers =
+            Sequencers::new(&[first.url.clone(), second.url.clone()], rpc_client_builder())
+                .unwrap();
         sequencers.refresh_leader().await.unwrap();
 
         second.set_activity(Activity::NotLeader);
@@ -239,8 +243,10 @@ mod tests {
     async fn reads_go_to_the_current_leader() {
         let first = FakeSequencer::start(Activity::Active, 1).await;
         let second = FakeSequencer::start(Activity::NotLeader, 2).await;
-        let sequencers =
-            Arc::new(Sequencers::new(&[first.url.clone(), second.url.clone()]).await.unwrap());
+        let sequencers = Arc::new(
+            Sequencers::new(&[first.url.clone(), second.url.clone()], rpc_client_builder())
+                .unwrap(),
+        );
         let runtime = TokioRuntime::new();
         let tracking = tokio::spawn(
             Arc::clone(&sequencers).track_leader(runtime.clone(), Duration::from_millis(1)),
