@@ -135,7 +135,9 @@ def rpc(url, method, *params, upstream=False):
 def call(url, address, signature, *args, block="latest", upstream=False):
     data = run("cast", "calldata", signature, *map(str, args))
     encoded = rpc(url, "eth_call", {"to": address, "data": data}, block, upstream=upstream)
-    return json.loads(run("cast", "abi-decode", "--json", signature, encoded))[0]
+    decoded = json.loads(run("cast", "abi-decode", "--json", signature, encoded))
+    # Foundry >= 1.8 wraps `--json` output in a `{"schema_version", "data", ...}` envelope.
+    return (decoded["data"] if isinstance(decoded, dict) else decoded)[0]
 
 
 def wait(description, check, timeout, poll_interval=1, progress=None, report_interval=30, diagnostics=None):
