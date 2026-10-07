@@ -21,7 +21,7 @@ use base_consensus_rpc::RollupNodeApiClient;
 use base_protocol::BlockInfo;
 use base_retry::{DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
 use base_runtime::TokioRuntime;
-use base_tx_manager::{BaseTxMetrics, SimpleTxManager, TxManagerConfig};
+use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use futures::{
     FutureExt, StreamExt, TryFutureExt,
     future::BoxFuture,
@@ -343,15 +343,14 @@ impl BatcherService {
         let cancel_on_failure = runtime.token().clone().drop_guard();
         let mut background_tasks = Vec::new();
         self.config.encoder_config.validate()?;
+        let tx_manager_config = self.config.tx_manager_config();
+        tx_manager_config.validate()?;
         if let Some(throttle) = &self.config.throttle {
             throttle.validate()?;
         }
 
         if self.config.poll_interval.is_zero() {
             eyre::bail!("poll_interval must be greater than zero");
-        }
-        if self.config.network_timeout.is_zero() {
-            eyre::bail!("network_timeout must be greater than zero");
         }
         if self.config.max_pending_transactions == 0 {
             eyre::bail!(
@@ -588,14 +587,11 @@ impl BatcherService {
         let l1_chain_id =
             Self::rpc_retry("l1-chain-id", retry, rpc_timeout, || l1_provider.get_chain_id())
                 .await?;
-        let drain_timeout = self.config.tx_manager.resubmission_timeout * 2;
+        let drain_timeout = self.config.resubmission_timeout * 2;
         let tx_manager = SimpleTxManager::new(
             l1_provider,
             signer_config,
-            TxManagerConfig {
-                network_timeout: self.config.network_timeout,
-                ..self.config.tx_manager
-            },
+            tx_manager_config,
             l1_chain_id,
             Arc::new(BaseTxMetrics::new("batcher")),
         )
@@ -780,7 +776,7 @@ mod tests {
     )]
     #[case::zero_network_timeout(
         BatcherConfig { network_timeout: Duration::ZERO, ..BatcherConfig::default() },
-        "network_timeout must be greater than zero"
+        "network_timeout must be > 0, got 0s"
     )]
     #[case::zero_max_pending_transactions(
         BatcherConfig { max_pending_transactions: 0, ..BatcherConfig::default() },

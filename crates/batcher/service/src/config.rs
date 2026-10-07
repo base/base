@@ -52,9 +52,16 @@ pub struct BatcherConfig {
     pub encoder_config: EncoderConfig,
     /// Maximum number of in-flight (unconfirmed) transactions.
     pub max_pending_transactions: usize,
-    /// Transaction manager configuration. Its `network_timeout` is replaced by
-    /// [`network_timeout`](Self::network_timeout).
-    pub tx_manager: TxManagerConfig,
+    /// L1 confirmations a submission waits for.
+    pub num_confirmations: u64,
+    /// Time after which an unconfirmed submission is resubmitted with a higher fee. Twice this
+    /// value also bounds the drain of in-flight submissions at shutdown.
+    pub resubmission_timeout: Duration,
+    /// Times the first publication of a submission is retried when an RPC rejects its nonce as
+    /// too high, as it temporarily does for an ordered nonce.
+    pub publish_max_retries: usize,
+    /// Delay between those retries.
+    pub publish_retry_delay: Duration,
     /// DA throttle configuration, `None` to disable the throttle.
     ///
     /// Must be `None` when [`shadow`](Self::shadow) is set.
@@ -111,7 +118,10 @@ impl Default for BatcherConfig {
             network_timeout: Duration::from_secs(10),
             encoder_config: EncoderConfig::default(),
             max_pending_transactions: 1,
-            tx_manager: TxManagerConfig { num_confirmations: 1, ..TxManagerConfig::default() },
+            num_confirmations: 1,
+            resubmission_timeout: Duration::from_secs(48),
+            publish_max_retries: 10,
+            publish_retry_delay: Duration::from_secs(1),
             throttle: Some(ThrottleConfig::default()),
             check_recent_txs_depth: 0,
             admin_addr: None,
@@ -119,6 +129,21 @@ impl Default for BatcherConfig {
             wait_node_sync: false,
             wait_node_sync_timeout: Duration::from_secs(600),
             force_blobs_when_throttling: true,
+        }
+    }
+}
+
+impl BatcherConfig {
+    /// The transaction manager configuration: the settings the batcher exposes, its
+    /// [`network_timeout`](Self::network_timeout), and the tx manager's defaults for the rest.
+    pub fn tx_manager_config(&self) -> TxManagerConfig {
+        TxManagerConfig {
+            num_confirmations: self.num_confirmations,
+            resubmission_timeout: self.resubmission_timeout,
+            publish_max_retries: self.publish_max_retries,
+            publish_retry_delay: self.publish_retry_delay,
+            network_timeout: self.network_timeout,
+            ..TxManagerConfig::default()
         }
     }
 }
@@ -164,6 +189,32 @@ mod tests {
 
     const CANONICAL_INBOX: Address = Address::repeat_byte(0xca);
     const SHADOW_INBOX: Address = Address::repeat_byte(0x5a);
+
+    /// The tx manager gets the settings the batcher exposes and the batcher's network timeout,
+    /// and keeps its own defaults for the rest.
+    #[test]
+    fn tx_manager_config_carries_the_exposed_settings_and_the_network_timeout() {
+        let config = BatcherConfig {
+            num_confirmations: 3,
+            resubmission_timeout: Duration::from_secs(30),
+            publish_max_retries: 7,
+            publish_retry_delay: Duration::from_secs(2),
+            network_timeout: Duration::from_secs(4),
+            ..BatcherConfig::default()
+        };
+
+        assert_eq!(
+            config.tx_manager_config(),
+            TxManagerConfig {
+                num_confirmations: 3,
+                resubmission_timeout: Duration::from_secs(30),
+                publish_max_retries: 7,
+                publish_retry_delay: Duration::from_secs(2),
+                network_timeout: Duration::from_secs(4),
+                ..TxManagerConfig::default()
+            }
+        );
+    }
 
     /// A shadow config accepts the shadow inbox as the batch inbox of the parity validator's
     /// rollup config, and refuses another one.

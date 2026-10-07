@@ -10,7 +10,7 @@ use base_batcher_core::ThrottleConfig;
 use base_batcher_service::{BatcherConfig, BatcherService, ShadowConfig};
 use base_cli_utils::RuntimeManager;
 use base_runtime::TokioRuntime;
-use base_tx_manager::{SignerConfig, TxManagerConfig};
+use base_tx_manager::SignerConfig;
 use clap::Parser;
 use url::Url;
 
@@ -307,14 +307,6 @@ impl BatcherArgs {
 
         // Fail at startup, before constructing the service or accepting blocks.
         encoder_config.validate()?;
-        let tx_manager = TxManagerConfig {
-            num_confirmations: self.num_confirmations,
-            resubmission_timeout: Duration::from_secs(self.resubmission_timeout_secs),
-            publish_max_retries: self.publish_max_retries,
-            publish_retry_delay: self.publish_retry_delay,
-            ..TxManagerConfig::default()
-        };
-        tx_manager.validate()?;
         Ok(BatcherConfig {
             l1_rpc_url: self.l1_rpc_url,
             l1_ws_url: self.l1_ws_url,
@@ -326,7 +318,10 @@ impl BatcherArgs {
             network_timeout: Duration::from_secs(self.network_timeout_secs),
             encoder_config,
             max_pending_transactions: self.max_pending_transactions,
-            tx_manager,
+            num_confirmations: self.num_confirmations,
+            resubmission_timeout: Duration::from_secs(self.resubmission_timeout_secs),
+            publish_max_retries: self.publish_max_retries,
+            publish_retry_delay: self.publish_retry_delay,
             throttle: if self.no_throttle {
                 None
             } else {
@@ -568,13 +563,13 @@ mod tests {
         assert_eq!(config.encoder_config.compressed_size_target, Some(1000));
         assert_eq!(config.encoder_config.max_blobs_per_tx, 3);
         assert_eq!(config.encoder_config.brotli_level, base_batcher_encoder::BrotliLevel::Brotli5);
-        assert_eq!(config.tx_manager.publish_max_retries, 7);
-        assert_eq!(config.tx_manager.publish_retry_delay, Duration::from_secs(3));
+        assert_eq!(config.publish_max_retries, 7);
+        assert_eq!(config.publish_retry_delay, Duration::from_secs(3));
         assert_eq!(config.encoder_config.max_channel_duration, 10);
         assert_eq!(config.encoder_config.sub_safety_margin, 4);
         assert_eq!(config.max_pending_transactions, 4);
-        assert_eq!(config.tx_manager.num_confirmations, 3);
-        assert_eq!(config.tx_manager.resubmission_timeout, Duration::from_secs(30));
+        assert_eq!(config.num_confirmations, 3);
+        assert_eq!(config.resubmission_timeout, Duration::from_secs(30));
         assert_eq!(config.poll_interval, Duration::from_secs(2));
         assert_eq!(config.network_timeout, Duration::from_secs(3));
         assert_eq!(config.throttle.expect("the throttle is on").threshold_bytes, 500_000);
