@@ -18,6 +18,8 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -42,19 +44,39 @@ class BuilderGate:
 
     @staticmethod
     def load_measured(text: str) -> dict[str, int]:
-        """Map `<builder>/<scenario>` -> instruction count from iai-callgrind output."""
+        """Map `<builder>/<scenario>` -> instruction count from iai-callgrind output.
+
+        A benchmark id outside `BENCH_PREFIXES` is an error rather than skipped: a renamed
+        benchmark function would otherwise drop its whole builder from the check and, through
+        `--pin`, from the budget file.
+        """
         measured = {}
+        unknown = []
         for bench, count in IaiCompare.parse(text).items():
             for prefix, key_prefix in BENCH_PREFIXES.items():
                 if bench.startswith(prefix):
                     measured[key_prefix + bench.removeprefix(prefix)] = count
+                    break
+            else:
+                unknown.append(bench)
+        if unknown:
+            raise SystemExit(f"benchmark ids match no known builder prefix: {sorted(unknown)}")
         return measured
+
+    @staticmethod
+    def builder(key: str) -> str:
+        """The builder half of a `<builder>/<scenario>` key."""
+        return key.split("/", 1)[0]
 
     def marginal(self, scenario: str, spec: dict) -> float | None:
         """Instructions per deferred candidate above the reference scenario, if budgeted."""
         reference = spec.get("marginal_reference")
         if reference is None:
             return None
+        if self.builder(reference) != self.builder(scenario):
+            raise SystemExit(
+                f"`{scenario}` takes its marginal reference `{reference}` from another builder"
+            )
         if reference not in self.measured or scenario not in self.measured:
             return None
         return (self.measured[scenario] - self.measured[reference]) / spec["deferrals_per_block"]
@@ -129,7 +151,14 @@ class BuilderGate:
         """Return the budget file re-pinned to the measured counts."""
         headroom = self.budgets["headroom_pct"] / 100
         marginal_headroom = self.budgets["marginal_headroom_pct"] / 100
+        unbudgeted = sorted(set(self.measured) - set(self.budgets["scenarios"]))
+        if unbudgeted:
+            raise SystemExit(
+                f"cannot pin measured scenarios without a budget entry: {unbudgeted}; "
+                "add them to the budget file first"
+            )
         pinned = json.loads(json.dumps(self.budgets))
+        pinned["measured_on"] = {**pinned.get("measured_on", {}), **self.measured_on()}
         for scenario, spec in pinned["scenarios"].items():
             count = self.measured.get(scenario)
             if count is None:
@@ -145,6 +174,33 @@ class BuilderGate:
         return pinned
 
 
+    @staticmethod
+    def measured_on() -> dict:
+        """Describe the toolchain and commit this run measured, for a re-pinned budget file."""
+
+        def output(*command: str) -> str:
+            try:
+                return subprocess.run(
+                    command, capture_output=True, text=True, check=True
+                ).stdout.strip()
+            except (OSError, subprocess.CalledProcessError):
+                return ""
+
+        rustc = dict(
+            line.split(": ", 1) for line in output("rustc", "-vV").splitlines() if ": " in line
+        )
+        found = {
+            "target": rustc.get("host"),
+            "runner": os.environ.get("BUILDER_GATE_RUNNER"),
+            "toolchain": rustc.get("release"),
+            "valgrind": output("valgrind", "--version") or None,
+            "commit": (os.environ.get("GITHUB_SHA") or output("git", "rev-parse", "HEAD"))[:9]
+            or None,
+            "run": os.environ.get("BUILDER_GATE_RUN_ID"),
+        }
+        return {key: value for key, value in found.items() if value}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results", required=True, type=Path, help="raw iai-callgrind output")
@@ -156,7 +212,9 @@ def main() -> int:
     budgets = json.loads(args.budgets.read_text())
     gate = BuilderGate(budgets, BuilderGate.load_measured(args.results.read_text()))
     if args.pin:
-        args.pin.write_text(json.dumps(gate.pinned(), indent=2) + "\n")
+        pinned = json.dumps(gate.pinned(), indent=2) + "\n"
+        args.pin.write_text(pinned)
+        print(pinned)
         print(f"wrote re-pinned budgets to {args.pin}")
         return 0
 
