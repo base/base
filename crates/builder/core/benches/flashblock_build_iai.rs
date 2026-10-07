@@ -1,4 +1,4 @@
-//! Deterministic instruction-count gate for the block build path of both builders.
+//! Deterministic instruction-count benchmarks for the block build path of both builders.
 //!
 //! `build_block` builds one block of ten flashblocks for a [`FlashblockWorkload`] through the
 //! production flashblocks loop (`execute_best_transactions`, per-flashblock `build_block`, and
@@ -10,9 +10,8 @@
 //!
 //! Callgrind counts only the thread that runs the benchmark function, which is the builder
 //! thread: event serialization is counted, the background event-writer thread's file I/O is
-//! not. `etc/scripts/ci/builder_gate_check.py` compares these counts against the pinned
-//! budgets in `etc/benchmarks/builder-gate-budgets.json` and fails the gate when one is
-//! exceeded. See `docs/guides/BUILDER_PERFORMANCE_GATE.md`.
+//! not. `.depot/workflows/bench-builder.yml` runs this on a PR's base and head commits and
+//! posts the differences. See `docs/guides/BUILDER_BENCHMARKS.md`.
 
 // iai-callgrind's `library_benchmark` / `library_benchmark_group` macros expand to
 // undocumented modules, functions, and constants that `-D warnings` rejects. Benches
@@ -32,7 +31,7 @@ use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 fn workload(scenario: &str) -> FlashblockWorkload {
     let workload = FlashblockWorkload::by_name(scenario).expect("scenario is in the matrix");
     let events =
-        std::env::temp_dir().join(format!("builder-gate-{scenario}-{}.jsonl", std::process::id()));
+        std::env::temp_dir().join(format!("builder-bench-{scenario}-{}.jsonl", std::process::id()));
     FlashblockWorkload::install_file_event_writer(&events).expect("event writer initializes");
     workload
 }

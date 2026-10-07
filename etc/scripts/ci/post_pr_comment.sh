@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Post or update the single iai benchmark comment on a PR, identified by its
-# marker. The same marker is reused for the in-progress, results, and failure
-# states so there is only ever one comment, updated in place.
+# Post or update a single benchmark comment on a PR, identified by its marker.
+# The same marker is reused for the in-progress, results, and failure states so
+# there is only ever one comment per marker, updated in place. BODY_FILE must
+# start with the marker.
 #
-# Usage: post_pr_comment.sh BODY_FILE
+# Usage: post_pr_comment.sh BODY_FILE [MARKER]
+# MARKER defaults to the iai benchmark comment's marker.
 # Requires env: GH_TOKEN, REPO (owner/name), PR_NUMBER.
 set -euo pipefail
 
-marker='<!-- iai-bench-results -->'
+marker="${2:-<!-- iai-bench-results -->}"
 
 existing_id=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
   --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" \
