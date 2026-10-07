@@ -100,8 +100,6 @@ arbitrary = [
 	"reth-primitives-traits?/arbitrary",
 	"revm?/arbitrary",
 	"std",
-	"alloy-sol-types/arbitrary",
-	"base-common-genesis/arbitrary"
 ]
 serde = [
 	"alloy-consensus/serde",
@@ -114,7 +112,6 @@ serde = [
 	"reth-codecs?/serde",
 	"reth-primitives-traits?/serde",
 	"revm?/serde",
-	"base-common-genesis/serde"
 ]
 serde-bincode-compat = [ "alloy-consensus/serde-bincode-compat", "serde_with" ]
 evm = [ "dep:alloy-evm", "dep:revm" ]

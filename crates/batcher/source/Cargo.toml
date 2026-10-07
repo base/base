@@ -30,7 +30,4 @@ alloy-primitives = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["test-utils"] }
 
 [features]
-test-utils = [
-	"base-protocol/test-utils",
-	"base-runtime/test-utils"
-]
+test-utils = []
