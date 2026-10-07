@@ -203,18 +203,14 @@ impl<T> ParkedPredicateIndex<T> {
     pub fn affected_by_state(&self, state: &EvmState) -> StateChangeEffects {
         let mut effects = StateChangeEffects::default();
         for (address, account) in state {
-            if account.is_selfdestructed() {
-                // Deleted accounts read as nonce zero, regardless of the retained account info.
-                if let Some(bucket) = self.blockers.get(&ValidityPredicateKey::Nonce(*address)) {
-                    bucket.extend_all(&mut effects.affected_transactions);
-                    effects.woken_buckets += 1;
-                }
-            } else if account.info.nonce != account.original_info().nonce {
+            // Deleted accounts read as nonce zero, regardless of the retained account info.
+            let new_nonce = if account.is_selfdestructed() { 0 } else { account.info.nonce };
+            if new_nonce != account.original_info().nonce {
                 self.wake_bucket(
                     &mut effects,
                     ValidityPredicateKey::Nonce(*address),
                     U256::from(account.original_info().nonce),
-                    U256::from(account.info.nonce),
+                    U256::from(new_nonce),
                 );
             }
             if account.info.balance != account.original_info().balance {
@@ -522,10 +518,15 @@ pub struct StateChangeEffects {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, map::B256Set};
-    use base_execution_txpool::{ValidityOperator, ValidityPredicate};
-    use revm::state::{Account, EvmState, EvmStorageSlot};
+    use base_execution_txpool::{PredicateContext, ValidityOperator, ValidityPredicate};
+    use revm::{
+        database::InMemoryDB,
+        state::{Account, AccountInfo, EvmState, EvmStorageSlot},
+    };
 
-    use super::{ParkedPredicateIndex, StateChangeEffects};
+    use super::{
+        ParkedPredicateIndex, StateChangeEffects, ValidityPredicateEvaluation, ValidityPredicateKey,
+    };
 
     fn balance(address: Address, op: ValidityOperator, value: u64) -> ValidityPredicate {
         ValidityPredicate::Balance { address, op, value: U256::from(value) }
@@ -560,6 +561,78 @@ mod tests {
             EvmStorageSlot::new_changed(U256::from(old), U256::from(new), Default::default()),
         );
         EvmState::from_iter([(address, account)])
+    }
+
+    #[test]
+    fn passed_nonce_upper_bounds_remain_ineligible_until_block_expiry() {
+        let address = Address::with_last_byte(1);
+        let context = PredicateContext { block_number: 100, flashblock_index: 1 };
+        for (op, initial_nonce) in [
+            (ValidityOperator::Equal, 3),
+            (ValidityOperator::LessThan, 2),
+            (ValidityOperator::LessThanOrEqual, 3),
+        ] {
+            let predicates = [
+                ValidityPredicate::Nonce { address, op, value: U256::from(3) },
+                ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::LessThanOrEqual,
+                    value: U256::from(102),
+                },
+            ];
+            let mut db = InMemoryDB::default();
+            db.insert_account_info(
+                address,
+                AccountInfo { nonce: initial_nonce, ..Default::default() },
+            );
+            assert_eq!(
+                ValidityPredicateEvaluation::evaluate(&predicates, &mut db, &context).unwrap(),
+                ValidityPredicateEvaluation::Matched,
+            );
+            db.insert_account_info(address, AccountInfo { nonce: 4, ..Default::default() });
+            assert_eq!(
+                ValidityPredicateEvaluation::evaluate(&predicates, &mut db, &context).unwrap(),
+                ValidityPredicateEvaluation::Unsatisfied {
+                    blocker: ValidityPredicateKey::Nonce(address),
+                    blocker_index: 0,
+                    expired: false,
+                },
+            );
+            let expired_context = PredicateContext { block_number: 103, ..context };
+            assert_eq!(
+                ValidityPredicateEvaluation::evaluate(&predicates, &mut db, &expired_context)
+                    .unwrap(),
+                ValidityPredicateEvaluation::Unsatisfied {
+                    blocker: ValidityPredicateKey::Nonce(address),
+                    blocker_index: 0,
+                    expired: true,
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn deleted_accounts_with_zero_original_nonce_do_not_wake_riders() {
+        let address = Address::with_last_byte(1);
+        let hash = B256::with_last_byte(1);
+        for threshold in [1, 32] {
+            let mut index = ParkedPredicateIndex::new(threshold);
+            index.park(
+                hash,
+                (),
+                ValidityPredicate::Nonce {
+                    address,
+                    op: ValidityOperator::GreaterThanOrEqual,
+                    value: U256::ONE,
+                },
+            );
+            let mut account = Account::default();
+            account.info.nonce = 1;
+            account.mark_selfdestruct();
+            assert_eq!(
+                index.affected_by_state(&EvmState::from_iter([(address, account)])),
+                StateChangeEffects::default(),
+            );
+        }
     }
 
     #[test]
@@ -628,6 +701,11 @@ mod tests {
             hash,
             (),
             ValidityPredicate::Nonce { address, op: ValidityOperator::Equal, value: U256::ZERO },
+        );
+        index.park(
+            B256::with_last_byte(2),
+            (),
+            ValidityPredicate::Nonce { address, op: ValidityOperator::Equal, value: U256::from(5) },
         );
         let mut account = Account::default();
         account.original_info_mut().nonce = 9;

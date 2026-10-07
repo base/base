@@ -408,8 +408,8 @@ impl ValidityPredicate {
         }
     }
 
-    /// Returns whether these predicates can no longer be satisfied at any build
-    /// position at or after `context`.
+    /// Returns whether build-position upper bounds make this batch permanently
+    /// ineligible at or after `context`.
     ///
     /// Build position advances monotonically: `block_number` strictly increases
     /// across blocks and `flashblock_index` increases from zero within a block.
@@ -418,6 +418,9 @@ impl ValidityPredicate {
     /// transaction is permanently ineligible and should be evicted rather than
     /// parked for a later rescan. State predicates ([`Self::Balance`],
     /// [`Self::Nonce`], [`Self::Storage`]) never make a batch expired.
+    /// In particular, a nonce that passes an `=`, `<`, or `<=` bound still
+    /// parks the transaction rather than expiring it from a state observation.
+    /// The required block-number upper bound limits its lifetime and re-evaluations.
     ///
     /// The check is conservative — it reports `true` only when expiry is
     /// provable from upper-bound comparisons (`<`, `<=`, `=`), so any shape it
@@ -437,7 +440,7 @@ impl ValidityPredicate {
             let (op, value, upper) = match predicate {
                 Self::BlockNumber { op, value } => (op, value, &mut block_upper),
                 Self::FlashblockIndex { op, value } => (op, value, &mut flashblock_upper),
-                // State predicates are recoverable and never expire a batch.
+                // State mismatches, including passed nonce bounds, rely on block expiry.
                 Self::Balance { .. } | Self::Nonce { .. } | Self::Storage { .. } => continue,
             };
             // Only `<`, `<=`, `=` cap a value from above; `!=`, `>`, `>=` do not.

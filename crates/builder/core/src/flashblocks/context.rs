@@ -900,7 +900,7 @@ impl BasePayloadBuilderCtx {
                 // transaction there could place it behind a lower-priority transaction even though
                 // its predicate may have already been satisfied at its first position. An expired
                 // position predicate is terminal too — no later position can satisfy it — so both
-                // are dropped rather than parked; only recoverable state mismatches are parked.
+                // are dropped rather than parked; state mismatches rely on the block expiry.
                 if predicate_read_failed {
                     // A read failure is only terminal for this scan, so it is not cached.
                     self.reject_current(best_txs, &mut diag, &cx, &tx, ordering_position);
@@ -911,8 +911,8 @@ impl BasePayloadBuilderCtx {
                     // not re-evaluated on subsequent flashblock rebuilds.
                     self.expire_current(best_txs, &mut diag, &cx, &tx, ordering_position);
                 } else {
-                    // Recoverable state mismatch: park under the current blocker to retry at a
-                    // later position or flashblock.
+                    // State mismatch: retry at a later position or flashblock. Passed nonce
+                    // bounds also stay parked until the required block-number expiry.
                     let (_, blocker_index) = blocking_predicate
                         .expect("unsatisfied, non-terminal predicate implies a blocking key");
                     self.defer_current(
