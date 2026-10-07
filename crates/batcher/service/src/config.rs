@@ -46,8 +46,7 @@ pub struct BatcherConfig {
     pub shadow: Option<ShadowConfig>,
     /// Polling interval.
     pub poll_interval: Duration,
-    /// Timeout of the RPC calls to L1, the sequencers, the parity validator and the block
-    /// builders.
+    /// Timeout of the RPC calls to L1, the sequencers and the parity validator.
     pub network_timeout: Duration,
     /// Encoder configuration.
     pub encoder_config: EncoderConfig,

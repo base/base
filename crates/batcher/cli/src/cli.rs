@@ -77,8 +77,11 @@ pub struct BatcherArgs {
     #[arg(long = "poll-interval", default_value = "1", env = "BASE_BATCHER_POLL_INTERVAL")]
     pub poll_interval_secs: u64,
 
-    /// Timeout in seconds of the RPC calls to L1, the sequencers, the parity validator and the
-    /// block builders.
+    /// Timeout in seconds of the RPC calls to L1, the sequencers and the parity validator.
+    ///
+    /// A call that times out is logged and retried like any other failed call, and the batcher
+    /// keeps running. At startup, the reads that set it up retry until
+    /// `--wait-node-sync-timeout`, then the batcher exits.
     #[arg(long = "network-timeout", default_value = "10", env = "BASE_BATCHER_NETWORK_TIMEOUT")]
     pub network_timeout_secs: u64,
 

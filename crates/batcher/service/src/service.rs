@@ -184,15 +184,17 @@ impl BatcherService {
             return stream::pending().boxed();
         };
 
+        // The origin only: a hosted endpoint carries its API key in the path.
+        let origin = url.origin().ascii_serialization();
         let connect = ProviderBuilder::new().connect(url.as_str());
         let ws_provider = match tokio::time::timeout(network_timeout, connect).await {
             Ok(Ok(provider)) => provider,
             Ok(Err(error)) => {
-                warn!(error = %error, l1_ws = %url, "failed to connect L1 WS provider; falling back to polling");
+                warn!(error = %error, l1_ws = %origin, "failed to connect L1 WS provider; falling back to polling");
                 return stream::pending().boxed();
             }
             Err(_) => {
-                warn!(l1_ws = %url, "L1 WS provider did not connect in time; falling back to polling");
+                warn!(l1_ws = %origin, timeout = ?network_timeout, "L1 WS provider did not connect in time; falling back to polling");
                 return stream::pending().boxed();
             }
         };
@@ -201,11 +203,11 @@ impl BatcherService {
         let sub = match tokio::time::timeout(network_timeout, subscribe).await {
             Ok(Ok(sub)) => sub,
             Ok(Err(error)) => {
-                warn!(error = %error, l1_ws = %url, "failed to subscribe to new L1 blocks; falling back to polling");
+                warn!(error = %error, l1_ws = %origin, "failed to subscribe to new L1 blocks; falling back to polling");
                 return stream::pending().boxed();
             }
             Err(_) => {
-                warn!(l1_ws = %url, "L1 WS provider did not subscribe in time; falling back to polling");
+                warn!(l1_ws = %origin, timeout = ?network_timeout, "L1 WS provider did not subscribe in time; falling back to polling");
                 return stream::pending().boxed();
             }
         };
@@ -395,7 +397,7 @@ impl BatcherService {
         let signer_address = signer_config.address();
 
         info!(
-            l1_ws = self.config.l1_ws_url.as_ref().map(|u| u.as_str()),
+            l1_ws = self.config.l1_ws_url.as_ref().map(|url| url.origin().ascii_serialization()),
             "starting batcher service"
         );
 

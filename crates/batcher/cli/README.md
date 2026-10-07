@@ -18,7 +18,8 @@ from the rollup config of the node whose derivation the batcher follows.
 endpoints, comma-separated. The batcher submits the unsafe blocks of the leader,
 read with `eth_getBlockByNumber`. A single endpoint is the leader. Among several,
 the leader is the first whose `admin_sequencerActive` answers `true`, and one that
-answers anything else or does not answer is not active. The batcher waits for a
+answers anything else, or does not answer within 2 seconds, or within
+`--network-timeout` if that is shorter, is not active. The batcher waits for a
 leader at startup, up to `--wait-node-sync-timeout`, then looks for it again every
 `--poll-interval`, and keeps reading from the last one while none is.
 
@@ -45,10 +46,9 @@ selects Brotli quality `0..=11` (default 9). `--data-availability-type`
 selects blobs or calldata; `--max-channel-duration` and `--sub-safety-margin`
 control channel lifetime. For calldata configurations,
 `--no-force-blobs-when-throttling` disables the throttle-driven blob override.
-`--network-timeout` bounds the RPC calls to L1, the sequencers, the parity
-validator and the block builders, so an endpoint that stops answering never
-blocks the batcher. The corresponding environment variables use the
-`BASE_BATCHER_` prefix.
+`--network-timeout` bounds the RPC calls to L1, the sequencers and the parity
+validator, so an endpoint that stops answering never blocks the batcher. The
+corresponding environment variables use the `BASE_BATCHER_` prefix.
 
 ## Shadow mode
 

@@ -119,12 +119,14 @@ mod tests {
         assert!(matches!(error, ClientError::RequestTimeout), "{error}");
     }
 
-    /// A provider is only built for an HTTP URL, so a wrong scheme fails at startup instead of
-    /// on every request.
+    /// Neither client is built for a non-HTTP URL, so a wrong scheme fails at startup instead
+    /// of on every request.
     #[test]
-    fn a_provider_is_refused_for_a_non_http_url() {
+    fn no_client_is_built_for_a_non_http_url() {
         let url: Url = "ws://127.0.0.1:1".parse().unwrap();
+        let builder = RpcClientBuilder::new(NETWORK_TIMEOUT);
 
-        assert!(RpcClientBuilder::new(NETWORK_TIMEOUT).provider::<Ethereum>(&url).is_err());
+        assert!(builder.provider::<Ethereum>(&url).is_err());
+        assert!(builder.client(&url).is_err());
     }
 }
