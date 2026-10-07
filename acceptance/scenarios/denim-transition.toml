@@ -35,10 +35,9 @@ timeout = "90s"
 start = { after_fork = "denim", chain = "l2" }
 
 # The shadow validator derives its safe chain only from the base batcher's batches. Advancing
-# 300 blocks takes its safe head past Denim block 150, where its block must match the builder's.
-# Its safe head stays put for the 15 verifier confirmations, about 5.5 minutes, then catches up
-# at the Denim block rate. The builder derives without those confirmations, so its safe head
-# leads by about 1500 Denim blocks.
+# 300 blocks takes its safe head past Denim block 150. Its safe head stays put for the 15
+# verifier confirmations, about 5.5 minutes, then catches up at the Denim block rate. The
+# builder derives without those confirmations, so its safe head leads by about 1500 Denim blocks.
 [[checks]]
 id = "post-denim-shadow-safe-progress"
 kind = "safe_head_progress"
