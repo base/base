@@ -964,7 +964,7 @@ where
         // Build the final block WITH state root computed
         let (final_payload, _, _) = build_block(state, ctx, info, FlashblockId::default(), true)?;
 
-        self.emit_final_inclusion_events(ctx, &final_payload);
+        emit_final_inclusion_events(ctx, &final_payload);
 
         let elapsed = start_time.elapsed();
         info!(
@@ -976,56 +976,6 @@ where
         );
 
         Ok(final_payload)
-    }
-
-    fn emit_final_inclusion_events(
-        &self,
-        ctx: &BasePayloadBuilderCtx,
-        final_payload: &BaseBuiltPayload,
-    ) {
-        if GlobalTransactionEventWriter::get().is_none() {
-            return;
-        }
-
-        let block = final_payload.block();
-        let block_hash = block.hash();
-        let block_number = block.number;
-        let transaction_count = block.body().transactions.len();
-        let payload_event_ctx = BuilderTransactionEventContext {
-            payload_id: ctx.payload_id().to_string(),
-            block_number,
-            block_hash: Some(block_hash),
-            parent_hash: ctx.parent_hash(),
-            flashblock_index: None,
-            target_flashblock_count: ctx.target_flashblock_count(),
-            ordering_position: None,
-            builder_mode: "flashblocks",
-            source_queue: "finalized_payload",
-        };
-        emit_builder_payload_event(
-            payload_event_ctx.clone(),
-            TransactionEventType::BuilderPayloadFinalized,
-            || {
-                BuilderPayloadFinalizedEventData::new(
-                    transaction_count,
-                    block.gas_used,
-                    block.gas_limit,
-                    block.timestamp,
-                    "builder_finalized_payload",
-                )
-            },
-        );
-
-        for (position, tx) in block.body().transactions.iter().enumerate() {
-            let mut event_ctx = payload_event_ctx.clone();
-            event_ctx.ordering_position = Some(position as u64);
-            emit_builder_transaction_event(
-                event_ctx,
-                TransactionEventType::BuilderIncluded,
-                tx.tx_hash(),
-                || BuilderIncludedEventData::new("builder_finalized_payload"),
-            );
-        }
     }
 
     /// Calculate number of flashblocks, taking time drift into account.
@@ -1103,6 +1053,56 @@ struct FlashblocksMetadata {
     receipts: Option<HashMap<B256, BaseReceipt>>,
     /// Changed account balances (removed in Base 1.0)
     new_account_balances: Option<HashMap<Address, U256>>,
+}
+
+/// Emits the finalized-payload event and one `BUILDER_INCLUDED` event per included transaction.
+pub(crate) fn emit_final_inclusion_events(
+    ctx: &BasePayloadBuilderCtx,
+    final_payload: &BaseBuiltPayload,
+) {
+    if GlobalTransactionEventWriter::get().is_none() {
+        return;
+    }
+
+    let block = final_payload.block();
+    let block_hash = block.hash();
+    let block_number = block.number;
+    let transaction_count = block.body().transactions.len();
+    let payload_event_ctx = BuilderTransactionEventContext {
+        payload_id: ctx.payload_id().to_string(),
+        block_number,
+        block_hash: Some(block_hash),
+        parent_hash: ctx.parent_hash(),
+        flashblock_index: None,
+        target_flashblock_count: ctx.target_flashblock_count(),
+        ordering_position: None,
+        builder_mode: "flashblocks",
+        source_queue: "finalized_payload",
+    };
+    emit_builder_payload_event(
+        payload_event_ctx.clone(),
+        TransactionEventType::BuilderPayloadFinalized,
+        || {
+            BuilderPayloadFinalizedEventData::new(
+                transaction_count,
+                block.gas_used,
+                block.gas_limit,
+                block.timestamp,
+                "builder_finalized_payload",
+            )
+        },
+    );
+
+    for (position, tx) in block.body().transactions.iter().enumerate() {
+        let mut event_ctx = payload_event_ctx.clone();
+        event_ctx.ordering_position = Some(position as u64);
+        emit_builder_transaction_event(
+            event_ctx,
+            TransactionEventType::BuilderIncluded,
+            tx.tx_hash(),
+            || BuilderIncludedEventData::new("builder_finalized_payload"),
+        );
+    }
 }
 
 pub(crate) fn execute_pre_steps<DB>(
