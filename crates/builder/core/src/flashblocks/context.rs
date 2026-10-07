@@ -1419,6 +1419,12 @@ impl BasePayloadBuilderCtx {
                     );
                     continue;
                 };
+                // VALIDATION ONLY: injected per-candidate cost in the parked rescan.
+                for _ in 0..8 {
+                    std::hint::black_box(alloy_primitives::keccak256(std::hint::black_box(
+                        parked_hash,
+                    )));
+                }
                 let blocking_predicate =
                     match Self::accumulate_elapsed(&mut predicate_eval_total, || {
                         let mut recorder = PredicateReadRecorder::new(
