@@ -17,13 +17,11 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
 use base_tx_manager::NonceManager;
 use rand::Rng;
-use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, instrument};
 
 use super::{
-    DisplaySnapshot, LoadConfig, LoadTestDisplay, LoadTestStage, SubmissionPipeline, TxType,
-    ValidityRouter,
+    LoadConfig, LoadTestDisplay, LoadTestStage, SubmissionPipeline, TxType, ValidityRouter,
 };
 use crate::{
     BaselineError, Result,
@@ -59,7 +57,6 @@ pub struct LoadRunner {
     pub(super) validity_router: ValidityRouter,
     pub(super) base_fee: u128,
     pub(super) display: Option<LoadTestDisplay>,
-    pub(super) snapshot_tx: Option<watch::Sender<DisplaySnapshot>>,
     /// Per-run salt for deriving each sender's own B-20 token, set during B-20 setup.
     pub(super) b20_run_salt: Option<B256>,
     pub(super) recipient_keys: Option<KeyStream>,
@@ -184,7 +181,6 @@ impl LoadRunner {
             validity_router,
             base_fee: 0,
             display: None,
-            snapshot_tx: None,
             b20_run_salt: None,
             recipient_keys,
             recipient_rng,
@@ -383,7 +379,6 @@ impl LoadRunner {
             chain_id: self.config.chain_id,
             max_gas_price: self.config.max_gas_price,
             primary_submission_rpc: self.config.primary_submission_rpc().clone(),
-            hide_progress: self.snapshot_tx.is_some(),
             concurrency: PREP_CONCURRENCY,
             b20_mint,
             real_token_setup,
@@ -408,7 +403,6 @@ impl LoadRunner {
             chain_id: self.config.chain_id,
             max_gas_price: self.config.max_gas_price,
             primary_submission_rpc: self.config.primary_submission_rpc().clone(),
-            hide_progress: self.snapshot_tx.is_some(),
             concurrency: PREP_CONCURRENCY,
             b20_mint: U256::ZERO,
             real_token_setup: None,
@@ -460,7 +454,6 @@ impl LoadRunner {
             self.config.chain_id,
             self.config.max_gas_price,
             self.config.primary_submission_rpc().clone(),
-            self.snapshot_tx.is_some(),
             setup,
         )
         .await
@@ -483,11 +476,6 @@ impl LoadRunner {
     /// Returns a clone of the stop flag for external coordination.
     pub fn stop_flag(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.stop_flag)
-    }
-
-    /// Returns the load configuration.
-    pub const fn config(&self) -> &LoadConfig {
-        &self.config
     }
 
     /// Attaches a live progress-bar display.
@@ -518,24 +506,6 @@ impl LoadRunner {
             Some(display) => display.suspend(operation),
             None => operation(),
         }
-    }
-
-    /// Replaces the internal stop flag with an externally-owned one.
-    ///
-    /// Call this before [`run`] when the caller needs to share the flag across threads
-    /// (e.g. a TUI view pre-creates the flag so it can stop the test without waiting
-    /// for the runner to be fully initialised).
-    pub fn replace_stop_flag(&mut self, flag: Arc<AtomicBool>) {
-        self.stop_flag = flag;
-    }
-
-    /// Attaches a watch channel for streaming live [`DisplaySnapshot`] updates to a TUI view.
-    ///
-    /// When set, the runner publishes a snapshot every 500 ms during the run loop,
-    /// regardless of whether a TTY display is also attached. The TUI view polls
-    /// the corresponding [`watch::Receiver`] on each tick.
-    pub fn set_snapshot_tx(&mut self, tx: watch::Sender<DisplaySnapshot>) {
-        self.snapshot_tx = Some(tx);
     }
 }
 

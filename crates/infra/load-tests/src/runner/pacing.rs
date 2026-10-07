@@ -131,7 +131,6 @@ struct EnqueueProgress {
 /// Live TUI / snapshot updates while the enqueue loop owns the collector.
 struct EnqueueProgressDisplay<'a> {
     display: Option<&'a LoadTestDisplay>,
-    snapshot_tx: Option<&'a watch::Sender<DisplaySnapshot>>,
     last_update: Instant,
     last_log: Instant,
     start: Instant,
@@ -149,8 +148,8 @@ impl EnqueueProgressDisplay<'_> {
         collector: &mut MetricsCollector,
         results_tracker: &ResultsTracker,
     ) {
-        let should_render = (self.display.is_some() || self.snapshot_tx.is_some())
-            && self.last_update.elapsed() >= DISPLAY_RENDER_INTERVAL;
+        let should_render =
+            self.display.is_some() && self.last_update.elapsed() >= DISPLAY_RENDER_INTERVAL;
         let should_log = self.last_log.elapsed() >= PROGRESS_REPORT_INTERVAL;
         if !should_render && !should_log {
             return;
@@ -200,9 +199,6 @@ impl EnqueueProgressDisplay<'_> {
         };
         if let Some(display) = self.display {
             display.update(&snap);
-        }
-        if let Some(tx) = self.snapshot_tx {
-            let _ = tx.send(snap);
         }
     }
 }
@@ -542,12 +538,11 @@ impl LoadRunner {
         const BASE_FEE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
         let use_live_display = self.display.as_ref().is_some_and(|d| d.is_active());
-        let use_snapshot_tx = self.snapshot_tx.is_some();
 
         // Emit an initial snapshot immediately so the TUI renders live
         // metrics (submitted/in-flight/failed counters) without waiting
         // for the first confirmation to arrive.
-        if use_live_display || use_snapshot_tx {
+        if use_live_display {
             let snap = self.build_snapshot(
                 start,
                 &results_tracker,
@@ -557,9 +552,6 @@ impl LoadRunner {
             );
             if let Some(ref d) = self.display {
                 d.update(&snap);
-            }
-            if let Some(ref tx) = self.snapshot_tx {
-                let _ = tx.send(snap);
             }
         }
 
@@ -712,7 +704,6 @@ impl LoadRunner {
                 results_tracker: &results_tracker,
                 progress_display: Some(EnqueueProgressDisplay {
                     display: self.display.as_ref(),
-                    snapshot_tx: self.snapshot_tx.as_ref(),
                     last_update: Instant::now()
                         .checked_sub(DISPLAY_RENDER_INTERVAL)
                         .unwrap_or_else(Instant::now),
@@ -840,7 +831,6 @@ impl LoadRunner {
                     results_tracker: &results_tracker,
                     progress_display: Some(EnqueueProgressDisplay {
                         display: self.display.as_ref(),
-                        snapshot_tx: self.snapshot_tx.as_ref(),
                         last_update: Instant::now()
                             .checked_sub(DISPLAY_RENDER_INTERVAL)
                             .unwrap_or_else(Instant::now),
@@ -1046,9 +1036,7 @@ impl LoadRunner {
                     self.collector.record_confirmed(metrics);
                 }
             }
-            if self.display.as_ref().is_some_and(LoadTestDisplay::is_active)
-                || self.snapshot_tx.is_some()
-            {
+            if self.display.as_ref().is_some_and(LoadTestDisplay::is_active) {
                 let snap = self.build_snapshot(
                     start,
                     &results_tracker,
@@ -1058,9 +1046,6 @@ impl LoadRunner {
                 );
                 if let Some(display) = &self.display {
                     display.update(&snap);
-                }
-                if let Some(snapshot_tx) = &self.snapshot_tx {
-                    let _ = snapshot_tx.send(snap);
                 }
             }
 
