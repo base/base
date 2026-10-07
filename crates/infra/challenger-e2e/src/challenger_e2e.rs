@@ -1974,7 +1974,7 @@ impl ChallengerE2e {
     /// Sleeps through an observation window, logging every [`HEARTBEAT`] so a
     /// quiet window is distinguishable from a hung driver.
     async fn observe(window: Duration, what: &str) {
-        info!(window_s = window.as_secs(), "observing {what}");
+        info!(observing = what, window_s = window.as_secs(), "observing {what}");
         let started = Instant::now();
         loop {
             let elapsed = started.elapsed();
@@ -1985,6 +1985,7 @@ impl ChallengerE2e {
             let elapsed = started.elapsed();
             if elapsed < window {
                 info!(
+                    observing = what,
                     elapsed_s = elapsed.as_secs(),
                     window_s = window.as_secs(),
                     "still observing {what}"

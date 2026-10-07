@@ -293,6 +293,8 @@ answerable without reading the whole stream. Note the prefix: the driver's
 | Which phase a failed run died in | `"failed" @data.message.fields.verdict:fail` — has `phase` and `elapsed_ms` |
 | Every planned phase of one run, with timings | `"run summary"` — has `results`, e.g. `setup=pass(41.2s) quiet-window=pass(95.0s) path3=pass(22.4s) bystanders=pass(1.8s)` |
 | A wait that is taking long | `"still waiting for"` — has `waiting_for`, `elapsed_s`, `budget_s` |
+| One step of a phase | `@data.message.fields.what:"waiting for two challenger scans"` — with `phase`, `step`, `steps` |
+| A quiet window in progress | `"still observing"` — has `observing`, `elapsed_s`, `window_s` |
 
 Progress logs read as a sequence. Each planned phase logs `Path 1 started (3/7)`
 and `Path 1 finished` (with `elapsed_ms`), or `Path 1 failed`. A phase that a

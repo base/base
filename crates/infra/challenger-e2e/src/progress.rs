@@ -47,7 +47,7 @@ pub(crate) const fn plan(scenario: Scenario) -> &'static [Phase] {
 
 /// Logs one numbered step inside a phase, e.g. `Path 3 step 2/5: ...`.
 pub(crate) fn step(phase: Phase, step: u32, steps: u32, what: &str) {
-    info!(phase = %phase, step, steps, "{} step {step}/{steps}: {what}", phase.label());
+    info!(phase = %phase, step, steps, what, "{} step {step}/{steps}: {what}", phase.label());
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

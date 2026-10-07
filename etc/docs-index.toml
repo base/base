@@ -436,7 +436,7 @@ digest = "1e4810a82c"
 
 ["crates/infra/challenger-e2e/README.md"]
 summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games, asserts valid games are left alone and each path is disputed. Covers mock/real prover modes, scenarios and env vars."
-digest = "641b3d55d7"
+digest = "62387b7ca2"
 
 ["crates/infra/load-tests/README.md"]
 summary = "Load-testing framework (base-load-tests lib, base-load-tester bin): just/cargo commands, YAML config, tx mixes (precompile, B-20, swap, validity). Use to run or configure devnet/sepolia load tests."
