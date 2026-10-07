@@ -22,7 +22,7 @@ before stopping any containers. It skips the run if the proofs database is empty
 block lags the checked EL head by more than `--proofs-max-lag-blocks` (default 1,000; also settable
 via `SNAPSHOTTER_PROOFS_MAX_LAG_BLOCKS`). Exactly 1,000 blocks behind is allowed by default; zero
 requires proofs to reach the checked head. RPC errors abort the run without stopping containers,
-so the EL must expose the proofs ExEx's debug RPC. Without `--upload-proofs`, no proofs RPC is
+so the EL must expose the proofs `ExEx`'s debug RPC. Without `--upload-proofs`, no proofs RPC is
 called. Like the EL tip check, this is a best-effort pre-check, not an atomic snapshot guarantee.
 
 The Docker socket (`/var/run/docker.sock`) is volume-mounted into the sidecar container, giving

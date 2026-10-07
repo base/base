@@ -105,10 +105,10 @@ impl TipChecker for RpcTipChecker {
             .connect(self.rpc_url.as_str())
             .await
             .with_context(|| format!("connecting to EL RPC at {}", self.rpc_url))?;
-        let status: ProofsSyncStatus = provider
-            .raw_request("debug_proofsSyncStatus".into(), ())
-            .await
-            .context("fetching proofs sync status; ensure the proofs ExEx and debug RPC are enabled")?;
+        let status: ProofsSyncStatus =
+            provider.raw_request("debug_proofsSyncStatus".into(), ()).await.context(
+                "fetching proofs sync status; ensure the proofs ExEx and debug RPC are enabled",
+            )?;
         Ok(status.latest)
     }
 }
@@ -140,7 +140,8 @@ mod tests {
                 })
                 .expect("proofs status method should register");
             let handle = server.start(module);
-            let checker = RpcTipChecker::new(format!("http://{addr}").parse().expect("valid RPC URL"));
+            let checker =
+                RpcTipChecker::new(format!("http://{addr}").parse().expect("valid RPC URL"));
             assert_eq!(
                 checker.proofs_latest().await.expect("proofs status should decode"),
                 latest,
@@ -168,8 +169,10 @@ mod tests {
                 .register_method("debug_proofsSyncStatus", move |_, _, _| response.clone())
                 .expect("proofs status method should register");
             let handle = server.start(module);
-            let checker = RpcTipChecker::new(format!("http://{addr}").parse().expect("valid RPC URL"));
-            let err = checker.proofs_latest().await.expect_err("unknown proofs status must be rejected");
+            let checker =
+                RpcTipChecker::new(format!("http://{addr}").parse().expect("valid RPC URL"));
+            let err =
+                checker.proofs_latest().await.expect_err("unknown proofs status must be rejected");
             assert_eq!(
                 err.to_string(),
                 "fetching proofs sync status; ensure the proofs ExEx and debug RPC are enabled",

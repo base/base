@@ -456,7 +456,7 @@ digest = "437eac6593"
 
 ["crates/infra/snapshotter/README.md"]
 summary = "Snapshotter: EL freshness and optional proofs-lag gates, Docker EL/CL stop/restart, snapshot generation and S3/R2 uploads. Use to configure publication safety and proofs uploads."
-digest = "e76286210b"
+digest = "24583c1be5"
 
 ["crates/infra/snark-e2e/README.md"]
 summary = "base-snark-e2e library: submits a one-block SNARK PLONK prove request to prover-service, polls, and verifies the receipt. Lists required env vars and the ignored integration test command."
