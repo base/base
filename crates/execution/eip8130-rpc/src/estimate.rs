@@ -177,8 +177,15 @@ impl Eip8130GasEstimator {
             )
         })?;
         // The validity window and nonce-free rules, as pool admission applies
-        // them at the simulated block's timestamp.
-        let now_ms = evm_env.block_env.timestamp.saturating_to::<u64>().saturating_mul(1_000);
+        // them at the simulated block's timestamp. A `time` block override is
+        // only applied to the env inside the state closure below, so it must be
+        // honored here explicitly.
+        let timestamp = overrides
+            .block
+            .as_ref()
+            .and_then(|block| block.time)
+            .unwrap_or_else(|| evm_env.block_env.timestamp.saturating_to());
+        let now_ms = timestamp.saturating_mul(1_000);
         if let Some(parts) = &sim_tx.eip8130 {
             parts.signed.validate_timestamp(now_ms).map_err(|error| {
                 ErrorObjectOwned::owned(

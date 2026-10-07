@@ -3746,6 +3746,8 @@ dependencies = [
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
  "rstest",
+ "serde_json",
+ "thiserror 2.0.19",
 ]
 
 [[package]]

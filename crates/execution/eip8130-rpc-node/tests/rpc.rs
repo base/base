@@ -483,6 +483,37 @@ async fn estimate_gas_rejects_a_nonce_free_request_without_valid_before() -> eyr
     Ok(())
 }
 
+/// The validity window is checked at the simulated block's time: a request not
+/// yet valid at the head is rejected, but accepted under a `time` block override
+/// that opens its window.
+#[tokio::test]
+async fn eth_call_checks_the_validity_window_at_the_overridden_time() -> eyre::Result<()> {
+    let alice: Address = Account::Alice.address();
+    let returner = address!("0x00000000000000000000000000000000000000fe");
+    let (_harness, client) =
+        setup_with(genesis_with_code(returner, bytes!("602a60005260206000f3"))).await?;
+    let valid_after_secs = 1_000_u64;
+    let request = json!({
+        "from": alice,
+        "calls": [[{ "to": returner, "data": "0x" }]],
+        "validAfter": format!("{valid_after_secs:#x}"),
+    });
+
+    let at_head: Result<alloy_primitives::Bytes, _> =
+        client.request("eth_call", (&request, "latest")).await;
+    let err_str = at_head.expect_err("not yet valid at the head").to_string();
+    assert!(err_str.contains("not yet valid"), "expected a validity-window error, got: {err_str}");
+
+    let block_overrides = json!({ "time": format!("{valid_after_secs:#x}") });
+    let output: alloy_primitives::Bytes =
+        client.request("eth_call", (&request, "latest", json!({}), block_overrides)).await?;
+    assert_eq!(
+        output,
+        alloy_primitives::Bytes::from(U256::from(42u64).to_be_bytes::<32>().to_vec())
+    );
+    Ok(())
+}
+
 /// `type: 0x79` alone marks an EIP-8130 request, so a top-level call is
 /// estimated through the EIP-8130 path rather than as a plain transfer.
 #[tokio::test]

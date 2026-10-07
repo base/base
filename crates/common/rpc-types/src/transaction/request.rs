@@ -97,6 +97,10 @@ pub struct Eip8130RequestFields {
     pub nonce_key: Option<U256>,
     /// Account-configuration changes applied before the calls (create,
     /// authorize/revoke actor, set delegation).
+    ///
+    /// Simulation applies them as inclusion would, so a sequenced config change
+    /// must carry the account's current channel sequence (and, on the local
+    /// channel, its current local epoch); a mismatch rejects the request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_changes: Option<Vec<AccountChange>>,
     /// The phased call batches dispatched by the sender account.

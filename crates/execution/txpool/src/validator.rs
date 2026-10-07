@@ -1733,6 +1733,8 @@ where
         if size > limit {
             return Err(InvalidPoolTransactionError::OversizedData { size, limit });
         }
+        // Cheap shape checks run before the fork gate and signature recovery.
+        Eip8130Structure::validate(signed).map_err(Self::map_structural_error)?;
 
         // Single read of the head-block timestamp so the fork gate and the
         // expiry check see the same value even when `on_new_head_block` updates
@@ -1758,8 +1760,7 @@ where
         signed
             .validate_timestamp(now_ms)
             .map_err(|error| Self::map_timestamp_error(error, signed, now_ms))?;
-        Self::validate_eoa_sender_signature(signed)?;
-        Eip8130Structure::validate(signed).map_err(Self::map_structural_error)
+        Self::validate_eoa_sender_signature(signed)
     }
 
     /// Checks the implicit EOA-path signature is recoverable before admitting it
@@ -2371,6 +2372,27 @@ mod tests {
             validator.validate_eip8130_structural(&signed),
             "call phase count exceeds maximum",
         );
+    }
+
+    /// The call phase cap is a cheap shape check, so it rejects before the fork
+    /// gate and before any signature recovery is attempted.
+    #[test]
+    fn call_phase_cap_rejects_before_fork_gate_and_signature_recovery() {
+        let pre_everest = BaseChainSpecBuilder::base_mainnet().cobalt_activated().build();
+        let tx = TxEip8130 {
+            calls: vec![Vec::new(); Eip8130Constants::MAX_CALL_PHASES_PER_TX + 1],
+            ..minimal_valid_eoa_tx()
+        };
+        let unrecoverable = Eip8130Signed::new(tx, Bytes::from(vec![0xff; 65]), Bytes::new());
+
+        for validator in
+            [build_test_validator(), build_test_validator_with_spec(Arc::new(pre_everest))]
+        {
+            assert_structural_reason(
+                validator.validate_eip8130_structural(&unrecoverable),
+                "call phase count exceeds maximum",
+            );
+        }
     }
 
     #[test]
