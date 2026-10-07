@@ -1,6 +1,7 @@
-//! A fake sequencer endpoint for the tests of the leader search.
+//! A fake sequencer endpoint for the tests of the leader search, and the clients the tests build
+//! it with.
 //!
-//! Hand-rolled because [`Sequencers`](crate::Sequencers) builds concrete clients from URLs, a
+//! The fake is hand-rolled because [`Sequencers`](crate::Sequencers) builds concrete clients from URLs, a
 //! jsonrpsee `HttpClient` and an alloy `RootProvider`, so there is no trait to automock. It is a
 //! real JSON-RPC server rather than an `httpmock` mock because the client rejects an answer whose
 //! id is not its request's, and these tests call one endpoint several times.
@@ -17,6 +18,13 @@ use jsonrpsee::{
 };
 use serde_json::Value;
 use url::Url;
+
+use crate::{BatcherConfig, RpcClientBuilder};
+
+/// A builder of clients with the network timeout of [`BatcherConfig::default`].
+pub fn rpc_client_builder() -> RpcClientBuilder {
+    RpcClientBuilder::new(BatcherConfig::default().network_timeout)
+}
 
 /// What a [`FakeSequencer`] answers to `admin_sequencerActive`.
 #[derive(Debug, Clone, Copy)]

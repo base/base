@@ -152,7 +152,7 @@ digest = "d1525977c0"
 
 ["crates/batcher/cli/README.md"]
 summary = "base-batcher-cli: base batcher flags and startup, with sequencer endpoints and leader search, channel and DA config, and shadow mode posting to the inbox a parity validator derives its chain from."
-digest = "8c65ed44e2"
+digest = "876305aea7"
 
 ["crates/batcher/comp/README.md"]
 summary = "base-comp: incremental Brotli channel compression (CompressionStream, BrotliLevel) producing protocol-compatible channels; batch encoding and framing live in batcher-encoder."

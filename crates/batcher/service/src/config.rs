@@ -16,7 +16,7 @@ use url::Url;
 /// the parity validator of [`shadow`](Self::shadow).
 #[derive(Debug, Clone)]
 pub struct BatcherConfig {
-    /// L1 RPC endpoint.
+    /// L1 HTTP RPC endpoint.
     pub l1_rpc_url: Url,
     /// Sequencer HTTP endpoints, at least one: conductors with their RPC proxy enabled, or
     /// consensus nodes that forward the methods they do not serve to their execution client.
@@ -28,10 +28,10 @@ pub struct BatcherConfig {
     pub sequencer_urls: Vec<Url>,
     /// Optional L1 WebSocket endpoint for new-block subscriptions.
     ///
-    /// When set, the batcher subscribes to new L1 block headers over this
-    /// connection to advance the pipeline's L1 head, falling back to polling
-    /// [`l1_rpc_url`](Self::l1_rpc_url) only on failure. When absent, polling
-    /// is used exclusively.
+    /// When set, the batcher also takes new L1 heads from a subscription over this connection,
+    /// alongside polling [`l1_rpc_url`](Self::l1_rpc_url). A connection or subscription that
+    /// fails or outlasts [`network_timeout`](Self::network_timeout) leaves polling alone. When
+    /// absent, polling is used exclusively.
     pub l1_ws_url: Option<Url>,
     /// Signer configuration for signing L1 transactions.
     ///
@@ -46,12 +46,22 @@ pub struct BatcherConfig {
     pub shadow: Option<ShadowConfig>,
     /// Polling interval.
     pub poll_interval: Duration,
+    /// Timeout of the RPC calls to L1, the sequencers and the parity validator.
+    pub network_timeout: Duration,
     /// Encoder configuration.
     pub encoder_config: EncoderConfig,
     /// Maximum number of in-flight (unconfirmed) transactions.
     pub max_pending_transactions: usize,
-    /// Transaction manager configuration.
-    pub tx_manager: TxManagerConfig,
+    /// L1 confirmations a submission waits for.
+    pub num_confirmations: u64,
+    /// Time after which an unconfirmed submission is resubmitted with a higher fee. Twice this
+    /// value also bounds the drain of in-flight submissions at shutdown.
+    pub resubmission_timeout: Duration,
+    /// Times the first publication of a submission is retried when an RPC rejects its nonce as
+    /// too high, as it temporarily does for an ordered nonce.
+    pub publish_max_retries: usize,
+    /// Delay between those retries.
+    pub publish_retry_delay: Duration,
     /// DA throttle configuration, `None` to disable the throttle.
     ///
     /// Must be `None` when [`shadow`](Self::shadow) is set.
@@ -108,9 +118,13 @@ impl Default for BatcherConfig {
             metrics_enabled: false,
             shadow: None,
             poll_interval: Duration::from_secs(1),
+            network_timeout: Duration::from_secs(10),
             encoder_config: EncoderConfig::default(),
             max_pending_transactions: 1,
-            tx_manager: TxManagerConfig { num_confirmations: 1, ..TxManagerConfig::default() },
+            num_confirmations: 1,
+            resubmission_timeout: Duration::from_secs(48),
+            publish_max_retries: 10,
+            publish_retry_delay: Duration::from_secs(1),
             throttle: Some(ThrottleConfig::default()),
             throttle_strategy: ThrottleStrategy::Quadratic,
             check_recent_txs_depth: 0,
@@ -124,6 +138,19 @@ impl Default for BatcherConfig {
 }
 
 impl BatcherConfig {
+    /// The transaction manager configuration: the settings the batcher exposes, its
+    /// [`network_timeout`](Self::network_timeout), and the tx manager's defaults for the rest.
+    pub fn tx_manager_config(&self) -> TxManagerConfig {
+        TxManagerConfig {
+            num_confirmations: self.num_confirmations,
+            resubmission_timeout: self.resubmission_timeout,
+            publish_max_retries: self.publish_max_retries,
+            publish_retry_delay: self.publish_retry_delay,
+            network_timeout: self.network_timeout,
+            ..TxManagerConfig::default()
+        }
+    }
+
     /// The throttle controller the batcher starts with: the configured
     /// [`throttle_strategy`](Self::throttle_strategy) and [`throttle`](Self::throttle) config, or
     /// [`ThrottleController::disabled`] when `throttle` is `None`.
@@ -143,8 +170,8 @@ pub struct ShadowConfig {
     /// Rollup node RPC endpoint of the parity validator, whose rollup config the batcher reads
     /// and whose derivation it follows.
     pub validator_rollup_rpc: Url,
-    /// L2 RPC endpoint of the parity validator, whose derived block hashes are compared with
-    /// the leader sequencer's.
+    /// L2 HTTP RPC endpoint of the parity validator, whose derived block hashes are compared
+    /// with the leader sequencer's.
     pub validator_l2_rpc: Url,
 }
 
@@ -175,6 +202,32 @@ mod tests {
 
     const CANONICAL_INBOX: Address = Address::repeat_byte(0xca);
     const SHADOW_INBOX: Address = Address::repeat_byte(0x5a);
+
+    /// The tx manager gets the settings the batcher exposes and the batcher's network timeout,
+    /// and keeps its own defaults for the rest.
+    #[test]
+    fn tx_manager_config_carries_the_exposed_settings_and_the_network_timeout() {
+        let config = BatcherConfig {
+            num_confirmations: 3,
+            resubmission_timeout: Duration::from_secs(30),
+            publish_max_retries: 7,
+            publish_retry_delay: Duration::from_secs(2),
+            network_timeout: Duration::from_secs(4),
+            ..BatcherConfig::default()
+        };
+
+        assert_eq!(
+            config.tx_manager_config(),
+            TxManagerConfig {
+                num_confirmations: 3,
+                resubmission_timeout: Duration::from_secs(30),
+                publish_max_retries: 7,
+                publish_retry_delay: Duration::from_secs(2),
+                network_timeout: Duration::from_secs(4),
+                ..TxManagerConfig::default()
+            }
+        );
+    }
 
     /// The batcher starts with the configured throttle strategy and config, and with the off
     /// strategy when the throttle is disabled.

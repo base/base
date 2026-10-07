@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use base_batcher_core::DerivationStatus;
 use base_consensus_rpc::RollupNodeApiClient;
-use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
+use jsonrpsee::http_client::HttpClient;
 
-use crate::{DerivationStatusProvider, Sequencers, ShadowConfig};
+use crate::{DerivationStatusProvider, RpcClientBuilder, Sequencers, ShadowConfig};
 
 /// The rollup node whose rollup config the batcher reads and whose derivation it follows.
 #[derive(Debug)]
@@ -24,20 +24,17 @@ impl RollupNode {
     /// # Errors
     ///
     /// Returns an error when the parity validator URL is not an HTTP URL.
-    pub fn new(shadow: Option<&ShadowConfig>, sequencers: Arc<Sequencers>) -> eyre::Result<Self> {
-        let Some(shadow) = shadow else {
-            return Ok(Self::Leader(sequencers));
-        };
-
-        let origin = shadow.validator_rollup_rpc.origin().ascii_serialization();
-        let client = HttpClientBuilder::default()
-            .build(shadow.validator_rollup_rpc.as_str())
-            .map_err(|e| {
-                eyre::eyre!(
-                    "failed to build the parity validator rollup node client for {origin}: {e}"
-                )
-            })?;
-        Ok(Self::ParityValidator(client))
+    pub fn new(
+        shadow: Option<&ShadowConfig>,
+        sequencers: Arc<Sequencers>,
+        client_builder: RpcClientBuilder,
+    ) -> eyre::Result<Self> {
+        match shadow {
+            Some(shadow) => {
+                Ok(Self::ParityValidator(client_builder.client(&shadow.validator_rollup_rpc)?))
+            }
+            None => Ok(Self::Leader(sequencers)),
+        }
     }
 
     /// The client of the rollup node: for [`Leader`](Self::Leader), the client of the current
@@ -68,7 +65,7 @@ mod tests {
     use jsonrpsee::{core::client::ClientT, rpc_params};
 
     use super::*;
-    use crate::test_utils::{Activity, FakeSequencer};
+    use crate::test_utils::{Activity, FakeSequencer, rpc_client_builder};
 
     /// A canonical batcher's rollup node is the one of the current leader, so a request made
     /// after a leader change reaches the new leader.
@@ -76,10 +73,13 @@ mod tests {
     async fn leader_rollup_node_is_the_current_leader() {
         let first = FakeSequencer::start(Activity::Active, 1).await;
         let second = FakeSequencer::start(Activity::NotLeader, 2).await;
-        let sequencers =
-            Arc::new(Sequencers::new(&[first.url.clone(), second.url.clone()]).await.unwrap());
+        let sequencers = Arc::new(
+            Sequencers::new(&[first.url.clone(), second.url.clone()], rpc_client_builder())
+                .unwrap(),
+        );
         sequencers.refresh_leader().await.unwrap();
-        let rollup_node = RollupNode::new(None, Arc::clone(&sequencers)).unwrap();
+        let rollup_node =
+            RollupNode::new(None, Arc::clone(&sequencers), rpc_client_builder()).unwrap();
 
         first.set_activity(Activity::NotLeader);
         second.set_activity(Activity::Active);

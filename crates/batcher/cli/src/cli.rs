@@ -10,7 +10,7 @@ use base_batcher_core::{ThrottleConfig, ThrottleStrategy};
 use base_batcher_service::{BatcherConfig, BatcherService, ShadowConfig};
 use base_cli_utils::RuntimeManager;
 use base_runtime::TokioRuntime;
-use base_tx_manager::{SignerConfig, TxManagerConfig};
+use base_tx_manager::SignerConfig;
 use clap::Parser;
 use url::Url;
 
@@ -19,7 +19,7 @@ base_tx_manager::define_signer_cli!("BASE_BATCHER");
 /// CLI arguments for the batcher.
 #[derive(Parser, Clone, Debug)]
 pub struct BatcherArgs {
-    /// L1 RPC endpoint.
+    /// L1 HTTP RPC endpoint.
     #[arg(long = "l1-rpc-url", visible_aliases = ["l1", "l1-eth-rpc"], env = "BASE_NODE_L1_ETH_RPC")]
     pub l1_rpc_url: Url,
 
@@ -66,7 +66,7 @@ pub struct BatcherArgs {
     #[arg(long = "shadow.validator-rollup-rpc", env = "BASE_BATCHER_SHADOW_VALIDATOR_ROLLUP_RPC")]
     pub shadow_validator_rollup_rpc: Option<Url>,
 
-    /// Parity validator L2 RPC endpoint, whose derived block hashes are compared
+    /// Parity validator L2 HTTP RPC endpoint, whose derived block hashes are compared
     /// with the leader sequencer's.
     ///
     /// Required with `--shadow.enabled`.
@@ -76,6 +76,14 @@ pub struct BatcherArgs {
     /// Polling interval in seconds.
     #[arg(long = "poll-interval", default_value = "1", env = "BASE_BATCHER_POLL_INTERVAL")]
     pub poll_interval_secs: u64,
+
+    /// Timeout in seconds of the RPC calls to L1, the sequencers and the parity validator.
+    ///
+    /// A call that times out is logged and retried like any other failed call, and the batcher
+    /// keeps running. At startup, the reads that set it up retry until
+    /// `--wait-node-sync-timeout`, then the batcher exits.
+    #[arg(long = "network-timeout", default_value = "10", env = "BASE_BATCHER_NETWORK_TIMEOUT")]
+    pub network_timeout_secs: u64,
 
     /// Maximum L1 blocks a channel may stay open.
     #[arg(
@@ -319,14 +327,6 @@ impl BatcherArgs {
 
         // Fail at startup, before constructing the service or accepting blocks.
         encoder_config.validate()?;
-        let tx_manager = TxManagerConfig {
-            num_confirmations: self.num_confirmations,
-            resubmission_timeout: Duration::from_secs(self.resubmission_timeout_secs),
-            publish_max_retries: self.publish_max_retries,
-            publish_retry_delay: self.publish_retry_delay,
-            ..TxManagerConfig::default()
-        };
-        tx_manager.validate()?;
         Ok(BatcherConfig {
             l1_rpc_url: self.l1_rpc_url,
             l1_ws_url: self.l1_ws_url,
@@ -335,9 +335,13 @@ impl BatcherArgs {
             metrics_enabled,
             shadow,
             poll_interval: Duration::from_secs(self.poll_interval_secs),
+            network_timeout: Duration::from_secs(self.network_timeout_secs),
             encoder_config,
             max_pending_transactions: self.max_pending_transactions,
-            tx_manager,
+            num_confirmations: self.num_confirmations,
+            resubmission_timeout: Duration::from_secs(self.resubmission_timeout_secs),
+            publish_max_retries: self.publish_max_retries,
+            publish_retry_delay: self.publish_retry_delay,
             throttle: if self.no_throttle {
                 None
             } else {
@@ -496,6 +500,7 @@ mod tests {
 
         assert!(!config.stopped);
         assert!(!config.wait_node_sync);
+        assert_eq!(config.network_timeout, Duration::from_secs(10));
         assert_eq!(config.throttle_strategy, ThrottleStrategy::Quadratic);
 
         assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Blob);
@@ -558,6 +563,8 @@ mod tests {
             "30",
             "--poll-interval",
             "2",
+            "--network-timeout",
+            "3",
             "--throttle-start-threshold",
             "500000",
             "--throttle-full-threshold",
@@ -583,14 +590,15 @@ mod tests {
         assert_eq!(config.encoder_config.compressed_size_target, Some(1000));
         assert_eq!(config.encoder_config.max_blobs_per_tx, 3);
         assert_eq!(config.encoder_config.brotli_level, base_batcher_encoder::BrotliLevel::Brotli5);
-        assert_eq!(config.tx_manager.publish_max_retries, 7);
-        assert_eq!(config.tx_manager.publish_retry_delay, Duration::from_secs(3));
+        assert_eq!(config.publish_max_retries, 7);
+        assert_eq!(config.publish_retry_delay, Duration::from_secs(3));
         assert_eq!(config.encoder_config.max_channel_duration, 10);
         assert_eq!(config.encoder_config.sub_safety_margin, 4);
         assert_eq!(config.max_pending_transactions, 4);
-        assert_eq!(config.tx_manager.num_confirmations, 3);
-        assert_eq!(config.tx_manager.resubmission_timeout, Duration::from_secs(30));
+        assert_eq!(config.num_confirmations, 3);
+        assert_eq!(config.resubmission_timeout, Duration::from_secs(30));
         assert_eq!(config.poll_interval, Duration::from_secs(2));
+        assert_eq!(config.network_timeout, Duration::from_secs(3));
         let throttle = config.throttle.expect("the throttle is on");
         assert_eq!(throttle.start_threshold_bytes, 500_000);
         assert_eq!(throttle.full_threshold_bytes, 800_000);
