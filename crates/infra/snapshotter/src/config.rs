@@ -192,25 +192,33 @@ mod tests {
             "snapshots",
         ];
         let default = TestCli::try_parse_from(args).expect("default CLI should parse").config;
-        assert_eq!(default.proofs_max_lag_blocks, 1_000, "default lag must be exactly 1,000 blocks");
+        assert_eq!(
+            default.proofs_max_lag_blocks, 1_000,
+            "default lag must be exactly 1,000 blocks"
+        );
         assert!(!default.upload_proofs, "proofs uploads must remain disabled by default");
         for (value, expected) in [("0", 0), ("250", 250)] {
-        let command = TestCli::command();
-        let lag_arg = command
-            .get_arguments()
-            .find(|arg| arg.get_long() == Some("proofs-max-lag-blocks"))
-            .expect("proofs lag flag must be exposed");
-        assert_eq!(
-            lag_arg.get_env(),
-            Some(OsStr::new("SNAPSHOTTER_PROOFS_MAX_LAG_BLOCKS")),
-            "proofs lag must support the documented environment variable"
-        );
-            let config = TestCli::try_parse_from(
-                args.into_iter().chain(["--proofs-max-lag-blocks", value, "--upload-proofs"]),
-            )
+            let command = TestCli::command();
+            let lag_arg = command
+                .get_arguments()
+                .find(|arg| arg.get_long() == Some("proofs-max-lag-blocks"))
+                .expect("proofs lag flag must be exposed");
+            assert_eq!(
+                lag_arg.get_env(),
+                Some(OsStr::new("SNAPSHOTTER_PROOFS_MAX_LAG_BLOCKS")),
+                "proofs lag must support the documented environment variable"
+            );
+            let config = TestCli::try_parse_from(args.into_iter().chain([
+                "--proofs-max-lag-blocks",
+                value,
+                "--upload-proofs",
+            ]))
             .expect("proofs lag override should parse")
             .config;
-            assert_eq!(config.proofs_max_lag_blocks, expected, "CLI must preserve the requested lag");
+            assert_eq!(
+                config.proofs_max_lag_blocks, expected,
+                "CLI must preserve the requested lag"
+            );
             assert!(config.upload_proofs, "proofs upload flag must enable the gate");
         }
     }

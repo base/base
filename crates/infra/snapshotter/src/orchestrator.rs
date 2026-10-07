@@ -83,7 +83,9 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
                 .await
                 .context("failed to check proofs sync status")?;
             let Some(proofs_latest) = proofs_latest else {
-                warn!("proofs database is empty; skipping snapshot run and leaving containers running");
+                warn!(
+                    "proofs database is empty; skipping snapshot run and leaving containers running"
+                );
                 return Ok(());
             };
             // Proofs can advance beyond the sampled EL head between the two RPC calls.
@@ -381,7 +383,8 @@ mod tests {
             .returning(|_| Ok(TipStatus { block_number: 2_000, at_tip: true }));
         tip.expect_proofs_latest().times(1).returning(|| Err(anyhow!("RPC unavailable")));
         let (snapshotter, _tmp) = snapshotter(containers, tip, true, 1_000);
-        let err = snapshotter.run().await.expect_err("unknown proofs status must prevent publication");
+        let err =
+            snapshotter.run().await.expect_err("unknown proofs status must prevent publication");
         assert_eq!(
             err.to_string(),
             "failed to check proofs sync status",
