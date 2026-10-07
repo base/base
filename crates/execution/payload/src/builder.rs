@@ -2222,6 +2222,37 @@ mod tests {
     }
 
     #[test]
+    fn native_builder_promotes_transaction_after_watched_nonce_advances() {
+        let trigger = pool_transaction_to(0, Address::repeat_byte(0x64), U256::ZERO);
+        let gated = pool_transaction_to(0, Address::repeat_byte(0x65), U256::ZERO)
+            .with_validity_predicates(vec![ValidityPredicate::Nonce {
+                address: trigger.sender(),
+                op: ValidityOperator::Equal,
+                value: U256::ONE,
+            }]);
+        let funded_senders = [gated.sender(), trigger.sender()];
+        let gated_hash = *gated.hash();
+        let trigger_hash = *trigger.hash();
+
+        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
+            pool_payload_context(DENIM_TIMESTAMP),
+            TestParkableTransactions::new(vec![gated, trigger]),
+            &funded_senders,
+        ) else {
+            panic!("Denim payload must freeze")
+        };
+
+        let included_hashes = payload
+            .block()
+            .body()
+            .transactions
+            .iter()
+            .map(|transaction| *transaction.tx_hash())
+            .collect::<Vec<_>>();
+        assert_eq!(included_hashes, vec![trigger_hash, gated_hash]);
+    }
+
+    #[test]
     fn native_builder_promotes_transaction_after_predicate_state_changes() {
         let watched_address = Address::repeat_byte(0x44);
         let gated = pool_transaction_to(0, Address::repeat_byte(0x55), U256::ZERO)

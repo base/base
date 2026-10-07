@@ -15,7 +15,7 @@ pub const DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD: usize = 32;
 
 /// Location that currently blocks a parked validity predicate.
 ///
-/// State keys ([`Self::Balance`], [`Self::Storage`]) are woken by
+/// State keys ([`Self::Balance`], [`Self::Nonce`], [`Self::Storage`]) are woken by
 /// [`ParkedPredicateIndex::affected_by_state`]. Context keys
 /// ([`Self::BlockNumber`], [`Self::FlashblockIndex`]) stay parked until the
 /// iterator is rebuilt with an updated context.
@@ -23,6 +23,8 @@ pub const DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD: usize = 32;
 pub enum ValidityPredicateKey {
     /// Account balance.
     Balance(Address),
+    /// Account protocol nonce.
+    Nonce(Address),
     /// Contract storage slot.
     Storage(Address, U256),
     /// Number of the block currently being built.
@@ -36,6 +38,7 @@ impl ValidityPredicateKey {
     pub const fn for_predicate(predicate: &ValidityPredicate) -> Self {
         match predicate {
             ValidityPredicate::Balance { address, .. } => Self::Balance(*address),
+            ValidityPredicate::Nonce { address, .. } => Self::Nonce(*address),
             ValidityPredicate::Storage { address, slot, .. } => Self::Storage(*address, *slot),
             ValidityPredicate::BlockNumber { .. } => Self::BlockNumber,
             ValidityPredicate::FlashblockIndex { .. } => Self::FlashblockIndex,
@@ -200,6 +203,20 @@ impl<T> ParkedPredicateIndex<T> {
     pub fn affected_by_state(&self, state: &EvmState) -> StateChangeEffects {
         let mut effects = StateChangeEffects::default();
         for (address, account) in state {
+            if account.is_selfdestructed() {
+                // Deleted accounts read as nonce zero, regardless of the retained account info.
+                if let Some(bucket) = self.blockers.get(&ValidityPredicateKey::Nonce(*address)) {
+                    bucket.extend_all(&mut effects.affected_transactions);
+                    effects.woken_buckets += 1;
+                }
+            } else if account.info.nonce != account.original_info().nonce {
+                self.wake_bucket(
+                    &mut effects,
+                    ValidityPredicateKey::Nonce(*address),
+                    U256::from(account.original_info().nonce),
+                    U256::from(account.info.nonce),
+                );
+            }
             if account.info.balance != account.original_info().balance {
                 self.wake_bucket(
                     &mut effects,
@@ -286,7 +303,7 @@ impl<T> ParkedPredicateIndex<T> {
 
 impl ValidityPredicateKey {
     const fn is_state(self) -> bool {
-        matches!(self, Self::Balance(_) | Self::Storage(_, _))
+        matches!(self, Self::Balance(_) | Self::Nonce(_) | Self::Storage(_, _))
     }
 }
 
@@ -426,7 +443,8 @@ impl OrderedPredicateBucket {
 
 fn ordered_predicate(predicate: &ValidityPredicate) -> Option<(U256, OrderedPredicateKind)> {
     let (mask, op, value) = match predicate {
-        ValidityPredicate::Balance { op, value, .. } => (U256::MAX, *op, *value),
+        ValidityPredicate::Balance { op, value, .. }
+        | ValidityPredicate::Nonce { op, value, .. } => (U256::MAX, *op, *value),
         ValidityPredicate::Storage { mask, op, value, .. } => (*mask, *op, *value),
         ValidityPredicate::BlockNumber { .. } | ValidityPredicate::FlashblockIndex { .. } => {
             return None;
@@ -542,6 +560,91 @@ mod tests {
             EvmStorageSlot::new_changed(U256::from(old), U256::from(new), Default::default()),
         );
         EvmState::from_iter([(address, account)])
+    }
+
+    #[test]
+    fn nonce_buckets_wake_on_nonce_changes_only() {
+        let address = Address::with_last_byte(1);
+        let hash = B256::with_last_byte(1);
+        for threshold in [1, 32] {
+            let mut index = ParkedPredicateIndex::new(threshold);
+            index.park(
+                hash,
+                (),
+                ValidityPredicate::Nonce {
+                    address,
+                    op: ValidityOperator::GreaterThanOrEqual,
+                    value: U256::from(10),
+                },
+            );
+            assert_eq!(
+                index.affected_by_state(&changed_balance(address, 9, 10)),
+                StateChangeEffects::default(),
+            );
+            let mut account = Account::default();
+            account.original_info_mut().nonce = 9;
+            account.info.nonce = 10;
+            assert_eq!(
+                index.affected_by_state(&EvmState::from_iter([(address, account)])),
+                StateChangeEffects { affected_transactions: vec![hash], woken_buckets: 1 },
+            );
+            assert_eq!(index.remove(hash), Some(()));
+            assert!(index.is_empty());
+        }
+    }
+
+    #[test]
+    fn ordered_nonce_buckets_wake_each_operator_at_its_boundary() {
+        let address = Address::with_last_byte(1);
+        let hash = B256::with_last_byte(1);
+        for (op, old, new) in [
+            (ValidityOperator::LessThan, 10, 9),
+            (ValidityOperator::LessThanOrEqual, 11, 10),
+            (ValidityOperator::Equal, 9, 10),
+            (ValidityOperator::NotEqual, 10, 11),
+            (ValidityOperator::GreaterThan, 10, 11),
+            (ValidityOperator::GreaterThanOrEqual, 9, 10),
+        ] {
+            let mut index = ParkedPredicateIndex::new(1);
+            index.park(hash, (), ValidityPredicate::Nonce { address, op, value: U256::from(10) });
+            let mut account = Account::default();
+            account.original_info_mut().nonce = old;
+            account.info.nonce = new;
+            assert_eq!(
+                index
+                    .affected_by_state(&EvmState::from_iter([(address, account)]))
+                    .affected_transactions,
+                vec![hash],
+            );
+        }
+    }
+
+    #[test]
+    fn ordered_nonce_bucket_skips_uncrossed_threshold_and_wakes_on_deletion() {
+        let address = Address::with_last_byte(1);
+        let hash = B256::with_last_byte(1);
+        let mut index = ParkedPredicateIndex::new(1);
+        index.park(
+            hash,
+            (),
+            ValidityPredicate::Nonce { address, op: ValidityOperator::Equal, value: U256::ZERO },
+        );
+        let mut account = Account::default();
+        account.original_info_mut().nonce = 9;
+        account.info.nonce = 10;
+        assert!(
+            index
+                .affected_by_state(&EvmState::from_iter([(address, account.clone())]))
+                .affected_transactions
+                .is_empty()
+        );
+        account.mark_selfdestruct();
+        assert_eq!(
+            index
+                .affected_by_state(&EvmState::from_iter([(address, account)]))
+                .affected_transactions,
+            vec![hash],
+        );
     }
 
     #[test]

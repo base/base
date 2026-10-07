@@ -177,6 +177,63 @@ async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre:
     Ok(())
 }
 
+/// A nonce-gated transaction wakes within the same block after the watched sender executes.
+#[tokio::test]
+async fn nonce_predicate_promotes_after_watched_sender_executes() -> eyre::Result<()> {
+    let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
+        .install_ext::<BuilderApiExtension>(
+            BuilderApiExtensionConfig::new(true, DEFAULT_MAX_VALIDITY_PREDICATES)
+                .with_noop_metering(),
+        )
+        .build()
+        .await?;
+    let driver = instance.driver().await?;
+    let accounts = driver.fund_accounts(2, ONE_ETH).await?;
+    let watched_nonce = driver.provider().get_transaction_count(accounts[1].address()).await?;
+    let gated = driver
+        .create_transaction()
+        .with_signer(&accounts[0])
+        .with_to(Address::random())
+        .with_max_priority_fee_per_gas(100)
+        .build()
+        .await;
+    let gated_hash = gated.tx_hash();
+    let validated = ValidatedTransaction {
+        sender: accounts[0].address(),
+        raw: gated.encoded_2718().into(),
+        metering: None,
+        extensions: TransactionValidity {
+            validity: vec![ValidityPredicate::Nonce {
+                address: accounts[1].address(),
+                op: ValidityOperator::Equal,
+                value: U256::from(watched_nonce + 1),
+            }],
+        },
+    };
+    driver
+        .provider()
+        .raw_request::<_, ()>("base_insertValidatedTransaction".into(), (validated,))
+        .await?;
+    let trigger_hash = *driver
+        .create_transaction()
+        .with_signer(&accounts[1])
+        .with_to(Address::random())
+        .with_max_priority_fee_per_gas(50)
+        .send()
+        .await?
+        .tx_hash();
+
+    let block = driver.build_new_block().await?;
+    let tracked = [trigger_hash, gated_hash];
+    let actual = block
+        .transactions
+        .into_transactions()
+        .filter_map(|tx| tracked.contains(&tx.tx_hash()).then(|| tx.tx_hash()))
+        .collect::<Vec<_>>();
+    assert_eq!(actual, tracked);
+    Ok(())
+}
+
 /// Once a flashblock's validity-predicate evaluation time budget is exhausted, further
 /// validity-gated transactions are deferred without evaluation rather than checked, even when
 /// their predicate is already satisfied. An ordinary transaction is unaffected by the cutoff, so

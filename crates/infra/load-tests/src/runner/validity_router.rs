@@ -121,6 +121,11 @@ impl ValidityRouter {
                     value: *value,
                 }
             }
+            ValidityPredicateTemplate::Nonce { address, op, value } => ValidityPredicate::Nonce {
+                address: resolve_address(address, from, to),
+                op: *op,
+                value: *value,
+            },
             ValidityPredicateTemplate::Storage { address, slot, mask, op, value } => {
                 ValidityPredicate::Storage {
                     address: resolve_address(address, from, to),
@@ -208,6 +213,50 @@ mod tests {
 
     fn router(ratio: f64, predicates: Vec<ValidityPredicateTemplate>) -> ValidityRouter {
         ValidityRouter { ratio, priority_lead_ratio: 0.0, predicates, seed: 12345 }
+    }
+
+    #[test]
+    fn nonce_templates_resolve_sender_recipient_and_fixed_addresses() {
+        let from = Address::repeat_byte(0x11);
+        let to = Address::repeat_byte(0x22);
+        let fixed = Address::repeat_byte(0x33);
+        let r = router(
+            1.0,
+            vec![
+                ValidityPredicateTemplate::Nonce {
+                    address: PredicateAddress::Sender,
+                    op: ValidityOperator::Equal,
+                    value: U256::from(2),
+                },
+                ValidityPredicateTemplate::Nonce {
+                    address: PredicateAddress::Recipient,
+                    op: ValidityOperator::Equal,
+                    value: U256::from(2),
+                },
+                ValidityPredicateTemplate::Nonce {
+                    address: PredicateAddress::Fixed(fixed),
+                    op: ValidityOperator::Equal,
+                    value: U256::from(2),
+                },
+            ],
+        );
+        for (recipient, expected) in
+            [(Some(to), vec![from, to, fixed]), (None, vec![from, from, fixed])]
+        {
+            let predicates = r.predicates_for(SubmitCohort::ValidityPass, 100, from, recipient);
+            assert_eq!(
+                predicates,
+                expected
+                    .into_iter()
+                    .map(|address| ValidityPredicate::Nonce {
+                        address,
+                        op: ValidityOperator::Equal,
+                        value: U256::from(2),
+                    })
+                    .collect::<Vec<_>>()
+            );
+        }
+        assert!(r.predicates_for(SubmitCohort::Plain, 100, from, Some(to)).is_empty());
     }
 
     #[test]
