@@ -2,12 +2,13 @@
 
 use std::sync::Arc;
 
+use alloy_consensus::Transaction;
 use alloy_primitives::{Address, TxHash};
 use base_execution_txpool::{BasePooledTx, ParkableBestTransactions};
 pub use reth_payload_util::NoopPayloadTransactions;
 use reth_payload_util::PayloadTransactions;
 use reth_transaction_pool::{
-    BestTransactions, PoolTransaction, ValidPoolTransaction,
+    PoolTransaction, ValidPoolTransaction,
     error::{InvalidPoolTransactionError, PoolTransactionError},
 };
 
@@ -35,10 +36,11 @@ pub trait ParkablePayloadTransactions: PayloadTransactions
 where
     Self::Transaction: PoolTransaction,
 {
-    /// Parks and clears the current transaction.
+    /// Parks and clears the current transaction, if any.
     ///
-    /// Returns `false` when this iterator does not support parking or has no current transaction.
-    fn park_current(&mut self) -> bool;
+    /// Parking never fails: an iterator without lane-aware parking excludes the current
+    /// transaction's lane for the rest of this iterator instead.
+    fn park_current(&mut self);
 
     /// Commits and clears the current transaction, if any.
     fn mark_current_committed(&mut self);
@@ -50,33 +52,11 @@ where
     fn discard_parked(&mut self, transaction_hash: TxHash) -> bool;
 }
 
-impl<T, I> ParkablePayloadTransactions for reth_payload_util::BestPayloadTransactions<T, I>
-where
-    T: PoolTransaction,
-    I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
-{
-    fn park_current(&mut self) -> bool {
-        false
-    }
-
-    fn mark_current_committed(&mut self) {}
-
-    fn promote(&mut self, _transaction_hash: TxHash) -> bool {
-        false
-    }
-
-    fn discard_parked(&mut self, _transaction_hash: TxHash) -> bool {
-        false
-    }
-}
-
 impl<T> ParkablePayloadTransactions for reth_payload_util::NoopPayloadTransactions<T>
 where
     T: PoolTransaction,
 {
-    fn park_current(&mut self) -> bool {
-        false
-    }
+    fn park_current(&mut self) {}
 
     fn mark_current_committed(&mut self) {}
 
@@ -89,33 +69,40 @@ where
     }
 }
 
-/// Adds no-op parking lifecycle methods to a payload iterator that cannot park transactions.
+/// Adds parking lifecycle methods to a payload iterator without lane-aware parking.
 ///
-/// The payload builder skips transactions with unsatisfied predicates when this adapter reports
-/// that parking is unavailable.
+/// Parking the current transaction excludes its lane for the rest of this iterator, as
+/// [`PayloadTransactions::mark_invalid`] does. The transaction stays in the pool and is
+/// reconsidered by the next iterator. Promotion and discarding are no-ops because nothing is ever
+/// held parked.
 #[derive(Debug, Clone)]
 pub struct NonParkablePayloadTransactions<I> {
     inner: I,
+    current: Option<(Address, u64)>,
 }
 
 impl<I> NonParkablePayloadTransactions<I> {
     /// Wraps a payload iterator without adding parking support.
     pub const fn new(inner: I) -> Self {
-        Self { inner }
+        Self { inner, current: None }
     }
 }
 
 impl<I> PayloadTransactions for NonParkablePayloadTransactions<I>
 where
     I: PayloadTransactions,
+    I::Transaction: PoolTransaction,
 {
     type Transaction = I::Transaction;
 
     fn next(&mut self, ctx: ()) -> Option<Self::Transaction> {
-        self.inner.next(ctx)
+        let transaction = self.inner.next(ctx)?;
+        self.current = Some((transaction.sender(), transaction.nonce()));
+        Some(transaction)
     }
 
     fn mark_invalid(&mut self, sender: Address, nonce: u64) {
+        self.current = None;
         self.inner.mark_invalid(sender, nonce);
     }
 }
@@ -125,11 +112,15 @@ where
     I: PayloadTransactions,
     I::Transaction: PoolTransaction,
 {
-    fn park_current(&mut self) -> bool {
-        false
+    fn park_current(&mut self) {
+        if let Some((sender, nonce)) = self.current.take() {
+            self.inner.mark_invalid(sender, nonce);
+        }
     }
 
-    fn mark_current_committed(&mut self) {}
+    fn mark_current_committed(&mut self) {
+        self.current = None;
+    }
 
     fn promote(&mut self, _transaction_hash: TxHash) -> bool {
         false
@@ -208,12 +199,10 @@ impl<T> ParkablePayloadTransactions for ParkableBestPayloadTransactions<T>
 where
     T: BasePooledTx,
 {
-    fn park_current(&mut self) -> bool {
-        let Some(transaction) = self.current.take() else {
-            return false;
-        };
-        self.inner.park(&transaction);
-        true
+    fn park_current(&mut self) {
+        if let Some(transaction) = self.current.take() {
+            self.inner.park(&transaction);
+        }
     }
 
     fn mark_current_committed(&mut self) {

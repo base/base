@@ -130,12 +130,9 @@ where
     T: PoolTransaction,
     I: ParkablePayloadTransactions<Transaction = T>,
 {
-    fn park_current(&mut self) -> bool {
-        let parked = self.inner.park_current();
-        if parked {
-            self.current_transaction = None;
-        }
-        parked
+    fn park_current(&mut self) {
+        self.inner.park_current();
+        self.current_transaction = None;
     }
 
     fn mark_current_committed(&mut self) {
@@ -161,6 +158,7 @@ mod tests {
     use alloy_consensus::Transaction;
     use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
     use alloy_primitives::Address;
+    use base_execution_payload_builder::NonParkablePayloadTransactions;
     use reth_payload_util::{BestPayloadTransactions, PayloadTransactions};
     use reth_transaction_pool::{
         CoinbaseTipOrdering, PoolTransaction,
@@ -189,11 +187,13 @@ mod tests {
 
         // Create iterator
         let mut iterator = BestFlashblocksTxs::new(
-            BestPayloadTransactions::new(pool.best()),
+            NonParkablePayloadTransactions::new(BestPayloadTransactions::new(pool.best())),
             test_rejection_cache(),
         );
         // ### First flashblock
-        iterator.refresh_iterator(BestPayloadTransactions::new(pool.best()));
+        iterator.refresh_iterator(NonParkablePayloadTransactions::new(
+            BestPayloadTransactions::new(pool.best()),
+        ));
         // Accept first tx
         let tx1 = iterator.next(()).unwrap();
         // Invalidate second tx
@@ -208,7 +208,9 @@ mod tests {
 
         // ### Second flashblock
         // It should not return txs 1 and 3, but should return 2
-        iterator.refresh_iterator(BestPayloadTransactions::new(pool.best()));
+        iterator.refresh_iterator(NonParkablePayloadTransactions::new(
+            BestPayloadTransactions::new(pool.best()),
+        ));
         let tx2 = iterator.next(()).unwrap();
         // Check that it's empty
         assert!(iterator.next(()).is_none(), "Iterator should be empty");
@@ -216,26 +218,48 @@ mod tests {
         iterator.mark_committed(&[*tx2.hash()]);
 
         // ### Third flashblock
-        iterator.refresh_iterator(BestPayloadTransactions::new(pool.best()));
+        iterator.refresh_iterator(NonParkablePayloadTransactions::new(
+            BestPayloadTransactions::new(pool.best()),
+        ));
         // Check that it's empty
         assert!(iterator.next(()).is_none(), "Iterator should be empty");
     }
 
     #[test]
-    fn non_parkable_iterator_reports_parking_capacity_miss() {
+    fn non_parkable_iterator_parks_by_skipping_the_lane_for_this_scan() {
+        let sender = Address::random();
+        let parked =
+            MockTransaction::eip1559().with_sender(sender).with_nonce(0).with_priority_fee(3);
+        let descendant =
+            MockTransaction::eip1559().with_sender(sender).with_nonce(1).with_priority_fee(2);
+        let other = MockTransaction::eip1559().with_priority_fee(1);
+        let parked_hash = *parked.hash();
+        let descendant_hash = *descendant.hash();
+        let other_hash = *other.hash();
+        let mut factory = MockTransactionFactory::default();
         let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
-        let mut f = MockTransactionFactory::default();
-        pool.add_transaction(Arc::new(f.create_eip1559()), 0);
-
+        pool.add_transaction(Arc::new(factory.validated(parked)), 0);
+        pool.add_transaction(Arc::new(factory.validated(descendant)), 0);
+        pool.add_transaction(Arc::new(factory.validated(other)), 0);
         let mut iterator = BestFlashblocksTxs::new(
-            BestPayloadTransactions::new(pool.best()),
+            NonParkablePayloadTransactions::new(BestPayloadTransactions::new(pool.best())),
             test_rejection_cache(),
         );
-        assert!(iterator.next(()).is_some());
-        assert!(
-            !iterator.park_current(),
-            "BestPayloadTransactions cannot park, so the builder must emit BUILDER_REJECTED"
-        );
+
+        assert_eq!(iterator.next(()).map(|tx| *tx.hash()), Some(parked_hash));
+        iterator.park_current();
+        let remaining: Vec<_> =
+            std::iter::from_fn(|| iterator.next(())).map(|tx| *tx.hash()).collect();
+
+        assert_eq!(remaining, vec![other_hash]);
+
+        iterator.refresh_iterator(NonParkablePayloadTransactions::new(
+            BestPayloadTransactions::new(pool.best()),
+        ));
+        let rescanned: Vec<_> =
+            std::iter::from_fn(|| iterator.next(())).map(|tx| *tx.hash()).collect();
+
+        assert_eq!(rescanned, vec![parked_hash, descendant_hash, other_hash]);
     }
 
     /// This test simulates the nonce-chain gating fix across flashblock boundaries.
@@ -289,7 +313,7 @@ mod tests {
 
         // === FLASHBLOCK 1 ===
         let mut iterator = BestFlashblocksTxs::new(
-            BestPayloadTransactions::new(pool.best()),
+            NonParkablePayloadTransactions::new(BestPayloadTransactions::new(pool.best())),
             test_rejection_cache(),
         );
 
@@ -313,7 +337,9 @@ mod tests {
 
         // === FLASHBLOCK 2 ===
         // We refresh the iterator with the latest best transactions
-        iterator.refresh_iterator(BestPayloadTransactions::new(pool.best()));
+        iterator.refresh_iterator(NonParkablePayloadTransactions::new(
+            BestPayloadTransactions::new(pool.best()),
+        ));
 
         // Now, theoretically, TX_A has already been executed, so
         // TX_B should be the best txn and TX_C the second best
@@ -421,7 +447,7 @@ mod tests {
         pool.add_transaction(Arc::new(tx_3), 0);
 
         let mut iterator = BestFlashblocksTxs::new(
-            BestPayloadTransactions::new(pool.best()),
+            NonParkablePayloadTransactions::new(BestPayloadTransactions::new(pool.best())),
             test_rejection_cache(),
         );
 
@@ -433,7 +459,9 @@ mod tests {
         assert!(iterator.next(()).is_none());
 
         // FB2: refresh iterator — tx2 should still be skipped
-        iterator.refresh_iterator(BestPayloadTransactions::new(pool.best()));
+        iterator.refresh_iterator(NonParkablePayloadTransactions::new(
+            BestPayloadTransactions::new(pool.best()),
+        ));
         let mut seen_hashes = Vec::new();
         while let Some(tx) = iterator.next(()) {
             seen_hashes.push(*tx.hash());
@@ -458,14 +486,19 @@ mod tests {
         let cache = test_rejection_cache();
 
         // Block 1: reject tx_2
-        let mut iter1 =
-            BestFlashblocksTxs::new(BestPayloadTransactions::new(pool.best()), cache.clone());
+        let mut iter1 = BestFlashblocksTxs::new(
+            NonParkablePayloadTransactions::new(BestPayloadTransactions::new(pool.best())),
+            cache.clone(),
+        );
         let _tx1 = iter1.next(()).unwrap();
         let _tx2 = iter1.next(()).unwrap();
         iter1.mark_rejected(&[tx_2_hash]);
 
         // Block 2: new iterator, same cache — tx_2 should be skipped
-        let mut iter2 = BestFlashblocksTxs::new(BestPayloadTransactions::new(pool.best()), cache);
+        let mut iter2 = BestFlashblocksTxs::new(
+            NonParkablePayloadTransactions::new(BestPayloadTransactions::new(pool.best())),
+            cache,
+        );
         let mut seen_hashes = Vec::new();
         while let Some(tx) = iter2.next(()) {
             seen_hashes.push(*tx.hash());
@@ -496,8 +529,10 @@ mod tests {
         pool.add_transaction(Arc::new(factory.validated(other)), 0);
         let cache = test_rejection_cache();
         cache.insert(rejected_hash);
-        let mut iterator =
-            BestFlashblocksTxs::new(BestPayloadTransactions::new(pool.best()), cache);
+        let mut iterator = BestFlashblocksTxs::new(
+            NonParkablePayloadTransactions::new(BestPayloadTransactions::new(pool.best())),
+            cache,
+        );
 
         let yielded_hashes: Vec<_> =
             std::iter::from_fn(|| iterator.next(())).map(|tx| *tx.hash()).collect();
@@ -521,8 +556,10 @@ mod tests {
         let cache = RejectionCache::new(1000, Duration::from_millis(1));
 
         // Reject tx_2
-        let mut iter1 =
-            BestFlashblocksTxs::new(BestPayloadTransactions::new(pool.best()), cache.clone());
+        let mut iter1 = BestFlashblocksTxs::new(
+            NonParkablePayloadTransactions::new(BestPayloadTransactions::new(pool.best())),
+            cache.clone(),
+        );
         let _tx1 = iter1.next(()).unwrap();
         let _tx2 = iter1.next(()).unwrap();
         iter1.mark_rejected(&[tx_2_hash]);
@@ -532,7 +569,10 @@ mod tests {
         cache.run_pending_tasks();
 
         // New iterator — tx_2 should be back
-        let mut iter2 = BestFlashblocksTxs::new(BestPayloadTransactions::new(pool.best()), cache);
+        let mut iter2 = BestFlashblocksTxs::new(
+            NonParkablePayloadTransactions::new(BestPayloadTransactions::new(pool.best())),
+            cache,
+        );
         let mut seen_hashes = Vec::new();
         while let Some(tx) = iter2.next(()) {
             seen_hashes.push(*tx.hash());
