@@ -40,8 +40,10 @@ stdout/stderr and the normal Kubernetes log pipeline.
 `cargo bench -p base-observability-events --bench emit` measures the
 producer-thread cost of one builder-shaped event: each emission stage, the full
 path into a JSONL writer, the calling-thread share of the deferred path, and an
-ordinary `tracing` JSON log line with the same fields for comparison. It fails if
-a writer drops events, because drops are cheaper than writes.
+ordinary `tracing` JSON log line with the same fields for comparison. The
+`metrics` group compares labeled counter lookups with a cached handle under a
+Prometheus recorder. The bench fails if a writer drops events, because drops are
+cheaper than writes.
 
 ## Contract Notes
 

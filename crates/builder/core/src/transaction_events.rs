@@ -9,8 +9,8 @@ use serde::Serialize;
 use tracing::warn;
 
 use crate::{
-    BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, ResourceLimits, TxResources,
-    TxnExecutionError,
+    BuilderEmittedEventCounters, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded,
+    ResourceLimits, TxResources, TxnExecutionError,
 };
 
 /// Stable decision context attached to each builder transaction event.
@@ -482,11 +482,11 @@ fn emit_builder_event<C, D, F>(
 
     match result {
         Ok(TransactionEventEmitOutcome::Emitted) => {
-            BuilderMetrics::builder_transaction_events_emitted(event_type.to_string()).increment(1);
+            BuilderEmittedEventCounters::increment(event_type);
         }
         Ok(TransactionEventEmitOutcome::NotConfigured) => {}
         Err(err) => {
-            BuilderMetrics::builder_transaction_events_dropped(event_type.to_string(), "write")
+            BuilderMetrics::builder_transaction_events_dropped(event_type.as_str(), "write")
                 .increment(1);
             warn!(
                 target: "payload_builder",

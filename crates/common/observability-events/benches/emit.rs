@@ -282,5 +282,25 @@ fn reference(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, stages, emit, reference);
+/// Cost of the builder's per-event emitted counter under a real Prometheus recorder.
+fn metrics(c: &mut Criterion) {
+    const NAME: &str = "base_builder.builder_transaction_events_emitted";
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let event_type = TransactionEventType::BuilderDeferred;
+
+    let mut group = c.benchmark_group("metrics");
+    metrics::with_local_recorder(&recorder, || {
+        group.bench_function("counter_string_label", |b| {
+            b.iter(|| metrics::counter!(NAME, "event_type" => event_type.to_string()).increment(1))
+        });
+        group.bench_function("counter_static_label", |b| {
+            b.iter(|| metrics::counter!(NAME, "event_type" => event_type.as_str()).increment(1))
+        });
+        let counter = metrics::counter!(NAME, "event_type" => event_type.as_str());
+        group.bench_function("counter_cached_handle", |b| b.iter(|| counter.increment(1)));
+    });
+    group.finish();
+}
+
+criterion_group!(benches, stages, emit, metrics, reference);
 criterion_main!(benches);

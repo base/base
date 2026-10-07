@@ -50,7 +50,18 @@ impl fmt::Display for TransactionEventProducer {
 }
 
 /// Versioned transaction event vocabulary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::EnumIter)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    strum::EnumIter,
+    strum::EnumCount,
+)]
 pub enum TransactionEventType {
     /// Proxyd accepted a transaction request from a client.
     #[serde(rename = "PROXY_RECEIVED")]
@@ -204,9 +215,18 @@ impl TransactionEventType {
     }
 }
 
-impl fmt::Display for TransactionEventType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = match self {
+impl TransactionEventType {
+    /// Number of event types, for tables indexed by [`index`](Self::index).
+    pub const COUNT: usize = <Self as strum::EnumCount>::COUNT;
+
+    /// Returns a dense index in `0..COUNT`, for per-event-type lookup tables.
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+
+    /// Returns the stable wire name, such as `BUILDER_DEFERRED`.
+    pub const fn as_str(self) -> &'static str {
+        match self {
             Self::ProxyReceived => "PROXY_RECEIVED",
             Self::ProxyRejected => "PROXY_REJECTED",
             Self::ProxyValidationAccepted => "PROXY_VALIDATION_ACCEPTED",
@@ -251,8 +271,13 @@ impl fmt::Display for TransactionEventType {
             Self::BuilderFlashblockStarted => "BUILDER_FLASHBLOCK_STARTED",
             Self::BuilderFlashblockPublished => "BUILDER_FLASHBLOCK_PUBLISHED",
             Self::BuilderFlashblockBuildStopped => "BUILDER_FLASHBLOCK_BUILD_STOPPED",
-        };
-        f.write_str(value)
+        }
+    }
+}
+
+impl fmt::Display for TransactionEventType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 

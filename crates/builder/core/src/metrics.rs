@@ -1,6 +1,38 @@
 //! Builder metrics collected during block and flashblock construction.
 
+#[cfg(feature = "metrics")]
+use std::sync::OnceLock;
+
+use base_observability_events::TransactionEventType;
+
 use crate::{ExecutionInfo, FlashblockDiagnostics, ResourceLimits};
+
+/// Cached `builder_transaction_events_emitted` counters, one per event type.
+///
+/// Looking up a labeled counter costs 60-90 ns per call, which the builder paid for every
+/// emitted event; incrementing a cached handle costs about 2 ns. Each handle binds to the
+/// recorder that is active the first time its event type is emitted, so the process must
+/// install its global recorder before building payloads (the node CLI does this at startup).
+/// For the same reason, tests that read this counter through a local recorder only see
+/// increments if their recorder registered the handle first.
+#[derive(Debug)]
+pub struct BuilderEmittedEventCounters;
+
+impl BuilderEmittedEventCounters {
+    /// Increments the emitted counter for `event_type`.
+    #[cfg(feature = "metrics")]
+    pub fn increment(event_type: TransactionEventType) {
+        static COUNTERS: [OnceLock<metrics::Counter>; TransactionEventType::COUNT] =
+            [const { OnceLock::new() }; TransactionEventType::COUNT];
+        COUNTERS[event_type.index()]
+            .get_or_init(|| BuilderMetrics::builder_transaction_events_emitted(event_type.as_str()))
+            .increment(1);
+    }
+
+    /// Increments the emitted counter for `event_type`.
+    #[cfg(not(feature = "metrics"))]
+    pub const fn increment(_event_type: TransactionEventType) {}
+}
 
 const PRIORITY_FEE_THRESHOLDS_WEI: [(&str, u64); 3] =
     [("100wei", 100), ("100kwei", 100_000), ("1mwei", 1_000_000)];
