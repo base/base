@@ -331,6 +331,8 @@ services:
       - --rpc.port
       - "${L2_BUILDER_CL_RPC_PORT}"
       - --rpc.enable-admin
+      - --rpc.execution-forwarding-endpoint
+      - http://localhost:${L2_BUILDER_HTTP_PORT}
       - --p2p.listen.tcp
       - "${L2_BUILDER_CL_P2P_PORT}"
       - --p2p.listen.udp
@@ -393,11 +395,13 @@ services:
       - "${BATCHER_METRICS_PORT}:${BATCHER_METRICS_PORT}"   # Metrics
     restart: unless-stopped
 
-  # Shadow DA: the Rust base batcher runs in --shadow-mode alongside the
+  # Shadow DA: the Rust base batcher runs in shadow mode alongside the
   # op-batcher, posting to SHADOW_BATCH_INBOX_ADDRESS from SHADOW_BATCHER_ADDR
   # (a distinct L1 sender, so its nonces never collide with the op-batcher's).
-  # It follows the derivation of base-shadow-validator, whose rollup node derives the
-  # shadow inbox, and compares its blocks with the builder's.
+  # It reads the blocks to submit from the consensus RPC of base-builder, which forwards
+  # the block reads to its execution client. It follows the derivation of
+  # base-shadow-validator, whose rollup node derives its chain from the shadow inbox,
+  # and compares the validator's blocks with the builder's.
   base-batcher:
     image: base:local
     build:
@@ -413,15 +417,16 @@ services:
       base-shadow-validator:
         condition: service_healthy
     environment:
-      - BASE_BATCHER_ROLLUP_RPC_URL=http://base-shadow-validator:${L2_SHADOW_CL_RPC_PORT}
+      - BASE_BATCHER_SEQUENCER_URLS=http://base-builder:${L2_BUILDER_CL_RPC_PORT}
     command:
       - batcher
       - --l1-rpc-url=http://l1-el:${L1_HTTP_PORT}
-      - --l2-rpc-url=http://base-builder:${L2_BUILDER_HTTP_PORT}
       - --private-key=${SHADOW_BATCHER_KEY}
-      - --shadow-mode
-      - --dangerously-override-batch-inbox-address=${SHADOW_BATCH_INBOX_ADDRESS}
-      - --parity-validator-l2-rpc-url=http://base-shadow-validator:${L2_SHADOW_HTTP_PORT}
+      - --shadow.enabled
+      - --shadow.inbox=${SHADOW_BATCH_INBOX_ADDRESS}
+      - --shadow.validator-rollup-rpc=http://base-shadow-validator:${L2_SHADOW_CL_RPC_PORT}
+      - --shadow.validator-l2-rpc=http://base-shadow-validator:${L2_SHADOW_HTTP_PORT}
+      - --no-throttle
       - --max-channel-duration=2
       - --poll-interval=1
       - --sub-safety-margin=0

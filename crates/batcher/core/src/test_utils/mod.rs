@@ -1,8 +1,5 @@
 //! Test utilities for consumers of `base-batcher-core`.
 
-mod throttle;
-pub use throttle::{ThrottleCallLog, TrackingThrottleClient};
-
 mod pipeline;
 pub use pipeline::{PipelineCall, Recorded, TrackingPipeline};
 

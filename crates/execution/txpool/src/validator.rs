@@ -33,7 +33,7 @@ use parking_lot::RwLock;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
 use reth_primitives_traits::{
-    Block, BlockBody, BlockTy, GotExpected, SealedBlock,
+    Block, BlockBody, BlockTy, GotExpected, SealedBlock, constants::MAX_TX_GAS_LIMIT_OSAKA,
     transaction::error::InvalidTransactionError,
 };
 use reth_storage_api::{
@@ -1122,6 +1122,15 @@ where
         {
             return Err(InvalidTransactionError::GasTooLow.into());
         }
+        // EIP-7825 (from Azul): `gas_limit` plus the payer authentication
+        // metered on top of it is bounded by the per-transaction gas cap,
+        // matching execution.
+        if self.chain_spec().is_azul_active_at_timestamp(now)
+            && FeeCheck::max_chargeable_gas(signed.tx().gas_limit, intrinsic.payer_auth)
+                > MAX_TX_GAS_LIMIT_OSAKA
+        {
+            return Err(InvalidTransactionError::GasLimitTooHigh.into());
+        }
 
         let payer_account = state
             .basic_account(&payer)
@@ -1615,6 +1624,9 @@ where
                 InvalidTransactionError::NonceNotConsistent { tx: got, state: channel }.into()
             }
             NonceError::Replay => Self::eip8130_error("nonce-free replay detected"),
+            NonceError::NonceFreeSequence { .. } => {
+                Self::eip8130_error("nonce-free transaction has a non-zero nonce sequence")
+            }
             NonceError::Storage(_) => Self::eip8130_error("nonce state read failed"),
         }
     }
@@ -3754,6 +3766,37 @@ mod tests {
             .expect("call value beyond the balance does not block admission");
         assert_eq!(with_value.payer_max_cost, without_value.payer_max_cost);
         assert_eq!(with_value.manifest.payer_max_cost(), with_value.payer_max_cost);
+    }
+
+    /// EIP-7825 bounds `gas_limit` plus payer authentication at admission, as
+    /// at execution.
+    #[test]
+    fn eip8130_gas_above_the_per_transaction_cap_is_rejected() {
+        let signer = PrivateKeySigner::random();
+        let sender = signer.address();
+        let signed_with_gas = |gas_limit: u64| {
+            let tx = TxEip8130 { gas_limit, ..minimal_valid_eoa_tx() };
+            let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new())
+        };
+        let validator = build_test_validator_with_account(
+            sender,
+            ExtendedAccount::new(0, U256::from(u64::MAX) * U256::from(u64::MAX)),
+        );
+
+        validator
+            .validate_eip8130_full(&signed_with_gas(MAX_TX_GAS_LIMIT_OSAKA))
+            .expect("gas at the cap is admitted");
+        let err = validator
+            .validate_eip8130_full(&signed_with_gas(MAX_TX_GAS_LIMIT_OSAKA + 1))
+            .expect_err("gas above the cap is rejected");
+        assert!(
+            matches!(
+                err,
+                InvalidPoolTransactionError::Consensus(InvalidTransactionError::GasLimitTooHigh)
+            ),
+            "expected GasLimitTooHigh, got {err:?}"
+        );
     }
 
     #[test]

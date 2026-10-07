@@ -8,11 +8,8 @@ use std::{
 
 use base_batcher_admin::AdminServer;
 use base_batcher_core::{
-    BatchDriverError, DaThrottle, ThrottleConfig, ThrottleController,
-    test_utils::{
-        DriverFixture, DriverHandles, Recorded, ScriptedTxManager, ThrottleCallLog,
-        TrackingPipeline, TrackingThrottleClient,
-    },
+    BatchDriverError, DaLimits, DaThrottle, ThrottleController,
+    test_utils::{DriverFixture, DriverHandles, Recorded, ScriptedTxManager, TrackingPipeline},
 };
 use base_runtime::{Cancellation, TokioRuntime};
 use jsonrpsee::{
@@ -21,7 +18,7 @@ use jsonrpsee::{
     rpc_params,
 };
 use serde_json::{Value, json};
-use tokio::task::JoinHandle;
+use tokio::{sync::watch, task::JoinHandle};
 
 /// The DA backlog the driver's pipeline reports, above the threshold of [`throttle_config`].
 const DA_BACKLOG_BYTES: u64 = 1_500;
@@ -32,8 +29,8 @@ struct AdminRpc {
     runtime: TokioRuntime,
     driver: JoinHandle<Result<(), BatchDriverError>>,
     recorded: Arc<Mutex<Recorded>>,
-    /// The limits the driver pushed to the block builder, in order.
-    throttle_pushes: ThrottleCallLog,
+    /// The DA limits the driver publishes for the block builders.
+    limits: watch::Receiver<DaLimits>,
     _server: AdminServer,
     /// Kept alive because the driver exits once the derivation status sender is dropped.
     _handles: DriverHandles,
@@ -44,13 +41,11 @@ impl AdminRpc {
         let runtime = TokioRuntime::new();
         let pipeline = TrackingPipeline::new().with_da_backlog(DA_BACKLOG_BYTES);
         let recorded = pipeline.recorded();
-        let (throttle_client, throttle_pushes) = TrackingThrottleClient::new();
+        let throttle = DaThrottle::new(ThrottleController::disabled());
+        let limits = throttle.subscribe();
         let (driver, handles) =
             DriverFixture::new(runtime.clone(), pipeline, ScriptedTxManager::new([]))
-                .throttle(DaThrottle::new(
-                    ThrottleController::disabled(),
-                    Arc::new(throttle_client),
-                ))
+                .throttle(throttle)
                 .build();
         let driver = tokio::spawn(driver.run());
         let server = AdminServer::spawn((Ipv4Addr::LOCALHOST, 0).into(), handles.admin.clone())
@@ -59,15 +54,7 @@ impl AdminRpc {
         let client = HttpClientBuilder::default()
             .build(format!("http://{}", server.local_addr()))
             .expect("the client builds");
-        Self {
-            client,
-            runtime,
-            driver,
-            recorded,
-            throttle_pushes,
-            _server: server,
-            _handles: handles,
-        }
+        Self { client, runtime, driver, recorded, limits, _server: server, _handles: handles }
     }
 
     /// The JSON-RPC error code and message the call fails with.
@@ -126,11 +113,11 @@ async fn stop_and_start_gate_the_flush() {
     assert_eq!(rpc.recorded.lock().unwrap().flushes(), 1);
 }
 
-/// The throttle controller is read back as set and applied to the backlog, an invalid config
-/// is refused as invalid params, and a set or a reset pushes the limits to the block builder.
+/// The throttle controller is read back as set and applied to the backlog, its limits are
+/// published for the block builders, and an invalid config is refused as invalid params.
 #[tokio::test]
-async fn throttle_controller_is_set_read_and_reset() {
-    let rpc = AdminRpc::start().await;
+async fn throttle_controller_is_set_and_read() {
+    let mut rpc = AdminRpc::start().await;
 
     let params = rpc_params!["step", throttle_config(0.5)];
     let () = rpc.client.request("admin_setThrottleController", params).await.unwrap();
@@ -151,20 +138,19 @@ async fn throttle_controller_is_set_read_and_reset() {
         })
     );
 
+    // Check the published limits right away, since the driver answered the read above only
+    // after the pass that published them.
+    assert_eq!(
+        *rpc.limits.borrow_and_update(),
+        DaLimits { max_tx_size: 5_100, max_block_size: 51_500 }
+    );
+
     let params = rpc_params!["step", throttle_config(2.0)];
     assert_eq!(
         rpc.error("admin_setThrottleController", params).await,
         (-32602, "invalid throttle config: max_intensity (2) must be within [0, 1]".into())
     );
-
-    let () = rpc.client.request("admin_resetThrottleController", rpc_params![]).await.unwrap();
-
-    // The driver serves the next command after the pass that pushes the reset limits.
-    let _: Value = rpc.client.request("admin_getBatcherStatus", rpc_params![]).await.unwrap();
-    // The upper limits of the disabled controller at startup, then the step limits twice.
-    let defaults = ThrottleConfig::default();
-    let upper = (defaults.tx_size_upper_limit, defaults.block_size_upper_limit);
-    assert_eq!(*rpc.throttle_pushes.lock().unwrap(), [upper, (5_100, 51_500), (5_100, 51_500)]);
+    assert!(!rpc.limits.has_changed().unwrap(), "a refused config publishes nothing");
 }
 
 /// `admin_setLogLevel` answers method-not-found until log levels can be changed at runtime.
@@ -192,7 +178,6 @@ async fn driver_commands_fail_once_the_driver_has_exited() {
         ("admin_getBatcherStatus", rpc_params![]),
         ("admin_getThrottleController", rpc_params![]),
         ("admin_setThrottleController", rpc_params!["step", throttle_config(1.0)]),
-        ("admin_resetThrottleController", rpc_params![]),
     ];
     for (method, params) in commands {
         assert_eq!(

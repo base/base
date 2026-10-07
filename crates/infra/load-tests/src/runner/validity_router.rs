@@ -46,7 +46,7 @@ impl ValidityRouter {
 
     /// Returns true when resolving this router's predicates requires the current
     /// chain height, i.e. at least one [`BlockNumberBound::Offset`] template is
-    /// configured on the validity path. Absolute, storage, and
+    /// configured on the validity path. Absolute, balance, storage, and
     /// flashblock-index predicates never read the current height, so absolute-only
     /// configurations avoid the per-round latest-block fetch entirely.
     pub fn needs_current_block(&self) -> bool {
@@ -114,6 +114,13 @@ impl ValidityRouter {
         to: Option<Address>,
     ) -> ValidityPredicate {
         match template {
+            ValidityPredicateTemplate::Balance { address, op, value } => {
+                ValidityPredicate::Balance {
+                    address: resolve_address(address, from, to),
+                    op: *op,
+                    value: *value,
+                }
+            }
             ValidityPredicateTemplate::Storage { address, slot, mask, op, value } => {
                 ValidityPredicate::Storage {
                     address: resolve_address(address, from, to),
@@ -272,19 +279,15 @@ mod tests {
     #[test]
     fn pass_cohort_resolves_sender_and_recipient_addresses() {
         let templates = vec![
-            ValidityPredicateTemplate::Storage {
+            ValidityPredicateTemplate::Balance {
                 address: PredicateAddress::Sender,
-                slot: SlotTemplate::Fixed(U256::ZERO),
-                mask: None,
                 op: ValidityOperator::GreaterThanOrEqual,
-                value: PredicateValue::Fixed(U256::ZERO),
+                value: U256::ZERO,
             },
-            ValidityPredicateTemplate::Storage {
+            ValidityPredicateTemplate::Balance {
                 address: PredicateAddress::Recipient,
-                slot: SlotTemplate::Fixed(U256::ZERO),
-                mask: None,
                 op: ValidityOperator::LessThanOrEqual,
-                value: PredicateValue::Fixed(U256::MAX),
+                value: U256::MAX,
             },
         ];
         let r = router(1.0, templates);
@@ -293,12 +296,12 @@ mod tests {
         let predicates = r.predicates_for(SubmitCohort::ValidityPass, 0, from, Some(to));
         assert_eq!(predicates.len(), 2);
         match &predicates[0] {
-            ValidityPredicate::Storage { address, .. } => assert_eq!(*address, from),
-            other => panic!("expected storage, got {other:?}"),
+            ValidityPredicate::Balance { address, .. } => assert_eq!(*address, from),
+            other => panic!("expected balance, got {other:?}"),
         }
         match &predicates[1] {
-            ValidityPredicate::Storage { address, .. } => assert_eq!(*address, to),
-            other => panic!("expected storage, got {other:?}"),
+            ValidityPredicate::Balance { address, .. } => assert_eq!(*address, to),
+            other => panic!("expected balance, got {other:?}"),
         }
     }
 
@@ -410,18 +413,16 @@ mod tests {
         );
         assert!(!absolute.needs_current_block(), "an absolute bound must not trigger the fetch");
 
-        let storage = router(
+        let balance = router(
             1.0,
-            vec![ValidityPredicateTemplate::Storage {
+            vec![ValidityPredicateTemplate::Balance {
                 address: PredicateAddress::Sender,
-                slot: SlotTemplate::Fixed(U256::ZERO),
-                mask: None,
                 op: ValidityOperator::GreaterThanOrEqual,
-                value: PredicateValue::Fixed(U256::ZERO),
+                value: U256::ZERO,
             }],
         );
         assert!(
-            !storage.needs_current_block(),
+            !balance.needs_current_block(),
             "non-position predicates must not trigger the fetch"
         );
     }
@@ -460,12 +461,10 @@ mod tests {
 
     #[test]
     fn plain_cohort_carries_no_predicates() {
-        let templates = vec![ValidityPredicateTemplate::Storage {
+        let templates = vec![ValidityPredicateTemplate::Balance {
             address: PredicateAddress::Sender,
-            slot: SlotTemplate::Fixed(U256::ZERO),
-            mask: None,
             op: ValidityOperator::GreaterThanOrEqual,
-            value: PredicateValue::Fixed(U256::ZERO),
+            value: U256::ZERO,
         }];
         let r = router(1.0, templates);
         let from = Address::repeat_byte(0xaa);
@@ -474,19 +473,17 @@ mod tests {
 
     #[test]
     fn recipient_address_falls_back_to_sender_on_create() {
-        let templates = vec![ValidityPredicateTemplate::Storage {
+        let templates = vec![ValidityPredicateTemplate::Balance {
             address: PredicateAddress::Recipient,
-            slot: SlotTemplate::Fixed(U256::ZERO),
-            mask: None,
             op: ValidityOperator::GreaterThanOrEqual,
-            value: PredicateValue::Fixed(U256::ZERO),
+            value: U256::ZERO,
         }];
         let r = router(1.0, templates);
         let from = Address::repeat_byte(0xaa);
         let predicates = r.predicates_for(SubmitCohort::ValidityPass, 0, from, None);
         match &predicates[0] {
-            ValidityPredicate::Storage { address, .. } => assert_eq!(*address, from),
-            other => panic!("expected storage, got {other:?}"),
+            ValidityPredicate::Balance { address, .. } => assert_eq!(*address, from),
+            other => panic!("expected balance, got {other:?}"),
         }
     }
 

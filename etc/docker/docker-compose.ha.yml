@@ -50,7 +50,8 @@ services:
       - NODE_HEALTHCHECK_CL_RPC_PORT=${L2_BUILDER_CL_RPC_PORT}
       - OTEL_SERVICE_NAME=base-builder
 
-  # Both batchers read the leader through the conductor rollup proxy in HA.
+  # The op-batcher reads its rollup node through the proxy of op-conductor-0. The base batcher
+  # takes the three conductors and reads the blocks from the leader among them.
   op-batcher:
     depends_on:
       setup-conductor:
@@ -63,7 +64,7 @@ services:
       setup-conductor:
         condition: service_completed_successfully
     environment:
-      - BASE_BATCHER_ROLLUP_RPC_URL=http://op-conductor-0:${CONDUCTOR0_RPC_PORT}
+      - BASE_BATCHER_SEQUENCER_URLS=http://op-conductor-0:${CONDUCTOR0_RPC_PORT},http://op-conductor-1:${CONDUCTOR1_RPC_PORT},http://op-conductor-2:${CONDUCTOR2_RPC_PORT}
 
   base-sequencer-1:
     <<: *sequencer-base

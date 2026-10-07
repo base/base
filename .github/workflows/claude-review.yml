@@ -83,13 +83,16 @@ jobs:
             - CI already enforces: clippy (52 rules, -D warnings), rustfmt (2024 edition), cargo-deny, cargo-udeps
 
             REVIEW GUIDELINES:
-            - Review like a senior Rust engineer on the team
+            - Review as a principal Rust auditor. Be thorough, but do not nit-pick for the sake of it
             - Focus on correctness, safety, and idiomatic Rust
+            - Verify that the logic matches the PR description and intended behavior
+            - Look for meaningful redundancy, unnecessary complexity, or missed reuse of existing abstractions
             - Review code using the PR context and the `gh pr diff` / `gh pr view` commands; do not rely on broad local repo reads
             - DO NOT comment on formatting or style — clippy and rustfmt handle that
-            - DO NOT post praise, "looks good", or filler comments. If everything looks fine, post nothing
+            - DO NOT post praise, "looks good", or filler comments. If there are no actionable findings, post nothing
             - Use inline comments for specific code feedback via mcp__github_inline_comment__create_inline_comment
-            - Post one summary comment at the end with your overall assessment (if you have findings)
+            - Keep each inline finding to one concise sentence where possible: state the issue and its concrete consequence. The Critical block-production finding requirements below take precedence over brevity
+            - Post one brief summary comment at the end with your overall assessment (if you have findings)
 
             DUPLICATE AVOIDANCE:
             Before posting any inline comment, first fetch all existing inline review comments on this PR by running:

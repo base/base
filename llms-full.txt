@@ -65,7 +65,7 @@ Find a doc through the index below instead of grepping the tree. After adding, m
 ## Binaries
 
 - [bin/acceptance/README.md](bin/acceptance/README.md): base-acceptance CLI entry point for the acceptance system: lists subcommands (validate, plan, run, check, report, cleanup) and example cargo invocations, deferring to acceptance/README.md.
-- [bin/audit-archiver/README.md](bin/audit-archiver/README.md): audit-archiver service: ingests transaction-event NDJSON over HTTP into Postgres, serves JSON-RPC queries, partition retention classes, env vars, S3 removal rollout, and BRIN index step.
+- [bin/audit-archiver/README.md](bin/audit-archiver/README.md): audit-archiver service: NDJSON ingest into Postgres, JSON-RPC queries, retention classes and partition maintenance, BRIN summary worker, event_seq extraction split, env vars, S3 removal rollout.
 - [bin/base-telemetry/README.md](bin/base-telemetry/README.md): base-telemetry backend: CLI and env config, per-IP rate limiting, and on-demand P2P reachability probes for execution-layer (enode) and consensus-layer (ENR or multiaddr) nodes.
 - [bin/base/README.md](bin/base/README.md): Unified base node binary: OTLP tracing options plus the batcher, rpc, sequencer and update subcommands, their flags and env vars, and chain selection.
 - [bin/basectl/README.md](bin/basectl/README.md): basectl operator console reference: global options, TUI and scriptable commands (block, sync-status, p2p, txpool, conductor, sequencer, batcher, doctor, proofs), JSON output and examples.
@@ -94,7 +94,7 @@ Find a doc through the index below instead of grepping the tree. After adding, m
 
 - [crates/batcher/admin/README.md](crates/batcher/admin/README.md): Batcher admin JSON-RPC API: start, stop, flush, status, and DA throttle controller methods (admin_*), their behavior and error codes. Use when operating the batcher.
 - [crates/batcher/blobs/README.md](crates/batcher/blobs/README.md): base-blobs: EIP-4844 blob encoder and decoder for the batcher wire format (130,044 payload bytes per blob); excludes KZG commitments and submission.
-- [crates/batcher/cli/README.md](crates/batcher/cli/README.md): base-batcher-cli: arguments and startup for base batcher, including channel and DA config flags and shadow mode, where the batcher posts to a non-canonical inbox checked by a parity validator.
+- [crates/batcher/cli/README.md](crates/batcher/cli/README.md): base-batcher-cli: base batcher flags and startup, with sequencer endpoints and leader search, channel and DA config, and shadow mode posting to the inbox a parity validator derives its chain from.
 - [crates/batcher/comp/README.md](crates/batcher/comp/README.md): base-comp: incremental Brotli channel compression (CompressionStream, BrotliLevel) producing protocol-compatible channels; batch encoding and framing live in batcher-encoder.
 - [crates/batcher/core/README.md](crates/batcher/core/README.md): base-batcher-core: async BatchDriver, SubmissionQueue for L1 transactions, and the DA throttle subsystem (Off, Step, Linear) that limits sequencer DA via miner_setMaxDASize.
 - [crates/batcher/encoder/README.md](crates/batcher/encoder/README.md): base-batcher-encoder: synchronous, no-I/O encoder from L2 blocks to L1 submissions. Covers channel closing rules, blob framing, metric labels, and BatchEncoder usage.
@@ -178,7 +178,7 @@ Find a doc through the index below instead of grepping the tree. After adding, m
 
 ## Crates: infra
 
-- [crates/infra/audit/README.md](crates/infra/audit/README.md): audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers schema snapshot regeneration and legacy migrations.
+- [crates/infra/audit/README.md](crates/infra/audit/README.md): audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers the migrations and schema snapshot regeneration.
 - [crates/infra/basectl/README.md](crates/infra/basectl/README.md): basectl-cli: the basectl clap parser and commands (blocks, sync, txpool, peers, proofs, conductor), interactive monitor, flashblocks JSON-lines stream, Denim readiness checks, and pods view config.
 - [crates/infra/challenger-e2e/README.md](crates/infra/challenger-e2e/README.md): Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games, asserts valid games are left alone and each path is disputed. Covers mock/real prover modes, scenarios and env vars.
 - [crates/infra/load-tests/README.md](crates/infra/load-tests/README.md): Load-testing framework (base-load-tests lib, base-load-tester bin): just/cargo commands, YAML config, tx mixes (precompile, B-20, swap, validity). Use to run or configure devnet/sepolia load tests.
