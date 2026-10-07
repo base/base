@@ -838,6 +838,9 @@ mod tests {
 
     // Socket scheduling is real time; ordinary assertions must not benchmark the CI host.
     const RPC_BUDGET: Duration = Duration::from_secs(5);
+    /// Deadline for cases whose expected outcome is reached only when the deadline elapses.
+    /// Long enough for a few local requests on a loaded runner, short enough to keep tests fast.
+    const DEADLINE_OUTCOME: Duration = Duration::from_millis(300);
 
     #[derive(Clone)]
     struct Reply {
@@ -930,7 +933,7 @@ mod tests {
         }
     }
 
-    fn healthy(duration: Duration, maximum_age: Duration) -> AcceptanceCheck {
+    fn healthy(duration: Duration, maximum_age: Duration, timeout: Duration) -> AcceptanceCheck {
         AcceptanceCheck::HeadsHealthy {
             id: "health".into(),
             endpoints: vec!["builder".into(), "validator".into()],
@@ -939,16 +942,27 @@ mod tests {
             minimum_blocks: 1,
             maximum_age: Span(maximum_age),
             max_lag_blocks: 1,
-            timeout: Span(Duration::from_millis(60)),
+            timeout: Span(timeout),
             start: None,
         }
     }
 
+    /// Runs a health check with a deadline far beyond any loaded CI runner's RPC latency.
     async fn run_health(
         left: Vec<Reply>,
         right: Vec<Reply>,
         duration: Duration,
         maximum_age: Duration,
+    ) -> crate::CheckResult {
+        run_health_within(left, right, duration, maximum_age, RPC_BUDGET).await
+    }
+
+    async fn run_health_within(
+        left: Vec<Reply>,
+        right: Vec<Reply>,
+        duration: Duration,
+        maximum_age: Duration,
+        timeout: Duration,
     ) -> crate::CheckResult {
         let map = BTreeMap::from([
             ("builder".into(), server(left).await),
@@ -957,12 +971,12 @@ mod tests {
         let mut samples = Vec::new();
         observer()
             .run(
-                &healthy(duration, maximum_age),
+                &healthy(duration, maximum_age, timeout),
                 0,
                 &map,
                 &mut samples,
                 Instant::now(),
-                Instant::now() + Duration::from_millis(80),
+                Instant::now() + timeout,
             )
             .await
     }
@@ -972,10 +986,10 @@ mod tests {
         let url = server(replies(&[block(1_000_000, 'a'), block(1_000_001, 'b')])).await;
         let map = BTreeMap::from([("rpc".into(), url)]);
         let mut samples = Vec::new();
-        let result = RpcObserver::new(RPC_BUDGET, Duration::from_millis(200))
+        let result = RpcObserver::new(RPC_BUDGET, Duration::from_millis(50))
             .unwrap()
             .run(
-                &progress(Duration::from_secs(1), 2),
+                &progress(DEADLINE_OUTCOME, 2),
                 0,
                 &map,
                 &mut samples,
@@ -1005,34 +1019,36 @@ mod tests {
 
     #[tokio::test]
     async fn progress_distinguishes_outage_from_recovered_violation() {
-        let result = run_progress(replies(&[block(10, 'a'), Value::Null])).await;
+        let result = run_progress(replies(&[block(10, 'a'), Value::Null]), DEADLINE_OUTCOME).await;
         assert_eq!(result.status, Status::Error);
         assert_eq!(result.samples, 1);
 
         // A single request consuming the remaining deadline is also infrastructure failure.
         let mut delayed = replies(&[block(10, 'a'), block(11, 'b')]);
         delayed[1].delay = RPC_BUDGET;
-        let result = run_progress(delayed).await;
+        let result = run_progress(delayed, DEADLINE_OUTCOME).await;
         assert_eq!(result.status, Status::Error);
         assert_eq!(result.samples, 1);
         assert_eq!(result.rpc_errors, 1);
 
-        let result = run_progress(replies(&[block(10, 'a'), Value::Null, block(9, 'b')])).await;
+        let result =
+            run_progress(replies(&[block(10, 'a'), Value::Null, block(9, 'b')]), RPC_BUDGET).await;
         assert_eq!(result.status, Status::Failed);
         assert!(result.message.contains("reorged"));
         assert!(result.rpc_errors > 0);
 
-        let result = run_progress(replies(&[block(10, 'a'), Value::Null, block(11, 'b')])).await;
+        let result =
+            run_progress(replies(&[block(10, 'a'), Value::Null, block(11, 'b')]), RPC_BUDGET).await;
         assert_eq!(result.status, Status::Passed);
         assert!(result.rpc_errors > 0);
     }
 
-    async fn run_progress(script: Vec<Reply>) -> crate::CheckResult {
+    async fn run_progress(script: Vec<Reply>, timeout: Duration) -> crate::CheckResult {
         let url = server(script).await;
         let mut samples = Vec::new();
         observer()
             .run(
-                &progress(Duration::from_secs(1), 1),
+                &progress(timeout, 1),
                 0,
                 &BTreeMap::from([("rpc".into(), url)]),
                 &mut samples,
@@ -1174,7 +1190,7 @@ mod tests {
                 endpoints: vec!["a".into(), "b".into()],
                 head: "latest".into(),
                 max_lag_blocks: 0,
-                timeout: Span(Duration::from_secs(1)),
+                timeout: Span(DEADLINE_OUTCOME),
                 start: None,
             };
             let result = RpcObserver::new(RPC_BUDGET, Duration::from_secs(2))
@@ -1410,9 +1426,14 @@ mod tests {
         assert!(result.message.contains("freshness limit"));
 
         let delayed = vec![Reply { delay: Duration::from_millis(70), body: rpc(block(10, 'a')) }];
-        let result =
-            run_health(delayed.clone(), delayed, Duration::from_millis(4), Duration::from_secs(2))
-                .await;
+        let result = run_health_within(
+            delayed.clone(),
+            delayed,
+            Duration::from_millis(4),
+            Duration::from_secs(2),
+            Duration::from_millis(60),
+        )
+        .await;
         assert_eq!(result.status, Status::Error);
         assert!(result.rpc_errors > 0);
     }
