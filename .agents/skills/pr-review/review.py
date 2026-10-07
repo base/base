@@ -450,11 +450,13 @@ def apply_plan(plan: Plan, ctx: Context) -> None:
     if summary is not None:
         if plan.unanchored:
             summary += "\n\n**Findings outside the diff:**\n" + "\n".join(plan.unanchored)
-        for comment_id in gh(["api", f"repos/{repo}/issues/{number}/comments", "--paginate", "--jq",
-                              f'.[] | select(.body | startswith("{SUMMARY_MARKER}")) | .id']).split():
-            gh(["api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment_id}"])
+        old_ids = gh(["api", f"repos/{repo}/issues/{number}/comments", "--paginate", "--jq",
+                      f'.[] | select(.body | startswith("{SUMMARY_MARKER}")) | .id']).split()
+        # Post first so a failed post leaves the previous summary in place.
         gh(["pr", "comment", str(number), "--repo", repo, "--body-file", "-"],
            input_text=f"{SUMMARY_MARKER}\n\n{summary}")
+        for comment_id in old_ids:
+            gh(["api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment_id}"])
     elif plan.unanchored:
         gh(["pr", "comment", str(number), "--repo", repo, "--body-file", "-"],
            input_text=f"{MARKER}\n**Findings outside the diff:**\n" + "\n".join(plan.unanchored))
