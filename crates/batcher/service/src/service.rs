@@ -11,9 +11,7 @@ use alloy_provider::{Provider, ProviderBuilder, ProviderLayer, RootProvider};
 use backon::Retryable;
 use base_balance_monitor::BalanceMonitorLayer;
 use base_batcher_admin::AdminServer;
-use base_batcher_core::{
-    AdminHandle, BatchDriver, BatchDriverInputs, DaThrottle, ThrottleController, ThrottleStrategy,
-};
+use base_batcher_core::{AdminHandle, BatchDriver, BatchDriverInputs, DaThrottle};
 use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
 use base_batcher_source::{HybridL1HeadSource, PollingBlockSource};
 use base_common_network::Base;
@@ -565,11 +563,7 @@ impl BatcherService {
         let encoder =
             BatchEncoder::new(Arc::clone(&rollup_config), self.config.encoder_config.clone())?;
 
-        let throttle = DaThrottle::new(
-            self.config.throttle.clone().map_or_else(ThrottleController::disabled, |cfg| {
-                ThrottleController::new(cfg, ThrottleStrategy::Linear)
-            }),
-        );
+        let throttle = DaThrottle::new(self.config.throttle_controller());
 
         // Build the L1 head source: a hybrid of optional WS subscription + polling.
         let l1_head_stream =
@@ -670,7 +664,7 @@ mod tests {
 
     use alloy_node_bindings::Anvil;
     use alloy_primitives::Address;
-    use base_batcher_core::ThrottleConfig;
+    use base_batcher_core::{ThrottleConfig, ThrottleController};
     use base_common_genesis::RollupConfig;
     use base_protocol::SyncStatus;
     use base_runtime::Cancellation;

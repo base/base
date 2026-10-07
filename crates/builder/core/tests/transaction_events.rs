@@ -19,7 +19,7 @@ use base_observability_events::{TransactionEventCapture, TransactionEventType};
 
 fn validity_instance() -> LocalInstanceBuilder {
     LocalInstanceBuilder::new(BuilderConfig::for_tests()).install_ext::<BuilderApiExtension>(
-        BuilderApiExtensionConfig::new(true, DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
+        BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
     )
 }
 
@@ -111,6 +111,66 @@ async fn recoverable_predicate_emits_builder_deferred() -> eyre::Result<()> {
     Ok(())
 }
 
+/// A transaction that stays blocked is re-evaluated and parked again on every flashblock of the
+/// block, but the journal records its deferral once.
+#[tokio::test]
+async fn blocked_transaction_emits_one_builder_deferred_per_block() -> eyre::Result<()> {
+    let capture = TransactionEventCapture::install();
+    let instance = validity_instance().build().await?;
+    let driver = instance.driver().await?;
+    let accounts = driver.fund_accounts(1, ONE_ETH).await?;
+
+    let blocked = driver
+        .create_transaction()
+        .with_signer(&accounts[0])
+        .with_nonce(0)
+        .with_to(Address::random())
+        .build()
+        .await;
+    let blocked_hash = blocked.tx_hash();
+    driver
+        .provider()
+        .raw_request::<_, ()>(
+            "base_insertValidatedTransaction".into(),
+            (ValidatedTransaction {
+                sender: accounts[0].address(),
+                raw: blocked.encoded_2718().into(),
+                metering: None,
+                extensions: TransactionValidity {
+                    validity: vec![ValidityPredicate::Balance {
+                        address: Address::random(),
+                        op: ValidityOperator::Equal,
+                        value: U256::from(1),
+                    }],
+                },
+            },),
+        )
+        .await?;
+
+    let block = driver.build_new_block().await?;
+    assert!(
+        !block.transactions.into_transactions().any(|tx| tx.tx_hash() == blocked_hash),
+        "a transaction whose predicate never holds must not be included"
+    );
+
+    let events = capture.events();
+    let deferred_in_flashblocks: Vec<_> = events
+        .iter()
+        .filter(|event| {
+            event.tx_hash == Some(blocked_hash)
+                && event.event_type == TransactionEventType::BuilderDeferred
+        })
+        .map(|event| event.data["flashblock_index"].clone())
+        .collect();
+    assert_eq!(deferred_in_flashblocks.len(), 1, "deferred in {deferred_in_flashblocks:?}");
+    assert!(
+        !events.iter().any(|event| event.event_type == TransactionEventType::BuilderConsidered),
+        "the flashblocks builder must not emit BUILDER_CONSIDERED"
+    );
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn expired_position_predicate_emits_builder_expired() -> eyre::Result<()> {
     let capture = TransactionEventCapture::install();
@@ -189,8 +249,7 @@ async fn expired_flashblock_predicate_releases_same_nonce_before_block_seals() -
     config.flashblocks_ws_addr.set_port(get_available_port());
     let instance = LocalInstanceBuilder::new(config)
         .install_ext::<BuilderApiExtension>(
-            BuilderApiExtensionConfig::new(true, DEFAULT_MAX_VALIDITY_PREDICATES)
-                .with_noop_metering(),
+            BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
         )
         .build()
         .await?;

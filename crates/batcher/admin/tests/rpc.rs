@@ -20,7 +20,8 @@ use jsonrpsee::{
 use serde_json::{Value, json};
 use tokio::{sync::watch, task::JoinHandle};
 
-/// The DA backlog the driver's pipeline reports, above the threshold of [`throttle_config`].
+/// The DA backlog the driver's pipeline reports, between the start and full thresholds of
+/// [`throttle_config`].
 const DA_BACKLOG_BYTES: u64 = 1_500;
 
 /// A driver running in the background, its admin server, and an HTTP client on it.
@@ -69,7 +70,8 @@ impl AdminRpc {
 /// A throttle config as an operator sends it, with no value at its default.
 fn throttle_config(max_intensity: f64) -> Value {
     json!({
-        "threshold_bytes": 1_000,
+        "start_threshold_bytes": 1_000,
+        "full_threshold_bytes": 2_000,
         "max_intensity": max_intensity,
         "block_size_lower_limit": 3_000,
         "block_size_upper_limit": 100_000,
@@ -113,6 +115,26 @@ async fn stop_and_start_gate_the_flush() {
     assert_eq!(rpc.recorded.lock().unwrap().flushes(), 1);
 }
 
+/// `admin_setThrottleController` takes each throttle strategy by its lowercase name, `off`,
+/// `step`, `linear` or `quadratic`, applies that strategy to the backlog, and
+/// `admin_getThrottleController` reports it under the same name.
+#[tokio::test]
+async fn throttle_strategies_are_set_and_read_back_by_lowercase_name() {
+    let rpc = AdminRpc::start().await;
+
+    for (strategy, intensity) in
+        [("off", 0.0), ("step", 0.5), ("linear", 0.25), ("quadratic", 0.125)]
+    {
+        let params = rpc_params![strategy, throttle_config(0.5)];
+        let () = rpc.client.request("admin_setThrottleController", params).await.unwrap();
+
+        let info: Value =
+            rpc.client.request("admin_getThrottleController", rpc_params![]).await.unwrap();
+        assert_eq!(info["strategy"], strategy);
+        assert_eq!(info["current_intensity"], intensity, "{strategy}");
+    }
+}
+
 /// The throttle controller is read back as set and applied to the backlog, its limits are
 /// published for the block builders, and an invalid config is refused as invalid params.
 #[tokio::test]
@@ -122,7 +144,7 @@ async fn throttle_controller_is_set_and_read() {
     let params = rpc_params!["step", throttle_config(0.5)];
     let () = rpc.client.request("admin_setThrottleController", params).await.unwrap();
 
-    // The backlog is above the threshold, so the step strategy throttles at half intensity and
+    // The backlog is above the start threshold, so the step strategy throttles at half intensity and
     // the limits sit halfway between their lower and upper bounds.
     let info: Value =
         rpc.client.request("admin_getThrottleController", rpc_params![]).await.unwrap();
@@ -130,7 +152,8 @@ async fn throttle_controller_is_set_and_read() {
         info,
         json!({
             "strategy": "step",
-            "threshold_bytes": 1_000,
+            "start_threshold_bytes": 1_000,
+            "full_threshold_bytes": 2_000,
             "max_intensity": 0.5,
             "current_intensity": 0.5,
             "max_block_size": 51_500,

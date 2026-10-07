@@ -348,11 +348,6 @@ pub struct RpcStandardNodeArgs {
     )]
     pub enable_tx_forwarding: bool,
 
-    /// Enable validity transactions before Cobalt activates. Without this override, the
-    /// endpoint is registered at startup but rejects submissions until Cobalt is active.
-    #[arg(long = "enable-experimental-validity-transactions")]
-    pub enable_experimental_validity_transactions: bool,
-
     /// Maximum validity predicates accepted per validity transaction.
     ///
     /// Capped at [`DEFAULT_MAX_VALIDITY_PREDICATES`], the fixed wire ceiling the
@@ -797,15 +792,11 @@ impl StandardBaseRethNode {
         runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
         // Query nodes proxy validity metadata to their sequencer; forwarders submit locally.
-        if args.rpc.enable_tx_forwarding
-            || args.rpc.rollup_args.sequencer.is_some()
-            || args.rpc.enable_experimental_validity_transactions
-        {
+        if args.rpc.enable_tx_forwarding || args.rpc.rollup_args.sequencer.is_some() {
             runner.install_ext::<SendRawTransactionValidityExtension>(
                 SendRawTransactionValidityConfig {
                     max_validity_predicates: args.rpc.validity_max_predicates,
                     max_validity_expiry_secs: args.rpc.validity_max_expiry_secs,
-                    experimental_override: args.rpc.enable_experimental_validity_transactions,
                     sequencer_url: args
                         .rpc
                         .rollup_args
@@ -1011,7 +1002,6 @@ mod tests {
             enable_transaction_event_journal: false,
             transaction_event_journal_path: None,
             enable_tx_forwarding: false,
-            enable_experimental_validity_transactions: false,
             validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
             validity_max_expiry_secs: DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
             builder_rpc_urls: Vec::new(),
@@ -1141,7 +1131,6 @@ mod tests {
         let config = TxForwardingConfig::from(&standard_args);
 
         assert_eq!(standard_args.rpc.rollup_args.sequencer, None);
-        assert!(!standard_args.rpc.enable_experimental_validity_transactions);
         assert_eq!(standard_args.rpc.validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
         assert_eq!(standard_args.rpc.validity_max_expiry_secs, DEFAULT_MAX_VALIDITY_EXPIRY_SECS);
         assert!(!config.enabled);
@@ -1150,25 +1139,12 @@ mod tests {
     }
 
     #[test]
-    fn experimental_validity_transactions_parse_without_forwarding() {
-        let args = CommandParser::<StandardNodeArgs>::parse_from([
-            "base-reth",
-            "--enable-experimental-validity-transactions",
-        ])
-        .args;
-
-        assert!(args.rpc.enable_experimental_validity_transactions);
-        assert!(!args.rpc.enable_tx_forwarding);
-    }
-
-    #[test]
-    fn experimental_validity_transactions_parse_with_forwarding() {
+    fn validity_args_parse_with_forwarding() {
         let args = CommandParser::<StandardNodeArgs>::parse_from([
             "base-reth",
             "--enable-tx-forwarding",
             "--builder-rpc-urls",
             "http://localhost:8545",
-            "--enable-experimental-validity-transactions",
             "--validity-max-predicates",
             "8",
             "--validity-max-expiry-secs",
@@ -1177,7 +1153,6 @@ mod tests {
         .args;
 
         assert!(args.rpc.enable_tx_forwarding);
-        assert!(args.rpc.enable_experimental_validity_transactions);
         assert_eq!(args.rpc.validity_max_predicates, 8);
         assert_eq!(args.rpc.validity_max_expiry_secs, 45);
         assert_eq!(args.rpc.builder_rpc_urls.len(), 1);
@@ -1208,32 +1183,6 @@ mod tests {
         .expect_err("a maximum of zero should be rejected");
 
         assert!(error.to_string().contains("--validity-max-predicates"));
-    }
-
-    #[test]
-    fn validity_max_predicates_accepts_the_wire_ceiling_without_experimental_override() {
-        let args = CommandParser::<StandardNodeArgs>::parse_from([
-            "base-reth",
-            "--validity-max-predicates",
-            &DEFAULT_MAX_VALIDITY_PREDICATES.to_string(),
-        ])
-        .args;
-
-        assert!(!args.rpc.enable_experimental_validity_transactions);
-        assert_eq!(args.rpc.validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
-    }
-
-    #[test]
-    fn validity_max_expiry_secs_parses_without_experimental_override() {
-        let args = CommandParser::<StandardNodeArgs>::parse_from([
-            "base-reth",
-            "--validity-max-expiry-secs",
-            "45",
-        ])
-        .args;
-
-        assert!(!args.rpc.enable_experimental_validity_transactions);
-        assert_eq!(args.rpc.validity_max_expiry_secs, 45);
     }
 
     #[test]
@@ -1358,15 +1307,6 @@ mod tests {
 
             assert!(result.is_err(), "{flag} {value} must be rejected");
         }
-    }
-
-    #[test]
-    fn programmatic_validity_config_without_forwarding_is_valid() {
-        let mut args = StandardNodeArgs::from(default_rpc_standard_node_args());
-        args.rpc.enable_experimental_validity_transactions = true;
-
-        StandardBaseRethNode::runner(args)
-            .expect("validity transactions should not require forwarding");
     }
 
     #[test]

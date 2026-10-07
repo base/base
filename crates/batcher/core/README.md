@@ -32,9 +32,12 @@ and `Failed`.
 The throttle subsystem controls how much DA data the block builders may include per block and per
 transaction based on the L1 DA backlog. `ThrottleController` takes a `ThrottleConfig` and a
 `ThrottleStrategy` and produces `ThrottleParams` from a raw backlog byte count.
-`ThrottleStrategy::Off` disables throttling entirely. `ThrottleStrategy::Step` applies
-`max_intensity` once the backlog reaches the configured threshold. `ThrottleStrategy::Linear` grows
-intensity linearly from zero at the threshold to `max_intensity` at twice the threshold.
+`ThrottleStrategy::Off` never throttles, so `DaThrottle` publishes the upper limits.
+`ThrottleStrategy::Step` sets the intensity to `max_intensity` once the backlog reaches the start
+threshold. `ThrottleStrategy::Linear` grows intensity linearly from zero at the start threshold to
+`max_intensity` at the full threshold and beyond. `ThrottleStrategy::Quadratic` grows it between the
+same two thresholds with the square of the backlog above the start threshold, so it throttles less than
+`ThrottleStrategy::Linear` in between.
 `ThrottleParams` carries a fractional `intensity` value and the corresponding
 `max_block_size` and `max_tx_size` byte limits computed by
 interpolating between the upper and lower limits in `ThrottleConfig`.

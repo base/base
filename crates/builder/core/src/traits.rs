@@ -11,7 +11,7 @@ use reth_node_api::{FullNodeTypes, NodeTypes};
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
 use reth_transaction_pool::{TransactionPool, TransactionPoolExt};
 
-use crate::ParkablePayloadTransactions;
+use crate::{ParkablePayloadTransactions, RestingPayloadTransactions};
 
 /// Composite trait bound for a full node type compatible with the Base builder.
 pub trait NodeBounds:
@@ -85,14 +85,14 @@ impl<T> ClientBounds for T where
 /// Composite trait bound for payload transaction iterators used by the Base builder.
 pub trait PayloadTxsBounds:
     ParkablePayloadTransactions<
-    Transaction: BasePooledTx<Consensus = BaseTransactionSigned> + TimestampedTransaction,
->
+        Transaction: BasePooledTx<Consensus = BaseTransactionSigned> + TimestampedTransaction,
+    > + RestingPayloadTransactions
 {
 }
 
 impl<T> PayloadTxsBounds for T where
     T: ParkablePayloadTransactions<
-        Transaction: BasePooledTx<Consensus = BaseTransactionSigned> + TimestampedTransaction,
-    >
+            Transaction: BasePooledTx<Consensus = BaseTransactionSigned> + TimestampedTransaction,
+        > + RestingPayloadTransactions
 {
 }

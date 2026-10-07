@@ -101,7 +101,6 @@ impl SnapshotL2Stack {
             flashblocks_port: container.and_then(|value| value.builder_flashblocks_port),
             metrics_port: None,
             block_time: block_interval.duration(),
-            enable_experimental_validity_transactions: false,
             payload_builder_cutover: block_interval == DevnetBlockInterval::TwoHundredMilliseconds,
             extra_extensions: Vec::new(),
             persistence_threshold: Some(0),
@@ -160,7 +159,6 @@ impl SnapshotL2Stack {
             )),
             tx_forwarding_config: None,
             upgrade_signal: None,
-            enable_experimental_validity_transactions: false,
             extra_extensions: Vec::new(),
         })
         .await

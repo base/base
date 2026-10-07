@@ -394,7 +394,6 @@ pub struct SystemTestStackBuilder {
     base_zenith_activation_block: Option<u64>,
     output_dir: Option<PathBuf>,
     tx_forwarding_config: Option<TxForwardingConfig>,
-    enable_experimental_validity_transactions: bool,
     payload_builder_cutover: bool,
     verifier_l1_confs: u64,
     force_batch_submission: bool,
@@ -527,12 +526,6 @@ impl SystemTestStackBuilder {
     /// the `base_insertValidatedTransaction` RPC endpoint.
     pub fn with_tx_forwarding(mut self, config: TxForwardingConfig) -> Self {
         self.tx_forwarding_config = Some(config);
-        self
-    }
-
-    /// Enables experimental validity transaction ingress and builder acceptance.
-    pub const fn with_experimental_validity_transactions(mut self) -> Self {
-        self.enable_experimental_validity_transactions = true;
         self
     }
 
@@ -938,8 +931,6 @@ impl SystemTestStackBuilder {
             l1_slot_duration: slot_duration,
             container_config: l2_container_config,
             tx_forwarding_config: self.tx_forwarding_config,
-            enable_experimental_validity_transactions: self
-                .enable_experimental_validity_transactions,
             payload_builder_cutover: self.payload_builder_cutover,
             verifier_l1_confs: self.verifier_l1_confs,
             force_batch_submission: self.force_batch_submission,
