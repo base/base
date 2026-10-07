@@ -124,7 +124,8 @@ pub struct BatcherArgs {
     #[arg(
         long = "max-pending-transactions",
         default_value = "1",
-        env = "BASE_BATCHER_MAX_PENDING_TRANSACTIONS"
+        env = "BASE_BATCHER_MAX_PENDING_TRANSACTIONS",
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
     )]
     pub max_pending_transactions: usize,
 
@@ -513,6 +514,16 @@ mod tests {
         args.extend_from_slice(["--brotli-quality", "12"].as_slice());
 
         assert!(BatcherArgs::try_parse_from(args).is_err());
+    }
+
+    /// Zero in-flight transactions would mean the batcher never submits, so reject it at parse time.
+    #[test]
+    fn cli_rejects_zero_max_pending_transactions() {
+        let mut args = base_args();
+        args.extend_from_slice(["--max-pending-transactions", "0"].as_slice());
+
+        let error = BatcherArgs::try_parse_from(args).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
     }
 
     /// A calldata batcher's frame size is its calldata cap minus the derivation version byte.
