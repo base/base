@@ -8,21 +8,29 @@ alias stop := down
 default:
     @just --justfile {{ source_file() }} --list --list-prefix '  just devnet snapshot '
 
-# Prepare or resume an experiment, reusing completed steps
+# Prepare and initialize an experiment; reuse completed steps and leave services stopped
 setup *args:
     python3 etc/scripts/devnet/snapshot_devnet.py setup "$@"
 
-# Use an existing datadir in place; optionally add --validator-dir
+# Download one datadir without copying it or configuring a devnet
+download *args:
+    python3 etc/scripts/devnet/snapshot_devnet.py download "$@"
+
+# Initialize an existing datadir in place, including Denim; optionally add --validator-dir
 init *args:
     python3 etc/scripts/devnet/snapshot_devnet.py init "$@"
 
-# Start or resume the configured fork without deleting data
+# Start the initialized fork; catch-up continues in the background
 up *args:
     python3 etc/scripts/devnet/snapshot_devnet.py up "$@"
 
 # Stop the configured fork and preserve all data
 down *args:
     python3 etc/scripts/devnet/snapshot_devnet.py down "$@"
+
+# Stop saved experiments and forget their selection; keep databases and fork state
+clear *args:
+    python3 etc/scripts/devnet/snapshot_devnet.py clear "$@"
 
 # Show fork services, block heights, and Denim scheduling
 status *args:

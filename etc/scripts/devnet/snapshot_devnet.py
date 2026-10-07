@@ -43,6 +43,7 @@ READ_METHODS = {
 ROLES = ("sequencer", "validator")
 FORK_SERVICES = {"l1", *ROLES, "batcher"}
 EXECUTION_RPC_PORT = 8545
+WEBSOCKET_RPC_PORT = 8546
 CONSENSUS_RPC_PORT = 9545
 GOSSIP_PORT = 9222
 # The published full snapshot keeps 31 days of legacy 2s-block history (31 * 43200 blocks). The
@@ -177,7 +178,7 @@ def wait(description, check, timeout, poll_interval=1, progress=None, report_int
             next_report = now + report_interval
         stalled = f" (no progress for {timeout}s; {message})" if progress is not None else ""
         require(deadline is None or now < deadline,
-                f"timed out: {description}{stalled}; data preserved, rerun start to resume")
+                f"timed out: {description}{stalled}; data preserved, rerun the same command to resume")
         time.sleep(poll_interval)
 
 
@@ -205,6 +206,33 @@ def configured_directory(directory=None):
     return directory
 
 
+def clear():
+    """Stop saved experiments before forgetting their selection; never delete fork data."""
+    path = setup_path()
+    if not path.exists():
+        print("No snapshot devnet selected.", flush=True)
+        return
+    original = path.read_bytes()
+    selection = json.loads(original)
+    with contextlib.ExitStack() as locks:
+        for saved in dict.fromkeys(selection.get(key) for key in ("directory", "pending_directory")):
+            if not saved:
+                continue
+            directory = Path(saved)
+            if not directory.is_dir():
+                print(f"Saved fork directory is unavailable: {directory}; forgetting its selection only.", flush=True)
+                continue
+            lock = locks.enter_context(open(directory / ".lock", "a"))
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fork = SnapshotFork(directory)
+            if fork.manifest is not None:
+                require(fork.manifest.get("version") == 2, "unsupported snapshot manifest; selection preserved")
+                fork.stop()
+        require(path.read_bytes() == original, "snapshot selection changed during shutdown; rerun clear")
+        path.unlink()
+    print("Snapshot selection cleared; all fork data preserved. Bare up now requires init or setup.", flush=True)
+
+
 def setup_command(*args, lock_fd=None):
     # Downloads and builds can exceed the node-readiness timeout. Stream their progress rather
     # than retaining potentially hours of output; none of these commands contains RPC credentials.
@@ -212,6 +240,68 @@ def setup_command(*args, lock_fd=None):
     require(subprocess.call(list(map(str, args)), cwd=ROOT,
                             pass_fds=() if lock_fd is None else (lock_fd,)) == 0,
             "snapshot setup command failed; downloaded data preserved")
+
+
+def pin_snapshot(path):
+    """Keep one mainnet snapshot manifest across interrupted downloads."""
+    if path.exists():
+        return
+    entries = [entry for entry in request_json(SNAPSHOT_INDEX)
+               if int(entry["chainId"]) == 8453 and entry["metadataUrl"].endswith("manifest.json")]
+    require(entries, "no Base mainnet snapshot manifest available")
+    latest = max(entries, key=lambda entry: int(entry["block"]))
+    snapshot = request_json(latest["metadataUrl"])
+    require(int(snapshot["chain_id"]) == 8453 and int(snapshot["block"]) == int(latest["block"]),
+            "snapshot manifest does not match the selected snapshot")
+    snapshot["base_url"] = snapshot.get("base_url") or urllib.parse.urljoin(latest["metadataUrl"], ".")
+    write_json(path, snapshot)
+
+
+def run_download(work, datadir, image, concurrency, container, lock_fd):
+    print("Downloading the pinned snapshot (completed files are verified and reused).", flush=True)
+    setup_command("docker", "run", "--rm", "--name", container,
+                  "--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/work",
+                  "-v", f"{work}:/work", "--entrypoint", "/app/base", image,
+                  "snapshot", "download", "--chain", "mainnet", "--datadir", datadir,
+                  "--manifest-path", "/work/download-manifest.json",
+                  "--download-concurrency", str(concurrency),
+                  "--with-txs-distance", str(PUBLISHED_FULL_SNAPSHOT_DISTANCE),
+                  "--with-receipts-distance", str(PUBLISHED_FULL_SNAPSHOT_DISTANCE),
+                  "--with-state-history-distance", str(PUBLISHED_FULL_SNAPSHOT_DISTANCE), "--non-interactive",
+                  lock_fd=lock_fd)
+
+
+def download(args):
+    """Download one datadir without building images, copying data or selecting a devnet."""
+    require(args.download_concurrency > 0, "download concurrency must be positive")
+    directory = Path(args.dir).expanduser().resolve()
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    journal = directory / "snapshot-download.json"
+    pinned = directory / "download-manifest.json"
+    with open(directory / ".download.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if journal.exists():
+            state = json.loads(journal.read_text())
+            require(pinned.is_file(), "pinned download manifest is missing; data preserved")
+        else:
+            require({entry.name for entry in directory.iterdir()} <= {
+                ".download.lock", "download-manifest.json", "download-manifest.json.tmp"},
+                "download requires an empty directory or its own interrupted download; existing data preserved")
+            try:
+                image = run("docker", "image", "inspect", "--format", "{{.Id}}", DEFAULT_IMAGES["base"])
+            except RuntimeError as error:
+                raise RuntimeError("download requires the local Base image; build it with docker buildx bake "
+                                   "-f etc/docker/docker-bake.hcl base --set base.args.PROFILE=release --load") from error
+            pin_snapshot(pinned)
+            state = {"image": image, "container": "snapshot-download-" + secrets.token_hex(6), "complete": False}
+            write_json(journal, state)
+        if not state["complete"]:
+            run_download(directory, "/work", state["image"], args.download_concurrency,
+                         state["container"], lock.fileno())
+            state["complete"] = True
+            write_json(journal, state)
+    print(f"Snapshot download complete: {directory}. No devnet configured.\n"
+          f"Run just devnet snapshot init --dir {shlex.quote(str(directory))} when ready.", flush=True)
 
 
 def prepare_snapshot(args, fork, work, lock, datadirs=None):
@@ -305,32 +395,13 @@ def prepare_snapshot(args, fork, work, lock, datadirs=None):
             state["phase"] = "initialize"
             write_json(journal, state)
     if state["phase"] == "build":
-        manifest_path = work / "download-manifest.json"
-        if not manifest_path.exists():
-            entries = [entry for entry in request_json(SNAPSHOT_INDEX)
-                       if int(entry["chainId"]) == 8453 and entry["metadataUrl"].endswith("manifest.json")]
-            require(entries, "no Base mainnet snapshot manifest available")
-            latest = max(entries, key=lambda entry: int(entry["block"]))
-            snapshot = request_json(latest["metadataUrl"])
-            require(int(snapshot["chain_id"]) == 8453 and int(snapshot["block"]) == int(latest["block"]),
-                    "snapshot manifest does not match the selected snapshot")
-            snapshot["base_url"] = snapshot.get("base_url") or urllib.parse.urljoin(latest["metadataUrl"], ".")
-            write_json(manifest_path, snapshot)
+        pin_snapshot(work / "download-manifest.json")
         state["phase"] = "download"
         write_json(journal, state)
     if state["phase"] == "download":
         require((work / "download-manifest.json").is_file(), "pinned download manifest is missing; data preserved")
-        print("Downloading the pinned snapshot (completed files are verified and reused).", flush=True)
-        setup_command("docker", "run", "--rm", "--name", state["download_container"],
-                      "--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/work",
-                      "-v", f"{work}:/work", "--entrypoint", "/app/base", images["base"],
-                      "snapshot", "download", "--chain", "mainnet", "--datadir", "/work/builder",
-                      "--manifest-path", "/work/download-manifest.json",
-                      "--download-concurrency", str(args.download_concurrency),
-                      "--with-txs-distance", str(PUBLISHED_FULL_SNAPSHOT_DISTANCE),
-                      "--with-receipts-distance", str(PUBLISHED_FULL_SNAPSHOT_DISTANCE),
-                      "--with-state-history-distance", str(PUBLISHED_FULL_SNAPSHOT_DISTANCE), "--non-interactive",
-                      lock_fd=lock.fileno())
+        run_download(work, "/work/builder", images["base"], args.download_concurrency,
+                     state["download_container"], lock.fileno())
         state["phase"] = "copy"
         write_json(journal, state)
     if state["phase"] == "copy":
@@ -393,7 +464,7 @@ def setup(args):
                 "setup requires an unused working directory or a saved setup; existing data is never overwritten")
         fork = SnapshotFork(work / "fork", args.timeout)
     require(fork.manifest is None or (fork.manifest.get("version") == 2
-            and fork.manifest.get("phase") in ("inspecting", "prepared", "stopped", "running", "starting")),
+            and fork.manifest.get("phase") in ("inspecting", "prepared", "initializing", "stopped", "running", "starting")),
             "unsupported snapshot manifest; data preserved")
     if fork.manifest is not None:
         require(datadirs is None or fork.manifest["datadirs"] == datadirs,
@@ -445,9 +516,12 @@ def setup(args):
         fork = SnapshotFork(fork.directory, args.timeout)
         fork.credentials = credentials
         write_json(fork.directory / "upstreams.json", credentials)
-        if fork.manifest is None or fork.manifest["phase"] == "inspecting":
+        if fork.manifest is None or not fork.initialized():
             write_json(path, {**selection, "pending_directory": str(fork.directory)})
-            if work is None:
+            if fork.manifest is not None and fork.manifest["phase"] != "inspecting":
+                # F is known: resume runtime bootstrap without rebuilding, downloading, copying or rediscovering.
+                fork.prepare_runtime()
+            elif work is None:
                 require(fork.manifest is not None and "setup_input" in fork.manifest,
                         "use init with the original input config to resume this fork")
                 fork.initialize(fork.manifest["setup_input"])
@@ -554,14 +628,12 @@ def validate_schedule(config, schedule, head_timestamp):
                     f"contract would change historical {UPGRADES[index]} activation")
 
 
-def validate_origins(inspections, url, *, upstream=False):
+def validate_origins(inspections, url):
     for inspection in inspections:
         for label in ("latest", "safe", "finalized"):
             origin = inspection[label]["block_info"]["l1origin"]
-            header = rpc(url, "eth_getBlockByNumber", hex(origin["number"]), False, upstream=upstream)
-            require(header and header["hash"] == origin["hash"],
-                    "snapshot has a noncanonical L1 origin" if upstream
-                    else "restored L2 refers to missing/conflicting L1 history")
+            header = rpc(url, "eth_getBlockByNumber", hex(origin["number"]), False, upstream=True)
+            require(header and header["hash"] == origin["hash"], "snapshot has a noncanonical L1 origin")
 
 
 class SnapshotFork:
@@ -602,6 +674,9 @@ class SnapshotFork:
         networks, so L2 RPCs use the container's internal-network IP, reachable only from this host."""
         if role == "l1":
             return f"http://127.0.0.1:{self.manifest['port']}"
+        if role == "sequencer-ws":
+            _, address = private_address(self.manifest["project"], ("sequencer",), self.containers())
+            return f"ws://{address}:{WEBSOCKET_RPC_PORT}"
         node, consensus = role.removesuffix("-cl"), role.endswith("-cl")
         # Both kinds running at once is ambiguous; inspection nodes only expose execution RPC.
         service, address = private_address(self.manifest["project"], ("inspect-" + node, node), self.containers())
@@ -611,7 +686,7 @@ class SnapshotFork:
 
     def status(self):
         endpoints = {}
-        for role in ("l1", *self.roles, *(role + "-cl" for role in self.roles)):
+        for role in ("l1", *self.roles, *(role + "-cl" for role in self.roles), "sequencer-ws"):
             with contextlib.suppress(Unavailable):
                 endpoints[role] = self.url(role)
         # Docker's raw ps/inspect output includes command arguments containing provider credentials.
@@ -744,19 +819,6 @@ class SnapshotFork:
     def inspect(self, discover=False):
         """Inspects configured datadirs; with `discover`, the sequencer also finds F."""
         inspector = os.environ.get("BASE_SNAPSHOT_INSPECTOR", str(ROOT / "target/debug/base-devnet"))
-        arguments = []
-        if "initial" in self.manifest:
-            config = json.loads((self.directory / "config/rollup.json").read_text())
-            require(config == self.manifest["initial"][0]["rollup_config"], "pinned rollup config changed")
-            schedule = self.expected_schedule()
-            for index, upgrade in enumerate(UPGRADES):
-                timestamp = schedule[index] if index < len(schedule) else 0
-                if index >= LEGACY_UPGRADE_COUNT:
-                    config.setdefault("base", {})[upgrade] = timestamp or None
-                else:
-                    config[upgrade + "_time"] = timestamp or None
-            write_json(self.directory / "config/inspection.json", config)
-            arguments = ["--rollup-config", str(self.directory / "config/inspection.json")]
         result = []
         require(not self.running_services() & set(self.roles),
                 "production nodes are running on these datadirs; stop them before inspection")
@@ -765,8 +827,8 @@ class SnapshotFork:
             self.compose("--profile", "inspect", "up", "-d", "--no-build", *services)
             for role in self.roles:
                 self.await_rpc(role)
-                command, env, timeout, secrets = [inspector, "inspect-snapshot", "--rpc-url", self.url(role),
-                                                  *arguments], None, self.timeout, ()
+                command = [inspector, "inspect-snapshot", "--rpc-url", self.url(role)]
+                env, timeout, secrets = None, self.timeout, ()
                 if discover and role == "sequencer":
                     # The inspector reads the standard names; config may name other variables.
                     upstreams = {"SNAPSHOT_UPSTREAM_" + name.upper(): self.endpoint(name)
@@ -783,15 +845,6 @@ class SnapshotFork:
                 inspection = json.loads(run(*command, env=env, timeout=timeout, secrets=secrets))
                 require(not env or "fork" in inspection, "inspector did not report a fork block")
                 result.append(inspection)
-                for label in ("safe_l2", "finalized_l2"):
-                    saved = self.manifest.get("last_stop", {}).get(role, {}).get(label)
-                    if saved:
-                        block = rpc(self.url(role), "eth_getBlockByNumber", hex(saved["number"]), False)
-                        # Reth may persist a head older than the recorded checkpoints; start() requires
-                        # derivation to restore that missing tail before mining or sequencing.
-                        unpersisted = block is None and saved["number"] > inspection["latest"]["block_info"]["number"]
-                        require(unpersisted or (block and block["hash"] == saved["hash"]),
-                                "restored L2 lost a recorded checkpoint")
         finally:
             self.compose("--profile", "inspect", "stop", *services)
         return result
@@ -830,10 +883,10 @@ class SnapshotFork:
         if self.manifest is not None:
             require(self.manifest["version"] == 2 and all(self.manifest[key] == value for key, value in settings.items()),
                     "initialization config changed; existing fork preserved")
-            require(self.manifest["phase"] in ("inspecting", "prepared", "stopped", "starting", "running"),
+            require(self.manifest["phase"] in ("inspecting", "prepared", "initializing", "stopped", "starting", "running"),
                     "unsupported initialization phase")
             if self.manifest["phase"] != "inspecting":
-                print("Fork already initialized; keeping its data and identities.", flush=True)
+                self.prepare_runtime()
                 return
         else:
             self.manifest = {"version": 2, "project": "snapshot-" + secrets.token_hex(6), "phase": "inspecting",
@@ -874,7 +927,7 @@ class SnapshotFork:
         fork = {key: header[key] for key in ("number", "hash", "timestamp", "parentHash")}
         validate_boundary(inspections, discovered["number"])
         config = inspections[0]["rollup_config"]
-        validate_origins(inspections, execution, upstream=True)
+        validate_origins(inspections, execution)
         contract = self.manifest["protocol_versions"]
         schedule = list(map(number, call(execution, contract, "getSchedule()(uint64[])",
                                          block=fork["number"], upstream=True)))
@@ -897,8 +950,67 @@ class SnapshotFork:
                              system_config=system, portal=portal, contracts=implementations, owners=owners,
                              minimum_protocol_version=minimum)
         self.save()
-        print(f"Prepared with L1 fork block {number(fork['number'])}; no local contracts changed. "
-              "Start derives past F before sequencing.")
+        print(f"Discovered L1 fork block {number(fork['number'])}; bootstrapping the local runtime.", flush=True)
+        self.prepare_runtime()
+
+    def initialized(self):
+        """Whether init completed runtime bootstrap, including forks completed by earlier launchers."""
+        return bool(self.manifest["phase"] in ("stopped", "starting", "running")
+                    and self.manifest.get("boundary_validated") and self.manifest.get("bootstrapped")
+                    and self.manifest.get("denim_timestamp") is not None)
+
+    def prepare_runtime(self):
+        """Completes first-time runtime bootstrap after F is known, then stops every service.
+
+        Interval mining stays paused (send() mines each journaled write), the sequencer stays stopped
+        and no batcher runs. Completed steps are durable, so a retry never reseeds or resubmits them.
+        """
+        if self.initialized():
+            print("Fork already initialized; keeping its data, identities and Denim schedule.", flush=True)
+            return
+        require(self.manifest["phase"] in ("prepared", "initializing", "starting", "stopped", "running"),
+                "unsupported initialization phase")
+        if self.running():
+            self.stop()
+        validate_paths(self.directory, self.manifest["datadirs"].values())
+        self.endpoint("execution")
+        self.endpoint("beacon")
+        dump = self.directory / "l1/anvil.json"
+        # Local L1 writes are journaled before they are made. A fresh fork would silently drop them.
+        if self.manifest["operations"] or "boundary" in self.manifest or self.manifest["phase"] not in (
+                "prepared", "initializing"):
+            require(dump.is_file(), "L1 state is missing; refusing a fresh fork")
+        self.manifest["phase"] = "initializing"
+        self.save()
+        print("Bootstrapping local L1 and L2 with interval mining paused and sequencing stopped.", flush=True)
+        try:
+            self.compose("up", "-d", "--no-build", "l1")
+            self.await_rpc("l1")
+            self.assert_local_l1()
+            self.seed_upgrade_signal()
+            self.validate_restored_contracts()
+            self.start_nodes()
+            if "validator" in self.roles:
+                require(not rpc(self.url("validator-cl"), "admin_sequencerActive"),
+                        "validator must remain stopped and derive independently")
+            if not self.manifest.get("boundary_validated"):
+                self.wait_boundary()
+            if not self.manifest.get("bootstrapped"):
+                self.bootstrap()
+                self.manifest["bootstrapped"] = True
+                self.save()
+            self.schedule_denim()
+            # Nothing writes L1 after this point, so any later dump holds every bootstrap effect.
+            written = dump.stat().st_mtime_ns if dump.exists() else None
+        finally:
+            # Dependents before L1; never remove state.
+            self.compose("stop", *self.roles)
+            self.compose("stop", "l1")
+        require(dump.is_file() and dump.stat().st_mtime_ns != written,
+                "Anvil did not save L1 state on shutdown; initialization is incomplete, data preserved")
+        self.manifest["phase"] = "stopped"
+        self.save()
+        print("Initialization complete; all services are stopped. Run just devnet snapshot up.", flush=True)
 
     def assert_local_l1(self):
         metadata = rpc(self.url("l1"), "anvil_metadata")
@@ -1038,6 +1150,11 @@ class SnapshotFork:
             self.mine()
         successor = rpc(self.url("l1"), "eth_getBlockByNumber", hex(fork_number + 1), False)
         require(successor and successor["parentHash"] == fork["hash"], "local L1 has no successor built on F")
+        # Nodes may already have derived this block; record it so a retry requires the same L1 state.
+        mined = {key: successor[key] for key in ("number", "hash")}
+        require(self.manifest.setdefault("boundary", {}).setdefault("l1_successor", mined) == mined,
+                "local L1 successor of F changed; data preserved")
+        self.save()
         statuses = {}
 
         def derived():
@@ -1062,39 +1179,6 @@ class SnapshotFork:
             "current_l1": {role: statuses[role]["current_l1"] for role in self.roles}, "safe_l2": safe})
         self.save()
 
-    def wait_checkpoints(self):
-        """Gates local L1 writes and sequencing on each node re-deriving its recorded safe and finalized
-        blocks from retained L1. EL availability or unsafe height alone does not restore them."""
-        last_stop = self.manifest.get("last_stop", {})
-        checkpoints = [(role, last_stop[role][label]) for role in self.roles for label in ("safe_l2", "finalized_l2")
-                       if last_stop.get(role, {}).get(label)]
-        targets = {}
-        for role, saved in checkpoints:
-            targets[role] = max(targets.get(role, 0), number(saved["number"]))
-        statuses = {}
-
-        def recovered():
-            try:
-                statuses.update((role, self.sync_status(role)) for role in targets)
-                if any(number(statuses[role]["safe_l2"]["number"]) < target for role, target in targets.items()):
-                    return False
-                blocks = [(role, saved, rpc(self.url(role), "eth_getBlockByNumber", hex(number(saved["number"])), False))
-                          for role, saved in checkpoints]
-            except Unavailable:
-                self._containers = None
-                return False
-            for role, saved, block in blocks:
-                require(block and block["hash"] == saved["hash"],
-                        f"{role} derived a block conflicting with a recorded checkpoint; data preserved")
-            return True
-
-        def progress():
-            heads = {role: number(status["safe_l2"]["number"]) for role, status in statuses.items()}
-            return heads, "; ".join(f"{role} safe {safe}/{targets[role]} needed"
-                                    for role, safe in heads.items()) or "consensus status unavailable"
-
-        wait("nodes re-deriving recorded safe/finalized checkpoints", recovered, self.timeout, progress=progress)
-
     def peers(self):
         if "validator" not in self.roles:
             return
@@ -1110,31 +1194,6 @@ class SnapshotFork:
         require("batcher" in self.running_services(), "batcher exited after start (any exit, including "
                 "code 0, fails); inspect its logs; data preserved, rerun start to resume")
 
-    def start_batcher(self):
-        """Requires each configured node to advance its safe head from a local batch."""
-        target = max(number(self.sync_status(role)["safe_l2"]["number"]) for role in self.roles) + 1
-        self.compose("up", "-d", "--no-build", "batcher")
-        statuses = {}
-
-        def batched():
-            self.require_batcher()
-            try:
-                statuses.update((role, self.sync_status(role)) for role in self.roles)
-            except Unavailable:
-                return False
-            return all(number(status["safe_l2"]["number"]) >= target for status in statuses.values())
-
-        def progress():
-            heads = {role: number(status["safe_l2"]["number"]) for role, status in statuses.items()}
-            return heads, "; ".join(f"{role} safe {safe}/{target} needed"
-                                    for role, safe in heads.items()) or "consensus status unavailable"
-
-        wait("batcher advancing configured safe heads", batched, self.timeout, progress=progress)
-        hashes = {(rpc(self.url(role), "eth_getBlockByNumber", hex(target), False) or {}).get("hash")
-                  for role in self.roles}
-        require(len(hashes) == 1 and None not in hashes,
-                f"sequencer and validator disagree on canonical safe block {target}; data preserved")
-
     def start_nodes(self):
         self.compose("up", "-d", "--no-build", *self.roles)
         for role in self.roles:
@@ -1142,54 +1201,35 @@ class SnapshotFork:
             wait(role + " consensus RPC", lambda: self.consensus_ready(role), self.timeout)
 
     def start(self):
-        require(self.manifest["phase"] in ("prepared", "stopped", "running", "starting"), "init did not complete")
+        """Starts an initialized fork and returns once the sequencer and batcher run; catch-up continues
+        in the background. Init already proved the boundary, configured L1 and scheduled Denim."""
+        require(self.initialized(), "initialization is incomplete; rerun just devnet snapshot setup --dir "
+                f"{shlex.quote(str(self.directory))} to resume it")
         print("Starting snapshot devnet: checking containers.", file=sys.stderr, flush=True)
         if self.running():
             if self.manifest["phase"] == "running" and {"l1", "batcher", *self.roles} <= self.running_services():
-                self.assert_local_l1()
-                self.validate_restored_contracts()
                 if all(self.consensus_ready(role) for role in self.roles) and rpc(
                         self.url("sequencer-cl"), "admin_sequencerActive"):
-                    self.schedule_denim()
                     print("Snapshot devnet already running.", flush=True)
                     return
             self.stop()
         validate_paths(self.directory, self.manifest["datadirs"].values())
         self.endpoint("execution")
         self.endpoint("beacon")
-        previous_phase = self.manifest["phase"]
-        # Never reuse a stopped fork whose durable L1 state vanished.
-        if previous_phase != "prepared":
-            require((self.directory / "l1/anvil.json").is_file(), "L1 state is missing; refusing a fresh fork")
+        # Never reuse an initialized fork whose durable L1 state vanished.
+        require((self.directory / "l1/anvil.json").is_file(), "L1 state is missing; refusing a fresh fork")
         self.manifest["phase"] = "starting"
         self.save()
         try:
             self.compose("up", "-d", "--no-build", "l1")
             self.await_rpc("l1")
-            self.assert_local_l1()
-            self.seed_upgrade_signal()
-            self.validate_restored_contracts()
-            inspections = self.inspect()
-            validate_origins(inspections, self.url("l1"))
-            require(not self.running_services() & {"inspect-" + role for role in self.roles},
-                    "inspection nodes still hold the datadirs")
+            # Align the restored tip with the wall-clock slot grid before interval mining resumes.
+            self.mine()
+            rpc(self.url("l1"), "anvil_setIntervalMining", self.manifest["slot_seconds"])
             self.start_nodes()
             if "validator" in self.roles:
                 require(not rpc(self.url("validator-cl"), "admin_sequencerActive"),
                         "validator must remain stopped and derive independently")
-            self.wait_checkpoints()
-            if not self.manifest.get("boundary_validated"):
-                self.wait_boundary()
-            if not self.manifest.get("bootstrapped"):
-                self.bootstrap()
-                # The startup signer read must use the new local SystemConfig.
-                self.compose("stop", *self.roles)
-                self.start_nodes()
-                self.manifest["bootstrapped"] = True
-                self.save()
-            self.wait_upgrades()
-            self.mine()
-            rpc(self.url("l1"), "anvil_setIntervalMining", self.manifest["slot_seconds"])
             self.peers()
             try:
                 # op-batcher exits, even with code 0, when it cannot call miner_setMaxDASize.
@@ -1197,47 +1237,36 @@ class SnapshotFork:
             except Unavailable as error:
                 raise RuntimeError("sequencer HTTP RPC lacks the miner API required by the batcher; "
                                    "data preserved, recreate services from the current Compose file") from error
-            head = rpc(self.url("sequencer"), "eth_getBlockByNumber", "latest", False)
-            rpc(self.url("sequencer-cl"), "admin_startSequencer", head["hash"])
+
+            def sequencing():
+                # Retries a consensus RPC that is not ready or a head that moved before the call.
+                try:
+                    if rpc(self.url("sequencer-cl"), "admin_sequencerActive"):
+                        return True
+                    head = rpc(self.url("sequencer"), "eth_getBlockByNumber", "latest", False)
+                    rpc(self.url("sequencer-cl"), "admin_startSequencer", head["hash"])
+                    return True
+                except Unavailable:
+                    self._containers = None
+                    return False
+            wait("sequencer accepting admin_startSequencer", sequencing, self.timeout)
             # Derivation authorizes batch senders by the SystemConfig at each batch's L1 inclusion
             # block, not the L2 block's origin, so old-origin catch-up blocks are batchable now.
             # Deferring batching until wall time would risk their sequencing windows expiring.
-            self.start_batcher()
-            unsafe = {}
-
-            def caught_up():
-                self.require_batcher()
-                try:
-                    unsafe.update(self.sync_status("sequencer")["unsafe_l2"])
-                except Unavailable:
-                    return False
-                return unsafe["timestamp"] >= int(time.time()) - 2 * self.manifest["slot_seconds"]
-
-            def progress():
-                if not unsafe:
-                    return None, "sequencer status unavailable"
-                return unsafe["number"], (
-                    f"unsafe L2 {unsafe['number']} at {unsafe['timestamp']} "
-                    f"({max(0, int(time.time()) - unsafe['timestamp'])}s behind wall time), "
-                    f"L1 origin {unsafe['l1origin']['number']}")
-            wait("sequencer catch-up to wall time with a live batcher", caught_up, self.timeout, progress=progress)
+            self.compose("up", "-d", "--no-build", "batcher")
+            self.require_batcher()
             self.manifest["phase"] = "running"
             self.save()
             print("".join(f"{role.title()} RPC: {self.url(role)}\n" for role in self.roles) +
+                  f"Sequencer WebSocket RPC: {self.url('sequencer-ws')}\n" +
                   "These internal-network addresses work only on this Docker host and change when "
-                  "containers are recreated; rerun status for current values.")
+                  "containers are recreated; rerun status for current values. Catch-up to wall time "
+                  "and batching continue in the background.")
         except (Exception, KeyboardInterrupt):
             # Keep L1 alive while stopping dependents; never remove state on failure.
             self.compose("stop", "batcher", *self.roles)
             self.compose("stop", "l1")
             raise
-        # start_batcher already proved safe-head advancement on each configured node.
-        # A scheduling failure leaves the healthy fork and its durable journal in place.
-        try:
-            self.schedule_denim()
-        except RuntimeError as error:
-            raise RuntimeError(f"fork is running but Denim scheduling did not complete ({error}); "
-                               "rerun schedule-denim to resume") from error
 
     def consensus_ready(self, role):
         """False while the role is stopped or starting; identity/safety failures still raise."""
@@ -1270,7 +1299,7 @@ class SnapshotFork:
             self.save()
             self.compose("stop", *self.roles, *("inspect-" + role for role in self.roles))
             self.compose("stop", "l1")
-        if self.manifest["phase"] not in ("prepared", "inspecting"):
+        if self.manifest["phase"] not in ("prepared", "inspecting", "initializing"):
             self.manifest["phase"] = "stopped"
         self.save()
         if failure:
@@ -1292,9 +1321,11 @@ class SnapshotFork:
         """Schedules Denim at `timestamp`, by default the earliest even timestamp the live contract
         notice allows. An existing schedule is preserved and a journaled submission is reconciled,
         never moved or resent. Returns once configured nodes observe the recorded schedule.
-        Fast mode uses the local mock with a short lead, not the production contract's notice."""
+        Fast mode uses the local mock with a short lead, not the production contract's notice.
+        During initialization interval mining is paused, so send() mines the write itself."""
         self.assert_local_l1()
-        require(self.manifest["phase"] == "running", "start the fork before scheduling Denim")
+        require(self.manifest["phase"] in ("running", "initializing"),
+                "initialize or start the fork before scheduling Denim")
         fast = self.manifest.get("fast_denim", False)
         url, contract = self.url("l1"), self.upgrade_contract
         schedule = list(map(number, call(url, contract, "getSchedule()(uint64[])")))
@@ -1379,13 +1410,17 @@ def main():
     common.add_argument("--dir", help="fork directory (init without --config: existing Reth datadir)")
     common.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
                         help="seconds per readiness gate except L2 execution RPC (default: %(default)s); "
-                             "snapshot repair waits without a deadline; derivation and catch-up gates fail only after "
+                             "snapshot repair waits without a deadline; the init derivation gate fails only after "
                              "this long without head progress")
     commands = parser.add_subparsers(dest="command", required=True)
     prepare = commands.add_parser("setup", parents=[common], help="prepare or resume an experiment; completed steps are reused")
     prepare.add_argument("--workdir", help="new or interrupted working directory (remembered on retry)")
-    prepare.add_argument("--download-concurrency", type=int, default=DEFAULT_DOWNLOAD_CONCURRENCY,
-                         help="maximum simultaneous HTTP downloads, including file chunks (default: %(default)s)")
+    fetch = commands.add_parser("download", help="download one datadir only; requires a locally built base:local image")
+    fetch.add_argument("--dir", required=True, help="destination datadir; empty or an interrupted download")
+    commands.add_parser("clear", help="stop saved experiments and forget their selection; preserve all fork data")
+    for command in (prepare, fetch):
+        command.add_argument("--download-concurrency", type=int, default=DEFAULT_DOWNLOAD_CONCURRENCY,
+                             help="maximum simultaneous HTTP downloads, including file chunks (default: %(default)s)")
     init = commands.add_parser("init", parents=[common], help="use an existing datadir in place; no download or copy")
     init.add_argument("--validator-dir", help="optional independent validator datadir with the same snapshot head")
     init.add_argument("--config", help="advanced: saved input.json; --dir then names the fork-state directory")
@@ -1403,6 +1438,12 @@ def main():
     deposit = commands.add_parser("deposit", parents=[common])
     deposit.add_argument("--wei", type=int, default=10**18)
     args = parser.parse_args()
+    if args.command == "download":
+        download(args)
+        return
+    if args.command == "clear":
+        clear()
+        return
     require(args.timeout > 0, "timeout must be positive")
     if args.command == "setup" or (args.command == "init" and not args.config):
         setup(args)

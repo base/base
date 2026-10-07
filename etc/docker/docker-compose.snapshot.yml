@@ -75,7 +75,11 @@ services:
       - --http
       - --http.addr=0.0.0.0
       # The batcher's DA throttling calls miner_setMaxDASize here; the validator needs no miner API.
-      - --http.api=eth,net,web3,debug,miner
+      - --http.api=eth,net,web3,debug,trace,miner
+      - --ws
+      - --ws.addr=0.0.0.0
+      - --ws.port=8546
+      - --ws.api=eth,net,web3,debug,trace
       - --l1-eth-rpc=http://l1:8545
       - --l1-beacon=http://l1:8545
       - --l1-slot-duration-override=${SNAPSHOT_SLOT_SECONDS:?}

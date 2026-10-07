@@ -109,6 +109,11 @@ def local_blobs(fork, first, last):
 def assert_retained(fork, report):
     fork.assert_local_l1()
     fork.validate_restored_contracts()
+    # up returns before re-derivation; recovery assertions belong to verification, not startup.
+    height = max(number(saved["number"]) for saved in report["blocks"])
+    for role in fork.roles:
+        wait(role + " recovering verified safe blocks",
+             lambda: fork.sync_status(role)["safe_l2"]["number"] >= height, fork.timeout)
     for saved in report["blocks"]:
         for role in fork.roles:
             check_parity(saved, block(fork, role, number(saved["number"])),
@@ -220,7 +225,7 @@ def verify(fork):
     report["receipts"].append(receipt)
     report["blocks"].append(derived(fork, number(receipt["blockNumber"])))
     report["denim_timestamp"] = fork.manifest["denim_timestamp"]
-    report["denim_schedule"] = ("fast: local mock ProtocolVersions, short lead after startup" if fast
+    report["denim_schedule"] = ("fast: local mock ProtocolVersions, short lead at initialization" if fast
                                 else "restored ProtocolVersions contract notice period")
     report["activation_block_timestamp"] = timestamp
     report["blobs"] = local_blobs(fork, first_l1, number(rpc(fork.url("l1"), "eth_blockNumber")))

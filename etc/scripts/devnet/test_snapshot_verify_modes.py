@@ -209,6 +209,7 @@ class SingleNodeHelperTests(unittest.TestCase):
     def test_single_node_retention_checks_only_the_sequencer(self):
         fork = fork_fixture("/unused", SINGLE)
         fork.url.side_effect = lambda role: (no_validator(self, role), role)[1]
+        fork.sync_status.side_effect = lambda role: (no_validator(self, role), {"safe_l2": {"number": 124}})[1]
         saved = {"number": "0x7c", "hash": "a", "stateRoot": "a"}
         receipt = {"transactionHash": "0xt", "blockHash": "a", "status": "0x1"}
         report = {"blocks": [saved], "blobs": [], "receipts": [receipt]}

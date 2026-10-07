@@ -42,6 +42,12 @@ def manifest():
     }
 
 
+def completed(**fields):
+    """A manifest whose init finished runtime bootstrap and stopped every service."""
+    return {**manifest(), "phase": "stopped", "boundary_validated": True, "bootstrapped": True,
+            "denim_timestamp": 1000, **fields}
+
+
 def container(service, address="10.9.0.2", project="snapshot-fixture", networks=None, running=True):
     """One `docker inspect` record for a Compose-managed container."""
     return {
@@ -58,6 +64,134 @@ def sync_status(l1, safe=123, safe_hash="0x123", unsafe=None, unsafe_hash=None):
             "unsafe_l2": {"number": safe if unsafe is None else unsafe,
                           "hash": safe_hash if unsafe_hash is None else unsafe_hash,
                           "timestamp": 1234, "l1origin": {"number": 19}}}
+
+
+class FakeRuntime:
+    """Local L1, L2 RPCs and Compose for prepare_runtime. L1 state survives attempts like Anvil's saved
+    dump, and a write takes effect only when mined, as with interval mining paused."""
+
+    MOCK = "0x" + "4" * 40
+    HISTORY = [100] * 12 + [800]
+    SYSTEM_READS = {"setBatcherHash(bytes32)": "batcherHash()(bytes32)",
+                    "setUnsafeBlockSigner(address)": "unsafeBlockSigner()(address)"}
+
+    def __init__(self, test, directory, roles, legacy=False):
+        self.test = test
+        self.fork = devnet.SnapshotFork(directory, timeout=1)
+        self.fork.directory.mkdir()
+        self.fork.manifest = {**manifest(), "schedule": list(self.HISTORY), "minimum_protocol_version": 42,
+                              "system_config": "0x" + "1" * 40, "initial": [snapshot()],
+                              "datadirs": {role: f"/unused-{role}" for role in roles}}
+        if not legacy:
+            self.fork.manifest.update(fast_denim=True, local_protocol_versions=self.MOCK, upgrade_code="0x6000")
+        self.fork.save()
+        self.head, self.timestamp, self.code = 100, 1234, {}
+        self.contracts = {devnet.PROTOCOL_VERSIONS: {"schedule": list(self.HISTORY), "minimum": 42},
+                          self.MOCK: {"schedule": [], "minimum": 0}}
+        self.system = {"batcherHash()(bytes32)": "0x0", "unsafeBlockSigner()(address)": "0x0"}
+        self.pending, self.receipts, self.sent, self.rpcs, self.commands = [], {}, [], [], []
+        self.failure, self.saves_dump, self.mined, self.dump_ns = None, True, 0, 10**18
+
+    def fail_once(self, predicate, error):
+        self.failure = (predicate, error)
+
+    def check(self, *event):
+        if self.failure and self.failure[0](*event):
+            error, self.failure = self.failure[1], None
+            raise error
+
+    def run(self, *args, **_):
+        self.test.assertEqual(args[:2], ("cast", "calldata"))
+        return "0x" + json.dumps(args[2:]).encode().hex()
+
+    def rpc(self, url, method, *params, upstream=False):
+        self.test.assertFalse(upstream)
+        self.rpcs.append((url, method, *params))
+        if method in ("eth_estimateGas", "eth_sendTransaction"):
+            signature, *args = json.loads(bytes.fromhex(params[0]["data"][2:]))
+            self.check(method, signature, args)
+            if method == "eth_estimateGas":
+                return "0x5208"
+            transaction_hash = f"0xtx{len(self.sent)}"
+            self.sent.append(signature)
+            self.pending.append((transaction_hash, params[0]["to"], signature, args))
+            return transaction_hash
+        if url != "l1":
+            if method == "admin_sequencerActive":
+                return False
+            self.test.assertEqual(method, "eth_getBlockByNumber")
+            return {"hash": "0x123", "timestamp": hex(1234)} if params[0] in ("latest", hex(123)) else None
+        if method == "eth_getBlockByNumber":
+            if params[0] == "latest":
+                return {"number": hex(self.head), "timestamp": hex(self.timestamp)}
+            height = int(params[0], 16)
+            return {"number": params[0], "hash": f"0xl1{height}",
+                    "parentHash": "0xf" if height == 101 else f"0xl1{height - 1}"} if height <= self.head else None
+        if method == "anvil_setCode":
+            self.code[params[0]] = params[1]
+        results = {"eth_getCode": lambda: self.code.get(params[0], "0x"), "eth_blockNumber": lambda: hex(self.head),
+                   "eth_getTransactionCount": lambda: hex(len(self.sent)),
+                   "eth_getTransactionReceipt": lambda: self.receipts.get(params[0])}
+        if method in results:
+            return results[method]()
+        self.test.assertIn(method, ("anvil_setCode", "anvil_setBalance", "anvil_impersonateAccount",
+                                    "anvil_stopImpersonatingAccount"))
+        return None
+
+    def call(self, url, address, signature, *args, **_):
+        self.test.assertEqual(url, "l1")
+        reads = {"getSchedule()(uint64[])": lambda: list(map(str, self.contracts[address]["schedule"])),
+                 "minimumProtocolVersion()(uint256)": lambda: str(self.contracts[address]["minimum"]),
+                 "MIN_NOTICE()(uint64)": lambda: "3600"}
+        return reads[signature]() if signature in reads else self.system.get(signature, "0x" + "a" * 40)
+
+    def mine(self):
+        self.mined += 1
+        self.head += 1
+        self.timestamp = int(devnet.time.time())
+        for transaction_hash, target, signature, args in self.pending:
+            if signature == "setSchedule(uint64[])":
+                self.contracts[target]["schedule"] = json.loads(args[0])
+            elif signature == "registerUpgrade(uint64,uint256)":
+                self.contracts[target]["schedule"].append(int(args[0]))
+            elif signature == "setMinimumProtocolVersion(uint256)":
+                self.contracts[target]["minimum"] = int(args[0])
+            else:
+                self.system[self.SYSTEM_READS[signature]] = args[0]
+            self.receipts[transaction_hash] = {"status": "0x1", "blockNumber": hex(self.head)}
+        self.pending.clear()
+
+    def compose(self, *args):
+        self.commands.append(args)
+        if args == ("stop", "l1") and self.saves_dump:
+            dump = self.fork.directory / "l1/anvil.json"
+            dump.parent.mkdir(exist_ok=True)
+            dump.write_text("{}")
+            self.dump_ns += 1
+            os.utime(dump, ns=(self.dump_ns, self.dump_ns))
+
+    def retry(self):
+        """Reloads the durable manifest, as a new launcher process would, and resumes init."""
+        self.fork.manifest = devnet.SnapshotFork(self.fork.directory).manifest
+        self.fork.prepare_runtime()
+
+    @contextlib.contextmanager
+    def patched(self):
+        fork = self.fork
+        with patch.object(devnet, "validate_paths"), patch.multiple(fork, endpoint=DEFAULT, assert_local_l1=DEFAULT), \
+                patch.object(fork, "await_rpc", side_effect=lambda role: self.check("await_rpc", role)), \
+                patch.object(fork, "wait_upgrades", side_effect=lambda: self.check("wait_upgrades")), \
+                patch.object(fork, "running", return_value=False), \
+                patch.object(fork, "compose", side_effect=self.compose), \
+                patch.object(fork, "consensus_ready", return_value=True), \
+                patch.object(fork, "url", side_effect=lambda role: role), \
+                patch.object(fork, "mine", side_effect=self.mine), \
+                patch.object(fork, "sync_status", side_effect=lambda role: sync_status(101)), \
+                patch.object(devnet, "rpc", side_effect=self.rpc), patch.object(devnet, "call", side_effect=self.call), \
+                patch.object(devnet, "run", side_effect=self.run), \
+                patch.object(devnet.time, "time", return_value=1234), patch.object(devnet.time, "sleep"), \
+                patch("builtins.print"):
+            yield
 
 
 class SnapshotTests(unittest.TestCase):
@@ -102,6 +236,77 @@ class SnapshotTests(unittest.TestCase):
                 devnet.main()
                 lifecycle.assert_called_once_with()
 
+    def test_clear_stops_saved_forks_preserves_data_and_prevents_bare_up(self):
+        self.fork.save()
+        pending = self.root / "pending"
+        pending.mkdir()
+        devnet.write_json(pending / "manifest.json", manifest())
+        devnet.setup_path().parent.mkdir(parents=True)
+        devnet.write_json(devnet.setup_path(), {"directory": str(self.fork.directory), "pending_directory": str(pending)})
+        (devnet.setup_path().parent / "l1.env").write_text("keep credentials")
+        before = {path: path.read_bytes() for path in (self.fork.directory / "manifest.json", pending / "manifest.json",
+                                                       devnet.setup_path().parent / "l1.env")}
+
+        def stop(fork):
+            self.assertTrue(devnet.setup_path().exists(), "forget only after shutdown succeeds")
+            with open(fork.directory / ".lock", "a") as lock:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        with patch.object(sys, "argv", ["launcher", "clear"]), \
+                patch.object(devnet.SnapshotFork, "stop", autospec=True, side_effect=stop) as stopped, \
+                patch.object(devnet, "run") as run, patch("builtins.print"):
+            devnet.main()
+            devnet.main()  # Already cleared: no Docker calls or other side effects.
+            self.assertEqual([call.args[0].directory for call in stopped.call_args_list], [self.fork.directory, pending])
+            self.assertFalse(devnet.setup_path().exists())
+            self.assertEqual({path: path.read_bytes() for path in before}, before)
+            with patch.object(sys, "argv", ["launcher", "up"]):
+                with self.assertRaisesRegex(RuntimeError, "snapshot setup has not completed"):
+                    devnet.main()
+            run.assert_not_called()
+
+    def test_clear_keeps_selection_when_shutdown_fails_or_another_command_holds_lock(self):
+        self.fork.save()
+        devnet.setup_path().parent.mkdir(parents=True)
+        devnet.write_json(devnet.setup_path(), {"directory": str(self.fork.directory)})
+        before = devnet.setup_path().read_bytes()
+        with patch.object(sys, "argv", ["launcher", "clear"]), \
+                patch.object(devnet.SnapshotFork, "stop", side_effect=RuntimeError("shutdown failed")) as stopped:
+            with open(self.fork.directory / ".lock", "a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with self.assertRaises(BlockingIOError):
+                    devnet.main()
+            stopped.assert_not_called()
+            with self.assertRaisesRegex(RuntimeError, "shutdown failed"):
+                devnet.main()
+        self.assertEqual(devnet.setup_path().read_bytes(), before)
+
+    def test_up_returns_while_far_behind_without_revalidating_or_rescheduling(self):
+        self.fork.manifest.update(phase="stopped", boundary_validated=True, bootstrapped=True,
+                                  denim_timestamp=1000, last_stop={"sequencer": sync_status(102, safe=140)})
+        (self.fork.directory / "l1").mkdir()
+        (self.fork.directory / "l1/anvil.json").write_text("{}")
+
+        def node(url, method, *args):
+            if method == "eth_getBlockByNumber":
+                return {"hash": "0xhead", "timestamp": "0x64"}
+            return method != "admin_sequencerActive"
+
+        with self.starting(), patch.object(self.fork, "mine"), \
+                patch.object(self.fork, "inspect", side_effect=AssertionError("restart must not inspect snapshots")), \
+                patch.object(self.fork, "validate_restored_contracts", side_effect=AssertionError("init validates contracts")), \
+                patch.object(self.fork, "sync_status", side_effect=AssertionError("restart must not wait for heads")), \
+                patch.object(self.fork, "schedule_denim", side_effect=AssertionError("restart must retain the schedule")), \
+                patch.object(devnet, "rpc", side_effect=node) as transport, patch("builtins.print"):
+            self.fork.start()
+            self.assertEqual(self.fork.manifest["phase"], "running")
+            self.assertIn(("sequencer-cl", "admin_startSequencer", "0xhead"),
+                          [call.args for call in transport.call_args_list])
+            self.assertIn(("up", "-d", "--no-build", "batcher"),
+                          [call.args for call in self.fork.compose.call_args_list])
+        self.assertEqual(self.fork.manifest["denim_timestamp"], 1000)
+
     def test_up_requires_completed_setup_before_any_service_operation(self):
         with patch.object(sys, "argv", ["launcher", "up"]), patch.object(devnet, "run") as run:
             with self.assertRaisesRegex(RuntimeError, "run just devnet snapshot setup first"):
@@ -114,6 +319,7 @@ class SnapshotTests(unittest.TestCase):
             run.assert_not_called()
 
     def test_setup_selects_existing_fork_and_reuses_private_credentials_without_dir(self):
+        self.fork.manifest = completed()
         self.fork.save()
         before = (self.fork.directory / "manifest.json").read_bytes()
         devnet.setup_path().parent.mkdir(parents=True)
@@ -174,15 +380,88 @@ class SnapshotTests(unittest.TestCase):
                 self.assertFalse(devnet.setup_path().exists())
         self.assertFalse((self.root / "new").exists())
 
-    def test_setup_rejects_nonpositive_download_concurrency_before_prompting(self):
-        for concurrency in ("0", "-1"):
-            with self.subTest(concurrency=concurrency), \
-                    patch.object(sys, "argv", ["launcher", "setup", "--download-concurrency", concurrency]), \
-                    patch("builtins.input") as prompt, patch.object(devnet, "setup_command") as command:
-                with self.assertRaisesRegex(RuntimeError, "download concurrency must be positive"):
+    def test_setup_and_download_reject_nonpositive_concurrency_before_prompting(self):
+        for task in ("setup", "download"):
+            for concurrency in ("0", "-1"):
+                with self.subTest(task=task, concurrency=concurrency), \
+                        patch.object(sys, "argv", ["launcher", task, "--dir", str(self.root / "new"),
+                                                   "--download-concurrency", concurrency]), \
+                        patch("builtins.input") as prompt, patch.object(devnet, "setup_command") as command:
+                    with self.assertRaisesRegex(RuntimeError, "download concurrency must be positive"):
+                        devnet.main()
+                    prompt.assert_not_called()
+                    command.assert_not_called()
+                    self.assertFalse((self.root / "new").exists())
+
+    def test_download_resumes_pinned_snapshot_without_setup_or_copy_and_completed_download_is_noop(self):
+        directory = self.root / "snapshot with spaces"
+        devnet.setup_path().parent.mkdir(parents=True)
+        devnet.write_json(devnet.setup_path(), {"directory": "/another/fork", "pending_directory": "/pending/fork"})
+        selection = devnet.setup_path().read_bytes()
+        image = "sha256:" + "b" * 64
+        with patch.object(sys, "argv", ["launcher", "download", "--dir", str(directory)]), \
+                patch.object(devnet, "run", return_value=image) as inspect_image, \
+                patch.object(devnet, "request_json", side_effect=[[
+                    {"chainId": 8453, "block": 123, "metadataUrl": "https://snapshot.invalid/123/manifest.json"}],
+                    {"chain_id": 8453, "block": 123}]) as metadata, \
+                patch.object(devnet, "setup_command", side_effect=[KeyboardInterrupt(), None]) as command, \
+                patch.object(devnet.SnapshotFork, "initialize", side_effect=AssertionError("download only")), \
+                patch.object(devnet.getpass, "getpass", side_effect=AssertionError("no credentials needed")), \
+                patch("builtins.print"):
+            with self.assertRaises(KeyboardInterrupt):
+                devnet.main()
+            journal = directory / "snapshot-download.json"
+            self.assertFalse(json.loads(journal.read_text())["complete"])
+            pinned = (directory / "download-manifest.json").read_bytes()
+            with patch.object(sys, "argv", ["launcher", "download", "--dir", str(directory),
+                                           "--download-concurrency", "32"]):
+                devnet.main()
+            self.assertTrue(json.loads(journal.read_text())["complete"])
+            devnet.main()
+            self.assertEqual(command.call_count, 2)
+            for concurrency, invocation in zip(("16", "32"), command.call_args_list):
+                args = invocation.args
+                self.assertEqual(args[:3], ("docker", "run", "--rm"))
+                self.assertEqual(args[args.index("--entrypoint") + 1:args.index("--chain")],
+                                 ("/app/base", image, "snapshot", "download"))
+                self.assertEqual(args[args.index("--datadir") + 1], "/work")
+                self.assertEqual(args[args.index("-v") + 1], f"{directory}:/work")
+                self.assertEqual(args[args.index("--download-concurrency") + 1], concurrency)
+                self.assertNotIn("--force", args)
+                for flag in ("--with-txs-distance", "--with-receipts-distance", "--with-state-history-distance"):
+                    self.assertEqual(args[args.index(flag) + 1], "1339200")
+            self.assertEqual((directory / "download-manifest.json").read_bytes(), pinned)
+            self.assertEqual(metadata.call_count, 2, "retry must not discover a newer snapshot")
+            inspect_image.assert_called_once()
+            self.assertEqual(devnet.setup_path().read_bytes(), selection)
+            (directory / "download-manifest.json").unlink()
+            with self.assertRaisesRegex(RuntimeError, "pinned download manifest is missing"):
+                devnet.main()
+            self.assertEqual(command.call_count, 2)
+
+    def test_download_refuses_existing_datadir_and_overlapping_download(self):
+        directory = self.datadir("existing")
+        with patch.object(sys, "argv", ["launcher", "download", "--dir", str(directory)]), \
+                patch.object(devnet, "run") as run, patch.object(devnet, "setup_command") as command:
+            with self.assertRaisesRegex(RuntimeError, "existing data preserved"):
+                devnet.main()
+            with open(directory / ".download.lock", "a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with self.assertRaises(BlockingIOError):
                     devnet.main()
-                prompt.assert_not_called()
-                command.assert_not_called()
+            run.assert_not_called()
+            command.assert_not_called()
+            self.assertEqual((directory / "db/mdbx.dat").read_bytes(), b"untouched")
+
+    def test_download_missing_image_prints_build_command_without_selecting_snapshot(self):
+        with patch.object(sys, "argv", ["launcher", "download", "--dir", str(self.root / "download")]), \
+                patch.object(devnet, "run", side_effect=RuntimeError("image missing")), \
+                patch.object(devnet, "request_json") as metadata, patch.object(devnet, "setup_command") as command:
+            with self.assertRaisesRegex(RuntimeError, "docker buildx bake"):
+                devnet.main()
+            metadata.assert_not_called()
+            command.assert_not_called()
+            self.assertFalse(devnet.setup_path().exists())
 
     def test_setup_builds_missing_defaults_pulls_remote_and_preserves_custom_images(self):
         image_id = "sha256:" + "f" * 64
@@ -379,7 +658,7 @@ class SnapshotTests(unittest.TestCase):
                     # If init has touched either datadir, no retry may copy builder onto validator.
                     (work / "validator/db/mdbx.dat").write_bytes(b"opened-by-inspection")
                     fail("initialize")
-                    fork.manifest["phase"] = "prepared"
+                    fork.manifest = completed(setup_input=config)
                     fork.save()
 
                 with patch.object(sys, "argv", ["launcher", "setup", "--workdir", str(work)]), \
@@ -407,6 +686,40 @@ class SnapshotTests(unittest.TestCase):
                 self.assertEqual((work / "validator/db/mdbx.dat").read_bytes(), b"opened-by-inspection")
                 self.assertEqual(devnet.configured_directory(), work / "fork")
                 self.assertNotIn("pending_directory", json.loads(devnet.setup_path().read_text()))
+
+    def test_setup_resumes_runtime_init_without_preparing_or_rediscovering(self):
+        self.fork.manifest.update(phase="initializing", setup_input={"sequencer_datadir": "/unused-sequencer"})
+        self.fork.save()
+        devnet.setup_path().parent.mkdir(parents=True)
+        devnet.write_json(devnet.setup_path(), {"directory": "/previous", "pending_directory": str(self.fork.directory)})
+        attempts = []
+
+        def resume(fork):
+            attempts.append(fork.manifest["phase"])
+            if len(attempts) == 1:
+                raise RuntimeError("Denim receipt timed out")
+            fork.manifest = completed()
+            fork.save()
+
+        with patch.object(sys, "argv", ["launcher", "setup"]), \
+                patch.dict(os.environ, {"TEST_EXECUTION_URL": "https://rpc.invalid/key",
+                                        "TEST_BEACON_URL": "https://beacon.invalid/key"}), \
+                patch.object(devnet, "rpc", return_value="0x1"), \
+                patch.object(devnet, "request_json", side_effect=lambda url: self.assertNotEqual(
+                    url, devnet.SNAPSHOT_INDEX) or {"data": {"genesis_time": "1000", "SECONDS_PER_SLOT": "12"}}), \
+                patch.object(devnet, "setup_command") as command, \
+                patch.object(devnet.SnapshotFork, "initialize", side_effect=AssertionError("F is already known")), \
+                patch.object(devnet.SnapshotFork, "prepare_runtime", autospec=True, side_effect=resume), \
+                patch("builtins.input", side_effect=AssertionError("pending fork is remembered")), \
+                patch("builtins.print"):
+            with self.assertRaisesRegex(RuntimeError, "Denim receipt timed out"):
+                devnet.main()
+            self.assertEqual(json.loads(devnet.setup_path().read_text())["pending_directory"], str(self.fork.directory))
+            devnet.main()
+            devnet.main()
+            command.assert_not_called()
+        self.assertEqual(attempts, ["initializing", "initializing"], "completed init must not resume again")
+        self.assertEqual(json.loads(devnet.setup_path().read_text()), {"directory": str(self.fork.directory)})
 
     def test_setup_adopts_legacy_download_only_with_confirmation_and_never_redownloads(self):
         work = self.root / "legacy"
@@ -503,7 +816,7 @@ class SnapshotTests(unittest.TestCase):
                     initialized.append(config)
                     if len(initialized) == 1:
                         raise RuntimeError("waiting for finalized L1")
-                    fork.manifest = {**manifest(), "datadirs": roles, "fast_denim": True, "setup_input": config}
+                    fork.manifest = completed(datadirs=roles, fast_denim=True, setup_input=config)
                     fork.save()
 
                 arguments = ["launcher", "init", "--dir", str(source)]
@@ -597,6 +910,7 @@ class SnapshotTests(unittest.TestCase):
                 patch.object(devnet, "call", side_effect=contract), \
                 patch.object(devnet, "request_json", return_value={"data": {"genesis_time": "1000", "SECONDS_PER_SLOT": "12"}}), \
                 patch.object(devnet.SnapshotFork, "inspect", side_effect=[KeyboardInterrupt(), inspections]) as inspect, \
+                patch.object(devnet.SnapshotFork, "prepare_runtime", autospec=True) as runtime, \
                 patch("builtins.print"):
             with self.assertRaises(KeyboardInterrupt):
                 devnet.main()
@@ -609,7 +923,10 @@ class SnapshotTests(unittest.TestCase):
                 devnet.write_json(self.fork.directory / "manifest.json", before)
             keys = (self.fork.directory / "keys.json").read_bytes()
             self.assertEqual(before["phase"], "inspecting")
+            runtime.assert_not_called()
             devnet.main()
+            # Metadata is durable before runtime bootstrap, which --config init also performs.
+            runtime.assert_called_once()
             after = devnet.SnapshotFork(self.fork.directory).manifest
             self.assertEqual(after["phase"], "prepared")
             self.assertEqual(after["project"], before["project"])
@@ -627,7 +944,8 @@ class SnapshotTests(unittest.TestCase):
                 self.assertEqual(set(after["datadirs"]), {"sequencer"})
                 self.assertFalse((self.fork.directory / "validator").exists())
             devnet.main()
-            self.assertEqual(inspect.call_count, 2)
+            self.assertEqual(inspect.call_count, 2, "runtime retry must not rediscover F")
+            self.assertEqual(runtime.call_count, 2)
             self.assertEqual(devnet.SnapshotFork(self.fork.directory).manifest, after)
             devnet.write_json(config_path, {**config, "epoch_slots": 99})
             with self.assertRaisesRegex(RuntimeError, "config changed"):
@@ -638,25 +956,28 @@ class SnapshotTests(unittest.TestCase):
                 devnet.main()
             self.assertEqual(devnet.SnapshotFork(self.fork.directory).manifest, after)
 
-    def test_up_reuses_running_services_and_recovers_partial_start_before_inspection(self):
-        self.fork.manifest["phase"] = "running"
+    def test_up_reuses_running_services_and_recovers_partial_start(self):
+        self.fork.manifest = completed(phase="running")
+        unchanged = AssertionError("an active fork must not be revalidated or rescheduled")
         with patch.object(self.fork, "running", return_value=True), \
                 patch.object(self.fork, "running_services", return_value=set(devnet.FORK_SERVICES)) as services, \
-                patch.object(self.fork, "assert_local_l1"), \
-                patch.object(self.fork, "validate_restored_contracts"), \
+                patch.object(self.fork, "assert_local_l1", side_effect=unchanged), \
+                patch.object(self.fork, "validate_restored_contracts", side_effect=unchanged), \
                 patch.object(self.fork, "consensus_ready", return_value=True), \
                 patch.object(self.fork, "url", return_value="http://sequencer-cl"), \
                 patch.object(devnet, "rpc", return_value=True) as active, \
-                patch.object(self.fork, "schedule_denim") as schedule, \
+                patch.object(self.fork, "schedule_denim", side_effect=unchanged), \
                 patch.object(self.fork, "stop") as stop, \
                 patch.object(self.fork, "inspect") as inspect, \
+                patch.object(self.fork, "compose") as compose, \
                 patch.object(devnet, "validate_paths", side_effect=RuntimeError("recovery reached")) as paths, \
                 patch("builtins.print"):
             self.fork.start()
-            schedule.assert_called_once()
             stop.assert_not_called()
             paths.assert_not_called()
             inspect.assert_not_called()
+            compose.assert_not_called()
+            self.assertEqual(self.fork.manifest["denim_timestamp"], 1000)
             # A restarted container can be alive while its sequencer is still stopped.
             active.return_value = False
             with self.assertRaisesRegex(RuntimeError, "recovery reached"):
@@ -669,9 +990,146 @@ class SnapshotTests(unittest.TestCase):
             stop.assert_called_once()
             inspect.assert_not_called()
 
+    def test_init_bootstraps_runtime_with_mining_paused_and_leaves_services_stopped(self):
+        seeded = ["setSchedule(uint64[])", "setMinimumProtocolVersion(uint256)"]
+        configured = ["setBatcherHash(bytes32)", "setUnsafeBlockSigner(address)"]
+        # Legacy forks keep the restored contract's notice; fast forks schedule about 60s after wall clock.
+        for roles, legacy, denim, sent, mined in (
+            (("sequencer",), False, 1294, seeded + configured + ["setSchedule(uint64[])"], 5),
+            (devnet.ROLES, False, 1294, seeded + configured + ["setSchedule(uint64[])"], 5),
+            (devnet.ROLES, True, 4858, configured + ["registerUpgrade(uint64,uint256)"], 4),
+        ):
+            with self.subTest(roles=roles, legacy=legacy):
+                runtime = FakeRuntime(self, self.root / f"init-{len(roles)}-{legacy}", roles, legacy)
+                with runtime.patched():
+                    runtime.fork.prepare_runtime()
+                stored = devnet.SnapshotFork(runtime.fork.directory)
+                self.assertTrue(stored.initialized())
+                self.assertEqual(stored.manifest["phase"], "stopped")
+                self.assertEqual(stored.manifest["denim_timestamp"], denim)
+                self.assertEqual(runtime.contracts[stored.upgrade_contract]["schedule"], runtime.HISTORY + [denim])
+                self.assertEqual(runtime.sent, sent)
+                # One wall-slot block per write; legacy forks also mine F's successor for the boundary.
+                self.assertEqual(runtime.mined, mined)
+                self.assertEqual(stored.manifest["boundary"]["l1_successor"], {"number": "0x65", "hash": "0xl1101"})
+                self.assertEqual(runtime.commands, [("up", "-d", "--no-build", "l1"), ("up", "-d", "--no-build", *roles),
+                                                    ("stop", *roles), ("stop", "l1")])
+                self.assertEqual("validator" in str(runtime.rpcs), "validator" in roles)
+                if not legacy:
+                    self.assertEqual(runtime.contracts[devnet.PROTOCOL_VERSIONS]["schedule"], runtime.HISTORY)
+
+    def test_init_retry_after_bootstrap_or_scheduling_never_repeats_committed_writes(self):
+        def denim(*event):
+            # The 14-entry setSchedule is the Denim write; the 13-entry one seeds history.
+            return event[:2] == ("eth_estimateGas", "setSchedule(uint64[])") and len(json.loads(event[2][0])) == 14
+
+        cases = (
+            ("during bootstrap", lambda *event: event[:2] == ("eth_estimateGas", "setUnsafeBlockSigner(address)"),
+             RuntimeError("estimate failed")),
+            ("after bootstrap", denim, KeyboardInterrupt()),
+            ("after scheduling", lambda *event: event == ("wait_upgrades",), RuntimeError("nodes did not observe")),
+        )
+        for name, predicate, error in cases:
+            for roles in (("sequencer",), devnet.ROLES):
+                with self.subTest(name, roles=roles):
+                    runtime = FakeRuntime(self, self.root / f"{name}-{len(roles)}", roles)
+                    runtime.fail_once(predicate, error)
+                    fork, dump = runtime.fork, runtime.fork.directory / "l1/anvil.json"
+                    with runtime.patched():
+                        with self.assertRaises(type(error)):
+                            fork.prepare_runtime()
+                        self.assertEqual(runtime.commands[-2:], [("stop", *roles), ("stop", "l1")])
+                        self.assertEqual(fork.manifest["phase"], "initializing")
+                        self.assertEqual(fork.manifest.get("bootstrapped", False), name != "during bootstrap")
+                        self.assertEqual("denim_timestamp" in fork.manifest, name == "after scheduling")
+                        with self.assertRaisesRegex(RuntimeError, "initialization is incomplete"):
+                            fork.start()
+                        dump.unlink()
+                        commands = len(runtime.commands)
+                        with self.assertRaisesRegex(RuntimeError, "L1 state is missing"):
+                            runtime.retry()
+                        self.assertEqual(len(runtime.commands), commands)
+                        dump.write_text("{}")
+                        runtime.retry()
+                    self.assertTrue(devnet.SnapshotFork(fork.directory).initialized())
+                    self.assertEqual(fork.manifest["denim_timestamp"], 1294)
+                    self.assertEqual(list(fork.manifest["operations"]),
+                                     ["seed-upgrades", "seed-version", "set-batcher", "set-signer", "schedule-denim"])
+                    self.assertEqual(len(runtime.sent), 5, "committed writes must never be resubmitted")
+                    self.assertEqual(runtime.mined, 5)
+                    self.assertEqual([call[1] for call in runtime.rpcs].count("anvil_setCode"), 1)
+                    self.assertEqual(runtime.contracts[runtime.MOCK]["schedule"], runtime.HISTORY + [1294])
+
+    def test_init_retry_fails_closed_after_ambiguous_submission(self):
+        runtime = FakeRuntime(self, self.root / "ambiguous", devnet.ROLES)
+        runtime.fail_once(lambda *event: event[:2] == ("eth_sendTransaction", "setUnsafeBlockSigner(address)"),
+                          devnet.Unavailable("connection reset"))
+        with runtime.patched():
+            with self.assertRaises(devnet.Unavailable):
+                runtime.fork.prepare_runtime()
+            with self.assertRaisesRegex(RuntimeError, "reconcile its nonce"):
+                runtime.retry()
+            self.assertEqual(runtime.commands[-2:], [("stop", *devnet.ROLES), ("stop", "l1")])
+        self.assertEqual([call[1] for call in runtime.rpcs].count("eth_sendTransaction"), 4)
+        self.assertEqual(devnet.SnapshotFork(runtime.fork.directory).manifest["phase"], "initializing")
+
+    def test_first_interruption_before_l1_effects_retries_without_a_dump(self):
+        for roles in (("sequencer",), devnet.ROLES):
+            with self.subTest(roles=roles):
+                runtime = FakeRuntime(self, self.root / f"early-{len(roles)}", roles)
+                runtime.fail_once(lambda *event: event == ("await_rpc", "l1"), KeyboardInterrupt())
+                with runtime.patched():
+                    with self.assertRaises(KeyboardInterrupt):
+                        runtime.fork.prepare_runtime()
+                    self.assertEqual(runtime.commands, [("up", "-d", "--no-build", "l1"), ("stop", *roles), ("stop", "l1")])
+                    (runtime.fork.directory / "l1/anvil.json").unlink()  # Anvil never saved state.
+                    runtime.retry()
+                self.assertTrue(devnet.SnapshotFork(runtime.fork.directory).initialized())
+
+    def test_unsaved_l1_state_after_bootstrap_is_a_failed_initialization(self):
+        for stale in (False, True):
+            with self.subTest(stale=stale):
+                runtime = FakeRuntime(self, self.root / f"unsaved-{stale}", devnet.ROLES)
+                runtime.saves_dump = False
+                dump = runtime.fork.directory / "l1/anvil.json"
+                if stale:
+                    dump.parent.mkdir()
+                    dump.write_text("{}")  # An earlier periodic dump without the bootstrap writes.
+                with runtime.patched():
+                    with self.assertRaisesRegex(RuntimeError, "did not save L1 state"):
+                        runtime.fork.prepare_runtime()
+                    self.assertEqual(runtime.commands[-2:], [("stop", *devnet.ROLES), ("stop", "l1")])
+                    stored = devnet.SnapshotFork(runtime.fork.directory)
+                    self.assertEqual(stored.manifest["phase"], "initializing")
+                    self.assertFalse(stored.initialized())
+                    if not stale:
+                        with self.assertRaisesRegex(RuntimeError, "L1 state is missing"):
+                            runtime.retry()
+
+    def test_completed_init_is_a_noop_even_while_running(self):
+        for phase in ("stopped", "starting", "running"):
+            with self.subTest(phase=phase):
+                self.fork.manifest = completed(phase=phase)
+                self.fork.save()
+                before = (self.fork.directory / "manifest.json").read_bytes()
+                with patch.object(self.fork, "compose") as compose, patch.object(self.fork, "running") as running, \
+                        patch.object(devnet, "rpc") as transport, patch("builtins.print"):
+                    self.fork.prepare_runtime()
+                for effect in (compose, running, transport):
+                    effect.assert_not_called()
+                self.assertEqual((self.fork.directory / "manifest.json").read_bytes(), before)
+        # An earlier launcher's running fork without Denim is stopped before init resumes.
+        self.fork.manifest = completed(phase="running", denim_timestamp=None)
+        with patch.object(self.fork, "running", return_value=True), \
+                patch.object(self.fork, "stop", side_effect=RuntimeError("stopped first")), \
+                patch.object(self.fork, "compose") as compose:
+            with self.assertRaisesRegex(RuntimeError, "stopped first"):
+                self.fork.prepare_runtime()
+            compose.assert_not_called()
+
     @unittest.skipUnless(shutil.which("just"), "requires the just command dispatcher")
     def test_nested_just_commands_forward_arguments_without_starting_services(self):
-        for command in ("setup", "init", "up", "down", "start", "stop", "status", "reset",
+        for command in ("setup", "download", "init", "up", "down", "start", "stop", "status", "reset",
                         "schedule-denim", "deposit", "verify"):
             with self.subTest(command=command):
                 result = subprocess.run(
@@ -830,106 +1288,45 @@ class SnapshotTests(unittest.TestCase):
                 self.fork.send("bootstrap", "0x1", "0x2", "set(uint256)", 1)
             transport.assert_not_called()
 
+    def test_up_rejects_incomplete_init_with_setup_guidance_before_any_service_operation(self):
+        for name, fields in (("metadata only", {"phase": "prepared"}),
+                             ("interrupted bootstrap", {"phase": "initializing", "boundary_validated": True}),
+                             ("old fork without Denim", {"phase": "stopped", "denim_timestamp": None}),
+                             ("old running fork before bootstrap", {"phase": "running", "bootstrapped": False})):
+            with self.subTest(name), patch.object(self.fork, "compose") as compose, \
+                    patch.object(self.fork, "running") as running, patch.object(devnet, "rpc") as transport:
+                self.fork.manifest = completed(**fields)
+                with self.assertRaisesRegex(RuntimeError, "initialization is incomplete; rerun just devnet "
+                                            f"snapshot setup --dir {self.fork.directory}"):
+                    self.fork.start()
+                for effect in (compose, running, transport):
+                    effect.assert_not_called()
+
     def test_resume_rejects_missing_l1_dump_before_starting_any_database(self):
-        self.fork.manifest["phase"] = "stopped"
-        self.fork.manifest["datadirs"] = {"sequencer": str(self.datadir("a")), "validator": str(self.datadir("b"))}
-        with patch.object(self.fork, "running", return_value=False), patch.object(self.fork, "endpoint"), \
-                patch.object(self.fork, "inspect") as inspect:
-            with self.assertRaisesRegex(RuntimeError, "L1 state is missing"):
-                self.fork.start()
-            inspect.assert_not_called()
-
-    def test_inspection_defers_only_unpersisted_checkpoint_tail(self):
-        for height, actual, deferred in ((128, None, True), (123, None, False),
-                                         (122, None, False), (128, {"hash": "0xwrong"}, False)):
-            with self.subTest(height=height, actual=actual):
-                self.fork.manifest["last_stop"] = {
-                    "validator": {"safe_l2": {"number": height, "hash": "0xexpected"}}}
-                with patch.object(self.fork, "compose"), patch.object(self.fork, "await_rpc"), \
-                        patch.object(self.fork, "containers", return_value=[]), \
-                        patch.object(self.fork, "url", side_effect=lambda role: role), \
-                        patch.object(devnet, "run", return_value=json.dumps(snapshot())), \
-                        patch.object(devnet, "rpc", return_value=actual):
-                    if deferred:
-                        self.assertEqual(len(self.fork.inspect()), 2)
-                    else:
-                        with self.assertRaisesRegex(RuntimeError, "checkpoint"):
-                            self.fork.inspect()
-
-    def test_resume_replays_and_matches_checkpoints_before_mining_or_sequencing(self):
-        for outcome in ("recovered", "unavailable", "conflict", "stalled"):
-            with self.subTest(outcome=outcome):
-                self.fork.manifest = manifest()
-                self.fork.manifest.update(boundary_validated=True, bootstrapped=True, last_stop={
-                    "validator": {"safe_l2": {"number": 129, "hash": "0xsafe"},
-                                  "finalized_l2": {"number": 125, "hash": "0xfinal"}}})
-                self.fork.timeout = 0.02
-                polls, checked, effects = [], set(), []
-
-                def status(role):
-                    if role == "validator":
-                        polls.append(role)
-                        if outcome == "unavailable" and len(polls) == 1:
-                            raise devnet.Unavailable("validator consensus RPC restarting")
-                        return sync_status(101, safe=129 if len(polls) > 1 and outcome != "stalled" else 123,
-                                           unsafe=130)
-                    return sync_status(101, safe=130)
-
-                def transport(url, method, *args):
-                    if method == "admin_startSequencer":
-                        enable("sequence")
-                    if method == "eth_getBlockByNumber":
-                        if url == "validator" and args[0] != "latest":
-                            height = devnet.number(args[0])
-                            checked.add(height)
-                            return {"hash": "0xwrong" if outcome == "conflict" else
-                                    {129: "0xsafe", 125: "0xfinal"}[height]}
-                        return {"number": "0x82", "hash": "0xhead"}
-                    return method != "admin_sequencerActive"
-
-                def enable(effect):
-                    self.assertGreaterEqual(len(polls), 2, "must await safe derivation, not just EL availability")
-                    self.assertEqual(checked, {125, 129}, "must verify both saved hashes before enabling writes")
-                    effects.append(effect)
-
-                with self.starting(), \
-                        patch.multiple(self.fork, start_batcher=DEFAULT, schedule_denim=DEFAULT), \
-                        patch.object(self.fork, "mine", side_effect=lambda: enable("mine")), \
-                        patch.object(self.fork, "sync_status", side_effect=status), \
-                        patch.object(devnet.time, "sleep"), \
-                        patch.object(devnet, "rpc", side_effect=transport), patch("builtins.print"):
-                    if outcome in ("recovered", "unavailable"):
+        for roles in (("sequencer",), devnet.ROLES):
+            with self.subTest(roles=roles):
+                self.fork.manifest = completed(datadirs={role: str(self.datadir(f"{role}-{len(roles)}")) for role in roles})
+                with patch.object(self.fork, "running", return_value=False), patch.object(self.fork, "endpoint"), \
+                        patch.object(self.fork, "compose") as compose:
+                    with self.assertRaisesRegex(RuntimeError, "L1 state is missing"):
                         self.fork.start()
-                        self.assertEqual(effects, ["mine", "sequence"])
-                    else:
-                        with self.assertRaises(RuntimeError):
-                            self.fork.start()
-                        self.assertEqual(effects, [])
-                        self.assertNotEqual(self.fork.manifest["phase"], "running")
+                    compose.assert_not_called()
+                self.assertEqual(self.fork.manifest["phase"], "stopped")
 
     def test_start_checks_batcher_rpc_before_sequencing_and_rejects_exited_batcher(self):
         for missing_miner in (True, False):
             with self.subTest(missing_miner=missing_miner):
-                self.fork.manifest = manifest()
-                self.fork.manifest.update(boundary_validated=True, bootstrapped=True)
-                self.fork.manifest["operations"] = {
-                    name: {"receipt": {"blockNumber": "0x13"}}
-                    for name in ("set-batcher", "set-signer")
-                }
+                self.fork.manifest = completed()
+                (self.fork.directory / "l1").mkdir(exist_ok=True)
+                (self.fork.directory / "l1/anvil.json").write_text("{}")
                 calls = []
-                wait = devnet.wait
-
-                def waiting(description, *args, **kwargs):
-                    if description.startswith("sequencer catch-up"):
-                        calls.append("catch-up")
-                    return wait(description, *args, **kwargs)
 
                 def transport(url, method, *args):
                     calls.append(method)
                     if method.startswith("miner_"):
                         if missing_miner:
                             raise devnet.Unavailable("miner method unavailable")
-                        return ["0x0", "0x0"] if method == "miner_getMaxDASize" else True
+                        return ["0x0", "0x0"]
                     if method == "admin_sequencerActive":
                         return False
                     if method == "eth_getBlockByNumber":
@@ -940,71 +1337,40 @@ class SnapshotTests(unittest.TestCase):
                         patch.object(self.fork, "compose", side_effect=lambda *args: calls.append(args)), \
                         patch.object(self.fork, "running_services", return_value={"l1", "sequencer", "validator"}), \
                         patch.object(self.fork, "mine"), \
-                        patch.object(self.fork, "sync_status", return_value=sync_status(101)), \
-                        patch.object(devnet, "wait", side_effect=waiting), \
-                        patch.object(devnet, "rpc", side_effect=transport):
-                    with self.assertRaisesRegex(RuntimeError, "miner" if missing_miner else "batcher"):
+                        patch.object(devnet, "rpc", side_effect=transport), patch("builtins.print"):
+                    with self.assertRaisesRegex(RuntimeError, "miner" if missing_miner else "batcher exited"):
                         self.fork.start()
-                self.assertNotEqual(devnet.SnapshotFork(self.fork.directory).manifest["phase"], "running")
+                self.assertEqual(devnet.SnapshotFork(self.fork.directory).manifest["phase"], "starting")
                 self.assertEqual(calls[-2:], [("stop", "batcher", "sequencer", "validator"), ("stop", "l1")])
-                # A broken batcher must fail before potentially hours of unbatched catch-up.
-                self.assertNotIn("catch-up", calls)
                 if missing_miner:
                     self.assertNotIn("admin_startSequencer", calls)
+                    self.assertNotIn(("up", "-d", "--no-build", "batcher"), calls)
 
-    def test_start_batches_during_wall_time_catch_up_and_requires_live_batcher_until_running(self):
-        for batcher_exits in (False, True):
-            with self.subTest(batcher_exits=batcher_exits):
-                self.fork.manifest = manifest()
-                self.fork.manifest.update(boundary_validated=True, bootstrapped=True)
-                calls, polls = [], []
-                wait = devnet.wait
+    def test_up_retries_sequencer_start_after_readiness_and_head_race_errors(self):
+        self.fork.manifest = completed()
+        (self.fork.directory / "l1").mkdir()
+        (self.fork.directory / "l1/anvil.json").write_text("{}")
+        heads, started = iter(("0xold", "0xnew")), []
 
-                def waiting(description, *args, **kwargs):
-                    if description.startswith("sequencer catch-up"):
-                        calls.append("catch-up")
-                    return wait(description, *args, **kwargs)
+        def transport(url, method, *args):
+            if method == "eth_getBlockByNumber":
+                return {"hash": next(heads)}
+            if method == "admin_sequencerActive" and url == "sequencer-cl":
+                if not started:
+                    started.append("not ready")
+                    raise devnet.Unavailable("consensus RPC starting")
+                return False
+            if method == "admin_startSequencer":
+                started.append(args[0])
+                if args[0] == "0xold":
+                    raise devnet.Unavailable("head moved before admin_startSequencer")
+            return method != "admin_sequencerActive"
 
-                def status(role):
-                    # An hour behind wall time with an old L1 origin, then converged.
-                    current = sync_status(101)
-                    current["unsafe_l2"]["timestamp"] = 1234 - (3600 if not polls else 0)
-                    polls.append(role)
-                    return current
-
-                def transport(url, method, *args):
-                    calls.append(method)
-                    if method == "eth_getBlockByNumber":
-                        return {"number": "0x7b", "hash": "0x123"}
-                    return method != "admin_sequencerActive"
-
-                with self.starting(), patch.object(self.fork, "mine"), \
-                        patch.object(self.fork, "schedule_denim", side_effect=lambda: calls.append("denim")), \
-                        patch.object(self.fork, "compose", side_effect=lambda *args: calls.append(args)), \
-                        patch.object(self.fork, "running_services", side_effect=lambda: {
-                            "l1", "sequencer", "validator"} | (set() if batcher_exits and polls else {"batcher"})), \
-                        patch.object(self.fork, "start_batcher", side_effect=lambda: calls.append("batched")), \
-                        patch.object(self.fork, "sync_status", side_effect=status), \
-                        patch.object(devnet.time, "sleep"), \
-                        patch.object(devnet, "wait", side_effect=waiting), \
-                        patch.object(devnet, "rpc", side_effect=transport), \
-                        patch("builtins.print"):
-                    if batcher_exits:
-                        with self.assertRaisesRegex(RuntimeError, "batcher exited"):
-                            self.fork.start()
-                    else:
-                        self.fork.start()
-                phase = devnet.SnapshotFork(self.fork.directory).manifest["phase"]
-                self.assertEqual(phase == "running", not batcher_exits)
-                # Old-origin blocks are batched while catching up, not after.
-                self.assertLess(calls.index("admin_startSequencer"), calls.index("batched"))
-                self.assertLess(calls.index("batched"), calls.index("catch-up"))
-                if batcher_exits:
-                    self.assertEqual(calls[-2:], [("stop", "batcher", "sequencer", "validator"), ("stop", "l1")])
-                    self.assertNotIn("denim", calls)
-                else:
-                    self.assertIn("denim", calls, "up must schedule Denim without a separate manual step")
-                    self.assertLess(calls.index("catch-up"), calls.index("denim"))
+        with self.starting(), patch.object(self.fork, "mine"), patch.object(devnet.time, "sleep"), \
+                patch.object(devnet, "rpc", side_effect=transport), patch("builtins.print"):
+            self.fork.start()
+        self.assertEqual(started, ["not ready", "0xold", "0xnew"])
+        self.assertEqual(self.fork.manifest["phase"], "running")
 
     def test_status_reports_missing_batcher_as_degraded_even_after_successful_start(self):
         self.fork.manifest["phase"] = "running"
@@ -1018,50 +1384,10 @@ class SnapshotTests(unittest.TestCase):
         records = [container(role) for role in ("l1", "sequencer", "validator", "batcher")]
         with patch.object(self.fork, "containers", return_value=records), \
                 patch.object(devnet, "rpc") as transport:
-            self.assertEqual(self.fork.status()["phase"], "running")
+            status = self.fork.status()
+            self.assertEqual(status["phase"], "running")
+            self.assertEqual(status["rpc_docker_host_only"]["sequencer-ws"], "ws://10.9.0.2:8546")
             transport.assert_not_called()
-
-    def batching(self, safe_heads, alive, hashes):
-        """Patches start_batcher's collaborators: per-poll safe heads and batcher liveness."""
-        polls = iter(safe_heads)
-        liveness = iter(alive)
-        current = {}
-        calls = []
-
-        def status(role):
-            if role == "sequencer":
-                current.update(zip(devnet.ROLES, next(polls)))
-            return sync_status(101, safe=current[role], safe_hash=hex(current[role]))
-
-        def node(url, method, *args):
-            calls.append((url, method, *args))
-            return {"hash": hashes[url]}
-        self.addCleanup(patch.stopall)
-        patch.object(self.fork, "compose", side_effect=lambda *args: calls.append(args)).start()
-        patch.object(self.fork, "running_services",
-                     side_effect=lambda: {"l1", *devnet.ROLES} | ({"batcher"} if next(liveness) else set())).start()
-        patch.object(self.fork, "sync_status", side_effect=status).start()
-        patch.object(self.fork, "url", side_effect=lambda role: role).start()
-        patch.object(devnet, "rpc", side_effect=node).start()
-        patch.object(devnet.time, "sleep").start()
-        return calls
-
-    def test_batcher_start_waits_for_both_safe_heads_and_checks_common_canonical_hash(self):
-        calls = self.batching([(123, 123), (123, 123), (125, 123), (126, 124)], [True] * 3,
-                              {"sequencer": "0xsame", "validator": "0xsame"})
-        self.fork.start_batcher()
-        self.assertEqual(calls[0], ("up", "-d", "--no-build", "batcher"))
-        self.assertEqual(calls[1:], [(role, "eth_getBlockByNumber", hex(124), False) for role in devnet.ROLES])
-
-    def test_batcher_start_rejects_divergent_safe_block(self):
-        self.batching([(123, 123), (124, 124)], [True], {"sequencer": "0xa", "validator": "0xb"})
-        with self.assertRaisesRegex(RuntimeError, "disagree on canonical safe block 124"):
-            self.fork.start_batcher()
-
-    def test_batcher_start_fails_when_batcher_exits_cleanly_while_waiting(self):
-        self.batching([(123, 123), (123, 123)], [True, False], {})
-        with self.assertRaisesRegex(RuntimeError, "batcher exited.*code 0"):
-            self.fork.start_batcher()
 
     def test_restored_schedule_mismatch_does_not_bootstrap_over_it(self):
         self.fork.manifest["schedule"] = [100] * 13
@@ -1157,27 +1483,33 @@ class SnapshotTests(unittest.TestCase):
                                                         else ("registerUpgrade(uint64,uint256)", 4908, 0)])
                         self.assertEqual(self.fork.manifest["denim_timestamp"], 4908)
 
-    def test_single_node_start_batches_and_never_contacts_or_starts_a_validator(self):
+    def test_single_node_start_sequences_and_never_contacts_or_starts_a_validator(self):
+        self.fork.manifest = completed()
         del self.fork.manifest["datadirs"]["validator"]
-        self.fork.manifest.update(boundary_validated=True, bootstrapped=True)
-        heights = iter((123, 124, 124))
+        (self.fork.directory / "l1").mkdir()
+        (self.fork.directory / "l1/anvil.json").write_text("{}")
+        calls = []
 
         def node(url, method, *args):
             self.assertNotIn("validator", url)
+            calls.append((url, method, *args))
             if method == "eth_getBlockByNumber":
                 return {"hash": "0x124", "timestamp": hex(1234)}
             if method == "admin_sequencerActive":
-                return True
+                return False
             return None
 
         with self.starting(), patch.object(self.fork, "mine"), \
-                patch.object(self.fork, "schedule_denim"), patch.object(devnet, "rpc", side_effect=node), \
-                patch.object(self.fork, "sync_status", side_effect=lambda role: sync_status(102, safe=next(heights))), \
-                patch("builtins.print"):
+                patch.object(self.fork, "schedule_denim", side_effect=AssertionError("init scheduled Denim")), \
+                patch.object(self.fork, "sync_status", side_effect=AssertionError("up must not wait for heads")), \
+                patch.object(devnet, "rpc", side_effect=node), patch("builtins.print"):
             self.fork.start()
             self.assertEqual(self.fork.manifest["phase"], "running")
-            self.assertIn(("up", "-d", "--no-build", "batcher"), [c.args for c in self.fork.compose.call_args_list])
-            self.assertNotIn("validator", str(self.fork.compose.call_args_list))
+            self.assertIn(("l1", "anvil_setIntervalMining", 12), calls)
+            self.assertIn(("sequencer-cl", "admin_startSequencer", "0x124"), calls)
+            self.assertEqual([c.args for c in self.fork.compose.call_args_list], [
+                ("up", "-d", "--no-build", "l1"), ("up", "-d", "--no-build", "sequencer"),
+                ("up", "-d", "--no-build", "batcher")])
         with patch.object(self.fork, "running", return_value=True), patch.object(self.fork, "compose") as compose, \
                 patch.object(self.fork, "url", side_effect=lambda role: role), \
                 patch.object(self.fork, "sync_status", return_value=sync_status(102, safe=124)), \
@@ -1227,6 +1559,15 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(schedule, history + [1064])
         self.assertEqual(len(sent), 1)
         self.assertEqual(self.fork.manifest["denim_timestamp"], 1064)
+
+    def test_denim_scheduling_requires_initialization_or_a_running_fork(self):
+        for phase in ("prepared", "stopped", "starting"):
+            with self.subTest(phase=phase), self.protocol_versions([]) as fake:
+                self.fork.manifest["phase"] = phase
+                with self.assertRaisesRegex(RuntimeError, "initialize or start the fork"):
+                    self.fork.schedule_denim()
+                self.assertEqual(fake["sent"], [])
+                self.assertNotIn("pending_denim_timestamp", self.fork.manifest)
 
     def test_denim_write_must_retain_the_minimum_protocol_version(self):
         with self.protocol_versions([], minimum_after="43"):
@@ -1312,41 +1653,6 @@ class SnapshotTests(unittest.TestCase):
                 devnet.main()
                 schedule.assert_called_once_with(expected)
 
-    def test_denim_scheduling_failure_after_start_keeps_the_running_fork(self):
-        self.fork.manifest.update(boundary_validated=True, bootstrapped=True)
-        calls = []
-
-        def transport(url, method, *args):
-            if method == "eth_getBlockByNumber":
-                return {"number": "0x7b", "hash": "0x123"}
-            return method != "admin_sequencerActive"
-
-        with self.starting(), \
-                patch.multiple(self.fork, wait_checkpoints=DEFAULT, mine=DEFAULT, start_batcher=DEFAULT), \
-                patch.object(self.fork, "schedule_denim", side_effect=RuntimeError("Denim receipt timed out")), \
-                patch.object(self.fork, "compose", side_effect=lambda *args: calls.append(args)), \
-                patch.object(self.fork, "sync_status", return_value=sync_status(101)), \
-                patch.object(devnet, "rpc", side_effect=transport), patch("builtins.print"):
-            with self.assertRaisesRegex(RuntimeError, "running but Denim.*receipt timed out.*rerun schedule-denim"):
-                self.fork.start()
-        self.assertEqual(devnet.SnapshotFork(self.fork.directory).manifest["phase"], "running")
-        self.assertFalse([call for call in calls if call[0] == "stop"])
-
-    def test_inspection_uses_persisted_denim_and_leaves_original_config_unchanged(self):
-        config = {"genesis": {"l2_time": 100}, "base": {"cobalt": 1000}}
-        (self.fork.directory / "config").mkdir()
-        devnet.write_json(self.fork.directory / "config/rollup.json", config)
-        self.fork.manifest.update(initial=[{"rollup_config": config}], schedule=[100] * 13, denim_timestamp=9000)
-        with patch.object(self.fork, "compose"), patch.object(self.fork, "await_rpc"), \
-                patch.object(self.fork, "containers", return_value=[]), \
-                patch.object(self.fork, "url", return_value="http://10.9.0.2:8545"), \
-                patch.object(devnet, "run", return_value="{}") as inspect:
-            self.fork.inspect()
-            self.assertIn("--rollup-config", inspect.call_args.args)
-            self.assertNotIn("--find-fork", inspect.call_args.args)
-        self.assertEqual(json.loads((self.fork.directory / "config/inspection.json").read_text())["base"]["denim"], 9000)
-        self.assertEqual(json.loads((self.fork.directory / "config/rollup.json").read_text()), config)
-
     def test_stop_orders_dependents_before_l1_and_never_removes_data(self):
         calls = []
         with patch.object(self.fork, "running", return_value=True), \
@@ -1385,10 +1691,12 @@ class SnapshotTests(unittest.TestCase):
         self.assertIn(("stop", "sequencer", "validator", "inspect-sequencer", "inspect-validator"), calls)
         self.assertEqual(calls[-1], ("stop", "l1"))
 
-    def test_stop_before_first_start_keeps_prepared_fork_startable(self):
-        with patch.object(self.fork, "running", return_value=False):
-            self.fork.stop()
-        self.assertEqual(devnet.SnapshotFork(self.fork.directory).manifest["phase"], "prepared")
+    def test_stop_during_incomplete_init_keeps_the_init_phase(self):
+        for phase in ("prepared", "initializing"):
+            with self.subTest(phase=phase), patch.object(self.fork, "running", return_value=False):
+                self.fork.manifest["phase"] = phase
+                self.fork.stop()
+                self.assertEqual(devnet.SnapshotFork(self.fork.directory).manifest["phase"], phase)
 
     def test_l1_url_uses_published_loopback_port_without_docker_lookup(self):
         with patch.object(devnet, "run") as run:
@@ -1418,11 +1726,13 @@ class SnapshotTests(unittest.TestCase):
                 self.assertEqual(self.fork.url("validator"), "http://10.9.0.8:8545")
         with patch.object(self.fork, "containers", return_value=[container("sequencer", "10.9.0.7")]):
             self.assertEqual(self.fork.url("sequencer-cl"), "http://10.9.0.7:9545")
+            self.assertEqual(self.fork.url("sequencer-ws"), "ws://10.9.0.7:8546")
 
     def test_unavailable_role_is_retryable_but_ambiguous_identity_is_not(self):
         cases = {
             "stopped": ([container("sequencer", running=False)], "sequencer", devnet.Unavailable),
             "inspection has no consensus RPC": ([container("inspect-sequencer")], "sequencer-cl", devnet.Unavailable),
+            "inspection has no WebSocket RPC": ([container("inspect-sequencer")], "sequencer-ws", devnet.Unavailable),
             "other project": ([container("sequencer", project="snapshot-other")], "sequencer", devnet.Unavailable),
             "inspection and production": ([container("sequencer"), container("inspect-sequencer", "10.9.0.3")],
                                           "sequencer", RuntimeError),
@@ -1617,11 +1927,22 @@ class SnapshotTests(unittest.TestCase):
         self.fork.wait_boundary()
         mine.assert_not_called()
 
+    def test_boundary_gate_resume_rejects_a_different_recorded_successor(self):
+        mine = self.boundary_gate(101)
+        self.fork.manifest["boundary"] = {"l1_successor": {"number": "0x65", "hash": "0xearlier"}}
+        with self.assertRaisesRegex(RuntimeError, "successor of F changed"):
+            self.fork.wait_boundary()
+        mine.assert_not_called()
+        self.assertFalse(self.fork.manifest.get("boundary_validated"))
+
     def test_boundary_gate_rejects_reorged_snapshot_head_without_persisting(self):
         self.boundary_gate(100, canonical="0xother")
         with self.assertRaisesRegex(RuntimeError, "no longer canonical"):
             self.fork.wait_boundary()
-        self.assertFalse(self.fork.manifest.get("boundary_validated"))
+        stored = devnet.SnapshotFork(self.fork.directory).manifest
+        self.assertFalse(stored.get("boundary_validated"))
+        # The mined successor is journaled, so a retry requires the saved L1 state.
+        self.assertEqual(stored["boundary"], {"l1_successor": {"number": "0x65", "hash": "0xsuccessor"}})
 
     def test_execution_rpc_wait_has_no_deadline_and_keeps_reporting(self):
         self.fork.timeout = 60
@@ -1777,7 +2098,9 @@ class SnapshotTests(unittest.TestCase):
         # The batcher's default throttling calls miner_setMaxDASize on the sequencer's HTTP RPC.
         sequencer_command = config["services"]["sequencer"]["command"]
         http_apis = next(arg.split("=", 1)[1].split(",") for arg in sequencer_command if arg.startswith("--http.api="))
-        self.assertIn("miner", http_apis)
+        self.assertEqual(set(http_apis), {"eth", "net", "web3", "debug", "trace", "miner"})
+        for flag in ("--ws", "--ws.addr=0.0.0.0", "--ws.port=8546", "--ws.api=eth,net,web3,debug,trace"):
+            self.assertIn(flag, sequencer_command)
         self.assertEqual(config["services"]["batcher"]["stop_signal"], "SIGTERM")
         del self.fork.manifest["datadirs"]["validator"]
         single = json.loads(self.fork.compose("config", "--format", "json"))
@@ -1883,6 +2206,37 @@ class QualificationTests(unittest.TestCase):
                 patch.object(devnet.time, "sleep"), patch("builtins.print"):
             self.assertEqual(verification.derived(fork, 124), header)
 
+    def test_retention_verification_waits_for_recovery_then_rejects_changed_blocks(self):
+        for changed in (False, True):
+            with self.subTest(changed=changed):
+                fork = Mock(spec=devnet.SnapshotFork)
+                fork.roles, fork.timeout = devnet.ROLES, 1
+                fork.url.side_effect = lambda role: role
+                heights = {"sequencer": iter((123, 125)), "validator": iter((124, 125))}
+                recovered = set()
+
+                def status(role):
+                    height = next(heights[role])
+                    if height == 125:
+                        recovered.add(role)
+                    return {"safe_l2": {"number": height}}
+
+                fork.sync_status.side_effect = status
+                saved = {"number": "0x7d", "hash": "canonical", "stateRoot": "root"}
+
+                def rpc(url, *args):
+                    self.assertEqual(recovered, set(devnet.ROLES))
+                    return {**saved, "hash": "conflict"} if changed and url == "validator" else saved
+
+                with patch.object(verification, "rpc", side_effect=rpc), \
+                        patch.object(devnet.time, "sleep"), patch("builtins.print"):
+                    report = {"blocks": [saved], "blobs": [], "receipts": []}
+                    if changed:
+                        with self.assertRaisesRegex(RuntimeError, "changed across restart"):
+                            verification.assert_retained(fork, report)
+                    else:
+                        verification.assert_retained(fork, report)
+
     def test_denim_activation_uses_genesis_slot_parity_not_absolute_even_seconds(self):
         config = {"genesis": {"l2_time": 101}, "block_time": 2}
         for scheduled, first_block in ((100, 101), (101, 101), (1000, 1001), (1001, 1001), (1002, 1003)):
@@ -1971,7 +2325,8 @@ class FastDenimContractTests(unittest.TestCase):
                 code = devnet.run("forge", "inspect", "--root", str(devnet.ROOT / "crates/utilities/test-utils/contracts"),
                                   "src/MockProtocolVersions.sol:MockProtocolVersions", "deployedBytecode")
                 history = list(range(100, 113))
-                fork.manifest = {**manifest(), "phase": "starting", "port": port, "fast_denim": True,
+                # Init seeds and schedules with interval mining paused; send() mines each write.
+                fork.manifest = {**manifest(), "phase": "initializing", "port": port, "fast_denim": True,
                                  "local_protocol_versions": "0x" + "4" * 40, "upgrade_code": code,
                                  "minimum_protocol_version": 42, "schedule": history}
                 sender, original = fork.manifest["accounts"]["user"], fork.manifest["protocol_versions"]
@@ -1995,8 +2350,6 @@ class FastDenimContractTests(unittest.TestCase):
                     fork.seed_upgrade_signal()
                     self.assertEqual(devnet.number(devnet.rpc(url, "eth_getTransactionCount", sender, "latest")), nonce + 1)
                     fork.seed_upgrade_signal()
-                    fork.manifest["phase"] = "running"
-                    devnet.rpc(url, "evm_setAutomine", True)
                     fork.schedule_denim()
                     timestamp = fork.manifest["denim_timestamp"]
                     self.assertEqual(devnet.call(url, fork.upgrade_contract, "getSchedule()(uint64[])"), history + [timestamp])
