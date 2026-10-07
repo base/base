@@ -2,9 +2,8 @@
 //!
 //! Each [`FlashblockWorkload`] describes one block of pool traffic: plain transfers that fill
 //! every flashblock, a backlog of validity transactions whose predicates stay unsatisfied (so the
-//! build loop re-considers, re-evaluates and re-parks them on every flashblock, as in the
-//! 2026-10-06 mainnet regression), arrivals between flashblocks, and optional satisfied validity
-//! transactions. [`FlashblockWorkloadFixture`] materializes a workload into a pool, a seeded
+//! build loop re-considers, re-evaluates and re-parks them on every flashblock), arrivals between
+//! flashblocks, and optional satisfied validity transactions. [`FlashblockWorkloadFixture`] materializes a workload into a pool, a seeded
 //! in-memory proofs trie, and a builder context, then runs it through [`FlashblockBlockDriver`].
 //!
 //! Everything is deterministic: fixed senders, nonces, fees, and predicates, and the
@@ -91,15 +90,15 @@ pub struct FlashblockWorkload {
 }
 
 impl FlashblockWorkload {
-    /// Flashblocks per block, matching mainnet's 2 s blocks at 200 ms flashblocks.
+    /// Flashblocks per block: 2 s blocks at 200 ms flashblocks.
     pub const FLASHBLOCKS: u64 = 10;
     /// Gas used by every workload transaction (a plain transfer).
     pub const TRANSFER_GAS: u64 = 21_000;
     /// Predicates per satisfied validity transaction.
     pub const SATISFIED_PREDICATES: usize = 4;
-    /// Resting backlog at incident scale: mainnet deferred ~4,700 validity transactions per
-    /// flashblock on 2026-10-06.
-    pub const INCIDENT_BACKLOG: usize = 4_500;
+    /// Resting validity transactions in the backlog scenarios: thousands of candidates deferred
+    /// on every flashblock, enough that per-candidate costs dominate the block.
+    pub const RESTING_BACKLOG_SIZE: usize = 4_500;
     /// Chain id of the synthetic chain.
     const CHAIN_ID: u64 = 901;
     /// Balance seeded into every sender, far above any transfer's worst-case cost.
@@ -118,16 +117,16 @@ impl FlashblockWorkload {
         satisfied_validity_per_flashblock: 0,
     };
 
-    /// The 2026-10-06 incident: an incident-scale backlog of single-predicate validity
-    /// transactions that stay unsatisfied and are re-parked on every flashblock.
+    /// A backlog of single-predicate validity transactions that stay unsatisfied and are
+    /// re-considered, re-evaluated, and re-parked on every flashblock.
     pub const RESTING_BACKLOG: Self = Self {
         name: "resting_backlog",
-        resting_at_start: Self::INCIDENT_BACKLOG,
+        resting_at_start: Self::RESTING_BACKLOG_SIZE,
         predicates_per_resting_tx: 1,
         ..Self::TRANSFERS
     };
 
-    /// The incident backlog with eight predicates per transaction on unique accounts, so each
+    /// The backlog with eight predicates per transaction on unique accounts, so each
     /// re-evaluation reads eight cold accounts.
     pub const RESTING_BACKLOG_MULTI_PREDICATE: Self = Self {
         name: "resting_backlog_multi_predicate",
@@ -135,7 +134,7 @@ impl FlashblockWorkload {
         ..Self::RESTING_BACKLOG
     };
 
-    /// The incident backlog with eight predicates per transaction over sixteen shared
+    /// The backlog with eight predicates per transaction over sixteen shared
     /// accounts: warm reads and crowded predicate-index buckets.
     pub const RESTING_BACKLOG_SHARED_STATE: Self = Self {
         name: "resting_backlog_shared_state",
@@ -146,11 +145,15 @@ impl FlashblockWorkload {
 
     /// Transfers that pay the watched accounts of a parked backlog, so every commit wakes a
     /// bucket and the loop rescans and re-parks its transactions within the flashblock.
+    ///
+    /// 125 accounts keep eight transactions per bucket, below
+    /// `DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD`: flat buckets wake on any change to the
+    /// watched balance, while ordered buckets wake only transactions the new value can satisfy.
     pub const WAKE_RESCAN: Self = Self {
         name: "wake_rescan",
         resting_at_start: 1_000,
         predicates_per_resting_tx: 1,
-        predicate_state: PredicateState::Shared { accounts: 16 },
+        predicate_state: PredicateState::Shared { accounts: 125 },
         transfers_touch_watched_state: true,
         ..Self::TRANSFERS
     };
