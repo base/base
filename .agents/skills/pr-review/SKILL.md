@@ -103,22 +103,23 @@ The whole run has a wall-clock budget (`--budget-seconds`, default 4800, inside 
 
 ## In CI
 
-`.github/workflows/claude-review.yml` runs `review.py --pr <number> --post` on the BaseRunnerGroup runner with the LLM gateway. It posts:
+`.github/workflows/claude-review.yml` has two jobs, because the token on the BaseRunnerGroup runner (which can reach the LLM gateway) is refused when it tries to resolve or reopen a review thread.
 
-- new inline comments, in one review, most severe first
-- replies on existing bot threads
-- a resolved thread, with a one-line "Fixed" reply, for a bot thread whose problem the push fixed
-- a reopened thread, with a reason, for a resolved bot thread whose problem is still present
-- one summary comment that replaces the previous one (marked `<!-- CLAUDE_REVIEW_SUMMARY -->`)
+1. **`review`** (BaseRunnerGroup) runs `review.py --pr <number> --post --handoff-file ...`. It posts new inline comments (one review, most severe first), replies on existing bot threads, and one summary comment that replaces the previous one (marked `<!-- CLAUDE_REVIEW_SUMMARY -->`). It does not change any thread's state. It writes the threads the decider wants resolved or reopened to a small JSON file, with the commit it reviewed, and uploads only that file as an artifact.
+2. **`threads`** (a GitHub-hosted runner, no gateway access, never runs an agent) downloads the file and runs `review.py --pr <number> --apply-thread-actions <file>`. For each thread it resolves or reopens the thread and adds a one-line "Fixed" or "Reopened" reply. If GitHub still refuses a resolve, the reply says the problem is fixed and asks a person to resolve the thread, and later runs do not ask again.
 
-The script runs from a clean checkout of the base branch, so a PR cannot add files to the code that holds the tokens. Agents run with the PR's checkout as their working directory, `--setting-sources user` (the PR's own Claude settings and hooks are not loaded), read-only tools, and no `GH_TOKEN`.
+The file comes from a job that read untrusted pull request content through a model, so the second job treats it as untrusted. It drops the whole file if the pull request has moved to a newer commit. It ignores any action that is malformed, over the limit of 50, not for a thread currently on this pull request, not started by the Actions bot, or for a thread already in the wanted state. It uses nothing from an action except the thread id and a reply of at most 2,000 characters, with the review markers removed. The most a forged file can do is resolve or reopen the bot's own threads on this pull request and add short bot replies.
+
+Both jobs run `review.py` from a clean checkout of the base branch, so a PR cannot add files to the code that holds the tokens. Agents run with the PR's checkout as their working directory, `--setting-sources user` (the PR's own Claude settings and hooks are not loaded), read-only tools, and no `GH_TOKEN`.
 
 Safeguards in the script:
 
 - It acts only on threads and summaries whose author is the Actions bot, not on any comment that contains the marker.
 - It moves any comment whose line is not in the diff into the summary, and posts at most 20 inline comments (the rest go to the summary).
-- Every GitHub write fails on its own. If GitHub rejects the inline review, the findings move into the summary; a failed reply or resolve is reported but does not stop the summary. The summary is posted before the old one is deleted.
+- Every GitHub write fails on its own. If GitHub rejects the inline review, the findings move into the summary; a failed reply is reported but does not stop the summary. The summary is posted before the old one is deleted.
 - It reads the PR's metadata and diff at one head commit, pages through all threads, and rebuilds the diff from the files API when `gh pr diff` refuses a large PR.
 - If triage fails, every reviewer and the council run. If a reviewer or council member fails, the summary says the review is incomplete and the rest continue; if the chair fails, the unmerged findings go to the decider.
+
+Running with `--post` and no `--handoff-file` (for example `just review --pr 1234 --post` from your machine) makes the thread changes itself, so it needs a token that is allowed to resolve threads.
 
 Run `python3 .agents/skills/pr-review/test_review.py` after changing `review.py` or `render.py`.
