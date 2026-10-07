@@ -9,6 +9,9 @@ use url::Url;
 /// EL to be considered "at tip".
 pub const DEFAULT_TIP_THRESHOLD_SECS: u64 = 10;
 
+/// Default maximum gap between the EL head and the latest proofs block.
+pub const DEFAULT_PROOFS_MAX_LAG_BLOCKS: u64 = 1_000;
+
 /// Default number of archive streams compressed and uploaded concurrently.
 ///
 /// This preserves parallel packaging of the state, RocksDB-index, and proofs databases while leaving capacity for another archive.
@@ -54,6 +57,14 @@ pub struct SnapshotterConfig {
     /// and CL containers are left untouched.
     #[arg(long, env = "SNAPSHOTTER_TIP_THRESHOLD_SECS", default_value_t = DEFAULT_TIP_THRESHOLD_SECS)]
     pub tip_threshold_secs: u64,
+
+    /// Maximum number of blocks proofs may lag behind the EL's latest block.
+    ///
+    /// Only checked when `--upload-proofs` is enabled. A larger gap or an empty
+    /// proofs database skips the snapshot run and leaves containers running.
+    /// Set to zero to require proofs to reach the checked EL head.
+    #[arg(long, env = "SNAPSHOTTER_PROOFS_MAX_LAG_BLOCKS", default_value_t = DEFAULT_PROOFS_MAX_LAG_BLOCKS)]
+    pub proofs_max_lag_blocks: u64,
 
     /// Source datadir containing the reth node data (static files + DB).
     #[arg(long, short = 'd')]
@@ -149,4 +160,66 @@ pub struct SnapshotterConfig {
     /// production. Disabled by default.
     #[arg(long, env = "SNAPSHOTTER_UPLOAD_PROOFS", default_value_t = false)]
     pub upload_proofs: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+
+    use clap::{CommandFactory, Parser};
+
+    use super::*;
+
+    /// Parses the public snapshotter configuration for CLI tests.
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        config: SnapshotterConfig,
+    }
+
+    /// Verifies the default block lag and CLI overrides, including strict zero-lag mode.
+    #[test]
+    fn proofs_lag_default_and_overrides() {
+        let args = [
+            "snapshotter",
+            "--container-name",
+            "el",
+            "--el-rpc-url",
+            "http://127.0.0.1:8545",
+            "--source-datadir",
+            "/tmp/reth",
+            "--bucket",
+            "snapshots",
+        ];
+        let default = TestCli::try_parse_from(args).expect("default CLI should parse").config;
+        assert_eq!(
+            default.proofs_max_lag_blocks, 1_000,
+            "default lag must be exactly 1,000 blocks"
+        );
+        assert!(!default.upload_proofs, "proofs uploads must remain disabled by default");
+        for (value, expected) in [("0", 0), ("250", 250)] {
+            let command = TestCli::command();
+            let lag_arg = command
+                .get_arguments()
+                .find(|arg| arg.get_long() == Some("proofs-max-lag-blocks"))
+                .expect("proofs lag flag must be exposed");
+            assert_eq!(
+                lag_arg.get_env(),
+                Some(OsStr::new("SNAPSHOTTER_PROOFS_MAX_LAG_BLOCKS")),
+                "proofs lag must support the documented environment variable"
+            );
+            let config = TestCli::try_parse_from(args.into_iter().chain([
+                "--proofs-max-lag-blocks",
+                value,
+                "--upload-proofs",
+            ]))
+            .expect("proofs lag override should parse")
+            .config;
+            assert_eq!(
+                config.proofs_max_lag_blocks, expected,
+                "CLI must preserve the requested lag"
+            );
+            assert!(config.upload_proofs, "proofs upload flag must enable the gate");
+        }
+    }
 }

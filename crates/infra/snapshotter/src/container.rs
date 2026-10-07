@@ -13,6 +13,7 @@ use bollard::{
 use tracing::info;
 
 /// Manages the lifecycle of a container (stop/start with state verification).
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait ContainerManager: Send + Sync {
     /// Stops the container and verifies it is no longer running.
