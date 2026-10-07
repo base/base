@@ -46,18 +46,18 @@ Instruction counts are deterministic for a fixed toolchain, dependency set, targ
 
 ## Baselines and budgets
 
-Pinned on `x86_64-unknown-linux-gnu`, `depot-ubuntu-24.04-8`, Rust 1.96.0, Valgrind 3.22.0, at commit `957d465b7` (Depot run `qkb4853fp4`).
+Pinned on `x86_64-unknown-linux-gnu`, `depot-ubuntu-24.04-8`, Rust 1.96.0, Valgrind 3.22.0, at commit `0870a433f` (Depot run `vfrpbg74nh`).
 
 | Scenario | Baseline instructions | Budget | Marginal per deferral (budget) |
 | --- | ---: | ---: | ---: |
-| `transfers` | 516,697,858 | 542,532,751 | |
-| `resting_backlog` | 1,599,429,633 | 1,679,401,115 | 24,061 (26,467) |
-| `resting_backlog_multi_predicate` | 2,028,606,708 | 2,130,037,044 | 33,598 (36,958) |
-| `resting_backlog_shared_state` | 1,720,742,163 | 1,806,779,272 | 26,757 (29,433) |
-| `wake_rescan` | 754,994,314 | 792,744,030 | 23,830 (26,213) |
-| `backlog_growth` | 1,395,587,851 | 1,465,367,244 | 27,901 (30,692) |
-| `congested` | 1,930,821,324 | 2,027,362,391 | |
-| `satisfied_validity` | 805,038,485 | 845,290,410 | |
+| `transfers` | 516,566,204 | 542,394,515 |  |
+| `resting_backlog` | 1,599,501,861 | 1,679,476,955 | 24,065 (26,472) |
+| `resting_backlog_multi_predicate` | 2,026,455,160 | 2,127,777,918 | 33,553 (36,909) |
+| `resting_backlog_shared_state` | 1,721,373,284 | 1,807,441,949 | 26,773 (29,451) |
+| `wake_rescan` | 775,079,063 | 813,833,017 | 25,851 (28,437) |
+| `backlog_growth` | 1,395,729,471 | 1,465,515,945 | 27,910 (30,701) |
+| `congested` | 1,931,122,363 | 2,027,678,482 |  |
+| `satisfied_validity` | 805,186,512 | 845,445,838 |  |
 
 Event budgets per block:
 
@@ -72,7 +72,7 @@ Event budgets per block:
 
 `BUILDER_DEFERRED` is budgeted at one per resting transaction and reason per block, matching `BlockDeferrals`. `congested` pins today's behavior: gas-limit rejections are not deduplicated, so the overflow is re-rejected on every flashblock (200 + 400 + ... + 2,000 = 11,000 events for 1,000 inclusions). That is the same per-flashblock amplification a resting backlog has; the budget stops it from growing without endorsing it.
 
-Why 5%: counts are reproducible run to run on the same runner image, so headroom only has to absorb unrelated churn such as dependency bumps on `main` (a few percent at most). At 5%, `resting_backlog` fails on about 80 million added instructions per block, or about 1,800 instructions per deferred candidate. Today each deferral costs about 24,000 instructions above the baseline, so a 10% per-deferral regression also fails the marginal budget.
+Why 5%: counts are not bit-identical run to run, because hash maps use random seeds, but across four runs of the same commit every scenario stayed within 0.10% of its baseline. Headroom also has to absorb unrelated churn such as dependency bumps on `main`. At 5%, `resting_backlog` fails on about 80 million added instructions per block, or about 1,800 instructions per deferred candidate, and `wake_rescan` fails on about 4,800 added instructions per rescanned candidate (about 8,000 rescans per block). Each deferral currently costs about 24,000 instructions above the baseline, so a 10% per-deferral regression also fails the marginal budget.
 
 ## When the gate fails
 

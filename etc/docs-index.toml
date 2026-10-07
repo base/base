@@ -411,8 +411,8 @@ summary = "base-tx-forwarding: forwards mempool txs to builder RPCs via per-dest
 digest = "b72a1536e1"
 
 ["crates/execution/txpool-rpc/README.md"]
-summary = "Txpool RPC APIs: admin pool management, transaction status queries, and base_sendRawTransactionValidity (validity predicates, Cobalt-gated, proxied to sequencer). Use for tx submission RPC behavior."
-digest = "203cea1f64"
+summary = "Txpool RPC APIs: admin pool management, transaction status queries, and base_sendRawTransactionValidity (validity predicates, proxied to sequencer). Use for tx submission RPC behavior."
+digest = "d5082966c5"
 
 ["crates/execution/txpool-tracing/README.md"]
 summary = "Txpool tracing extension: tracks mempool lifecycle events, txpool_transactionStatus RPC, enabling CLI flags, and reth_transaction_tracing_tx_event histogram. Use to debug tx latency or drops."
@@ -435,12 +435,12 @@ summary = "basectl-cli: the basectl clap parser and commands (blocks, sync, txpo
 digest = "1e4810a82c"
 
 ["crates/infra/challenger-e2e/README.md"]
-summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games, asserts valid games are left alone and Path 4 (plus Path 3 and Path 2 in separate scenarios) is disputed."
-digest = "118deb12bf"
+summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games, asserts valid games are left alone and each path is disputed. Covers mock/real prover modes, scenarios and env vars."
+digest = "2bd45dbbc9"
 
 ["crates/infra/load-tests/README.md"]
 summary = "Load-testing framework (base-load-tests lib, base-load-tester bin): just/cargo commands, YAML config, tx mixes (precompile, B-20, swap, validity). Use to run or configure devnet/sepolia load tests."
-digest = "74e01ef24a"
+digest = "ca9c441a4b"
 
 ["crates/infra/roxy/README.md"]
 summary = "Scaffold-only Rust JSON-RPC reverse proxy meant to replace the ProxyD fork; currently just a listen-address flag plus /healthz and /readyz probes, no proxying yet."
@@ -654,6 +654,10 @@ digest = "fd4c93a6fc"
 summary = "Review guide for block-production-sensitive PRs: mandatory payload size-limit gate across I/O boundaries, taxonomy of halt/stall scenarios (precompiles, builder, flashblocks), and a checklist."
 digest = "393c4961d6"
 
+["docs/guides/BUILDER_PERFORMANCE_GATE.md"]
+summary = "Per-PR fail-closed flashblock build gate: workload matrix, Callgrind instruction and event-volume budgets, re-pinning with pin=true, CI cost, and exclusions."
+digest = "bd8ec12b5a"
+
 ["docs/guides/P2P.md"]
 summary = "Explains the Base P2P stack for newcomers: consensus-layer discv5 and libp2p gossipsub versus execution-layer reth networking, how they interact via Engine API, key files, flags, and glossary."
 digest = "2407f38ac8"
@@ -680,7 +684,7 @@ digest = "e87f3373b8"
 
 ["docs/transaction-events/README.md"]
 summary = "Spec for transaction-event/v1, the JSONL business event journal for transaction observability: config fields, envelope, event vocabulary, Vector to audit-archiver ingest, Postgres retention, examples."
-digest = "1089184709"
+digest = "6eaf6038fc"
 
 ["docs/transaction-events/tips-parity-checklist.md"]
 summary = "Checklist for verifying TIPS UI audit-archiver/Postgres responses match the S3-backed routes (block, txn, bundle, rejected) before switching TIPS_UI_QUERY_BACKEND=audit."
@@ -688,7 +692,7 @@ digest = "49f6748dde"
 
 ["etc/docker/README.md"]
 summary = "Dockerfiles, Bake targets, published images (ghcr.io/base/node and single-binary images), and Compose setup for the local devnet and Rust services, including batcher topology and build profiles."
-digest = "3e735e31da"
+digest = "12c930d703"
 
 ["etc/systems/README.md"]
 summary = "Docs for base-system-tests: running the snapshot-backed mainnet devnet (builder and follow client), snapshot and transfer benchmarks, workload suite, 2s vs 200ms comparison, cleanup."
