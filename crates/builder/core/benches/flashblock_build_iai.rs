@@ -31,7 +31,7 @@ use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 fn workload(scenario: &str) -> FlashblockWorkload {
     let workload = FlashblockWorkload::by_name(scenario).expect("scenario is in the matrix");
     let events =
-        std::env::temp_dir().join(format!("builder-bench-{scenario}-{}.jsonl", std::process::id()));
+        std::env::temp_dir().join(format!("builder-bench-events-{}.jsonl", std::process::id()));
     FlashblockWorkload::install_file_event_writer(&events).expect("event writer initializes");
     workload
 }
