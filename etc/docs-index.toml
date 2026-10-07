@@ -459,8 +459,8 @@ summary = "base-snapshotter sidecar: at-tip check, stops EL/CL Docker containers
 digest = "5c2c2991ba"
 
 ["crates/infra/snark-e2e/README.md"]
-summary = "base-snark-e2e library: submits a one-block SNARK PLONK prove request to prover-service, polls, and verifies the receipt. Lists required env vars and the ignored integration test command."
-digest = "a669367578"
+summary = "base-snark-e2e library: submits a one-block SNARK PLONK prove request, verifies the receipt, and checks its vkeys match the on-chain verifier. Lists env vars and the integration test command."
+digest = "992ae59820"
 
 ["crates/infra/telemetry/README.md"]
 summary = "base-telemetry-service Axum API with EL (devp2p) and CL (libp2p) P2P reachability probe endpoints: request/response shapes, limits, rate limiting, trusted proxies, IPv4 target rules."
