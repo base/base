@@ -48,6 +48,14 @@ pub enum SyncTargetState {
 }
 
 impl SyncTargetState {
+    /// The first block to remove, if this state includes a revert.
+    pub const fn revert_to(&self) -> Option<BlockWithParent> {
+        match self {
+            Self::Revert { revert_to } | Self::RevertThenSync { revert_to, .. } => Some(*revert_to),
+            Self::SyncUpTo { .. } => None,
+        }
+    }
+
     const fn apply_next(&mut self, new: Self) {
         *self = match (&*self, new) {
             // If we are just syncing to tip already, replace with the new state.
@@ -74,16 +82,6 @@ impl SyncTargetState {
                 Self::SyncUpTo { to },
             ) => Self::RevertThenSync { revert_to: *revert_to, sync_to: to },
         };
-    }
-}
-
-impl SyncTargetState {
-    /// The first block to remove, if this state includes a revert.
-    pub const fn revert_to(&self) -> Option<BlockWithParent> {
-        match self {
-            Self::Revert { revert_to } | Self::RevertThenSync { revert_to, .. } => Some(*revert_to),
-            Self::SyncUpTo { .. } => None,
-        }
     }
 }
 

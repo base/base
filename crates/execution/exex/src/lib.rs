@@ -457,6 +457,11 @@ where
         Ok(())
     }
 
+    /// Syncs proofs storage forward to `target` in batches.
+    ///
+    /// Each iteration reports the latest stored block via `FinishedHeight` (only while it is at or
+    /// below `target`), so the same height may be reported more than once across calls. The `ExEx`
+    /// manager treats `FinishedHeight` as idempotent, so repeats are harmless.
     async fn sync_forward(
         sync_target: &SyncTarget,
         storage: &BaseProofsStorage<Storage>,
