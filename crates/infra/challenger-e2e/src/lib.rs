@@ -8,6 +8,8 @@ pub use mock_prover::{MockProofRequests, MockProver};
 
 mod mock_verifier;
 
+mod progress;
+
 mod metrics;
 pub use metrics::Scrape;
 

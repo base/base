@@ -1,6 +1,11 @@
 //! Drives a real challenger binary against a throwaway fork of the target L1.
 
-use std::{collections::BTreeSet, path::Path, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeSet,
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use alloy_consensus::Transaction as _;
 use alloy_node_bindings::{Anvil, AnvilInstance};
@@ -31,6 +36,7 @@ use crate::{
     metrics::Scrape,
     mock_prover::MockProver,
     mock_verifier,
+    progress::{self, Progress},
 };
 
 /// Wei granted to each throwaway account on the fork. Orders of magnitude more
@@ -41,6 +47,9 @@ const FUNDING_WEI: u128 = 100_000_000_000_000_000_000;
 /// game. Anything other than the stored root passes `_checkIntermediateRoot`,
 /// and the verifier is mocked for that one call.
 const PATH3_STAGING_ROOT: B256 = B256::repeat_byte(0xde);
+
+/// How often a wait or an observation window logs that it is still going.
+const HEARTBEAT: Duration = Duration::from_secs(30);
 
 /// Counters that must stay at zero for as long as every game on the fork is
 /// valid. Checked absolutely at the baseline and as a delta over the window.
@@ -133,6 +142,22 @@ impl Phase {
             Self::Bystanders => "bystanders",
         }
     }
+
+    /// Human-readable name for log messages, e.g. `Path 2 skip`.
+    ///
+    /// Messages only; filter on the `phase` field, which is [`Self::as_str`].
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Setup => "Setup",
+            Self::QuietWindow => "Quiet window",
+            Self::Path1 => "Path 1",
+            Self::Path2Skip => "Path 2 skip",
+            Self::Path2Dispute => "Path 2 dispute",
+            Self::Path3 => "Path 3",
+            Self::Path4 => "Path 4",
+            Self::Bystanders => "Bystanders",
+        }
+    }
 }
 
 impl std::fmt::Display for Phase {
@@ -149,6 +174,8 @@ pub enum Verdict {
     /// The phase could not assert its claim, for a reason that is not the
     /// challenger's fault. Coverage was lost, not violated.
     Skip,
+    /// The phase's claim did not hold, or the phase could not complete.
+    Fail,
 }
 
 impl Verdict {
@@ -157,6 +184,7 @@ impl Verdict {
         match self {
             Self::Pass => "pass",
             Self::Skip => "skip",
+            Self::Fail => "fail",
         }
     }
 }
@@ -181,8 +209,17 @@ pub struct ChallengerE2e;
 impl ChallengerE2e {
     /// Runs the test to completion. An `Ok` return means the challenger passed.
     pub async fn run() -> Result<()> {
-        let mut config = Config::parse();
+        let config = Config::parse();
+        let mut progress = Progress::new(config.scenario);
+        let result = Self::run_scenario(config, &mut progress).await;
+        if let Err(error) = &result {
+            progress.fail(error);
+        }
+        progress.summary();
+        result
+    }
 
+    async fn run_scenario(mut config: Config, progress: &mut Progress) -> Result<()> {
         // Two distinct accounts: A (driver) signs setup only, B is the
         // challenger. Both are generated per run and never leave the pod.
         let driver = PrivateKeySigner::random();
@@ -203,8 +240,12 @@ impl ChallengerE2e {
             game_type = config.game_type,
             "starting scenario"
         );
+        progress.start(Phase::Setup);
+        let stages_dual_proof = matches!(config.scenario, Scenario::All | Scenario::Path3);
+        let setup_steps = if stages_dual_proof { 5 } else { 4 };
 
         // Held until the end of run(); the fork dies with this binding.
+        progress::step(Phase::Setup, 1, setup_steps, "forking L1 and funding both keys");
         let anvil = Self::spawn_fork(&config)?;
         let fork_url = anvil.endpoint_url();
         let provider: RootProvider = RootProvider::new_http(fork_url.clone());
@@ -237,6 +278,7 @@ impl ChallengerE2e {
 
         // Chosen before the challenger boots so the positive case below is
         // measured against a fork that already contains the target games.
+        progress::step(Phase::Setup, 2, setup_steps, "selecting the games under test");
         let (game_a, game_b) =
             Self::select_games(&config, &factory, &verifier, &anchor_registry).await?;
         if config.prover == ProverMode::Mock {
@@ -252,6 +294,7 @@ impl ChallengerE2e {
         // Taken before the challenger boots. Every dispute assertion below is
         // scoped to A or B, so without this a challenger that also disputes
         // games it was never given would pass the run.
+        progress::step(Phase::Setup, 3, setup_steps, "snapshotting bystander games");
         let bystanders = Self::snapshot_bystanders(
             &config,
             &factory,
@@ -260,15 +303,25 @@ impl ChallengerE2e {
         )
         .await?;
 
-        if matches!(config.scenario, Scenario::All | Scenario::Path3) {
+        if stages_dual_proof {
+            progress::step(Phase::Setup, 4, setup_steps, "staging game B as a dual-proof game");
             Self::stage_dual_proof(&config, &fork_url, &verifier, &provider, &driver, game_b)
                 .await?;
         }
 
+        progress::step(
+            Phase::Setup,
+            setup_steps,
+            setup_steps,
+            "releasing the challenger and waiting for its first scan",
+        );
         Self::release_challenger(&config.env_file, &fork_url, &config.zk_rpc_url, &challenger)?;
         Self::await_first_scan(&config).await?;
+        progress.pass();
 
+        progress.start(Phase::QuietWindow);
         Self::assert_quiet_on_valid_games(&config).await?;
+        progress.pass();
 
         // After the quiet window, not before it. B is a valid dual-proof game
         // until `stage_path3` patches it, so this scenario gets the same
@@ -279,6 +332,7 @@ impl ChallengerE2e {
             // the challenger must leave alone — but `snapshot_bystanders`
             // excludes both games under test. Watching it here is what makes
             // the collateral-damage check cover it.
+            progress.start(Phase::Path3);
             let mut untouched = bystanders;
             untouched
                 .push((game_a.address, Self::read_game_state(&verifier, game_a.address).await?));
@@ -298,6 +352,12 @@ impl ChallengerE2e {
             )
             .await?;
 
+            progress::step(
+                Phase::Path3,
+                4,
+                5,
+                "waiting for the challenger to nullify the ZK proof",
+            );
             // The ZK proof must go, whichever route cleared it. A timeout here
             // fails the run: the game is still invalid, and an E2E that reports
             // success over an undisputed invalid game is worse than no E2E.
@@ -322,8 +382,8 @@ impl ChallengerE2e {
             )
             .await?;
 
-            info!(window = ?config.quiet_window, "observing the fork after Path 3");
-            tokio::time::sleep(config.quiet_window).await;
+            progress::step(Phase::Path3, 5, 5, "checking nothing else is disputed afterwards");
+            Self::observe(config.quiet_window, "the fork after Path 3").await;
 
             let after = Self::disputes_submitted(&config).await?;
             ensure!(
@@ -334,8 +394,11 @@ impl ChallengerE2e {
                 after - submitted - 1.0,
                 config.quiet_window
             );
+            progress.pass();
 
+            progress.start(Phase::Bystanders);
             Self::assert_bystanders_untouched(&verifier, &untouched).await?;
+            progress.pass();
 
             Self::log_scenario_complete(
                 &config,
@@ -344,12 +407,33 @@ impl ChallengerE2e {
             return Ok(());
         }
 
+        progress.start(Phase::Path1);
         let (path1, checkpoint) =
             Self::run_path1(&config, &fork_url, &verifier, &provider, &driver, &challenger, game_a)
                 .await?;
+        // The settle window belongs to whichever claim Path 1 left to check:
+        // Path 2 skip after a ZK challenge, Path 1's own idempotence after a
+        // TEE nullify.
+        match path1 {
+            Path1Outcome::ZkChallenge => {
+                progress.pass();
+                progress.start(Phase::Path2Skip);
+            }
+            Path1Outcome::TeeNullify => {
+                progress::step(Phase::Path1, 3, 3, "checking the nullified game is left alone");
+            }
+        }
         Self::assert_game_a_settled(&config, &verifier, &provider, &challenger, game_a, path1)
             .await?;
+        progress.pass();
+        if matches!(path1, Path1Outcome::TeeNullify) {
+            progress.skip(
+                Phase::Path2Skip,
+                "Path 1 landed as a TEE nullify, so there is no challenge to leave standing",
+            );
+        }
         if config.scenario == Scenario::Path1Path2 {
+            progress.start(Phase::Path2Dispute);
             ensure!(
                 matches!(path1, Path1Outcome::ZkChallenge),
                 "Path 2 dispute requires Path 1 to land as a ZK challenge"
@@ -364,7 +448,10 @@ impl ChallengerE2e {
                 checkpoint,
             )
             .await?;
+            progress.pass();
+            progress.start(Phase::Bystanders);
             Self::assert_bystanders_untouched(&verifier, &bystanders).await?;
+            progress.pass();
             Self::log_scenario_complete(
                 &config,
                 &[
@@ -377,11 +464,23 @@ impl ChallengerE2e {
             );
             return Ok(());
         }
+        progress.start(Phase::Path4);
         let path3_in_situ =
             Self::run_path4(&config, &fork_url, &verifier, &provider, &driver, &challenger, game_b)
                 .await?;
+        progress.pass();
+        if path3_in_situ {
+            progress.passed_within(Phase::Path3, Phase::Path4);
+        } else {
+            progress.skip(
+                Phase::Path3,
+                "Path 4 did not drop the TEE proof first; the path3 scenario covers Path 3",
+            );
+        }
 
+        progress.start(Phase::Bystanders);
         Self::assert_bystanders_untouched(&verifier, &bystanders).await?;
+        progress.pass();
 
         // Built from what ran: `assert_game_a_settled` asserts the Path 2 skip
         // only when Path 1 landed as a ZK challenge, and Path 4 reaches Path 3
@@ -742,6 +841,7 @@ impl ChallengerE2e {
             .await
             .context("failed to build a tx manager for the Path 3 TEE nullify")?;
 
+        progress::step(Phase::Path3, 1, 5, "dropping game B's TEE proof while its roots are valid");
         info!(
             game = %game.address,
             tee_verifier = %tee_verifier,
@@ -806,10 +906,12 @@ impl ChallengerE2e {
              blocked"
         );
 
+        progress::step(Phase::Path3, 2, 5, "waiting for two challenger scans");
         Self::await_scans_after(config, "the TEE proof was dropped").await?;
 
         // Only now does the game become invalid, and every scan from here on
         // classifies it from its ZK-only shape.
+        progress::step(Phase::Path3, 3, 5, "corrupting a root of the ZK-only game");
         let checkpoint = Checkpoint::patch(&fork_config, verifier)
             .await
             .context("failed to corrupt the ZK-only game on the fork")?;
@@ -1271,8 +1373,7 @@ impl ChallengerE2e {
             );
         }
 
-        info!(window = ?config.quiet_window, "observing the challenger against an unmodified fork");
-        tokio::time::sleep(config.quiet_window).await;
+        Self::observe(config.quiet_window, "the challenger against an unmodified fork").await;
         let after = Scrape::fetch(&config.challenger_metrics_url).await?;
 
         // `games_scanned_total` counts attempted factory indices and is
@@ -1335,6 +1436,7 @@ impl ChallengerE2e {
         // those readbacks would have already spent the nonce this baseline is
         // meant to precede, and its correct dispute would read as nobody's.
         let nonce = provider.get_transaction_count(challenger.address()).await?;
+        progress::step(Phase::Path1, 1, 3, "corrupting a root of game A");
         let checkpoint = Checkpoint::patch(&fork_config, verifier)
             .await
             .context("failed to corrupt an intermediate output root on the fork")?;
@@ -1345,6 +1447,7 @@ impl ChallengerE2e {
             target_block = checkpoint.target_block(),
             "corrupted intermediate output root; waiting for the challenger to dispute"
         );
+        progress::step(Phase::Path1, 2, 3, "waiting for the challenger to dispute game A");
 
         let outcome = Self::await_dispute(
             config,
@@ -1413,7 +1516,7 @@ impl ChallengerE2e {
             claim,
             "observing the settle window"
         );
-        tokio::time::sleep(config.quiet_window).await;
+        Self::observe(config.quiet_window, "the settle window").await;
 
         let after = Self::read_game_state(verifier, game.address).await?;
         let nonce_after = provider.get_transaction_count(challenger.address()).await?;
@@ -1458,6 +1561,12 @@ impl ChallengerE2e {
         checkpoint: Checkpoint,
     ) -> Result<()> {
         let nonce = provider.get_transaction_count(challenger.address()).await?;
+        progress::step(
+            Phase::Path2Dispute,
+            1,
+            2,
+            "restoring the canonical root under the challenge",
+        );
         checkpoint
             .restore(&fork_config, verifier)
             .await
@@ -1466,6 +1575,12 @@ impl ChallengerE2e {
             game = %game.address,
             challenged_index = checkpoint.index,
             "restored the correct root; waiting for Path 2"
+        );
+        progress::step(
+            Phase::Path2Dispute,
+            2,
+            2,
+            "waiting for the challenger to nullify the challenge",
         );
 
         let state = Self::poll_until(
@@ -1620,6 +1735,7 @@ impl ChallengerE2e {
         let fork_config = Self::fork_config(config, fork_url, driver, game);
         // Sampled before the patch for the reason given in `run_path1`.
         let nonce = provider.get_transaction_count(challenger.address()).await?;
+        progress::step(Phase::Path4, 1, 2, "corrupting a root of dual-proof game B");
         let checkpoint = Checkpoint::patch(&fork_config, verifier)
             .await
             .context("failed to corrupt the dual-proof game on the fork")?;
@@ -1630,6 +1746,7 @@ impl ChallengerE2e {
             target_block = checkpoint.target_block(),
             "corrupted dual-proof game; waiting for Path 4"
         );
+        progress::step(Phase::Path4, 2, 2, "waiting for the challenger to drop one of B's proofs");
 
         // Path 4 is done when either proof is gone; which one tells us what the
         // game has become, and so which path must clear the remainder. Both
@@ -1854,8 +1971,31 @@ impl ChallengerE2e {
         }
     }
 
+    /// Sleeps through an observation window, logging every [`HEARTBEAT`] so a
+    /// quiet window is distinguishable from a hung driver.
+    async fn observe(window: Duration, what: &str) {
+        info!(observing = what, window_s = window.as_secs(), "observing {what}");
+        let started = Instant::now();
+        loop {
+            let elapsed = started.elapsed();
+            if elapsed >= window {
+                return;
+            }
+            tokio::time::sleep(HEARTBEAT.min(window - elapsed)).await;
+            let elapsed = started.elapsed();
+            if elapsed < window {
+                info!(
+                    observing = what,
+                    elapsed_s = elapsed.as_secs(),
+                    window_s = window.as_secs(),
+                    "still observing {what}"
+                );
+            }
+        }
+    }
+
     /// Polls `check` every `poll_interval` until it yields a value or `budget`
-    /// elapses.
+    /// elapses, logging every [`HEARTBEAT`] while it waits.
     async fn poll_until<T, F, Fut>(
         config: &Config,
         budget: Duration,
@@ -1867,8 +2007,20 @@ impl ChallengerE2e {
         Fut: Future<Output = Result<Option<T>>>,
     {
         let mut last_error = None;
+        let started = Instant::now();
+        let mut next_heartbeat = HEARTBEAT;
         match tokio::time::timeout(budget, async {
             loop {
+                let elapsed = started.elapsed();
+                if elapsed >= next_heartbeat {
+                    info!(
+                        waiting_for,
+                        elapsed_s = elapsed.as_secs(),
+                        budget_s = budget.as_secs(),
+                        "still waiting for {waiting_for}"
+                    );
+                    next_heartbeat += HEARTBEAT;
+                }
                 match check().await {
                     Ok(Some(value)) => return Ok(value),
                     Ok(None) => {}
@@ -1995,6 +2147,7 @@ mod tests {
         assert_eq!(Phase::Bystanders.as_str(), "bystanders");
         assert_eq!(Verdict::Pass.as_str(), "pass");
         assert_eq!(Verdict::Skip.as_str(), "skip");
+        assert_eq!(Verdict::Fail.as_str(), "fail");
 
         // `Display` is what the `%` sigil uses in the tracing macros, so it has
         // to agree with `as_str` or the logs and this test diverge.
