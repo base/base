@@ -176,7 +176,7 @@ pub struct BatcherArgs {
     /// turn throttling on without a restart.
     #[arg(
         long = "throttle-strategy",
-        default_value = "linear",
+        default_value = "quadratic",
         env = "BASE_BATCHER_THROTTLE_STRATEGY"
     )]
     pub throttle_strategy: ThrottleStrategy,
@@ -479,8 +479,8 @@ mod tests {
         assert_eq!(shadow.validator_l2_rpc.as_str(), "http://validator:9545/");
     }
 
-    /// Without flags the batcher runs blobs at full blob frames and Brotli quality 9, throttles
-    /// with the linear strategy, starts running and does not wait for the node to sync.
+    /// Without flags the batcher runs blobs at full blob frames and Brotli quality 9, picks the
+    /// quadratic throttle strategy, starts running and does not wait for the node to sync.
     #[test]
     fn into_config_applies_the_defaults() {
         let cli = parse_cli(&[]);
@@ -488,7 +488,7 @@ mod tests {
 
         assert!(!config.stopped);
         assert!(!config.wait_node_sync);
-        assert_eq!(config.throttle_strategy, ThrottleStrategy::Linear);
+        assert_eq!(config.throttle_strategy, ThrottleStrategy::Quadratic);
 
         assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Blob);
         assert_eq!(
@@ -553,7 +553,7 @@ mod tests {
             "--throttle-threshold",
             "500000",
             "--throttle-strategy",
-            "quadratic",
+            "linear",
             "--check-recent-txs-depth",
             "16",
             "--wait-node-sync-timeout",
@@ -582,7 +582,7 @@ mod tests {
         assert_eq!(config.tx_manager.resubmission_timeout, Duration::from_secs(30));
         assert_eq!(config.poll_interval, Duration::from_secs(2));
         assert_eq!(config.throttle.expect("the throttle is on").threshold_bytes, 500_000);
-        assert_eq!(config.throttle_strategy, ThrottleStrategy::Quadratic);
+        assert_eq!(config.throttle_strategy, ThrottleStrategy::Linear);
         assert_eq!(config.check_recent_txs_depth, 16);
         assert_eq!(config.wait_node_sync_timeout, Duration::from_secs(60));
         assert_eq!(config.admin_addr, Some(SocketAddr::new(IpAddr::from([0, 0, 0, 0]), 7000)));
@@ -606,7 +606,7 @@ mod tests {
         }
     }
 
-    /// The DA throttle is on unless `--no-throttle` is set, `--throttle-strategy off` included.
+    /// The DA throttle is on unless `--no-throttle` is set, even with `--throttle-strategy off`.
     #[test]
     fn only_no_throttle_disables_the_da_throttle() {
         assert!(parse_cli(&[]).into_config(false).unwrap().throttle.is_some());

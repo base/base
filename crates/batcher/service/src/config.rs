@@ -112,7 +112,7 @@ impl Default for BatcherConfig {
             max_pending_transactions: 1,
             tx_manager: TxManagerConfig { num_confirmations: 1, ..TxManagerConfig::default() },
             throttle: Some(ThrottleConfig::default()),
-            throttle_strategy: ThrottleStrategy::Linear,
+            throttle_strategy: ThrottleStrategy::Quadratic,
             check_recent_txs_depth: 0,
             admin_addr: None,
             stopped: false,
@@ -180,17 +180,17 @@ mod tests {
     /// strategy when the throttle is disabled.
     #[test]
     fn throttle_controller_takes_the_configured_strategy_unless_disabled() {
-        let quadratic = BatcherConfig {
-            throttle_strategy: ThrottleStrategy::Quadratic,
+        let step = BatcherConfig {
+            throttle_strategy: ThrottleStrategy::Step,
             throttle: Some(ThrottleConfig { threshold_bytes: 42, ..ThrottleConfig::default() }),
             ..BatcherConfig::default()
         };
-        let disabled = BatcherConfig { throttle: None, ..quadratic.clone() };
+        let disabled = BatcherConfig { throttle: None, ..step.clone() };
 
-        let controller = quadratic.throttle_controller();
-        assert_eq!(*controller.strategy(), ThrottleStrategy::Quadratic);
+        let controller = step.throttle_controller();
+        assert_eq!(controller.strategy(), ThrottleStrategy::Step);
         assert_eq!(controller.config().threshold_bytes, 42);
-        assert_eq!(*disabled.throttle_controller().strategy(), ThrottleStrategy::Off);
+        assert_eq!(disabled.throttle_controller().strategy(), ThrottleStrategy::Off);
     }
 
     /// A shadow config accepts the shadow inbox as the batch inbox of the parity validator's

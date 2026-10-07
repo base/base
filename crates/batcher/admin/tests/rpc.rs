@@ -129,7 +129,7 @@ async fn throttle_strategies_are_set_and_read_back_by_lowercase_name() {
         let info: Value =
             rpc.client.request("admin_getThrottleController", rpc_params![]).await.unwrap();
         assert_eq!(info["strategy"], strategy);
-        assert_eq!(info["current_intensity"], intensity);
+        assert_eq!(info["current_intensity"], intensity, "{strategy}");
     }
 }
 

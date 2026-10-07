@@ -152,7 +152,7 @@ digest = "d1525977c0"
 
 ["crates/batcher/cli/README.md"]
 summary = "base-batcher-cli: base batcher flags and startup, with sequencer endpoints and leader search, channel and DA config, and shadow mode posting to the inbox a parity validator derives its chain from."
-digest = "3841ebb00a"
+digest = "4c10fc8fed"
 
 ["crates/batcher/comp/README.md"]
 summary = "base-comp: incremental Brotli channel compression (CompressionStream, BrotliLevel) producing protocol-compatible channels; batch encoding and framing live in batcher-encoder."
@@ -160,7 +160,7 @@ digest = "ce9421e523"
 
 ["crates/batcher/core/README.md"]
 summary = "base-batcher-core: async BatchDriver, SubmissionQueue for L1 transactions, and the DA throttle (Off, Step, Linear, Quadratic strategies) that publishes the DA limits the block builders apply."
-digest = "e2b4bd478f"
+digest = "dd94b446ee"
 
 ["crates/batcher/encoder/README.md"]
 summary = "base-batcher-encoder: synchronous, no-I/O encoder from L2 blocks to L1 submissions. Covers channel closing rules, blob framing, metric labels, and BatchEncoder usage."

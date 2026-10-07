@@ -12,9 +12,7 @@ pub struct ThrottleConfig {
     /// Backlog threshold in bytes at which throttling activates.
     /// Default: 1,000,000 bytes (1 MB).
     pub threshold_bytes: u64,
-    /// Maximum throttle intensity (0.0 to 1.0), reached from the threshold on with
-    /// [`ThrottleStrategy::Step`] and from twice the threshold on with
-    /// [`ThrottleStrategy::Linear`] and [`ThrottleStrategy::Quadratic`].
+    /// Maximum throttle intensity (0.0 to 1.0).
     /// Default: 1.0 (full throttle).
     pub max_intensity: f64,
     /// Maximum block DA bytes allowed at full throttle intensity.
@@ -108,7 +106,7 @@ pub enum ThrottleConfigError {
 /// Parameters to apply when throttling is active.
 #[derive(Debug, Clone, Copy)]
 pub struct ThrottleParams {
-    /// Fraction of normal submission rate to apply (0.0 to 1.0).
+    /// Throttle intensity, from 0 (upper limits) to 1 (lower limits).
     pub intensity: f64,
     /// Maximum DA bytes allowed per block at the current throttle intensity.
     pub max_block_size: u64,
@@ -128,23 +126,18 @@ impl ThrottleParams {
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[serde(rename_all = "lowercase")]
 pub enum ThrottleStrategy {
-    /// No throttling: intensity 0 whatever the backlog.
+    /// Never throttles.
     Off,
-    /// Intensity 0 below the threshold, and the maximum intensity from the threshold on.
+    /// Maximum intensity from the threshold on.
     Step,
-    /// Intensity in proportion to the backlog above the threshold, up to the maximum intensity at
-    /// twice the threshold and beyond.
+    /// Intensity grows linearly from 0 at the threshold to the maximum at twice the threshold.
     Linear,
-    /// Intensity in proportion to the square of the backlog above the threshold, up to the
-    /// maximum intensity at twice the threshold and beyond, so below `linear` in between.
+    /// Like the linear strategy, but the growth is squared, so gentler until twice the threshold.
     Quadratic,
 }
 
-/// Controls submission rate based on DA backlog.
-///
-/// The controller evaluates the current DA backlog against a configured
-/// threshold and strategy to produce throttle parameters that the driver
-/// can use to slow block production on the sequencer.
+/// Turns a DA backlog into throttle params, following a [`ThrottleConfig`] and a
+/// [`ThrottleStrategy`].
 #[derive(Debug)]
 pub struct ThrottleController {
     /// Throttle configuration.
@@ -170,8 +163,8 @@ impl ThrottleController {
     }
 
     /// Returns the active throttle strategy.
-    pub const fn strategy(&self) -> &ThrottleStrategy {
-        &self.strategy
+    pub const fn strategy(&self) -> ThrottleStrategy {
+        self.strategy
     }
 
     /// Compute DA size limits from the given intensity.
@@ -203,7 +196,7 @@ impl ThrottleController {
         }
     }
 
-    /// Update with current DA backlog bytes.
+    /// Computes the throttle params for a DA backlog.
     ///
     /// Returns [`ThrottleParams`] if throttling should be applied, or `None` if the backlog is
     /// below the threshold or the intensity is zero.
@@ -322,7 +315,7 @@ impl DaThrottle {
         let config = self.controller.config();
         let limits = self.controller.limits(params.as_ref());
         ThrottleInfo {
-            strategy: *self.controller.strategy(),
+            strategy: self.controller.strategy(),
             threshold_bytes: config.threshold_bytes,
             max_intensity: config.max_intensity,
             current_intensity: params.map_or(0.0, |p| p.intensity),
