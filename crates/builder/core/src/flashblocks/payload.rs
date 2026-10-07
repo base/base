@@ -897,7 +897,7 @@ where
         block_hash: Option<B256>,
         data: F,
     ) where
-        D: Serialize,
+        D: Serialize + Send + 'static,
         F: FnOnce() -> D,
     {
         if GlobalTransactionEventWriter::get().is_none() {

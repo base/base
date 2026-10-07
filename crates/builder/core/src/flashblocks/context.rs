@@ -453,7 +453,7 @@ impl BasePayloadBuilderCtx {
         ordering_position: Option<u64>,
         data: F,
     ) where
-        D: Serialize,
+        D: Serialize + Send + 'static,
         F: FnOnce() -> D,
     {
         emit_builder_transaction_event(

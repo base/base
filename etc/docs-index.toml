@@ -240,7 +240,7 @@ digest = "66133b4e24"
 
 ["crates/common/observability-events/README.md"]
 summary = "Producer-side transaction-event/v1 JSONL envelope and non-blocking writer for transaction audit journals, with field and privacy rules. Use when emitting transaction lifecycle events."
-digest = "3e17333f7d"
+digest = "7dba405286"
 
 ["crates/common/precompile-macros/README.md"]
 summary = "Proc macros for native precompile storage: #[contract], #[namespace], #[derive(Storable)], and primitive/array impl generators. Use when defining precompile storage layouts (adapted from Tempo)."
