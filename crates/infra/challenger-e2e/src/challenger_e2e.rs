@@ -332,6 +332,7 @@ impl ChallengerE2e {
             // the challenger must leave alone — but `snapshot_bystanders`
             // excludes both games under test. Watching it here is what makes
             // the collateral-damage check cover it.
+            progress.start(Phase::Path3);
             let mut untouched = bystanders;
             untouched
                 .push((game_a.address, Self::read_game_state(&verifier, game_a.address).await?));
@@ -340,7 +341,6 @@ impl ChallengerE2e {
             // counters are still absolutely zero once the first scan completes.
             let submitted = Self::disputes_submitted(&config).await?;
 
-            progress.start(Phase::Path3);
             let (nonce, dual_before, checkpoint) = Self::stage_path3(
                 &config,
                 &fork_url,
@@ -433,11 +433,11 @@ impl ChallengerE2e {
             );
         }
         if config.scenario == Scenario::Path1Path2 {
+            progress.start(Phase::Path2Dispute);
             ensure!(
                 matches!(path1, Path1Outcome::ZkChallenge),
                 "Path 2 dispute requires Path 1 to land as a ZK challenge"
             );
-            progress.start(Phase::Path2Dispute);
             Self::run_path2(
                 &config,
                 Self::fork_config(&config, &fork_url, &driver, game_a),

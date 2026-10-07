@@ -124,10 +124,26 @@ impl Progress {
         self.outcomes.push(Outcome { phase, verdict: Verdict::Skip, elapsed_ms: None });
     }
 
-    /// Marks the running phase, if any, as the one that failed.
+    /// Marks the running phase as the one that failed.
+    ///
+    /// An error raised between two phases, with none running, is charged to
+    /// the next planned phase that has no outcome yet, so a failed run never
+    /// reads `failed=0`.
     pub(crate) fn fail(&mut self, cause: &eyre::Report) {
-        let Some((phase, since)) = self.current.take() else { return };
-        let elapsed_ms = since.elapsed().as_millis();
+        let (phase, elapsed_ms) = match self.current.take() {
+            Some((phase, since)) => (phase, Some(since.elapsed().as_millis())),
+            None => {
+                let next = self
+                    .plan
+                    .iter()
+                    .find(|phase| !self.outcomes.iter().any(|o| o.phase == **phase));
+                let Some(&phase) = next else {
+                    error!(error = %cause, "run failed after every planned phase");
+                    return;
+                };
+                (phase, None)
+            }
+        };
         error!(
             phase = %phase,
             verdict = %Verdict::Fail,
@@ -136,7 +152,7 @@ impl Progress {
             "{} failed",
             phase.label()
         );
-        self.outcomes.push(Outcome { phase, verdict: Verdict::Fail, elapsed_ms: Some(elapsed_ms) });
+        self.outcomes.push(Outcome { phase, verdict: Verdict::Fail, elapsed_ms });
     }
 
     /// One line per planned phase, e.g. `path3=pass(22.4s)`; a phase the run
@@ -213,6 +229,22 @@ mod tests {
         let rendered = progress.render();
         assert!(rendered.contains("path2-skip=skip "), "{rendered}");
         assert!(rendered.contains("path3=pass "), "{rendered}");
+    }
+
+    #[test]
+    fn an_error_between_phases_fails_the_next_planned_phase() {
+        let mut progress = Progress::new(Scenario::Path1Path2);
+        for phase in [Phase::Setup, Phase::QuietWindow, Phase::Path1] {
+            progress.start(phase);
+            progress.pass();
+        }
+        progress.skip(Phase::Path2Skip, "Path 1 landed as a TEE nullify");
+
+        progress.fail(&eyre::eyre!("Path 2 dispute requires Path 1 to land as a ZK challenge"));
+
+        let rendered = progress.render();
+        assert!(rendered.contains("path2-dispute=fail "), "{rendered}");
+        assert!(rendered.ends_with("bystanders=not-run"), "{rendered}");
     }
 
     #[test]

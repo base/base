@@ -289,8 +289,8 @@ answerable without reading the whole stream. Note the prefix: the driver's
 | What one run actually asserted | `"scenario complete"` — has `phases_asserted` |
 | Which scenario a run was | `"starting scenario"` — has `scenario`, both keys, the timeouts |
 | A named contract revert | `"reverted with"` |
-| Where a run is, phase by phase | `"started" OR "finished" OR "failed" OR "skipped"` with `@data.message.fields.step:*` |
-| Which phase a failed run died in | `"failed" @data.message.fields.verdict:fail` — has `phase` and `elapsed_ms` |
+| Where a run is, phase by phase | `"started" OR "finished" OR "failed" OR "skipped"` with `@data.message.fields.phase:*` |
+| Which phase a failed run died in | `"failed" @data.message.fields.verdict:fail` — has `phase`, and `elapsed_ms` unless the error came between two phases (charged to the next one) |
 | Every planned phase of one run, with timings | `"run summary"` — has `results`, e.g. `setup=pass(41.2s) quiet-window=pass(95.0s) path3=pass(22.4s) bystanders=pass(1.8s)` |
 | A wait that is taking long | `"still waiting for"` — has `waiting_for`, `elapsed_s`, `budget_s` |
 | One step of a phase | `@data.message.fields.what:"waiting for two challenger scans"` — with `phase`, `step`, `steps` |
