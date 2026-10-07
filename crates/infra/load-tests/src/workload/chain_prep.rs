@@ -137,8 +137,6 @@ pub struct ChainPrepContext<'a> {
     pub max_gas_price: u128,
     /// Primary RPC used to submit prep transactions.
     pub primary_submission_rpc: Url,
-    /// When true, progress bars are hidden (live display mode).
-    pub hide_progress: bool,
     /// Concurrent prep RPC operations.
     pub concurrency: usize,
     /// B-20 mint amount per sender (when B-20 prep runs).
@@ -152,11 +150,8 @@ pub struct ChainPrepContext<'a> {
 }
 
 impl ChainPrepContext<'_> {
-    /// Creates a progress bar for prep phases (or a hidden bar in live-display mode).
+    /// Creates a progress bar for prep phases.
     pub fn progress_bar(&self, total: u64, prefix: &str) -> ProgressBar {
-        if self.hide_progress {
-            return ProgressBar::hidden();
-        }
         let pb = ProgressBar::new(total);
         pb.set_style(
             ProgressStyle::with_template("{prefix} [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
