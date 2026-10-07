@@ -10,7 +10,9 @@ concurrency:
 
 permissions:
   contents: read
-  # This allows posting comments and reviews and un-resolving review threads
+  # This allows posting comments, reviews, and replies. It does not allow resolving review threads
+  # (GitHub rejects the resolveReviewThread mutation for this token), so a fixed thread gets a reply
+  # asking for a manual resolve. Reopening a thread has not been tested and may be rejected too.
   # It does not allow pushing any commits or modifying any files in the repo
   pull-requests: write
 

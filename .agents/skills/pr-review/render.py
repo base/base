@@ -147,17 +147,18 @@ def cell(text: str) -> str:
 
 
 def render_summary(*, overview: str | None, new: list[Finding], outside: list[Finding],
-                   threads: list[dict[str, Any]], reopened: set[str], fixed: set[str], failed: list[str],
-                   details: str, repo: str, head_sha: str | None,
+                   threads: list[dict[str, Any]], reopened: set[str], fixed: set[str], fixed_open: set[str],
+                   failed: list[str], details: str, repo: str, head_sha: str | None,
                    replace_existing: bool) -> str | None:
     """The top-level summary: headline counts, new findings, and what is still open.
 
     Returns None when there is nothing to report and no earlier summary to replace.
     """
     # An outdated thread is still open until someone resolves it, so it still counts.
-    carried = [t for t in threads if t["owned_by_bot"] and t["thread_id"] not in fixed
+    settled = fixed | fixed_open
+    carried = [t for t in threads if t["owned_by_bot"] and t["thread_id"] not in settled
                and (t["thread_id"] in reopened or not t["resolved"])]
-    resolved_now = [t for t in threads if t["thread_id"] in fixed]
+    resolved_now = [t for t in threads if t["thread_id"] in settled]
     if not (new or outside or carried or resolved_now or failed) and not replace_existing:
         return None
     counts: collections.Counter = collections.Counter(f.severity for f in new + outside)
@@ -186,8 +187,10 @@ def render_summary(*, overview: str | None, new: list[Finding], outside: list[Fi
 
     if resolved_now:
         out += ["", "### Fixed in this push", ""]
-        out += [f"- ✅ {thread_header(t)[1]} ([thread]({t['url']}))" if t.get("url")
-                else f"- ✅ {thread_header(t)[1]}" for t in resolved_now]
+        for t in resolved_now:
+            link = f" ([thread]({t['url']}))" if t.get("url") else ""
+            note = " — fixed, but still open on GitHub; please resolve it" if t["thread_id"] in fixed_open else ""
+            out.append(f"- ✅ {thread_header(t)[1]}{link}{note}")
 
     if outside:
         out += ["", "### Outside the diff", ""]

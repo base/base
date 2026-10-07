@@ -261,7 +261,7 @@ class SummaryTests(unittest.TestCase):
         return render.render_summary(
             overview="One panic path.", new=plan.new, outside=plan.outside, threads=threads or [],
             reopened={u["thread_id"] for u in plan.unresolves}, fixed={r["thread_id"] for r in plan.resolves},
-            failed=failed or [], details="Details.",
+            fixed_open={r["thread_id"] for r in plan.fixed_open}, failed=failed or [], details="Details.",
             repo="base/base", head_sha="abc123", replace_existing=replace_existing)
 
     def test_summary_lists_findings_with_links(self) -> None:
@@ -431,11 +431,37 @@ class BudgetTests(unittest.TestCase):
         # With the budget, a worst-case run still ends with a decision; without it, it would not.
         self.assertGreater(worst, review.MIN_STAGE_SECONDS)
 
+    def test_gh_calls_are_bounded(self) -> None:
+        with mock.patch.object(review, "run", return_value="") as run:
+            review.gh(["api", "x"])
+            review.git(["status"])
+        self.assertEqual([c.kwargs["timeout"] for c in run.call_args_list],
+                         [review.GH_TIMEOUT_SECONDS, review.GH_TIMEOUT_SECONDS])
+
     def test_agents_do_not_inherit_github_credentials(self) -> None:
         with mock.patch.dict(os.environ, {"GH_TOKEN": "x", "GITHUB_TOKEN": "y", "ANTHROPIC_API_KEY": "z"}):
             env = review.agent_env()
         self.assertEqual((env.get("GH_TOKEN"), env.get("GITHUB_TOKEN"), env.get("ANTHROPIC_API_KEY")),
                          (None, None, "z"))
+
+
+class FailureReasonTests(unittest.TestCase):
+    def result(self, stdout: str = "", stderr: str = ""):
+        return mock.Mock(stdout=stdout, stderr=stderr)
+
+    def test_the_api_error_in_stdout_is_reported_not_the_model_warning(self) -> None:
+        reason = review.describe_failure(self.result(
+            stdout=json.dumps({"is_error": True, "result": "API Error: 403 Access denied to restricted model"}),
+            stderr='[claude-code:unrecognized_model] {"model":"grok-4.7"}'))
+        self.assertIn("403", reason)
+        self.assertNotIn("unrecognized_model", reason)
+
+    def test_plain_stderr_is_used_when_stdout_is_not_json(self) -> None:
+        self.assertEqual(review.describe_failure(self.result(stdout="", stderr="gh: HTTP 502")), "gh: HTTP 502")
+
+    def test_the_warning_alone_is_better_than_nothing(self) -> None:
+        reason = review.describe_failure(self.result(stderr="[claude-code:unrecognized_model] x"))
+        self.assertTrue(reason)
 
 
 class FakeGh:
@@ -475,7 +501,8 @@ class ApplyPlanTests(unittest.TestCase):
             return render.render_summary(
                 overview=None, new=plan.new, outside=plan.outside, threads=self.ctx.threads,
                 reopened={u["thread_id"] for u in plan.unresolves}, fixed={r["thread_id"] for r in plan.resolves},
-                failed=[], details="d", repo="base/base", head_sha="abc", replace_existing=True)
+                fixed_open={r["thread_id"] for r in plan.fixed_open}, failed=[], details="d",
+                repo="base/base", head_sha="abc", replace_existing=True)
 
         with mock.patch.object(review, "gh", gh):
             return review.apply_plan(self.plan, self.ctx, summarize)
@@ -508,18 +535,42 @@ class ApplyPlanTests(unittest.TestCase):
         self.assertIn("### Outside the diff", summary)
         self.assertIn("Panics on empty batch", summary)
 
-    def test_a_failed_resolve_or_reopen_is_not_reported_as_applied(self) -> None:
-        gh = FakeGh(fail=("{ resolveReviewThread(", "{ unresolveReviewThread("))
+    def test_a_failed_reopen_is_not_reported_as_applied(self) -> None:
+        gh = FakeGh(fail=("{ unresolveReviewThread(",))
         problems = self.apply(gh)
-        self.assertEqual(len(problems), 2)
-        self.assertEqual((self.plan.resolves, self.plan.unresolves), ([], []))
-        # No "Fixed" or "Reopened" reply for a change that did not happen.
+        self.assertEqual(len(problems), 1)
+        self.assertEqual(self.plan.unresolves, [])
         replies = [" ".join(c) for c in gh.calls if "addPullRequestReviewThreadReply" in " ".join(c)]
-        self.assertEqual(len(replies), 1)
-        self.assertNotIn("Fixed", replies[0])
+        self.assertFalse([r for r in replies if "Reopened" in r])
         [summary] = [i for c, i in zip(gh.calls, gh.inputs) if c[:2] == ["pr", "comment"]]
-        self.assertNotIn("Fixed in this push", summary)
         self.assertNotIn("### Reopened", summary)
+
+    def test_when_github_refuses_to_resolve_the_reply_asks_a_person_to(self) -> None:
+        gh = FakeGh(fail=("{ resolveReviewThread(",))
+        problems = self.apply(gh)
+        # The Actions token cannot resolve threads, so this is expected and is not a failed run.
+        self.assertEqual(problems, [])
+        self.assertEqual((self.plan.resolves, len(self.plan.fixed_open)), ([], 1))
+        [reply] = [" ".join(c) for c in gh.calls if "Fixed" in " ".join(c)]
+        self.assertIn("please resolve it", reply)
+        [summary] = [i for c, i in zip(gh.calls, gh.inputs) if c[:2] == ["pr", "comment"]]
+        self.assertIn("### Fixed in this push", summary)
+        self.assertIn("please resolve it", summary)
+        self.assertNotIn("## 💬", summary)
+
+    def test_a_thread_already_marked_for_manual_resolve_is_not_asked_again(self) -> None:
+        asked = {**thread("open"), "comments": [
+            {"author": "github-actions", "body": "Problem."},
+            {"author": "github-actions", "body": f"**Fixed:** x\n\n{review.RESOLVE_REQUEST}"}]}
+        plan = review.build_plan({"actions": [{"type": "resolve", "thread_id": "open", "body": "fixed"}]},
+                                 [asked], set())
+        self.assertEqual((plan.resolves, plan.fixed_open, plan.asked), ([], [], ["open"]))
+
+    def test_failing_to_list_old_summaries_still_posts_the_new_one(self) -> None:
+        gh = FakeGh(fail=("startswith",))
+        problems = self.apply(gh)
+        self.assertEqual(len(problems), 1)
+        self.assertEqual(len([c for c in gh.calls if c[:2] == ["pr", "comment"]]), 1)
 
     def test_state_changes_come_before_their_explanations(self) -> None:
         gh = FakeGh()
@@ -609,6 +660,14 @@ class PipelineFailureTests(unittest.TestCase):
         outcome = self.run_pipeline()
         self.assertIn("council/council-tests", outcome.failed)
         self.assertIn("council-chair", self.calls)
+
+    def test_a_failed_decider_still_yields_a_summary_that_says_so(self) -> None:
+        self.failing = {"decide"}
+        outcome = self.run_pipeline()
+        self.assertIn("decide", outcome.failed)
+        plan = review.build_plan(outcome.decision, [], review.diff_new_lines(DIFF))
+        self.assertEqual(plan.new, [])
+        self.assertIn("final step failed", outcome.decision["overview"])
 
     def test_every_reviewer_failing_is_an_error(self) -> None:
         self.failing = {"review-general", "council-invariants", "council-adversary", "council-tests"}
