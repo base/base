@@ -198,6 +198,16 @@ class FindingTests(unittest.TestCase):
         severity, text = render.thread_header(thread("t", body=body))
         self.assertEqual((severity, text), ("major", "🟠 **Major** — This overlay does not stop a PR."))
 
+    def test_threads_with_empty_or_marker_only_bodies_render(self) -> None:
+        for body in ("", render.MARKER, f"{render.MARKER}\n\n"):
+            with self.subTest(body=body):
+                self.assertEqual(render.thread_header(thread("t", body=body)), (None, "💬 (empty comment)"))
+                text = render.render_summary(
+                    overview=None, new=[], outside=[], threads=[thread("t", body=body)], reopened=set(),
+                    fixed=set(), fixed_open=set(), failed=[], details="d", repo="base/base", head_sha="abc",
+                    replace_existing=False)
+                self.assertIn("(empty comment)", text)
+
     def test_oversized_bodies_are_clipped_below_the_github_limit(self) -> None:
         finding = render.Finding.from_action(comment(body="x" * 100_000, evidence="y" * 100_000))
         self.assertLessEqual(len(finding.markdown()), render.MAX_BODY_CHARS)
@@ -419,6 +429,75 @@ class ThreadTests(unittest.TestCase):
         self.assertIn("diff --git a/old.rs b/new.rs", diff)
 
 
+class PrContextTests(unittest.TestCase):
+    """pr_context against a scripted gh."""
+
+    HEAD = "a" * 40
+
+    def scripted(self, *, fail: tuple[str, ...] = (), head: str | None = None, files_pages: list | None = None):
+        calls: list[str] = []
+
+        def fake_gh(args, input_text=None):
+            joined = " ".join(args)
+            calls.append(joined)
+            for needle in fail:
+                if needle in joined:
+                    raise review.ReviewError(f"boom: {needle}")
+            if args[:2] == ["pr", "view"]:
+                return json.dumps({"title": "T", "body": "B", "headRefOid": head or self.HEAD,
+                                   "files": [{"path": "src/a.rs"}]})
+            if args[:2] == ["pr", "diff"]:
+                return DIFF
+            if "pulls/7/files" in joined:
+                return json.dumps(files_pages or [[{"filename": "src/a.rs", "status": "modified",
+                                                    "patch": "@@ -1 +1,2 @@\n keep\n+new"}]])
+            if "reviewThreads" in joined:
+                return json.dumps([{"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}}])
+            return ""
+
+        return fake_gh, calls
+
+    def context(self, gh_fn, checked_out: str | None = None, post: bool = False):
+        with mock.patch.object(review, "gh", gh_fn), mock.patch.object(
+                review, "git", return_value=(checked_out or self.HEAD) + "\n"):
+            return review.pr_context(7, "base/base", post=post)
+
+    def test_the_diff_is_rebuilt_from_the_files_api_when_gh_pr_diff_fails(self) -> None:
+        gh_fn, calls = self.scripted(fail=("pr diff",))
+        ctx = self.context(gh_fn)
+        self.assertIn(("src/a.rs", 2), review.diff_new_lines(ctx.diff))
+        files_call = next(c for c in calls if "pulls/7/files" in c)
+        self.assertIn("--paginate", files_call)
+        self.assertIn("--slurp", files_call)
+
+    def test_all_pages_of_the_files_api_are_used(self) -> None:
+        pages = [[{"filename": "a.rs", "status": "modified", "patch": "@@ -1 +1 @@\n+x"}],
+                 [{"filename": "b.rs", "status": "modified", "patch": "@@ -1 +1 @@\n+y"}]]
+        gh_fn, _ = self.scripted(fail=("pr diff",), files_pages=pages)
+        anchors = {p for p, _ in review.diff_new_lines(self.context(gh_fn).diff)}
+        self.assertEqual(anchors, {"a.rs", "b.rs"})
+
+    def test_threads_are_read_with_pagination(self) -> None:
+        gh_fn, calls = self.scripted()
+        self.context(gh_fn)
+        call = next(c for c in calls if "reviewThreads" in c)
+        self.assertIn("--paginate", call)
+        self.assertIn("--slurp", call)
+
+    def test_a_failed_previous_summary_lookup_does_not_stop_the_review(self) -> None:
+        gh_fn, _ = self.scripted(fail=("startswith",))
+        self.assertIsNone(self.context(gh_fn).previous_summary)
+
+    def test_posting_from_the_wrong_commit_is_refused(self) -> None:
+        gh_fn, _ = self.scripted()
+        with self.assertRaises(review.ReviewError):
+            self.context(gh_fn, checked_out="b" * 40, post=True)
+
+    def test_a_local_run_on_another_commit_only_warns(self) -> None:
+        gh_fn, _ = self.scripted()
+        self.assertEqual(self.context(gh_fn, checked_out="b" * 40, post=False).head_sha, self.HEAD)
+
+
 class BudgetTests(unittest.TestCase):
     def agent(self, timeout: int = 1000) -> review.Agent:
         return review.Agent("a", "review", ("always",), "m", "high", "Read", timeout, None, None, "p",
@@ -512,6 +591,40 @@ class AgentRunTests(unittest.TestCase):
         review.MODELS_RAN.clear()
         self.call(self.agent(name="alias-agent", model="opus"), [self.envelope()])
         self.assertEqual(review.MODELS_RAN["alias-agent"], "resolved-model")
+
+    def test_a_retry_gets_only_the_time_that_is_left(self) -> None:
+        empty = json.dumps({"is_error": False, "structured_output": None})
+        now = [0.0]
+        timeouts: list[int] = []
+
+        def slow_first(cmd, **kwargs):
+            timeouts.append(kwargs["timeout"])
+            now[0] += 800  # the first attempt uses almost all of its time and returns nothing
+            return empty if len(timeouts) == 1 else self.envelope()
+
+        with mock.patch.object(review.time, "monotonic", lambda: now[0]):
+            budget = review.Budget(1000)
+            with tempfile.TemporaryDirectory() as tmp, mock.patch.object(review, "run", side_effect=slow_first):
+                review.run_agent(self.agent(timeout_seconds=900), "p", Path(tmp), Path(tmp), None,
+                                 budget=budget, reserve=0)
+        self.assertEqual(timeouts[0], 900)
+        self.assertLessEqual(timeouts[1], 200)
+
+    def test_no_retry_when_the_budget_is_spent(self) -> None:
+        empty = json.dumps({"is_error": False, "structured_output": None})
+        now = [0.0]
+
+        def use_it_all(cmd, **kwargs):
+            now[0] += 990
+            return empty
+
+        with mock.patch.object(review.time, "monotonic", lambda: now[0]):
+            budget = review.Budget(1000)
+            with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+                    review, "run", side_effect=use_it_all) as run, self.assertRaises(review.ReviewError):
+                review.run_agent(self.agent(timeout_seconds=900), "p", Path(tmp), Path(tmp), None,
+                                 budget=budget, reserve=0)
+        self.assertEqual(run.call_count, 1)
 
     def test_an_empty_answer_is_retried_once(self) -> None:
         empty = json.dumps({"is_error": False, "structured_output": None, "subtype": "success", "result": ""})
@@ -666,6 +779,24 @@ class ApplyPlanTests(unittest.TestCase):
                                  [asked], set())
         self.assertEqual((plan.resolves, plan.asked), ([], ["open"]))
 
+    def test_a_thread_already_handed_to_a_person_stays_fixed_even_if_the_decider_says_nothing(self) -> None:
+        asked = {**thread("open"), "comments": [
+            {"author": "github-actions", "body": "Problem."},
+            {"author": "github-actions", "body": review.RESOLVE_REQUEST}]}
+        plan = review.build_plan({"actions": []}, [asked, thread("other")], set())
+        self.assertEqual(plan.asked, ["open"])
+        text = render.render_summary(
+            overview=None, new=[], outside=[], threads=[asked, thread("other")], reopened=set(), fixed=set(),
+            fixed_open=set(plan.asked), failed=[], details="d", repo="base/base", head_sha="abc",
+            replace_existing=True)
+        self.assertIn("### Fixed in this push", text)
+        self.assertEqual(text.count("Open from earlier reviews"), 1)
+
+    def test_a_resolved_thread_is_not_marked_as_asked(self) -> None:
+        done = {**thread("done", resolved=True), "comments": [
+            {"author": "github-actions", "body": review.RESOLVE_REQUEST}]}
+        self.assertEqual(review.build_plan({"actions": []}, [done], set()).asked, [])
+
     def test_failing_to_list_old_summaries_still_posts_the_new_one(self) -> None:
         gh = FakeGh(fail=("startswith",))
         problems = self.apply(gh)
@@ -679,11 +810,22 @@ class ApplyPlanTests(unittest.TestCase):
         self.assertEqual(len(gh.matching("pulls/7/reviews")), 1)
         self.assertEqual(len([c for c in gh.calls if c[:2] == ["pr", "comment"]]), 1)
 
-    def test_a_failed_summary_post_keeps_the_old_summary(self) -> None:
+    def test_a_failed_summary_post_keeps_the_old_summary_and_is_reported(self) -> None:
         gh = FakeGh(fail=("pr comment",), responses={"issues/7/comments": "11\n"})
-        with self.assertRaises(review.ReviewError):
-            self.apply(gh)
+        problems = self.apply(gh)
+        self.assertEqual(len(problems), 1)
         self.assertEqual(gh.matching("DELETE"), [])
+        # Everything else was still posted, so the caller can go on to write the handoff file.
+        self.assertEqual(len(gh.matching("pulls/7/reviews")), 1)
+
+    def test_the_review_payload_is_what_github_requires(self) -> None:
+        gh = FakeGh()
+        self.apply(gh)
+        [payload] = [json.loads(i) for c, i in zip(gh.calls, gh.inputs, strict=True) if "pulls/7/reviews" in " ".join(c)]
+        self.assertEqual((payload["event"], payload["commit_id"]), ("COMMENT", "abc"))
+        [item] = payload["comments"]
+        self.assertEqual((item["path"], item["line"], item["side"]), ("src/a.rs", 3, "RIGHT"))
+        self.assertTrue(item["body"].startswith(render.MARKER))
 
 
 class ThreadActionTests(unittest.TestCase):
