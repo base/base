@@ -4,7 +4,7 @@ name: Builder performance gate
 # flashblocks per scenario through the production build loop with transaction events on,
 # then fails when a scenario exceeds the event-volume or instruction-count budget pinned in
 # etc/benchmarks/builder-gate-budgets.json. Instruction counts come from Valgrind's
-# Callgrind, so they are deterministic on shared runners. See docs/builder-performance-gate.md.
+# Callgrind, so they are deterministic on shared runners. See docs/guides/BUILDER_PERFORMANCE_GATE.md.
 #
 # The job always runs and always reports, so it can be a required check. PRs that cannot
 # affect base-builder-core (by dependency graph or gate inputs) skip the measurement steps

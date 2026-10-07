@@ -58,6 +58,7 @@ reth-basic-payload-builder.workspace = true
 base-execution-payload-builder.workspace = true
 reth-ipc = { workspace = true, optional = true }
 reth-payload-builder-primitives.workspace = true
+reth-db-common = { workspace = true, optional = true }
 reth-node-core = { workspace = true, features = ["otlp"] }
 base-execution-rpc = { workspace = true, features = ["client"] }
 
@@ -79,6 +80,7 @@ alloy-transport-http.workspace = true
 alloy-rpc-types-beacon.workspace = true
 alloy-eips = { workspace = true, features = ["std"] }
 alloy-serde = { workspace = true, features = ["std"] }
+alloy-genesis = { workspace = true, optional = true }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
@@ -145,8 +147,6 @@ thiserror = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 opentelemetry = { workspace = true, optional = true }
 testcontainers = { workspace = true, optional = true }
-alloy-genesis = { workspace = true, optional = true }
-reth-db-common = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
 uuid = { workspace = true, features = ["serde", "v5", "v4"] }
 
