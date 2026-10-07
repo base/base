@@ -110,15 +110,17 @@ jobs:
         shell: bash
         run: cargo test --profile bench -p base-builder-core --test flashblock_build_gate
 
+      # The instruction steps run even when the event budgets fail, so a regression reports
+      # both signals; the job still fails.
       - name: Instruction counts
-        if: steps.affected.outputs.run == 'true'
+        if: ${{ !cancelled() && steps.affected.outputs.run == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
           cargo bench -p base-builder-core --bench flashblock_build_iai 2>&1 | tee "$RUNNER_TEMP/iai.txt"
 
       - name: Instruction budgets
-        if: steps.affected.outputs.run == 'true' && !inputs.pin
+        if: ${{ !cancelled() && steps.affected.outputs.run == 'true' && !inputs.pin }}
         shell: bash
         run: |
           python3 etc/scripts/ci/builder_gate_check.py \
@@ -127,7 +129,7 @@ jobs:
             --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Re-pin budgets
-        if: steps.affected.outputs.run == 'true' && inputs.pin
+        if: ${{ !cancelled() && steps.affected.outputs.run == 'true' && inputs.pin }}
         shell: bash
         run: |
           set -euo pipefail
