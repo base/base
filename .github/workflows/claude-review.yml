@@ -37,19 +37,33 @@ jobs:
             release-assets.githubusercontent.com:443
             ${{ vars.LLM_GATEWAY_HOSTNAME }}:443
 
+      # Agents read the PR's files, so check out the PR head (not the default merge commit) to make the
+      # line numbers they report match the diff that comments are anchored to. Do not leave the job
+      # token in .git/config, where an agent reading untrusted PR content could copy it.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
+          persist-credentials: false
 
       # Models, prompts, and which reviewers run are defined in .agents/skills/pr-review/.
-      # Run the base branch's copy of the pipeline, not the PR's, so a PR cannot change its own reviewer.
+      # Run the pipeline from a clean checkout of the base branch, so a PR cannot add or replace files
+      # (agents, prompts, or a module that shadows the standard library) in the code that holds the
+      # tokens. The agents read the PR's files from the working directory, and `--setting-sources user`
+      # keeps the PR's own Claude settings and hooks out. This does not cover this workflow file: a
+      # `pull_request` run uses the PR's copy of it, which is why only same-repository PRs run.
       # The PR that introduces the pipeline has no base copy and runs its own.
       - name: Check out the review pipeline from the base branch
+        id: pipeline
         run: |
           git fetch --depth 1 origin "$BASE_REF"
-          if git cat-file -e FETCH_HEAD:.agents/skills/pr-review/review.py 2>/dev/null; then
-            git checkout FETCH_HEAD -- .agents/skills/pr-review
+          script=.agents/skills/pr-review/review.py
+          if git cat-file -e "FETCH_HEAD:$script" 2>/dev/null; then
+            git worktree prune
+            git worktree add --force --detach "$RUNNER_TEMP/pipeline" FETCH_HEAD
+            script="$RUNNER_TEMP/pipeline/$script"
           fi
+          echo "script=$script" >> "$GITHUB_OUTPUT"
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
 
@@ -57,8 +71,9 @@ jobs:
         run: npm install --global @anthropic-ai/claude-code@2.1.284
 
       - name: Review pull request
-        run: python3 .agents/skills/pr-review/review.py --pr "$PR_NUMBER" --post --artifacts-dir "$RUNNER_TEMP/pr-review"
+        run: python3 "$SCRIPT" --pr "$PR_NUMBER" --post --artifacts-dir "$RUNNER_TEMP/pr-review"
         env:
+          SCRIPT: ${{ steps.pipeline.outputs.script }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}

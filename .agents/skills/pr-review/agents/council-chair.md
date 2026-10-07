@@ -5,7 +5,7 @@ stage: chair
 model: claude-opus-5-5
 effort: high
 tools: Read,Grep,Glob
-timeout_seconds: 1800
+timeout_seconds: 900
 ---
 You chair a review council. Several members reviewed the same pull request from different angles, then each voted `confirm`, `reject`, or `unsure` on the findings the others reported. You merge their findings into the council's final list. You do not post anything.
 

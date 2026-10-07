@@ -44,8 +44,17 @@ AGENTS_DIR = SKILL_DIR / "agents"
 SCHEMAS_DIR = SKILL_DIR / "schemas"
 FINDING_GUIDE = SKILL_DIR / "shared" / "finding-guide.md"
 
-# Threads started by github-actions (including the previous workflow's) count as ours.
-BOT_LOGIN_PREFIX = "github-actions"
+# Only threads and comments authored by the Actions bot count as ours, so a human who quotes a bot
+# comment (marker included) cannot become a target for replies, resolves, or deletion.
+BOT_LOGIN = "github-actions"
+BOT_COMMENT_JQ = 'select(.user.login == "github-actions[bot]" and .user.type == "Bot")'
+# Credentials that agents, which only read files, have no use for.
+SECRET_ENV = ("GH_TOKEN", "GITHUB_TOKEN")
+
+# The whole run must finish inside the CI job's timeout (90 minutes) with time left to post.
+DEFAULT_BUDGET_SECONDS = 4800
+MIN_STAGE_SECONDS = 60
+VOTE_TIMEOUT_SECONDS = 600
 
 MAX_DIFF_CHARS = 400_000
 MAX_COMMENT_CHARS = 2_000
@@ -70,11 +79,11 @@ def log(message: str) -> None:
 
 
 def run(cmd: list[str], *, input_text: str | None = None, cwd: Path | None = None,
-        timeout: int | None = None) -> str:
+        timeout: int | None = None, env: dict[str, str] | None = None) -> str:
     """Run a command and return stdout, raising ReviewError on failure."""
     try:
         result = subprocess.run(cmd, input=input_text, capture_output=True, text=True,
-                                cwd=cwd, timeout=timeout, check=False)
+                                cwd=cwd, timeout=timeout, env=env, check=False)
     except FileNotFoundError as exc:
         raise ReviewError(f"`{cmd[0]}` is not installed or not on PATH") from exc
     except subprocess.TimeoutExpired as exc:
@@ -175,10 +184,40 @@ def select_reviewers(agents: list[Agent], triage: dict[str, Any]) -> list[Agent]
     return [a for a in agents if a.stage == "review" and active.intersection(a.when)]
 
 
+class Budget:
+    """Wall-clock allowance for a whole run, so stage timeouts cannot add up past the CI job limit."""
+
+    def __init__(self, seconds: float) -> None:
+        self.deadline = time.monotonic() + seconds
+
+    def remaining(self) -> float:
+        return self.deadline - time.monotonic()
+
+    def timeout_for(self, wanted: int, label: str, reserve: float = 0.0) -> int:
+        """`wanted` seconds, cut down so `reserve` seconds are left for the stages after it."""
+        allowed = min(wanted, self.remaining() - reserve)
+        if allowed < MIN_STAGE_SECONDS:
+            raise ReviewError(f"{label}: skipped, not enough of the time budget is left")
+        return int(allowed)
+
+
+def agent_env() -> dict[str, str]:
+    """The environment for agents: ours, minus GitHub credentials."""
+    return {k: v for k, v in os.environ.items() if k not in SECRET_ENV}
+
+
 def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path, model_override: str | None,
-              *, schema: str | None = None, label: str | None = None) -> dict[str, Any]:
-    """Run one agent through the `claude` CLI and return its schema-validated output."""
+              *, schema: str | None = None, label: str | None = None, budget: Budget | None = None,
+              reserve: float = 0.0, cap: int | None = None) -> dict[str, Any]:
+    """Run one agent through the `claude` CLI and return its schema-validated output.
+
+    `reserve` is the time to leave in `budget` for the stages that run after this one, and `cap`
+    lowers the agent's own timeout for a short task such as casting votes.
+    """
     label = label or agent.name
+    timeout = min(agent.timeout_seconds, cap or agent.timeout_seconds)
+    if budget:
+        timeout = budget.timeout_for(timeout, label, reserve)
     schema_text = (SCHEMAS_DIR / f"{schema or SCHEMA_FOR_STAGE[agent.stage]}.json").read_text()
     model = model_override or agent.model
     system_prompt = agent.prompt
@@ -190,14 +229,14 @@ def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path, model_
     cmd = [
         "claude", "-p", "--model", model, "--effort", agent.effort, "--tools", agent.tools,
         "--permission-mode", "dontAsk", "--permission-prompts", "none",
-        "--setting-sources", "project", "--no-session-persistence",
+        "--setting-sources", "user", "--no-session-persistence",
         "--output-format", "json", "--json-schema", schema_text,
         "--append-system-prompt", system_prompt,
     ]
     if agent.max_budget_usd is not None:
         cmd += ["--max-budget-usd", str(agent.max_budget_usd)]
     started = time.monotonic()
-    raw = run(cmd, input_text=user_prompt, cwd=cwd, timeout=agent.timeout_seconds)
+    raw = run(cmd, input_text=user_prompt, cwd=cwd, timeout=timeout, env=agent_env())
     (artifacts / f"{label}.result.json").write_text(raw)
     try:
         envelope = json.loads(raw)
@@ -289,58 +328,104 @@ def local_context(base: str | None) -> Context:
 
 
 THREADS_QUERY = """
-query($owner: String!, $name: String!, $number: Int!) {
+query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      reviewThreads(first: 100) {
+      reviewThreads(first: 100, after: $endCursor) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           id isResolved isOutdated path line
-          comments(first: 30) { nodes { url author { login } body } }
+          root: comments(first: 1) { nodes { ...C } }
+          recent: comments(last: 30) { nodes { ...C } }
         }
       }
     }
   }
 }
+fragment C on PullRequestReviewComment { url body author { login __typename } }
 """
 
 
-def parse_threads(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """Flatten the GraphQL reply and mark which threads the bot started."""
-    nodes = payload["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+def parse_threads(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Flatten the GraphQL pages and mark which threads the bot started."""
     threads = []
-    for node in nodes:
-        comments = [{"author": (c["author"] or {}).get("login", "ghost"), "body": c["body"],
-                     "url": c.get("url")} for c in node["comments"]["nodes"]]
-        if not comments:
-            continue
-        first = comments[0]
-        threads.append({
-            "thread_id": node["id"],
-            "url": first["url"],
-            "resolved": node["isResolved"],
-            "outdated": node["isOutdated"],
-            "path": node["path"],
-            "line": node["line"],
-            "owned_by_bot": render.MARKER in first["body"] or first["author"].startswith(BOT_LOGIN_PREFIX),
-            "comments": [{"author": c["author"], "body": c["body"]} for c in comments],
-        })
+    for page in pages:
+        for node in page["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]:
+            # The first comment decides who owns the thread; the latest ones are what the decider needs.
+            comments, seen = [], set()
+            for c in node["root"]["nodes"] + node["recent"]["nodes"]:
+                if c["url"] not in seen:
+                    seen.add(c["url"])
+                    comments.append(c)
+            if not comments:
+                continue
+            author = comments[0]["author"] or {}
+            threads.append({
+                "thread_id": node["id"],
+                "url": comments[0]["url"],
+                "resolved": node["isResolved"],
+                "outdated": node["isOutdated"],
+                "path": node["path"],
+                "line": node["line"],
+                "owned_by_bot": author.get("login") == BOT_LOGIN and author.get("__typename") == "Bot",
+                "comments": [{"author": (c["author"] or {}).get("login", "ghost"), "body": c["body"]}
+                             for c in comments],
+            })
     return threads
 
 
+def diff_from_files(number: int, repo: str) -> str:
+    """Rebuild a unified diff from the files API, for pull requests `gh pr diff` refuses to return."""
+    pages = json.loads(gh(["api", f"repos/{repo}/pulls/{number}/files", "--paginate", "--slurp"]))
+    out = []
+    for f in (f for page in pages for f in page):
+        old = f.get("previous_filename") or f["filename"]
+        old_side = "/dev/null" if f["status"] == "added" else f"a/{old}"
+        new_side = "/dev/null" if f["status"] == "removed" else f"b/{f['filename']}"
+        patch = f.get("patch") or "[no patch available: binary or too large]"
+        out.append(f"diff --git a/{old} b/{f['filename']}\n--- {old_side}\n+++ {new_side}\n{patch}\n")
+    return "".join(out)
+
+
 def pr_context(number: int, repo: str) -> Context:
-    info = json.loads(gh(["pr", "view", str(number), "--repo", repo, "--json",
-                          "title,body,headRefOid,files"]))
     owner, name = repo.split("/", 1)
+
+    def head() -> str:
+        return json.loads(gh(["pr", "view", str(number), "--repo", repo, "--json", "headRefOid"]))["headRefOid"]
+
+    # Read the metadata and the diff at one head commit, or comments could target the wrong lines.
+    for _ in range(3):
+        info = json.loads(gh(["pr", "view", str(number), "--repo", repo, "--json",
+                              "title,body,headRefOid,files"]))
+        try:
+            diff = gh(["pr", "diff", str(number), "--repo", repo])
+        except ReviewError as exc:
+            log(f"gh pr diff failed ({exc}); rebuilding the diff from the files API")
+            diff = diff_from_files(number, repo)
+        if head() == info["headRefOid"]:
+            break
+    else:
+        raise ReviewError("the pull request kept changing while it was being read")
+
+    try:
+        checked_out = git(["rev-parse", "HEAD"]).strip()
+    except ReviewError:
+        checked_out = None
+    if checked_out != info["headRefOid"]:
+        # Agents read files from the working directory; if it is not the PR head, the line numbers
+        # they report can differ from the diff that comments are anchored to.
+        log(f"warning: the working tree is at {checked_out and checked_out[:12]}, not the PR head "
+            f"{info['headRefOid'][:12]}; check out the PR head for line numbers to match")
     threads = parse_threads(json.loads(gh([
-        "api", "graphql", "-f", f"query={THREADS_QUERY}", "-f", f"owner={owner}",
+        "api", "graphql", "--paginate", "--slurp", "-f", f"query={THREADS_QUERY}", "-f", f"owner={owner}",
         "-f", f"name={name}", "-F", f"number={number}"])))
     summaries = gh(["api", f"repos/{repo}/issues/{number}/comments", "--paginate", "--jq",
-                    f'.[] | select(.body | startswith("{render.SUMMARY_MARKER}")) | .body'])
+                    f'.[] | {BOT_COMMENT_JQ} | select(.body | startswith("{render.SUMMARY_MARKER}")) | .body'])
     return Context(
         description=info["body"] or "(no description)",
         title=info["title"],
         files=[f["path"] for f in info["files"]],
-        diff=gh(["pr", "diff", str(number), "--repo", repo]),
+        diff=diff,
         pr_number=number,
         repo=repo,
         head_sha=info["headRefOid"],
@@ -464,6 +549,7 @@ class Plan:
     outside: list[render.Finding] = dataclasses.field(default_factory=list)
     replies: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     unresolves: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    resolves: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     rejected: list[str] = dataclasses.field(default_factory=list)
     summary: str | None = None
 
@@ -491,6 +577,12 @@ def build_plan(decision: dict[str, Any], threads: list[dict[str, Any]],
         elif kind == "reply":
             plan.replies.append({"thread_id": thread["thread_id"],
                                  "body": f"{render.MARKER}\n**Follow-up:** {body}"})
+        elif kind == "resolve":
+            if thread["resolved"]:
+                plan.rejected.append(f"resolve: thread {thread['thread_id']} is already resolved")
+            else:
+                plan.resolves.append({"thread_id": thread["thread_id"],
+                                      "body": f"{render.MARKER}\n✅ **Fixed:** {body}"})
         elif not thread["resolved"]:
             plan.rejected.append(f"unresolve: thread {thread['thread_id']} is not resolved")
         else:
@@ -509,32 +601,67 @@ def build_plan(decision: dict[str, Any], threads: list[dict[str, Any]],
 # --------------------------------------------------------------------------- posting
 
 
-def apply_plan(plan: Plan, ctx: Context) -> None:
-    """Post a validated plan to the pull request."""
+REPLY_MUTATION = ("mutation($id: ID!, $body: String!) { addPullRequestReviewThreadReply("
+                  "input: {pullRequestReviewThreadId: $id, body: $body}) { comment { id } } }")
+UNRESOLVE_MUTATION = "mutation($id: ID!) { unresolveReviewThread(input: {threadId: $id}) { thread { id } } }"
+RESOLVE_MUTATION = "mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { id } } }"
+
+
+def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None]) -> list[str]:
+    """Post a validated plan to the pull request and return what could not be posted.
+
+    Each GitHub write fails on its own: a rejected inline comment moves into the summary and
+    a failed reply is reported, but neither stops the summary from being posted.
+    """
     assert ctx.pr_number is not None
     repo, number = ctx.repo, ctx.pr_number
-    reply_mutation = ("mutation($id: ID!, $body: String!) { addPullRequestReviewThreadReply("
-                      "input: {pullRequestReviewThreadId: $id, body: $body}) { comment { id } } }")
-    unresolve_mutation = ("mutation($id: ID!) { unresolveReviewThread(input: {threadId: $id}) "
-                          "{ thread { id } } }")
-    for item in plan.replies + plan.unresolves:
-        gh(["api", "graphql", "-f", f"query={reply_mutation}", "-f", f"id={item['thread_id']}",
-            "-f", f"body={item['body']}"])
-    for item in plan.unresolves:
-        gh(["api", "graphql", "-f", f"query={unresolve_mutation}", "-f", f"id={item['thread_id']}"])
+    problems: list[str] = []
+
+    def attempt(what: str, args: list[str], input_text: str | None = None) -> bool:
+        try:
+            gh(args, input_text=input_text)
+            return True
+        except ReviewError as exc:
+            problems.append(f"{what}: {exc}")
+            log(f"  could not post: {what}: {exc}")
+            return False
+
+    def graphql(query: str, **fields: str) -> list[str]:
+        return ["api", "graphql", "-f", f"query={query}", *[a for k, v in fields.items() for a in ("-f", f"{k}={v}")]]
+
+    def reply(item: dict[str, Any]) -> None:
+        attempt(f"reply on {item['thread_id']}", graphql(REPLY_MUTATION, id=item["thread_id"], body=item["body"]))
+
+    for item in plan.replies:
+        reply(item)
+    # Change the thread's state first and explain it only if that worked, so the reply, the
+    # summary, and GitHub agree. A thread whose change failed stays as it was.
+    plan.unresolves = [i for i in plan.unresolves
+                       if attempt(f"reopen {i['thread_id']}", graphql(UNRESOLVE_MUTATION, id=i["thread_id"]))]
+    plan.resolves = [i for i in plan.resolves
+                     if attempt(f"resolve {i['thread_id']}", graphql(RESOLVE_MUTATION, id=i["thread_id"]))]
+    for item in plan.unresolves + plan.resolves:
+        reply(item)
+
     if plan.new:
         review = {"event": "COMMENT", "commit_id": ctx.head_sha, "body": "",
                   "comments": [{**c, "side": "RIGHT"} for c in plan.inline_comments()]}
-        gh(["api", "-X", "POST", f"repos/{repo}/pulls/{number}/reviews", "--input", "-"],
-           input_text=json.dumps(review))
+        if not attempt("inline review", ["api", "-X", "POST", f"repos/{repo}/pulls/{number}/reviews",
+                                         "--input", "-"], json.dumps(review)):
+            # GitHub rejects the whole review if one comment is invalid; keep the findings in the summary.
+            plan.outside = sorted(plan.new + plan.outside, key=lambda f: (render.severity_rank(f.severity),
+                                                                          f.path or "", f.line or 0))
+            plan.new = []
 
+    plan.summary = summarize(plan)
     if plan.summary is not None:
         old_ids = gh(["api", f"repos/{repo}/issues/{number}/comments", "--paginate", "--jq",
-                      f'.[] | select(.body | startswith("{render.SUMMARY_MARKER}")) | .id']).split()
+                      f'.[] | {BOT_COMMENT_JQ} | select(.body | startswith("{render.SUMMARY_MARKER}")) | .id']).split()
         # Post first so a failed post leaves the previous summary in place.
         gh(["pr", "comment", str(number), "--repo", repo, "--body-file", "-"], input_text=plan.summary)
         for comment_id in old_ids:
-            gh(["api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment_id}"])
+            attempt(f"delete old summary {comment_id}", ["api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment_id}"])
+    return problems
 
 
 # --------------------------------------------------------------------------- pipeline
@@ -552,14 +679,20 @@ class Outcome:
 
 
 def run_council(ctx: Context, triage: dict[str, Any], members: list[Agent], chair: Agent, cwd: Path,
-                artifacts: Path, model_override: str | None) -> tuple[dict[str, Any], dict[str, str], bool]:
+                artifacts: Path, model_override: str | None, budget: Budget,
+                reserve: float) -> tuple[dict[str, Any], dict[str, str], bool]:
     """Members review, vote on each other's findings, and the chair merges.
+
+    `reserve` is the time to leave for the decider. Each stage also leaves time for the stages
+    after it, so a slow review cannot starve the votes and the chair.
 
     Returns the council's findings, the names of failures, and whether the chair ran.
     """
     prompt = review_prompt(ctx, triage)
     drafts, failed = run_parallel({
-        m.name: functools.partial(run_agent, m, prompt, cwd, artifacts, model_override) for m in members})
+        m.name: functools.partial(run_agent, m, prompt, cwd, artifacts, model_override, budget=budget,
+                                  reserve=reserve + VOTE_TIMEOUT_SECONDS + chair.timeout_seconds)
+        for m in members})
     if not drafts:
         raise ReviewError("every council member failed")
     candidates = merge_candidates(drafts)
@@ -570,7 +703,9 @@ def run_council(ctx: Context, triage: dict[str, Any], members: list[Agent], chai
               and any(c["reported_by"] != m.name for c in candidates)]
     ballots, vote_failed = run_parallel({
         m.name: functools.partial(run_agent, m, ballot_prompt(ctx, triage, m.name, candidates), cwd,
-                                  artifacts, model_override, schema="votes", label=f"{m.name}.vote")
+                                  artifacts, model_override, schema="votes", label=f"{m.name}.vote",
+                                  budget=budget, reserve=reserve + chair.timeout_seconds,
+                                  cap=VOTE_TIMEOUT_SECONDS)
         for m in voters})
     failed.update({f"{name}.vote": why for name, why in vote_failed.items()})
     votes: dict[str, list[dict[str, Any]]] = {}
@@ -582,7 +717,7 @@ def run_council(ctx: Context, triage: dict[str, Any], members: list[Agent], chai
 
     try:
         merged = run_agent(chair, chair_prompt(ctx, triage, candidates, votes, list(failed)), cwd,
-                           artifacts, model_override)
+                           artifacts, model_override, budget=budget, reserve=reserve)
     except ReviewError as exc:
         # Better to pass the unmerged findings on, flagged, than to lose the council's work.
         failed[chair.name] = str(exc)
@@ -595,7 +730,7 @@ def run_council(ctx: Context, triage: dict[str, Any], members: list[Agent], chai
 
 
 def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
-                 model_override: str | None) -> Outcome:
+                 model_override: str | None, budget: Budget) -> Outcome:
     """Run triage, the reviewers (and the council, on deep changes), then the decider."""
     triage_agent = next(a for a in agents if a.stage == "triage")
     decide_agent = next(a for a in agents if a.stage == "decide")
@@ -607,7 +742,8 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
 
     log("Triage")
     try:
-        triage = run_agent(triage_agent, triage_prompt(ctx), cwd, artifacts, model_override)
+        triage = run_agent(triage_agent, triage_prompt(ctx), cwd, artifacts, model_override, budget=budget,
+                           reserve=decide_agent.timeout_seconds)
     except ReviewError as exc:
         log(f"  triage failed ({exc}); running every reviewer")
         triage = {"depth": "deep", "block_production_sensitive": True, "focus_areas": [],
@@ -618,11 +754,13 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
     use_council = triage["depth"] == "deep" and chair is not None
     log(f"Review: {', '.join(a.name for a in reviewers)}" + (" + council" if use_council else ""))
     prompt = review_prompt(ctx, triage)
+    reserve = decide_agent.timeout_seconds
     jobs: dict[str, Callable[[], Any]] = {
-        a.name: functools.partial(run_agent, a, prompt, cwd, artifacts, model_override) for a in reviewers}
+        a.name: functools.partial(run_agent, a, prompt, cwd, artifacts, model_override, budget=budget,
+                                  reserve=reserve) for a in reviewers}
     if use_council:
         jobs["council"] = functools.partial(run_council, ctx, triage, members, chair, cwd, artifacts,
-                                            model_override)
+                                            model_override, budget, reserve)
     results, failed = run_parallel(jobs)
     rows += [row(a) for a in reviewers]
 
@@ -639,7 +777,7 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
 
     log("Decide")
     decision = run_agent(decide_agent, decide_prompt(ctx, triage, reviews, failed), cwd, artifacts,
-                         model_override)
+                         model_override, budget=budget)
     rows.append(row(decide_agent))
     return Outcome(triage, reviews, failed, decision, rows)
 
@@ -652,6 +790,7 @@ def build_summary(outcome: Outcome, plan: Plan, ctx: Context) -> str | None:
     return render.render_summary(
         overview=outcome.decision.get("overview"), new=plan.new, outside=plan.outside,
         threads=ctx.threads, reopened={u["thread_id"] for u in plan.unresolves},
+        fixed={r["thread_id"] for r in plan.resolves},
         failed=list(outcome.failed), details=details, repo=ctx.repo, head_sha=ctx.head_sha,
         replace_existing=ctx.previous_summary is not None)
 
@@ -663,7 +802,8 @@ def render_report(plan: Plan) -> str:
         out.append(f"**{render.location('', None, f.path, f.line) or f'{f.path}:{f.line}'}**\n\n{f.markdown()}\n")
     if not plan.new:
         out.append("none\n")
-    for heading, items in (("Replies", plan.replies), ("Threads to reopen", plan.unresolves)):
+    for heading, items in (("Replies", plan.replies), ("Threads to reopen", plan.unresolves),
+                           ("Threads to resolve", plan.resolves)):
         if items:
             out.append(f"# {heading}\n")
             out += [f"{i['thread_id']}\n\n{i['body'].removeprefix(render.MARKER).strip()}\n" for i in items]
@@ -684,6 +824,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--agents-dir", type=Path, default=AGENTS_DIR)
     parser.add_argument("--artifacts-dir", type=Path, help="where to keep prompts and raw results")
     parser.add_argument("--json", action="store_true", help="print the decider's raw output as JSON")
+    parser.add_argument("--budget-seconds", type=int, default=DEFAULT_BUDGET_SECONDS,
+                        help="total wall-clock allowance; stage timeouts shrink to fit (default: %(default)s)")
     args = parser.parse_args(argv)
     if args.post and args.pr is None:
         parser.error("--post requires --pr")
@@ -698,14 +840,18 @@ def main(argv: list[str] | None = None) -> int:
         artifacts = args.artifacts_dir or Path(tempfile.mkdtemp(prefix="pr-review-"))
         artifacts.mkdir(parents=True, exist_ok=True)
         cwd = Path(git(["rev-parse", "--show-toplevel"]).strip())
-        outcome = run_pipeline(ctx, agents, cwd, artifacts, args.model)
+        outcome = run_pipeline(ctx, agents, cwd, artifacts, args.model, Budget(args.budget_seconds))
         plan = build_plan(outcome.decision, ctx.threads, diff_new_lines(ctx.diff))
         plan.summary = build_summary(outcome, plan, ctx)
         (artifacts / "plan.json").write_text(dumps(dataclasses.asdict(plan)))
         if args.post:
-            apply_plan(plan, ctx)
+            problems = apply_plan(plan, ctx, lambda p: build_summary(outcome, p, ctx))
+            (artifacts / "posted.json").write_text(dumps(dataclasses.asdict(plan)))
             log(f"Posted {len(plan.new)} comment(s), {len(plan.replies)} reply(ies), "
-                f"{len(plan.unresolves)} reopened thread(s)")
+                f"{len(plan.unresolves)} reopened and {len(plan.resolves)} resolved thread(s)")
+            if problems:
+                log(f"{len(problems)} write(s) failed; see above")
+                return 1
         print(dumps(outcome.decision) if args.json else render_report(plan))
         log(f"Artifacts: {artifacts}")
     except ReviewError as exc:

@@ -39,12 +39,28 @@ CATEGORIES = {
 
 # Matches the header line written by Finding.header().
 HEADER_RE = re.compile(r"^(?:🔴|🟠|🟡) \*\*(Critical|Major|Minor) · [^*]+\*\* — .+$", re.MULTILINE)
+# Matches the plain label the first version of this pipeline put in front of a comment.
+LEGACY_RE = re.compile(r"^\*\*(Critical|Major|Minor):\*\*\s*(.+)", re.DOTALL)
 MAX_TITLE_CHARS = 80
+# GitHub rejects comment bodies over 65,536 characters; stay well under.
+MAX_BODY_CHARS = 30_000
+MAX_SUMMARY_FINDING_CHARS = 2_000
+MAX_DETAILS_CHARS = 10_000
 
 
 def clip(text: str, limit: int) -> str:
     text = text.strip()
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def clip_words(text: str, limit: int) -> str:
+    """Clip at a word boundary so the cut does not land inside a code span or word."""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1]
+    cut = cut[: cut.rfind(" ")] if " " in cut else cut
+    return cut.rstrip(" ,;:(") + "…"
 
 
 def severity_rank(severity: str) -> int:
@@ -91,17 +107,22 @@ class Finding:
             parts.append(f"**Suggested fix:**{separator}{self.suggestion}")
         if self.evidence:
             parts.append(f"<details>\n<summary>Evidence</summary>\n\n{self.evidence}\n\n</details>")
-        return "\n\n".join(parts)
+        return clip("\n\n".join(parts), MAX_BODY_CHARS)
 
 
 def thread_header(thread: dict[str, Any]) -> tuple[str | None, str]:
     """The severity (if known) and one-line description of an existing thread's first comment."""
-    first = thread["comments"][0]["body"]
+    first = thread["comments"][0]["body"].replace(MARKER, "").strip()
     match = HEADER_RE.search(first)
     if match:
         return match.group(1).lower(), match.group(0)
-    lines = [ln.strip() for ln in first.replace(MARKER, "").splitlines() if ln.strip()]
-    return None, f"💬 {clip(lines[0], 100) if lines else '(empty comment)'}"
+    legacy = LEGACY_RE.match(first)
+    if legacy:
+        severity = legacy.group(1).lower()
+        sentence = re.split(r"(?<=[.!?])\s", legacy.group(2).strip(), maxsplit=1)[0]
+        return severity, f"{SEVERITIES[severity][0]} **{legacy.group(1)}** — {clip_words(sentence, 100)}"
+    lines = [ln.strip() for ln in first.splitlines() if ln.strip()]
+    return None, f"💬 {clip_words(lines[0], 100) if lines else '(empty comment)'}"
 
 
 def location(repo: str, head_sha: str | None, path: str | None, line: int | None) -> str:
@@ -126,16 +147,18 @@ def cell(text: str) -> str:
 
 
 def render_summary(*, overview: str | None, new: list[Finding], outside: list[Finding],
-                   threads: list[dict[str, Any]], reopened: set[str], failed: list[str],
+                   threads: list[dict[str, Any]], reopened: set[str], fixed: set[str], failed: list[str],
                    details: str, repo: str, head_sha: str | None,
                    replace_existing: bool) -> str | None:
     """The top-level summary: headline counts, new findings, and what is still open.
 
     Returns None when there is nothing to report and no earlier summary to replace.
     """
-    carried = [t for t in threads if t["owned_by_bot"]
-               and (t["thread_id"] in reopened or (not t["resolved"] and not t["outdated"]))]
-    if not (new or outside or carried or failed) and not replace_existing:
+    # An outdated thread is still open until someone resolves it, so it still counts.
+    carried = [t for t in threads if t["owned_by_bot"] and t["thread_id"] not in fixed
+               and (t["thread_id"] in reopened or not t["resolved"])]
+    resolved_now = [t for t in threads if t["thread_id"] in fixed]
+    if not (new or outside or carried or resolved_now or failed) and not replace_existing:
         return None
     counts: collections.Counter = collections.Counter(f.severity for f in new + outside)
     counts.update(thread_header(t)[0] for t in carried)
@@ -161,15 +184,21 @@ def render_summary(*, overview: str | None, new: list[Finding], outside: list[Fi
                 text = thread_header(t)[1]
                 out.append(f"- {text} ([thread]({t['url']}))" if t.get("url") else f"- {text}")
 
+    if resolved_now:
+        out += ["", "### Fixed in this push", ""]
+        out += [f"- ✅ {thread_header(t)[1]} ([thread]({t['url']}))" if t.get("url")
+                else f"- ✅ {thread_header(t)[1]}" for t in resolved_now]
+
     if outside:
         out += ["", "### Outside the diff", ""]
         for f in outside:
             where = f" (`{f.path}`)" if f.path else ""
-            detail = f.markdown().split("\n\n", 1)[1]
+            detail = clip(f.markdown().split("\n\n", 1)[1], MAX_SUMMARY_FINDING_CHARS)
             out += [f"- {f.header()}{where}", "", "  " + detail.replace("\n", "\n  "), ""]
 
-    out += ["", "<details>", "<summary>How this was reviewed</summary>", "", details.strip(), "", "</details>"]
-    return "\n".join(out) + "\n"
+    out += ["", "<details>", "<summary>How this was reviewed</summary>", "", clip(details, MAX_DETAILS_CHARS),
+            "", "</details>"]
+    return clip("\n".join(out), MAX_BODY_CHARS) + "\n"
 
 
 def render_details(*, triage: dict[str, Any], rows: list[tuple[str, str, str]],
