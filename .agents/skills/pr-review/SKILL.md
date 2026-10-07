@@ -19,7 +19,7 @@ triage ─► review ───────────────────�
    1. Every `council-*` member reviews the whole change through its own lens (invariants, adversarial scenarios, tests and compatibility).
    2. Each member then votes `confirm`, `reject`, or `unsure` on every finding the others reported, after checking it against the code.
    3. The `council-chair` merges the findings. Votes inform it, but it verifies a rejected finding itself rather than counting heads.
-4. **decide** (`agents/decide.md`) reads every finding and the PR's existing review threads. It drops findings that are wrong or already covered, replies on threads that deserve a follow-up, and reopens a resolved thread when its problem is still present.
+4. **decide** (`agents/decide.md`) reads every finding and the PR's existing review threads. It drops findings that are wrong or already covered, and it goes through every open bot thread: it resolves a thread whose problem the push fixed, replies where the author answered or there is something new to say, and reopens a resolved thread whose problem is still present.
 
 `review.py` validates the decider's actions against the diff and the thread list, then `render.py` formats and posts them. Agents never write to GitHub; they have only `Read`, `Grep`, and `Glob`.
 
@@ -40,6 +40,8 @@ Every finding has a severity and a category. The script writes the header from t
 | 🟡 `minor` | Real but low impact. |
 
 Categories are `block-production`, `correctness`, `concurrency`, `error-handling`, `safety`, `performance`, `compatibility`, `design`, and `tests`; `shared/finding-guide.md` defines each one and the writing style (a title under 80 characters, one to three plain sentences, a concrete fix, long traces in a collapsed `Evidence` block). That guide is appended to the prompt of every agent that reports or posts findings.
+
+Comments are updated across pushes. A thread whose problem was fixed is resolved with a one-line "Fixed" reply, a resolved thread whose problem is still there is reopened, and a new finding never duplicates an open thread. The summary lists what was fixed in this push and what is still open, linking each thread.
 
 The summary comment is rendered from the same structured data, so its layout does not depend on what the model writes: a headline count, a table of new findings with links to the lines, the threads still open or reopened, anything outside the diff, and a collapsed "How this was reviewed" section listing the models that ran and what the decider dropped. If there is nothing to report, no summary is posted.
 
@@ -82,18 +84,22 @@ Current agents (the front matter is the source of truth):
 | `review-general` | review | always | `claude-opus-5-5` |
 | `review-block-production` | review | triage says block-production-sensitive | `claude-opus-5-5` |
 | `council-invariants` | council | triage says `deep` | `claude-opus-5-5` |
-| `council-adversary` | council | triage says `deep` | `claude-opus-5-5` |
-| `council-tests` | council | triage says `deep` | `claude-opus-5-5` |
+| `council-adversary` | council | triage says `deep` | `gpt-6.1-sol` |
+| `council-tests` | council | triage says `deep` | `grok-4.7` |
 | `council-chair` | chair | triage says `deep` | `claude-opus-5-5` |
 | `decide` | decide | always | `claude-opus-5-5` |
 
+The council members run on different models on purpose: independent models make different mistakes, so a finding that several of them confirm is worth more than one a single model repeats. Which models you can use depends on your gateway; some IDs are restricted (for example `claude-fable-5-1` returned a 403 here), and the CLI prints an `unrecognized_model` warning for non-Claude IDs that is harmless. Check a model with `just review --model <id>` before putting it in a file. The chair and decider stay on Opus because they check other models' claims against the code.
 - **Switch a model:** edit `model:` in the agent file. Use `--model` or `PR_REVIEW_MODEL` to try one locally without editing anything.
-- **Make the council diverse:** give members different models. Independent models catch different mistakes, and the votes then carry more information.
 - **Add a council member or reviewer:** copy a `council-*.md` or `review-*.md` file and change the name and prompt. Nothing else needs to change. Every member votes on the others' findings automatically.
 - **Remove an agent:** delete its file, keeping the rules above.
 - **Change the output shape:** edit `schemas/<name>.json` and the code in `review.py` or `render.py` that consumes it. Prompts do not describe the JSON; the CLI enforces the schema.
 
 `review-block-production` reads `docs/guides/BLOCK_PRODUCTION_REVIEW.md`. Edit that guide for what counts as a halt or stall trigger, and the agent file only for how the review is carried out.
+
+## Time budget
+
+The whole run has a wall-clock budget (`--budget-seconds`, default 4800, inside the 90-minute CI job). Each stage's `timeout_seconds` is cut down so the stages after it still fit: the council's reviews leave time for the votes, the chair, and the decider. A stage with less than a minute left is skipped and reported as failed, so the run ends with a summary rather than a killed job. Council votes are capped at 10 minutes.
 
 ## In CI
 
@@ -101,9 +107,18 @@ Current agents (the front matter is the source of truth):
 
 - new inline comments, in one review, most severe first
 - replies on existing bot threads
+- a resolved thread, with a one-line "Fixed" reply, for a bot thread whose problem the push fixed
 - a reopened thread, with a reason, for a resolved bot thread whose problem is still present
 - one summary comment that replaces the previous one (marked `<!-- CLAUDE_REVIEW_SUMMARY -->`)
 
-The script ignores any action that targets a thread the bot did not start, moves any comment whose line is not in the diff into the summary, and posts at most 20 inline comments (the rest go to the summary). If triage fails, every reviewer and the council run. If a reviewer or council member fails, the summary says the review is incomplete and the rest continue; if the chair fails, the unmerged findings go to the decider.
+The script runs from a clean checkout of the base branch, so a PR cannot add files to the code that holds the tokens. Agents run with the PR's checkout as their working directory, `--setting-sources user` (the PR's own Claude settings and hooks are not loaded), read-only tools, and no `GH_TOKEN`.
+
+Safeguards in the script:
+
+- It acts only on threads and summaries whose author is the Actions bot, not on any comment that contains the marker.
+- It moves any comment whose line is not in the diff into the summary, and posts at most 20 inline comments (the rest go to the summary).
+- Every GitHub write fails on its own. If GitHub rejects the inline review, the findings move into the summary; a failed reply or resolve is reported but does not stop the summary. The summary is posted before the old one is deleted.
+- It reads the PR's metadata and diff at one head commit, pages through all threads, and rebuilds the diff from the files API when `gh pr diff` refuses a large PR.
+- If triage fails, every reviewer and the council run. If a reviewer or council member fails, the summary says the review is incomplete and the rest continue; if the chair fails, the unmerged findings go to the decider.
 
 Run `python3 .agents/skills/pr-review/test_review.py` after changing `review.py` or `render.py`.
