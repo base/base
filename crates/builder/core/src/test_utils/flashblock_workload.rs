@@ -1,4 +1,4 @@
-//! Flashblock build workloads for the builder performance gate.
+//! Flashblock build workloads for the builder benchmarks.
 //!
 //! Each [`FlashblockWorkload`] describes one block of pool traffic: plain transfers that fill
 //! every flashblock, a backlog of validity transactions whose predicates stay unsatisfied (so the
@@ -80,10 +80,10 @@ pub enum PredicateState {
     },
 }
 
-/// One block of pool traffic for the flashblock build gate. See the module docs.
+/// One block of pool traffic for the builder benchmarks. See the module docs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FlashblockWorkload {
-    /// Stable scenario name used as the benchmark id and budget key.
+    /// Stable scenario name used as the benchmark id.
     pub name: &'static str,
     /// Plain transfers that arrive before each flashblock. The flashblock gas target fits
     /// exactly these plus the satisfied validity transactions.
@@ -204,7 +204,7 @@ impl FlashblockWorkload {
         ..Self::TRANSFERS
     };
 
-    /// The gate's workload matrix, in budget-file order.
+    /// The benchmark workload matrix, in reporting order.
     pub const MATRIX: [Self; 8] = [
         Self::TRANSFERS,
         Self::RESTING_BACKLOG,
@@ -263,7 +263,7 @@ impl FlashblockWorkload {
             queue_capacity: 1 << 20,
             ..TransactionEventWriterConfig::disabled(
                 TransactionEventProducer::BaseBuilder,
-                "builder-gate",
+                "builder-bench",
                 path,
             )
         }))?;

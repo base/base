@@ -1,7 +1,7 @@
 //! Synchronous driver that builds one block of flashblocks through the production build loop.
 //!
-//! The performance gate (`benches/flashblock_build_iai.rs`) and the event-volume budget test
-//! (`tests/flashblock_build_gate.rs`) both run blocks through this driver so they measure the
+//! The instruction-count benchmark (`benches/flashblock_build_iai.rs`) and the event-volume
+//! test (`tests/flashblock_build_events.rs`) both run blocks through this driver so they measure the
 //! same code that `BasePayloadBuilder::build_next_flashblock` runs on the builder thread:
 //! [`BasePayloadBuilderCtx::execute_best_transactions`] over a [`BestFlashblocksTxs`] that is
 //! refreshed from the pool before every flashblock, per-flashblock `build_block` without a state
@@ -11,7 +11,7 @@
 //! publication, pool maintenance (`update_accounts`, `prune_transactions`, invalidation and
 //! expiry sweeps), metering-provider bookkeeping, and the flashblock lifecycle events emitted
 //! by the payload builder itself. Those paths need a live node and do not scale with the
-//! transaction backlog the gate models.
+//! transaction backlog the benchmarks model.
 
 use alloy_primitives::{B256, TxHash};
 use base_common_flashblocks::FlashblockId;
