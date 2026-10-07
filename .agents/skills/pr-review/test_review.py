@@ -261,7 +261,7 @@ class SummaryTests(unittest.TestCase):
         return render.render_summary(
             overview="One panic path.", new=plan.new, outside=plan.outside, threads=threads or [],
             reopened={u["thread_id"] for u in plan.unresolves}, fixed={r["thread_id"] for r in plan.resolves},
-            fixed_open={r["thread_id"] for r in plan.fixed_open}, failed=failed or [], details="Details.",
+            fixed_open=set(plan.asked), failed=failed or [], details="Details.",
             repo="base/base", head_sha="abc123", replace_existing=replace_existing)
 
     def test_summary_lists_findings_with_links(self) -> None:
@@ -501,7 +501,7 @@ class ApplyPlanTests(unittest.TestCase):
             return render.render_summary(
                 overview=None, new=plan.new, outside=plan.outside, threads=self.ctx.threads,
                 reopened={u["thread_id"] for u in plan.unresolves}, fixed={r["thread_id"] for r in plan.resolves},
-                fixed_open={r["thread_id"] for r in plan.fixed_open}, failed=[], details="d",
+                fixed_open=set(plan.asked), failed=[], details="d",
                 repo="base/base", head_sha="abc", replace_existing=True)
 
         with mock.patch.object(review, "gh", gh):
@@ -511,13 +511,18 @@ class ApplyPlanTests(unittest.TestCase):
         gh = FakeGh(responses={"issues/7/comments": "11\n12\n"})
         self.assertEqual(self.apply(gh), [])
         self.assertEqual(len(gh.matching("pulls/7/reviews")), 1)
-        self.assertEqual(len(gh.matching("unresolveReviewThread")), 1)
-        self.assertEqual(len(gh.matching("{ resolveReviewThread(")), 1)
         comment_calls = [i for i, c in enumerate(gh.calls) if c[:2] == ["pr", "comment"]]
         deletes = [i for i, c in enumerate(gh.calls) if "DELETE" in c]
         self.assertEqual(len(comment_calls), 1)
         self.assertEqual(len(deletes), 2)
         self.assertLess(comment_calls[0], min(deletes))
+
+    def test_this_job_never_changes_a_threads_state(self) -> None:
+        # Resolving needs a token this job may not have; the plan is handed to another job instead.
+        gh = FakeGh()
+        self.apply(gh)
+        self.assertEqual(gh.matching("resolveReviewThread"), [])
+        self.assertEqual(gh.matching("unresolveReviewThread"), [])
 
     def test_summary_query_only_matches_the_bot(self) -> None:
         gh = FakeGh()
@@ -535,28 +540,12 @@ class ApplyPlanTests(unittest.TestCase):
         self.assertIn("### Outside the diff", summary)
         self.assertIn("Panics on empty batch", summary)
 
-    def test_a_failed_reopen_is_not_reported_as_applied(self) -> None:
-        gh = FakeGh(fail=("{ unresolveReviewThread(",))
-        problems = self.apply(gh)
-        self.assertEqual(len(problems), 1)
-        self.assertEqual(self.plan.unresolves, [])
-        replies = [" ".join(c) for c in gh.calls if "addPullRequestReviewThreadReply" in " ".join(c)]
-        self.assertFalse([r for r in replies if "Reopened" in r])
-        [summary] = [i for c, i in zip(gh.calls, gh.inputs) if c[:2] == ["pr", "comment"]]
-        self.assertNotIn("### Reopened", summary)
-
-    def test_when_github_refuses_to_resolve_the_reply_asks_a_person_to(self) -> None:
-        gh = FakeGh(fail=("{ resolveReviewThread(",))
-        problems = self.apply(gh)
-        # The Actions token cannot resolve threads, so this is expected and is not a failed run.
-        self.assertEqual(problems, [])
-        self.assertEqual((self.plan.resolves, len(self.plan.fixed_open)), ([], 1))
-        [reply] = [" ".join(c) for c in gh.calls if "Fixed" in " ".join(c)]
-        self.assertIn("please resolve it", reply)
+    def test_the_summary_lists_threads_that_the_other_job_will_change(self) -> None:
+        gh = FakeGh()
+        self.apply(gh)
         [summary] = [i for c, i in zip(gh.calls, gh.inputs) if c[:2] == ["pr", "comment"]]
         self.assertIn("### Fixed in this push", summary)
-        self.assertIn("please resolve it", summary)
-        self.assertNotIn("## 💬", summary)
+        self.assertIn("### Reopened", summary)
 
     def test_a_thread_already_marked_for_manual_resolve_is_not_asked_again(self) -> None:
         asked = {**thread("open"), "comments": [
@@ -564,7 +553,7 @@ class ApplyPlanTests(unittest.TestCase):
             {"author": "github-actions", "body": f"**Fixed:** x\n\n{review.RESOLVE_REQUEST}"}]}
         plan = review.build_plan({"actions": [{"type": "resolve", "thread_id": "open", "body": "fixed"}]},
                                  [asked], set())
-        self.assertEqual((plan.resolves, plan.fixed_open, plan.asked), ([], [], ["open"]))
+        self.assertEqual((plan.resolves, plan.asked), ([], ["open"]))
 
     def test_failing_to_list_old_summaries_still_posts_the_new_one(self) -> None:
         gh = FakeGh(fail=("startswith",))
@@ -572,18 +561,10 @@ class ApplyPlanTests(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertEqual(len([c for c in gh.calls if c[:2] == ["pr", "comment"]]), 1)
 
-    def test_state_changes_come_before_their_explanations(self) -> None:
-        gh = FakeGh()
-        self.apply(gh)
-        text = [" ".join(c) for c in gh.calls]
-        reply = next(i for i, c in enumerate(text) if "Fixed" in c)
-        resolve = next(i for i, c in enumerate(text) if "{ resolveReviewThread(" in c)
-        self.assertLess(resolve, reply)
-
     def test_a_failed_reply_does_not_stop_the_summary(self) -> None:
         gh = FakeGh(fail=("addPullRequestReviewThreadReply",))
         problems = self.apply(gh)
-        self.assertEqual(len(problems), 3)
+        self.assertEqual(len(problems), 1)
         self.assertEqual(len(gh.matching("pulls/7/reviews")), 1)
         self.assertEqual(len([c for c in gh.calls if c[:2] == ["pr", "comment"]]), 1)
 
@@ -592,6 +573,157 @@ class ApplyPlanTests(unittest.TestCase):
         with self.assertRaises(review.ReviewError):
             self.apply(gh)
         self.assertEqual(gh.matching("DELETE"), [])
+
+
+class ThreadActionTests(unittest.TestCase):
+    """The second job: untrusted actions, checked against the live threads before anything changes."""
+
+    OPEN = "PRRT_kwDOopen00000001"
+    DONE = "PRRT_kwDOdone00000002"
+    HUMAN = "PRRT_kwDOhuman0000003"
+
+    def live_threads(self, **overrides: dict) -> list[dict]:
+        base = {self.OPEN: thread(self.OPEN), self.DONE: thread(self.DONE, resolved=True),
+                self.HUMAN: thread(self.HUMAN, bot=False)}
+        base.update(overrides)
+        return list(base.values())
+
+    def apply(self, actions, gh: FakeGh | None = None, threads: list[dict] | None = None):
+        gh = gh or FakeGh()
+        with mock.patch.object(review, "gh", gh), mock.patch.object(
+                review, "fetch_threads", return_value=self.live_threads() if threads is None else threads):
+            return review.apply_thread_actions(actions, 7, "base/base"), gh
+
+    def resolve(self, thread_id: str | None = None, **extra) -> dict:
+        return {"type": "resolve", "thread_id": thread_id or self.OPEN, "body": "fixed in `run`", **extra}
+
+    def test_a_valid_resolve_and_reopen_change_the_thread_and_explain_it(self) -> None:
+        problems, gh = self.apply([self.resolve(), {"type": "unresolve", "thread_id": self.DONE,
+                                                     "body": "still broken"}])
+        self.assertEqual(problems, [])
+        self.assertEqual(len(gh.matching("{ resolveReviewThread(")), 1)
+        self.assertEqual(len(gh.matching("{ unresolveReviewThread(")), 1)
+        text = [" ".join(c) for c in gh.calls]
+        self.assertLess(next(i for i, c in enumerate(text) if "{ resolveReviewThread(" in c),
+                        next(i for i, c in enumerate(text) if "addPullRequestReviewThreadReply" in c))
+
+    def test_only_threads_the_bot_started_can_be_changed(self) -> None:
+        problems, gh = self.apply([self.resolve(self.HUMAN)])
+        self.assertEqual(len(problems), 1)
+        self.assertEqual(gh.calls, [])
+
+    def test_a_thread_not_on_this_pull_request_is_skipped(self) -> None:
+        problems, gh = self.apply([self.resolve("PRRT_kwDOelsewhere000009")])
+        self.assertEqual((problems, gh.calls), ([], []))
+
+    def test_an_action_for_the_wrong_state_is_skipped(self) -> None:
+        # Resolved in the meantime, or reopened by a person: nothing to do and nothing to say.
+        problems, gh = self.apply([self.resolve(self.DONE), {"type": "unresolve", "thread_id": self.OPEN,
+                                                             "body": "x"}])
+        self.assertEqual((problems, gh.calls), ([], []))
+
+    def test_malformed_actions_are_ignored_and_reported(self) -> None:
+        bad = [{"type": "delete", "thread_id": self.OPEN, "body": "x"},
+               {"type": "resolve", "thread_id": "not-a-thread-id", "body": "x"},
+               {"type": "resolve", "thread_id": self.OPEN},
+               {"type": "resolve", "thread_id": ["PRRT_kwDOopen00000001"], "body": "x"},
+               "resolve", None, 7]
+        problems, gh = self.apply(bad)
+        self.assertEqual(len(problems), len(bad))
+        self.assertEqual(gh.calls, [])
+
+    def test_a_list_that_is_not_a_list_is_rejected(self) -> None:
+        problems, gh = self.apply({"actions": []})
+        self.assertEqual(len(problems), 1)
+        self.assertEqual(gh.calls, [])
+
+    def test_extra_fields_have_no_effect(self) -> None:
+        problems, gh = self.apply([self.resolve(query="mutation { deleteRepository }", id="other")])
+        self.assertEqual(problems, [])
+        for call in gh.calls:
+            self.assertNotIn("deleteRepository", " ".join(call))
+            self.assertIn(self.OPEN, " ".join(call))
+
+    def test_the_number_of_actions_is_limited(self) -> None:
+        threads = [thread(f"PRRT_kwDOthread{i:08d}") for i in range(review.MAX_THREAD_ACTIONS + 5)]
+        actions = [self.resolve(t["thread_id"]) for t in threads]
+        problems, gh = self.apply(actions, threads=threads)
+        self.assertEqual(len(gh.matching("{ resolveReviewThread(")), review.MAX_THREAD_ACTIONS)
+        self.assertEqual(len(problems), 1)
+
+    def test_the_reply_cannot_forge_the_markers_or_run_long(self) -> None:
+        body = f"{review.render.SUMMARY_MARKER}{review.render.MARKER}" + "x" * 50_000
+        _, gh = self.apply([self.resolve(body=body)])
+        [reply] = [c for c in gh.calls if "addPullRequestReviewThreadReply" in " ".join(c)]
+        text = next(a for a in reply if a.startswith("body="))
+        self.assertNotIn(review.render.SUMMARY_MARKER, text)
+        self.assertLessEqual(len(text), review.MAX_COMMENT_CHARS + 100)
+
+    def test_if_resolving_is_refused_the_reply_asks_a_person_to(self) -> None:
+        problems, gh = self.apply([self.resolve()], FakeGh(fail=("{ resolveReviewThread(",)))
+        self.assertEqual(len(problems), 1)
+        [reply] = [" ".join(c) for c in gh.calls if "addPullRequestReviewThreadReply" in " ".join(c)]
+        self.assertIn(review.RESOLVE_REQUEST, reply)
+
+    def test_a_refused_resolve_is_not_announced_twice(self) -> None:
+        asked = {**thread(self.OPEN), "comments": [
+            {"author": "github-actions", "body": "Problem."},
+            {"author": "github-actions", "body": review.RESOLVE_REQUEST}]}
+        _, gh = self.apply([self.resolve()], FakeGh(fail=("{ resolveReviewThread(",)), threads=[asked])
+        self.assertEqual(gh.matching("addPullRequestReviewThreadReply"), [])
+
+    def test_a_failed_reopen_is_not_explained(self) -> None:
+        problems, gh = self.apply([{"type": "unresolve", "thread_id": self.DONE, "body": "x"}],
+                                  FakeGh(fail=("{ unresolveReviewThread(",)))
+        self.assertEqual(len(problems), 1)
+        self.assertEqual(gh.matching("addPullRequestReviewThreadReply"), [])
+
+    def test_the_plan_is_what_gets_handed_off(self) -> None:
+        plan = review.build_plan({"actions": [
+            {"type": "resolve", "thread_id": "open", "body": "fixed"},
+            {"type": "unresolve", "thread_id": "done", "body": "again"}]},
+            [thread("open"), thread("done", resolved=True)], set())
+        actions = review.thread_actions(plan)
+        self.assertEqual([(a["type"], a["thread_id"]) for a in actions],
+                         [("unresolve", "done"), ("resolve", "open")])
+        self.assertTrue(all(a["body"].startswith(review.render.MARKER) for a in actions))
+
+    def handoff(self, tmp: str, body: object) -> Path:
+        path = Path(tmp) / "handoff.json"
+        path.write_text(body if isinstance(body, str) else json.dumps(body))
+        return path
+
+    def test_the_handoff_file_is_applied_when_the_head_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+                review, "gh", return_value=json.dumps({"headRefOid": "abc"})), mock.patch.object(
+                review, "apply_thread_actions", return_value=[]) as apply:
+            path = self.handoff(tmp, {"head_sha": "abc", "actions": [self.resolve()]})
+            self.assertEqual(review.apply_handoff(path, 7, "base/base"), 0)
+        self.assertEqual(apply.call_args.args[0], [self.resolve()])
+
+    def test_a_handoff_for_an_older_commit_is_dropped(self) -> None:
+        for reviewed in ("old", None):
+            with self.subTest(reviewed=reviewed), tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+                    review, "gh", return_value=json.dumps({"headRefOid": "new"})), mock.patch.object(
+                    review, "apply_thread_actions") as apply:
+                path = self.handoff(tmp, {"head_sha": reviewed, "actions": [self.resolve()]})
+                self.assertEqual(review.apply_handoff(path, 7, "base/base"), 0)
+            apply.assert_not_called()
+
+    def test_problems_applying_the_handoff_fail_the_job(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+                review, "gh", return_value=json.dumps({"headRefOid": "abc"})), mock.patch.object(
+                review, "apply_thread_actions", return_value=["boom"]):
+            path = self.handoff(tmp, {"head_sha": "abc", "actions": []})
+            self.assertEqual(review.apply_handoff(path, 7, "base/base"), 1)
+
+    def test_unreadable_handoff_files_are_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            for text in ("not json", "[]", ""):
+                with self.subTest(text=text), self.assertRaises(review.ReviewError):
+                    review.apply_handoff(self.handoff(tmp, text), 7, "base/base")
+            with self.assertRaises(review.ReviewError):
+                review.apply_handoff(Path(tmp) / "missing.json", 7, "base/base")
 
 
 class PipelineFailureTests(unittest.TestCase):
