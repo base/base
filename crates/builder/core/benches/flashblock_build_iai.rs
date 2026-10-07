@@ -10,7 +10,7 @@
 //! thread: event serialization is counted, the background event-writer thread's file I/O is
 //! not. `etc/scripts/ci/builder_gate_check.py` compares these counts against the pinned
 //! budgets in `etc/benchmarks/builder-gate-budgets.json` and fails the gate when one is
-//! exceeded. See `docs/builder-performance-gate.md`.
+//! exceeded. See `docs/guides/BUILDER_PERFORMANCE_GATE.md`.
 
 // iai-callgrind's `library_benchmark` / `library_benchmark_group` macros expand to
 // undocumented modules, functions, and constants that `-D warnings` rejects. Benches
