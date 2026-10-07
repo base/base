@@ -44,6 +44,8 @@ pub use flashblocks::{
     PayloadTransactionInvalidated, PredicateLoadTracker, PredicateReadRecorder, ResolvePayload,
     StateChangeEffects, ValidityPredicateEvaluation, ValidityPredicateKey,
 };
+#[cfg(any(test, feature = "test-utils"))]
+pub use flashblocks::{FlashblockBlockDriver, FlashblockBlockOutcome};
 
 mod extension;
 pub use extension::{
