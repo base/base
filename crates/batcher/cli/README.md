@@ -44,9 +44,10 @@ reaches the target. `--max-blobs-per-tx` caps blob packing per L1 transaction,
 while `--max-calldata-size-bytes` caps calldata transactions. `--brotli-quality`
 selects Brotli quality `0..=11` (default 9). `--data-availability-type`
 selects blobs or calldata; `--max-channel-duration` and `--sub-safety-margin`
-control channel lifetime. `--throttle-threshold` sets the DA backlog from which
-the batcher throttles, and `--throttle-strategy` how hard it throttles as the
-backlog grows above it: `off`, `step`, `linear` or `quadratic` (default). Unlike
+control channel lifetime. `--throttle-start-threshold` sets the DA backlog from
+which the batcher throttles, `--throttle-full-threshold` the one from which it
+throttles the most, and `--throttle-strategy` how the intensity grows between
+them: `off`, `step`, `linear` or `quadratic` (default). Unlike
 `--no-throttle`, `off` keeps pushing the DA limits, at their highest. For
 calldata configurations, `--no-force-blobs-when-throttling` disables the
 throttle-driven blob override. The corresponding environment variables use the

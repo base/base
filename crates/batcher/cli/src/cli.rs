@@ -157,19 +157,26 @@ pub struct BatcherArgs {
     )]
     pub publish_retry_delay: Duration,
 
-    /// DA backlog threshold in bytes at which throttling activates.
-    ///
-    /// Above it, `--throttle-strategy` sets how far the batcher lowers the DA limits it
-    /// pushes to the `--sequencer-urls` endpoints.
+    /// DA backlog in bytes from which the batcher throttles, lowering the DA limits it pushes
+    /// to the `--sequencer-urls` endpoints.
     #[arg(
-        long = "throttle-threshold",
+        long = "throttle-start-threshold",
         default_value = "1000000",
-        env = "BASE_BATCHER_THROTTLE_THRESHOLD"
+        env = "BASE_BATCHER_THROTTLE_START_THRESHOLD"
     )]
-    pub throttle_threshold: u64,
+    pub throttle_start_threshold: u64,
+
+    /// DA backlog in bytes from which the batcher throttles the most, with the lowest DA
+    /// limits. Must be above `--throttle-start-threshold`.
+    #[arg(
+        long = "throttle-full-threshold",
+        default_value = "2000000",
+        env = "BASE_BATCHER_THROTTLE_FULL_THRESHOLD"
+    )]
+    pub throttle_full_threshold: u64,
 
     /// How the throttle intensity, from 0 (highest DA limits) to 1 (lowest), grows with
-    /// the DA backlog above `--throttle-threshold`.
+    /// the DA backlog between `--throttle-start-threshold` and `--throttle-full-threshold`.
     ///
     /// `off` never throttles but, unlike `--no-throttle`, keeps pushing the highest DA
     /// limits to the `--sequencer-urls` endpoints, so `admin_setThrottleController` can
@@ -335,7 +342,8 @@ impl BatcherArgs {
                 None
             } else {
                 Some(ThrottleConfig {
-                    threshold_bytes: self.throttle_threshold,
+                    start_threshold_bytes: self.throttle_start_threshold,
+                    full_threshold_bytes: self.throttle_full_threshold,
                     max_intensity: 1.0,
                     ..Default::default()
                 })
@@ -550,8 +558,10 @@ mod tests {
             "30",
             "--poll-interval",
             "2",
-            "--throttle-threshold",
+            "--throttle-start-threshold",
             "500000",
+            "--throttle-full-threshold",
+            "800000",
             "--throttle-strategy",
             "linear",
             "--check-recent-txs-depth",
@@ -581,7 +591,9 @@ mod tests {
         assert_eq!(config.tx_manager.num_confirmations, 3);
         assert_eq!(config.tx_manager.resubmission_timeout, Duration::from_secs(30));
         assert_eq!(config.poll_interval, Duration::from_secs(2));
-        assert_eq!(config.throttle.expect("the throttle is on").threshold_bytes, 500_000);
+        let throttle = config.throttle.expect("the throttle is on");
+        assert_eq!(throttle.start_threshold_bytes, 500_000);
+        assert_eq!(throttle.full_threshold_bytes, 800_000);
         assert_eq!(config.throttle_strategy, ThrottleStrategy::Linear);
         assert_eq!(config.check_recent_txs_depth, 16);
         assert_eq!(config.wait_node_sync_timeout, Duration::from_secs(60));

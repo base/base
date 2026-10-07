@@ -20,7 +20,8 @@ use jsonrpsee::{
 use serde_json::{Value, json};
 use tokio::{sync::watch, task::JoinHandle};
 
-/// The DA backlog the driver's pipeline reports, above the threshold of [`throttle_config`].
+/// The DA backlog the driver's pipeline reports, between the start and full thresholds of
+/// [`throttle_config`].
 const DA_BACKLOG_BYTES: u64 = 1_500;
 
 /// A driver running in the background, its admin server, and an HTTP client on it.
@@ -69,7 +70,8 @@ impl AdminRpc {
 /// A throttle config as an operator sends it, with no value at its default.
 fn throttle_config(max_intensity: f64) -> Value {
     json!({
-        "threshold_bytes": 1_000,
+        "start_threshold_bytes": 1_000,
+        "full_threshold_bytes": 2_000,
         "max_intensity": max_intensity,
         "block_size_lower_limit": 3_000,
         "block_size_upper_limit": 100_000,
@@ -142,7 +144,7 @@ async fn throttle_controller_is_set_and_read() {
     let params = rpc_params!["step", throttle_config(0.5)];
     let () = rpc.client.request("admin_setThrottleController", params).await.unwrap();
 
-    // The backlog is above the threshold, so the step strategy throttles at half intensity and
+    // The backlog is above the start threshold, so the step strategy throttles at half intensity and
     // the limits sit halfway between their lower and upper bounds.
     let info: Value =
         rpc.client.request("admin_getThrottleController", rpc_params![]).await.unwrap();
@@ -150,7 +152,8 @@ async fn throttle_controller_is_set_and_read() {
         info,
         json!({
             "strategy": "step",
-            "threshold_bytes": 1_000,
+            "start_threshold_bytes": 1_000,
+            "full_threshold_bytes": 2_000,
             "max_intensity": 0.5,
             "current_intensity": 0.5,
             "max_block_size": 51_500,

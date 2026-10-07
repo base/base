@@ -182,14 +182,17 @@ mod tests {
     fn throttle_controller_takes_the_configured_strategy_unless_disabled() {
         let step = BatcherConfig {
             throttle_strategy: ThrottleStrategy::Step,
-            throttle: Some(ThrottleConfig { threshold_bytes: 42, ..ThrottleConfig::default() }),
+            throttle: Some(ThrottleConfig {
+                start_threshold_bytes: 42,
+                ..ThrottleConfig::default()
+            }),
             ..BatcherConfig::default()
         };
         let disabled = BatcherConfig { throttle: None, ..step.clone() };
 
         let controller = step.throttle_controller();
         assert_eq!(controller.strategy(), ThrottleStrategy::Step);
-        assert_eq!(controller.config().threshold_bytes, 42);
+        assert_eq!(controller.config().start_threshold_bytes, 42);
         assert_eq!(disabled.throttle_controller().strategy(), ThrottleStrategy::Off);
     }
 
