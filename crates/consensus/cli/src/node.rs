@@ -8,7 +8,7 @@ use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::{
-    EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder,
+    EngineConfig, L1ConfigBuilder, NodeMode, NodeOperatingMode, RollupNode, RollupNodeBuilder,
     UpgradeSignalBuilderConfig,
 };
 use base_upgrade_signal::{
@@ -361,15 +361,15 @@ impl ConsensusNodeArgs {
     /// Validates the signing-key requirements for the configured sequencer mode.
     pub fn validate_sequencer_key(&self) -> eyre::Result<()> {
         if self.config.node_mode.is_sequencer() {
-            let sequencer = self.config.sequencer_flags.config();
             let signer = &self.config.p2p_flags.signer;
             let has_signing_key = signer.sequencer_key.is_some()
                 || signer.sequencer_key_path.is_some()
                 || signer.endpoint.is_some();
-            if sequencer.isolated && has_signing_key {
+            let operating_mode = self.operating_mode()?;
+            if operating_mode.is_isolated() && has_signing_key {
                 eyre::bail!("isolated sequencer must not configure a signing key");
             }
-            if !sequencer.isolated && !sequencer.is_shadow_sequencer() && !has_signing_key {
+            if matches!(operating_mode, NodeOperatingMode::Sequencer) && !has_signing_key {
                 eyre::bail!(
                     "sequencer mode requires a signing key; \
                      provide --p2p.sequencer.key, --p2p.sequencer.key.path, \
@@ -378,6 +378,14 @@ impl ConsensusNodeArgs {
             }
         }
         Ok(())
+    }
+
+    fn operating_mode(&self) -> eyre::Result<NodeOperatingMode> {
+        let flags = &self.config.sequencer_flags;
+        self.config
+            .node_mode
+            .try_into_operating_mode(flags.isolated, flags.shadow_blocks_per_cycle)
+            .map_err(|e| eyre::eyre!(e))
     }
 
     /// Validates that synthetic account funding is confined to shadow sequencers.
@@ -393,8 +401,7 @@ impl ConsensusNodeArgs {
             eyre::bail!("shadow funding amount exceeds u128::MAX (TxDeposit::mint limit)");
         }
         if sequencer.shadow_funding_address.is_some()
-            && (!self.config.node_mode.is_sequencer()
-                || sequencer.shadow_blocks_per_cycle.is_none())
+            && !self.operating_mode()?.is_shadow_sequencer()
         {
             eyre::bail!("shadow funding is only supported in shadow sequencer mode");
         }
@@ -536,7 +543,7 @@ impl ConsensusNodeArgs {
             l2_jwt_secret: jwt_secret,
             l1_url: self.config.l1_rpc_args.l1_eth_rpc.clone(),
             l1_rpc_timeout: self.config.l1_rpc_args.l1_rpc_timeout,
-            mode: self.config.node_mode,
+            mode: self.operating_mode()?,
         };
 
         let mut builder = RollupNodeBuilder::new(
@@ -986,7 +993,7 @@ mod tests {
         let args = ConsensusNodeArgs::new(
             ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
             ConsensusNodeConfigArgs {
-                node_mode: NodeMode::Sequencer,
+                node_mode: NodeMode::ShadowSequencer,
                 sequencer_flags: SequencerArgs {
                     shadow_blocks_per_cycle: std::num::NonZeroU64::new(10),
                     ..SequencerArgs::default()
@@ -1003,12 +1010,42 @@ mod tests {
         let args = ConsensusNodeArgs::new(
             ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
             ConsensusNodeConfigArgs {
-                node_mode: NodeMode::Sequencer,
-                sequencer_flags: SequencerArgs { isolated: true, ..SequencerArgs::default() },
+                node_mode: NodeMode::IsolatedSequencer,
                 ..default_node_config_args()
             },
         );
 
+        assert!(args.validate_sequencer_key().is_ok());
+    }
+
+    #[rstest]
+    #[case::isolated(
+        SequencerArgs { isolated: true, ..SequencerArgs::default() },
+        NodeOperatingMode::IsolatedSequencer
+    )]
+    #[case::shadow(
+        SequencerArgs {
+            shadow_blocks_per_cycle: std::num::NonZeroU64::new(10),
+            ..SequencerArgs::default()
+        },
+        NodeOperatingMode::ShadowSequencer {
+            blocks_per_cycle: std::num::NonZeroU64::new(10).unwrap(),
+        }
+    )]
+    fn legacy_sequencer_flags_select_operating_mode(
+        #[case] sequencer_flags: SequencerArgs,
+        #[case] expected: NodeOperatingMode,
+    ) {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs {
+                node_mode: NodeMode::Sequencer,
+                sequencer_flags,
+                ..default_node_config_args()
+            },
+        );
+
+        assert_eq!(args.operating_mode().unwrap(), expected);
         assert!(args.validate_sequencer_key().is_ok());
     }
 
@@ -1026,9 +1063,8 @@ mod tests {
         let args = ConsensusNodeArgs::new(
             ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
             ConsensusNodeConfigArgs {
-                node_mode: NodeMode::Sequencer,
+                node_mode: NodeMode::IsolatedSequencer,
                 p2p_flags: P2PArgs { signer, ..P2PArgs::default() },
-                sequencer_flags: SequencerArgs { isolated: true, ..SequencerArgs::default() },
                 ..default_node_config_args()
             },
         );

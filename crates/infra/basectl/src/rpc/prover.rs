@@ -244,7 +244,6 @@ impl ProofProposeRequest {
                         number_of_blocks_to_prove: self.num_blocks,
                         sequence_window: None,
                         l1_head: Some(self.l1_head),
-                        intermediate_root_interval: Some(self.intermediate_root_interval),
                         schedule_l2_block_number: None,
                         zk_vm: ZkVm::Sp1,
                         zk_backend: self.zk_backend,
@@ -277,6 +276,15 @@ impl fmt::Debug for ProofsClient {
 }
 
 impl ProofsClient {
+    /// Interval between proof status polls in [`Self::wait_for_completion`].
+    pub const POLL_INTERVAL: Duration = Duration::from_secs(5);
+
+    /// How long [`Self::wait_for_completion`] polls before giving up.
+    ///
+    /// Network-backend PLONK proposal proofs regularly take hours (a compressed
+    /// range proof plus an aggregation/wrap stage).
+    pub const MAX_WAIT: Duration = Duration::from_secs(24 * 60 * 60);
+
     /// Connects a requester client to the prover-service `endpoint`.
     pub fn connect(endpoint: &Url) -> Result<Self, ProofsCommandError> {
         let config = ProverServiceClientConfig::new(endpoint.as_str());
@@ -295,16 +303,9 @@ impl ProofsClient {
         Ok(Self {
             endpoint: endpoint.origin().ascii_serialization(),
             requester,
-            poll_interval: config.poll_interval(),
-            max_wait: config.max_wait(),
+            poll_interval: Self::POLL_INTERVAL,
+            max_wait: Self::MAX_WAIT,
         })
-    }
-
-    /// Overrides the maximum time spent waiting for proof completion.
-    #[must_use]
-    pub const fn with_max_wait(mut self, max_wait: Duration) -> Self {
-        self.max_wait = max_wait;
-        self
     }
 
     /// Overrides the poll cadence used by [`Self::wait_for_completion`].
@@ -440,8 +441,8 @@ mod tests {
 
     use alloy_primitives::{Address, B256};
     use base_prover_service_protocol::{
-        DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
-        ListProofsRequest, ListProofsResponse, ProofRequestKind, ProofStatus,
+        CancelProofRequest, DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest,
+        GetProofResponse, ListProofsRequest, ListProofsResponse, ProofRequestKind, ProofStatus,
         ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer, ZkBackend, ZkVm,
     };
     use jsonrpsee::{
@@ -687,7 +688,6 @@ mod tests {
                 assert_eq!(snark.proof.number_of_blocks_to_prove, 1000);
                 assert_eq!(snark.proof.sequence_window, None);
                 assert_eq!(snark.proof.l1_head, Some(B256::repeat_byte(0x22)));
-                assert_eq!(snark.proof.intermediate_root_interval, Some(100));
                 assert_eq!(snark.proof.zk_vm, ZkVm::Sp1);
                 assert_eq!(snark.proof.zk_backend, ZkBackend::Network);
             }
@@ -750,6 +750,14 @@ mod tests {
                 .pop_front()
                 .unwrap_or(self.last_status);
             Ok(GetProofResponse { status, error_message: None, result: None })
+        }
+
+        async fn cancel_proof_request(&self, _request: CancelProofRequest) -> RpcResult<()> {
+            Err(ErrorObjectOwned::owned(
+                ErrorCode::MethodNotFound.code(),
+                "not used by tests",
+                None::<()>,
+            ))
         }
 
         async fn delete_proof_request(&self, _request: DeleteProofRequest) -> RpcResult<()> {

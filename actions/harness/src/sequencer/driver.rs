@@ -276,7 +276,7 @@ impl<E: SequencerEngineBackend> L2Sequencer<E> {
             conductor: Some(ActionConductor::new(Arc::clone(&self.conductor))),
             engine_client,
             is_active: false,
-            shadow_blocks_per_cycle: None,
+            mode: base_consensus_node::NodeOperatingMode::Sequencer,
             shadow_funding: None,
             recovery_mode: RecoveryModeGuard::new(false),
             rollup_config: self.actor_rollup_config(),

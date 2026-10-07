@@ -1,19 +1,18 @@
 use base_prover_service_protocol::{
-    ProofResult as ProtocolProofResult, SnarkPlonkProofResult, ZkBackend, ZkProofResult, ZkVm,
+    PROOF_REQUEST_CANCELLED_MESSAGE, ProofResult as ProtocolProofResult, ZkBackend,
 };
 use chrono::Utc;
 use sqlx::{PgPool, Result, Row};
 use uuid::Uuid;
 
 use crate::{
-    AbandonProofJob, AbandonProofOutcome, ApiProofType, ClaimAuth, ClaimProofJob,
-    CompleteClaimedProofJob, CreateProofRequest, CreateProofRequestError,
-    CreateProofRequestOutcome, CreateProofRequestValidationError, CreateProofSession,
-    DeleteProofRequestOutcome, FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob,
-    JobLockState, ProofJob, ProofJobStatus, ProofRequest, ProofRequestListItem, ProofRequestPage,
-    ProofSession, ProofStatus, ProofType, RecordSessionOutcome, RetryOutcome, SessionStatus,
-    SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession, UpdateReceipt,
-    WorkerSessionUpsert, ZkVmKind, canonical_session_id,
+    AbandonProofJob, AbandonProofOutcome, ApiProofType, CancelProofRequestOutcome, ClaimAuth,
+    ClaimProofJob, CompleteClaimedProofJob, CreateProofRequest, CreateProofRequestError,
+    CreateProofRequestOutcome, CreateProofRequestValidationError, DeleteProofRequestOutcome,
+    FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob, JobLockState, ProofJob,
+    ProofJobStatus, ProofRequest, ProofRequestListItem, ProofRequestPage, ProofSession,
+    ProofStatus, ProofType, RecordSessionOutcome, RetryOutcome, SessionStatus, SessionType,
+    SubmitProofOutcome, TeeKind, WorkerSessionUpsert, ZkVmKind, canonical_session_id,
 };
 
 /// Repository for proof request database operations
@@ -40,9 +39,9 @@ impl ProofRequestRepo {
             INSERT INTO proof_requests (
                 id, session_id, request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
                 start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, status,
-                prover_address, l1_head, intermediate_root_interval
+                prover_address, l1_head
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             "#,
         )
         .bind(prepared.id)
@@ -59,7 +58,6 @@ impl ProofRequestRepo {
         .bind(ProofStatus::Created.as_str())
         .bind(&prepared.prover_address)
         .bind(&prepared.l1_head)
-        .bind(prepared.intermediate_root_interval)
         .execute(&self.pool)
         .await?;
 
@@ -82,9 +80,9 @@ impl ProofRequestRepo {
             INSERT INTO proof_requests (
                 id, session_id, request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
                 start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, status,
-                prover_address, l1_head, intermediate_root_interval
+                prover_address, l1_head
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             ON CONFLICT ((COALESCE(session_id, id::text))) DO NOTHING
             "#,
         )
@@ -102,7 +100,6 @@ impl ProofRequestRepo {
         .bind(ProofStatus::Created.as_str())
         .bind(&prepared.prover_address)
         .bind(&prepared.l1_head)
-        .bind(prepared.intermediate_root_interval)
         .execute(&mut *tx)
         .await?;
 
@@ -117,8 +114,8 @@ impl ProofRequestRepo {
             SELECT id, COALESCE(session_id, id::text) AS session_id,
                    request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
                    start_block_number, number_of_blocks_to_prove, sequence_window,
-                   proof_type, status, prover_address, l1_head,
-                   intermediate_root_interval, retry_count
+                   proof_type, status, error_message, prover_address, l1_head,
+                   retry_count
             FROM proof_requests
             WHERE COALESCE(session_id, id::text) = $1
             FOR UPDATE
@@ -148,7 +145,6 @@ impl ProofRequestRepo {
             proof_type: prepared.proof_type.map(|proof_type| proof_type.as_str()),
             prover_address: prepared.prover_address.as_deref(),
             l1_head: prepared.l1_head.as_deref(),
-            intermediate_root_interval: prepared.intermediate_root_interval,
         };
         let status_str: &str = row.get("status");
         let status = ProofStatus::try_from(status_str).map_err(|e| {
@@ -177,6 +173,12 @@ impl ProofRequestRepo {
                 Ok(CreateProofRequestOutcome::Replayed(existing_id))
             }
             ProofStatus::Failed => {
+                if row.get::<Option<&str>, _>("error_message")
+                    == Some(PROOF_REQUEST_CANCELLED_MESSAGE)
+                {
+                    tx.rollback().await?;
+                    return Ok(CreateProofRequestOutcome::Cancelled(existing_id));
+                }
                 if !retry_failed {
                     tx.rollback().await?;
                     return Ok(CreateProofRequestOutcome::RetryNotAllowed(existing_id));
@@ -243,6 +245,88 @@ impl ProofRequestRepo {
                 Ok(CreateProofRequestOutcome::Requeued(existing_id))
             }
         }
+    }
+
+    /// Cancel a non-terminal Cluster or Network proof request by public session id.
+    ///
+    /// The request is failed with [`PROOF_REQUEST_CANCELLED_MESSAGE`] and its worker
+    /// claim is cleared, so a late submit from the previous owner is rejected.
+    pub async fn cancel_proof_request_by_session_id(
+        &self,
+        session_id: &str,
+    ) -> Result<CancelProofRequestOutcome> {
+        let session_id = canonical_session_id(session_id)
+            .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
+        let mut tx = self.pool.begin().await?;
+
+        // `zk_backend` is NULL for TEE rows and for ZK rows written before
+        // migration 014, which the claim query treats as `cluster`.
+        let row = sqlx::query(
+            r#"
+            SELECT status, error_message,
+                   api_proof_type IS DISTINCT FROM 'tee'
+                       AND COALESCE(zk_backend, 'cluster') IN ('cluster', 'network')
+                       AS cancellable
+            FROM proof_requests
+            WHERE COALESCE(session_id, id::text) = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(&session_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let Some(row) = row else {
+            tx.rollback().await?;
+            return Ok(CancelProofRequestOutcome::NotFound);
+        };
+
+        if !row.get::<bool, _>("cancellable") {
+            tx.rollback().await?;
+            return Ok(CancelProofRequestOutcome::UnsupportedBackend);
+        }
+
+        let status_str: &str = row.get("status");
+        let status = ProofStatus::try_from(status_str).map_err(|e| {
+            sqlx::Error::Protocol(format!("Unknown proof status '{status_str}': {e}"))
+        })?;
+        if status == ProofStatus::Failed
+            && row.get::<Option<&str>, _>("error_message") == Some(PROOF_REQUEST_CANCELLED_MESSAGE)
+        {
+            tx.rollback().await?;
+            return Ok(CancelProofRequestOutcome::AlreadyCancelled);
+        }
+        if matches!(status, ProofStatus::Succeeded | ProofStatus::Failed) {
+            tx.rollback().await?;
+            return Ok(CancelProofRequestOutcome::AlreadyTerminal(status));
+        }
+
+        let columns = PROOF_JOB_RETURNING_COLUMNS;
+        let sql = format!(
+            r#"
+            UPDATE proof_requests
+            SET status = 'FAILED',
+                job_status = 'FAILED',
+                error_message = $2,
+                completed_at = NOW(),
+                worker_id = NULL,
+                lock_id = NULL,
+                lock_expires_at = NULL,
+                claimed_at = NULL,
+                last_heartbeat_at = NULL
+            WHERE COALESCE(session_id, id::text) = $1
+            RETURNING {columns}
+            "#
+        );
+        let row = sqlx::query(&sql)
+            .bind(&session_id)
+            .bind(PROOF_REQUEST_CANCELLED_MESSAGE)
+            .fetch_one(&mut *tx)
+            .await?;
+        let job = row_to_proof_job(&row)?;
+
+        tx.commit().await?;
+        Ok(CancelProofRequestOutcome::Cancelled(Box::new(job)))
     }
 
     /// Delete a terminal proof request by public session id.
@@ -336,7 +420,7 @@ impl ProofRequestRepo {
                 stark_receipt, snark_receipt, result_payload,
                 submitted_by_worker_id, submitted_lock_id,
                 status, error_message,
-                prover_address, l1_head, intermediate_root_interval,
+                prover_address, l1_head,
                 created_at, updated_at, completed_at, retry_count
             FROM proof_requests
             WHERE id = $1
@@ -362,7 +446,7 @@ impl ProofRequestRepo {
                 stark_receipt, snark_receipt, result_payload,
                 submitted_by_worker_id, submitted_lock_id,
                 status, error_message,
-                prover_address, l1_head, intermediate_root_interval,
+                prover_address, l1_head,
                 created_at, updated_at, completed_at, retry_count
             FROM proof_requests
             WHERE COALESCE(session_id, id::text) = $1
@@ -373,204 +457,6 @@ impl ProofRequestRepo {
         .await?;
 
         row.map(|r| row_to_proof_request(&r)).transpose()
-    }
-
-    /// Update receipt fields while the request is still RUNNING.
-    /// Status is kept as RUNNING — this method cannot be used for state transitions.
-    /// Returns true if update succeeded, false otherwise.
-    pub async fn update_receipt_if_running(&self, update: UpdateReceipt) -> Result<bool> {
-        debug_assert_eq!(
-            update.status,
-            ProofStatus::Running,
-            "update_receipt_if_running is for intermediate receipt updates only; \
-             use transition_running_to_succeeded or fail_session_and_request for state transitions",
-        );
-
-        let result = sqlx::query(
-            r#"
-            UPDATE proof_requests
-            SET
-                stark_receipt = COALESCE($1, stark_receipt),
-                snark_receipt = COALESCE($2, snark_receipt),
-                status = 'RUNNING',
-                error_message = $3,
-                completed_at = NULL
-            WHERE id = $4
-              AND status = 'RUNNING'
-            "#,
-        )
-        .bind(&update.stark_receipt)
-        .bind(&update.snark_receipt)
-        .bind(&update.error_message)
-        .bind(update.id)
-        .execute(&self.pool)
-        .await?;
-
-        let updated = result.rows_affected() > 0;
-
-        Ok(updated)
-    }
-
-    /// Atomically claim a task by transitioning it from CREATED to PENDING.
-    /// Returns true if the task was successfully claimed (was in CREATED state).
-    /// Returns false if the task was already claimed or doesn't exist.
-    pub async fn atomic_claim_task(&self, id: Uuid) -> Result<bool> {
-        let result = sqlx::query(
-            r#"
-            UPDATE proof_requests
-            SET status = $1
-            WHERE id = $2 AND status = $3
-            "#,
-        )
-        .bind(ProofStatus::Pending.as_str())
-        .bind(id)
-        .bind(ProofStatus::Created.as_str())
-        .execute(&self.pool)
-        .await?;
-
-        let claimed = result.rows_affected() > 0;
-
-        Ok(claimed)
-    }
-
-    /// Atomically create a proof session and transition proof request PENDING → RUNNING.
-    /// Returns `Ok(Some(session_id))` if the request was in PENDING state.
-    /// Returns `Ok(None)` if the request was NOT in PENDING state (race lost).
-    pub async fn transition_pending_to_running(
-        &self,
-        session: CreateProofSession,
-    ) -> Result<Option<i64>> {
-        let mut tx = self.pool.begin().await?;
-
-        let result = sqlx::query(
-            r#"
-            UPDATE proof_requests
-            SET status = $1
-            WHERE id = $2 AND status = $3
-            "#,
-        )
-        .bind(ProofStatus::Running.as_str())
-        .bind(session.proof_request_id)
-        .bind(ProofStatus::Pending.as_str())
-        .execute(&mut *tx)
-        .await?;
-
-        if result.rows_affected() == 0 {
-            tx.rollback().await?;
-            return Ok(None);
-        }
-
-        let row = sqlx::query(
-            r#"
-            INSERT INTO proof_sessions (
-                proof_request_id, session_type, backend_session_id, status, metadata
-            )
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING id
-            "#,
-        )
-        .bind(session.proof_request_id)
-        .bind(session.session_type.as_str())
-        .bind(&session.backend_session_id)
-        .bind(SessionStatus::Running.as_str())
-        .bind(&session.metadata)
-        .fetch_one(&mut *tx)
-        .await?;
-
-        let session_id: i64 = row.get("id");
-        tx.commit().await?;
-
-        Ok(Some(session_id))
-    }
-
-    /// Transition proof request PENDING → FAILED with error message.
-    /// Returns true if the transition succeeded (was PENDING).
-    pub async fn transition_pending_to_failed(
-        &self,
-        id: Uuid,
-        error_message: String,
-    ) -> Result<bool> {
-        let result = sqlx::query(
-            r#"
-            UPDATE proof_requests
-            SET status = $1,
-                error_message = $2,
-                completed_at = NOW()
-            WHERE id = $3 AND status = $4
-            "#,
-        )
-        .bind(ProofStatus::Failed.as_str())
-        .bind(&error_message)
-        .bind(id)
-        .bind(ProofStatus::Pending.as_str())
-        .execute(&self.pool)
-        .await?;
-
-        Ok(result.rows_affected() > 0)
-    }
-
-    /// Transition proof request RUNNING → FAILED with optional error message.
-    /// Returns true if the transition succeeded (was RUNNING).
-    pub async fn transition_running_to_failed(
-        &self,
-        id: Uuid,
-        error_message: Option<String>,
-    ) -> Result<bool> {
-        let result = sqlx::query(
-            r#"
-            UPDATE proof_requests
-            SET status = $1,
-                error_message = $2,
-                completed_at = NOW()
-            WHERE id = $3 AND status = $4
-            "#,
-        )
-        .bind(ProofStatus::Failed.as_str())
-        .bind(&error_message)
-        .bind(id)
-        .bind(ProofStatus::Running.as_str())
-        .execute(&self.pool)
-        .await?;
-
-        Ok(result.rows_affected() > 0)
-    }
-
-    /// Transition proof request RUNNING → SUCCEEDED with receipt data.
-    /// Returns true if the transition succeeded (was RUNNING).
-    pub async fn transition_running_to_succeeded(&self, update: UpdateReceipt) -> Result<bool> {
-        debug_assert_eq!(
-            update.status,
-            ProofStatus::Succeeded,
-            "transition_running_to_succeeded called with status {:?}; the status field is ignored \
-             — this method always writes SUCCEEDED",
-            update.status,
-        );
-
-        let result_payload = result_payload_from_receipt_update(&update)?;
-
-        let result = sqlx::query(
-            r#"
-            UPDATE proof_requests
-            SET stark_receipt = COALESCE($1, stark_receipt),
-                snark_receipt = COALESCE($2, snark_receipt),
-                result_payload = COALESCE($3, result_payload),
-                status = $4,
-                error_message = $5,
-                completed_at = NOW()
-            WHERE id = $6 AND status = $7
-            "#,
-        )
-        .bind(&update.stark_receipt)
-        .bind(&update.snark_receipt)
-        .bind(&result_payload)
-        .bind(ProofStatus::Succeeded.as_str())
-        .bind(&update.error_message)
-        .bind(update.id)
-        .bind(ProofStatus::Running.as_str())
-        .execute(&self.pool)
-        .await?;
-
-        Ok(result.rows_affected() > 0)
     }
 
     // ========== Worker Job API Methods ==========
@@ -980,8 +866,7 @@ impl ProofRequestRepo {
             r#"
             SELECT retry_count, status, job_status, lock_expires_at,
                    start_block_number, number_of_blocks_to_prove,
-                   sequence_window, proof_type, prover_address, l1_head,
-                   intermediate_root_interval
+                   sequence_window, proof_type, prover_address, l1_head
             FROM proof_requests
             WHERE id = $1
             FOR UPDATE
@@ -1098,49 +983,6 @@ impl ProofRequestRepo {
 
     // ========== Proof Session Methods ==========
 
-    /// Create a new proof session
-    pub async fn create_proof_session(&self, session: CreateProofSession) -> Result<i64> {
-        let row = sqlx::query(
-            r#"
-            INSERT INTO proof_sessions (
-                proof_request_id, session_type, backend_session_id, status, metadata
-            )
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING id
-            "#,
-        )
-        .bind(session.proof_request_id)
-        .bind(session.session_type.as_str())
-        .bind(&session.backend_session_id)
-        .bind(SessionStatus::Running.as_str())
-        .bind(&session.metadata)
-        .fetch_one(&self.pool)
-        .await?;
-
-        let id: i64 = row.get("id");
-        Ok(id)
-    }
-
-    /// Get a proof session by backend session ID
-    pub async fn get_session_by_backend_id(
-        &self,
-        backend_session_id: &str,
-    ) -> Result<Option<ProofSession>> {
-        let row = sqlx::query(
-            r#"
-            SELECT id, proof_request_id, session_type, backend_session_id,
-                   status, error_message, metadata, created_at, completed_at
-            FROM proof_sessions
-            WHERE backend_session_id = $1
-            "#,
-        )
-        .bind(backend_session_id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        row.map(|r| row_to_proof_session(&r)).transpose()
-    }
-
     /// Get all sessions for a proof request
     pub async fn get_sessions_for_request(
         &self,
@@ -1216,7 +1058,7 @@ impl ProofRequestRepo {
 
         let claim = sqlx::query(
             r#"
-            SELECT id, job_status, lock_id, worker_id, lock_expires_at
+            SELECT id, job_status, lock_id, worker_id, lock_expires_at, error_message
             FROM proof_requests
             WHERE COALESCE(session_id, id::text) = $1
             FOR UPDATE
@@ -1229,6 +1071,8 @@ impl ProofRequestRepo {
         let Some(claim) = claim else {
             return Ok(RecordSessionOutcome::NotFound);
         };
+        let cancelled =
+            claim.get::<Option<&str>, _>("error_message") == Some(PROOF_REQUEST_CANCELLED_MESSAGE);
 
         let proof_request_id: Uuid = claim.get("id");
         let job_status_str: &str = claim.get("job_status");
@@ -1251,6 +1095,7 @@ impl ProofRequestRepo {
             now,
         ) {
             ClaimAuth::Authorized => {}
+            ClaimAuth::Terminal if cancelled => return Ok(RecordSessionOutcome::Cancelled),
             ClaimAuth::Terminal => return Ok(RecordSessionOutcome::Terminal),
             ClaimAuth::NotClaimed => return Ok(RecordSessionOutcome::NotClaimed),
             ClaimAuth::StaleLock => return Ok(RecordSessionOutcome::StaleLock),
@@ -1355,48 +1200,6 @@ impl ProofRequestRepo {
         Ok(RecordSessionOutcome::Recorded(session))
     }
 
-    /// Get all running sessions (for polling)
-    pub async fn get_running_sessions(&self) -> Result<Vec<ProofSession>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT id, proof_request_id, session_type, backend_session_id,
-                   status, error_message, metadata, created_at, completed_at
-            FROM proof_sessions
-            WHERE status = $1
-            ORDER BY created_at ASC
-            "#,
-        )
-        .bind(SessionStatus::Running.as_str())
-        .fetch_all(&self.pool)
-        .await?;
-
-        rows.iter().map(row_to_proof_session).collect()
-    }
-
-    /// Get all running proof requests (for polling)
-    pub async fn get_running_proof_requests(&self) -> Result<Vec<ProofRequest>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT id, COALESCE(session_id, id::text) AS session_id,
-                   request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
-                   start_block_number, number_of_blocks_to_prove,
-                   sequence_window, proof_type, stark_receipt, snark_receipt,
-                   result_payload, submitted_by_worker_id, submitted_lock_id,
-                   status, error_message, prover_address, l1_head,
-                   intermediate_root_interval,
-                   created_at, updated_at, completed_at, retry_count
-            FROM proof_requests
-            WHERE status = $1
-            ORDER BY created_at ASC
-            "#,
-        )
-        .bind(ProofStatus::Running.as_str())
-        .fetch_all(&self.pool)
-        .await?;
-
-        rows.iter().map(row_to_proof_request).collect()
-    }
-
     /// Get proof requests that are stuck in PENDING without a running session,
     /// or migration-parked RUNNING requests that were never claimed by a worker.
     /// PENDING requests are likely orphaned due to crashes before session creation.
@@ -1412,7 +1215,6 @@ impl ProofRequestRepo {
                 pr.sequence_window, pr.proof_type, pr.stark_receipt, pr.snark_receipt,
                 pr.result_payload, pr.submitted_by_worker_id, pr.submitted_lock_id,
                 pr.status, pr.error_message, pr.prover_address, pr.l1_head,
-                pr.intermediate_root_interval,
                 pr.created_at, pr.updated_at, pr.completed_at, pr.retry_count
             FROM proof_requests pr
             WHERE pr.updated_at < NOW() - INTERVAL '1 minute' * $1
@@ -1441,179 +1243,6 @@ impl ProofRequestRepo {
         rows.iter().map(row_to_proof_request).collect()
     }
 
-    /// Update a proof session status
-    pub async fn update_proof_session(&self, update: UpdateProofSession) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE proof_sessions
-            SET status = $1,
-                error_message = $2,
-                metadata = COALESCE($3, metadata),
-                completed_at = CASE WHEN $1 IN ('COMPLETED', 'FAILED') THEN NOW() ELSE completed_at END
-            WHERE backend_session_id = $4
-            "#,
-        )
-        .bind(update.status.as_str())
-        .bind(&update.error_message)
-        .bind(&update.metadata)
-        .bind(&update.backend_session_id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    /// Update a proof session only if it's still in RUNNING state (non-terminal).
-    /// Returns true if the session was updated, false if already terminal.
-    pub async fn update_proof_session_if_non_terminal(
-        &self,
-        update: UpdateProofSession,
-    ) -> Result<bool> {
-        let result = sqlx::query(
-            r#"
-            UPDATE proof_sessions
-            SET status = $1,
-                error_message = $2,
-                metadata = COALESCE($3, metadata),
-                completed_at = CASE WHEN $1 IN ('COMPLETED', 'FAILED') THEN NOW() ELSE completed_at END
-            WHERE backend_session_id = $4
-              AND status = 'RUNNING'
-            "#,
-        )
-        .bind(update.status.as_str())
-        .bind(&update.error_message)
-        .bind(&update.metadata)
-        .bind(&update.backend_session_id)
-        .execute(&self.pool)
-        .await?;
-
-        let updated = result.rows_affected() > 0;
-        Ok(updated)
-    }
-
-    /// Atomically update proof session to FAILED and proof request RUNNING → FAILED.
-    ///
-    /// The request update is guarded on `status = 'RUNNING'` so that a
-    /// concurrent stuck-detector marking PENDING → FAILED cannot be
-    /// overwritten. If the guard fails the entire transaction is rolled back
-    /// so the session is not left in an inconsistent `FAILED` state while the
-    /// request remains unchanged.
-    ///
-    /// Returns `true` if both updates were applied, `false` if the request was
-    /// not in RUNNING state (transaction rolled back, no changes persisted).
-    pub async fn fail_session_and_request(
-        &self,
-        backend_session_id: &str,
-        proof_request_id: Uuid,
-        error_message: Option<String>,
-    ) -> Result<bool> {
-        let mut tx = self.pool.begin().await?;
-
-        let result = sqlx::query(
-            r#"
-            UPDATE proof_requests
-            SET status = $1,
-                error_message = $2,
-                completed_at = NOW()
-            WHERE id = $3
-              AND status = 'RUNNING'
-            "#,
-        )
-        .bind(ProofStatus::Failed.as_str())
-        .bind(&error_message)
-        .bind(proof_request_id)
-        .execute(&mut *tx)
-        .await?;
-
-        if result.rows_affected() == 0 {
-            tx.rollback().await?;
-            return Ok(false);
-        }
-
-        sqlx::query(
-            r#"
-            UPDATE proof_sessions
-            SET status = $1,
-                error_message = $2,
-                completed_at = NOW()
-            WHERE backend_session_id = $3
-            "#,
-        )
-        .bind(SessionStatus::Failed.as_str())
-        .bind(&error_message)
-        .bind(backend_session_id)
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-
-        Ok(true)
-    }
-
-    /// Atomically update proof session to COMPLETED and update proof request
-    /// with the receipt.
-    ///
-    /// The request update is guarded on `status = 'RUNNING'`. If the guard
-    /// fails the entire transaction is rolled back so the session is not left
-    /// in an inconsistent `COMPLETED` state while the request remains
-    /// unchanged.
-    ///
-    /// Returns `true` if both updates were applied, `false` if the request was
-    /// not in RUNNING state (transaction rolled back, no changes persisted).
-    pub async fn complete_session_and_update_receipt(
-        &self,
-        backend_session_id: &str,
-        update_receipt: UpdateReceipt,
-    ) -> Result<bool> {
-        let mut tx = self.pool.begin().await?;
-        let result_payload = result_payload_from_receipt_update(&update_receipt)?;
-
-        let result = sqlx::query(
-            r#"
-            UPDATE proof_requests
-            SET
-                stark_receipt = COALESCE($1, stark_receipt),
-                snark_receipt = COALESCE($2, snark_receipt),
-                result_payload = COALESCE($3, result_payload),
-                status = $4,
-                error_message = $5,
-                completed_at = CASE WHEN $4 IN ('SUCCEEDED', 'FAILED') THEN NOW() ELSE completed_at END
-            WHERE id = $6
-              AND status = 'RUNNING'
-            "#,
-        )
-        .bind(&update_receipt.stark_receipt)
-        .bind(&update_receipt.snark_receipt)
-        .bind(&result_payload)
-        .bind(update_receipt.status.as_str())
-        .bind(&update_receipt.error_message)
-        .bind(update_receipt.id)
-        .execute(&mut *tx)
-        .await?;
-
-        if result.rows_affected() == 0 {
-            tx.rollback().await?;
-            return Ok(false);
-        }
-
-        sqlx::query(
-            r#"
-            UPDATE proof_sessions
-            SET status = $1,
-                completed_at = NOW()
-            WHERE backend_session_id = $2
-            "#,
-        )
-        .bind(SessionStatus::Completed.as_str())
-        .bind(backend_session_id)
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-
-        Ok(true)
-    }
-
     /// List all proof requests with optional status filter
     pub async fn list(
         &self,
@@ -1630,7 +1259,7 @@ impl ProofRequestRepo {
                     stark_receipt, snark_receipt, result_payload,
                     submitted_by_worker_id, submitted_lock_id,
                     status, error_message,
-                    prover_address, l1_head, intermediate_root_interval,
+                    prover_address, l1_head,
                     created_at, updated_at, completed_at, retry_count
                 FROM proof_requests
                 WHERE status = $1
@@ -1652,7 +1281,7 @@ impl ProofRequestRepo {
                     stark_receipt, snark_receipt, result_payload,
                     submitted_by_worker_id, submitted_lock_id,
                     status, error_message,
-                    prover_address, l1_head, intermediate_root_interval,
+                    prover_address, l1_head,
                     created_at, updated_at, completed_at, retry_count
                 FROM proof_requests
                 ORDER BY created_at DESC
@@ -1784,7 +1413,6 @@ struct PreparedProofRequest {
     proof_type: Option<ProofType>,
     prover_address: Option<String>,
     l1_head: Option<String>,
-    intermediate_root_interval: Option<i64>,
 }
 
 impl TryFrom<CreateProofRequest> for PreparedProofRequest {
@@ -1813,14 +1441,6 @@ impl TryFrom<CreateProofRequest> for PreparedProofRequest {
                 })
             })
             .transpose()?;
-        let intermediate_root_interval = req
-            .intermediate_root_interval
-            .map(|v| {
-                i64::try_from(v).map_err(|_| CreateProofRequestValidationError::ValueOutOfRange {
-                    field: "intermediate_root_interval",
-                })
-            })
-            .transpose()?;
         validate_backend_proof_type(req.api_proof_type, req.proof_type)?;
         let request_payload = serde_json::to_value(&req.request_payload)
             .map_err(|_| CreateProofRequestValidationError::RequestPayloadSerialization)?;
@@ -1839,7 +1459,6 @@ impl TryFrom<CreateProofRequest> for PreparedProofRequest {
             proof_type: req.proof_type,
             prover_address: req.prover_address,
             l1_head: req.l1_head,
-            intermediate_root_interval,
         })
     }
 }
@@ -1874,40 +1493,6 @@ const fn validate_backend_proof_type(
             proof_type,
         }),
     }
-}
-
-fn result_payload_from_receipt_update(update: &UpdateReceipt) -> Result<Option<serde_json::Value>> {
-    if update.status != ProofStatus::Succeeded {
-        return Ok(None);
-    }
-
-    let Some(result) = proof_result_from_receipt_update(update) else {
-        return Ok(None);
-    };
-
-    serde_json::to_value(result).map(Some).map_err(|e| sqlx::Error::Encode(Box::new(e)))
-}
-
-fn proof_result_from_receipt_update(update: &UpdateReceipt) -> Option<ProtocolProofResult> {
-    // `UpdateReceipt` is the legacy OP Succinct receipt path, which currently only
-    // stores SP1 receipts. Protocol-native completions carry their own ZK VM.
-    if let Some(snark_receipt) = &update.snark_receipt {
-        return Some(ProtocolProofResult::SnarkPlonk(SnarkPlonkProofResult {
-            proof: ZkProofResult {
-                zk_vm: ZkVm::Sp1,
-                proof: snark_receipt.clone().into(),
-                execution_stats: None,
-            },
-        }));
-    }
-
-    update.stark_receipt.as_ref().map(|stark_receipt| {
-        ProtocolProofResult::Compressed(ZkProofResult {
-            zk_vm: ZkVm::Sp1,
-            proof: stark_receipt.clone().into(),
-            execution_stats: None,
-        })
-    })
 }
 
 fn compatibility_receipts_for_result(
@@ -1958,7 +1543,6 @@ struct ProtocolRequestPayloadParams<'a> {
     zk_backend: Option<ZkBackend>,
     prover_address: Option<&'a str>,
     l1_head: Option<&'a str>,
-    intermediate_root_interval: Option<i64>,
 }
 
 impl ProtocolRequestPayloadParams<'_> {
@@ -1968,7 +1552,6 @@ impl ProtocolRequestPayloadParams<'_> {
             "number_of_blocks_to_prove": self.number_of_blocks_to_prove,
             "sequence_window": self.sequence_window,
             "l1_head": self.l1_head,
-            "intermediate_root_interval": self.intermediate_root_interval,
             "zk_vm": ZkVmKind::Sp1.as_str(),
             "zk_backend": self.zk_backend.unwrap_or(ZkBackend::Cluster).as_str(),
         });
@@ -2004,9 +1587,6 @@ impl ProtocolRequestPayloadParams<'_> {
                             "claimed_l2_output_root": ZERO_HASH,
                             "claimed_l2_block_number": self.start_block_number,
                             "proposer": ZERO_ADDRESS,
-                            "intermediate_block_interval": self
-                                .intermediate_root_interval
-                                .unwrap_or_default(),
                             "l1_head_number": 0,
                         },
                         "tee_kind": self.tee_kind.unwrap_or(TeeKind::AwsNitro).as_str(),
@@ -2051,7 +1631,6 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
     let sequence_window = row.get("sequence_window");
     let prover_address = row.get::<Option<String>, _>("prover_address");
     let l1_head = row.get::<Option<String>, _>("l1_head");
-    let intermediate_root_interval = row.get("intermediate_root_interval");
 
     let status_str: &str = row.get("status");
     let status = ProofStatus::try_from(status_str)
@@ -2095,7 +1674,6 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
                 zk_backend,
                 prover_address: prover_address.as_deref(),
                 l1_head: l1_head.as_deref(),
-                intermediate_root_interval,
             }
             .build()
         });
@@ -2121,7 +1699,6 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
         error_message: row.get("error_message"),
         prover_address,
         l1_head,
-        intermediate_root_interval,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         completed_at: row.get("completed_at"),
@@ -2150,7 +1727,7 @@ const PROOF_JOB_RETURNING_COLUMNS: &str = "id, COALESCE(session_id, id::text) AS
      start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, \
      stark_receipt, snark_receipt, result_payload, \
      submitted_by_worker_id, submitted_lock_id, status, error_message, \
-     prover_address, l1_head, intermediate_root_interval, \
+     prover_address, l1_head, \
      created_at, updated_at, completed_at, retry_count, \
      job_status, worker_id, lock_id, lock_expires_at, claimed_at, attempt, last_heartbeat_at";
 
@@ -2290,7 +1867,6 @@ struct CreateRequestParams<'a> {
     proof_type: Option<&'a str>,
     prover_address: Option<&'a str>,
     l1_head: Option<&'a str>,
-    intermediate_root_interval: Option<i64>,
 }
 
 impl CreateRequestParams<'_> {
@@ -2331,11 +1907,6 @@ impl CreateRequestParams<'_> {
             && row.get::<Option<&str>, _>("l1_head") != self.l1_head
         {
             return Some("l1_head");
-        }
-        if row.get::<Option<i64>, _>("intermediate_root_interval")
-            != self.intermediate_root_interval
-        {
-            return Some("intermediate_root_interval");
         }
         if let Some(api_proof_type) = row.get::<Option<&str>, _>("api_proof_type")
             && api_proof_type != self.api_proof_type
@@ -2397,6 +1968,9 @@ fn comparable_request_payload(
         };
     if let Some(map) = zk_backend_path.and_then(|path| value.pointer_mut(path)?.as_object_mut()) {
         map.entry("zk_backend").or_insert_with(|| serde_json::Value::String("cluster".to_owned()));
+        // Older ZK payloads recorded a caller-supplied interval. The range program
+        // ignores it, so it must not split an otherwise identical replay.
+        map.remove("intermediate_root_interval");
     }
     if mode == RequestMismatchMode::AllowL1HeadReplacement {
         remove_l1_head_fields(&mut value);
@@ -2437,7 +2011,6 @@ mod tests {
                 number_of_blocks_to_prove: 5,
                 sequence_window: Some(50),
                 l1_head: None,
-                intermediate_root_interval: Some(5),
                 schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
@@ -2461,7 +2034,6 @@ mod tests {
         assert_eq!(zk_request.start_block_number, 100);
         assert_eq!(zk_request.number_of_blocks_to_prove, 5);
         assert_eq!(zk_request.sequence_window, Some(50));
-        assert_eq!(zk_request.intermediate_root_interval, Some(5));
         assert_eq!(zk_request.zk_vm, ZkVm::Sp1);
     }
 
@@ -2474,7 +2046,6 @@ mod tests {
                 number_of_blocks_to_prove: 5,
                 sequence_window: None,
                 l1_head: None,
-                intermediate_root_interval: None,
                 schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
@@ -2514,7 +2085,6 @@ mod tests {
             zk_backend: None,
             prover_address: None,
             l1_head: Some(ZERO_HASH),
-            intermediate_root_interval: Some(10),
         }
         .build();
 
@@ -2527,7 +2097,6 @@ mod tests {
         };
         assert_eq!(request.tee_kind, ProtocolTeeKind::AwsNitro);
         assert_eq!(request.proof.claimed_l2_block_number, 100);
-        assert_eq!(request.proof.intermediate_block_interval, 10);
     }
 
     #[test]
@@ -2614,7 +2183,10 @@ mod tests {
         let payloads = [
             (
                 serde_json::json!({
-                    "request": {"proof_type": "compressed", "payload": {"start_block_number": 1}}
+                    "request": {
+                        "proof_type": "compressed",
+                        "payload": {"start_block_number": 1, "intermediate_root_interval": 10}
+                    }
                 }),
                 serde_json::json!({
                     "request": {
@@ -2688,7 +2260,6 @@ mod tests {
                 number_of_blocks_to_prove: 5,
                 sequence_window: None,
                 l1_head: None,
-                intermediate_root_interval: None,
                 schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
@@ -2702,77 +2273,6 @@ mod tests {
         assert_eq!(
             err,
             CreateProofRequestValidationError::ValueOutOfRange { field: "start_block_number" }
-        );
-    }
-
-    #[test]
-    fn receipt_update_builds_compressed_result_payload() {
-        let update = UpdateReceipt {
-            id: Uuid::new_v4(),
-            stark_receipt: Some(vec![1, 2, 3]),
-            snark_receipt: None,
-            status: ProofStatus::Succeeded,
-            error_message: None,
-        };
-
-        let payload = result_payload_from_receipt_update(&update)
-            .expect("payload should serialize")
-            .expect("stark receipt should produce payload");
-        let result: ProtocolProofResult =
-            serde_json::from_value(payload).expect("payload should deserialize");
-
-        assert_eq!(
-            result,
-            ProtocolProofResult::Compressed(ZkProofResult {
-                zk_vm: ZkVm::Sp1,
-                proof: vec![1, 2, 3].into(),
-                execution_stats: None,
-            })
-        );
-    }
-
-    #[test]
-    fn receipt_update_skips_non_terminal_result_payload() {
-        let update = UpdateReceipt {
-            id: Uuid::new_v4(),
-            stark_receipt: Some(vec![1, 2, 3]),
-            snark_receipt: None,
-            status: ProofStatus::Running,
-            error_message: None,
-        };
-
-        assert!(
-            result_payload_from_receipt_update(&update)
-                .expect("payload check should not fail")
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn receipt_update_prefers_snark_result_payload() {
-        let update = UpdateReceipt {
-            id: Uuid::new_v4(),
-            stark_receipt: Some(vec![1, 2, 3]),
-            snark_receipt: Some(vec![4, 5, 6]),
-            status: ProofStatus::Succeeded,
-            error_message: None,
-        };
-
-        let payload = result_payload_from_receipt_update(&update)
-            .expect("payload should serialize")
-            .expect("snark receipt should produce payload");
-        let result: ProtocolProofResult =
-            serde_json::from_value(payload).expect("payload should deserialize");
-
-        assert_eq!(
-            result,
-            ProtocolProofResult::SnarkPlonk(SnarkPlonkProofResult {
-                proof: ZkProofResult {
-                    zk_vm: ZkVm::Sp1,
-                    proof: vec![4, 5, 6].into(),
-                    execution_stats: None
-                }
-            })
         );
     }
 }

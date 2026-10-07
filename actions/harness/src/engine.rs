@@ -36,7 +36,7 @@ use base_consensus_node::{
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
-    BaseBuiltPayload, BasePayloadBuilder, BasePayloadBuilderAttributes, NoopPayloadTransactions,
+    BaseBuiltPayload, BasePayloadBuilder, BasePayloadBuilderAttributes,
 };
 use base_execution_txpool::BasePooledTransaction;
 use base_node_core::BaseNode;
@@ -350,12 +350,6 @@ impl ActionEngineClient {
         inner.executed_receipts.get(&block_number).cloned()
     }
 
-    /// Return the executed hash for an L2 block number.
-    pub fn block_hash_at(&self, block_number: u64) -> Option<B256> {
-        let inner = self.inner.lock().expect("engine client lock");
-        inner.executed_infos.get(&block_number).map(|info| info.block_info.hash)
-    }
-
     /// Check whether an account has non-empty code deployed.
     ///
     /// Returns `true` if the account exists and has code, `false` otherwise.
@@ -421,10 +415,7 @@ impl ActionEngineClient {
             pool,
             inner.blockchain_provider.clone(),
             inner.evm_config.clone(),
-        )
-        .with_transactions(|_pool: TestPool, _attrs| {
-            NoopPayloadTransactions::<BasePooledTransaction>::default()
-        });
+        );
         let outcome = RethPayloadBuilder::try_build(&payload_builder, args).map_err(|e| {
             TransportError::from(TransportErrorKind::custom_str(&format!(
                 "payload builder failed: {e}"
@@ -1086,6 +1077,8 @@ mod tests {
 
     use super::*;
 
+    /// The Base fork activations of the rollup config reach the execution genesis, so the harness
+    /// EL runs the same forks as derivation.
     #[test]
     fn build_genesis_propagates_base_activations() {
         let config = RollupConfig {
@@ -1105,22 +1098,16 @@ mod tests {
 
         let genesis = ActionEngineClient::build_genesis_for_rollup(&config);
 
-        assert_eq!(genesis.config.extra_fields["base"]["denim"], serde_json::json!(42));
-        assert_eq!(genesis.config.extra_fields["base"]["everest"], serde_json::json!(42));
-        assert_eq!(genesis.config.extra_fields["base"]["zenith"], serde_json::json!(42));
-    }
-
-    #[test]
-    #[should_panic(expected = "denim requires cobalt to be configured")]
-    fn build_genesis_requires_cobalt_before_denim() {
-        let config = RollupConfig {
-            upgrades: UpgradeConfig {
-                base: BaseUpgradeConfig { denim: Some(42), ..Default::default() },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        ActionEngineClient::build_genesis_for_rollup(&config);
+        assert_eq!(
+            genesis.config.extra_fields["base"],
+            serde_json::json!({
+                "azul": 42,
+                "beryl": 42,
+                "cobalt": 42,
+                "denim": 42,
+                "everest": 42,
+                "zenith": 42,
+            })
+        );
     }
 }

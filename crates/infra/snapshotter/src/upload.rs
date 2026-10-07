@@ -1056,7 +1056,7 @@ impl SnapshotUploader {
         }
         .await;
 
-        progress_logger.stop();
+        drop(progress_logger);
         if let Err(error) = upload_result {
             error!(
                 error = %error,
@@ -1930,6 +1930,7 @@ mod tests {
             base_url: None,
             reth_version: None,
             components,
+            extensions: BTreeMap::new(),
         };
 
         let published =

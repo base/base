@@ -1466,11 +1466,11 @@ validity:
         let yaml = include_str!("../../examples/validity-devnet.yaml");
         let config = TestConfig::from_yaml(yaml).expect("validity-devnet.yaml must parse");
         assert_eq!(config.validity.ratio, 0.5);
-        assert_eq!(config.validity.predicates.len(), 1);
+        assert_eq!(config.validity.predicates.len(), 2);
 
         let load_config = config.to_load_config(Some(1337)).expect("must lower to LoadConfig");
         assert_eq!(load_config.validity_ratio, 0.5);
-        assert_eq!(load_config.validity_predicates.len(), 1);
+        assert_eq!(load_config.validity_predicates.len(), 2);
     }
 
     #[test]

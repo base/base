@@ -12,7 +12,7 @@ use std::{
 use alloy_consensus::{BlockHeader, Transaction, constants::KECCAK_EMPTY};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseUpgrade, Upgrades};
 use base_common_consensus::{
     AccountChange, ChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
     Eip8130TimestampError, InitialActor, SignedChange,
@@ -33,7 +33,7 @@ use parking_lot::RwLock;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
 use reth_primitives_traits::{
-    Block, BlockBody, BlockTy, GotExpected, SealedBlock,
+    Block, BlockBody, BlockTy, GotExpected, SealedBlock, constants::MAX_TX_GAS_LIMIT_OSAKA,
     transaction::error::InvalidTransactionError,
 };
 use reth_storage_api::{
@@ -1001,6 +1001,10 @@ where
         let classification_generation = self.limit_class_cache_generation();
         let local_chain_id = self.inner.chain_spec().chain().id();
         let now = self.block_timestamp();
+        // Before Zenith there is no Keystore: authorization, lock state, and the
+        // high-rate payer classification never read `AccountConfiguration`.
+        let keystore =
+            BaseSpecId::from_timestamp(self.chain_spec(), now).is_enabled_in(BaseUpgrade::Zenith);
         let state = self.client().latest().map_err(|error| Self::provider_unavailable(error))?;
 
         // Authorize *and apply* the account changes against a writable overlay so
@@ -1015,7 +1019,7 @@ where
         ));
         let auth_start = Instant::now();
         let auth_result = StorageCtx::enter(&mut storage, |ctx| {
-            let applied = {
+            let applied = if keystore {
                 let mut account_config = AccountConfigurationStorage::new(ctx);
                 TransactionAuthorizer::authorize_and_apply(
                     signed,
@@ -1023,6 +1027,8 @@ where
                     local_chain_id,
                     now,
                 )?
+            } else {
+                TransactionAuthorizer::authorize_without_keystore(signed)?
             };
             if let Some(delegation) = applied.applied.delegation {
                 delegation.install(ctx).map_err(TxAuthError::from)?;
@@ -1116,6 +1122,15 @@ where
         {
             return Err(InvalidTransactionError::GasTooLow.into());
         }
+        // EIP-7825 (from Azul): `gas_limit` plus the payer authentication
+        // metered on top of it is bounded by the per-transaction gas cap,
+        // matching execution.
+        if self.chain_spec().is_azul_active_at_timestamp(now)
+            && FeeCheck::max_chargeable_gas(signed.tx().gas_limit, intrinsic.payer_auth)
+                > MAX_TX_GAS_LIMIT_OSAKA
+        {
+            return Err(InvalidTransactionError::GasLimitTooHigh.into());
+        }
 
         let payer_account = state
             .basic_account(&payer)
@@ -1173,25 +1188,30 @@ where
             });
         }
 
-        let sender_status = self.account_lock(
-            &*state,
-            local_chain_id,
-            now,
-            sender,
-            classification_generation,
-            Self::prefetched_account_state(&config_reads, sender),
-        );
-        let payer_status = if payer == sender {
-            sender_status
-        } else {
-            self.account_lock(
+        let (sender_status, payer_status) = if keystore {
+            let sender_status = self.account_lock(
                 &*state,
                 local_chain_id,
                 now,
-                payer,
+                sender,
                 classification_generation,
-                Self::prefetched_account_state(&config_reads, payer),
-            )
+                Self::prefetched_account_state(&config_reads, sender),
+            );
+            let payer_status = if payer == sender {
+                sender_status
+            } else {
+                self.account_lock(
+                    &*state,
+                    local_chain_id,
+                    now,
+                    payer,
+                    classification_generation,
+                    Self::prefetched_account_state(&config_reads, payer),
+                )
+            };
+            (sender_status, payer_status)
+        } else {
+            (LockStatus::UNLOCKED, LockStatus::UNLOCKED)
         };
         // Only a pending unlock has a knowable timestamp; a hard lock reports
         // `UNLOCKS_AT_MAX`, which must never surface as a timed expiry-bucket (it
@@ -1254,16 +1274,13 @@ where
         } else {
             U256::ZERO
         };
-        // Calls move `call.value` out of the sender, not the payer. A self-paying
-        // sender reserves it alongside gas; a sponsored sender must hold it alone.
-        let call_value = signed.tx().sender_call_value(sender);
-        let payer_max_cost = gas_charge
-            .saturating_add(additional_fee)
-            .saturating_add(if payer == sender { call_value } else { U256::ZERO });
-        let sender_obligation = if payer == sender { payer_max_cost } else { call_value };
-        if sender_account.balance < sender_obligation {
+        // Admission only requires the payer to cover the transaction's fees.
+        // `call.value` is not reserved: a call whose value the sender cannot
+        // cover reverts at execution, and the fees are still paid.
+        let payer_max_cost = gas_charge.saturating_add(additional_fee);
+        if payer_account.balance < payer_max_cost {
             return Err(InvalidTransactionError::InsufficientFunds(
-                GotExpected { got: sender_account.balance, expected: sender_obligation }.into(),
+                GotExpected { got: payer_account.balance, expected: payer_max_cost }.into(),
             )
             .into());
         }
@@ -1523,6 +1540,9 @@ where
     fn map_tx_auth_error(error: TxAuthError) -> InvalidPoolTransactionError {
         tracing::debug!(error = ?error, "EIP-8130 actor authorization failed");
         let reason = match error {
+            TxAuthError::UnsupportedAccountChange | TxAuthError::UnsupportedAuthenticator => {
+                return InvalidTransactionError::TxTypeNotSupported.into();
+            }
             TxAuthError::Authorize(AuthorizeError::Authenticate(_)) => {
                 "actor authentication failed"
             }
@@ -1550,6 +1570,9 @@ where
             TxAuthError::BadSequence { .. } => "config change sequence mismatch",
             TxAuthError::StaleEpoch { .. } => "config change local epoch is stale",
             TxAuthError::SequenceSaturated => "config change channel sequence is saturated",
+            TxAuthError::SignerMismatch => {
+                "secp256k1 signature does not recover to the named account"
+            }
             TxAuthError::Apply(apply) => Self::map_apply_error(apply),
         };
         Self::eip8130_error(reason)
@@ -1601,6 +1624,9 @@ where
                 InvalidTransactionError::NonceNotConsistent { tx: got, state: channel }.into()
             }
             NonceError::Replay => Self::eip8130_error("nonce-free replay detected"),
+            NonceError::NonceFreeSequence { .. } => {
+                Self::eip8130_error("nonce-free transaction has a non-zero nonce sequence")
+            }
             NonceError::Storage(_) => Self::eip8130_error("nonce state read failed"),
         }
     }
@@ -1718,6 +1744,13 @@ where
         if !self.chain_spec().is_everest_active_at_timestamp(now) {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
+        // Without the Keystore an EIP-8130 transaction may use only delegation
+        // and native secp256k1 keys; anything else is an unsupported type.
+        if !BaseSpecId::from_timestamp(self.chain_spec(), now).is_enabled_in(BaseUpgrade::Zenith)
+            && TransactionAuthorizer::check_without_keystore(signed).is_err()
+        {
+            return Err(InvalidTransactionError::TxTypeNotSupported.into());
+        }
         let local_chain_id = self.inner.chain_spec().chain().id();
         signed.validate_static(local_chain_id).map_err(InvalidPoolTransactionError::from)?;
         // The validity window is evaluated in milliseconds against
@@ -1818,19 +1851,30 @@ where
     }
 
     /// Returns `true` when an authenticator selector may be used directly on the
-    /// EIP-8130 transaction validation path. Only the native k1 authenticator
-    /// is accepted.
+    /// EIP-8130 transaction validation path: native k1 or a canonical Keystore
+    /// authenticator. Non-k1 selectors only reach this after the Zenith gate in
+    /// [`Self::validate_eip8130_structural`].
     fn authenticator_allowed_for_tx_path(authenticator: &Address) -> bool {
         *authenticator == Eip8130Constants::K1_AUTHENTICATOR
+            || Eip8130Contracts::is_canonical_authenticator(authenticator)
     }
 
-    /// Performs the cheap k1 wire check that does not require running an
-    /// authenticator. Native k1 must carry exactly `r || s || v`.
-    ///
-    /// Callers reject every other selector in [`Self::authenticator_allowed_for_tx_path`]
-    /// before this runs, so a delegate-authenticator shape is not checked here.
+    /// Performs cheap selector-specific wire checks that do not require running
+    /// an authenticator. Native k1 must carry exactly `r || s || v`; delegated
+    /// auth must be depth-1 and name a canonical nested authenticator.
     fn authenticator_payload_well_formed(authenticator: &Address, data: &[u8]) -> bool {
-        *authenticator == Eip8130Constants::K1_AUTHENTICATOR && data.len() == 65
+        if *authenticator == Eip8130Constants::K1_AUTHENTICATOR {
+            return data.len() == 65;
+        }
+        if *authenticator == Eip8130Contracts::DELEGATE_AUTHENTICATOR {
+            if data.len() < 40 {
+                return false;
+            }
+            let nested = Address::from_slice(&data[20..40]);
+            return nested != Eip8130Contracts::DELEGATE_AUTHENTICATOR
+                && Self::authenticator_allowed_for_tx_path(&nested);
+        }
+        true
     }
 
     /// Enforces the interim total-account-changes admission cap
@@ -2207,6 +2251,20 @@ mod tests {
         Arc::new(BaseChainSpec::from_genesis(genesis))
     }
 
+    /// An Everest chain spec with Zenith (and so the Keystore) also active at
+    /// genesis.
+    fn zenith_chain_spec() -> Arc<BaseChainSpec> {
+        let mut genesis = build_test_genesis_everest();
+        genesis.config.chain_id = test_chain_id();
+        genesis.config.extra_fields.insert(
+            "base".to_string(),
+            serde_json::json!({
+                "azul": 0, "beryl": 0, "cobalt": 0, "denim": 0, "everest": 0, "zenith": 0
+            }),
+        );
+        Arc::new(BaseChainSpec::from_genesis(genesis))
+    }
+
     /// Builds a [`BaseTransactionValidator`] configured against the given chain spec with
     /// no accounts seeded.
     fn build_test_validator_with_spec(chain_spec: Arc<BaseChainSpec>) -> TestValidator {
@@ -2248,7 +2306,15 @@ mod tests {
         address: Address,
         account: ExtendedAccount,
     ) -> TestValidator {
-        let chain_spec = everest_chain_spec();
+        build_test_validator_with_account_and_spec(address, account, everest_chain_spec())
+    }
+
+    /// [`build_test_validator_with_account`] against the given chain spec.
+    fn build_test_validator_with_account_and_spec(
+        address: Address,
+        account: ExtendedAccount,
+        chain_spec: Arc<BaseChainSpec>,
+    ) -> TestValidator {
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
             .with_genesis_block();
@@ -2873,15 +2939,24 @@ mod tests {
         assert_unsupported(TestValidator::validate_payer_auth(&signed));
     }
 
-    /// A configured sender naming a canonical non-k1 authenticator is rejected
-    /// at admission.
+    /// A configured sender naming a canonical non-k1 authenticator is an
+    /// unsupported transaction type before Zenith, and admissible from it.
     #[test]
-    fn rejects_eip8130_non_k1_sender_authenticator() {
+    fn non_k1_sender_authenticator_is_unsupported_before_zenith() {
         let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
         let mut auth = Eip8130Contracts::P256_AUTHENTICATOR.as_slice().to_vec();
         auth.extend_from_slice(&[0u8; 64]);
         let signed = Eip8130Signed::new(tx, Bytes::from(auth), Bytes::new());
-        assert_unsupported(TestValidator::validate_sender_auth(&signed));
+
+        assert_unsupported(build_test_validator().validate_eip8130_structural(&signed));
+        let zenith = build_test_validator_with_spec(zenith_chain_spec());
+        assert!(!matches!(
+            zenith.validate_eip8130_structural(&signed),
+            Err(InvalidPoolTransactionError::Consensus(
+                InvalidTransactionError::TxTypeNotSupported
+            ))
+        ));
+        assert!(TestValidator::validate_sender_auth(&signed).is_ok());
     }
 
     /// Returns an authenticator address comfortably above the `K1_AUTHENTICATOR`
@@ -3629,22 +3704,52 @@ mod tests {
         assert_eq!(state.manifest.payer_max_cost(), state.payer_max_cost);
     }
 
-    /// A self-paying sender reserves its call value on top of gas, and is
-    /// rejected when its balance cannot cover both.
+    /// Before Zenith, admitting an EOA transaction reads no Keystore state, so
+    /// no `AccountConfiguration` slot is captured or watched; at Zenith the
+    /// same transaction depends on the account's Keystore state.
     #[test]
-    fn eip8130_self_pay_reserves_call_value() {
+    fn eip8130_admission_reads_keystore_only_at_zenith() {
+        let signer = PrivateKeySigner::random();
+        let sender = signer.address();
+        let tx = TxEip8130 { gas_limit: 100_000, ..minimal_valid_eoa_tx() };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let funded = || ExtendedAccount::new(0, U256::from(1_000_000_000_000u64));
+        let watches_keystore = |state: &Eip8130ValidationState| {
+            state.watch_set.iter().any(|key| {
+                matches!(key, InvalidationKey::Slot { address, .. }
+                    if *address == AccountConfigurationStorage::ADDRESS)
+            })
+        };
+
+        let everest = build_test_validator_with_account(sender, funded())
+            .validate_eip8130_full(&signed)
+            .expect("EOA transaction is admitted before Zenith");
+        assert!(everest.manifest.has_no_config_slots());
+        assert!(!watches_keystore(&everest));
+
+        let zenith =
+            build_test_validator_with_account_and_spec(sender, funded(), zenith_chain_spec())
+                .validate_eip8130_full(&signed)
+                .expect("EOA transaction is admitted at Zenith");
+        assert!(!zenith.manifest.has_no_config_slots());
+        assert!(watches_keystore(&zenith));
+    }
+
+    /// Admission reserves only the transaction's fees: call value is not
+    /// reserved, so a call worth more than the sender's balance is admitted as
+    /// long as the payer can cover the fees.
+    #[test]
+    fn eip8130_admission_ignores_call_value() {
         const BALANCE: u64 = 1_000_000_000_000;
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
         let recipient = Address::repeat_byte(0xee);
-        let signed_with_value = |value: u64| {
+        let signed_with_value = |value: U256| {
             let tx = TxEip8130 {
                 gas_limit: 100_000,
-                calls: vec![vec![Call {
-                    to: recipient,
-                    value: U256::from(value),
-                    data: Bytes::new(),
-                }]],
+                calls: vec![vec![Call { to: recipient, value, data: Bytes::new() }]],
                 ..minimal_valid_eoa_tx()
             };
             let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
@@ -3654,49 +3759,43 @@ mod tests {
             build_test_validator_with_account(sender, ExtendedAccount::new(0, U256::from(BALANCE)));
 
         let without_value = validator
-            .validate_eip8130_full(&signed_with_value(0))
-            .expect("gas alone is affordable");
+            .validate_eip8130_full(&signed_with_value(U256::ZERO))
+            .expect("fees are affordable");
         let with_value = validator
-            .validate_eip8130_full(&signed_with_value(BALANCE / 2))
-            .expect("gas plus half the balance is affordable");
-        assert_eq!(
-            with_value.payer_max_cost - without_value.payer_max_cost,
-            U256::from(BALANCE / 2),
-            "the call value is reserved on top of gas"
-        );
+            .validate_eip8130_full(&signed_with_value(U256::from(BALANCE) * U256::from(10)))
+            .expect("call value beyond the balance does not block admission");
+        assert_eq!(with_value.payer_max_cost, without_value.payer_max_cost);
         assert_eq!(with_value.manifest.payer_max_cost(), with_value.payer_max_cost);
+    }
 
+    /// EIP-7825 bounds `gas_limit` plus payer authentication at admission, as
+    /// at execution.
+    #[test]
+    fn eip8130_gas_above_the_per_transaction_cap_is_rejected() {
+        let signer = PrivateKeySigner::random();
+        let sender = signer.address();
+        let signed_with_gas = |gas_limit: u64| {
+            let tx = TxEip8130 { gas_limit, ..minimal_valid_eoa_tx() };
+            let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new())
+        };
+        let validator = build_test_validator_with_account(
+            sender,
+            ExtendedAccount::new(0, U256::from(u64::MAX) * U256::from(u64::MAX)),
+        );
+
+        validator
+            .validate_eip8130_full(&signed_with_gas(MAX_TX_GAS_LIMIT_OSAKA))
+            .expect("gas at the cap is admitted");
         let err = validator
-            .validate_eip8130_full(&signed_with_value(BALANCE))
-            .expect_err("gas plus the whole balance is not affordable");
+            .validate_eip8130_full(&signed_with_gas(MAX_TX_GAS_LIMIT_OSAKA + 1))
+            .expect_err("gas above the cap is rejected");
         assert!(
             matches!(
                 err,
-                InvalidPoolTransactionError::Consensus(InvalidTransactionError::InsufficientFunds(
-                    _
-                ))
+                InvalidPoolTransactionError::Consensus(InvalidTransactionError::GasLimitTooHigh)
             ),
-            "expected InsufficientFunds, got {err:?}"
-        );
-
-        // Self-calls move nothing, so three of them whose sum exceeds the
-        // balance reserve only one call's value.
-        let self_call = Call { to: sender, value: U256::from(BALANCE / 2), data: Bytes::new() };
-        let tx = TxEip8130 {
-            gas_limit: 100_000,
-            calls: vec![vec![self_call.clone(), self_call.clone(), self_call]],
-            ..minimal_valid_eoa_tx()
-        };
-        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
-        let self_calls =
-            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
-        let state = validator
-            .validate_eip8130_full(&self_calls)
-            .expect("repeated self-calls only need one call's value on hand");
-        assert_eq!(
-            state.payer_max_cost - without_value.payer_max_cost,
-            U256::from(BALANCE / 2),
-            "self-calls reserve their peak, not their sum"
+            "expected GasLimitTooHigh, got {err:?}"
         );
     }
 
@@ -3866,9 +3965,10 @@ mod tests {
 
         // Fund the counterfactual address so the self-paid fee check passes; it
         // is still "fresh" (nonce 0, no code) for the create freshness gate.
-        let validator = build_test_validator_with_account(
+        let validator = build_test_validator_with_account_and_spec(
             derived,
             ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)),
+            zenith_chain_spec(),
         );
 
         let state = validator

@@ -54,8 +54,9 @@ pub struct Eip8130ReceiptFields {
     /// Resolved gas payer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer: Option<Address>,
-    /// Per-phase execution statuses.
-    #[serde(default, skip_serializing_if = "Vec::is_empty", with = "alloy_serde::quantity::vec")]
+    /// Per-phase execution statuses. Always serialized, as `[]` when `calls`
+    /// was empty, matching [`BaseTransactionReceipt`].
+    #[serde(default, with = "alloy_serde::quantity::vec")]
     pub phase_statuses: Vec<u8>,
     /// Opaque transaction metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -507,5 +508,8 @@ mod tests {
 
         let other = OtherFields::try_from(fields).unwrap();
         assert_eq!(other.get("phaseStatuses"), Some(&json!(["0x1", "0x0"])));
+
+        let empty_calls = Eip8130ReceiptFields { payer: Some(payer), ..Default::default() };
+        assert_eq!(serde_json::to_value(&empty_calls).unwrap()["phaseStatuses"], json!([]));
     }
 }

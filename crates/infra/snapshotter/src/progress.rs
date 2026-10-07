@@ -222,19 +222,8 @@ pub(crate) struct UploadProgressLogger {
     join_handle: Option<StdJoinHandle<()>>,
 }
 
-impl UploadProgressLogger {
-    /// Stops the background upload logger.
-    pub(crate) fn stop(mut self) {
-        if let Some(stop_tx) = self.stop_tx.take() {
-            let _ = stop_tx.send(());
-        }
-        if let Some(join_handle) = self.join_handle.take() {
-            let _ = join_handle.join();
-        }
-    }
-}
-
 impl Drop for UploadProgressLogger {
+    /// Stops the background logger: sends the stop signal and joins its thread.
     fn drop(&mut self) {
         if let Some(stop_tx) = self.stop_tx.take() {
             let _ = stop_tx.send(());

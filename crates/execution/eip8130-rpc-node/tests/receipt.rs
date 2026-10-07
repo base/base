@@ -100,6 +100,20 @@ async fn eip8130_transaction_is_mined_and_has_a_receipt() -> eyre::Result<()> {
         json.get("metadata").is_none_or(serde_json::Value::is_null),
         "empty metadata must be omitted, not serialized as \"0x\""
     );
+    assert_eq!(json["to"], serde_json::Value::Null, "an EIP-8130 receipt has no single recipient");
+
+    // The transaction response is shaped like any other transaction: flat, with
+    // hex quantities and the standard single-call fields.
+    let tx_json: serde_json::Value = client.request("eth_getTransactionByHash", (tx_hash,)).await?;
+    assert!(tx_json.get("tx").is_none(), "the transaction fields are not nested");
+    assert_eq!(tx_json["type"], "0x79");
+    assert_eq!(tx_json["nonce"], "0x0");
+    assert!(tx_json["gas"].as_str().is_some_and(|gas| gas.starts_with("0x")));
+    assert!(tx_json["chainId"].as_str().is_some_and(|id| id.starts_with("0x")));
+    assert_eq!(tx_json["to"], serde_json::Value::Null);
+    assert_eq!(tx_json["value"], "0x0");
+    assert_eq!(tx_json["input"], "0x");
+    assert_eq!(tx_json["from"], serde_json::to_value(alice.address())?);
 
     Ok(())
 }

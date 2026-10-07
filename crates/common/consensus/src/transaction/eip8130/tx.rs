@@ -46,18 +46,25 @@ use crate::transaction::eip8130::{
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct TxEip8130 {
     /// EIP-155 chain ID this transaction is bound to.
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub chain_id: ChainId,
     /// Explicit sender account address, or `None` for the EOA path.
     pub sender: Option<Address>,
     /// High 192 bits of the compound nonce; with `nonce_sequence` forms the
     /// per-account replay protection key.
     pub nonce_key: U256,
-    /// Sequence number within the nonce key.
+    /// Sequence number within the nonce key. Named `nonce` in JSON, like every
+    /// other transaction type; `nonceSequence` is also accepted.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "nonce", alias = "nonceSequence", with = "alloy_serde::quantity")
+    )]
     pub nonce_sequence: u64,
     /// Lower bound of the validity window: a Unix timestamp in **seconds or
     /// milliseconds** (auto-detected per EIP-8130 Timestamp Normalization; see
     /// [`Self::valid_after_ms`]). After normalization the transaction is invalid
     /// when `block.timestamp * 1000 < valid_after_ms`; `0` means no lower bound.
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub valid_after: u64,
     /// Upper bound of the validity window: a Unix timestamp in **seconds or
     /// milliseconds** (auto-detected; see [`Self::valid_before_ms`]). After
@@ -69,6 +76,7 @@ pub struct TxEip8130 {
     /// nonce is recorded: the nonce-manager replay ring's admission window is
     /// `(now, now + NONCE_FREE_MAX_EXPIRY_WINDOW]`, so a nonce-free transaction
     /// cannot actually be included exactly at `valid_before`.
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub valid_before: u64,
     /// Max priority fee per gas (tip) the sender is willing to pay.
     #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
@@ -76,7 +84,12 @@ pub struct TxEip8130 {
     /// Max total fee per gas (base + tip cap) the sender is willing to pay.
     #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub max_fee_per_gas: u128,
-    /// Gas limit for the entire AA transaction execution.
+    /// Gas limit for the entire AA transaction execution. Named `gas` in JSON,
+    /// like every other transaction type; `gasLimit` is also accepted.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "gas", alias = "gasLimit", with = "alloy_serde::quantity")
+    )]
     pub gas_limit: u64,
     /// Account-mutation entries applied before calls execute.
     pub account_changes: Vec<AccountChange>,
@@ -90,6 +103,10 @@ pub struct TxEip8130 {
     /// Optional payer; `None` means the resolved sender pays gas, and
     /// [`Eip8130Constants::OPEN_PAYER`] means the payer is recovered from
     /// `payer_auth`.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, deserialize_with = "super::Eip8130PayerSerde::deserialize")
+    )]
     pub payer: Option<Address>,
 }
 
@@ -446,29 +463,6 @@ impl TxEip8130 {
                 })
                 .sum::<usize>()
             + self.metadata.len()
-    }
-
-    /// The most wei `sender` must hold at any point while its calls run, in
-    /// call order across every phase.
-    ///
-    /// A call to another account moves `call.value` out of the sender, so those
-    /// values accumulate. A call to `sender` itself is only checked against the
-    /// current balance and moves nothing, so it needs its value on hand at that
-    /// point but does not add to later calls. Two 1 ETH self-calls therefore
-    /// need 1 ETH, not 2. ETH a callee sends back is not known statically and
-    /// is not credited. Saturates at [`U256::MAX`] rather than wrapping.
-    pub fn sender_call_value(&self, sender: Address) -> U256 {
-        let mut spent = U256::ZERO;
-        let mut peak = U256::ZERO;
-        for call in self.calls.iter().flatten() {
-            if call.to == sender {
-                peak = peak.max(spent.saturating_add(call.value));
-            } else {
-                spent = spent.saturating_add(call.value);
-                peak = peak.max(spent);
-            }
-        }
-        peak
     }
 }
 
@@ -1009,51 +1003,6 @@ mod tests {
     }
 
     #[test]
-    fn sender_call_value_sums_transfers_to_other_accounts() {
-        let sender = Address::repeat_byte(0x11);
-        let other = Address::repeat_byte(0x22);
-        let call = |to, value: u64| Call { to, value: U256::from(value), data: Bytes::new() };
-        let tx = TxEip8130 {
-            calls: vec![vec![call(other, 3), call(other, 4)], vec![call(other, 5)]],
-            ..Default::default()
-        };
-        assert_eq!(tx.sender_call_value(sender), U256::from(12u64));
-        assert_eq!(
-            TxEip8130 { calls: vec![], ..Default::default() }.sender_call_value(sender),
-            U256::ZERO
-        );
-    }
-
-    #[test]
-    fn sender_call_value_does_not_sum_self_calls() {
-        let sender = Address::repeat_byte(0x11);
-        let other = Address::repeat_byte(0x22);
-        let call = |to, value: u64| Call { to, value: U256::from(value), data: Bytes::new() };
-
-        // Two self-calls of 10 need 10 on hand, not 20.
-        let self_only = TxEip8130 {
-            calls: vec![vec![call(sender, 10), call(sender, 10)]],
-            ..Default::default()
-        };
-        assert_eq!(self_only.sender_call_value(sender), U256::from(10u64));
-
-        // A self-call after 4 has left needs 4 + 10 on hand at that point.
-        let after_spend = TxEip8130 {
-            calls: vec![vec![call(other, 4)], vec![call(sender, 10)]],
-            ..Default::default()
-        };
-        assert_eq!(after_spend.sender_call_value(sender), U256::from(14u64));
-
-        // A self-call before the spend only needs its own value then; the later
-        // transfers accumulate to 12, which is the peak.
-        let before_spend = TxEip8130 {
-            calls: vec![vec![call(sender, 10), call(other, 5), call(other, 7)]],
-            ..Default::default()
-        };
-        assert_eq!(before_spend.sender_call_value(sender), U256::from(12u64));
-    }
-
-    #[test]
     fn account_change_roundtrip_in_tx() {
         let tx = TxEip8130 {
             chain_id: 1,
@@ -1134,21 +1083,19 @@ mod tests {
 
         let json = serde_json::json!({
             "type": "0x79",
-            "tx": {
-                "chainId": 1,
-                "sender": null,
-                "nonceKey": "0x0",
-                "nonceSequence": 1,
-                "validAfter": 0,
-                "validBefore": 0,
-                "maxPriorityFeePerGas": "0x3b9aca00",
-                "maxFeePerGas": "0x3b9aca00",
-                "gasLimit": 21000,
-                "accountChanges": [],
-                "calls": [],
-                "metadata": "0x",
-                "payer": null
-            },
+            "chainId": "0x1",
+            "sender": null,
+            "nonceKey": "0x0",
+            "nonce": "0x1",
+            "validAfter": "0x0",
+            "validBefore": "0x0",
+            "maxPriorityFeePerGas": "0x3b9aca00",
+            "maxFeePerGas": "0x3b9aca00",
+            "gas": "0x5208",
+            "accountChanges": [],
+            "calls": [],
+            "metadata": "0x",
+            "payer": null,
             "senderAuth": "0x",
             "payerAuth": "0x"
         });
@@ -1162,6 +1109,52 @@ mod tests {
 
         let envelope = result.unwrap();
         assert!(matches!(envelope, BaseTxEnvelope::Eip8130(_)));
+    }
+
+    /// The JSON is flat and uses hex quantities for every integer, with the
+    /// standard `nonce` / `gas` names and single-call fields generic tooling
+    /// reads. The EIP field names `nonceSequence` / `gasLimit` and a short
+    /// `"0x00"` open payer are also accepted.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn eip8130_json_is_a_standard_transaction_shape() {
+        use crate::{BaseTxEnvelope, Eip8130Signed};
+
+        let tx = TxEip8130 {
+            chain_id: 8453,
+            nonce_sequence: 7,
+            valid_before: 1_700_000_000,
+            gas_limit: 21_000,
+            payer: Some(Eip8130Constants::OPEN_PAYER),
+            ..Default::default()
+        };
+        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(
+            tx,
+            Bytes::from_static(&[0xab]),
+            Bytes::from_static(&[0xcd]),
+        ));
+        let json = serde_json::to_value(&envelope).unwrap();
+        assert_eq!(json["type"], "0x79");
+        assert_eq!(json["chainId"], "0x2105");
+        assert_eq!(json["nonce"], "0x7");
+        assert_eq!(json["gas"], "0x5208");
+        assert_eq!(json["validAfter"], "0x0");
+        assert_eq!(json["validBefore"], "0x6553f100");
+        assert_eq!(json["to"], serde_json::Value::Null);
+        assert_eq!(json["value"], "0x0");
+        assert_eq!(json["input"], "0x");
+        assert_eq!(json["senderAuth"], "0xab");
+        assert!(json.get("tx").is_none(), "the transaction fields are not nested");
+        assert_eq!(serde_json::from_value::<BaseTxEnvelope>(json.clone()).unwrap(), envelope);
+
+        let mut eip_names = json;
+        let fields = eip_names.as_object_mut().unwrap();
+        let nonce = fields.remove("nonce").unwrap();
+        let gas = fields.remove("gas").unwrap();
+        fields.insert("nonceSequence".into(), nonce);
+        fields.insert("gasLimit".into(), gas);
+        fields.insert("payer".into(), "0x00".into());
+        assert_eq!(serde_json::from_value::<BaseTxEnvelope>(eip_names).unwrap(), envelope);
     }
 
     #[test]

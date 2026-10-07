@@ -25,9 +25,7 @@ base-prover-service-protocol.workspace = true
 # network
 url.workspace = true
 tonic.workspace = true
-alloy-contract.workspace = true
 alloy-consensus.workspace = true
-alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 
 # sp1

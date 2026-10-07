@@ -27,15 +27,11 @@ use reth_transaction_pool::{BatchTxRequest, PoolTransaction, TransactionOrigin, 
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-/// Rejection message when validity ingress is wired but Cobalt has not activated.
-pub const VALIDITY_TX_PRE_COBALT_RPC_ERROR: &str =
-    "validity transactions are gated behind the Cobalt hard fork";
-
 /// Rejection message returned when an EIP-8130 (account abstraction) validity transaction is
 /// submitted before the Everest hard fork is active at the latest block.
 ///
 /// EIP-8130 validity transactions are fork-gated on Everest; other transaction types (e.g. EIP-1559)
-/// carry validity predicates under the experimental flag alone.
+/// carry validity predicates without a fork gate.
 pub const VALIDITY_TX_PRE_EVEREST_RPC_ERROR: &str = "EIP-8130 validity transactions are gated behind \
      the Everest hard fork; they are not accepted before Everest is active";
 
@@ -121,7 +117,6 @@ pub struct SendRawTransactionValidityApiImpl<Provider> {
     provider: Provider,
     max_validity_predicates: usize,
     max_validity_expiry_secs: u64,
-    experimental_override: bool,
     sequencer_client: Option<SequencerClient>,
     transaction_sender: tokio::sync::mpsc::UnboundedSender<BatchTxRequest<BasePooledTransaction>>,
 }
@@ -171,15 +166,9 @@ impl<Provider> SendRawTransactionValidityApiImpl<Provider> {
             provider,
             max_validity_predicates,
             max_validity_expiry_secs,
-            experimental_override: false,
             sequencer_client: None,
             transaction_sender,
         }
-    }
-    /// Allows validity submissions before Cobalt for experimental deployments.
-    pub const fn with_experimental_override(mut self, enabled: bool) -> Self {
-        self.experimental_override = enabled;
-        self
     }
     /// Proxies validity submissions to the configured sequencer rather than the local pool.
     pub fn with_sequencer_client(mut self, client: SequencerClient) -> Self {
@@ -208,22 +197,20 @@ where
         Ok(Some((header.number(), header.timestamp())))
     }
 
-    /// Returns the maximum permitted expiry distance in full blocks for the block being built.
-    fn max_validity_expiry_blocks(&self, latest_timestamp: u64) -> u64 {
+    /// Returns the full-block interval, in milliseconds, of the block being built.
+    fn block_interval_millis(&self, latest_timestamp: u64) -> u64 {
         // The target build can be the first Denim block even though the latest committed header
         // is pre-Denim. Check both its parent timestamp and the next legacy block timestamp so
         // the window uses Denim's 200ms full-block cadence at that transition.
         let next_legacy_timestamp =
             latest_timestamp.saturating_add(LEGACY_BLOCK_INTERVAL_MILLIS.saturating_div(1_000));
-        let block_interval_millis =
-            if self.provider.chain_spec().is_denim_active_at_timestamp(latest_timestamp)
-                || self.provider.chain_spec().is_denim_active_at_timestamp(next_legacy_timestamp)
-            {
-                RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
-            } else {
-                LEGACY_BLOCK_INTERVAL_MILLIS
-            };
-        self.max_validity_expiry_secs.saturating_mul(1_000).div_ceil(block_interval_millis)
+        if self.provider.chain_spec().is_denim_active_at_timestamp(latest_timestamp)
+            || self.provider.chain_spec().is_denim_active_at_timestamp(next_legacy_timestamp)
+        {
+            RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
+        } else {
+            LEGACY_BLOCK_INTERVAL_MILLIS
+        }
     }
 }
 
@@ -295,20 +282,6 @@ where
         }
 
         let latest = self.latest_block_number_and_timestamp()?;
-        if !self.experimental_override {
-            let active = latest.is_some_and(|(_, timestamp)| {
-                self.provider.chain_spec().is_cobalt_active_at_timestamp(
-                    timestamp.saturating_add(LEGACY_BLOCK_INTERVAL_MILLIS / 1_000),
-                )
-            });
-            if !active {
-                return Err(ErrorObjectOwned::owned(
-                    ErrorCode::InvalidParams.code(),
-                    VALIDITY_TX_PRE_COBALT_RPC_ERROR,
-                    None::<()>,
-                ));
-            }
-        }
 
         ValidityPredicate::validate_batch(&options.validity, self.max_validity_predicates)
             .map_err(|error| {
@@ -328,7 +301,8 @@ where
                 ValidityPredicate::validate_block_expiry_bounds(
                     &options.validity,
                     latest_block.saturating_add(1),
-                    self.max_validity_expiry_blocks(latest_timestamp),
+                    self.max_validity_expiry_secs,
+                    self.block_interval_millis(latest_timestamp),
                 )
             }
             // Before genesis is committed there is no build target from which to measure the
@@ -336,6 +310,9 @@ where
             None => ValidityPredicate::validate_has_block_expiry(&options.validity),
         };
         expiry_validation.map_err(|error| {
+            // The returned message omits the local head; keep it in the log for diagnosing
+            // ingress latency.
+            debug!(error = ?error, "rejected validity transaction block expiry");
             ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), error.to_string(), None::<()>)
         })?;
 
@@ -349,8 +326,8 @@ where
             })?;
 
         // EIP-8130 (account abstraction) validity transactions are fork-gated on Everest. Other
-        // transaction types (e.g. EIP-1559) carry validity predicates under the experimental flag
-        // alone and are accepted before Everest activates.
+        // transaction types (e.g. EIP-1559) carry validity predicates without a fork gate and are
+        // accepted before Everest activates.
         let everest_active = latest.is_some_and(|(_, timestamp)| {
             self.provider.chain_spec().is_everest_active_at_timestamp(timestamp)
         });
@@ -433,13 +410,13 @@ mod tests {
         BaseBlock, BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives,
         Eip8130Signed, TxEip8130,
     };
-    use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry};
+    use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_observability_events::{
         TransactionEventBuilder, TransactionEventCapture, TransactionEventProducer,
         TransactionEventType,
     };
-    use base_test_utils::{build_test_genesis, build_test_genesis_everest};
+    use base_test_utils::build_test_genesis_everest;
     use httpmock::prelude::*;
     use reth_chainspec::ForkCondition;
     use reth_provider::test_utils::MockEthProvider;
@@ -517,6 +494,11 @@ mod tests {
                 op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
                 value: U256::from(1),
             },
+            ValidityPredicate::Nonce {
+                address: Address::repeat_byte(0x11),
+                op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
+                value: U256::from(1),
+            },
             ValidityPredicate::Storage {
                 address: Address::repeat_byte(0xab),
                 slot: U256::from(1),
@@ -536,12 +518,12 @@ mod tests {
     }
 
     #[test]
-    fn max_validity_expiry_blocks_uses_the_active_full_block_cadence() {
+    fn block_interval_millis_uses_the_active_full_block_cadence() {
         let legacy = SendRawTransactionValidityApiImpl::new(
             pre_everest_provider(),
             test_transaction_sender(),
         );
-        assert_eq!(legacy.max_validity_expiry_blocks(0), 30);
+        assert_eq!(legacy.block_interval_millis(0), LEGACY_BLOCK_INTERVAL_MILLIS);
 
         let denim_provider = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::new(
@@ -552,7 +534,10 @@ mod tests {
             .with_genesis_block();
         let denim =
             SendRawTransactionValidityApiImpl::new(denim_provider, test_transaction_sender());
-        assert_eq!(denim.max_validity_expiry_blocks(0), 300);
+        assert_eq!(
+            denim.block_interval_millis(0),
+            RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
+        );
 
         let transition_provider = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::new(
@@ -563,7 +548,10 @@ mod tests {
             .with_genesis_block();
         let transition =
             SendRawTransactionValidityApiImpl::new(transition_provider, test_transaction_sender());
-        assert_eq!(transition.max_validity_expiry_blocks(0), 300);
+        assert_eq!(
+            transition.block_interval_millis(0),
+            RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
+        );
     }
 
     fn signed_eip1559(signer: &PrivateKeySigner, nonce: u64, priority_fee: u128) -> Bytes {
@@ -670,6 +658,14 @@ mod tests {
                     },
                 },
                 {
+                    "type": "nonce",
+                    "params": {
+                        "address": "0x1111111111111111111111111111111111111111",
+                        "op": ">=",
+                        "value": "0x1",
+                    },
+                },
+                {
                     "type": "storage",
                     "params": {
                         "address": "0xabababababababababababababababababababab",
@@ -743,79 +739,6 @@ mod tests {
             events[0].data["validity_predicates"],
             serde_json::to_value(all_predicate_variants()).unwrap()
         );
-    }
-
-    #[tokio::test]
-    async fn runtime_cobalt_schedule_enables_existing_rpc() {
-        let chain_id = 9_100_202;
-        RuntimeUpgradeRegistry::clear_chain(chain_id);
-        let mut genesis = build_test_genesis();
-        genesis.config.chain_id = chain_id;
-        let spec = BaseChainSpec::from_genesis(genesis);
-        let provider = MockEthProvider::<BasePrimitives>::new()
-            .with_chain_spec(Arc::new(spec))
-            .with_genesis_block();
-        let rpc = validity_rpc(provider);
-        let request = || SendRawTransactionValidityOptions { validity: vec![] };
-        assert_eq!(
-            rpc.send_raw_transaction_validity(Bytes::new(), request()).await.unwrap_err().message(),
-            VALIDITY_TX_PRE_COBALT_RPC_ERROR
-        );
-        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Cobalt, 2);
-        assert!(
-            rpc.send_raw_transaction_validity(Bytes::new(), request())
-                .await
-                .unwrap_err()
-                .message()
-                .contains("validity predicates must not be empty")
-        );
-        RuntimeUpgradeRegistry::clear_chain(chain_id);
-    }
-
-    #[tokio::test]
-    async fn validity_ingress_opens_at_cobalt_without_restart() {
-        let pre_cobalt = MockEthProvider::<BasePrimitives>::new()
-            .with_chain_spec(Arc::new(
-                BaseChainSpecBuilder::base_mainnet()
-                    .with_fork(BaseUpgrade::Cobalt, ForkCondition::Never)
-                    .build(),
-            ))
-            .with_genesis_block();
-        let rpc = validity_rpc(pre_cobalt.clone());
-        let rejected = rpc
-            .send_raw_transaction_validity(
-                Bytes::new(),
-                SendRawTransactionValidityOptions { validity: vec![] },
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(rejected.message(), VALIDITY_TX_PRE_COBALT_RPC_ERROR);
-
-        let override_rpc = rpc.with_experimental_override(true);
-        let rejected = override_rpc
-            .send_raw_transaction_validity(
-                Bytes::new(),
-                SendRawTransactionValidityOptions { validity: vec![] },
-            )
-            .await
-            .unwrap_err();
-        assert!(rejected.message().contains("validity predicates must not be empty"));
-
-        let cobalt = MockEthProvider::<BasePrimitives>::new()
-            .with_chain_spec(Arc::new(
-                BaseChainSpecBuilder::base_mainnet()
-                    .with_fork(BaseUpgrade::Cobalt, ForkCondition::Timestamp(0))
-                    .build(),
-            ))
-            .with_genesis_block();
-        let rejected = validity_rpc(cobalt)
-            .send_raw_transaction_validity(
-                Bytes::new(),
-                SendRawTransactionValidityOptions { validity: vec![] },
-            )
-            .await
-            .unwrap_err();
-        assert!(rejected.message().contains("validity predicates must not be empty"));
     }
 
     #[tokio::test]
@@ -906,8 +829,8 @@ mod tests {
 
     #[tokio::test]
     async fn send_raw_transaction_validity_accepts_eip1559_before_everest() {
-        // EIP-1559 validity transactions are gated by the experimental flag alone, not by Everest,
-        // so they clear the fork gate before Everest activates. The admission event fires only once
+        // EIP-1559 validity transactions are not gated by Everest, so they clear the fork gate
+        // before Everest activates. The admission event fires only once
         // the gate is cleared; the noop pool then rejects insertion.
         let capture = TransactionEventCapture::install();
         let signer = PrivateKeySigner::random();
@@ -1027,6 +950,14 @@ mod tests {
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
         assert!(error.message().contains("expires too far in the future"));
+        assert!(
+            error.message().contains("maximum validity window of 60 seconds"),
+            "message should state the window: {error}"
+        );
+        assert!(
+            !error.message().contains("131"),
+            "message must not expose the head-derived maximum: {error}"
+        );
     }
 
     #[tokio::test]
@@ -1178,6 +1109,10 @@ mod tests {
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
         assert!(error.message().contains("already expired"), "unexpected message: {error}");
+        assert!(
+            !error.message().contains("101"),
+            "message must not expose the local head: {error}"
+        );
     }
 
     #[tokio::test]

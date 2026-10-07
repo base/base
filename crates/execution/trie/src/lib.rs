@@ -69,6 +69,12 @@ pub use cursor_factory::{
     BaseProofsHashedAccountCursorFactory, BaseProofsTrieCursorFactory,
 };
 
+mod cursor_cache;
+pub use cursor_cache::{
+    CachedHashedCursor, CachedHashedCursorFactory, CachedTrieCursor, CachedTrieCursorFactory,
+    CursorMemo, CursorOp, CursorResultCache, CursorResultMap,
+};
+
 pub mod error;
 pub use error::{BaseProofsStorageError, BaseProofsStorageResult};
 

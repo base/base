@@ -76,7 +76,8 @@ use revm::{
 
 use crate::{
     BaseContext, BaseContextTr, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransaction,
-    BaseTransactionError, BaseTxTr, Eip8130PhaseStatuses, L1BlockInfo, handler::BaseHandler,
+    BaseTransactionError, BaseTxTr, BaseUpgrade, Eip8130PhaseStatuses, L1BlockInfo,
+    handler::BaseHandler,
 };
 
 /// EIP-3529 maximum gas refund quotient: refunds are capped at `gas_used / 5`.
@@ -249,6 +250,12 @@ impl Eip8130Executor {
         }
 
         let spec = ctx.cfg().spec();
+        // Consensus-critical: the EIP-8130 transaction type exists only from
+        // Everest. Every ingress path gates it, but a block delivered by the
+        // Engine API or P2P reaches execution directly.
+        if !spec.is_enabled_in(BaseUpgrade::Everest) {
+            return Err(Self::not_active_error().into());
+        }
         // Consensus-critical: a clamped timestamp would silently shift the expiry
         // validation in the authorizer and nonce validator, so reject rather than
         // saturate. Block timestamps never approach `u64::MAX` in practice.
@@ -446,6 +453,9 @@ impl Eip8130Executor {
             })?;
 
         let ctx = evm.ctx_mut();
+        if !ctx.cfg().spec().is_enabled_in(BaseUpgrade::Everest) {
+            return Err(Self::not_active_error().into());
+        }
         let from = ctx.tx().base.caller;
         // Estimation skips authorization (no signature is verified), but it must
         // still apply account changes exactly as consensus would so the post-change
@@ -802,7 +812,14 @@ impl Eip8130Executor {
     {
         let tx = signed.tx();
         let nonce_key = tx.nonce_key;
-        let gas_limit = tx.gas_limit;
+        // EIP-7825: execution bounds `gas_limit` plus payer authentication by
+        // the per-transaction cap, so simulate at most the gas a real
+        // transaction could carry. The payer authentication ceiling is the
+        // worst case, so a submission at the returned estimate always fits.
+        let payer_auth_ceiling =
+            IntrinsicGas::max_payer_auth_cost(signed).map_err(BaseTransactionError::eip8130)?;
+        let gas_limit =
+            tx.gas_limit.min(ctx.cfg().tx_gas_limit_cap().saturating_sub(payer_auth_ceiling));
         let max_fee = tx.max_fee_per_gas;
         let max_priority = tx.max_priority_fee_per_gas;
         // Use the declared payer (sponsor) so the payer published to the
@@ -813,6 +830,11 @@ impl Eip8130Executor {
         // to; before a payer has signed (a stub that does not recover) the payer
         // is unknown and published as `UNSIGNED_OPEN_PAYER`, never the sender.
         let payer = signed.resolved_payer(sender).unwrap_or(Self::UNSIGNED_OPEN_PAYER);
+        let keystore = ctx.cfg().spec().is_enabled_in(BaseUpgrade::Zenith);
+        if !keystore {
+            TransactionAuthorizer::check_without_keystore(signed)
+                .map_err(BaseTransactionError::eip8130)?;
+        }
 
         let internals = EvmInternals::from_context(ctx);
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
@@ -853,25 +875,15 @@ impl Eip8130Executor {
             //    so the returned ceiling stays valid even if the gate flips
             //    between estimation and inclusion (the gate is a non-monotonic
             //    state-dependent cost).
-            let acc = AccountConfigurationStorage::new(sctx);
+            //    Before Zenith there is no Keystore: the sender is always its own
+            //    ungated self-actor and no configuration is read.
             let sender_actor_id = acting_actor_hint
+                .filter(|_| keystore)
                 .unwrap_or_else(|| AccountConfigurationStorage::self_actor_id(sender));
-            // Resolve the acting scope via the effective-config resolver: an
-            // explicit `actor_config` entry, or the inline secp256k1 self (a
-            // revoked default EOA resolves to the empty config, i.e. scope 0).
-            // Then read the policy target with `get_policy_manager` only when
-            // gated, avoiding `get_policy`'s extra `policy_commitment` SLOAD on
-            // this estimation hot path (the commitment is unused here).
-            let actor_scope = acc
-                .resolve_actor_config(sender, sender_actor_id)
-                .map_err(BaseTransactionError::eip8130)?
-                .scope;
-            let policy_gated = Eip8130Constants::sender_is_policy_gated(actor_scope);
-            let policy_target = if policy_gated {
-                acc.get_policy_manager(sender, sender_actor_id)
-                    .map_err(BaseTransactionError::eip8130)?
+            let (policy_gated, policy_target) = if keystore {
+                Self::simulate_policy_gate(sctx, sender, sender_actor_id)?
             } else {
-                Address::ZERO
+                (false, Address::ZERO)
             };
 
             // 4. Intrinsic gas (auth gas is priced from the auth-blob shape, so a
@@ -918,6 +930,34 @@ impl Eip8130Executor {
         })
     }
 
+    /// Resolves the simulated acting actor's policy gate from the Keystore:
+    /// whether it is policy-gated and, if so, its policy target.
+    fn simulate_policy_gate(
+        sctx: StorageCtx<'_>,
+        sender: Address,
+        sender_actor_id: B256,
+    ) -> Result<(bool, Address), BaseTransactionError> {
+        // Resolve the acting scope via the effective-config resolver: an
+        // explicit `actor_config` entry, or the inline secp256k1 self (a
+        // revoked default EOA resolves to the empty config, i.e. scope 0).
+        // Then read the policy target with `get_policy_manager` only when
+        // gated, avoiding `get_policy`'s extra `policy_commitment` SLOAD on
+        // this estimation hot path (the commitment is unused here).
+        let acc = AccountConfigurationStorage::new(sctx);
+        let actor_scope = acc
+            .resolve_actor_config(sender, sender_actor_id)
+            .map_err(BaseTransactionError::eip8130)?
+            .scope;
+        let policy_gated = Eip8130Constants::sender_is_policy_gated(actor_scope);
+        let policy_target = if policy_gated {
+            acc.get_policy_manager(sender, sender_actor_id)
+                .map_err(BaseTransactionError::eip8130)?
+        } else {
+            Address::ZERO
+        };
+        Ok((policy_gated, policy_target))
+    }
+
     /// Runs the storage-backed pre-call pipeline (authorize, nonce, intrinsic
     /// gas, fee-cap check, account-change apply) over a gas-free
     /// journal view and publishes the transaction context, returning the resolved
@@ -946,6 +986,7 @@ impl Eip8130Executor {
         let gas_limit = tx.gas_limit;
         let max_fee = tx.max_fee_per_gas;
         let max_priority = tx.max_priority_fee_per_gas;
+        let tx_gas_limit_cap = ctx.cfg().tx_gas_limit_cap();
         // Validity bounds are normalized to Unix milliseconds (seconds bounds are
         // scaled by 1000 per EIP-8130 Timestamp Normalization); `0` stays `0`
         // (disabled). The nonce-free replay ring records this normalized upper
@@ -967,6 +1008,7 @@ impl Eip8130Executor {
         // the respective bound). The nonce-free replay ring separately enforces
         // its own admission window (`valid_before > now_ms`) when it records the
         // nonce, so a nonce-free transaction at the boundary still fails there.
+        let keystore = ctx.cfg().spec().is_enabled_in(BaseUpgrade::Zenith);
         let now_ms = now.saturating_mul(1_000);
         if valid_after != 0 && now_ms < valid_after {
             return Err(BaseTransactionError::eip8130("transaction is not yet valid"));
@@ -992,9 +1034,14 @@ impl Eip8130Executor {
             //    resulting post-apply state. `AccountConfiguration` storage
             //    transitions are written here; the deferred account-code effects
             //    are installed in step 2.
-            let applied_tx =
+            //    Before Zenith there is no Keystore: authorization is pure
+            //    secp256k1 recovery and never reads `AccountConfiguration`.
+            let applied_tx = if keystore {
                 TransactionAuthorizer::authorize_and_apply(signed, &mut acc, chain_id, now)
-                    .map_err(BaseTransactionError::eip8130)?;
+            } else {
+                TransactionAuthorizer::authorize_without_keystore(signed)
+            }
+            .map_err(BaseTransactionError::eip8130)?;
             let sender_actor = applied_tx.actors.sender.resolved;
             let payer_policy_gated = applied_tx
                 .actors
@@ -1079,6 +1126,14 @@ impl Eip8130Executor {
                     .with_revoke_discount_slots(applied_tx.revoke_discount_slots),
                 gas_limit,
             )?;
+            // EIP-7825: the transaction may consume `gas_limit` plus the payer
+            // authentication metered on top of it, and that total is bounded by
+            // the per-transaction gas cap (from Azul).
+            if FeeCheck::max_chargeable_gas(gas_limit, intrinsic.payer_auth) > tx_gas_limit_cap {
+                return Err(BaseTransactionError::eip8130(
+                    "transaction gas exceeds the EIP-7825 per-transaction cap",
+                ));
+            }
 
             // 5. Fee caps and payer balance.
             FeeCheck::validate_fees(max_fee, max_priority, base_fee)
@@ -1819,6 +1874,11 @@ impl Eip8130Executor {
         Ok((intrinsic, execution_gas_available))
     }
 
+    /// The rejection for an EIP-8130 transaction under a spec before Everest.
+    fn not_active_error() -> BaseTransactionError {
+        BaseTransactionError::eip8130("EIP-8130 transactions are not active before Everest")
+    }
+
     /// ABI-encodes the `ActorPolicyViolation(bytes32 actorId, address target)`
     /// protocol revert: the 4-byte selector followed by the two 32-byte words.
     fn actor_policy_violation_data(actor_id: B256, target: Address) -> Bytes {
@@ -1842,7 +1902,8 @@ mod tests {
     use alloy_sol_types::{SolEvent, SolValue, sol};
     use base_common_consensus::{
         AccountChange, AccountChangeChannel, BaseTxEnvelope, Call, ChangeType, CreateEntry,
-        Eip8130Signed, InitialActor, Predeploys, SignedAccountChanges, SignedChange, TxEip8130,
+        Eip8130Contracts, Eip8130Signed, InitialActor, Predeploys, SignedAccountChanges,
+        SignedChange, TxEip8130,
     };
     use base_common_precompiles::INonceManager;
     use base_execution_eip8130::AccountChangeApplier;
@@ -1934,6 +1995,14 @@ mod tests {
         BaseTransaction::from_encoded_tx(&envelope, Address::ZERO, encoded)
     }
 
+    /// Runs `evm` under the Zenith spec, where the Keystore is active.
+    fn with_zenith(
+        mut evm: BaseEvm<InMemoryDB, NoOpInspector, PrecompilesMap>,
+    ) -> BaseEvm<InMemoryDB, NoOpInspector, PrecompilesMap> {
+        evm.ctx_mut().cfg.spec = BaseSpecId::new(BaseUpgrade::Zenith);
+        evm
+    }
+
     /// Builds an EVM with `balance` funded to `sender`, optionally deploying
     /// `code` at the given contract addresses.
     fn evm_with_accounts(
@@ -1956,7 +2025,7 @@ mod tests {
         Context::base()
             .with_db(db)
             .with_cfg(
-                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus))
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Everest))
                     .with_chain_id(CHAIN_ID),
             )
             .with_block(BlockEnv {
@@ -2478,7 +2547,7 @@ mod tests {
         Context::base()
             .with_db(db)
             .with_cfg(
-                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus))
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Everest))
                     .with_chain_id(CHAIN_ID),
             )
             .with_block(BlockEnv {
@@ -2792,11 +2861,11 @@ mod tests {
         tx.calls = vec![vec![Call { to: allowed, value: U256::ZERO, data: Bytes::new() }]];
         let signed = configured_signed(tx, &owner);
 
-        let mut evm = evm_with_accounts(
+        let mut evm = with_zenith(evm_with_accounts(
             U256::from(10u64).pow(U256::from(18u64)),
             account,
             &[(allowed, bytes!("00")), (wrong, bytes!("00"))],
-        );
+        ));
         // Gate the account's self-actor away from `allowed` so the no-hint path
         // hits the node policy gate.
         seed_gated_sender(&mut evm, account, account, wrong);
@@ -3019,7 +3088,7 @@ mod tests {
         let mut evm = Context::base()
             .with_db(db)
             .with_cfg(
-                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus))
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Everest))
                     .with_chain_id(CHAIN_ID),
             )
             .with_block(BlockEnv {
@@ -3338,7 +3407,7 @@ mod tests {
         tx.calls = vec![vec![Call { to: forbidden, value: U256::ZERO, data: Bytes::new() }]];
         let signed = configured_signed(tx, &signer);
 
-        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), account);
+        let mut evm = with_zenith(evm_with(U256::from(10u64).pow(U256::from(18u64)), account));
         seed_gated_sender(&mut evm, account, signer_addr, allowed);
 
         let outcome = evm.transact_raw(into_base_tx(&signed)).expect("tx should be included");
@@ -3362,15 +3431,171 @@ mod tests {
         tx.calls = vec![vec![Call { to: allowed, value: U256::ZERO, data: Bytes::new() }]];
         let signed = configured_signed(tx, &signer);
 
-        let mut evm = evm_with_accounts(
+        let mut evm = with_zenith(evm_with_accounts(
             U256::from(10u64).pow(U256::from(18u64)),
             account,
             &[(allowed, bytes!("00"))],
-        );
+        ));
         seed_gated_sender(&mut evm, account, signer_addr, allowed);
 
         let outcome = evm.transact_raw(into_base_tx(&signed)).expect("tx should execute");
         assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+    }
+
+    #[test]
+    fn pre_zenith_ignores_keystore_actors() {
+        // The Keystore authorizes `signer` for `account`, but before Zenith
+        // there is no Keystore: a named sender must sign with its own key.
+        let account = address!("0x00000000000000000000000000000000000000ca");
+        let allowed = address!("0x00000000000000000000000000000000000000cb");
+        let signer = signing_key(0x99);
+        let signer_addr = eoa_address(&signer);
+
+        let mut tx = base_tx();
+        tx.sender = Some(account);
+        tx.calls = vec![vec![Call { to: allowed, value: U256::ZERO, data: Bytes::new() }]];
+        let signed = configured_signed(tx, &signer);
+
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), account);
+        seed_gated_sender(&mut evm, account, signer_addr, allowed);
+
+        let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
+        let EVMError::Transaction(BaseTransactionError::Eip8130(reason)) = err else {
+            panic!("expected an Eip8130 validity rejection, got {err:?}");
+        };
+        assert!(reason.contains("does not recover to the named account"), "got {reason:?}");
+    }
+
+    /// Before Zenith, a non-secp256k1 authenticator and a `Create` are rejected
+    /// as unsupported, in both execution and simulation.
+    #[test]
+    fn pre_zenith_rejects_unsupported_authenticator_and_account_change() {
+        let account = address!("0x00000000000000000000000000000000000000ce");
+        let mut tx = base_tx();
+        tx.sender = Some(account);
+        let mut auth = Eip8130Contracts::P256_AUTHENTICATOR.to_vec();
+        auth.extend_from_slice(&[0u8; 128]);
+        let p256 = Eip8130Signed::new(tx, Bytes::from(auth), Bytes::new());
+        let (derived, create) =
+            counterfactual_create_signed(&signing_key(0x9b), bytes!("00"), Vec::new());
+
+        for (signed, sender, reason) in [
+            (p256, account, "unsupported authenticator"),
+            (create, derived, "unsupported account change type"),
+        ] {
+            let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+            let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
+            let EVMError::Transaction(BaseTransactionError::Eip8130(got)) = err else {
+                panic!("expected an Eip8130 validity rejection, got {err:?}");
+            };
+            assert!(got.contains(reason), "got {got:?}, expected {reason:?}");
+
+            let mut sim = into_base_tx(&signed);
+            sim.base.caller = sender;
+            if let Some(parts) = sim.eip8130.as_mut() {
+                parts.mode = Eip8130ExecutionMode::Simulate;
+            }
+            evm.ctx_mut().tx = sim;
+            let err = Eip8130Executor::simulate(&mut evm).unwrap_err();
+            assert!(err.to_string().contains(reason), "got {err}, expected {reason:?}");
+        }
+    }
+
+    /// EIP-8130 exists only from Everest: a block before it cannot include or
+    /// simulate one, whatever path delivered the transaction.
+    #[test]
+    fn eip8130_is_rejected_before_everest() {
+        let key = signing_key(0x9c);
+        let sender = eoa_address(&key);
+        let signed = eoa_signed(base_tx(), &key);
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+        evm.ctx_mut().cfg.spec = BaseSpecId::new(BaseUpgrade::Denim);
+
+        let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
+        assert!(err.to_string().contains("not active before Everest"), "got {err}");
+
+        let mut sim = into_base_tx(&signed);
+        sim.base.caller = sender;
+        if let Some(parts) = sim.eip8130.as_mut() {
+            parts.mode = Eip8130ExecutionMode::Simulate;
+        }
+        evm.ctx_mut().tx = sim;
+        let err = Eip8130Executor::simulate(&mut evm).unwrap_err();
+        assert!(err.to_string().contains("not active before Everest"), "got {err}");
+    }
+
+    /// EIP-7825 bounds the gas an EIP-8130 transaction can consume.
+    #[test]
+    fn gas_above_the_per_transaction_cap_is_rejected() {
+        let key = signing_key(0x9d);
+        let sender = eoa_address(&key);
+        let mut evm = evm_with(U256::MAX >> 1, sender);
+        let cap = evm.ctx().cfg.tx_gas_limit_cap();
+        let signed = eoa_signed(TxEip8130 { gas_limit: cap + 1, ..base_tx() }, &key);
+
+        let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
+        assert!(err.to_string().contains("EIP-7825"), "got {err}");
+    }
+
+    /// Simulation never runs with more gas than a real transaction could carry:
+    /// `gas_limit` plus the payer authentication ceiling stays within the
+    /// EIP-7825 cap, so a sponsored estimate is always includable.
+    #[test]
+    fn simulation_gas_is_bounded_by_the_per_transaction_cap() {
+        let key = signing_key(0x9f);
+        let sender = eoa_address(&key);
+        let payer = address!("0x00000000000000000000000000000000000000b7");
+        // `JUMPDEST PUSH1 0 JUMP`: loops until it runs out of gas, so the
+        // simulation consumes its whole gas ceiling.
+        let looper = address!("0x00000000000000000000000000000000000000b8");
+        let mut evm = evm_with_accounts(U256::MAX >> 1, sender, &[(looper, bytes!("5b600056"))]);
+        let cap = evm.ctx().cfg.tx_gas_limit_cap();
+        let tx = TxEip8130 {
+            gas_limit: cap,
+            payer: Some(payer),
+            calls: vec![vec![Call { to: looper, value: U256::ZERO, data: Bytes::new() }]],
+            ..base_tx()
+        };
+        let mut payer_auth = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
+        payer_auth.extend_from_slice(&[0xab; 65]);
+        let signed = Eip8130Signed::new(tx, eoa_sig(&key, B256::ZERO), Bytes::from(payer_auth));
+        let payer_auth_ceiling = IntrinsicGas::max_payer_auth_cost(&signed).unwrap();
+        assert!(payer_auth_ceiling > 0);
+
+        let mut sim = into_base_tx(&signed);
+        sim.base.caller = sender;
+        if let Some(parts) = sim.eip8130.as_mut() {
+            parts.mode = Eip8130ExecutionMode::Simulate;
+        }
+        evm.ctx_mut().tx = sim;
+        let result = Eip8130Executor::simulate(&mut evm).expect("simulation runs");
+        assert!(!result.is_success(), "the loop exhausts the simulated gas");
+        // The reported gas includes the payer authentication metered on top of
+        // the simulated `gas_limit`.
+        assert!(
+            result.tx_gas_used() <= cap,
+            "simulated gas {} (with payer authentication {payer_auth_ceiling}) exceeds the cap {cap}",
+            result.tx_gas_used()
+        );
+    }
+
+    /// A nonce-free transaction must carry `nonce_sequence == 0` at inclusion,
+    /// not only at pool admission.
+    #[test]
+    fn nonce_free_with_nonzero_sequence_is_rejected_at_inclusion() {
+        let key = signing_key(0x9e);
+        let sender = eoa_address(&key);
+        let tx = TxEip8130 {
+            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+            nonce_sequence: 1,
+            valid_before: NOW * 1_000 + 20_000,
+            ..base_tx()
+        };
+        let signed = eoa_signed(tx, &key);
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+
+        let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
+        assert!(err.to_string().contains("nonce-free transaction has nonce sequence"), "got {err}");
     }
 
     #[test]
@@ -3430,7 +3655,7 @@ mod tests {
         let (derived, signed) = counterfactual_create_signed(&key, bytes!("00"), Vec::new());
 
         let initial_balance = U256::from(10u64).pow(U256::from(18u64));
-        let mut evm = evm_with(initial_balance, derived);
+        let mut evm = with_zenith(evm_with(initial_balance, derived));
         let outcome =
             evm.transact_raw(into_base_tx(&signed)).expect("counterfactual create should execute");
 
@@ -3450,7 +3675,7 @@ mod tests {
     fn assert_create_rejected(byte: u8, code: Bytes, reason: &str) {
         let key = signing_key(byte);
         let (derived, signed) = counterfactual_create_signed(&key, code, Vec::new());
-        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), derived);
+        let mut evm = with_zenith(evm_with(U256::from(10u64).pow(U256::from(18u64)), derived));
         let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
         let EVMError::Transaction(BaseTransactionError::Eip8130(got)) = err else {
             panic!("expected an Eip8130 validity rejection, got {err:?}");
@@ -3499,7 +3724,7 @@ mod tests {
         // preexisting (non-8130) bytecode instead of overwriting it.
         let key = signing_key(0xb5);
         let (derived, signed) = counterfactual_create_signed(&key, bytes!("6001"), Vec::new());
-        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), derived);
+        let mut evm = with_zenith(evm_with(U256::from(10u64).pow(U256::from(18u64)), derived));
         seed_account_code(&mut evm, derived, Bytes::from_static(&[0xfe, 0xfe, 0xfe]));
 
         let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
@@ -3525,7 +3750,8 @@ mod tests {
         );
 
         let initial_balance = U256::from(10u64).pow(U256::from(18u64));
-        let mut evm = evm_with_accounts(initial_balance, derived, &[(target, bytes!("00"))]);
+        let mut evm =
+            with_zenith(evm_with_accounts(initial_balance, derived, &[(target, bytes!("00"))]));
         let outcome = evm
             .transact_raw(into_base_tx(&signed))
             .expect("counterfactual create + call should execute");
@@ -3641,7 +3867,7 @@ mod tests {
         let mut evm = Context::base()
             .with_db(db)
             .with_cfg(
-                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus))
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Everest))
                     .with_chain_id(CHAIN_ID),
             )
             .with_block(BlockEnv {

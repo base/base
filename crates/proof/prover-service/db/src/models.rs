@@ -223,6 +223,9 @@ pub enum CreateProofRequestOutcome {
     RetryNotAllowed(Uuid),
     /// An existing failed row is at the retry cap; no requeue.
     RetryExhausted(Uuid),
+    /// An existing row was cancelled by a requester and is never requeued by a
+    /// replay; it must be deleted before the session id can be proved again.
+    Cancelled(Uuid),
 }
 
 impl CreateProofRequestOutcome {
@@ -233,9 +236,25 @@ impl CreateProofRequestOutcome {
             | Self::Requeued(id)
             | Self::Replayed(id)
             | Self::RetryNotAllowed(id)
-            | Self::RetryExhausted(id) => *id,
+            | Self::RetryExhausted(id)
+            | Self::Cancelled(id) => *id,
         }
     }
+}
+
+/// Outcome of cancelling a proof request by session id.
+#[derive(Debug, Clone)]
+pub enum CancelProofRequestOutcome {
+    /// A queued or running proof request was terminally failed.
+    Cancelled(Box<ProofJob>),
+    /// The request was already cancelled.
+    AlreadyCancelled,
+    /// No proof request exists for the session id.
+    NotFound,
+    /// The proof backend does not support cancellation.
+    UnsupportedBackend,
+    /// The request had already reached another terminal state.
+    AlreadyTerminal(ProofStatus),
 }
 
 /// Outcome of deleting a completed proof request by session id.
@@ -548,8 +567,6 @@ pub struct ProofRequest {
     pub prover_address: Option<String>,
     /// Explicit L1 head hash used for witness generation.
     pub l1_head: Option<String>,
-    /// Intermediate root interval requested for ZK proof generation.
-    pub intermediate_root_interval: Option<i64>,
     /// Timestamp when the request was created.
     pub created_at: DateTime<Utc>,
     /// Timestamp of the last status update.
@@ -770,8 +787,6 @@ pub struct CreateProofRequest {
     pub prover_address: Option<String>,
     /// Explicit L1 head hash for witness generation.
     pub l1_head: Option<String>,
-    /// Intermediate root interval for ZK proof generation.
-    pub intermediate_root_interval: Option<u64>,
 }
 
 impl CreateProofRequest {
@@ -794,7 +809,6 @@ impl CreateProofRequest {
             sequence_window: fields.sequence_window,
             prover_address: fields.prover_address,
             l1_head: fields.l1_head,
-            intermediate_root_interval: fields.intermediate_root_interval,
         })
     }
 
@@ -847,11 +861,6 @@ impl CreateProofRequest {
         if self.l1_head != expected.l1_head {
             return Err(CreateProofRequestValidationError::FieldMismatch { field: "l1_head" });
         }
-        if self.intermediate_root_interval != expected.intermediate_root_interval {
-            return Err(CreateProofRequestValidationError::FieldMismatch {
-                field: "intermediate_root_interval",
-            });
-        }
 
         Ok(())
     }
@@ -880,8 +889,6 @@ pub struct DerivedProofRequestFields {
     pub prover_address: Option<String>,
     /// Explicit L1 head hash.
     pub l1_head: Option<String>,
-    /// Intermediate root interval.
-    pub intermediate_root_interval: Option<u64>,
 }
 
 impl DerivedProofRequestFields {
@@ -901,7 +908,6 @@ impl DerivedProofRequestFields {
                 sequence_window: proof.sequence_window,
                 prover_address: None,
                 l1_head: proof.l1_head.map(|hash| format!("{hash:#x}")),
-                intermediate_root_interval: proof.intermediate_root_interval,
             }),
             ProtocolProofRequestKind::SnarkPlonk(request) => Ok(Self {
                 api_proof_type: ApiProofType::SnarkPlonk,
@@ -914,7 +920,6 @@ impl DerivedProofRequestFields {
                 sequence_window: request.proof.sequence_window,
                 prover_address: Some(format!("{:#x}", request.prover_address)),
                 l1_head: request.proof.l1_head.map(|hash| format!("{hash:#x}")),
-                intermediate_root_interval: request.proof.intermediate_root_interval,
             }),
             ProtocolProofRequestKind::Tee(request) => Ok(Self {
                 api_proof_type: ApiProofType::Tee,
@@ -927,8 +932,6 @@ impl DerivedProofRequestFields {
                 sequence_window: None,
                 prover_address: None,
                 l1_head: Some(format!("{:#x}", request.proof.l1_head)),
-                intermediate_root_interval: (request.proof.intermediate_block_interval > 0)
-                    .then_some(request.proof.intermediate_block_interval),
             }),
         }
     }
@@ -955,47 +958,6 @@ pub fn canonical_session_id(session_id: &str) -> Result<String, CreateProofReque
     Ok(Uuid::parse_str(session_id)
         .map(|uuid| uuid.to_string())
         .unwrap_or_else(|_| session_id.to_owned()))
-}
-
-/// Parameters for creating a new proof session
-#[derive(Debug, Clone)]
-pub struct CreateProofSession {
-    /// Parent proof request identifier.
-    pub proof_request_id: Uuid,
-    /// Whether this is a STARK or SNARK session.
-    pub session_type: SessionType,
-    /// Backend-assigned session identifier.
-    pub backend_session_id: String,
-    /// Backend-specific metadata (JSON).
-    pub metadata: Option<serde_json::Value>,
-}
-
-/// Parameters for updating a proof session status
-#[derive(Debug, Clone)]
-pub struct UpdateProofSession {
-    /// Backend-assigned session identifier to look up.
-    pub backend_session_id: String,
-    /// New session status.
-    pub status: SessionStatus,
-    /// Error message, if the session failed.
-    pub error_message: Option<String>,
-    /// Updated backend metadata (JSON).
-    pub metadata: Option<serde_json::Value>,
-}
-
-/// Parameters for updating a proof request with receipt
-#[derive(Debug, Clone)]
-pub struct UpdateReceipt {
-    /// Proof request identifier.
-    pub id: Uuid,
-    /// Raw STARK receipt bytes.
-    pub stark_receipt: Option<Vec<u8>>,
-    /// Raw SNARK receipt bytes.
-    pub snark_receipt: Option<Vec<u8>>,
-    /// New proof status.
-    pub status: ProofStatus,
-    /// Error message, if the proof failed.
-    pub error_message: Option<String>,
 }
 
 /// Parameters for claiming the next available worker proof job.
@@ -1185,6 +1147,8 @@ pub enum RecordSessionOutcome {
     Expired,
     /// The job is already terminal.
     Terminal,
+    /// The job was cancelled by a requester.
+    Cancelled,
     /// The requested session status is terminal and must be coordinated with job completion.
     TerminalSessionStatus,
 }
@@ -1290,7 +1254,6 @@ mod tests {
                 number_of_blocks_to_prove: 5,
                 sequence_window: Some(50),
                 l1_head: None,
-                intermediate_root_interval: None,
                 schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,

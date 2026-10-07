@@ -50,7 +50,8 @@ services:
       - NODE_HEALTHCHECK_CL_RPC_PORT=${L2_BUILDER_CL_RPC_PORT}
       - OTEL_SERVICE_NAME=base-builder
 
-  # Both batchers read the leader through the conductor rollup proxy in HA.
+  # The op-batcher reads its rollup node through the proxy of op-conductor-0. The base batcher
+  # takes the three conductors and reads the blocks from the leader among them.
   op-batcher:
     depends_on:
       setup-conductor:
@@ -63,7 +64,7 @@ services:
       setup-conductor:
         condition: service_completed_successfully
     environment:
-      - BASE_BATCHER_ROLLUP_RPC_URL=http://op-conductor-0:${CONDUCTOR0_RPC_PORT}
+      - BASE_BATCHER_SEQUENCER_URLS=http://op-conductor-0:${CONDUCTOR0_RPC_PORT},http://op-conductor-1:${CONDUCTOR1_RPC_PORT},http://op-conductor-2:${CONDUCTOR2_RPC_PORT}
 
   base-sequencer-1:
     <<: *sequencer-base
@@ -80,10 +81,10 @@ services:
       - "${L2_SEQ1_CL_P2P_PORT}:${L2_SEQ1_CL_P2P_PORT}"                 # Consensus P2P TCP
       - "${L2_SEQ1_CL_P2P_PORT}:${L2_SEQ1_CL_P2P_PORT}/udp"             # Consensus P2P UDP
     volumes:
-      - ../../.devnet/l2/sequencer-1:/data
-      - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
-      - ../../.devnet/l1/configs:/genesis:ro
-      - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ${DEVNET_ROOT:-../../.devnet}/l2/sequencer-1:/data
+      - ${DEVNET_ROOT:-../../.devnet}/l2/cl-bootnode-enr:/bootnodes:ro
+      - ${DEVNET_ROOT:-../../.devnet}/l1/configs:/genesis:ro
+      - ${DEVNET_ROOT:-../../.devnet}/l2/configs:/genesis/l2:ro
     environment:
       - BASE_CHAIN_NAME=dev
       - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
@@ -122,7 +123,6 @@ services:
       - --flashblocks.port=${L2_SEQ1_FLASHBLOCKS_PORT}
       - --flashblocks.block-time=200
       - --rollup.chain-block-time=2000
-      - --builder.enable-experimental-validity-transactions
       - --builder.payload-builder-cutover
       - --metrics=0.0.0.0:${L2_SEQ1_METRICS_PORT}
       - --txpool.nolocals
@@ -191,10 +191,10 @@ services:
       - "${L2_SEQ2_CL_P2P_PORT}:${L2_SEQ2_CL_P2P_PORT}"                 # Consensus P2P TCP
       - "${L2_SEQ2_CL_P2P_PORT}:${L2_SEQ2_CL_P2P_PORT}/udp"             # Consensus P2P UDP
     volumes:
-      - ../../.devnet/l2/sequencer-2:/data
-      - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
-      - ../../.devnet/l1/configs:/genesis:ro
-      - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ${DEVNET_ROOT:-../../.devnet}/l2/sequencer-2:/data
+      - ${DEVNET_ROOT:-../../.devnet}/l2/cl-bootnode-enr:/bootnodes:ro
+      - ${DEVNET_ROOT:-../../.devnet}/l1/configs:/genesis:ro
+      - ${DEVNET_ROOT:-../../.devnet}/l2/configs:/genesis/l2:ro
     environment:
       - BASE_CHAIN_NAME=dev
       - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
@@ -233,7 +233,6 @@ services:
       - --flashblocks.port=${L2_SEQ2_FLASHBLOCKS_PORT}
       - --flashblocks.block-time=200
       - --rollup.chain-block-time=2000
-      - --builder.enable-experimental-validity-transactions
       - --builder.payload-builder-cutover
       - --metrics=0.0.0.0:${L2_SEQ2_METRICS_PORT}
       - --txpool.nolocals
@@ -298,8 +297,8 @@ services:
       - "${CONDUCTOR0_RAFT_PORT}:${CONDUCTOR0_RAFT_PORT}"         # Raft
       - "${CONDUCTOR0_METRICS_PORT}:${CONDUCTOR0_METRICS_PORT}"   # Metrics
     volumes:
-      - ../../.devnet/conductor-0:/data
-      - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ${DEVNET_ROOT:-../../.devnet}/conductor-0:/data
+      - ${DEVNET_ROOT:-../../.devnet}/l2/configs:/genesis/l2:ro
     command:
       - --rollup.config=/genesis/l2/rollup-conductor.json
       - --raft.server.id=sequencer-0
@@ -334,8 +333,8 @@ services:
       - "${CONDUCTOR1_RAFT_PORT}:${CONDUCTOR1_RAFT_PORT}"         # Raft
       - "${CONDUCTOR1_METRICS_PORT}:${CONDUCTOR1_METRICS_PORT}"   # Metrics
     volumes:
-      - ../../.devnet/conductor-1:/data
-      - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ${DEVNET_ROOT:-../../.devnet}/conductor-1:/data
+      - ${DEVNET_ROOT:-../../.devnet}/l2/configs:/genesis/l2:ro
     command:
       - --rollup.config=/genesis/l2/rollup-conductor.json
       - --raft.server.id=sequencer-1
@@ -370,8 +369,8 @@ services:
       - "${CONDUCTOR2_RAFT_PORT}:${CONDUCTOR2_RAFT_PORT}"         # Raft
       - "${CONDUCTOR2_METRICS_PORT}:${CONDUCTOR2_METRICS_PORT}"   # Metrics
     volumes:
-      - ../../.devnet/conductor-2:/data
-      - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ${DEVNET_ROOT:-../../.devnet}/conductor-2:/data
+      - ${DEVNET_ROOT:-../../.devnet}/l2/configs:/genesis/l2:ro
     command:
       - --rollup.config=/genesis/l2/rollup-conductor.json
       - --raft.server.id=sequencer-2

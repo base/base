@@ -138,12 +138,16 @@ where
     }
 }
 
+/// Divisor converting the pre-Ecotone L1 fee scalar from its 6-decimal fixed-point encoding.
+const L1_FEE_SCALAR_DIVISOR: f64 = 1_000_000.0;
+
+/// Fixed-point scale of the Fjord `FastLZ` transaction size estimate.
+const FJORD_TX_SIZE_SCALE: u64 = 1_000_000;
+
 /// L1 fee and data gas for a non-deposit transaction, or deposit nonce and receipt version for a
 /// deposit transaction.
 #[derive(Debug, Clone)]
 pub struct ReceiptFieldsBuilder {
-    /// Block number.
-    pub block_number: u64,
     /// Block timestamp.
     pub block_timestamp: u64,
     /// The L1 fee for transaction.
@@ -180,9 +184,8 @@ pub struct ReceiptFieldsBuilder {
 
 impl ReceiptFieldsBuilder {
     /// Returns a new builder.
-    pub const fn new(block_timestamp: u64, block_number: u64) -> Self {
+    pub const fn new(block_timestamp: u64) -> Self {
         Self {
-            block_number,
             block_timestamp,
             l1_fee: None,
             l1_data_gas: None,
@@ -225,7 +228,7 @@ impl ReceiptFieldsBuilder {
         );
 
         self.l1_fee_scalar = (!chain_spec.is_ecotone_active_at_timestamp(timestamp))
-            .then_some(f64::from(l1_block_info.l1_base_fee_scalar) / 1_000_000.0);
+            .then_some(f64::from(l1_block_info.l1_base_fee_scalar) / L1_FEE_SCALAR_DIVISOR);
 
         self.l1_base_fee = Some(l1_block_info.l1_base_fee.saturating_to());
         self.l1_base_fee_scalar = Some(l1_block_info.l1_base_fee_scalar.saturating_to());
@@ -267,8 +270,7 @@ impl ReceiptFieldsBuilder {
     /// Builds the [`TransactionReceiptFields`] object.
     pub const fn build(self) -> TransactionReceiptFields {
         let Self {
-            block_number: _,    // used to compute other fields
-            block_timestamp: _, // used to compute other fields
+            block_timestamp: _,
             l1_fee,
             l1_data_gas: l1_gas_used,
             l1_fee_scalar,
@@ -330,7 +332,6 @@ impl BaseReceiptBuilder {
         N: NodePrimitives<SignedTx: BaseTransaction, Receipt = BaseReceipt>,
     {
         let timestamp = input.meta.timestamp;
-        let block_number = input.meta.block_number;
         let tx_signed = *input.tx.inner();
 
         // EIP-8130 RPC-only fields, derived before `input` is consumed below. The payer is
@@ -385,6 +386,11 @@ impl BaseReceiptBuilder {
             };
             mapped_receipt.into_with_bloom()
         });
+        // An EIP-8130 transaction has no single recipient; its calls are in
+        // `calls`. Report `to: null`, not the zero address its `kind` carries.
+        if tx_signed.as_eip8130().is_some() {
+            core_receipt.to = None;
+        }
 
         // In jovian, we're using the blob gas used field to store the current da
         // footprint's value.
@@ -395,13 +401,13 @@ impl BaseReceiptBuilder {
             // footprint gas scalar.
             // Jovian specs: `https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/exec-engine.md#da-footprint-block-limit`
             let da_size = estimate_tx_compressed_size(tx_signed.encoded_2718().as_slice())
-                .saturating_div(1_000_000)
+                .saturating_div(FJORD_TX_SIZE_SCALE)
                 .saturating_mul(l1_block_info.da_footprint_gas_scalar.unwrap_or_default().into());
 
             core_receipt.blob_gas_used = Some(da_size);
         });
 
-        let receipt_fields = ReceiptFieldsBuilder::new(timestamp, block_number)
+        let receipt_fields = ReceiptFieldsBuilder::new(timestamp)
             .l1_block_info(chain_spec, tx_signed, l1_block_info)?
             .build();
 
@@ -411,11 +417,13 @@ impl BaseReceiptBuilder {
     /// Builds [`BaseTransactionReceipt`] by combining core L1 receipt fields and additional Base
     /// receipt fields.
     pub fn build(self) -> BaseTransactionReceipt {
-        let Self { core_receipt: inner, receipt_fields, payer, phase_statuses, metadata } = self;
-
-        let TransactionReceiptFields { l1_block_info, .. } = receipt_fields;
-
-        BaseTransactionReceipt { inner, l1_block_info, payer, phase_statuses, metadata }
+        BaseTransactionReceipt {
+            inner: self.core_receipt,
+            l1_block_info: self.receipt_fields.l1_block_info,
+            payer: self.payer,
+            phase_statuses: self.phase_statuses,
+            metadata: self.metadata,
+        }
     }
 }
 
@@ -495,7 +503,7 @@ mod tests {
         let base_mainnet = BaseChainSpec::mainnet();
         assert!(Upgrades::is_fjord_active_at_timestamp(&base_mainnet, BLOCK_124665056_TIMESTAMP));
 
-        let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
+        let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP)
             .l1_block_info(&base_mainnet, &tx_1, &mut l1_block_info)
             .expect("should parse revm l1 info")
             .build();
@@ -573,7 +581,7 @@ mod tests {
             ..Default::default()
         };
 
-        let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
+        let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP)
             .l1_block_info(&BaseChainSpec::mainnet(), &tx_1, &mut l1_block_info)
             .expect("should parse revm l1 info")
             .build();
@@ -597,7 +605,7 @@ mod tests {
             ..Default::default()
         };
 
-        let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
+        let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP)
             .l1_block_info(&BaseChainSpec::mainnet(), &tx_1, &mut l1_block_info)
             .expect("should parse revm l1 info")
             .build();
@@ -631,7 +639,7 @@ mod tests {
         );
         let tx_1 = BaseTransactionSigned::decode_2718(&mut &tx[..]).unwrap();
 
-        let receipt_meta = ReceiptFieldsBuilder::new(1730216981, 21713817)
+        let receipt_meta = ReceiptFieldsBuilder::new(1730216981)
             .l1_block_info(&BaseChainSpec::mainnet(), &tx_1, &mut l1_block_info)
             .expect("should parse revm l1 info")
             .build();
@@ -689,7 +697,7 @@ mod tests {
 
         let upgrades = BaseChainSpec::mainnet();
 
-        let receipt = ReceiptFieldsBuilder::new(ChainConfig::mainnet().jovian_timestamp, u64::MAX)
+        let receipt = ReceiptFieldsBuilder::new(ChainConfig::mainnet().jovian_timestamp)
             .l1_block_info(&upgrades, &tx, &mut l1_block_info)
             .expect("should parse revm l1 info")
             .build();

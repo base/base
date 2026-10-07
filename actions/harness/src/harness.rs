@@ -337,27 +337,6 @@ impl ActionTestHarness {
         L1BlockInfoTx::decode_calldata(sealed.inner().input.as_ref())
             .expect("L1 info calldata must decode")
     }
-
-    /// Build an [`ActionL2Source`] pre-populated with `n` real [`BaseBlock`]s
-    /// starting from L2 genesis.
-    ///
-    /// Use this when a test needs a ready-made block source and does not
-    /// require direct access to the underlying [`L2Sequencer`].
-    ///
-    /// Note: this is an async operation because the sequencer now uses the
-    /// production engine. If you need a sync source builder, construct the
-    /// sequencer manually and drive it with an async runtime.
-    ///
-    /// [`BaseBlock`]: base_common_consensus::BaseBlock
-    pub async fn create_l2_source(&self, n: u64) -> ActionL2Source {
-        let chain = SharedL1Chain::from_blocks(self.l1.chain().to_vec());
-        let mut sequencer = self.create_l2_sequencer(chain);
-        let mut source = ActionL2Source::new();
-        for _ in 0..n {
-            source.push(sequencer.build_next_block_with_single_transaction().await);
-        }
-        source
-    }
 }
 
 impl Default for ActionTestHarness {

@@ -5,7 +5,8 @@ use std::path::PathBuf;
 
 use base_builder_core::{
     BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
-    ExecutionMeteringMode, RejectionCache, ShadowValidityConfig, SharedMeteringProvider,
+    ExecutionMeteringMode, RejectionCache, RestingPredicateMode, ShadowValidityConfig,
+    SharedMeteringProvider,
 };
 use base_builder_metering::MeteringStore;
 use base_execution_cli::ShadowIndexerArgs;
@@ -185,14 +186,6 @@ pub struct Args {
     #[arg(long = "builder.enable-resource-metering", default_value = "false")]
     pub enable_resource_metering: bool,
 
-    /// Enable experimental validity-bearing transactions on this builder.
-    ///
-    /// Registers `base_sendRawTransactionValidity` for direct ingress and accepts
-    /// validity metadata on `base_insertValidatedTransaction` from forwarding nodes.
-    /// Predicates are preserved and enforced during block construction.
-    #[arg(long = "builder.enable-experimental-validity-transactions", default_value = "false")]
-    pub enable_experimental_validity_transactions: bool,
-
     /// Maximum validity predicates accepted per validity transaction.
     ///
     /// Capped at [`DEFAULT_MAX_VALIDITY_PREDICATES`], the fixed wire ceiling the
@@ -243,17 +236,11 @@ pub struct Args {
     )]
     pub predicate_bucket_ordered_threshold: usize,
 
-    /// URL of the audit-archiver RPC endpoint for forwarding rejected transactions
-    #[arg(long = "builder.audit-archiver-url", env = "BUILDER_AUDIT_ARCHIVER_URL")]
-    pub audit_archiver_url: Option<String>,
-
-    /// Bounded channel capacity for rejected transaction forwarding (drops on full)
-    #[arg(long = "builder.rejected-tx-channel-size", default_value = "500")]
-    pub rejected_tx_channel_size: usize,
-
-    /// Maximum rejected transactions accumulated per block before dropping
-    #[arg(long = "builder.max-rejected-txs-per-block", default_value = "500")]
-    pub max_rejected_txs_per_block: usize,
+    /// Hold back validity transactions whose predicate was unsatisfied earlier in the block until
+    /// a commit changes the state it reads: off, shadow (track and count mismatches only), or
+    /// enforce.
+    #[arg(long = "builder.resting-predicates", value_enum, default_value = "off")]
+    pub resting_predicate_mode: RestingPredicateMode,
 
     /// Buffer size for tx data store (LRU eviction when full)
     #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
@@ -346,7 +333,6 @@ impl Default for Args {
             execution_metering_mode: ExecutionMeteringMode::Off,
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
-            enable_experimental_validity_transactions: false,
             validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
             shadow_validity_injection_enabled: false,
             shadow_validity_injection_sample_rate_bps: 100,
@@ -354,9 +340,7 @@ impl Default for Args {
             metering_wait_duration_ms: None,
             predicate_eval_hard_cutoff_ms: 10,
             predicate_bucket_ordered_threshold: 32,
-            audit_archiver_url: None,
-            rejected_tx_channel_size: 500,
-            max_rejected_txs_per_block: 500,
+            resting_predicate_mode: RestingPredicateMode::Off,
             tx_data_store_buffer_size: 10000,
             metering_store_ttl_secs: 30,
             rejection_cache_max_capacity: 100_000,
@@ -377,18 +361,15 @@ impl Args {
     ///
     /// # Errors
     ///
-    /// Returns an error when shadow injection is enabled without validity transaction support.
+    /// Returns an error when the shadow injection sample rate is out of range.
     pub fn builder_api_config(&self) -> eyre::Result<BuilderApiExtensionConfig> {
         let shadow_validity = if self.shadow_validity_injection_enabled {
             ShadowValidityConfig::enabled(self.shadow_validity_injection_sample_rate_bps)?
         } else {
             ShadowValidityConfig::disabled()
         };
-        Ok(BuilderApiExtensionConfig::new(
-            self.enable_experimental_validity_transactions,
-            self.validity_max_predicates,
-        )
-        .with_shadow_validity(shadow_validity)?)
+        Ok(BuilderApiExtensionConfig::new(self.validity_max_predicates)
+            .with_shadow_validity(shadow_validity))
     }
 
     /// Converts these CLI arguments into a [`BuilderConfig`] using the given shared metering
@@ -430,14 +411,12 @@ impl Args {
             metering_wait_duration: self.metering_wait_duration_ms.map(Duration::from_millis),
             predicate_eval_hard_cutoff: Duration::from_millis(self.predicate_eval_hard_cutoff_ms),
             predicate_bucket_ordered_threshold: self.predicate_bucket_ordered_threshold,
+            resting_predicate_mode: self.resting_predicate_mode,
             metering_provider,
             rejection_cache: RejectionCache::new(
                 self.rejection_cache_max_capacity,
                 Duration::from_secs(self.rejection_cache_ttl_secs),
             ),
-            audit_archiver_url: self.audit_archiver_url,
-            rejected_tx_channel_size: self.rejected_tx_channel_size,
-            max_rejected_txs_per_block: self.max_rejected_txs_per_block,
             manifest_precheck_enabled: self.manifest_precheck_enabled,
         })
     }
@@ -475,7 +454,6 @@ mod tests {
     #[test]
     fn default_args_produce_valid_config() {
         let args = Args::default();
-        assert!(!args.enable_experimental_validity_transactions);
         assert_eq!(args.validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
         assert!(!args.shadow_validity_injection_enabled);
         assert_eq!(args.shadow_validity_injection_sample_rate_bps, 100);
@@ -484,19 +462,6 @@ mod tests {
         assert_eq!(config.block_time, Duration::from_millis(1000));
         assert!(config.max_gas_per_txn.is_none());
         assert!(config.manifest_precheck_enabled);
-    }
-
-    #[test]
-    fn experimental_validity_transactions_require_explicit_opt_in() {
-        let parsed = CommandParser::parse_from([
-            "builder",
-            "--builder.enable-experimental-validity-transactions",
-            "--builder.validity-max-predicates",
-            "8",
-        ]);
-
-        assert!(parsed.args.enable_experimental_validity_transactions);
-        assert_eq!(parsed.args.validity_max_predicates, 8);
     }
 
     #[test]
@@ -524,24 +489,8 @@ mod tests {
     }
 
     #[test]
-    fn validity_max_predicates_accepts_the_wire_ceiling_without_experimental_override() {
-        let parsed = CommandParser::parse_from([
-            "builder",
-            "--builder.validity-max-predicates",
-            &DEFAULT_MAX_VALIDITY_PREDICATES.to_string(),
-        ]);
-
-        assert!(!parsed.args.enable_experimental_validity_transactions);
-        assert_eq!(parsed.args.validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
-    }
-
-    #[test]
-    fn shadow_validity_injection_requires_validity_support() {
-        let args = Args { shadow_validity_injection_enabled: true, ..Default::default() };
-        assert!(args.builder_api_config().is_err());
-
+    fn shadow_validity_injection_maps_to_config() {
         let args = Args {
-            enable_experimental_validity_transactions: true,
             shadow_validity_injection_enabled: true,
             shadow_validity_injection_sample_rate_bps: 250,
             ..Default::default()
@@ -765,6 +714,19 @@ mod tests {
         assert_eq!(args.block_state_root_gas_limit, Some(1_000_000));
         assert_eq!(args.state_root_gas_coefficient, Some(0.1));
         assert_eq!(args.state_root_gas_anchor_us, Some(5_000));
+    }
+
+    #[rstest]
+    #[case::default(&[], RestingPredicateMode::Off)]
+    #[case::shadow(&["--builder.resting-predicates", "shadow"], RestingPredicateMode::Shadow)]
+    #[case::enforce(&["--builder.resting-predicates", "enforce"], RestingPredicateMode::Enforce)]
+    fn resting_predicate_mode_is_propagated(
+        #[case] flags: &[&str],
+        #[case] expected: RestingPredicateMode,
+    ) {
+        let args =
+            CommandParser::parse_from(std::iter::once("builder").chain(flags.iter().copied())).args;
+        assert_eq!(convert(args).resting_predicate_mode, expected);
     }
 
     #[test]

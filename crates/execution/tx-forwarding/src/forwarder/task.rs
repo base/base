@@ -18,9 +18,6 @@ use tracing::{debug, error, info, trace};
 
 use super::{config::ForwarderConfig, metrics::ForwarderMetrics, request::ForwardRequest};
 
-/// Internal buffer cap used when RPC batch size is configured as unlimited.
-const UNLIMITED_BATCH_BUFFER_LIMIT: usize = 1024;
-
 /// Sliding window rate limiter that tracks request timestamps.
 ///
 /// Maintains a bounded deque of send timestamps within a 1-second window.
@@ -103,11 +100,7 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         config: Arc<ForwarderConfig>,
     ) -> Self {
         let limiter = RateLimiter::new(config.max_rps);
-        let buffer_limit = if config.max_batch_size == 0 {
-            UNLIMITED_BATCH_BUFFER_LIMIT
-        } else {
-            config.max_batch_size
-        };
+        let buffer_limit = config.batch_limit();
         let buffer = Vec::with_capacity(buffer_limit);
         let url_label: Arc<str> = builder_url.to_string().into();
         Self { builder_url, url_label, client, receiver, config, limiter, buffer, buffer_limit }
@@ -248,17 +241,21 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         let tx_count = batch.len() as u64;
         let overall_start = Instant::now();
         for attempt in 0..=self.config.max_retries {
-            for (tx_hash, method) in tx_hashes.iter().zip(&methods) {
-                self.emit_forward_event(
-                    TransactionEventType::TxpoolBuilderForwardAttempt,
-                    *tx_hash,
-                    method,
-                    Some(attempt),
-                    Map::from_iter([
-                        ("attempt".to_string(), json!(attempt)),
-                        ("batch_size".to_string(), json!(tx_count)),
-                    ]),
-                );
+            // The first attempt is not journaled: every send ends in a failure or drop event here
+            // or a builder-side insert event. Only retries add information.
+            if attempt > 0 {
+                for (tx_hash, method) in tx_hashes.iter().zip(&methods) {
+                    self.emit_forward_event(
+                        TransactionEventType::TxpoolBuilderForwardAttempt,
+                        *tx_hash,
+                        method,
+                        Some(attempt),
+                        Map::from_iter([
+                            ("attempt".to_string(), json!(attempt)),
+                            ("batch_size".to_string(), json!(tx_count)),
+                        ]),
+                    );
+                }
             }
             let result = self.send_batch(&batch).await;
 
@@ -274,19 +271,10 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                         let tx_hash = tx_hashes.get(idx).copied().flatten();
                         let method = methods.get(idx).copied().unwrap_or_default();
                         match res {
-                            Ok(()) => {
-                                ok_count += 1;
-                                self.emit_forward_event(
-                                    TransactionEventType::TxpoolBuilderForwardSuccess,
-                                    tx_hash,
-                                    method,
-                                    Some(attempt),
-                                    Map::from_iter([
-                                        ("attempt".to_string(), json!(attempt)),
-                                        ("batch_size".to_string(), json!(tx_count)),
-                                    ]),
-                                );
-                            }
+                            // Delivery is journaled by the destination as
+                            // `TXPOOL_VALIDATED_INSERT_ACCEPTED`; a node-side success event per
+                            // destination would duplicate it.
+                            Ok(()) => ok_count += 1,
                             Err(e) => {
                                 debug!(
                                     builder_url = %self.builder_url,
@@ -431,7 +419,10 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
 
-    use super::{super::request::InsertValidatedTransaction, *};
+    use super::{
+        super::{config::UNLIMITED_BATCH_BUFFER_LIMIT, request::InsertValidatedTransaction},
+        *,
+    };
 
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     struct TestExtensions {

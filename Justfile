@@ -69,7 +69,7 @@ setup:
 ci: fix check::all test lychee zepter check::no-std check::no-std-proof
 
 # Runs ci checks with tests scoped to crates affected by changes
-pr: fix check::format check::udeps check::clippy check::deny lychee zepter check::no-std check::no-std-proof test-affected
+pr: fix check::format check::udeps check::clippy check::deny check::docs-index lychee zepter check::no-std check::no-std-proof test-affected
 
 # Performs lychee checks, installing the lychee command if necessary
 lychee:
@@ -102,6 +102,10 @@ test: install-nextest build::contracts build::elfs
 # Checks published Base snapshot manifests without downloading snapshot archives (live network)
 check-snapshot-manifests:
     cargo test --locked -p base --test snapshot_defaults -- --ignored --nocapture
+
+# Runs one real-devnet acceptance scenario (requires Docker and no existing devnet)
+acceptance scenario="smoke":
+    cargo run --locked -p base-acceptance-cli -- run acceptance/scenarios/{{ scenario }}.toml --output target/acceptance/{{ scenario }}-$(date +%s)
 
 # Runs tests only for crates affected by changes vs main (excludes system tests)
 test-affected base="main": install-nextest build::contracts build::elfs

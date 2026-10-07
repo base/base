@@ -142,6 +142,8 @@ pub enum TransactionEventType {
     #[serde(rename = "TXPOOL_BUILDER_FORWARD_DROPPED")]
     TxpoolBuilderForwardDropped,
     /// Txpool consumed a transaction from the best-txs iterator for builder forwarding.
+    ///
+    /// No longer emitted. Retained so historical events remain readable.
     #[serde(rename = "TXPOOL_BUILDER_CONSUMED")]
     TxpoolBuilderConsumed,
     /// A validated txpool insert accepted a transaction.
@@ -334,13 +336,8 @@ impl TransactionEvent {
         if self.event_id.trim().is_empty() {
             return Err(TransactionEventValidationError::MissingEventId);
         }
-        if let Some(reason) = find_forbidden_data_key(&self.data, 0) {
-            return Err(match reason {
-                ForbiddenDataReason::Key(key) => {
-                    TransactionEventValidationError::ForbiddenDataKey(key)
-                }
-                ForbiddenDataReason::TooDeep => TransactionEventValidationError::DataTooDeep,
-            });
+        if let Some(err) = find_forbidden_data_key(&self.data, 0) {
+            return Err(err);
         }
         Ok(())
     }
@@ -405,39 +402,33 @@ pub enum TransactionEventValidationError {
     DataTooDeep,
 }
 
-enum ForbiddenDataReason {
-    Key(String),
-    TooDeep,
-}
-
-fn find_forbidden_data_key(data: &Map<String, Value>, depth: usize) -> Option<ForbiddenDataReason> {
+fn find_forbidden_data_key(
+    data: &Map<String, Value>,
+    depth: usize,
+) -> Option<TransactionEventValidationError> {
     if depth > MAX_DATA_VALIDATION_DEPTH {
-        return Some(ForbiddenDataReason::TooDeep);
+        return Some(TransactionEventValidationError::DataTooDeep);
     }
-    for (key, value) in data {
+    data.iter().find_map(|(key, value)| {
         if is_forbidden_data_key(key) {
-            return Some(ForbiddenDataReason::Key(key.clone()));
+            Some(TransactionEventValidationError::ForbiddenDataKey(key.clone()))
+        } else {
+            find_forbidden_data_value(value, depth + 1)
         }
-        if let Some(reason) = find_forbidden_data_value(value, depth + 1) {
-            return Some(reason);
-        }
-    }
-    None
+    })
 }
 
-fn find_forbidden_data_value(value: &Value, depth: usize) -> Option<ForbiddenDataReason> {
+fn find_forbidden_data_value(
+    value: &Value,
+    depth: usize,
+) -> Option<TransactionEventValidationError> {
     if depth > MAX_DATA_VALIDATION_DEPTH {
-        return Some(ForbiddenDataReason::TooDeep);
+        return Some(TransactionEventValidationError::DataTooDeep);
     }
     match value {
         Value::Object(child) => find_forbidden_data_key(child, depth),
         Value::Array(items) => {
-            for item in items {
-                if let Some(reason) = find_forbidden_data_value(item, depth + 1) {
-                    return Some(reason);
-                }
-            }
-            None
+            items.iter().find_map(|item| find_forbidden_data_value(item, depth + 1))
         }
         _ => None,
     }

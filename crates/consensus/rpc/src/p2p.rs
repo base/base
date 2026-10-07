@@ -10,6 +10,8 @@ use jsonrpsee::{
     core::RpcResult,
     types::{ErrorCode, ErrorObject},
 };
+use libp2p::PeerId;
+use tokio::sync::oneshot;
 
 use crate::{BaseP2PApiServer, net::P2pRpc};
 
@@ -19,171 +21,87 @@ const PEER_STATE_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 impl BaseP2PApiServer for P2pRpc {
     async fn opp2p_self(&self) -> RpcResult<PeerInfo> {
         Metrics::rpc_calls("opp2p_self").increment(1.0);
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.sender
-            .send(P2pRpcRequest::PeerInfo(tx))
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
-
-        rx.await.map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        self.query(P2pRpcRequest::PeerInfo).await
     }
 
     async fn opp2p_peer_count(&self) -> RpcResult<PeerCount> {
         Metrics::rpc_calls("opp2p_peerCount").increment(1.0);
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.sender
-            .send(P2pRpcRequest::PeerCount(tx))
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
-
-        let (connected_discovery, connected_gossip) =
-            rx.await.map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
-
+        let (connected_discovery, connected_gossip) = self.query(P2pRpcRequest::PeerCount).await?;
         Ok(PeerCount { connected_discovery, connected_gossip })
     }
 
     async fn opp2p_peers(&self, connected: bool) -> RpcResult<PeerDump> {
         Metrics::rpc_calls("opp2p_peers").increment(1.0);
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.sender
-            .send(P2pRpcRequest::Peers { out: tx, connected })
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
-
-        let dump = rx.await.map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
-
-        Ok(dump)
+        self.query(|out| P2pRpcRequest::Peers { out, connected }).await
     }
 
     async fn opp2p_peer_stats(&self) -> RpcResult<PeerStats> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.sender
-            .send(P2pRpcRequest::PeerStats(tx))
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
-
-        let stats = rx.await.map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
-
-        Ok(stats)
+        self.query(P2pRpcRequest::PeerStats).await
     }
 
     async fn opp2p_discovery_table(&self) -> RpcResult<Vec<String>> {
         Metrics::rpc_calls("opp2p_discoveryTable").increment(1.0);
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.sender
-            .send(P2pRpcRequest::DiscoveryTable(tx))
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
-
-        rx.await.map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        self.query(P2pRpcRequest::DiscoveryTable).await
     }
 
     async fn opp2p_block_peer(&self, peer_id: String) -> RpcResult<()> {
         Metrics::rpc_calls("opp2p_blockPeer").increment(1.0);
-        let id = libp2p::PeerId::from_str(&peer_id)
-            .map_err(|_| ErrorObject::from(ErrorCode::InvalidParams))?;
-        self.sender
-            .send(P2pRpcRequest::BlockPeer { id })
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        let id = Self::parse_peer_id(&peer_id)?;
+        self.send(P2pRpcRequest::BlockPeer { id }).await
     }
 
     async fn opp2p_unblock_peer(&self, peer_id: String) -> RpcResult<()> {
         Metrics::rpc_calls("opp2p_unblockPeer").increment(1.0);
-        let id = libp2p::PeerId::from_str(&peer_id)
-            .map_err(|_| ErrorObject::from(ErrorCode::InvalidParams))?;
-        self.sender
-            .send(P2pRpcRequest::UnblockPeer { id })
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        let id = Self::parse_peer_id(&peer_id)?;
+        self.send(P2pRpcRequest::UnblockPeer { id }).await
     }
 
     async fn opp2p_list_blocked_peers(&self) -> RpcResult<Vec<String>> {
         Metrics::rpc_calls("opp2p_listBlockedPeers").increment(1.0);
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.sender
-            .send(P2pRpcRequest::ListBlockedPeers(tx))
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
-
-        rx.await
-            .map(|peers| peers.iter().map(|p| p.to_string()).collect())
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        let peers = self.query(P2pRpcRequest::ListBlockedPeers).await?;
+        Ok(peers.iter().map(ToString::to_string).collect())
     }
 
     async fn opp2p_block_addr(&self, address: IpAddr) -> RpcResult<()> {
         Metrics::rpc_calls("opp2p_blockAddr").increment(1.0);
-        self.sender
-            .send(P2pRpcRequest::BlockAddr { address })
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        self.send(P2pRpcRequest::BlockAddr { address }).await
     }
 
     async fn opp2p_unblock_addr(&self, address: IpAddr) -> RpcResult<()> {
         Metrics::rpc_calls("opp2p_unblockAddr").increment(1.0);
-        self.sender
-            .send(P2pRpcRequest::UnblockAddr { address })
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        self.send(P2pRpcRequest::UnblockAddr { address }).await
     }
 
     async fn opp2p_list_blocked_addrs(&self) -> RpcResult<Vec<IpAddr>> {
         Metrics::rpc_calls("opp2p_listBlockedAddrs").increment(1.0);
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.sender
-            .send(P2pRpcRequest::ListBlockedAddrs(tx))
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
-
-        rx.await.map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        self.query(P2pRpcRequest::ListBlockedAddrs).await
     }
 
     async fn opp2p_block_subnet(&self, subnet: IpNet) -> RpcResult<()> {
         Metrics::rpc_calls("opp2p_blockSubnet").increment(1.0);
-        self.sender
-            .send(P2pRpcRequest::BlockSubnet { address: subnet })
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        self.send(P2pRpcRequest::BlockSubnet { address: subnet }).await
     }
 
     async fn opp2p_unblock_subnet(&self, subnet: IpNet) -> RpcResult<()> {
         Metrics::rpc_calls("opp2p_unblockSubnet").increment(1.0);
-
-        self.sender
-            .send(P2pRpcRequest::UnblockSubnet { address: subnet })
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        self.send(P2pRpcRequest::UnblockSubnet { address: subnet }).await
     }
 
     async fn opp2p_list_blocked_subnets(&self) -> RpcResult<Vec<IpNet>> {
         Metrics::rpc_calls("opp2p_listBlockedSubnets").increment(1.0);
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.sender
-            .send(P2pRpcRequest::ListBlockedSubnets(tx))
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
-
-        rx.await.map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        self.query(P2pRpcRequest::ListBlockedSubnets).await
     }
 
     async fn opp2p_protect_peer(&self, id: String) -> RpcResult<()> {
         Metrics::rpc_calls("opp2p_protectPeer").increment(1.0);
-        let peer_id = libp2p::PeerId::from_str(&id)
-            .map_err(|_| ErrorObject::from(ErrorCode::InvalidParams))?;
-        self.sender
-            .send(P2pRpcRequest::ProtectPeer { peer_id })
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        let peer_id = Self::parse_peer_id(&id)?;
+        self.send(P2pRpcRequest::ProtectPeer { peer_id }).await
     }
 
     async fn opp2p_unprotect_peer(&self, id: String) -> RpcResult<()> {
         Metrics::rpc_calls("opp2p_unprotectPeer").increment(1.0);
-        let peer_id = libp2p::PeerId::from_str(&id)
-            .map_err(|_| ErrorObject::from(ErrorCode::InvalidParams))?;
-        self.sender
-            .send(P2pRpcRequest::UnprotectPeer { peer_id })
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+        let peer_id = Self::parse_peer_id(&id)?;
+        self.send(P2pRpcRequest::UnprotectPeer { peer_id }).await
     }
 
     async fn opp2p_connect_peer(&self, peer: String) -> RpcResult<()> {
@@ -206,6 +124,33 @@ impl BaseP2PApiServer for P2pRpc {
 }
 
 impl P2pRpc {
+    /// Sends `request` to the network actor.
+    async fn send(&self, request: P2pRpcRequest) -> RpcResult<()> {
+        self.sender.send(request).await.map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+    }
+
+    /// Sends the request built around a reply channel and awaits the network actor's reply.
+    async fn query<T>(
+        &self,
+        request: impl FnOnce(oneshot::Sender<T>) -> P2pRpcRequest,
+    ) -> RpcResult<T> {
+        let (tx, rx) = oneshot::channel();
+        self.send(request(tx)).await?;
+        rx.await.map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+    }
+
+    /// Parses a peer ID parameter, rejecting malformed input as invalid params.
+    fn parse_peer_id(peer_id: &str) -> RpcResult<PeerId> {
+        PeerId::from_str(peer_id).map_err(|_| ErrorObject::from(ErrorCode::InvalidParams))
+    }
+
+    /// Returns whether `peer_id` is among the currently connected peers.
+    async fn is_peer_connected(&self, peer_id: &PeerId) -> RpcResult<bool> {
+        let peers: PeerDump =
+            self.query(|out| P2pRpcRequest::Peers { out, connected: true }).await?;
+        Ok(peers.peers.contains_key(&peer_id.to_string()))
+    }
+
     async fn connect_peer_with_backoff(
         &self,
         peer: String,
@@ -237,23 +182,10 @@ impl P2pRpc {
             )
         })?;
 
-        // We need to wait until both peers are connected to each other to return from this method.
-        // We try with an exponential backoff and return an error if we fail to connect to the peer.
-        let is_connected = async || {
-            let (tx, rx) = tokio::sync::oneshot::channel();
-
-            self.sender
-                .send(P2pRpcRequest::Peers { out: tx, connected: true })
-                .await
-                .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
-
-            let peers = rx.await.map_err(|_| {
-                ErrorObject::borrowed(ErrorCode::InternalError.code(), "Failed to get peers", None)
-            })?;
-
-            // InvalidParams = "not connected yet" (retryable). InternalError = channel failure
-            // (fail fast via .when() below).
-            if peers.peers.contains_key(&peer_id.to_string()) {
+        // Return only once both peers are connected to each other, or fail after the backoff.
+        // InvalidParams = "not connected yet" (retryable); InternalError = channel failure (fatal).
+        let peer_connected = async || {
+            if self.is_peer_connected(&peer_id).await? {
                 Ok(())
             } else {
                 Err(ErrorObject::borrowed(
@@ -264,12 +196,10 @@ impl P2pRpc {
             }
         };
 
-        // Retry only peer-state misses; do not retry channel failures.
-        is_connected
+        peer_connected
             .retry(backoff)
             .when(|error| error.code() == ErrorCode::InvalidParams.code())
-            .await?;
-        Ok(())
+            .await
     }
 
     async fn disconnect_peer_with_backoff(
@@ -285,29 +215,12 @@ impl P2pRpc {
             }
         };
 
-        self.sender
-            .send(P2pRpcRequest::DisconnectPeer { peer_id })
-            .await
-            .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
+        self.send(P2pRpcRequest::DisconnectPeer { peer_id }).await?;
 
-        // We need to wait until both peers are fully disconnected to each other to return from this
-        // method. We try with an exponential backoff and return an error if we fail to
-        // disconnect from the peer.
-        let is_not_connected = async || {
-            let (tx, rx) = tokio::sync::oneshot::channel();
-
-            self.sender
-                .send(P2pRpcRequest::Peers { out: tx, connected: true })
-                .await
-                .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
-
-            let peers = rx.await.map_err(|_| {
-                ErrorObject::borrowed(ErrorCode::InternalError.code(), "Failed to get peers", None)
-            })?;
-
-            // InvalidParams = "still connected" (retryable). InternalError = channel failure
-            // (fail fast via .when() below).
-            if peers.peers.contains_key(&peer_id.to_string()) {
+        // Return only once both peers are fully disconnected, or fail after the backoff.
+        // InvalidParams = "still connected" (retryable); InternalError = channel failure (fatal).
+        let peer_disconnected = async || {
+            if self.is_peer_connected(&peer_id).await? {
                 Err(ErrorObject::borrowed(
                     ErrorCode::InvalidParams.code(),
                     "Peers are still connected",
@@ -318,12 +231,10 @@ impl P2pRpc {
             }
         };
 
-        // Retry only peer-state misses; do not retry channel failures.
-        is_not_connected
+        peer_disconnected
             .retry(backoff)
             .when(|error| error.code() == ErrorCode::InvalidParams.code())
-            .await?;
-        Ok(())
+            .await
     }
 }
 

@@ -11,24 +11,21 @@ use url::Url;
 /// Full batcher configuration combining RPC endpoints, identity, encoding
 /// parameters, submission limits, and optional throttling.
 ///
-/// By default the batch inbox address is sourced from the rollup config fetched
-/// at startup via `optimism_rollupConfig`. Shadow deployments may set
-/// [`batch_inbox_override`](Self::batch_inbox_override) to submit to a non-canonical inbox.
+/// The batcher posts to the batch inbox of the rollup config of the node it follows, read at
+/// startup through `optimism_rollupConfig`: the leader sequencer's rollup node, or in shadow mode
+/// the parity validator of [`shadow`](Self::shadow).
 #[derive(Debug, Clone)]
 pub struct BatcherConfig {
-    /// L1 RPC endpoint(s).
+    /// L1 RPC endpoint.
+    pub l1_rpc_url: Url,
+    /// Sequencer HTTP endpoints, at least one: conductors with their RPC proxy enabled, or
+    /// consensus nodes that forward the methods they do not serve to their execution client.
     ///
-    /// One or more HTTP/HTTPS URLs. The service connects to each in order at
-    /// startup and uses the first one that responds; later endpoints serve as
-    /// startup-time fallbacks only (no per-call rotation). Must be non-empty.
-    pub l1_rpc_url: Vec<Url>,
-    /// L2 HTTP RPC endpoint(s). Used for all JSON-RPC calls including throttle
-    /// control (`miner_setMaxDASize`). Must be HTTP/HTTPS URLs.
-    ///
-    /// Same connection-time failover semantics as [`l1_rpc_url`](Self::l1_rpc_url):
-    /// the service tries each in order and uses the first that connects.
-    /// Must be non-empty.
-    pub l2_rpc_url: Vec<Url>,
+    /// The batcher reads the unsafe blocks of the leader and, outside shadow mode, follows its
+    /// derivation. Among several endpoints, the leader is the first whose `admin_sequencerActive`
+    /// answers `true`. The DA limits are pushed to every endpoint when the
+    /// [`throttle`](Self::throttle) is on.
+    pub sequencer_urls: Vec<Url>,
     /// Optional L1 WebSocket endpoint for new-block subscriptions.
     ///
     /// When set, the batcher subscribes to new L1 block headers over this
@@ -36,21 +33,6 @@ pub struct BatcherConfig {
     /// [`l1_rpc_url`](Self::l1_rpc_url) only on failure. When absent, polling
     /// is used exclusively.
     pub l1_ws_url: Option<Url>,
-    /// Parity validator L2 RPC endpoint for shadow mode.
-    ///
-    /// Required with [`batch_inbox_override`](Self::batch_inbox_override) and
-    /// rejected without it. The validator's derived block hashes are compared
-    /// with the sequencer's.
-    pub parity_validator_l2_rpc_url: Option<Url>,
-    /// Rollup node RPC endpoint(s).
-    ///
-    /// The batcher reads the rollup config of this node and follows its derivation, so the
-    /// node must derive the inbox the batcher posts to. In shadow mode it is the parity
-    /// validator's rollup node.
-    ///
-    /// Same connection-time failover semantics as [`l1_rpc_url`](Self::l1_rpc_url).
-    /// Must be non-empty.
-    pub rollup_rpc_url: Vec<Url>,
     /// Signer configuration for signing L1 transactions.
     ///
     /// Must be `Some` before the batcher is started; a `None` value will cause
@@ -60,13 +42,9 @@ pub struct BatcherConfig {
     ///
     /// When enabled, the service starts the signer account balance monitor.
     pub metrics_enabled: bool,
-    /// Dangerous shadow-mode batch inbox override.
-    ///
-    /// When set, the batcher submits L1 transactions to this address instead of the
-    /// canonical inbox. This is only intended for explicit shadow deployments. Canonical
-    /// deployments must leave it unset.
-    pub batch_inbox_override: Option<Address>,
-    /// L2 block polling interval.
+    /// Shadow mode settings, `None` for a canonical batcher.
+    pub shadow: Option<ShadowConfig>,
+    /// Polling interval.
     pub poll_interval: Duration,
     /// Encoder configuration.
     pub encoder_config: EncoderConfig,
@@ -74,7 +52,9 @@ pub struct BatcherConfig {
     pub max_pending_transactions: usize,
     /// Transaction manager configuration.
     pub tx_manager: TxManagerConfig,
-    /// Throttle configuration (optional).
+    /// DA throttle configuration, `None` to disable the throttle.
+    ///
+    /// Must be `None` when [`shadow`](Self::shadow) is set.
     pub throttle: Option<ThrottleConfig>,
     /// Number of recent L1 blocks to inspect for a confirmed batcher transaction.
     ///
@@ -118,14 +98,12 @@ pub struct BatcherConfig {
 impl Default for BatcherConfig {
     fn default() -> Self {
         Self {
-            l1_rpc_url: vec!["http://localhost:8545".parse().expect("valid default URL")],
+            l1_rpc_url: "http://localhost:8545".parse().expect("valid default URL"),
             l1_ws_url: None,
-            l2_rpc_url: vec!["http://localhost:9545".parse().expect("valid default URL")],
-            parity_validator_l2_rpc_url: None,
-            rollup_rpc_url: vec!["http://localhost:7545".parse().expect("valid default URL")],
+            sequencer_urls: vec!["http://localhost:7545".parse().expect("valid default URL")],
             signer: None,
             metrics_enabled: false,
-            batch_inbox_override: None,
+            shadow: None,
             poll_interval: Duration::from_secs(1),
             encoder_config: EncoderConfig::default(),
             max_pending_transactions: 1,
@@ -141,59 +119,67 @@ impl Default for BatcherConfig {
     }
 }
 
-impl BatcherConfig {
-    /// Returns the inbox the batcher posts to, [`batch_inbox_override`](Self::batch_inbox_override)
-    /// when set and otherwise `derived_inbox`, the inbox the rollup node derives.
+/// The settings of a shadow batcher, which posts to a non-canonical inbox that a parity
+/// validator derives its chain from.
+#[derive(Debug, Clone)]
+pub struct ShadowConfig {
+    /// The shadow inbox, which must be the batch inbox of the parity validator's rollup config.
+    pub inbox: Address,
+    /// Rollup node RPC endpoint of the parity validator, whose rollup config the batcher reads
+    /// and whose derivation it follows.
+    pub validator_rollup_rpc: Url,
+    /// L2 RPC endpoint of the parity validator, whose derived block hashes are compared with
+    /// the leader sequencer's.
+    pub validator_l2_rpc: Url,
+}
+
+impl ShadowConfig {
+    /// Checks that `batch_inbox`, the batch inbox of the parity validator's rollup config, is
+    /// the shadow [`inbox`](Self::inbox).
     ///
     /// # Errors
     ///
-    /// Returns an error when the override differs from `derived_inbox`, because the batcher
-    /// follows the derivation of the [`rollup_rpc_url`](Self::rollup_rpc_url) node.
-    pub fn batch_inbox(&self, derived_inbox: Address) -> eyre::Result<Address> {
-        match self.batch_inbox_override {
-            Some(inbox) if inbox != derived_inbox => eyre::bail!(
-                "the rollup node derives inbox {derived_inbox} instead of the shadow inbox \
-                 {inbox}, point the rollup RPC at the parity validator's rollup node"
-            ),
-            Some(inbox) => Ok(inbox),
-            None => Ok(derived_inbox),
+    /// Returns an error when it is another inbox, because the batcher posts to the batch inbox
+    /// of that config.
+    pub fn validate_batch_inbox(&self, batch_inbox: Address) -> eyre::Result<()> {
+        if batch_inbox != self.inbox {
+            eyre::bail!(
+                "the batch inbox of the parity validator's rollup config is {batch_inbox} \
+                 instead of the shadow inbox {inbox}, check --shadow.inbox and \
+                 --shadow.validator-rollup-rpc",
+                inbox = self.inbox
+            );
         }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use rstest::rstest;
-
     use super::*;
 
     const CANONICAL_INBOX: Address = Address::repeat_byte(0xca);
     const SHADOW_INBOX: Address = Address::repeat_byte(0x5a);
 
-    #[rstest]
-    #[case::canonical(None, CANONICAL_INBOX)]
-    #[case::shadow(Some(SHADOW_INBOX), SHADOW_INBOX)]
-    fn batch_inbox_is_the_inbox_the_rollup_node_derives(
-        #[case] batch_inbox_override: Option<Address>,
-        #[case] derived_inbox: Address,
-    ) {
-        let config = BatcherConfig { batch_inbox_override, ..BatcherConfig::default() };
-
-        assert_eq!(config.batch_inbox(derived_inbox).unwrap(), derived_inbox);
-    }
-
+    /// A shadow config accepts the shadow inbox as the batch inbox of the parity validator's
+    /// rollup config, and refuses another one.
     #[test]
-    fn batch_inbox_rejects_a_rollup_node_that_derives_another_inbox() {
-        let config =
-            BatcherConfig { batch_inbox_override: Some(SHADOW_INBOX), ..BatcherConfig::default() };
+    fn validate_batch_inbox_requires_the_shadow_inbox() {
+        let shadow = ShadowConfig {
+            inbox: SHADOW_INBOX,
+            validator_rollup_rpc: "http://localhost:7545".parse().unwrap(),
+            validator_l2_rpc: "http://localhost:8545".parse().unwrap(),
+        };
 
-        let error = config.batch_inbox(CANONICAL_INBOX).unwrap_err();
+        shadow.validate_batch_inbox(SHADOW_INBOX).unwrap();
 
+        let error = shadow.validate_batch_inbox(CANONICAL_INBOX).unwrap_err();
         assert_eq!(
             error.to_string(),
             format!(
-                "the rollup node derives inbox {CANONICAL_INBOX} instead of the shadow inbox \
-                 {SHADOW_INBOX}, point the rollup RPC at the parity validator's rollup node"
+                "the batch inbox of the parity validator's rollup config is {CANONICAL_INBOX} \
+                 instead of the shadow inbox {SHADOW_INBOX}, check --shadow.inbox and \
+                 --shadow.validator-rollup-rpc"
             )
         );
     }
