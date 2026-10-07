@@ -78,9 +78,9 @@ alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
 alloy-transport-http.workspace = true
 alloy-rpc-types-beacon.workspace = true
+alloy-genesis = { workspace = true, optional = true }
 alloy-eips = { workspace = true, features = ["std"] }
 alloy-serde = { workspace = true, features = ["std"] }
-alloy-genesis = { workspace = true, optional = true }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
@@ -211,10 +211,10 @@ min-info-logs = [ "tracing/release_max_level_info" ]
 min-debug-logs = [ "tracing/release_max_level_debug" ]
 min-trace-logs = [ "tracing/release_max_level_trace" ]
 test-utils = [
+	"alloy-genesis",
 	"base-bundles/test-utils",
 	"base-common-chains/test-utils",
 	"base-execution-eip8130/test-utils",
-	"alloy-genesis",
 	"base-execution-rpc/client",
 	"base-node-core/test-utils",
 	"base-node-runner/test-utils",
@@ -242,6 +242,7 @@ test-utils = [
 	"reth-trie/test-utils",
 	"rlimit",
 	"testcontainers",
+	"reth-engine-tree/test-utils"
 ]
 
 [[bench]]

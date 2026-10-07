@@ -29,11 +29,14 @@ env:
 
 permissions:
   contents: read
+  # dorny/paths-filter lists the PR's changed files through the REST API.
+  pull-requests: read
 
 jobs:
   builder-gate:
     name: Builder performance gate
-    runs-on: depot-ubuntu-24.04-8
+    # Building the bench profile peaks above 90% of the 8-vCPU runner's memory.
+    runs-on: depot-ubuntu-24.04-16
     timeout-minutes: 60
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -131,6 +134,10 @@ jobs:
       - name: Re-pin budgets
         if: ${{ !cancelled() && steps.affected.outputs.run == 'true' && inputs.pin }}
         shell: bash
+        env:
+          BUILDER_GATE_RUN_ID: ${{ github.run_id }}
+          # Keep in sync with `runs-on` above; recorded in the re-pinned `measured_on`.
+          BUILDER_GATE_RUNNER: depot-ubuntu-24.04-16
         run: |
           set -euo pipefail
           python3 etc/scripts/ci/builder_gate_check.py \
