@@ -655,8 +655,8 @@ summary = "Review guide for block-production-sensitive PRs: mandatory payload si
 digest = "393c4961d6"
 
 ["docs/guides/BUILDER_PERFORMANCE_GATE.md"]
-summary = "Per-PR fail-closed flashblock build gate: workload matrix, Callgrind instruction and event-volume budgets, re-pinning with pin=true, CI cost, and exclusions."
-digest = "bd8ec12b5a"
+summary = "Per-PR fail-closed build gate for the flashblocks and native (Denim) builders: workload matrix, Callgrind instruction and event-volume budgets, re-pinning with pin=true, CI cost, and exclusions."
+digest = "7f41d6b6fb"
 
 ["docs/guides/P2P.md"]
 summary = "Explains the Base P2P stack for newcomers: consensus-layer discv5 and libp2p gossipsub versus execution-layer reth networking, how they interact via Engine API, key files, flags, and glossary."
