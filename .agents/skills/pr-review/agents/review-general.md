@@ -3,7 +3,7 @@ name: review-general
 description: Primary correctness review of every change, as a senior Rust engineer on the team would do it.
 stage: review
 when: always
-model: claude-opus-5-5
+model: opus
 effort: high
 tools: Read,Grep,Glob
 timeout_seconds: 1500

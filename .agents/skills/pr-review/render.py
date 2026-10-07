@@ -100,8 +100,12 @@ class Finding:
         emoji, label = SEVERITIES[self.severity]
         return f"{emoji} **{label} · {CATEGORIES[self.category]}** — {self.title}"
 
+    def details(self) -> str:
+        """Everything but the header: the explanation, the fix, and the evidence."""
+        return self.markdown().partition("\n\n")[2]
+
     def markdown(self) -> str:
-        parts = [self.header(), self.body]
+        parts = [self.header(), *([self.body] if self.body else [])]
         if self.suggestion:
             separator = "\n\n" if "\n" in self.suggestion else " "
             parts.append(f"**Suggested fix:**{separator}{self.suggestion}")
@@ -196,8 +200,8 @@ def render_summary(*, overview: str | None, new: list[Finding], outside: list[Fi
         out += ["", "### Outside the diff", ""]
         for f in outside:
             where = f" (`{f.path}`)" if f.path else ""
-            detail = clip(f.markdown().split("\n\n", 1)[1], MAX_SUMMARY_FINDING_CHARS)
-            out += [f"- {f.header()}{where}", "", "  " + detail.replace("\n", "\n  "), ""]
+            detail = clip(f.details(), MAX_SUMMARY_FINDING_CHARS)
+            out += [f"- {f.header()}{where}"] + (["", "  " + detail.replace("\n", "\n  "), ""] if detail else [""])
 
     out += ["", "<details>", "<summary>How this was reviewed</summary>", "", clip(details, MAX_DETAILS_CHARS),
             "", "</details>"]
