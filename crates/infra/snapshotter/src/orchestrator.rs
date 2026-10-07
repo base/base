@@ -47,6 +47,7 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
     /// Executes the full snapshot lifecycle.
     ///
     /// 0. Captures the EL's latest block and verifies it is at chain tip; skips the run if it is not
+    ///    When uploading proofs, also verifies proofs lag is within the configured block limit
     /// 1. Stops the CL (when configured) then the EL
     /// 2. Verifies stopped containers are no longer running
     /// 3. Generates snapshot archives
@@ -73,6 +74,37 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
                 "EL is not at tip; skipping snapshot run and leaving containers running"
             );
             return Ok(());
+        }
+
+        if self.config.upload_proofs {
+            let proofs_latest = self
+                .tip_checker
+                .proofs_latest()
+                .await
+                .context("failed to check proofs sync status")?;
+            let Some(proofs_latest) = proofs_latest else {
+                warn!("proofs database is empty; skipping snapshot run and leaving containers running");
+                return Ok(());
+            };
+            // Proofs can advance beyond the sampled EL head between the two RPC calls.
+            let lag_blocks = tip.block_number.saturating_sub(proofs_latest);
+            if lag_blocks > self.config.proofs_max_lag_blocks {
+                warn!(
+                    el_block = tip.block_number,
+                    proofs_latest,
+                    lag_blocks,
+                    max_lag_blocks = self.config.proofs_max_lag_blocks,
+                    "proofs sync is too far behind; skipping snapshot run and leaving containers running"
+                );
+                return Ok(());
+            }
+            info!(
+                el_block = tip.block_number,
+                proofs_latest,
+                lag_blocks,
+                max_lag_blocks = self.config.proofs_max_lag_blocks,
+                "checked proofs sync status"
+            );
         }
 
         // Stop the dependent CL first when configured, then the EL. Restarting
@@ -245,6 +277,182 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
             Err(e) => {
                 error!(error = %e, path = %known_peers.display(), "failed to clear persisted peer list")
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::anyhow;
+    use aws_sdk_s3::{
+        Client,
+        config::{BehaviorVersion, Credentials, Region},
+    };
+    use clap::Parser;
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::{
+        container::MockContainerManager,
+        tip::{MockTipChecker, TipStatus},
+    };
+
+    /// Parses snapshotter arguments through the public CLI configuration.
+    #[derive(Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        config: SnapshotterConfig,
+    }
+
+    /// Builds a snapshotter with an unreachable uploader; pre-checks must not access S3.
+    fn snapshotter(
+        container_manager: MockContainerManager,
+        tip_checker: MockTipChecker,
+        upload_proofs: bool,
+        max_lag: u64,
+    ) -> (Snapshotter<MockContainerManager, MockTipChecker>, TempDir) {
+        let tmp = TempDir::new().expect("temporary datadir should be created");
+        let mut config = TestCli::try_parse_from([
+            "snapshotter",
+            "--container-name",
+            "el",
+            "--consensus-container-name",
+            "cl",
+            "--el-rpc-url",
+            "http://127.0.0.1:1",
+            "--source-datadir",
+            tmp.path().to_str().expect("test path should be UTF-8"),
+            "--bucket",
+            "snapshots",
+        ])
+        .expect("test configuration should parse")
+        .config;
+        config.upload_proofs = upload_proofs;
+        config.proofs_max_lag_blocks = max_lag;
+        let client = Client::from_conf(
+            aws_sdk_s3::config::Builder::new()
+                .behavior_version(BehaviorVersion::latest())
+                .region(Region::new("us-east-1"))
+                .credentials_provider(Credentials::new("test", "test", None, None, "test"))
+                .endpoint_url("http://127.0.0.1:1")
+                .build(),
+        );
+        let uploader = SnapshotUploader::new(client, "snapshots".into(), String::new(), None);
+        (Snapshotter::new(container_manager, tip_checker, uploader, config), tmp)
+    }
+
+    /// Verifies lagging or empty proofs leave both containers, peer data, and S3 untouched.
+    #[tokio::test]
+    async fn lagging_or_empty_proofs_skip_snapshot() {
+        for (latest, max_lag) in
+            [(Some(999), 1_000), (None, 1_000), (Some(1_999), 0), (Some(1_989), 10)]
+        {
+            let mut containers = MockContainerManager::new();
+            containers.expect_stop().never();
+            containers.expect_start().never();
+            containers.expect_is_running().never();
+            let mut tip = MockTipChecker::new();
+            tip.expect_check_tip()
+                .times(1)
+                .returning(|_| Ok(TipStatus { block_number: 2_000, at_tip: true }));
+            tip.expect_proofs_latest().times(1).returning(move || Ok(latest));
+            let (snapshotter, tmp) = snapshotter(containers, tip, true, max_lag);
+            let peers = tmp.path().join("known-peers.json");
+            std::fs::write(&peers, b"peers").expect("peer data should be written");
+            snapshotter.run().await.expect("lagging or empty proofs should skip successfully");
+            assert_eq!(
+                std::fs::read(peers).expect("peer data must remain"),
+                b"peers",
+                "skipped runs must not clear peers"
+            );
+        }
+    }
+
+    /// Verifies RPC failures abort before stopping either container or accessing S3.
+    #[tokio::test]
+    async fn proofs_rpc_failure_aborts_before_container_stop() {
+        let mut containers = MockContainerManager::new();
+        containers.expect_stop().never();
+        containers.expect_start().never();
+        containers.expect_is_running().never();
+        let mut tip = MockTipChecker::new();
+        tip.expect_check_tip()
+            .times(1)
+            .returning(|_| Ok(TipStatus { block_number: 2_000, at_tip: true }));
+        tip.expect_proofs_latest().times(1).returning(|| Err(anyhow!("RPC unavailable")));
+        let (snapshotter, _tmp) = snapshotter(containers, tip, true, 1_000);
+        let err = snapshotter.run().await.expect_err("unknown proofs status must prevent publication");
+        assert_eq!(
+            err.to_string(),
+            "failed to check proofs sync status",
+            "failure must identify the proofs pre-check"
+        );
+        assert_eq!(err.root_cause().to_string(), "RPC unavailable", "RPC cause must be retained");
+    }
+
+    /// Verifies stale EL heads skip without querying proofs, even when uploads are enabled.
+    #[tokio::test]
+    async fn stale_el_skips_proofs_check() {
+        let mut containers = MockContainerManager::new();
+        containers.expect_stop().never();
+        containers.expect_start().never();
+        containers.expect_is_running().never();
+        let mut tip = MockTipChecker::new();
+        tip.expect_check_tip()
+            .times(1)
+            .returning(|_| Ok(TipStatus { block_number: 2_000, at_tip: false }));
+        tip.expect_proofs_latest().never();
+        let (snapshotter, _tmp) = snapshotter(containers, tip, true, 1_000);
+        snapshotter.run().await.expect("stale EL should skip successfully");
+    }
+
+    /// Verifies inclusive thresholds, zero lag, and disabled uploads proceed to the lifecycle.
+    #[tokio::test]
+    async fn eligible_proofs_and_disabled_uploads_proceed() {
+        for (upload_proofs, latest, max_lag) in [
+            (true, 1_000, 1_000),
+            (true, 1_001, 1_000),
+            (true, 2_000, 0),
+            (true, 2_001, 0),
+            (true, 1_990, 10),
+            (false, 0, 0),
+        ] {
+            let mut containers = MockContainerManager::new();
+            containers
+                .expect_stop()
+                .with(mockall::predicate::eq("cl"))
+                .times(1)
+                .returning(|_| Err(anyhow!("stop sentinel")));
+            containers
+                .expect_start()
+                .with(mockall::predicate::eq("el"))
+                .times(1)
+                .returning(|_| Ok(()));
+            containers
+                .expect_start()
+                .with(mockall::predicate::eq("cl"))
+                .times(1)
+                .returning(|_| Ok(()));
+            containers.expect_is_running().never();
+            let mut tip = MockTipChecker::new();
+            tip.expect_check_tip()
+                .times(1)
+                .returning(|_| Ok(TipStatus { block_number: 2_000, at_tip: true }));
+            if upload_proofs {
+                tip.expect_proofs_latest().times(1).returning(move || Ok(Some(latest)));
+            } else {
+                tip.expect_proofs_latest().never();
+            }
+            let (snapshotter, _tmp) = snapshotter(containers, tip, upload_proofs, max_lag);
+            let err = snapshotter
+                .run()
+                .await
+                .expect_err("eligible snapshots must reach the container stop sentinel");
+            assert_eq!(
+                err.root_cause().to_string(),
+                "stop sentinel",
+                "proofs eligibility must allow the lifecycle to start"
+            );
         }
     }
 }

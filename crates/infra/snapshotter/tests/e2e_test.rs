@@ -148,6 +148,10 @@ impl TipChecker for MockTipChecker {
     async fn check_tip(&self, _threshold: std::time::Duration) -> Result<TipStatus> {
         Ok(TipStatus { block_number: 100, at_tip: self.at_tip })
     }
+
+    async fn proofs_latest(&self) -> Result<Option<u64>> {
+        panic!("proofs status must not be queried when proofs uploads are disabled");
+    }
 }
 
 /// Builds a `SnapshotterConfig` for orchestrator tests. `source_datadir` is set
@@ -158,6 +162,7 @@ fn test_config(bucket: &str, tmp: &Path) -> base_snapshotter::SnapshotterConfig 
         consensus_container_name: Some("fake-cl".to_string()),
         el_rpc_url: "http://127.0.0.1:8545".parse().expect("valid test URL"),
         tip_threshold_secs: base_snapshotter::DEFAULT_TIP_THRESHOLD_SECS,
+        proofs_max_lag_blocks: base_snapshotter::DEFAULT_PROOFS_MAX_LAG_BLOCKS,
         source_datadir: tmp.join("nonexistent-datadir"),
         bucket: bucket.to_string(),
         prefix: "test".to_string(),
