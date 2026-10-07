@@ -50,7 +50,6 @@ for attempt in $(seq 1 60); do
         "TXPOOL_BUILDER_CONSUMED"
       ])
       and has_event("base-builder"; [
-        "BUILDER_CONSIDERED",
         "BUILDER_ACCEPTED",
         "BUILDER_INCLUDED"
       ])

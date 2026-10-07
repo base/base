@@ -45,13 +45,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Level, debug, span, trace, warn};
 
 use crate::{
-    BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded,
+    BlockDeferrals, BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded,
     ParkedPredicateIndex, PayloadTxsBounds, PredicateReadRecorder, ResourceLimits,
     StateChangeEffects, TxResources, TxnExecutionError, TxnOutcome, ValidityPredicateEvaluation,
     transaction_events::{
-        BuilderAcceptedEventData, BuilderConsideredEventData, BuilderDeferredEventData,
-        BuilderExpiredEventData, BuilderRejectedEventData, BuilderTransactionEventContext,
-        emit_builder_transaction_event, rejection_reason_code,
+        BuilderAcceptedEventData, BuilderDeferredEventData, BuilderExpiredEventData,
+        BuilderRejectedEventData, BuilderTransactionEventContext, emit_builder_transaction_event,
+        rejection_reason_code,
     },
 };
 
@@ -657,18 +657,7 @@ impl BasePayloadBuilderCtx {
         Self::skip_current(best_txs, tx.sender(), tx.nonce(), tx.eip8130_replay_id().is_some());
     }
 
-    fn emit_considered(&self, cx: &DecisionContext<'_>, tx_hash: TxHash, ordering_position: u64) {
-        self.emit_builder_decision_event(
-            cx.payload_id,
-            TransactionEventType::BuilderConsidered,
-            tx_hash,
-            Some(ordering_position),
-            || BuilderConsideredEventData::new(cx.info, cx.limits, None),
-        );
-    }
-
-    /// Emits considered + rejected, counts an "other" rejection, and closes the
-    /// current iterator candidate.
+    /// Emits rejected, counts an "other" rejection, and closes the current iterator candidate.
     fn reject_current<B: PayloadTxsBounds>(
         &self,
         best_txs: &mut B,
@@ -677,12 +666,10 @@ impl BasePayloadBuilderCtx {
         tx: &B::Transaction,
         ordering_position: u64,
     ) {
-        let tx_hash = *tx.hash();
-        self.emit_considered(cx, tx_hash, ordering_position);
         self.emit_builder_decision_event(
             cx.payload_id,
             TransactionEventType::BuilderRejected,
-            tx_hash,
+            *tx.hash(),
             Some(ordering_position),
             || BuilderRejectedEventData::new(cx.reason, cx.detail, false, cx.info, cx.limits, None),
         );
@@ -690,8 +677,7 @@ impl BasePayloadBuilderCtx {
         Self::skip_pooled_current(best_txs, tx);
     }
 
-    /// Emits considered + expired, records a permanent rejection, and closes the
-    /// current iterator candidate.
+    /// Emits expired, records a permanent rejection, and closes the current iterator candidate.
     fn expire_current<B: PayloadTxsBounds>(
         &self,
         best_txs: &mut B,
@@ -701,7 +687,6 @@ impl BasePayloadBuilderCtx {
         ordering_position: u64,
     ) {
         let tx_hash = *tx.hash();
-        self.emit_considered(cx, tx_hash, ordering_position);
         self.emit_builder_decision_event(
             cx.payload_id,
             TransactionEventType::BuilderExpired,
@@ -717,22 +702,33 @@ impl BasePayloadBuilderCtx {
     /// Defers the current validity-gated candidate by parking it for a later flashblock, or, when
     /// the iterator cannot park it, rejects it and closes the candidate. Emits the matching
     /// builder-decision event and updates `diag`. Returns `true` when the transaction was parked.
+    ///
+    /// A parked transaction is re-evaluated on every later flashblock and after every promotion,
+    /// so `BUILDER_DEFERRED` is emitted only when `deferrals` has not already recorded the same
+    /// reason for it in this block. `diag` still counts every park.
     fn defer_or_reject_current<B: PayloadTxsBounds>(
         &self,
         best_txs: &mut B,
         diag: &mut FlashblockDiagnostics,
+        deferrals: &mut BlockDeferrals,
         cx: &DecisionContext<'_>,
         tx: &B::Transaction,
         ordering_position: u64,
     ) -> bool {
         if best_txs.park_current() {
-            self.emit_builder_decision_event(
-                cx.payload_id,
-                TransactionEventType::BuilderDeferred,
-                *tx.hash(),
-                Some(ordering_position),
-                || BuilderDeferredEventData::new(cx.reason, cx.detail, cx.info, cx.limits, None),
-            );
+            if deferrals.record(*tx.hash(), cx.reason) {
+                self.emit_builder_decision_event(
+                    cx.payload_id,
+                    TransactionEventType::BuilderDeferred,
+                    *tx.hash(),
+                    Some(ordering_position),
+                    || {
+                        BuilderDeferredEventData::new(
+                            cx.reason, cx.detail, cx.info, cx.limits, None,
+                        )
+                    },
+                );
+            }
             diag.txs_deferred += 1;
             true
         } else {
@@ -755,10 +751,12 @@ impl BasePayloadBuilderCtx {
 
     /// Executes the given best transactions and updates the execution info.
     ///
-    /// Returns diagnostics summarizing transaction selection for the flashblock.
+    /// Returns diagnostics summarizing transaction selection for the flashblock. `deferrals`
+    /// must live for the whole block so deferral events are not repeated across flashblocks.
     pub(super) fn execute_best_transactions(
         &self,
         info: &mut ExecutionInfo,
+        deferrals: &mut BlockDeferrals,
         db: &mut State<impl Database>,
         best_txs: &mut impl PayloadTxsBounds,
         limits: &ResourceLimits,
@@ -842,12 +840,18 @@ impl BasePayloadBuilderCtx {
                     tx_hash = ?tx_hash,
                     "deferring validity-gated transaction: predicate evaluation budget exhausted for this flashblock"
                 );
-                self.emit_considered(&cx, tx_hash, ordering_position);
                 ValidityMetrics::validity_predicate_evaluations_total("budget_exhausted")
                     .increment(1);
                 validity_candidates_deferred += 1;
                 predicate_eval_cutoff_hit = true;
-                self.defer_or_reject_current(best_txs, &mut diag, &cx, &tx, ordering_position);
+                self.defer_or_reject_current(
+                    best_txs,
+                    &mut diag,
+                    deferrals,
+                    &cx,
+                    &tx,
+                    ordering_position,
+                );
                 continue;
             }
 
@@ -938,12 +942,12 @@ impl BasePayloadBuilderCtx {
                 } else {
                     // Recoverable state mismatch: park under the current blocker to retry at a
                     // later position or flashblock, or reject if the iterator cannot park it.
-                    self.emit_considered(&cx, tx_hash, ordering_position);
                     let (_, blocker_index) = blocking_predicate
                         .expect("unsatisfied, non-terminal predicate implies a blocking key");
                     if self.defer_or_reject_current(
                         best_txs,
                         &mut diag,
+                        deferrals,
                         &cx,
                         &tx,
                         ordering_position,
@@ -1081,16 +1085,6 @@ impl BasePayloadBuilderCtx {
                     };
                     self.emit_builder_decision_event(
                         &payload_id,
-                        TransactionEventType::BuilderConsidered,
-                        tx_hash,
-                        Some(ordering_position),
-                        || {
-                            BuilderConsideredEventData::new(info, limits, Some(&tx_resources))
-                                .with_metering_wait(tx_age_ms, wait_duration.as_millis())
-                        },
-                    );
-                    self.emit_builder_decision_event(
-                        &payload_id,
                         TransactionEventType::BuilderRejected,
                         tx_hash,
                         Some(ordering_position),
@@ -1124,13 +1118,6 @@ impl BasePayloadBuilderCtx {
                 execution_time_us: predicted_execution_time_us,
                 uncompressed_size: tx_uncompressed_size,
             };
-            self.emit_builder_decision_event(
-                &payload_id,
-                TransactionEventType::BuilderConsidered,
-                tx_hash,
-                Some(ordering_position),
-                || BuilderConsideredEventData::new(info, limits, Some(&tx_resources)),
-            );
 
             // ensure we still have capacity for this transaction
             if let Err(err) = info.is_tx_over_limits(&tx_resources, limits) {
@@ -1873,7 +1860,13 @@ mod tests {
         let limits = ResourceLimits { block_gas_limit: 0, ..Default::default() };
 
         let diagnostics = ctx
-            .execute_best_transactions(&mut info, &mut state, &mut best_txs, &limits)
+            .execute_best_transactions(
+                &mut info,
+                &mut BlockDeferrals::default(),
+                &mut state,
+                &mut best_txs,
+                &limits,
+            )
             .expect("cancelled selection should succeed");
 
         assert!(diagnostics.cancelled);
@@ -1896,7 +1889,13 @@ mod tests {
         let limits = ResourceLimits { block_gas_limit: 0, ..Default::default() };
 
         let diagnostics = ctx
-            .execute_best_transactions(&mut info, &mut state, &mut best_txs, &limits)
+            .execute_best_transactions(
+                &mut info,
+                &mut BlockDeferrals::default(),
+                &mut state,
+                &mut best_txs,
+                &limits,
+            )
             .expect("cancelled selection should succeed");
 
         assert!(diagnostics.cancelled);
