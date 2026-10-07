@@ -3,7 +3,7 @@ name: review-block-production
 description: Looks for changes that can halt or stall block production, using docs/guides/BLOCK_PRODUCTION_REVIEW.md.
 stage: review
 when: block-production
-model: claude-opus-5-5
+model: opus
 effort: high
 tools: Read,Grep,Glob
 timeout_seconds: 1500
