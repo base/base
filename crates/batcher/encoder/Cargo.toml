@@ -37,4 +37,7 @@ base-consensus-derive = { workspace = true, features = ["test-utils"] }
 [features]
 clap = [ "dep:clap" ]
 metrics = [ "base-metrics/metrics", "dep:metrics" ]
-test-utils = []
+test-utils = [
+	"base-common-genesis/test-utils",
+	"base-protocol/test-utils"
+]

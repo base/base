@@ -10,7 +10,7 @@
     "run": "depot ci run 4zhpnbcltn"
   },
   "headroom_pct": 5,
-  "marginal_headroom_pct": 10,
+  "marginal_headroom_pct": 5,
   "scenarios": {
     "flashblocks/transfers": {
       "events": {

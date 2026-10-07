@@ -12,8 +12,6 @@
 //! `BUILDER_DEFERRED` per transaction and reason per block. The instruction budgets for the same
 //! scenarios live in `benches/flashblock_build_iai.rs`.
 
-#![allow(missing_docs)]
-
 use std::{collections::BTreeMap, path::PathBuf};
 
 use base_builder_core::test_utils::{FlashblockWorkload, FlashblockWorkloadFixture};

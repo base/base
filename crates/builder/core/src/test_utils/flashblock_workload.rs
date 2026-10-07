@@ -30,8 +30,9 @@ use base_common_evm::BaseTime;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
+    REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL,
     builder::{BasePayloadBuilderCtx as NativePayloadBuilderCtx, Builder as NativeBuilder},
-    config::BaseBuilderConfig,
+    config::{BaseBuilderConfig, BaseDAConfig},
     payload::{BasePayloadBuilderAttributes, EthPayloadBuilderAttributes},
 };
 use base_execution_txpool::{
@@ -116,6 +117,13 @@ impl FlashblockWorkload {
     /// Resting validity transactions in the backlog scenarios: thousands of candidates deferred
     /// on every flashblock, enough that per-candidate costs dominate the block.
     pub const RESTING_BACKLOG_SIZE: usize = 4_500;
+    /// Per-transaction DA limit in bytes. Far above any workload transaction, so the limit check
+    /// runs on every candidate without rejecting one, as on a builder with DA throttling enabled.
+    pub const MAX_DA_TX_SIZE: u64 = 100_000;
+    /// Per-block DA limit in bytes, far above the workload's total DA size.
+    pub const MAX_DA_BLOCK_SIZE: u64 = 10_000_000;
+    /// Per-block uncompressed size limit in bytes, far above the workload's block size.
+    pub const MAX_UNCOMPRESSED_BLOCK_SIZE: u64 = 50_000_000;
     /// Chain id of the synthetic chain.
     const CHAIN_ID: u64 = 901;
     /// Balance seeded into every sender, far above any transfer's worst-case cost.
@@ -351,7 +359,7 @@ impl FlashblockWorkloadFixture {
         let outcome = driver.run_block(
             &mut ctx,
             &mut state,
-            RejectionCache::new(10_000, Duration::from_secs(60)),
+            RejectionCache::new(REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL),
             |flashblock_index| {
                 for transaction in arrivals[flashblock_index as usize].drain(..) {
                     pool.add_transaction(transaction, 0);
@@ -420,6 +428,10 @@ impl FlashblockWorkloadFixture {
             // See `builder_context`: the wall-clock cutoff would make counts nondeterministic.
             builder_config: BaseBuilderConfig {
                 predicate_eval_hard_cutoff: Duration::MAX,
+                da_config: BaseDAConfig::new(
+                    FlashblockWorkload::MAX_DA_TX_SIZE,
+                    FlashblockWorkload::MAX_DA_BLOCK_SIZE,
+                ),
                 ..Default::default()
             },
             chain_spec: Arc::clone(&self.chain_spec),
@@ -437,6 +449,12 @@ impl FlashblockWorkloadFixture {
         // The production cutoff is wall-clock time; under Valgrind it would trip at an
         // arbitrary, run-dependent candidate and make instruction counts nondeterministic.
         ctx.builder_config.predicate_eval_hard_cutoff = Duration::MAX;
+        ctx.builder_config.da_config = BaseDAConfig::new(
+            FlashblockWorkload::MAX_DA_TX_SIZE,
+            FlashblockWorkload::MAX_DA_BLOCK_SIZE,
+        );
+        ctx.builder_config.max_uncompressed_block_size =
+            Some(FlashblockWorkload::MAX_UNCOMPRESSED_BLOCK_SIZE);
         ctx
     }
 }

@@ -90,9 +90,24 @@ impl FlashblockBlockDriver {
                 best.refresh_iterator(next_iterator(flashblock_index));
             }
 
+            // The same limits `build_next_flashblock` sets, with the DA targets split evenly across
+            // flashblocks. The per-transaction execution-time limit is wall-clock based, so it stays
+            // off to keep instruction counts deterministic.
+            let flashblocks_built = flashblock_index + 1;
             let limits = ResourceLimits {
                 block_gas_limit: target_gas.min(ctx.block_gas_limit()),
-                ..Default::default()
+                tx_data_limit: ctx.builder_config.da_config.max_da_tx_size(),
+                block_data_limit: ctx
+                    .builder_config
+                    .da_config
+                    .max_da_block_size()
+                    .map(|da_limit| da_limit / self.flashblocks * flashblocks_built),
+                da_footprint_gas_scalar: info.da_footprint_scalar,
+                block_da_footprint_limit: info
+                    .da_footprint_scalar
+                    .map(|_| ctx.block_gas_limit() / self.flashblocks * flashblocks_built),
+                tx_execution_time_limit_us: None,
+                block_uncompressed_size_limit: ctx.builder_config.max_uncompressed_block_size,
             };
             let diag = ctx.execute_best_transactions(
                 &mut info,

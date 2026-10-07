@@ -74,4 +74,6 @@ test-utils = [
 	"dep:alloy-consensus",
 	"dep:alloy-rpc-types-eth",
 	"dep:async-trait",
+	"base-batcher-encoder/test-utils",
+	"base-batcher-source/test-utils"
 ]
