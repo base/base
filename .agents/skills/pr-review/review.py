@@ -216,12 +216,16 @@ def git(args: list[str]) -> str:
 
 
 def detect_base_ref() -> str:
-    """Prefer a remote pointing at base/base, then origin, then a local main."""
+    """Prefer a remote pointing at base/base, then origin, then a local main.
+
+    Refs are fully qualified because a local branch such as `base/main` would otherwise
+    shadow the remote-tracking branch of the same name.
+    """
     for line in git(["remote", "-v"]).splitlines():
         parts = line.split()
         if len(parts) >= 2 and re.search(r"[:/]base/base(\.git)?$", parts[1]):
-            return f"{parts[0]}/main"
-    for ref in ("origin/main", "main"):
+            return f"refs/remotes/{parts[0]}/main"
+    for ref in ("refs/remotes/origin/main", "refs/heads/main"):
         if subprocess.run(["git", "rev-parse", "--verify", "-q", ref],
                           capture_output=True, check=False).returncode == 0:
             return ref
