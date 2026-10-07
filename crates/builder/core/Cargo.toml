@@ -228,6 +228,7 @@ test-utils = [
 	"reth-chainspec/test-utils",
 	"reth-db-common",
 	"reth-db/test-utils",
+	"reth-engine-tree/test-utils",
 	"reth-evm/test-utils",
 	"reth-execution-cache/test-utils",
 	"reth-ipc",
@@ -242,7 +243,6 @@ test-utils = [
 	"reth-trie/test-utils",
 	"rlimit",
 	"testcontainers",
-	"reth-engine-tree/test-utils"
 ]
 
 [[bench]]

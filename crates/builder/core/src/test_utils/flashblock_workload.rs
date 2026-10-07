@@ -256,6 +256,9 @@ impl FlashblockWorkload {
     /// The queue is sized so no block in the matrix can fill it. The production queue is lossy,
     /// and a run that dropped events because the writer thread fell behind would measure less
     /// work than one that did not.
+    ///
+    /// The writer is process-global and the first successful call wins: later calls are no-ops,
+    /// so every block built in the process appends to the first call's `path`.
     pub fn install_file_event_writer(path: &Path) -> eyre::Result<()> {
         GlobalTransactionEventWriter::init(Some(TransactionEventWriterConfig {
             enabled: true,
