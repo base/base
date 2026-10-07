@@ -54,6 +54,17 @@ jobs:
             jq '[.[][] | .id] | max // 0')"
           echo "latest_comment_id=$latest_comment_id" >> "$GITHUB_OUTPUT"
 
+      # The action's claude.ai installer is blocked by the runner's egress policy.
+      - name: Install Claude Code from npm
+        id: install-claude
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/claude-code" --no-save --no-package-lock --no-audit --no-fund @anthropic-ai/claude-code@2.1.293
+          claude_path="$RUNNER_TEMP/claude-code/node_modules/.bin/claude"
+          "$claude_path" --version
+          echo "claude_path=$claude_path" >> "$GITHUB_OUTPUT"
+
       - name: Run Claude Code
         id: claude-review
         uses: anthropics/claude-code-action@6fed3ca145920b639991cb756090506e1bcaf515 # v1.0.245
@@ -63,6 +74,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.LLM_GATEWAY_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          path_to_claude_code_executable: ${{ steps.install-claude.outputs.claude_path }}
 
           # When track_progress is enabled:
           # - Creates a tracking comment with progress checkboxes
