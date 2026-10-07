@@ -24,7 +24,7 @@ use reth_revm::State;
 
 use super::payload::{build_block, emit_final_inclusion_events, execute_pre_steps};
 use crate::{
-    BasePayloadBuilderCtx, BestFlashblocksTxs, BlockDeferrals, ParkableBestPayloadTransactions,
+    BasePayloadBuilderCtx, BestFlashblocksTxs, ParkableBestPayloadTransactions,
     RejectionCache, ResourceLimits,
 };
 
@@ -77,7 +77,6 @@ impl FlashblockBlockDriver {
         ctx.extra.gas_per_batch = self.gas_per_flashblock;
 
         let mut info = execute_pre_steps(state, ctx)?;
-        let mut deferrals = BlockDeferrals::default();
         let mut outcome = FlashblockBlockOutcome::default();
         let mut best = BestFlashblocksTxs::new(next_iterator(0), rejection_cache);
 
@@ -94,10 +93,7 @@ impl FlashblockBlockDriver {
                 block_gas_limit: target_gas.min(ctx.block_gas_limit()),
                 ..Default::default()
             };
-            let diag = ctx.execute_best_transactions(
-                &mut info,
-                &mut deferrals,
-                state,
+            let diag = ctx.execute_best_transactions(&mut info, state,
                 &mut best,
                 &limits,
             )?;
