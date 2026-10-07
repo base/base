@@ -24,7 +24,7 @@ digest = "b7e65417fb"
 
 ["acceptance/README.md"]
 summary = "Acceptance runner that provisions the real Docker Compose devnet and checks RPC behavior from TOML scenarios. Covers CLI workflows, JSON results, reports, and safety limits."
-digest = "05ab0ffcdd"
+digest = "518a48381e"
 
 ["actions/README.md"]
 summary = "Action test framework: simulated rollup actors (L1 miner, batcher, sequencer, verifier) driven step by step against real derivation logic. Use when writing or understanding action tests."
