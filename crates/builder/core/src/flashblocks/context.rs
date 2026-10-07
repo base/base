@@ -46,7 +46,7 @@ use tracing::{Level, debug, span, trace, warn};
 
 use crate::{
     BlockDeferrals, BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded,
-    ParkedPredicateIndex, PayloadTxsBounds, PredicateReadRecorder, ResourceLimits,
+    PayloadTxsBounds, PersistentValidityParking, PredicateReadRecorder, ResourceLimits,
     StateChangeEffects, TxResources, TxnExecutionError, TxnOutcome, ValidityPredicateEvaluation,
     transaction_events::{
         BuilderAcceptedEventData, BuilderDeferredEventData, BuilderExpiredEventData,
@@ -761,6 +761,20 @@ impl BasePayloadBuilderCtx {
         best_txs: &mut impl PayloadTxsBounds,
         limits: &ResourceLimits,
     ) -> Result<FlashblockDiagnostics, PayloadBuilderError> {
+        self.execute_best_transactions_with_parking(info, deferrals, db, best_txs, limits, None)
+    }
+
+    /// [`Self::execute_best_transactions`] with optional [`PersistentValidityParking`] that
+    /// survives this call. Members are skipped without evaluation; `None` uses a fresh index.
+    pub(super) fn execute_best_transactions_with_parking<B: PayloadTxsBounds>(
+        &self,
+        info: &mut ExecutionInfo,
+        deferrals: &mut BlockDeferrals,
+        db: &mut State<impl Database>,
+        best_txs: &mut B,
+        limits: &ResourceLimits,
+        persistent: Option<&mut PersistentValidityParking<B::Transaction>>,
+    ) -> Result<FlashblockDiagnostics, PayloadBuilderError> {
         let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;
         let mut num_txs_simulated = 0;
@@ -789,8 +803,17 @@ impl BasePayloadBuilderCtx {
         let block_number = as_u64_saturated!(self.evm_env.block_env.number);
         let block_timestamp = self.attributes().timestamp();
         let payload_id = self.payload_id().to_string();
-        let mut predicate_index =
-            ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
+        let persist = persistent.is_some();
+        let mut local_parking;
+        let parking = match persistent {
+            Some(parking) => parking,
+            None => {
+                local_parking = PersistentValidityParking::new(
+                    self.builder_config.predicate_bucket_ordered_threshold,
+                );
+                &mut local_parking
+            }
+        };
         let predicate_context =
             PredicateContext { block_number, flashblock_index: self.flashblock_index() };
 
@@ -816,6 +839,14 @@ impl BasePayloadBuilderCtx {
             let ordering_position = num_txs_considered;
             let tx_hash = *tx.hash();
             let replay_independent = tx.eip8130_replay_id().is_some();
+            // A persisted member's blocker is still false, so evaluation would park it again:
+            // park it in this iterator without evaluating, indexing or emitting events.
+            if persist && parking.index.contains(tx_hash) {
+                if best_txs.park_current() {
+                    continue;
+                }
+                parking.index.remove(tx_hash);
+            }
             let has_validity_predicates = !tx.validity_predicates().is_empty();
             let coinbase_tip = tx.as_eip8130().and_then(|signed| CoinbaseTip::decode(signed.tx()));
             let has_coinbase_tip = coinbase_tip.is_some();
@@ -953,7 +984,7 @@ impl BasePayloadBuilderCtx {
                         ordering_position,
                     ) {
                         let predicate = tx.validity_predicates()[blocker_index].clone();
-                        predicate_index.park(tx_hash, tx, predicate);
+                        parking.park(tx_hash, tx, predicate);
                     }
                 }
                 continue;
@@ -1408,10 +1439,10 @@ impl BasePayloadBuilderCtx {
             };
             info.receipts.push(self.build_receipt(ctx, None));
 
-            let state_change_effects = if predicate_index.is_empty() {
+            let state_change_effects = if parking.index.is_empty() {
                 StateChangeEffects::default()
             } else {
-                predicate_index.affected_by_state(&state)
+                parking.index.affected_by_state(&state)
             };
             predicate_bucket_wakeups += state_change_effects.woken_buckets as u64;
 
@@ -1438,10 +1469,16 @@ impl BasePayloadBuilderCtx {
                     )
                     .increment(remaining);
                     predicate_eval_cutoff_hit = true;
+                    // Unprocessed wakeups must be re-evaluated when next yielded.
+                    if persist {
+                        for hash in &state_change_effects.affected_transactions[rescanned..] {
+                            parking.index.remove(*hash);
+                        }
+                    }
                     break;
                 }
                 let mut predicate_read_failed = false;
-                let Some(parked_transaction) = predicate_index.transaction(*parked_hash) else {
+                let Some(parked_transaction) = parking.index.transaction(*parked_hash) else {
                     warn!(
                         target: "payload_builder",
                         tx_hash = ?parked_hash,
@@ -1487,13 +1524,13 @@ impl BasePayloadBuilderCtx {
                 };
                 ValidityMetrics::validity_predicate_evaluations_total(outcome).increment(1);
                 if predicate_read_failed {
-                    predicate_index.remove(*parked_hash);
+                    parking.index.remove(*parked_hash);
                     best_txs.discard_parked(*parked_hash);
                 } else if let Some((_, blocker_index)) = blocking_predicate {
                     let predicate = parked_transaction.validity_predicates()[blocker_index].clone();
-                    predicate_index.reindex(*parked_hash, predicate);
+                    parking.index.reindex(*parked_hash, predicate);
                 } else {
-                    predicate_index.remove(*parked_hash);
+                    parking.index.remove(*parked_hash);
                     best_txs.promote(*parked_hash);
                 }
             }
@@ -1567,7 +1604,7 @@ impl BasePayloadBuilderCtx {
         );
         ValidityMetrics::record_predicate_index_diagnostics(
             predicate_bucket_wakeups,
-            &predicate_index,
+            &parking.index,
         );
 
         diag.txs_considered = num_txs_considered;

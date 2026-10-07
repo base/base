@@ -159,6 +159,34 @@ impl<T> ParkedPredicateIndex<T> {
         self.transactions.is_empty()
     }
 
+    /// Returns whether a transaction is indexed.
+    pub fn contains(&self, transaction_hash: TxHash) -> bool {
+        self.transactions.contains_key(&transaction_hash)
+    }
+
+    /// Returns the number of indexed transactions.
+    pub fn len(&self) -> usize {
+        self.transactions.len()
+    }
+
+    /// Keeps only the entries for which `keep` returns `true`, given each entry's hash,
+    /// transaction and blocking predicate. Returns the number of entries removed.
+    pub fn retain(
+        &mut self,
+        mut keep: impl FnMut(&TxHash, &T, &ValidityPredicate) -> bool,
+    ) -> usize {
+        let dropped: Vec<TxHash> = self
+            .transactions
+            .iter()
+            .filter(|(hash, entry)| !keep(hash, &entry.transaction, &entry.predicate))
+            .map(|(hash, _)| *hash)
+            .collect();
+        for hash in &dropped {
+            self.remove(*hash);
+        }
+        dropped.len()
+    }
+
     /// Adds a parked transaction under its currently unsatisfied predicate.
     pub fn park(&mut self, transaction_hash: TxHash, transaction: T, predicate: ValidityPredicate) {
         self.remove(transaction_hash);

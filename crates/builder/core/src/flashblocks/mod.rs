@@ -9,6 +9,9 @@ pub use base_execution_payload_builder::{
 };
 pub use best_txs::BestFlashblocksTxs;
 
+mod persistent_parking;
+pub use persistent_parking::PersistentValidityParking;
+
 mod deadline;
 pub use deadline::PayloadJobDeadline;
 
@@ -30,3 +33,6 @@ mod payload;
 
 mod service;
 pub use service::FlashblocksServiceBuilder;
+
+#[cfg(test)]
+mod validity_loop_harness;
