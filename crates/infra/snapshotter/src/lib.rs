@@ -15,8 +15,8 @@ pub use base_reth_cli::{
 
 mod config;
 pub use config::{
-    DEFAULT_MAX_STREAMING_ARCHIVES, DEFAULT_MAX_STREAMING_PART_UPLOADS, DEFAULT_TIP_THRESHOLD_SECS,
-    S3ConfigType, SnapshotterConfig,
+    DEFAULT_MAX_STREAMING_ARCHIVES, DEFAULT_MAX_STREAMING_PART_UPLOADS, DEFAULT_PROOFS_MAX_LAG_BLOCKS,
+    DEFAULT_TIP_THRESHOLD_SECS, S3ConfigType, SnapshotterConfig,
 };
 
 mod progress;
@@ -26,7 +26,7 @@ mod container;
 pub use container::{ContainerManager, DockerContainerManager};
 
 mod tip;
-pub use tip::{RpcTipChecker, TipChecker, TipStatus};
+pub use tip::{ProofsSyncStatus, RpcTipChecker, TipChecker, TipStatus};
 
 mod upload;
 pub use upload::{
