@@ -5,10 +5,11 @@
 //! than `etc/benchmarks/builder-gate-budgets.json` allows. Event types without a budget must not
 //! be emitted at all, so a new per-candidate event fails here until someone budgets it.
 //!
-//! Event volume is the cheapest deterministic signal for the 2026-10-06 regression: before
-//! #5623 the builder emitted `BUILDER_CONSIDERED` for every candidate and `BUILDER_DEFERRED` on
-//! every park, so the incident-scale backlog emitted ~10x its size per block. The instruction
-//! budgets for the same scenarios live in `benches/flashblock_build_iai.rs`.
+//! Event volume is the cheapest deterministic signal for per-candidate event cost on the builder
+//! thread. A resting validity transaction is deferred on every flashblock, so an event emitted
+//! per candidate or per park multiplies with the backlog. The budgets allow one
+//! `BUILDER_DEFERRED` per transaction and reason per block. The instruction budgets for the same
+//! scenarios live in `benches/flashblock_build_iai.rs`.
 
 #![allow(missing_docs)]
 
