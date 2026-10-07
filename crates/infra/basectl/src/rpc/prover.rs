@@ -276,6 +276,12 @@ impl fmt::Debug for ProofsClient {
 }
 
 impl ProofsClient {
+    /// Default interval between proof status polls.
+    pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
+
+    /// Default maximum time to wait for proof completion.
+    pub const DEFAULT_MAX_WAIT: Duration = Duration::from_secs(30 * 60);
+
     /// Connects a requester client to the prover-service `endpoint`.
     pub fn connect(endpoint: &Url) -> Result<Self, ProofsCommandError> {
         let config = ProverServiceClientConfig::new(endpoint.as_str());
@@ -294,8 +300,8 @@ impl ProofsClient {
         Ok(Self {
             endpoint: endpoint.origin().ascii_serialization(),
             requester,
-            poll_interval: config.poll_interval(),
-            max_wait: config.max_wait(),
+            poll_interval: Self::DEFAULT_POLL_INTERVAL,
+            max_wait: Self::DEFAULT_MAX_WAIT,
         })
     }
 
