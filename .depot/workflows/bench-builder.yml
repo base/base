@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       base_ref:
-        description: Commit or branch to compare against (default: tip of main)
+        description: "Commit or branch to compare against (default: tip of main)"
         type: string
         default: ""
 
