@@ -1012,7 +1012,6 @@ impl ChallengerE2e {
                 number_of_blocks_to_prove: checkpoint.block_count,
                 sequence_window: None,
                 l1_head: Some(l1_head),
-                intermediate_root_interval: Some(checkpoint.interval),
                 schedule_l2_block_number: Some(schedule_l2_block_number),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,

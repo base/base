@@ -30,9 +30,9 @@ use std::{
 use alloy_primitives::{Bytes, hex};
 use base_proof_submission::test_utils::SnarkReceiptFixture;
 use base_prover_service_protocol::{
-    DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
-    ListProofsRequest, ListProofsResponse, ProofRequestKind, ProofResult, ProofStatus,
-    ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer,
+    CancelProofRequest, DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest,
+    GetProofResponse, ListProofsRequest, ListProofsResponse, ProofRequestKind, ProofResult,
+    ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer,
     SnarkPlonkProofRequest, SnarkPlonkProofResult, ZkProofResult, ZkVm,
 };
 use eyre::{Context, Result};
@@ -188,6 +188,11 @@ impl ProverRequesterApiServer for MockProverRpc {
         self.0.status(&request.session_id)
     }
 
+    async fn cancel_proof_request(&self, _request: CancelProofRequest) -> RpcResult<()> {
+        // The challenger never cancels a request.
+        Err(MockProverService::unsupported("cancelProofRequest"))
+    }
+
     async fn delete_proof_request(&self, request: DeleteProofRequest) -> RpcResult<()> {
         self.0.sessions.lock().expect("mock prover state poisoned").remove(&request.session_id);
         Ok(())
@@ -299,7 +304,6 @@ mod tests {
                         number_of_blocks_to_prove: 30,
                         sequence_window: None,
                         l1_head: Some(B256::repeat_byte(0x11)),
-                        intermediate_root_interval: Some(30),
                         schedule_l2_block_number: Some(start_block_number + 600),
                         zk_vm: ZkVm::Sp1,
                         zk_backend: ZkBackend::Cluster,
@@ -362,7 +366,6 @@ mod tests {
                         claimed_l2_output_root: B256::repeat_byte(4),
                         claimed_l2_block_number: 600,
                         proposer: Address::repeat_byte(5),
-                        intermediate_block_interval: 30,
                         l1_head_number: 1200,
                         schedule_l2_block_number: None,
                     },

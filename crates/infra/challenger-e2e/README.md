@@ -49,11 +49,11 @@ its canonical root. The game itself only compares that root with its own stored
 one, so without this a challenger proving the wrong root would still pass.
 
 A right root is not a right proof, though: a real proof also commits to the
-range, L1 head, interval, schedule and prover it was requested for, and a
+range, L1 head, schedule and prover it was requested for, and a
 journal that does not match the game is rejected. So the mock records every
 SNARK request, and after each dispute the driver requires the challenger to
 have requested exactly the proof that checkpoint needs — one checkpoint's
-blocks, the game's `l1Head`, its interval, a schedule pinned to the game's final
+blocks, the game's `l1Head`, a schedule pinned to the game's final
 L2 block, and the challenger as prover.
 
 What `mock` cannot catch, by construction: real proof generation, a prover
