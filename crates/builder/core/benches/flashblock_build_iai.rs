@@ -3,7 +3,7 @@
 //! Each benchmark builds one block of ten flashblocks for a [`FlashblockWorkload`] through
 //! the production build loop (`execute_best_transactions`, per-flashblock `build_block`, and
 //! the finalizing state-root `build_block`) with the file transaction event writer enabled, as
-//! the builder runs on mainnet. Fixture construction (pool, signed transactions, MDBX genesis)
+//! a production builder runs. Fixture construction (pool, signed transactions, MDBX genesis)
 //! runs in the unmeasured setup phase.
 //!
 //! Callgrind counts only the thread that runs the benchmark function, which is the builder
