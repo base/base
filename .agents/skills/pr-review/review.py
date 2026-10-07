@@ -61,7 +61,7 @@ GH_TIMEOUT_SECONDS = 90
 VOTE_TIMEOUT_SECONDS = 600
 AGENT_ATTEMPTS = 2
 # Failures that a second try cannot fix.
-NO_RETRY = ("timed out", "Access denied", "Invalid model name")
+NO_RETRY = ("timed out", "Access denied", "Invalid model name", "skipped, not enough")
 
 MAX_DIFF_CHARS = 400_000
 MAX_COMMENT_CHARS = 2_000
@@ -268,9 +268,12 @@ def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path, model_
     lowers the agent's own timeout for a short task such as casting votes.
     """
     label = label or agent.name
-    timeout = min(agent.timeout_seconds, cap or agent.timeout_seconds)
-    if budget:
-        timeout = budget.timeout_for(timeout, label, reserve)
+    wanted = min(agent.timeout_seconds, cap or agent.timeout_seconds)
+
+    def timeout_now() -> int:
+        """The time this attempt may use: its own limit, cut to what the budget has left."""
+        return budget.timeout_for(wanted, label, reserve) if budget else wanted
+
     schema_text = (SCHEMAS_DIR / f"{schema or SCHEMA_FOR_STAGE[agent.stage]}.json").read_text()
     model = model_override or agent.model
     system_prompt = agent.prompt
@@ -296,14 +299,19 @@ def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path, model_
     # try is cheap next to losing a council member; failures that a retry cannot fix are not retried.
     for _ in range(AGENT_ATTEMPTS - 1):
         try:
-            envelope, output = run_claude_once(cmd, user_prompt, cwd, timeout, artifacts, label)
+            envelope, output = run_claude_once(cmd, user_prompt, cwd, timeout_now(), artifacts, label)
             break
         except ReviewError as exc:
             if any(marker in str(exc) for marker in NO_RETRY):
                 raise
+            try:
+                timeout_now()
+            except ReviewError:
+                # No time left for a second try; report the first failure.
+                raise exc from None
             log(f"  {label}: {exc}; trying once more")
     else:
-        envelope, output = run_claude_once(cmd, user_prompt, cwd, timeout, artifacts, label)
+        envelope, output = run_claude_once(cmd, user_prompt, cwd, timeout_now(), artifacts, label)
     # An alias such as `opus` is resolved by the CLI; record what actually ran.
     ran = next(iter(envelope.get("modelUsage") or {}), model)
     MODELS_RAN[agent.name] = ran
@@ -455,7 +463,7 @@ def fetch_threads(number: int, repo: str) -> list[dict[str, Any]]:
         "-f", f"name={name}", "-F", f"number={number}"])))
 
 
-def pr_context(number: int, repo: str) -> Context:
+def pr_context(number: int, repo: str, post: bool = False) -> Context:
     def head() -> str:
         return json.loads(gh(["pr", "view", str(number), "--repo", repo, "--json", "headRefOid"]))["headRefOid"]
 
@@ -479,12 +487,21 @@ def pr_context(number: int, repo: str) -> Context:
         checked_out = None
     if checked_out != info["headRefOid"]:
         # Agents read files from the working directory; if it is not the PR head, the line numbers
-        # they report can differ from the diff that comments are anchored to.
-        log(f"warning: the working tree is at {checked_out and checked_out[:12]}, not the PR head "
-            f"{info['headRefOid'][:12]}; check out the PR head for line numbers to match")
+        # they report can differ from the diff that comments are anchored to, and a finding about
+        # old code would be tagged with the new commit.
+        message = (f"the working tree is at {checked_out and checked_out[:12]}, not the PR head "
+                   f"{info['headRefOid'][:12]}")
+        if post:
+            raise ReviewError(f"{message}; a newer push has started its own review, so this one stops")
+        log(f"warning: {message}; check out the PR head for line numbers to match")
     threads = fetch_threads(number, repo)
-    summaries = gh(["api", f"repos/{repo}/issues/{number}/comments", "--paginate", "--jq",
-                    f'.[] | {BOT_COMMENT_JQ} | select(.body | startswith("{render.SUMMARY_MARKER}")) | .body'])
+    try:
+        summaries = gh(["api", f"repos/{repo}/issues/{number}/comments", "--paginate", "--jq",
+                        f'.[] | {BOT_COMMENT_JQ} | select(.body | startswith("{render.SUMMARY_MARKER}")) | .body'])
+    except ReviewError as exc:
+        # Only used to tell the decider what was said before; the review can go on without it.
+        log(f"warning: could not read the previous summary ({exc})")
+        summaries = ""
     return Context(
         description=info["body"] or "(no description)",
         title=info["title"],
@@ -629,6 +646,9 @@ def build_plan(decision: dict[str, Any], threads: list[dict[str, Any]],
     """Check the decider's actions against the diff and threads; demote what cannot be applied."""
     by_id = {t["thread_id"]: t for t in threads}
     plan = Plan()
+    # A bot thread that already asks a person to resolve it is fixed, however the decider treats it now.
+    plan.asked = [t["thread_id"] for t in threads if t["owned_by_bot"] and not t["resolved"]
+                  and any(c["author"] == BOT_LOGIN and RESOLVE_REQUEST in c["body"] for c in t["comments"])]
     anchored: list[render.Finding] = []
     for action in decision.get("actions", []):
         kind = action["type"]
@@ -646,8 +666,8 @@ def build_plan(decision: dict[str, Any], threads: list[dict[str, Any]],
         elif kind == "resolve":
             if thread["resolved"]:
                 plan.rejected.append(f"resolve: thread {thread['thread_id']} is already resolved")
-            elif any(c["author"] == BOT_LOGIN and RESOLVE_REQUEST in c["body"] for c in thread["comments"]):
-                plan.asked.append(thread["thread_id"])
+            elif thread["thread_id"] in plan.asked:
+                continue
             else:
                 plan.resolves.append({"thread_id": thread["thread_id"],
                                       "body": f"{render.MARKER}\n✅ **Fixed:** {body}"})
@@ -726,9 +746,11 @@ def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None]
             log(f"  could not list old summaries: {exc}")
             old_ids = []
         # Post first so a failed post leaves the previous summary in place.
-        gh(["pr", "comment", str(number), "--repo", repo, "--body-file", "-"], input_text=plan.summary)
-        for comment_id in old_ids:
-            attempt(f"delete old summary {comment_id}", ["api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment_id}"])
+        if attempt("post summary", ["pr", "comment", str(number), "--repo", repo, "--body-file", "-"],
+                   plan.summary):
+            for comment_id in old_ids:
+                attempt(f"delete old summary {comment_id}",
+                        ["api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment_id}"])
     return problems
 
 
@@ -1015,7 +1037,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.apply_thread_actions:
             return apply_handoff(args.apply_thread_actions, args.pr, args.repo)
         agents = load_agents(args.agents_dir)
-        ctx = pr_context(args.pr, args.repo) if args.pr else local_context(args.base)
+        ctx = pr_context(args.pr, args.repo, post=args.post) if args.pr else local_context(args.base)
         artifacts = args.artifacts_dir or Path(tempfile.mkdtemp(prefix="pr-review-"))
         artifacts.mkdir(parents=True, exist_ok=True)
         cwd = Path(git(["rev-parse", "--show-toplevel"]).strip())
