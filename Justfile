@@ -71,6 +71,10 @@ ci: fix check::all test lychee zepter check::no-std check::no-std-proof
 # Runs ci checks with tests scoped to crates affected by changes
 pr: fix check::format check::udeps check::clippy check::deny check::docs-index lychee zepter check::no-std check::no-std-proof test-affected
 
+# Reviews your branch with the same multi-model pipeline CI uses; prints findings, posts nothing
+review *args:
+    python3 .agents/skills/pr-review/review.py "$@"
+
 # Performs lychee checks, installing the lychee command if necessary
 lychee:
     @command -v lychee >/dev/null 2>&1 || cargo install lychee

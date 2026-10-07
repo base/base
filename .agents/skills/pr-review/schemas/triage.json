@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "depth",
+    "block_production_sensitive",
+    "reasoning",
+    "focus_areas"
+  ],
+  "properties": {
+    "depth": {
+      "enum": [
+        "standard",
+        "deep"
+      ]
+    },
+    "block_production_sensitive": {
+      "type": "boolean"
+    },
+    "reasoning": {
+      "type": "string"
+    },
+    "focus_areas": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}
