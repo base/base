@@ -164,12 +164,14 @@ pub struct P2PNetworkArgs {
     pub gossip_mesh_dlazy: usize,
     /// Configure `GossipSub` to publish messages to all known peers on the topic, outside of the
     /// mesh. Also see Dlazy as less aggressive alternative.
+    /// Defaults to enabled for sequencers, which publish unsafe blocks, and disabled otherwise.
     #[arg(
         long = "p2p.gossip.mesh.floodpublish",
-        default_value = "false",
+        num_args = 0..=1,
+        default_missing_value = "true",
         env = "BASE_NODE_P2P_GOSSIP_FLOOD_PUBLISH"
     )]
-    pub gossip_flood_publish: bool,
+    pub gossip_flood_publish: Option<bool>,
     /// Sets the peer scoring strategy for the P2P stack.
     /// Can be one of: none or light.
     #[arg(long = "p2p.scoring", default_value = "light", env = "BASE_NODE_P2P_SCORING")]
@@ -684,7 +686,7 @@ impl P2PArgs {
             .mesh_n_low(self.gossip_mesh_dlo)
             .mesh_n_high(self.gossip_mesh_dhi)
             .gossip_lazy(self.gossip_mesh_dlazy)
-            .flood_publish(self.gossip_flood_publish)
+            .flood_publish(self.gossip_flood_publish.unwrap_or_default())
             .build()
             .map_err(|e| eyre::eyre!("Failed to build gossip config: {e}"))?;
 
@@ -1304,6 +1306,24 @@ mod tests {
             .to_string();
 
         assert!(err.contains("Failed to parse bootnode 'enr:invalid'"));
+    }
+
+    #[rstest]
+    #[case::unset(&[], false)]
+    #[case::bare_flag(&["--p2p.gossip.mesh.floodpublish"], true)]
+    #[case::explicit_true(&["--p2p.gossip.mesh.floodpublish=true"], true)]
+    #[case::explicit_false(&["--p2p.gossip.mesh.floodpublish=false"], false)]
+    #[tokio::test]
+    async fn test_p2p_config_wires_flood_publish(#[case] flags: &[&str], #[case] expected: bool) {
+        let args = MockCommand::parse_from(std::iter::once("test").chain(flags.iter().copied()));
+
+        let config = args
+            .p2p
+            .config(&RollupConfig::default(), 8453, None, L1_RPC_TIMEOUT, Some(Address::ZERO))
+            .await
+            .unwrap();
+
+        assert_eq!(config.gossip_config.flood_publish(), expected);
     }
 
     #[tokio::test]

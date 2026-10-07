@@ -94,7 +94,7 @@ impl CliMetrics {
                 (Self::P2P_TOPIC_SCORING_ENABLED, p2p.topic_scoring.to_string()),
                 (Self::P2P_BANNING_ENABLED, p2p.ban_enabled.to_string()),
                 (Self::P2P_PEER_REDIALING, p2p.peer_redial.unwrap_or(0).to_string()),
-                (Self::P2P_FLOOD_PUBLISH, p2p.gossip_flood_publish.to_string()),
+                (Self::P2P_FLOOD_PUBLISH, p2p.gossip_flood_publish.unwrap_or_default().to_string()),
                 (Self::P2P_DISCOVERY_INTERVAL, p2p.discovery_interval.to_string()),
                 (Self::P2P_ADVERTISE_IP, p2p.advertise_ip.unwrap_or(p2p.listen_ip).to_string()),
                 (

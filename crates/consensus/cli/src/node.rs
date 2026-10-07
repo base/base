@@ -172,7 +172,13 @@ pub struct ConsensusNodeArgs {
 
 impl ConsensusNodeArgs {
     /// Creates reusable consensus node arguments from typed chain and node config components.
-    pub const fn new(chain: ConsensusChainArgs, config: ConsensusNodeConfigArgs) -> Self {
+    ///
+    /// Sequencers enable gossipsub flood publish unless it is set explicitly, so their unsafe
+    /// blocks reach every topic peer instead of only the mesh.
+    pub fn new(chain: ConsensusChainArgs, mut config: ConsensusNodeConfigArgs) -> Self {
+        if config.node_mode.is_sequencer() {
+            config.p2p_flags.gossip_flood_publish.get_or_insert(true);
+        }
         Self { chain, config }
     }
 }
@@ -696,7 +702,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::SignerArgs;
+    use crate::{SignerArgs, p2p::P2PNetworkArgs};
 
     const SIGNER_ENV_KEYS: &[&str] = &[
         "BASE_NODE_P2P_SEQUENCER_KEY",
@@ -986,6 +992,26 @@ mod tests {
             },
         );
         assert_eq!(args.validate_sequencer_key().is_ok(), expected_ok);
+    }
+
+    #[rstest]
+    #[case::validator_default(NodeMode::Validator, None, None)]
+    #[case::sequencer_default(NodeMode::Sequencer, None, Some(true))]
+    #[case::sequencer_opt_out(NodeMode::Sequencer, Some(false), Some(false))]
+    fn sequencer_defaults_to_flood_publish(
+        #[case] mode: NodeMode,
+        #[case] configured: Option<bool>,
+        #[case] expected: Option<bool>,
+    ) {
+        let p2p_flags = P2PArgs {
+            network: P2PNetworkArgs { gossip_flood_publish: configured, ..Default::default() },
+            ..P2PArgs::default()
+        };
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs { node_mode: mode, p2p_flags, ..default_node_config_args() },
+        );
+        assert_eq!(args.config.p2p_flags.gossip_flood_publish, expected);
     }
 
     #[test]
