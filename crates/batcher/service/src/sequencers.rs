@@ -9,6 +9,7 @@ use std::{
 };
 
 use alloy_provider::{Provider, RootProvider};
+use alloy_rpc_client::RpcClient;
 use base_common_network::Base;
 use base_consensus_rpc::AdminApiClient;
 use base_runtime::Runtime;
@@ -34,16 +35,26 @@ pub struct Sequencer {
 }
 
 impl Sequencer {
+    /// How long the sequencer has to answer a request of the
+    /// [`l2_provider`](Self::l2_provider).
+    pub const L2_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
     /// Creates the clients of the sequencer endpoint at `url`.
-    pub async fn new(url: &Url) -> eyre::Result<Self> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `url` is not an HTTP URL.
+    pub fn new(url: &Url) -> eyre::Result<Self> {
         let origin = url.origin().ascii_serialization();
 
         let rollup_node_client = HttpClientBuilder::default()
             .build(url.as_str())
             .map_err(|e| eyre::eyre!("failed to build the rollup node client for {origin}: {e}"))?;
-        let l2_provider = RootProvider::connect(url.as_str())
-            .await
+        let http = reqwest::Client::builder()
+            .timeout(Self::L2_REQUEST_TIMEOUT)
+            .build()
             .map_err(|e| eyre::eyre!("failed to build the L2 provider for {origin}: {e}"))?;
+        let l2_provider = RootProvider::new(RpcClient::new_http_with_client(http, url.clone()));
 
         Ok(Self { origin, rollup_node_client, l2_provider })
     }
@@ -74,11 +85,11 @@ impl Sequencers {
     /// # Errors
     ///
     /// Returns an error when `urls` is empty or one of them is not an HTTP URL.
-    pub async fn new(urls: &[Url]) -> eyre::Result<Self> {
+    pub fn new(urls: &[Url]) -> eyre::Result<Self> {
         if urls.is_empty() {
             eyre::bail!("at least one sequencer URL is required");
         }
-        let sequencers = future::try_join_all(urls.iter().map(Sequencer::new)).await?;
+        let sequencers = urls.iter().map(Sequencer::new).collect::<eyre::Result<_>>()?;
         Ok(Self { sequencers, leader_index: AtomicUsize::new(0) })
     }
 
@@ -173,6 +184,30 @@ mod tests {
     use super::*;
     use crate::test_utils::{Activity, FakeSequencer};
 
+    /// A read from a sequencer that accepts the connection but never answers fails once
+    /// [`Sequencer::L2_REQUEST_TIMEOUT`] elapses.
+    #[tokio::test(start_paused = true)]
+    async fn an_l2_read_fails_when_the_sequencer_never_answers() {
+        let silent = TcpListener::bind("127.0.0.1:0").unwrap();
+        let silent_url = format!("http://{}", silent.local_addr().unwrap()).parse().unwrap();
+        let sequencer = Sequencer::new(&silent_url).unwrap();
+
+        let error = tokio::time::timeout(
+            Sequencer::L2_REQUEST_TIMEOUT * 2,
+            sequencer.l2_provider.get_chain_id(),
+        )
+        .await
+        .expect("the read must fail instead of hanging")
+        .unwrap_err();
+
+        let timed_out = error
+            .as_transport_err()
+            .and_then(|error| error.as_custom())
+            .and_then(|error| error.downcast_ref::<reqwest::Error>())
+            .is_some_and(reqwest::Error::is_timeout);
+        assert!(timed_out, "{error}");
+    }
+
     /// The leader is the active sequencer, which the reads go to. A sequencer that is stopped,
     /// one that is not the leader behind its conductor and one that is unreachable are passed
     /// over, even when they come first.
@@ -183,7 +218,7 @@ mod tests {
         let unreachable = "http://127.0.0.1:1".parse().unwrap();
         let active = FakeSequencer::start(Activity::Active, 3).await;
         let urls = [stopped.url.clone(), not_leader.url.clone(), unreachable, active.url.clone()];
-        let sequencers = Sequencers::new(&urls).await.unwrap();
+        let sequencers = Sequencers::new(&urls).unwrap();
 
         sequencers.refresh_leader().await.unwrap();
 
@@ -197,7 +232,7 @@ mod tests {
         let silent = TcpListener::bind("127.0.0.1:0").unwrap();
         let silent_url = format!("http://{}", silent.local_addr().unwrap()).parse().unwrap();
         let active = FakeSequencer::start(Activity::Active, 1).await;
-        let sequencers = Sequencers::new(&[silent_url, active.url.clone()]).await.unwrap();
+        let sequencers = Sequencers::new(&[silent_url, active.url.clone()]).unwrap();
 
         tokio::time::timeout(
             Sequencers::SEQUENCER_ACTIVE_RPC_TIMEOUT * 2,
@@ -216,7 +251,7 @@ mod tests {
     async fn refresh_leader_fails_and_keeps_the_leader_when_no_sequencer_is_active() {
         let first = FakeSequencer::start(Activity::Stopped, 1).await;
         let second = FakeSequencer::start(Activity::Active, 2).await;
-        let sequencers = Sequencers::new(&[first.url.clone(), second.url.clone()]).await.unwrap();
+        let sequencers = Sequencers::new(&[first.url.clone(), second.url.clone()]).unwrap();
         sequencers.refresh_leader().await.unwrap();
 
         second.set_activity(Activity::NotLeader);
@@ -240,7 +275,7 @@ mod tests {
         let first = FakeSequencer::start(Activity::Active, 1).await;
         let second = FakeSequencer::start(Activity::NotLeader, 2).await;
         let sequencers =
-            Arc::new(Sequencers::new(&[first.url.clone(), second.url.clone()]).await.unwrap());
+            Arc::new(Sequencers::new(&[first.url.clone(), second.url.clone()]).unwrap());
         let runtime = TokioRuntime::new();
         let tracking = tokio::spawn(
             Arc::clone(&sequencers).track_leader(runtime.clone(), Duration::from_millis(1)),

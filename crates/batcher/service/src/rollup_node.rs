@@ -77,7 +77,7 @@ mod tests {
         let first = FakeSequencer::start(Activity::Active, 1).await;
         let second = FakeSequencer::start(Activity::NotLeader, 2).await;
         let sequencers =
-            Arc::new(Sequencers::new(&[first.url.clone(), second.url.clone()]).await.unwrap());
+            Arc::new(Sequencers::new(&[first.url.clone(), second.url.clone()]).unwrap());
         sequencers.refresh_leader().await.unwrap();
         let rollup_node = RollupNode::new(None, Arc::clone(&sequencers)).unwrap();
 

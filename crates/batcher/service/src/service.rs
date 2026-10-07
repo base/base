@@ -362,7 +362,7 @@ impl BatcherService {
             );
         }
 
-        let sequencers = Arc::new(Sequencers::new(&self.config.sequencer_urls).await?);
+        let sequencers = Arc::new(Sequencers::new(&self.config.sequencer_urls)?);
         // A canonical batcher follows the leader's rollup node, a shadow batcher the parity
         // validator's.
         let rollup_node = RollupNode::new(self.config.shadow.as_ref(), Arc::clone(&sequencers))?;
