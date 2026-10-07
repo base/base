@@ -907,7 +907,7 @@ where
         block_hash: Option<B256>,
         data: F,
     ) where
-        D: Serialize,
+        D: Serialize + Send + 'static,
         F: FnOnce() -> D,
     {
         emit_builder_payload_event(

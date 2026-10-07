@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_primitives::{B256, TxHash};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use tracing::debug;
@@ -96,6 +96,7 @@ pub struct TransactionEventBuilder {
     block_number: Option<u64>,
     payload_id: Option<String>,
     request_id: Option<String>,
+    event_time: Option<DateTime<Utc>>,
     data: Map<String, Value>,
 }
 
@@ -113,8 +114,15 @@ impl TransactionEventBuilder {
             block_number: None,
             payload_id: None,
             request_id: None,
+            event_time: None,
             data: Map::new(),
         }
+    }
+
+    /// Sets when the source observed the event. Defaults to the time the event is built.
+    pub const fn event_time(mut self, event_time: DateTime<Utc>) -> Self {
+        self.event_time = Some(event_time);
+        self
     }
 
     /// Adds a producer-specific event ID component.
@@ -214,7 +222,7 @@ impl TransactionEventBuilder {
     pub fn build_with_network(self, network: &str) -> TransactionEvent {
         let mut event = TransactionEvent::new(
             self.event_id.finish(),
-            Utc::now(),
+            self.event_time.unwrap_or_else(Utc::now),
             self.producer,
             self.event_type,
         )
@@ -277,6 +285,41 @@ impl TransactionEventBuilder {
         let result = build(Self::new(producer, event_type)).emit_to(writer);
         TransactionEventEmissionStats::record(start.elapsed());
         result
+    }
+
+    /// Captures event inputs on the calling thread and builds the event on the writer's
+    /// render thread.
+    ///
+    /// Returns [`TransactionEventEmitOutcome::NotConfigured`] without calling `capture` when
+    /// `writer` is `None`. Otherwise the calling thread runs `capture`, records the event time,
+    /// and queues `render`, which later builds the event from the captured inputs. Only that
+    /// calling-thread work is added to [`TransactionEventEmissionStats`]. `Emitted` means the
+    /// event was queued for rendering; validation and serialization failures on the render
+    /// thread are reported through [`Metrics`](crate::Metrics).
+    pub fn emit_deferred<P, C, R>(
+        writer: Option<&TransactionEventWriter>,
+        producer: TransactionEventProducer,
+        event_type: TransactionEventType,
+        capture: C,
+        render: R,
+    ) -> Result<TransactionEventEmitOutcome, WriteEventError>
+    where
+        P: Send + 'static,
+        C: FnOnce() -> P,
+        R: FnOnce(Self, P) -> Self + Send + 'static,
+    {
+        let Some(writer) = writer else {
+            return Ok(TransactionEventEmitOutcome::NotConfigured);
+        };
+        let start = Instant::now();
+        let event_time = Utc::now();
+        let inputs = capture();
+        let result = writer.try_write_deferred(Box::new(move |network| {
+            render(Self::new(producer, event_type).event_time(event_time), inputs)
+                .build_with_network(network)
+        }));
+        TransactionEventEmissionStats::record(start.elapsed());
+        result.map(|()| TransactionEventEmitOutcome::Emitted)
     }
 }
 
@@ -609,6 +652,49 @@ mod tests {
 
         assert_eq!(result.unwrap(), TransactionEventEmitOutcome::NotConfigured);
         assert_eq!(TransactionEventEmissionStats::current_thread().since(before).attempts, 0);
+    }
+
+    #[test]
+    fn emit_deferred_skips_capture_without_a_writer() {
+        let mut captured = false;
+
+        let result = TransactionEventBuilder::emit_deferred(
+            None,
+            TransactionEventProducer::BaseRethNode,
+            TransactionEventType::Pending,
+            || captured = true,
+            |builder, ()| builder,
+        );
+
+        assert_eq!(result.unwrap(), TransactionEventEmitOutcome::NotConfigured);
+        assert!(!captured);
+    }
+
+    #[test]
+    fn emit_deferred_renders_captured_inputs_with_the_capture_time() {
+        let capture = crate::TransactionEventCapture::install();
+        let tx_hash = TxHash::repeat_byte(0x44);
+        let before = chrono::Utc::now();
+
+        let result = TransactionEventBuilder::emit_deferred(
+            crate::GlobalTransactionEventWriter::get(),
+            TransactionEventProducer::BaseRethNode,
+            TransactionEventType::Pending,
+            || (tx_hash, 7_u64),
+            |builder, (tx_hash, index)| {
+                builder
+                    .tx_hash(tx_hash)
+                    .id_part("event_index", index)
+                    .data_field("index", json!(index))
+            },
+        );
+
+        assert_eq!(result.unwrap(), TransactionEventEmitOutcome::Emitted);
+        let events = capture.events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].tx_hash, Some(tx_hash));
+        assert_eq!(events[0].data["index"], 7);
+        assert!(events[0].event_time >= before);
     }
 
     #[test]

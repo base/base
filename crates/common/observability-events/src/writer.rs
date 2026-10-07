@@ -7,8 +7,10 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+        mpsc::{self, Receiver, SyncSender, TrySendError},
     },
+    thread::{self, JoinHandle},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -101,12 +103,18 @@ struct WriterInner {
     network: String,
 }
 
+/// Event construction deferred to the writer's render thread.
+///
+/// The closure receives the writer's network label and returns the finished event.
+pub type DeferredTransactionEvent = Box<dyn FnOnce(&str) -> TransactionEvent + Send>;
+
 enum WriterBackend {
     Disabled,
     File {
         writer: NonBlocking,
-        dropped: ErrorCounter,
-        observed_drops: AtomicUsize,
+        drops: Arc<AppenderDrops>,
+        // Declared before `_guard` so it drains into the appender before the appender flushes.
+        render: RenderStage,
         _guard: WorkerGuard,
     },
     #[cfg(any(test, feature = "test-utils"))]
@@ -208,17 +216,24 @@ impl TransactionEventWriter {
             .buffered_lines_limit(queue_capacity)
             .thread_name("transaction-event-writer")
             .finish(MetricWriter::new(file));
-        let dropped = writer.error_counter();
+        let backend = match WriterBackend::file(writer, guard, queue_capacity, &config.network) {
+            Ok(backend) => backend,
+            Err(err) if config.required => {
+                return Err(eyre::eyre!(
+                    "failed to start required transaction event render thread: {err}"
+                ));
+            }
+            Err(err) => {
+                Metrics::write_errors("write").increment(1);
+                warn!(
+                    error = %err,
+                    "transaction event writer disabled after render thread failed to start"
+                );
+                return Ok(Self::disabled(config));
+            }
+        };
 
-        Ok(Self::new(
-            WriterBackend::File {
-                writer,
-                dropped,
-                observed_drops: AtomicUsize::new(0),
-                _guard: guard,
-            },
-            config.network,
-        ))
+        Ok(Self::new(backend, config.network))
     }
 
     /// Creates a disabled writer handle.
@@ -250,19 +265,56 @@ impl TransactionEventWriter {
                 Metrics::submitted_events().increment(1);
                 Ok(())
             }
-            WriterBackend::File { writer, .. } => {
-                Self::validate_event(event)?;
-                let mut line = serde_json::to_vec(event).map_err(|err| {
-                    Metrics::dropped_events("serialization").increment(1);
-                    WriteEventError::Serialize(err)
-                })?;
-                line.push(b'\n');
+            WriterBackend::File { writer, drops, .. } => {
+                let mut line = Vec::new();
+                Self::encode_line(event, &mut line)?;
                 let _ = writer.clone().write_all(&line);
-                self.observe_dropped_events();
+                drops.observe();
                 Metrics::submitted_events().increment(1);
                 Ok(())
             }
         }
+    }
+
+    /// Queues `render` to build its event on the writer's render thread, without blocking.
+    ///
+    /// The calling thread pays only for the queue push. Validation and serialization happen on
+    /// the render thread, so their failures are reported through [`Metrics`] rather than
+    /// returned here. In-memory writers render inline so tests observe events immediately.
+    pub fn try_write_deferred(
+        &self,
+        render: DeferredTransactionEvent,
+    ) -> Result<(), WriteEventError> {
+        match &self.inner.backend {
+            WriterBackend::Disabled => {
+                Metrics::dropped_events("disabled").increment(1);
+                Err(WriteEventError::Disabled)
+            }
+            #[cfg(any(test, feature = "test-utils"))]
+            WriterBackend::Memory { .. } => self.try_write(&render(&self.inner.network)),
+            WriterBackend::File { render: stage, .. } => stage.try_send(render),
+        }
+    }
+
+    /// Returns how many events this writer has dropped because a queue was full.
+    pub fn dropped_events(&self) -> u64 {
+        match &self.inner.backend {
+            WriterBackend::File { drops, render, .. } => {
+                drops.dropped.dropped_lines() as u64 + render.dropped.load(Ordering::Relaxed)
+            }
+            _ => 0,
+        }
+    }
+
+    /// Validates `event` and appends it to `line` as one JSONL record.
+    fn encode_line(event: &TransactionEvent, line: &mut Vec<u8>) -> Result<(), WriteEventError> {
+        Self::validate_event(event)?;
+        serde_json::to_writer(&mut *line, event).map_err(|err| {
+            Metrics::dropped_events("serialization").increment(1);
+            WriteEventError::Serialize(err)
+        })?;
+        line.push(b'\n');
+        Ok(())
     }
 
     fn validate_event(event: &TransactionEvent) -> Result<(), WriteEventError> {
@@ -276,20 +328,44 @@ impl TransactionEventWriter {
     pub fn network(&self) -> &str {
         &self.inner.network
     }
+}
 
-    fn observe_dropped_events(&self) -> usize {
-        let WriterBackend::File { dropped, observed_drops, .. } = &self.inner.backend else {
-            return 0;
-        };
+impl WriterBackend {
+    /// Builds a file backend around `writer`, starting the render thread.
+    fn file(
+        writer: NonBlocking,
+        guard: WorkerGuard,
+        queue_capacity: usize,
+        network: &str,
+    ) -> io::Result<Self> {
+        let drops = Arc::new(AppenderDrops {
+            dropped: writer.error_counter(),
+            observed: AtomicUsize::new(0),
+        });
+        let render =
+            RenderStage::start(writer.clone(), Arc::clone(&drops), queue_capacity, network)?;
+        Ok(Self::File { writer, drops, render, _guard: guard })
+    }
+}
 
+/// Appender-side drop accounting shared by the producer and render threads.
+struct AppenderDrops {
+    dropped: ErrorCounter,
+    observed: AtomicUsize,
+}
+
+impl AppenderDrops {
+    /// Reports appender drops that happened since the last observation.
+    fn observe(&self) -> usize {
         loop {
-            let current = dropped.dropped_lines();
-            let previous = observed_drops.load(Ordering::Relaxed);
+            let current = self.dropped.dropped_lines();
+            let previous = self.observed.load(Ordering::Relaxed);
             if current <= previous {
                 return 0;
             }
 
-            if observed_drops
+            if self
+                .observed
                 .compare_exchange_weak(previous, current, Ordering::Relaxed, Ordering::Relaxed)
                 .is_ok()
             {
@@ -297,6 +373,75 @@ impl TransactionEventWriter {
                 Metrics::dropped_events("backpressure").increment(delta as u64);
                 return delta;
             }
+        }
+    }
+}
+
+/// Dedicated thread that builds deferred events and hands their JSONL lines to the appender.
+///
+/// Its queue is bounded and lossy like the appender's, so producers never block on it.
+struct RenderStage {
+    sender: Option<SyncSender<DeferredTransactionEvent>>,
+    thread: Option<JoinHandle<()>>,
+    dropped: AtomicU64,
+}
+
+impl RenderStage {
+    fn start(
+        writer: NonBlocking,
+        drops: Arc<AppenderDrops>,
+        queue_capacity: usize,
+        network: &str,
+    ) -> io::Result<Self> {
+        let (sender, receiver) = mpsc::sync_channel(queue_capacity);
+        let network = network.to_string();
+        let thread = thread::Builder::new()
+            .name("transaction-event-render".to_string())
+            .spawn(move || Self::run(&receiver, writer, &drops, &network))?;
+        Ok(Self { sender: Some(sender), thread: Some(thread), dropped: AtomicU64::new(0) })
+    }
+
+    fn try_send(&self, render: DeferredTransactionEvent) -> Result<(), WriteEventError> {
+        let Some(sender) = &self.sender else {
+            return Err(WriteEventError::Disabled);
+        };
+        match sender.try_send(render) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                self.dropped.fetch_add(1, Ordering::Relaxed);
+                Metrics::dropped_events("backpressure").increment(1);
+                Err(WriteEventError::QueueFull)
+            }
+            Err(TrySendError::Disconnected(_)) => Err(WriteEventError::Disabled),
+        }
+    }
+
+    fn run(
+        receiver: &Receiver<DeferredTransactionEvent>,
+        mut writer: NonBlocking,
+        drops: &AppenderDrops,
+        network: &str,
+    ) {
+        let mut line = Vec::with_capacity(1024);
+        for render in receiver {
+            let event = render(network);
+            line.clear();
+            if TransactionEventWriter::encode_line(&event, &mut line).is_err() {
+                continue;
+            }
+            let _ = writer.write_all(&line);
+            drops.observe();
+            Metrics::submitted_events().increment(1);
+        }
+    }
+}
+
+impl Drop for RenderStage {
+    /// Closes the queue and waits for queued events to reach the appender.
+    fn drop(&mut self) {
+        self.sender.take();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
         }
     }
 }
@@ -313,6 +458,9 @@ pub enum WriteEventError {
     /// Event failed contract validation.
     #[error("invalid transaction event: {0}")]
     Invalid(TransactionEventValidationError),
+    /// The render queue was full, so the event was dropped.
+    #[error("transaction event render queue is full")]
+    QueueFull,
 }
 
 const MAX_ROTATED_PATH_ATTEMPTS: u32 = 1000;
@@ -541,17 +689,9 @@ mod tests {
             .buffered_lines_limit(queue_capacity)
             .thread_name("transaction-event-writer-test")
             .finish(MetricWriter::new(sink));
-        let dropped = writer.error_counter();
-
-        TransactionEventWriter::new(
-            WriterBackend::File {
-                writer,
-                dropped,
-                observed_drops: AtomicUsize::new(0),
-                _guard: guard,
-            },
-            config.network,
-        )
+        let backend = WriterBackend::file(writer, guard, queue_capacity.max(1), &config.network)
+            .expect("render thread starts");
+        TransactionEventWriter::new(backend, config.network)
     }
 
     #[test]
@@ -774,6 +914,58 @@ mod tests {
     }
 
     #[test]
+    fn deferred_events_are_rendered_and_flushed_on_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("transaction-events.jsonl");
+        let writer = TransactionEventWriter::from_config(TransactionEventWriterConfig {
+            enabled: true,
+            file_path: path.clone(),
+            queue_capacity: 64,
+            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+            max_files: DEFAULT_MAX_FILES,
+            required: true,
+            producer: TransactionEventProducer::BaseRethNode,
+            network: "base-mainnet".to_string(),
+        })
+        .unwrap();
+
+        for _ in 0..3 {
+            writer.try_write_deferred(Box::new(|_network| sample_event())).unwrap();
+        }
+        drop(writer);
+
+        let contents = fs::read_to_string(path).unwrap();
+        let lines = contents.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 3);
+        let value: Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(value["schema_version"], SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn deferred_events_drop_without_blocking_when_render_queue_is_full() {
+        let writer = writer_with_sink(io::sink(), 1);
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+
+        // Occupy the render thread so the one-slot queue stays full.
+        writer
+            .try_write_deferred(Box::new(move |_network| {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                sample_event()
+            }))
+            .unwrap();
+        started_rx.recv().unwrap();
+        writer.try_write_deferred(Box::new(|_network| sample_event())).unwrap();
+
+        let result = writer.try_write_deferred(Box::new(|_network| sample_event()));
+
+        assert!(matches!(result, Err(WriteEventError::QueueFull)));
+        assert_eq!(writer.dropped_events(), 1);
+        release_tx.send(()).unwrap();
+    }
+
+    #[test]
     fn size_rolling_file_rotates_and_prunes_old_segments() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("events.jsonl");
@@ -823,18 +1015,18 @@ mod tests {
         }
 
         let writer = writer_with_sink(SlowWriter, 0);
-        let WriterBackend::File { observed_drops, .. } = &writer.inner.backend else {
+        let WriterBackend::File { drops, .. } = &writer.inner.backend else {
             panic!("backpressure test requires a file-backed writer");
         };
 
         for _ in 0..10_000 {
             writer.try_write(&sample_event()).unwrap();
-            if observed_drops.load(Ordering::Relaxed) > 0 {
+            if drops.observed.load(Ordering::Relaxed) > 0 {
                 break;
             }
         }
 
-        let dropped = observed_drops.load(Ordering::Relaxed);
+        let dropped = drops.observed.load(Ordering::Relaxed);
         assert!(dropped > 0, "lossy writer should report aggregate drops under backpressure");
     }
 

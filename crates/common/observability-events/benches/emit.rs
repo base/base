@@ -2,13 +2,20 @@
 //!
 //! The stage benchmarks split emission into the work the hot path performs today: converting
 //! typed event data into a JSON map, computing the SHA-256 event ID, building the envelope,
-//! validating it, and serializing it. `emit/file` runs the full path into a real JSONL writer.
-//! When its bounded queue is full the writer drops instead of blocking, so that case measures
-//! the caller-side cost including any drops. `reference/tracing_json` formats an ordinary
+//! validating it, and serializing it. `emit/file` runs the full path on the calling thread into a
+//! real JSONL writer in a tight loop. `emit/file_chunked` runs the same path in timed chunks with
+//! untimed pauses so writer queues drain, and `emit/file_deferred` uses those chunks to measure
+//! only the calling-thread share when the event is built on the writer's render thread. Compare
+//! the two chunked cases with each other; chunks start cold, so they read higher than the tight
+//! loop. The bench fails if the writer dropped anything, because drops are cheaper than writes. `reference/tracing_json` formats an ordinary
 //! `tracing` JSON log line with the same fields into the same kind of non-blocking writer, as a
 //! baseline for normal application logging.
 
-use std::{hint::black_box, io};
+use std::{
+    hint::black_box,
+    io, thread,
+    time::{Duration, Instant},
+};
 
 use alloy_primitives::{B256, TxHash};
 use base_observability_events::{
@@ -66,13 +73,20 @@ impl DeferredEventData {
 }
 
 fn deferred_event(builder: TransactionEventBuilder) -> TransactionEventBuilder {
+    deferred_event_with(builder, DeferredEventData::sample())
+}
+
+fn deferred_event_with(
+    builder: TransactionEventBuilder,
+    data: DeferredEventData,
+) -> TransactionEventBuilder {
     builder
         .tx_hash(TxHash::repeat_byte(0x11))
         .block_number(36_000_000)
         .payload_id(PAYLOAD_ID)
         .id_part("flashblock_index", 4)
         .id_part("ordering_position", 1_234)
-        .typed_data(DeferredEventData::sample())
+        .typed_data(data)
 }
 
 fn new_builder() -> TransactionEventBuilder {
@@ -123,11 +137,15 @@ fn stages(c: &mut Criterion) {
     group.finish();
 }
 
-fn emit(c: &mut Criterion) {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let writer = TransactionEventWriter::from_config(TransactionEventWriterConfig {
+/// Events emitted per timed chunk. Small enough that neither bounded queue fills.
+const CHUNK: u64 = 1_024;
+/// Untimed pause after each chunk so the writer threads drain before the next one.
+const DRAIN_PAUSE: Duration = Duration::from_millis(10);
+
+fn file_writer(dir: &tempfile::TempDir, name: &str) -> TransactionEventWriter {
+    TransactionEventWriter::from_config(TransactionEventWriterConfig {
         enabled: true,
-        file_path: dir.path().join("transaction-events.jsonl"),
+        file_path: dir.path().join(format!("{name}.jsonl")),
         queue_capacity: DEFAULT_QUEUE_CAPACITY,
         max_file_bytes: 64 * 1024 * 1024,
         max_files: 2,
@@ -135,9 +153,37 @@ fn emit(c: &mut Criterion) {
         producer: TransactionEventProducer::BaseBuilder,
         network: NETWORK.to_string(),
     })
-    .expect("file writer");
+    .expect("file writer")
+}
 
+/// Times `iters` calls of `emit` in drainable chunks, excluding the pauses.
+fn time_in_chunks(iters: u64, mut emit: impl FnMut()) -> Duration {
+    let mut elapsed = Duration::ZERO;
+    let mut remaining = iters;
+    while remaining > 0 {
+        let chunk = remaining.min(CHUNK);
+        let start = Instant::now();
+        for _ in 0..chunk {
+            emit();
+        }
+        elapsed += start.elapsed();
+        remaining -= chunk;
+        thread::sleep(DRAIN_PAUSE);
+    }
+    elapsed
+}
+
+/// Fails the bench if `writer` dropped events, because drops are cheaper than writes.
+fn assert_no_drops(case: &str, writer: &TransactionEventWriter) {
+    let dropped = writer.dropped_events();
+    eprintln!("{case}: writer dropped {dropped} events");
+    assert_eq!(dropped, 0, "{case}: drops make emit timings look cheaper than they are");
+}
+
+fn emit(c: &mut Criterion) {
+    let dir = tempfile::tempdir().expect("tempdir");
     let mut group = c.benchmark_group("emit");
+
     group.bench_function("disabled", |b| {
         b.iter(|| {
             TransactionEventBuilder::emit_with(
@@ -148,6 +194,8 @@ fn emit(c: &mut Criterion) {
             )
         })
     });
+
+    let writer = file_writer(&dir, "file");
     group.bench_function("file", |b| {
         b.iter(|| {
             TransactionEventBuilder::emit_with(
@@ -158,6 +206,39 @@ fn emit(c: &mut Criterion) {
             )
         })
     });
+    assert_no_drops("emit/file", &writer);
+
+    let writer = file_writer(&dir, "file_chunked");
+    group.bench_function("file_chunked", |b| {
+        b.iter_custom(|iters| {
+            time_in_chunks(iters, || {
+                let _ = black_box(TransactionEventBuilder::emit_with(
+                    Some(&writer),
+                    TransactionEventProducer::BaseBuilder,
+                    TransactionEventType::BuilderDeferred,
+                    deferred_event,
+                ));
+            })
+        })
+    });
+    assert_no_drops("emit/file_chunked", &writer);
+
+    let writer = file_writer(&dir, "file_deferred");
+    group.bench_function("file_deferred", |b| {
+        b.iter_custom(|iters| {
+            time_in_chunks(iters, || {
+                let _ = black_box(TransactionEventBuilder::emit_deferred(
+                    Some(&writer),
+                    TransactionEventProducer::BaseBuilder,
+                    TransactionEventType::BuilderDeferred,
+                    DeferredEventData::sample,
+                    deferred_event_with,
+                ));
+            })
+        })
+    });
+    assert_no_drops("emit/file_deferred", &writer);
+
     group.finish();
 }
 

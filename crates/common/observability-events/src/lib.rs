@@ -33,7 +33,9 @@ pub use stats::{TransactionEventEmissionStats, TransactionEventEmissionTotals};
 mod writer;
 #[cfg(any(test, feature = "test-utils"))]
 pub use writer::TransactionEventRecorder;
-pub use writer::{TransactionEventWriter, TransactionEventWriterConfig, WriteEventError};
+pub use writer::{
+    DeferredTransactionEvent, TransactionEventWriter, TransactionEventWriterConfig, WriteEventError,
+};
 
 #[doc(hidden)]
 pub mod __private {

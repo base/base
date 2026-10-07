@@ -26,6 +26,10 @@ stdout/stderr and the normal Kubernetes log pipeline.
   deterministic event IDs, and write-failure logging.
   Both evaluate event fields lazily, so call sites pay nothing when no writer is
   configured.
+- **`TransactionEventBuilder::emit_deferred`**: Hot-path variant that captures
+  owned inputs and the event time on the calling thread, then builds, validates,
+  and serializes the event on the writer's dedicated render thread. Its bounded
+  queue drops instead of blocking, like the file appender's.
 - **`TransactionEventEmissionStats`**: Per-thread totals of events constructed
   and the time spent building, validating, serializing, and enqueueing them.
   Snapshot before and after a synchronous unit of work to attribute emission
@@ -35,8 +39,9 @@ stdout/stderr and the normal Kubernetes log pipeline.
 
 `cargo bench -p base-observability-events --bench emit` measures the
 producer-thread cost of one builder-shaped event: each emission stage, the full
-path into a JSONL writer, and an ordinary `tracing` JSON log line with the same
-fields for comparison.
+path into a JSONL writer, the calling-thread share of the deferred path, and an
+ordinary `tracing` JSON log line with the same fields for comparison. It fails if
+a writer drops events, because drops are cheaper than writes.
 
 ## Contract Notes
 

@@ -412,8 +412,8 @@ pub(crate) const fn rejection_reason_code(err: &TxnExecutionError) -> &'static s
 
 /// Emits one builder transaction event if a sink is configured.
 ///
-/// `ctx` and `data` are lazy so disabled writers skip hot-path payload construction, and
-/// enabled writers count their construction in builder emission timing.
+/// `ctx` and `data` are lazy so disabled writers skip hot-path payload construction. With a
+/// writer, they run on the builder thread and the event is built on the writer's render thread.
 pub(crate) fn emit_builder_transaction_event<C, D, F>(
     ctx: C,
     event_type: TransactionEventType,
@@ -421,7 +421,7 @@ pub(crate) fn emit_builder_transaction_event<C, D, F>(
     data: F,
 ) where
     C: FnOnce() -> BuilderTransactionEventContext,
-    D: Serialize,
+    D: Serialize + Send + 'static,
     F: FnOnce() -> D,
 {
     emit_builder_event(ctx, event_type, Some(tx_hash), data);
@@ -429,12 +429,12 @@ pub(crate) fn emit_builder_transaction_event<C, D, F>(
 
 /// Emits one builder payload event if a sink is configured.
 ///
-/// `ctx` and `data` are lazy so disabled writers skip hot-path payload construction, and
-/// enabled writers count their construction in builder emission timing.
+/// `ctx` and `data` are lazy so disabled writers skip hot-path payload construction. With a
+/// writer, they run on the builder thread and the event is built on the writer's render thread.
 pub(crate) fn emit_builder_payload_event<C, D, F>(ctx: C, event_type: TransactionEventType, data: F)
 where
     C: FnOnce() -> BuilderTransactionEventContext,
-    D: Serialize,
+    D: Serialize + Send + 'static,
     F: FnOnce() -> D,
 {
     emit_builder_event(ctx, event_type, None, data);
@@ -449,16 +449,16 @@ fn emit_builder_event<C, D, F>(
     data: F,
 ) where
     C: FnOnce() -> BuilderTransactionEventContext,
-    D: Serialize,
+    D: Serialize + Send + 'static,
     F: FnOnce() -> D,
 {
-    let result = TransactionEventBuilder::emit_with(
+    let result = TransactionEventBuilder::emit_deferred(
         GlobalTransactionEventWriter::get(),
         TransactionEventProducer::BaseBuilder,
         event_type,
-        |builder| {
-            let ctx = ctx();
-            let data = BuilderEventData { context: ctx.event_data(), event: data() };
+        || (ctx(), data()),
+        move |builder, (ctx, data): (BuilderTransactionEventContext, D)| {
+            let data = BuilderEventData { context: ctx.event_data(), event: data };
             let builder = builder
                 .maybe_tx_hash(tx_hash)
                 .maybe_block_hash(ctx.block_hash)
