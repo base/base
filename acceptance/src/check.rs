@@ -930,7 +930,7 @@ mod tests {
         }
     }
 
-    fn healthy(duration: Duration, maximum_age: Duration) -> AcceptanceCheck {
+    fn healthy(duration: Duration, maximum_age: Duration, timeout: Duration) -> AcceptanceCheck {
         AcceptanceCheck::HeadsHealthy {
             id: "health".into(),
             endpoints: vec!["builder".into(), "validator".into()],
@@ -939,16 +939,27 @@ mod tests {
             minimum_blocks: 1,
             maximum_age: Span(maximum_age),
             max_lag_blocks: 1,
-            timeout: Span(Duration::from_millis(60)),
+            timeout: Span(timeout),
             start: None,
         }
     }
 
+    /// Runs a health check with a deadline far beyond any loaded CI runner's RPC latency.
     async fn run_health(
         left: Vec<Reply>,
         right: Vec<Reply>,
         duration: Duration,
         maximum_age: Duration,
+    ) -> crate::CheckResult {
+        run_health_within(left, right, duration, maximum_age, RPC_BUDGET).await
+    }
+
+    async fn run_health_within(
+        left: Vec<Reply>,
+        right: Vec<Reply>,
+        duration: Duration,
+        maximum_age: Duration,
+        timeout: Duration,
     ) -> crate::CheckResult {
         let map = BTreeMap::from([
             ("builder".into(), server(left).await),
@@ -957,12 +968,12 @@ mod tests {
         let mut samples = Vec::new();
         observer()
             .run(
-                &healthy(duration, maximum_age),
+                &healthy(duration, maximum_age, timeout),
                 0,
                 &map,
                 &mut samples,
                 Instant::now(),
-                Instant::now() + Duration::from_millis(80),
+                Instant::now() + timeout,
             )
             .await
     }
@@ -1410,9 +1421,14 @@ mod tests {
         assert!(result.message.contains("freshness limit"));
 
         let delayed = vec![Reply { delay: Duration::from_millis(70), body: rpc(block(10, 'a')) }];
-        let result =
-            run_health(delayed.clone(), delayed, Duration::from_millis(4), Duration::from_secs(2))
-                .await;
+        let result = run_health_within(
+            delayed.clone(),
+            delayed,
+            Duration::from_millis(4),
+            Duration::from_secs(2),
+            Duration::from_millis(60),
+        )
+        .await;
         assert_eq!(result.status, Status::Error);
         assert!(result.rpc_errors > 0);
     }
