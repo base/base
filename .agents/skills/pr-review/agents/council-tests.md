@@ -2,7 +2,7 @@
 name: council-tests
 description: Council member that checks whether the tests would actually catch a regression in this change.
 stage: council
-model: grok-4.7
+model: grok-lts
 effort: max
 tools: Read,Grep,Glob
 timeout_seconds: 1500

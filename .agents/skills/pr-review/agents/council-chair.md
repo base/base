@@ -2,7 +2,7 @@
 name: council-chair
 description: Merges the council members' findings into one list, using the members' votes to decide what survives.
 stage: chair
-model: claude-opus-5-5
+model: opus
 effort: high
 tools: Read,Grep,Glob
 timeout_seconds: 900

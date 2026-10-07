@@ -2,7 +2,7 @@
 name: decide
 description: Final step. Reads every reviewer's findings plus the PR's existing comment threads and decides what to post, follow up on, or reopen.
 stage: decide
-model: claude-opus-5-5
+model: opus
 effort: high
 tools: Read,Grep,Glob
 timeout_seconds: 900
