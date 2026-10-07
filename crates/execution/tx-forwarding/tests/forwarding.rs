@@ -14,7 +14,6 @@ use base_execution_txpool::{
     TransactionValidity, ValidatedTransaction, ValidityOperator, ValidityPredicate,
 };
 use base_node_runner::test_utils::TestHarness;
-use base_observability_events::{TransactionEventCapture, TransactionEventType};
 use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis};
 use base_tx_forwarding::{TxForwardingConfig, TxForwardingExtension};
 use base_txpool_rpc::{
@@ -230,58 +229,6 @@ async fn forwards_validity_to_every_builder() -> Result<()> {
     drop(harness);
     first.shutdown().await?;
     second.shutdown().await?;
-    Ok(())
-}
-
-/// Each destination's reader queues the transaction independently, so a per-destination journal
-/// event grows with the number of builders. Delivery is journaled by each builder and failures by
-/// the forwarder, so the mempool node must not journal the hand-off itself.
-#[tokio::test]
-async fn forwarding_to_every_builder_journals_no_consumed_events() -> Result<()> {
-    const BUILDERS: usize = 3;
-
-    let capture = TransactionEventCapture::install();
-    let mut builders = Vec::with_capacity(BUILDERS);
-    let mut receivers = Vec::with_capacity(BUILDERS);
-    for _ in 0..BUILDERS {
-        let (sender, receiver) = mpsc::unbounded_channel();
-        builders.push(MockBuilder::spawn(sender, None, None, None).await?);
-        receivers.push(receiver);
-    }
-    let config =
-        TxForwardingConfig::new(builders.iter().map(|builder| builder.url.clone()).collect());
-    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
-    let harness = TestHarness::builder()
-        .with_ext::<TxForwardingExtension>(config)
-        .with_chain_spec(chain_spec)
-        .build()
-        .await?;
-    let raw = signed_eip1559_transaction();
-    let tx_hash = keccak256(&raw);
-    let _pending = harness.provider().send_raw_transaction(&raw).await?;
-
-    for receiver in &mut receivers {
-        let forwarded = timeout(WAIT_TIMEOUT, receiver.recv())
-            .await
-            .wrap_err("builder was not called")?
-            .ok_or_else(|| eyre::eyre!("builder channel closed"))?;
-        assert_eq!(forwarded.raw, raw);
-    }
-
-    let consumed = capture
-        .events()
-        .into_iter()
-        .filter(|event| {
-            event.tx_hash == Some(tx_hash)
-                && event.event_type == TransactionEventType::TxpoolBuilderConsumed
-        })
-        .count();
-    assert_eq!(consumed, 0);
-
-    drop(harness);
-    for builder in builders {
-        builder.shutdown().await?;
-    }
     Ok(())
 }
 

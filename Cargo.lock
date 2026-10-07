@@ -6518,6 +6518,7 @@ dependencies = [
  "base-observability-events",
  "base-test-utils",
  "base-txpool-rpc",
+ "base-txpool-tracing",
  "eyre",
  "futures",
  "jsonrpsee",
