@@ -50,6 +50,9 @@ pub struct BasePooledTransaction<
 > {
     #[deref]
     inner: EthPooledTransaction<Cons>,
+    /// Worst-case cost including the L1 data and operator fees reserved at validation; see
+    /// [`BasePooledTx::set_l1_operator_fee_reservation`].
+    cost: U256,
     /// The estimated size of this transaction, lazily computed.
     estimated_tx_compressed_size: OnceLock<u64>,
     /// The pooled transaction type.
@@ -97,8 +100,10 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
         encoded_length: usize,
         received_at: u128,
     ) -> Self {
+        let inner = EthPooledTransaction::new(transaction, encoded_length);
         Self {
-            inner: EthPooledTransaction::new(transaction, encoded_length),
+            cost: inner.cost,
+            inner,
             estimated_tx_compressed_size: Default::default(),
             _pd: core::marker::PhantomData,
             encoded_2718: Default::default(),
@@ -235,7 +240,7 @@ where
     }
 
     fn cost(&self) -> &U256 {
-        &self.inner.cost
+        &self.cost
     }
 
     fn encoded_length(&self) -> usize {
@@ -392,6 +397,14 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     /// Returns the EIP-2718 encoded bytes of the transaction.
     fn encoded_2718(&self) -> Cow<'_, Bytes>;
 
+    /// Adds the L1 data and operator fees the payer must also cover to
+    /// [`PoolTransaction::cost`], replacing any previous reservation.
+    ///
+    /// The pool sums `cost()` over a sender's consecutive nonces to decide which are executable.
+    /// Without the reservation, it marks later transactions pending even when execution would
+    /// reject them for insufficient funds.
+    fn set_l1_operator_fee_reservation(&mut self, fee: U256);
+
     /// Returns state predicates required for this transaction's inclusion.
     ///
     /// Defaults to an empty slice for transaction types that do not carry
@@ -475,6 +488,10 @@ where
 {
     fn encoded_2718(&self) -> Cow<'_, Bytes> {
         Cow::Borrowed(self.encoded_2718())
+    }
+
+    fn set_l1_operator_fee_reservation(&mut self, fee: U256) {
+        self.cost = self.inner.cost.saturating_add(fee);
     }
 
     fn validity_predicates(&self) -> &[crate::ValidityPredicate] {
@@ -814,6 +831,19 @@ mod tests {
         transaction.set_watch_manifest(manifest);
 
         assert_eq!(transaction.size(), size_without_slots + slots_size);
+    }
+
+    #[test]
+    fn l1_operator_fee_reservation_replaces_previous_reservation() {
+        let mut transaction = eip1559_pooled_with_fees(0, 1_000);
+        let l2_cost = U256::from(21_000u64 * 1_000);
+        assert_eq!(*transaction.cost(), l2_cost);
+
+        transaction.set_l1_operator_fee_reservation(U256::from(5));
+        assert_eq!(*transaction.cost(), l2_cost + U256::from(5));
+
+        transaction.set_l1_operator_fee_reservation(U256::from(7));
+        assert_eq!(*transaction.cost(), l2_cost + U256::from(7));
     }
 
     #[test]

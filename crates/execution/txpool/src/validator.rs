@@ -2119,7 +2119,7 @@ where
         if let TransactionValidationOutcome::Valid {
             balance,
             state_nonce,
-            transaction: valid_tx,
+            transaction: mut valid_tx,
             propagate,
             bytecode_hash,
             authorities,
@@ -2161,7 +2161,17 @@ where
                 ),
                 spec_id,
             );
-            let cost = valid_tx.transaction().cost().saturating_add(cost_addition);
+            // Reserve the L1 data and operator fees in `cost()` so the pool's cumulative
+            // per-sender balance check covers them too. This check only compares one transaction
+            // with the on-chain balance; later nonces must also leave room for the fees of earlier
+            // ones. Fees are priced at admission and not re-priced when L1 fee parameters change.
+            match &mut valid_tx {
+                ValidTransaction::Valid(tx)
+                | ValidTransaction::ValidWithSidecar { transaction: tx, .. } => {
+                    tx.set_l1_operator_fee_reservation(cost_addition)
+                }
+            }
+            let cost = *valid_tx.transaction().cost();
 
             // Checks for max cost
             if cost > balance {
