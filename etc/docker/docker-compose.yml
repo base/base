@@ -304,7 +304,6 @@ services:
       - --rollup.chain-block-time=2000
       - --metrics=0.0.0.0:${L2_BUILDER_METRICS_PORT}
       - --builder.enable-resource-metering
-      - --builder.enable-experimental-validity-transactions
       - --builder.payload-builder-cutover
       - --txpool.nolocals
       - --rollup.txpool-max-inflight-delegated-slots=32768
@@ -522,7 +521,6 @@ services:
       - --rpc.forwarding-endpoint=http://base-builder:${L2_BUILDER_HTTP_PORT}
       - --enable-tx-forwarding
       - --builder-rpc-urls=${VALIDITY_BUILDER_RPC_URLS}
-      - --enable-experimental-validity-transactions
       - --enable-transaction-event-journal
       - --enable-metering
       - --l1-eth-rpc
@@ -627,7 +625,6 @@ services:
       - --rollup.discovery.v4
       - --enable-tx-forwarding
       - --builder-rpc-urls=${VALIDITY_BUILDER_RPC_URLS}
-      - --enable-experimental-validity-transactions
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
       - --l1-beacon
@@ -729,7 +726,6 @@ services:
       - --rpc.eth-proof-window=1209600
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
       - --rollup.discovery.v4
-      - --enable-experimental-validity-transactions
       # Derive the safe chain from the shadow DA instead of the canonical inbox.
       - --l1.dangerously-override-da-batch-inbox
       - "${SHADOW_BATCH_INBOX_ADDRESS}"

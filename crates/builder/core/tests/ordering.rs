@@ -96,8 +96,7 @@ async fn fee_priority_ordering() -> eyre::Result<()> {
 async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre::Result<()> {
     let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
         .install_ext::<BuilderApiExtension>(
-            BuilderApiExtensionConfig::new(true, DEFAULT_MAX_VALIDITY_PREDICATES)
-                .with_noop_metering(),
+            BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
         )
         .build()
         .await?;
@@ -186,7 +185,7 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
     let instance =
         LocalInstanceBuilder::new(BuilderConfig::for_tests().with_predicate_eval_hard_cutoff_ms(0))
             .install_ext::<BuilderApiExtension>(
-                BuilderApiExtensionConfig::new(true, DEFAULT_MAX_VALIDITY_PREDICATES)
+                BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES)
                     .with_noop_metering(),
             )
             .build()
@@ -280,8 +279,8 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
 async fn shadow_validity_injection_preserves_forwarded_transaction() -> eyre::Result<()> {
     let shadow =
         ShadowValidityConfig::enabled(MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS).expect("valid rate");
-    let api_config = BuilderApiExtensionConfig::new(true, DEFAULT_MAX_VALIDITY_PREDICATES)
-        .with_shadow_validity(shadow)?
+    let api_config = BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES)
+        .with_shadow_validity(shadow)
         .with_noop_metering();
     let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
         .install_ext::<BuilderApiExtension>(api_config)
