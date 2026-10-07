@@ -145,6 +145,8 @@ thiserror = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 opentelemetry = { workspace = true, optional = true }
 testcontainers = { workspace = true, optional = true }
+alloy-genesis = { workspace = true, optional = true }
+reth-db-common = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
 uuid = { workspace = true, features = ["serde", "v5", "v4"] }
 
@@ -173,6 +175,7 @@ metrics-exporter-prometheus.workspace = true
 alloy-provider = { workspace = true, default-features = true, features = ["txpool-api"] }
 
 # bench
+iai-callgrind.workspace = true
 criterion = { workspace = true, features = ["html_reports"] }
 
 # misc
@@ -211,6 +214,7 @@ test-utils = [
 	"base-bundles/test-utils",
 	"base-common-chains/test-utils",
 	"base-execution-eip8130/test-utils",
+	"alloy-genesis",
 	"base-execution-rpc/client",
 	"base-node-core/test-utils",
 	"base-node-runner/test-utils",
@@ -222,6 +226,7 @@ test-utils = [
 	"nanoid",
 	"reth-chain-state/test-utils",
 	"reth-chainspec/test-utils",
+	"reth-db-common",
 	"reth-db/test-utils",
 	"reth-evm/test-utils",
 	"reth-execution-cache/test-utils",
@@ -245,4 +250,8 @@ harness = false
 
 [[bench]]
 name = "tx_selection"
+harness = false
+
+[[bench]]
+name = "flashblock_build_iai"
 harness = false
