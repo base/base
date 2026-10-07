@@ -32,4 +32,4 @@ Set `block_production_sensitive` when the change touches builder, execution, pre
 
 ## How to work
 
-Read the description and file list, then read the diff, and open the surrounding code when the diff alone does not show what a change does. Keep `reasoning` to a few sentences that name the specific code that drove your choice. List up to five `focus_areas` that a deep reviewer should concentrate on, as short phrases that name a file, function, or invariant. Leave it empty for `standard`.
+Read the description and file list, then read the diff, and open the surrounding code when the diff alone does not show what a change does. Keep `reasoning` to a few sentences that name the specific code that drove your choice. List up to five `focus_areas` that the review council should concentrate on, as short phrases that name a file, function, or invariant. Leave it empty for `standard`.

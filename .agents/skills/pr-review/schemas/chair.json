@@ -8,7 +8,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["title", "severity", "category", "confidence", "path", "line", "explanation"],
+        "required": ["title", "severity", "category", "confidence", "path", "line", "explanation", "support"],
         "properties": {
           "title": {"type": "string"},
           "severity": {"enum": ["critical", "major", "minor"]},
@@ -20,7 +20,8 @@
           "path": {"type": "string"},
           "line": {"type": "integer", "minimum": 1},
           "explanation": {"type": "string"},
-          "suggested_fix": {"type": "string"}
+          "suggested_fix": {"type": "string"},
+          "support": {"type": "string"}
         }
       }
     }

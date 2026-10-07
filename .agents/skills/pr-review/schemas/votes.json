@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["votes"],
+  "properties": {
+    "votes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "vote", "reason"],
+        "properties": {
+          "id": {"type": "string"},
+          "vote": {"enum": ["confirm", "reject", "unsure"]},
+          "reason": {"type": "string"}
+        }
+      }
+    }
+  }
+}

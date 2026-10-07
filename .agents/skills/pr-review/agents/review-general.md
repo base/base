@@ -38,4 +38,4 @@ You are reviewing a pull request for Base Reth Node, a Rust Ethereum L2 node bui
 - Rust idioms: `&String` instead of `&str`, `&Vec<T>` instead of `&[T]`, manual implementations of standard traits, needless lifetime annotations.
 - Tests: new behavior or a fixed bug with no test that would fail without the change.
 
-Anchor each finding to the new-side line of the diff where the problem is visible. Use `severity: critical` only for a defect that would halt block production, lose or corrupt funds or state, or break consensus. Use `major` for a defect that will misbehave in production, and `minor` for a real but low-impact one.
+Anchor each finding to the new-side line of the diff where the problem is visible.
