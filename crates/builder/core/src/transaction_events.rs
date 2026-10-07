@@ -6,7 +6,6 @@ use base_observability_events::{
     TransactionEventProducer, TransactionEventType,
 };
 use serde::Serialize;
-use serde_json::{Map, Value};
 use tracing::warn;
 
 use crate::{
@@ -459,10 +458,7 @@ fn emit_builder_event<C, D, F>(
         event_type,
         |builder| {
             let ctx = ctx();
-            let data = serialize_builder_event_data(BuilderEventData {
-                context: ctx.event_data(),
-                event: data(),
-            });
+            let data = BuilderEventData { context: ctx.event_data(), event: data() };
             let builder = builder
                 .maybe_tx_hash(tx_hash)
                 .maybe_block_hash(ctx.block_hash)
@@ -480,7 +476,7 @@ fn emit_builder_event<C, D, F>(
             } else {
                 builder
             };
-            builder.data(data)
+            builder.typed_data(data)
         },
     );
 
@@ -501,14 +497,6 @@ fn emit_builder_event<C, D, F>(
             );
         }
     }
-}
-
-fn serialize_builder_event_data<T: Serialize>(data: BuilderEventData<T>) -> Map<String, Value> {
-    serde_json::to_value(data)
-        .expect("builder event data must serialize")
-        .as_object()
-        .expect("builder event data must serialize as an object")
-        .clone()
 }
 
 #[cfg(test)]
@@ -534,7 +522,7 @@ mod tests {
     #[test]
     fn builds_safe_builder_decision_context_fields() {
         let ctx = context();
-        let data = serialize_builder_event_data(BuilderEventData {
+        let data = serde_json::to_value(BuilderEventData {
             context: ctx.event_data(),
             event: BuilderBudgetFields::new(
                 &ExecutionInfo {
@@ -556,7 +544,8 @@ mod tests {
                     uncompressed_size: 110,
                 }),
             ),
-        });
+        })
+        .unwrap();
 
         assert_eq!(data["builder_mode"], "flashblocks");
         assert_eq!(data["flashblock_index"], 2);
@@ -574,7 +563,7 @@ mod tests {
         ctx.block_hash = Some(block_hash);
         ctx.flashblock_index = None;
         ctx.ordering_position = None;
-        let data = serialize_builder_event_data(BuilderEventData {
+        let data = serde_json::to_value(BuilderEventData {
             context: ctx.event_data(),
             event: BuilderPayloadFinalizedEventData::new(
                 0,
@@ -583,7 +572,8 @@ mod tests {
                 ctx.block_number,
                 "builder_finalized_payload",
             ),
-        });
+        })
+        .unwrap();
 
         assert_eq!(ctx.block_hash, Some(block_hash));
         assert_eq!(ctx.block_number, 10);

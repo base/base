@@ -7,6 +7,7 @@ use std::{
 
 use alloy_primitives::{B256, TxHash};
 use chrono::Utc;
+use serde::Serialize;
 use serde_json::{Map, Value};
 use tracing::debug;
 
@@ -187,6 +188,20 @@ impl TransactionEventBuilder {
     pub fn data(mut self, data: Map<String, Value>) -> Self {
         self.data = data;
         self
+    }
+
+    /// Replaces producer-specific event data with `data` converted to a JSON object.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `data` fails to serialize or does not serialize to a JSON object. Producer
+    /// data types are fixed structs, so either case is a programming error.
+    pub fn typed_data(self, data: impl Serialize) -> Self {
+        match serde_json::to_value(data) {
+            Ok(Value::Object(map)) => self.data(map),
+            Ok(other) => panic!("transaction event data must serialize to an object, got {other}"),
+            Err(err) => panic!("transaction event data must serialize: {err}"),
+        }
     }
 
     /// Adds one producer-specific event data field.

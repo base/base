@@ -1,7 +1,7 @@
 //! Producer-thread cost of emitting one builder-shaped transaction event.
 //!
 //! The stage benchmarks split emission into the work the hot path performs today: converting
-//! typed event data into a JSON map, building the envelope (including the SHA-256 event ID),
+//! typed event data into a JSON map, computing the SHA-256 event ID, building the envelope,
 //! validating it, and serializing it. `emit/file` runs the full path into a real JSONL writer.
 //! When its bounded queue is full the writer drops instead of blocking, so that case measures
 //! the caller-side cost including any drops. `reference/tracing_json` formats an ordinary
@@ -12,12 +12,12 @@ use std::{hint::black_box, io};
 
 use alloy_primitives::{B256, TxHash};
 use base_observability_events::{
-    DEFAULT_QUEUE_CAPACITY, TransactionEvent, TransactionEventBuilder, TransactionEventProducer,
-    TransactionEventType, TransactionEventWriter, TransactionEventWriterConfig,
+    DEFAULT_QUEUE_CAPACITY, EventIdBuilder, TransactionEvent, TransactionEventBuilder,
+    TransactionEventProducer, TransactionEventType, TransactionEventWriter,
+    TransactionEventWriterConfig,
 };
 use criterion::{Criterion, criterion_group, criterion_main};
 use serde::Serialize;
-use serde_json::{Map, Value};
 use tracing_subscriber::{fmt, layer::SubscriberExt};
 
 const NETWORK: &str = "bench";
@@ -65,25 +65,14 @@ impl DeferredEventData {
     }
 }
 
-fn data_map() -> Map<String, Value> {
-    serde_json::to_value(DeferredEventData::sample())
-        .expect("bench data serializes")
-        .as_object()
-        .expect("bench data is an object")
-        .clone()
-}
-
-fn deferred_event(
-    builder: TransactionEventBuilder,
-    data: Map<String, Value>,
-) -> TransactionEventBuilder {
+fn deferred_event(builder: TransactionEventBuilder) -> TransactionEventBuilder {
     builder
         .tx_hash(TxHash::repeat_byte(0x11))
         .block_number(36_000_000)
         .payload_id(PAYLOAD_ID)
         .id_part("flashblock_index", 4)
         .id_part("ordering_position", 1_234)
-        .data(data)
+        .typed_data(DeferredEventData::sample())
 }
 
 fn new_builder() -> TransactionEventBuilder {
@@ -94,16 +83,35 @@ fn new_builder() -> TransactionEventBuilder {
 }
 
 fn built_event() -> TransactionEvent {
-    deferred_event(new_builder(), data_map()).build_with_network(NETWORK)
+    deferred_event(new_builder()).build_with_network(NETWORK)
 }
 
 fn stages(c: &mut Criterion) {
     let mut group = c.benchmark_group("stage");
-    group.bench_function("typed_data_to_map", |b| b.iter(|| black_box(data_map())));
+    group.bench_function("typed_data_to_map", |b| {
+        b.iter_batched(
+            new_builder,
+            |builder| black_box(builder.typed_data(DeferredEventData::sample())),
+            criterion::BatchSize::SmallInput,
+        )
+    });
+    group.bench_function("event_id", |b| {
+        b.iter(|| {
+            EventIdBuilder::new()
+                .part("producer", TransactionEventProducer::BaseBuilder)
+                .part("event_type", TransactionEventType::BuilderDeferred)
+                .part("tx_hash", black_box(TxHash::repeat_byte(0x11)))
+                .part("block_number", black_box(36_000_000_u64))
+                .part("payload_id", black_box(PAYLOAD_ID))
+                .part("flashblock_index", black_box(4_u64))
+                .part("ordering_position", black_box(1_234_u64))
+                .finish()
+        })
+    });
     group.bench_function("build_envelope", |b| {
         b.iter_batched(
-            data_map,
-            |data| black_box(deferred_event(new_builder(), data).build_with_network(NETWORK)),
+            || deferred_event(new_builder()),
+            |builder| black_box(builder.build_with_network(NETWORK)),
             criterion::BatchSize::SmallInput,
         )
     });
@@ -136,7 +144,7 @@ fn emit(c: &mut Criterion) {
                 None,
                 TransactionEventProducer::BaseBuilder,
                 TransactionEventType::BuilderDeferred,
-                |builder| deferred_event(builder, data_map()),
+                deferred_event,
             )
         })
     });
@@ -146,7 +154,7 @@ fn emit(c: &mut Criterion) {
                 Some(&writer),
                 TransactionEventProducer::BaseBuilder,
                 TransactionEventType::BuilderDeferred,
-                |builder| deferred_event(builder, data_map()),
+                deferred_event,
             )
         })
     });
