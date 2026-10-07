@@ -62,6 +62,7 @@ jobs:
           git fetch --depth 1 origin "$BASE_REF"
           script=.agents/skills/pr-review/review.py
           if git cat-file -e "FETCH_HEAD:$script" 2>/dev/null; then
+            rm -rf "$RUNNER_TEMP/pipeline"
             git worktree prune
             git worktree add --force --detach "$RUNNER_TEMP/pipeline" FETCH_HEAD
             script="$RUNNER_TEMP/pipeline/$script"
@@ -139,7 +140,9 @@ jobs:
           git fetch --depth 1 origin "$BASE_REF"
           script=.agents/skills/pr-review/review.py
           if git cat-file -e "FETCH_HEAD:$script" 2>/dev/null; then
-            git worktree add --detach "$RUNNER_TEMP/pipeline" FETCH_HEAD
+            rm -rf "$RUNNER_TEMP/pipeline"
+            git worktree prune
+            git worktree add --force --detach "$RUNNER_TEMP/pipeline" FETCH_HEAD
             script="$RUNNER_TEMP/pipeline/$script"
           fi
           echo "script=$script" >> "$GITHUB_OUTPUT"

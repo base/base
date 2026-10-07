@@ -3,6 +3,7 @@
 
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -169,6 +170,18 @@ class FindingTests(unittest.TestCase):
                                               "severity": "bogus", "category": "nonsense"})
         self.assertEqual((finding.severity, finding.category), ("minor", "other"))
         self.assertEqual(finding.title, "First line.")
+
+    def test_a_finding_with_no_body_still_renders_everywhere(self) -> None:
+        for body in ("", "   ", "\n\n"):
+            with self.subTest(body=body):
+                finding = render.Finding.from_action(comment(body=body))
+                self.assertEqual(finding.markdown(), finding.header())
+                self.assertEqual(finding.details(), "")
+                text = render.render_summary(
+                    overview=None, new=[], outside=[finding], threads=[], reopened=set(), fixed=set(),
+                    fixed_open=set(), failed=[], details="d", repo="base/base", head_sha="abc",
+                    replace_existing=False)
+                self.assertIn("### Outside the diff", text)
 
     def test_long_title_is_clipped(self) -> None:
         finding = render.Finding.from_action(comment(title="x" * 200))
@@ -408,7 +421,8 @@ class ThreadTests(unittest.TestCase):
 
 class BudgetTests(unittest.TestCase):
     def agent(self, timeout: int = 1000) -> review.Agent:
-        return review.Agent("a", "review", ("always",), "m", "high", "Read", timeout, None, "p", Path("a.md"))
+        return review.Agent("a", "review", ("always",), "m", "high", "Read", timeout, None, None, "p",
+                            Path("a.md"))
 
     def test_timeout_shrinks_to_leave_time_for_later_stages(self) -> None:
         budget = review.Budget(2000)
@@ -419,17 +433,37 @@ class BudgetTests(unittest.TestCase):
         with self.assertRaises(review.ReviewError):
             review.Budget(100).timeout_for(1000, "a", reserve=90)
 
-    def test_worst_case_of_the_checked_in_agents_fits_the_ci_job(self) -> None:
+    def test_the_decider_always_gets_its_full_time_even_if_every_stage_uses_all_of_its_own(self) -> None:
         agents = {a.name: a for a in review.load_agents()}
         members = [a for a in agents.values() if a.stage == "council"]
-        worst = (agents["triage"].timeout_seconds + max(m.timeout_seconds for m in members)
-                 + review.VOTE_TIMEOUT_SECONDS + agents["council-chair"].timeout_seconds
-                 + agents["decide"].timeout_seconds)
-        job_limit = 90 * 60
-        # Leave ten minutes of the CI job to post the results and upload artifacts.
-        self.assertLessEqual(review.DEFAULT_BUDGET_SECONDS, job_limit - 600)
-        # With the budget, a worst-case run still ends with a decision; without it, it would not.
-        self.assertGreater(worst, review.MIN_STAGE_SECONDS)
+        decide, chair = agents["decide"], agents["council-chair"]
+        now = [0.0]
+        with mock.patch.object(review.time, "monotonic", lambda: now[0]):
+            budget = review.Budget(review.DEFAULT_BUDGET_SECONDS)
+
+            def spend(wanted: int, reserve: float) -> None:
+                now[0] += budget.timeout_for(wanted, "stage", reserve)
+
+            spend(agents["triage"].timeout_seconds, decide.timeout_seconds)
+            spend(max(m.timeout_seconds for m in members),
+                  decide.timeout_seconds + review.VOTE_TIMEOUT_SECONDS + chair.timeout_seconds)
+            spend(review.VOTE_TIMEOUT_SECONDS, decide.timeout_seconds + chair.timeout_seconds)
+            spend(chair.timeout_seconds, decide.timeout_seconds)
+            # Every stage ran as long as it was allowed to; the decider must still fit in full.
+            self.assertEqual(budget.timeout_for(decide.timeout_seconds, "decide"), decide.timeout_seconds)
+            now[0] += decide.timeout_seconds
+            # And the whole run ends with time to spare in the CI job.
+            self.assertLessEqual(now[0], 90 * 60 - 600)
+
+    def test_the_default_budget_leaves_the_ci_job_time_to_post(self) -> None:
+        self.assertLessEqual(review.DEFAULT_BUDGET_SECONDS, 90 * 60 - 600)
+
+    def test_a_stage_that_ate_the_reserve_is_skipped_not_run_over(self) -> None:
+        with mock.patch.object(review.time, "monotonic", lambda: 0.0):
+            budget = review.Budget(1000)
+            self.assertLessEqual(budget.timeout_for(5000, "a", reserve=900), 100)
+            with self.assertRaises(review.ReviewError):
+                budget.timeout_for(5000, "a", reserve=990)
 
     def test_gh_calls_are_bounded(self) -> None:
         with mock.patch.object(review, "run", return_value="") as run:
@@ -443,6 +477,83 @@ class BudgetTests(unittest.TestCase):
             env = review.agent_env()
         self.assertEqual((env.get("GH_TOKEN"), env.get("GITHUB_TOKEN"), env.get("ANTHROPIC_API_KEY")),
                          (None, None, "z"))
+
+
+class AgentRunTests(unittest.TestCase):
+    def agent(self, **overrides) -> review.Agent:
+        fields = dict(name="a", stage="review", when=("always",), model="m", effort="high", tools="Read",
+                      timeout_seconds=100, max_budget_usd=None, max_output_tokens=None, prompt="p",
+                      path=Path("a.md"))
+        return review.Agent(**{**fields, **overrides})
+
+    def envelope(self, **extra) -> str:
+        return json.dumps({"is_error": False, "structured_output": {"findings": []}, "total_cost_usd": 0.1,
+                           "modelUsage": {"resolved-model": {}}, **extra})
+
+    def call(self, agent: review.Agent, runs: list):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(review, "run", side_effect=runs) as run:
+            result = review.run_agent(agent, "prompt", Path(tmp), Path(tmp), None)
+        return result, run
+
+    def test_max_output_tokens_is_passed_through_settings_only_when_set(self) -> None:
+        _, run = self.call(self.agent(max_output_tokens=32000), [self.envelope()])
+        cmd = run.call_args.args[0]
+        settings = json.loads(cmd[cmd.index("--settings") + 1])
+        self.assertEqual(settings, {"env": {"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "32000"}})
+        _, run = self.call(self.agent(), [self.envelope()])
+        self.assertNotIn("--settings", run.call_args.args[0])
+
+    def test_pr_settings_are_never_loaded(self) -> None:
+        _, run = self.call(self.agent(), [self.envelope()])
+        cmd = run.call_args.args[0]
+        self.assertEqual(cmd[cmd.index("--setting-sources") + 1], "user")
+
+    def test_the_model_that_really_ran_is_recorded(self) -> None:
+        review.MODELS_RAN.clear()
+        self.call(self.agent(name="alias-agent", model="opus"), [self.envelope()])
+        self.assertEqual(review.MODELS_RAN["alias-agent"], "resolved-model")
+
+    def test_an_empty_answer_is_retried_once(self) -> None:
+        empty = json.dumps({"is_error": False, "structured_output": None, "subtype": "success", "result": ""})
+        result, run = self.call(self.agent(), [empty, self.envelope()])
+        self.assertEqual(result, {"findings": []})
+        self.assertEqual(run.call_count, review.AGENT_ATTEMPTS)
+
+    def test_a_second_failure_is_raised(self) -> None:
+        empty = json.dumps({"is_error": False, "structured_output": None})
+        with self.assertRaises(review.ReviewError):
+            self.call(self.agent(), [empty, empty])
+
+    def test_failures_that_a_retry_cannot_fix_are_not_retried(self) -> None:
+        for reason in ("`claude` timed out after 5s", "API Error: 403 Access denied to restricted model",
+                       "Invalid model name passed in model=x"):
+            with self.subTest(reason=reason), self.assertRaises(review.ReviewError):
+                self.call(self.agent(), [review.ReviewError(reason), self.envelope()])
+
+    def test_a_failed_command_keeps_its_full_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "x.failed.txt"
+            with self.assertRaises(review.ReviewError):
+                review.run([sys.executable, "-c", "import sys; print('out'); print('err', file=sys.stderr); "
+                            "sys.exit(3)"], failure_log=log)
+            text = log.read_text()
+        self.assertIn("exit 3", text)
+        self.assertIn("out", text)
+        self.assertIn("err", text)
+
+    def test_no_file_in_the_skill_shadows_a_standard_library_module(self) -> None:
+        # The script's directory comes first on sys.path, so a file named like a stdlib module would
+        # replace it for every import in a process that holds credentials.
+        names = {p.stem for p in review.SKILL_DIR.glob("*.py")} | {
+            p.name for p in review.SKILL_DIR.iterdir() if p.is_dir()}
+        self.assertEqual(sorted(names & set(sys.stdlib_module_names)), [])
+
+    def test_max_output_tokens_is_read_from_the_agent_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "x.md"
+            path.write_text("---\nstage: review\nmodel: m\nmax_output_tokens: 32000\n---\nx")
+            self.assertEqual(review.parse_agent(path).max_output_tokens, 32000)
+        self.assertTrue(any(a.max_output_tokens for a in review.load_agents()), "a Gemini member needs one")
 
 
 class FailureReasonTests(unittest.TestCase):
@@ -536,14 +647,14 @@ class ApplyPlanTests(unittest.TestCase):
         problems = self.apply(gh)
         self.assertEqual(len(problems), 1)
         self.assertEqual((self.plan.new, len(self.plan.outside)), ([], 1))
-        [summary] = [i for c, i in zip(gh.calls, gh.inputs) if c[:2] == ["pr", "comment"]]
+        [summary] = [i for c, i in zip(gh.calls, gh.inputs, strict=True) if c[:2] == ["pr", "comment"]]
         self.assertIn("### Outside the diff", summary)
         self.assertIn("Panics on empty batch", summary)
 
     def test_the_summary_lists_threads_that_the_other_job_will_change(self) -> None:
         gh = FakeGh()
         self.apply(gh)
-        [summary] = [i for c, i in zip(gh.calls, gh.inputs) if c[:2] == ["pr", "comment"]]
+        [summary] = [i for c, i in zip(gh.calls, gh.inputs, strict=True) if c[:2] == ["pr", "comment"]]
         self.assertIn("### Fixed in this push", summary)
         self.assertIn("### Reopened", summary)
 
@@ -802,7 +913,8 @@ class PipelineFailureTests(unittest.TestCase):
         self.assertIn("final step failed", outcome.decision["overview"])
 
     def test_every_reviewer_failing_is_an_error(self) -> None:
-        self.failing = {"review-general", "council-invariants", "council-adversary", "council-tests"}
+        self.failing = {"review-general", "council-invariants", "council-adversary", "council-tests",
+                        "council-design"}
         with self.assertRaises(review.ReviewError):
             self.run_pipeline()
 

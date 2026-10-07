@@ -2,7 +2,7 @@
 name: triage
 description: Decides whether a change needs a standard or a deep review, and whether it is block-production-sensitive.
 stage: triage
-model: claude-opus-5-5
+model: opus
 effort: high
 tools: Read,Grep,Glob
 timeout_seconds: 600

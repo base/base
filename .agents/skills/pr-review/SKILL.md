@@ -16,7 +16,7 @@ triage ─► review ───────────────────�
 1. **triage** (`agents/triage.md`) reads the change and decides the depth, `standard` or `deep`, and whether the change is block-production-sensitive. Depth depends on how hard the change is to get right, not how many lines it touches.
 2. **review** runs every reviewer whose `when` matches the triage result (`review-general` always, `review-block-production` for block-production-sensitive changes).
 3. **council** runs only when triage says `deep`, alongside the reviewers:
-   1. Every `council-*` member reviews the whole change through its own lens (invariants, adversarial scenarios, tests and compatibility).
+   1. Every `council-*` member reviews the whole change through its own lens (invariants, adversarial scenarios, tests and compatibility, design and conventions). The members run on models from different vendors on purpose.
    2. Each member then votes `confirm`, `reject`, or `unsure` on every finding the others reported, after checking it against the code.
    3. The `council-chair` merges the findings. Votes inform it, but it verifies a rejected finding itself rather than counting heads.
 4. **decide** (`agents/decide.md`) reads every finding and the PR's existing review threads. It drops findings that are wrong or already covered, and it goes through every open bot thread: it resolves a thread whose problem the push fixed, replies where the author answered or there is something new to say, and reopens a resolved thread whose problem is still present.
@@ -73,6 +73,7 @@ Every agent is `agents/<name>.md`: front matter, then the system prompt.
 | `tools` | Tools the agent may use. Default `Read,Grep,Glob`. Keep it read-only. |
 | `timeout_seconds` | Wall-clock limit. Default 1800. |
 | `max_budget_usd` | Optional spend cap for the agent. |
+| `max_output_tokens` | Optional. The CLI asks for 128k output tokens, which the gateway rejects for Gemini models (their limit is about 65k). Set this to 32000 for them. |
 
 The set must have exactly one `triage` and one `decide` agent and at least one `review` agent. A council needs at least two `council` members and exactly one `chair`; with no council, deep changes get only the reviewers.
 
@@ -80,16 +81,25 @@ Current agents (the front matter is the source of truth):
 
 | Agent | Stage | Runs when | Model |
 | --- | --- | --- | --- |
-| `triage` | triage | always | `claude-opus-5-5` |
-| `review-general` | review | always | `claude-opus-5-5` |
-| `review-block-production` | review | triage says block-production-sensitive | `claude-opus-5-5` |
-| `council-invariants` | council | triage says `deep` | `claude-opus-5-5` |
+| `triage` | triage | always | `opus` |
+| `review-general` | review | always | `opus` |
+| `review-block-production` | review | triage says block-production-sensitive | `opus` |
+| `council-invariants` | council | triage says `deep` | `opus` |
 | `council-adversary` | council | triage says `deep` | `gpt-6.1-sol` |
-| `council-tests` | council | triage says `deep` | `grok-4.7` |
-| `council-chair` | chair | triage says `deep` | `claude-opus-5-5` |
-| `decide` | decide | always | `claude-opus-5-5` |
+| `council-tests` | council | triage says `deep` | `grok-lts` |
+| `council-design` | council | triage says `deep` | `gemini-3.1-pro-preview` |
+| `council-chair` | chair | triage says `deep` | `opus` |
+| `decide` | decide | always | `opus` |
 
-The council members run on different models on purpose: independent models make different mistakes, so a finding that several of them confirm is worth more than one a single model repeats. Which models you can use depends on your gateway; some IDs are restricted (for example `claude-fable-5-1` returned a 403 here), and the CLI prints an `unrecognized_model` warning for non-Claude IDs that is harmless. Check a model with `just review --model <id>` before putting it in a file. The chair and decider stay on Opus because they check other models' claims against the code.
+### Choosing model IDs
+
+- **Use an alias where one exists, so the file does not go stale.** `opus`, `sonnet`, and `haiku` are resolved by the `claude` CLI to the newest model of that family (today `claude-opus-5-5`), and the summary records the model that actually ran. The alias moves when the CLI version pinned in `claude-review.yml` is bumped, so bump it deliberately and read the summary afterwards. The gateway has its own aliases ending in `-lts` (long-term support: a name that the platform team keeps pointing at a supported model) and `-latest`; `grok-lts` is the same model as `grok-4.7` today.
+- **Pin an exact ID when you want a specific model.** `gpt-lts-sol` points at `gpt-5.6-sol`, which is older than `gpt-6.1-sol`, so `council-adversary` is pinned. A pinned ID stops working when the gateway retires it, and that shows up as a failed council member.
+- **The gateway decides what exists.** List it with `curl -s "$ANTHROPIC_BASE_URL/v1/models" -H "x-api-key: $ANTHROPIC_API_KEY"`, and see what an alias maps to and its output limit at `$ANTHROPIC_BASE_URL/model/info`. Some IDs are restricted (`claude-fable-5-1` returns a 403), and the CLI prints an `unrecognized_model` warning for non-Claude IDs that is harmless. There is no Muse model on this gateway today.
+- **Check a model before you rely on it:** `just review --model <id>`. A model that cannot call tools or return the JSON schema fails its stage; one retry is attempted, and the full output of the failure is saved as `<agent>.failed.txt` in the artifacts.
+
+The council spans Anthropic, OpenAI, xAI, and Google models. The chair and decider stay on Opus because they check other models' claims against the code.
+
 - **Switch a model:** edit `model:` in the agent file. Use `--model` or `PR_REVIEW_MODEL` to try one locally without editing anything.
 - **Add a council member or reviewer:** copy a `council-*.md` or `review-*.md` file and change the name and prompt. Nothing else needs to change. Every member votes on the others' findings automatically.
 - **Remove an agent:** delete its file, keeping the rules above.

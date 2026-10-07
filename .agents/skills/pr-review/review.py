@@ -59,6 +59,9 @@ MIN_STAGE_SECONDS = 60
 # A hung gh or git call must not eat the time reserved for posting results.
 GH_TIMEOUT_SECONDS = 90
 VOTE_TIMEOUT_SECONDS = 600
+AGENT_ATTEMPTS = 2
+# Failures that a second try cannot fix.
+NO_RETRY = ("timed out", "Access denied", "Invalid model name")
 
 MAX_DIFF_CHARS = 400_000
 MAX_COMMENT_CHARS = 2_000
@@ -99,8 +102,12 @@ def describe_failure(result: subprocess.CompletedProcess) -> str:
 
 
 def run(cmd: list[str], *, input_text: str | None = None, cwd: Path | None = None,
-        timeout: int | None = None, env: dict[str, str] | None = None) -> str:
-    """Run a command and return stdout, raising ReviewError on failure."""
+        timeout: int | None = None, env: dict[str, str] | None = None,
+        failure_log: Path | None = None) -> str:
+    """Run a command and return stdout, raising ReviewError on failure.
+
+    On failure the full stdout and stderr go to `failure_log`, because the error message is cut short.
+    """
     try:
         result = subprocess.run(cmd, input=input_text, capture_output=True, text=True,
                                 cwd=cwd, timeout=timeout, env=env, check=False)
@@ -109,6 +116,9 @@ def run(cmd: list[str], *, input_text: str | None = None, cwd: Path | None = Non
     except subprocess.TimeoutExpired as exc:
         raise ReviewError(f"`{cmd[0]}` timed out after {timeout}s") from exc
     if result.returncode:
+        if failure_log:
+            failure_log.write_text(f"exit {result.returncode}\n\n--- stdout ---\n{result.stdout}\n\n"
+                                   f"--- stderr ---\n{result.stderr}\n")
         raise ReviewError(f"`{' '.join(cmd[:4])}` failed: {describe_failure(result)}")
     return result.stdout
 
@@ -128,6 +138,7 @@ class Agent:
     tools: str
     timeout_seconds: int
     max_budget_usd: float | None
+    max_output_tokens: int | None
     prompt: str
     path: Path
 
@@ -162,6 +173,7 @@ def parse_agent(path: Path) -> Agent:
             tools=fields.get("tools", "Read,Grep,Glob"),
             timeout_seconds=int(fields.get("timeout_seconds", "1800")),
             max_budget_usd=float(fields["max_budget_usd"]) if "max_budget_usd" in fields else None,
+            max_output_tokens=int(fields["max_output_tokens"]) if "max_output_tokens" in fields else None,
             prompt=match.group(2).strip(),
             path=path,
         )
@@ -204,6 +216,10 @@ def select_reviewers(agents: list[Agent], triage: dict[str, Any]) -> list[Agent]
     return [a for a in agents if a.stage == "review" and active.intersection(a.when)]
 
 
+# The model each agent really ran on, by agent name, for the summary.
+MODELS_RAN: dict[str, str] = {}
+
+
 class Budget:
     """Wall-clock allowance for a whole run, so stage timeouts cannot add up past the CI job limit."""
 
@@ -224,6 +240,23 @@ class Budget:
 def agent_env() -> dict[str, str]:
     """The environment for agents: ours, minus GitHub credentials."""
     return {k: v for k, v in os.environ.items() if k not in SECRET_ENV}
+
+
+def run_claude_once(cmd: list[str], user_prompt: str, cwd: Path, timeout: int, artifacts: Path,
+                    label: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """One `claude` invocation: the JSON envelope and its structured output, or a ReviewError."""
+    raw = run(cmd, input_text=user_prompt, cwd=cwd, timeout=timeout, env=agent_env(),
+              failure_log=artifacts / f"{label}.failed.txt")
+    (artifacts / f"{label}.result.json").write_text(raw)
+    try:
+        envelope = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ReviewError(f"{label}: claude did not return JSON") from exc
+    output = envelope.get("structured_output")
+    if envelope.get("is_error") or not isinstance(output, dict):
+        raise ReviewError(f"{label}: no structured output ({envelope.get('subtype')}): "
+                          f"{str(envelope.get('result'))[:500]}")
+    return envelope, output
 
 
 def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path, model_override: str | None,
@@ -255,19 +288,26 @@ def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path, model_
     ]
     if agent.max_budget_usd is not None:
         cmd += ["--max-budget-usd", str(agent.max_budget_usd)]
+    if agent.max_output_tokens is not None:
+        # The CLI asks for 128k output tokens, which some gateway models (Gemini) reject.
+        cmd += ["--settings", json.dumps({"env": {"CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(agent.max_output_tokens)}})]
     started = time.monotonic()
-    raw = run(cmd, input_text=user_prompt, cwd=cwd, timeout=timeout, env=agent_env())
-    (artifacts / f"{label}.result.json").write_text(raw)
-    try:
-        envelope = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ReviewError(f"{label}: claude did not return JSON") from exc
-    output = envelope.get("structured_output")
-    if envelope.get("is_error") or not isinstance(output, dict):
-        raise ReviewError(f"{label}: no structured output ({envelope.get('subtype')}): "
-                          f"{str(envelope.get('result'))[:500]}")
-    log(f"  {label}: {model}, {time.monotonic() - started:.0f}s, "
-        f"${envelope.get('total_cost_usd', 0):.2f}")
+    # Some models now and then end without the structured answer, and gateways drop requests. One more
+    # try is cheap next to losing a council member; failures that a retry cannot fix are not retried.
+    for _ in range(AGENT_ATTEMPTS - 1):
+        try:
+            envelope, output = run_claude_once(cmd, user_prompt, cwd, timeout, artifacts, label)
+            break
+        except ReviewError as exc:
+            if any(marker in str(exc) for marker in NO_RETRY):
+                raise
+            log(f"  {label}: {exc}; trying once more")
+    else:
+        envelope, output = run_claude_once(cmd, user_prompt, cwd, timeout, artifacts, label)
+    # An alias such as `opus` is resolved by the CLI; record what actually ran.
+    ran = next(iter(envelope.get("modelUsage") or {}), model)
+    MODELS_RAN[agent.name] = ran
+    log(f"  {label}: {ran}, {time.monotonic() - started:.0f}s, ${envelope.get('total_cost_usd', 0):.2f}")
     return output
 
 
@@ -834,7 +874,7 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
     chair = next((a for a in agents if a.stage == "chair"), None)
 
     def row(agent: Agent) -> tuple[str, str, str]:
-        return agent.stage, agent.name, model_override or agent.model
+        return agent.stage, agent.name, MODELS_RAN.get(agent.name) or model_override or agent.model
 
     log("Triage")
     try:
@@ -848,14 +888,15 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
 
     reviewers = select_reviewers(agents, triage)
     use_council = triage["depth"] == "deep" and chair is not None
+    council_chair = chair if use_council else None
     log(f"Review: {', '.join(a.name for a in reviewers)}" + (" + council" if use_council else ""))
     prompt = review_prompt(ctx, triage)
     reserve = decide_agent.timeout_seconds
     jobs: dict[str, Callable[[], Any]] = {
         a.name: functools.partial(run_agent, a, prompt, cwd, artifacts, model_override, budget=budget,
                                   reserve=reserve) for a in reviewers}
-    if use_council:
-        jobs["council"] = functools.partial(run_council, ctx, triage, members, chair, cwd, artifacts,
+    if council_chair:
+        jobs["council"] = functools.partial(run_council, ctx, triage, members, council_chair, cwd, artifacts,
                                             model_override, budget, reserve)
     results, failed = run_parallel(jobs)
     rows += [row(a) for a in reviewers]
@@ -865,7 +906,7 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
         if name == "council":
             reviews[name], council_failed, chair_ran = result
             failed.update({f"council/{n}": why for n, why in council_failed.items()})
-            rows += [row(m) for m in members] + ([row(chair)] if chair_ran else [])
+            rows += [row(m) for m in members] + ([row(council_chair)] if council_chair and chair_ran else [])
         else:
             reviews[name] = result
     if not reviews:
