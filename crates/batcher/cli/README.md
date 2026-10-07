@@ -20,8 +20,7 @@ read with `eth_getBlockByNumber`. A single endpoint is the leader. Among several
 the leader is the first whose `admin_sequencerActive` answers `true`, and one that
 answers anything else or does not answer is not active. The batcher waits for a
 leader at startup, up to `--wait-node-sync-timeout`, then looks for it again every
-`--poll-interval`, and keeps reading from the last one while none is. Every call
-to a sequencer times out, so one that stops answering never blocks the batcher.
+`--poll-interval`, and keeps reading from the last one while none is.
 
 A canonical batcher also reads the rollup config of the leader
 (`optimism_rollupConfig`) and follows its derivation (`optimism_syncStatus`).
@@ -46,7 +45,10 @@ selects Brotli quality `0..=11` (default 9). `--data-availability-type`
 selects blobs or calldata; `--max-channel-duration` and `--sub-safety-margin`
 control channel lifetime. For calldata configurations,
 `--no-force-blobs-when-throttling` disables the throttle-driven blob override.
-The corresponding environment variables use the `BASE_BATCHER_` prefix.
+`--network-timeout` bounds the RPC calls to L1, the sequencers, the parity
+validator and the block builders, so an endpoint that stops answering never
+blocks the batcher. The corresponding environment variables use the
+`BASE_BATCHER_` prefix.
 
 ## Shadow mode
 

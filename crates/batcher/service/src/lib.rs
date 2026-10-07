@@ -37,6 +37,9 @@ pub use throttle::ThrottlePusher;
 mod derivation_status_poller;
 pub use derivation_status_poller::{DerivationStatusPoller, DerivationStatusProvider};
 
+mod rpc_clients;
+pub use rpc_clients::RpcClients;
+
 mod sequencers;
 pub use sequencers::{Sequencer, Sequencers};
 

@@ -16,7 +16,7 @@ use url::Url;
 /// the parity validator of [`shadow`](Self::shadow).
 #[derive(Debug, Clone)]
 pub struct BatcherConfig {
-    /// L1 RPC endpoint.
+    /// L1 HTTP RPC endpoint.
     pub l1_rpc_url: Url,
     /// Sequencer HTTP endpoints, at least one: conductors with their RPC proxy enabled, or
     /// consensus nodes that forward the methods they do not serve to their execution client.
@@ -28,10 +28,10 @@ pub struct BatcherConfig {
     pub sequencer_urls: Vec<Url>,
     /// Optional L1 WebSocket endpoint for new-block subscriptions.
     ///
-    /// When set, the batcher subscribes to new L1 block headers over this
-    /// connection to advance the pipeline's L1 head, falling back to polling
-    /// [`l1_rpc_url`](Self::l1_rpc_url) only on failure. When absent, polling
-    /// is used exclusively.
+    /// When set, the batcher also takes new L1 heads from a subscription over this connection,
+    /// alongside polling [`l1_rpc_url`](Self::l1_rpc_url). A connection or subscription that
+    /// fails or outlasts [`network_timeout`](Self::network_timeout) leaves polling alone. When
+    /// absent, polling is used exclusively.
     pub l1_ws_url: Option<Url>,
     /// Signer configuration for signing L1 transactions.
     ///
@@ -46,11 +46,15 @@ pub struct BatcherConfig {
     pub shadow: Option<ShadowConfig>,
     /// Polling interval.
     pub poll_interval: Duration,
+    /// Timeout of the RPC calls to L1, the sequencers, the parity validator and the block
+    /// builders.
+    pub network_timeout: Duration,
     /// Encoder configuration.
     pub encoder_config: EncoderConfig,
     /// Maximum number of in-flight (unconfirmed) transactions.
     pub max_pending_transactions: usize,
-    /// Transaction manager configuration.
+    /// Transaction manager configuration. Its `network_timeout` is replaced by
+    /// [`network_timeout`](Self::network_timeout).
     pub tx_manager: TxManagerConfig,
     /// DA throttle configuration, `None` to disable the throttle.
     ///
@@ -105,6 +109,7 @@ impl Default for BatcherConfig {
             metrics_enabled: false,
             shadow: None,
             poll_interval: Duration::from_secs(1),
+            network_timeout: Duration::from_secs(10),
             encoder_config: EncoderConfig::default(),
             max_pending_transactions: 1,
             tx_manager: TxManagerConfig { num_confirmations: 1, ..TxManagerConfig::default() },
@@ -128,8 +133,8 @@ pub struct ShadowConfig {
     /// Rollup node RPC endpoint of the parity validator, whose rollup config the batcher reads
     /// and whose derivation it follows.
     pub validator_rollup_rpc: Url,
-    /// L2 RPC endpoint of the parity validator, whose derived block hashes are compared with
-    /// the leader sequencer's.
+    /// L2 HTTP RPC endpoint of the parity validator, whose derived block hashes are compared
+    /// with the leader sequencer's.
     pub validator_l2_rpc: Url,
 }
 

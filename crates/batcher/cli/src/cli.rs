@@ -19,7 +19,7 @@ base_tx_manager::define_signer_cli!("BASE_BATCHER");
 /// CLI arguments for the batcher.
 #[derive(Parser, Clone, Debug)]
 pub struct BatcherArgs {
-    /// L1 RPC endpoint.
+    /// L1 HTTP RPC endpoint.
     #[arg(long = "l1-rpc-url", visible_aliases = ["l1", "l1-eth-rpc"], env = "BASE_NODE_L1_ETH_RPC")]
     pub l1_rpc_url: Url,
 
@@ -66,7 +66,7 @@ pub struct BatcherArgs {
     #[arg(long = "shadow.validator-rollup-rpc", env = "BASE_BATCHER_SHADOW_VALIDATOR_ROLLUP_RPC")]
     pub shadow_validator_rollup_rpc: Option<Url>,
 
-    /// Parity validator L2 RPC endpoint, whose derived block hashes are compared
+    /// Parity validator L2 HTTP RPC endpoint, whose derived block hashes are compared
     /// with the leader sequencer's.
     ///
     /// Required with `--shadow.enabled`.
@@ -76,6 +76,11 @@ pub struct BatcherArgs {
     /// Polling interval in seconds.
     #[arg(long = "poll-interval", default_value = "1", env = "BASE_BATCHER_POLL_INTERVAL")]
     pub poll_interval_secs: u64,
+
+    /// Timeout in seconds of the RPC calls to L1, the sequencers, the parity validator and the
+    /// block builders.
+    #[arg(long = "network-timeout", default_value = "10", env = "BASE_BATCHER_NETWORK_TIMEOUT")]
+    pub network_timeout_secs: u64,
 
     /// Maximum L1 blocks a channel may stay open.
     #[arg(
@@ -315,6 +320,7 @@ impl BatcherArgs {
             metrics_enabled,
             shadow,
             poll_interval: Duration::from_secs(self.poll_interval_secs),
+            network_timeout: Duration::from_secs(self.network_timeout_secs),
             encoder_config,
             max_pending_transactions: self.max_pending_transactions,
             tx_manager,
@@ -474,6 +480,7 @@ mod tests {
 
         assert!(!config.stopped);
         assert!(!config.wait_node_sync);
+        assert_eq!(config.network_timeout, Duration::from_secs(10));
 
         assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Blob);
         assert_eq!(
@@ -535,6 +542,8 @@ mod tests {
             "30",
             "--poll-interval",
             "2",
+            "--network-timeout",
+            "3",
             "--throttle-threshold",
             "500000",
             "--check-recent-txs-depth",
@@ -564,6 +573,7 @@ mod tests {
         assert_eq!(config.tx_manager.num_confirmations, 3);
         assert_eq!(config.tx_manager.resubmission_timeout, Duration::from_secs(30));
         assert_eq!(config.poll_interval, Duration::from_secs(2));
+        assert_eq!(config.network_timeout, Duration::from_secs(3));
         assert_eq!(config.throttle.expect("the throttle is on").threshold_bytes, 500_000);
         assert_eq!(config.check_recent_txs_depth, 16);
         assert_eq!(config.wait_node_sync_timeout, Duration::from_secs(60));
