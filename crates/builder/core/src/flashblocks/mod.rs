@@ -9,6 +9,11 @@ pub use base_execution_payload_builder::{
 };
 pub use best_txs::BestFlashblocksTxs;
 
+#[cfg(any(test, feature = "test-utils"))]
+mod block_driver;
+#[cfg(any(test, feature = "test-utils"))]
+pub use block_driver::{FlashblockBlockDriver, FlashblockBlockOutcome};
+
 mod deadline;
 pub use deadline::PayloadJobDeadline;
 

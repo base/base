@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "measured_on": {
+    "target": "x86_64-unknown-linux-gnu",
+    "runner": "depot-ubuntu-24.04-8",
+    "toolchain": "1.96.0",
+    "valgrind": "apt (ubuntu 24.04)",
+    "iai_callgrind": "0.16.1",
+    "commit": null
+  },
+  "headroom_pct": 5,
+  "marginal_headroom_pct": 10,
+  "scenarios": {
+    "transfers": {
+      "events": {
+        "BUILDER_ACCEPTED": 1000,
+        "BUILDER_INCLUDED": 1000,
+        "BUILDER_PAYLOAD_FINALIZED": 1
+      },
+      "baseline_instructions": null,
+      "max_instructions": null
+    },
+    "resting_backlog": {
+      "marginal_reference": "transfers",
+      "deferrals_per_block": 45000,
+      "events": {
+        "BUILDER_ACCEPTED": 1000,
+        "BUILDER_INCLUDED": 1000,
+        "BUILDER_PAYLOAD_FINALIZED": 1,
+        "BUILDER_DEFERRED": 4500
+      },
+      "baseline_instructions": null,
+      "max_instructions": null
+    },
+    "resting_backlog_multi_predicate": {
+      "marginal_reference": "transfers",
+      "deferrals_per_block": 45000,
+      "events": {
+        "BUILDER_ACCEPTED": 1000,
+        "BUILDER_INCLUDED": 1000,
+        "BUILDER_PAYLOAD_FINALIZED": 1,
+        "BUILDER_DEFERRED": 4500
+      },
+      "baseline_instructions": null,
+      "max_instructions": null
+    },
+    "resting_backlog_shared_state": {
+      "marginal_reference": "transfers",
+      "deferrals_per_block": 45000,
+      "events": {
+        "BUILDER_ACCEPTED": 1000,
+        "BUILDER_INCLUDED": 1000,
+        "BUILDER_PAYLOAD_FINALIZED": 1,
+        "BUILDER_DEFERRED": 4500
+      },
+      "baseline_instructions": null,
+      "max_instructions": null
+    },
+    "wake_rescan": {
+      "marginal_reference": "transfers",
+      "deferrals_per_block": 10000,
+      "events": {
+        "BUILDER_ACCEPTED": 1000,
+        "BUILDER_INCLUDED": 1000,
+        "BUILDER_PAYLOAD_FINALIZED": 1,
+        "BUILDER_DEFERRED": 1000
+      },
+      "baseline_instructions": null,
+      "max_instructions": null
+    },
+    "backlog_growth": {
+      "marginal_reference": "transfers",
+      "deferrals_per_block": 31500,
+      "events": {
+        "BUILDER_ACCEPTED": 1000,
+        "BUILDER_INCLUDED": 1000,
+        "BUILDER_PAYLOAD_FINALIZED": 1,
+        "BUILDER_DEFERRED": 4500
+      },
+      "baseline_instructions": null,
+      "max_instructions": null
+    },
+    "congested": {
+      "events": {
+        "BUILDER_ACCEPTED": 1000,
+        "BUILDER_INCLUDED": 1000,
+        "BUILDER_PAYLOAD_FINALIZED": 1,
+        "BUILDER_REJECTED": 11000
+      },
+      "baseline_instructions": null,
+      "max_instructions": null
+    },
+    "satisfied_validity": {
+      "events": {
+        "BUILDER_ACCEPTED": 1500,
+        "BUILDER_INCLUDED": 1500,
+        "BUILDER_PAYLOAD_FINALIZED": 1
+      },
+      "baseline_instructions": null,
+      "max_instructions": null
+    }
+  }
+}

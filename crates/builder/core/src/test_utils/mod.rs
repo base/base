@@ -4,6 +4,7 @@ mod apis;
 mod contracts;
 mod driver;
 mod external;
+mod flashblock_workload;
 mod instance;
 mod txs;
 mod utils;
@@ -17,6 +18,9 @@ use base_execution_chainspec::BaseChainSpec;
 pub use contracts::*;
 pub use driver::*;
 pub use external::*;
+pub use flashblock_workload::{
+    FlashblockWorkload, FlashblockWorkloadBuilder, FlashblockWorkloadFixture, PredicateState,
+};
 pub use instance::*;
 use k256::sha2::{Digest, Sha256};
 use reth_node_builder::NodeConfig;

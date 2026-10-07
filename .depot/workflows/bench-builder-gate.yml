@@ -1,0 +1,144 @@
+name: Builder performance gate
+
+# Fail-closed performance gate for the flashblock build path. Builds one block of ten
+# flashblocks per scenario through the production build loop with transaction events on,
+# then fails when a scenario exceeds the event-volume or instruction-count budget pinned in
+# etc/benchmarks/builder-gate-budgets.json. Instruction counts come from Valgrind's
+# Callgrind, so they are deterministic on shared runners. See docs/builder-performance-gate.md.
+#
+# The job always runs and always reports, so it can be a required check. PRs that cannot
+# affect base-builder-core (by dependency graph or gate inputs) skip the measurement steps
+# and pass.
+on:
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+    inputs:
+      pin:
+        description: Re-pin budgets from this run instead of checking them
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: "sccache"
+
+permissions:
+  contents: read
+
+jobs:
+  builder-gate:
+    name: Builder performance gate
+    runs-on: depot-ubuntu-24.04-8
+    timeout-minutes: 60
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # PRs are checked out at their test merge commit; the affected-crate
+          # calculation compares it to its first parent.
+          fetch-depth: 2
+
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            gate-inputs:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.cargo/**'
+              - 'rust-toolchain.toml'
+              - 'etc/benchmarks/builder-gate-budgets.json'
+              - 'etc/scripts/ci/builder_gate_check.py'
+              - 'etc/scripts/ci/iai_compare.py'
+              - '.depot/actions/setup/**'
+              - '.depot/workflows/bench-builder-gate.yml'
+
+      # Run on every merge-queue and manual run, and on PRs that change a gate input or
+      # any crate base-builder-core depends on.
+      - name: Decide whether the build path can be affected
+        id: affected
+        shell: bash
+        env:
+          GATE_INPUTS: ${{ steps.filter.outputs.gate-inputs }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" != pull_request ] || [ "$GATE_INPUTS" = true ] || \
+             python3 etc/scripts/local/affected-crates.py HEAD^1 | grep -Fxq base-builder-core; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Builder performance gate skipped: base-builder-core is unaffected." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: ./.depot/actions/setup
+        if: steps.affected.outputs.run == 'true'
+        with:
+          native-deps: "true"
+          just: "false"
+
+      - name: Install Valgrind
+        if: steps.affected.outputs.run == 'true'
+        shell: bash
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends valgrind
+          valgrind --version | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # The runner binary version must match the iai-callgrind library version.
+      - uses: taiki-e/install-action@3575e532701a5fc614b0c842e4119af4cc5fd16d # v2.62.60
+        if: steps.affected.outputs.run == 'true'
+        with:
+          tool: iai-callgrind-runner@0.16.1
+
+      # Cheap and exact: fails when a scenario emits more transaction events of a type
+      # than budgeted. Uses the bench profile so it shares artifacts with the bench below.
+      - name: Event-volume budgets
+        if: steps.affected.outputs.run == 'true'
+        shell: bash
+        run: cargo test --profile bench -p base-builder-core --test flashblock_build_gate
+
+      - name: Instruction counts
+        if: steps.affected.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo bench -p base-builder-core --bench flashblock_build_iai 2>&1 | tee "$RUNNER_TEMP/iai.txt"
+
+      - name: Instruction budgets
+        if: steps.affected.outputs.run == 'true' && !inputs.pin
+        shell: bash
+        run: |
+          python3 etc/scripts/ci/builder_gate_check.py \
+            --results "$RUNNER_TEMP/iai.txt" \
+            --budgets etc/benchmarks/builder-gate-budgets.json \
+            --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Re-pin budgets
+        if: steps.affected.outputs.run == 'true' && inputs.pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 etc/scripts/ci/builder_gate_check.py \
+            --results "$RUNNER_TEMP/iai.txt" \
+            --budgets etc/benchmarks/builder-gate-budgets.json \
+            --pin "$RUNNER_TEMP/builder-gate-budgets.json"
+          {
+            echo '### Re-pinned builder gate budgets'
+            echo
+            echo '```json'
+            cat "$RUNNER_TEMP/builder-gate-budgets.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
