@@ -9,7 +9,8 @@ The checked-in scenarios are:
 - `smoke`: chain identity, block production, and validator convergence.
 - `health`: sustained sampled health across all four L2 node roles.
 - `derivation`: unsafe production, safe-head derivation, and head freshness.
-- `denim-transition`: progress and convergence immediately before and after Denim.
+- `denim-transition`: progress and convergence around Denim, including the shadow validator's
+  safe chain derived from the base batcher's batches.
 
 ## Requirements
 
