@@ -17,7 +17,7 @@ use tracing_appender::non_blocking::{ErrorCounter, NonBlocking, NonBlockingBuild
 
 use crate::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, Metrics, TransactionEvent,
-    TransactionEventProducer, TransactionEventValidationError,
+    TransactionEventValidationError,
 };
 
 /// Configuration for the dedicated transaction event JSONL writer.
@@ -35,19 +35,13 @@ pub struct TransactionEventWriterConfig {
     pub max_files: usize,
     /// If true, initialization errors are returned to the caller.
     pub required: bool,
-    /// Producer identity expected for events written through this handle.
-    pub producer: TransactionEventProducer,
     /// Network label expected for events written through this handle.
     pub network: String,
 }
 
 impl TransactionEventWriterConfig {
     /// Creates a disabled config with conservative defaults.
-    pub fn disabled(
-        producer: TransactionEventProducer,
-        network: impl Into<String>,
-        file_path: impl Into<PathBuf>,
-    ) -> Self {
+    pub fn disabled(network: impl Into<String>, file_path: impl Into<PathBuf>) -> Self {
         Self {
             enabled: false,
             file_path: file_path.into(),
@@ -55,7 +49,6 @@ impl TransactionEventWriterConfig {
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             max_files: DEFAULT_MAX_FILES,
             required: false,
-            producer,
             network: network.into(),
         }
     }
@@ -498,7 +491,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        EventIdBuilder, SCHEMA_VERSION, TransactionEventType, TransactionEventValidationError,
+        EventIdBuilder, SCHEMA_VERSION, TransactionEventProducer, TransactionEventType,
+        TransactionEventValidationError,
     };
 
     fn sample_event() -> TransactionEvent {
@@ -533,7 +527,6 @@ mod tests {
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             max_files: DEFAULT_MAX_FILES,
             required: true,
-            producer: TransactionEventProducer::BaseRethNode,
             network: "base-mainnet".to_string(),
         };
         let (writer, guard) = NonBlockingBuilder::default()
@@ -758,7 +751,6 @@ mod tests {
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             max_files: DEFAULT_MAX_FILES,
             required: true,
-            producer: TransactionEventProducer::BaseRethNode,
             network: "base-mainnet".to_string(),
         })
         .unwrap();
@@ -784,7 +776,6 @@ mod tests {
             max_file_bytes: 4,
             max_files: 3,
             required: true,
-            producer: TransactionEventProducer::BaseRethNode,
             network: "base-mainnet".to_string(),
         };
         let mut writer = SizeRollingFile::new(&config).unwrap();
@@ -849,7 +840,6 @@ mod tests {
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             max_files: DEFAULT_MAX_FILES,
             required: true,
-            producer: TransactionEventProducer::BaseRethNode,
             network: "base-mainnet".to_string(),
         })
         .unwrap();
@@ -872,7 +862,6 @@ mod tests {
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             max_files: DEFAULT_MAX_FILES,
             required: true,
-            producer: TransactionEventProducer::BaseRethNode,
             network: "base-mainnet".to_string(),
         })
         .unwrap_err();

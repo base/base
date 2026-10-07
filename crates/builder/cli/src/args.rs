@@ -11,8 +11,7 @@ use base_builder_metering::MeteringStore;
 use base_execution_cli::ShadowIndexerArgs;
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_observability_events::{
-    DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
-    TransactionEventWriterConfig,
+    DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventWriterConfig,
 };
 use tracing::warn;
 
@@ -127,7 +126,6 @@ impl TransactionEventsArgs {
             max_file_bytes: self.max_file_bytes,
             max_files: self.max_files,
             required: self.required,
-            producer: TransactionEventProducer::BaseBuilder,
             network: self.network.clone(),
         }
     }

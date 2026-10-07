@@ -36,10 +36,13 @@ producer-specific prefix:
 | `max_file_bytes` | integer | Maximum size of the active JSONL segment before it is renamed and a new segment is opened. |
 | `max_files` | integer | Maximum number of JSONL segments retained, including the active segment. |
 | `required` | boolean | If true, fail service initialization when the file writer cannot open. Runtime write failures remain observable and non-fatal. |
-| `producer` | string | One of the producer identities below. |
 | `network` | string | Network label, for example `base-mainnet` or `base-sepolia`. |
 
-For Go/proxyd, mirror the same names in TOML:
+Rust producers do not configure a producer identity on the writer: each event
+carries the `producer` chosen by the code that emits it, so one process's file
+can contain events from more than one producer.
+
+For Go/proxyd, mirror the same names in TOML, plus its `producer` identity:
 
 ```toml
 [transaction_events]

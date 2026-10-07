@@ -18,7 +18,7 @@ use base_node_core::{HasRollupArgs, RollupArgs};
 use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode, PayloadServiceBuilder};
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY,
-    GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
+    GlobalTransactionEventWriter, TransactionEventWriterConfig,
 };
 use base_proofs_extension::ProofsHistoryExtension;
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension, ShadowRetentionConfig};
@@ -901,7 +901,6 @@ fn transaction_event_writer_config(
         max_file_bytes: env.max_file_bytes,
         max_files: env.max_files,
         required: false,
-        producer: TransactionEventProducer::BaseRethNode,
         network: env.network.clone(),
     }))
 }
@@ -1598,7 +1597,6 @@ mod tests {
         };
         let config = transaction_event_writer_config(&args, &env).unwrap().unwrap();
         assert_eq!(config.file_path, PathBuf::from("/tmp/events.jsonl"));
-        assert_eq!(config.producer, TransactionEventProducer::BaseRethNode);
     }
 
     #[test]
