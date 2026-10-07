@@ -123,7 +123,7 @@ jobs:
             Do not edit or delete existing top-level comments. A dedicated workflow step removes older marked summaries after you finish.
 
           claude_args: |
-            --model claude-opus-4-6-default
+            --model claude-opus-5-5
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(git ls-files docs),Bash(git show HEAD:docs/:*),Bash(cat /home/runner/.claude/projects/:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --body:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments:*)"
 
       - name: Remove superseded review summaries
