@@ -2,10 +2,12 @@
 //!
 //! The instruction-count benchmark (`benches/flashblock_build_iai.rs`) and the event-volume
 //! test (`tests/flashblock_build_events.rs`) both run blocks through this driver so they measure the
-//! same code that `BasePayloadBuilder::build_next_flashblock` runs on the builder thread:
+//! same code the payload builder runs on the builder thread: the fallback block at flashblock
+//! index 0 (pre-execution steps and a `build_block` without pool transactions or a state root),
+//! then, as `BasePayloadBuilder::build_next_flashblock` does at indices 1 through N,
 //! [`BasePayloadBuilderCtx::execute_best_transactions`] over a [`BestFlashblocksTxs`] that is
-//! refreshed from the pool before every flashblock, per-flashblock `build_block` without a state
-//! root, and a finalizing `build_block` with the state root plus the final inclusion events.
+//! refreshed from the pool before every flashblock and a `build_block` without a state root,
+//! and finally a finalizing `build_block` with the state root plus the final inclusion events.
 //!
 //! The driver deliberately omits the async payload-job plumbing around that loop: websocket
 //! publication, pool maintenance (`update_accounts`, `prune_transactions`, invalidation and
@@ -57,7 +59,8 @@ pub struct FlashblockBlockDriver {
 impl FlashblockBlockDriver {
     /// Builds every flashblock of one block and finalizes it with a state root.
     ///
-    /// `next_iterator` is called before each flashblock with its index and returns a fresh
+    /// `next_iterator` is called before each pool flashblock with its zero-based position (the
+    /// flashblock index minus one) and returns a fresh
     /// best-transactions iterator over the pool, exactly as the payload builder refreshes
     /// [`BestFlashblocksTxs`] from the pool before every flashblock. Use it to add arrivals to the
     /// pool between flashblocks. `on_committed` receives the hashes each flashblock included.
@@ -79,25 +82,29 @@ impl FlashblockBlockDriver {
         ctx.extra.target_flashblock_count = self.flashblocks;
         ctx.extra.gas_per_batch = self.gas_per_flashblock;
 
+        // The fallback block: production publishes it at index 0 before any pool transactions,
+        // and computes its state root only when it skips flashblock building.
+        ctx.extra.flashblock_index = 0;
         let mut info = execute_pre_steps(state, ctx)?;
+        build_block(state, ctx, &mut info, FlashblockId::default(), false)?;
+
         let mut deferrals = BlockDeferrals::default();
         let mut outcome = FlashblockBlockOutcome::default();
         let mut best = BestFlashblocksTxs::new(next_iterator(0), rejection_cache)
             .with_resting_predicate_mode(self.resting_predicate_mode);
 
-        for flashblock_index in 0..self.flashblocks {
-            let target_gas = (flashblock_index + 1) * self.gas_per_flashblock;
+        for flashblock_index in 1..=self.flashblocks {
+            let target_gas = flashblock_index * self.gas_per_flashblock;
             ctx.extra.flashblock_index = flashblock_index;
             ctx.extra.target_gas_for_batch = target_gas;
 
-            if flashblock_index > 0 {
-                best.refresh_iterator(next_iterator(flashblock_index));
+            if flashblock_index > 1 {
+                best.refresh_iterator(next_iterator(flashblock_index - 1));
             }
 
             // The same limits `build_next_flashblock` sets, with the DA targets split evenly across
             // flashblocks. The per-transaction execution-time limit is wall-clock based, so it stays
             // off to keep instruction counts deterministic.
-            let flashblocks_built = flashblock_index + 1;
             let limits = ResourceLimits {
                 block_gas_limit: target_gas.min(ctx.block_gas_limit()),
                 tx_data_limit: ctx.builder_config.da_config.max_da_tx_size(),
@@ -105,11 +112,11 @@ impl FlashblockBlockDriver {
                     .builder_config
                     .da_config
                     .max_da_block_size()
-                    .map(|da_limit| da_limit / self.flashblocks * flashblocks_built),
+                    .map(|da_limit| da_limit / self.flashblocks * flashblock_index),
                 da_footprint_gas_scalar: info.da_footprint_scalar,
                 block_da_footprint_limit: info
                     .da_footprint_scalar
-                    .map(|_| ctx.block_gas_limit() / self.flashblocks * flashblocks_built),
+                    .map(|_| ctx.block_gas_limit() / self.flashblocks * flashblock_index),
                 tx_execution_time_limit_us: None,
                 block_uncompressed_size_limit: ctx.builder_config.max_uncompressed_block_size,
             };
