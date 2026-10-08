@@ -69,7 +69,7 @@ setup:
 ci: fix check::all test lychee zepter check::no-std check::no-std-proof
 
 # Runs ci checks with tests scoped to crates affected by changes
-pr: fix check::format check::udeps check::clippy check::deny check::docs-index lychee zepter check::no-std check::no-std-proof test-affected
+pr: fix check::format check::udeps check::clippy check::deny check::docs-index check::review-tests lychee zepter check::no-std check::no-std-proof test-affected
 
 # Reviews your branch with the same multi-model pipeline CI uses; prints findings, posts nothing
 review *args:

@@ -16,10 +16,10 @@ triage ─► review ───────────────────�
 1. **triage** (`agents/triage.md`) reads the change and decides the depth, `standard` or `deep`, and whether the change is block-production-sensitive. Depth depends on how hard the change is to get right, not how many lines it touches.
 2. **review** runs every reviewer whose `when` matches the triage result (`review-general` always, `review-block-production` for block-production-sensitive changes).
 3. **council** runs only when triage says `deep`, alongside the reviewers:
-   1. Every `council-*` member reviews the whole change through its own lens (invariants, adversarial scenarios, tests and compatibility, design and conventions). The members run on models from different vendors on purpose.
+   1. Every `council-*` member reviews the whole change through its own lens (invariants, adversarial scenarios, design and conventions). The members run on models from different vendors on purpose.
    2. Each member then votes `confirm`, `reject`, or `unsure` on every finding the others reported, after checking it against the code.
    3. The `council-chair` merges the findings. Votes inform it, but it verifies a rejected finding itself rather than counting heads.
-4. **decide** (`agents/decide.md`) reads every finding and the PR's existing review threads. It drops findings that are wrong or already covered, and it goes through every open bot thread: it resolves a thread whose problem the push fixed, replies where the author answered or there is something new to say, and reopens a resolved thread whose problem is still present.
+4. **decide** (`agents/decide.md`) reads every finding and the PR's existing review threads. It drops findings that are wrong or already covered, and it goes through every open bot thread: it marks a thread whose problem the push fixed as resolved, replies where the author answered or there is something new to say, and reopens a thread it marked resolved when the problem is back.
 
 `review.py` validates the decider's actions against the diff and the thread list, then `render.py` formats and posts them. Agents never write to GitHub; they have only `Read`, `Grep`, and `Glob`.
 
@@ -41,7 +41,7 @@ Every finding has a severity and a category. The script writes the header from t
 
 Categories are `block-production`, `correctness`, `concurrency`, `error-handling`, `safety`, `performance`, `compatibility`, `design`, and `tests`; `shared/finding-guide.md` defines each one and the writing style (a title under 80 characters, one to three plain sentences, a concrete fix, long traces in a collapsed `Evidence` block). That guide is appended to the prompt of every agent that reports or posts findings.
 
-Comments are updated across pushes. A thread whose problem was fixed is resolved with a one-line "Fixed" reply, a resolved thread whose problem is still there is reopened, and a new finding never duplicates an open thread. The summary lists what was fixed in this push and what is still open, linking each thread.
+Comments are updated across pushes. GitHub does not let the Actions token resolve a review thread, so when a push fixes a problem the bot edits its own comment: the first line becomes "✅ Resolved by the bot" with one sentence on how it was fixed, and the original text stays underneath in a collapsed block. The thread itself stays open on GitHub for a person to close. If the problem comes back, the bot puts the original comment back and replies. A new finding never duplicates an open thread. The summary lists what was fixed in this push and what is still open, linking each thread.
 
 The summary comment is rendered from the same structured data, so its layout does not depend on what the model writes: a headline count, a table of new findings with links to the lines, the threads still open or reopened, anything outside the diff, and a collapsed "How this was reviewed" section listing the models that ran and what the decider dropped. If there is nothing to report, no summary is posted.
 
@@ -86,19 +86,20 @@ Current agents (the front matter is the source of truth):
 | `review-block-production` | review | triage says block-production-sensitive | `opus` |
 | `council-invariants` | council | triage says `deep` | `opus` |
 | `council-adversary` | council | triage says `deep` | `gpt-6.1-sol` |
-| `council-tests` | council | triage says `deep` | `grok-lts` |
 | `council-design` | council | triage says `deep` | `gemini-3.1-pro-preview` |
 | `council-chair` | chair | triage says `deep` | `opus` |
 | `decide` | decide | always | `opus` |
 
 ### Choosing model IDs
 
-- **Use an alias where one exists, so the file does not go stale.** `opus`, `sonnet`, and `haiku` are resolved by the `claude` CLI to the newest model of that family (today `claude-opus-5-5`), and the summary records the model that actually ran. The alias moves when the CLI version pinned in `claude-review.yml` is bumped, so bump it deliberately and read the summary afterwards. The gateway has its own aliases ending in `-lts` (long-term support: a name that the platform team keeps pointing at a supported model) and `-latest`; `grok-lts` is the same model as `grok-4.7` today.
+- **Use an alias where one exists, so the file does not go stale.** `opus`, `sonnet`, and `haiku` are resolved by the `claude` CLI to the newest model of that family (today `claude-opus-5-5`), and the summary records the model that actually ran. The alias moves when the CLI version pinned in `claude-review.yml` is bumped, so bump it deliberately and read the summary afterwards. The gateway has its own aliases ending in `-lts` (long-term support: a name that the platform team keeps pointing at a supported model) and `-latest`; `grok-lts` is the same model as `grok-4.7` today, but the CI key is not allowed to use it (see below).
 - **Pin an exact ID when you want a specific model.** `gpt-lts-sol` points at `gpt-5.6-sol`, which is older than `gpt-6.1-sol`, so `council-adversary` is pinned. A pinned ID stops working when the gateway retires it, and that shows up as a failed council member.
 - **The gateway decides what exists.** List it with `curl -s "$ANTHROPIC_BASE_URL/v1/models" -H "x-api-key: $ANTHROPIC_API_KEY"`, and see what an alias maps to and its output limit at `$ANTHROPIC_BASE_URL/model/info`. Some IDs are restricted (`claude-fable-5-1` returns a 403), and the CLI prints an `unrecognized_model` warning for non-Claude IDs that is harmless. There is no Muse model on this gateway today.
 - **Check a model before you rely on it:** `just review --model <id>`. A model that cannot call tools or return the JSON schema fails its stage; one retry is attempted, and the full output of the failure is saved as `<agent>.failed.txt` in the artifacts.
 
-The council spans Anthropic, OpenAI, xAI, and Google models. The chair and decider stay on Opus because they check other models' claims against the code.
+The council spans Anthropic, OpenAI, and Google models. The chair and decider stay on Opus because they check other models' claims against the code.
+
+A Grok member was dropped: the gateway answers `403 Access denied to restricted model 'grok-4.7'` for the key used in CI, although it works with a developer key. To add one back, ask the platform team to allow that key to use the model, then add an agent file with `model: grok-lts`; a member that fails shows up as an "Incomplete review" banner, not a failed job.
 
 - **Switch a model:** edit `model:` in the agent file. Use `--model` or `PR_REVIEW_MODEL` to try one locally without editing anything.
 - **Add a council member or reviewer:** copy a `council-*.md` or `review-*.md` file and change the name and prompt. Nothing else needs to change. Every member votes on the others' findings automatically.
@@ -113,23 +114,20 @@ The whole run has a wall-clock budget (`--budget-seconds`, default 4800, inside 
 
 ## In CI
 
-`.github/workflows/claude-review.yml` has two jobs, because the token on the BaseRunnerGroup runner (which can reach the LLM gateway) is refused when it tries to resolve or reopen a review thread.
+`.github/workflows/claude-review.yml` has one job, `review`, on the BaseRunnerGroup runner (the one that can reach the LLM gateway). It runs `review.py --pr <number> --post`, which posts new inline comments (one review, most severe first), replies on existing bot threads, edits the bot's own comments to mark fixed threads or undo that, and one summary comment that replaces the previous one (marked `<!-- CLAUDE_REVIEW_SUMMARY -->`).
 
-1. **`review`** (BaseRunnerGroup) runs `review.py --pr <number> --post --handoff-file ...`. It posts new inline comments (one review, most severe first), replies on existing bot threads, and one summary comment that replaces the previous one (marked `<!-- CLAUDE_REVIEW_SUMMARY -->`). It does not change any thread's state. It writes the threads the decider wants resolved or reopened to a small JSON file, with the commit it reviewed, and uploads only that file as an artifact.
-2. **`threads`** (a GitHub-hosted runner, no gateway access, never runs an agent) downloads the file and runs `review.py --pr <number> --apply-thread-actions <file>`. For each thread it resolves or reopens the thread and adds a one-line "Fixed" or "Reopened" reply. If GitHub still refuses a resolve, the reply says the problem is fixed and asks a person to resolve the thread, and later runs do not ask again.
+The job's token cannot resolve review threads (GitHub answers "Resource not accessible by integration"), and no other token is available to this workflow. So the bot never calls the resolve mutation. It edits its own comment instead, which the token is allowed to do, and the thread stays open for a person to close. If a token that can resolve threads is ever provided, the place to use it is `apply_plan` in `review.py`.
 
-The file comes from a job that read untrusted pull request content through a model, so the second job treats it as untrusted. It drops the whole file if the pull request has moved to a newer commit. It ignores any action that is malformed, over the limit of 50, not for a thread currently on this pull request, not started by the Actions bot, or for a thread already in the wanted state. It uses nothing from an action except the thread id and a reply of at most 2,000 characters, with the review markers removed. The most a forged file can do is resolve or reopen the bot's own threads on this pull request and add short bot replies.
-
-Both jobs run `review.py` from a clean checkout of the base branch, so a PR cannot add files to the code that holds the tokens. Agents run with the PR's checkout as their working directory, `--setting-sources user` (the PR's own Claude settings and hooks are not loaded), read-only tools, and no `GH_TOKEN`.
+The script runs from a clean checkout of the base branch, so a PR cannot add files to the code that holds the tokens. Agents run with the PR's checkout as their working directory, `--setting-sources user` (the PR's own Claude settings and hooks are not loaded), read-only tools, and no `GH_TOKEN`.
 
 Safeguards in the script:
 
-- It acts only on threads and summaries whose author is the Actions bot, not on any comment that contains the marker.
+- It acts only on threads and summaries whose author is the Actions bot, not on any comment that contains the marker, and edits only the first comment of a bot thread. Before it posts anything it checks that the pull request is still at the commit it reviewed.
 - It moves any comment whose line is not in the diff into the summary, and posts at most 20 inline comments (the rest go to the summary).
-- Every GitHub write fails on its own. If GitHub rejects the inline review, the findings move into the summary; a failed reply is reported but does not stop the summary. The summary is posted before the old one is deleted.
+- Every GitHub write fails on its own. If GitHub rejects the inline review, the findings move into the summary; a failed reply or edit is reported, left out of the summary, and does not stop it. The summary is posted before the old one is deleted.
 - It reads the PR's metadata and diff at one head commit, pages through all threads, and rebuilds the diff from the files API when `gh pr diff` refuses a large PR.
 - If triage fails, every reviewer and the council run. If a reviewer or council member fails, the summary says the review is incomplete and the rest continue; if the chair fails, the unmerged findings go to the decider.
 
-Running with `--post` and no `--handoff-file` (for example `just review --pr 1234 --post` from your machine) makes the thread changes itself, so it needs a token that is allowed to resolve threads.
+Running with `--post` from your machine refuses to start if the working tree has uncommitted changes to tracked files or is not at the pull request's head, because the agents read the working tree and would review code that GitHub does not have.
 
-Run `python3 .agents/skills/pr-review/test_review.py` after changing `review.py` or `render.py`.
+Run `just check::review-tests` (or `python3 .agents/skills/pr-review/test_review.py`) after changing `review.py` or `render.py`. CI runs the tests in the `metadata-checks` job, and `just pr` and `just check::all` run them too.

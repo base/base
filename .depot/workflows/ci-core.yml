@@ -137,6 +137,8 @@ jobs:
         run: ./etc/scripts/ci/check-crate-deps.sh
       - name: Check docs index
         run: python3 etc/scripts/local/docs-index.py check
+      - name: Test PR review pipeline
+        run: python3 .agents/skills/pr-review/test_review.py
       - name: Validate operator compose
         run: docker compose config -q
   format:

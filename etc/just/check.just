@@ -4,8 +4,8 @@ _elf_stub := "BASE_SUCCINCT_ELF_STUB=1"
 default:
     @just --justfile {{source_file()}} --list --list-prefix '  check::'
 
-# Runs formatting, clippy, udeps, deny, and docs-index checks
-all: format clippy udeps deny docs-index
+# Runs formatting, clippy, udeps, deny, docs-index, and PR review pipeline checks
+all: format clippy udeps deny docs-index review-tests
 
 # Checks formatting
 format:
@@ -64,6 +64,10 @@ reth-pin:
 # Verifies llms.txt and llms-full.txt list every Markdown doc with a reviewed summary
 docs-index:
     python3 {{justfile_directory()}}/etc/scripts/local/docs-index.py check
+
+# Runs the unit tests for the PR review pipeline (.agents/skills/pr-review)
+review-tests:
+    python3 {{justfile_directory()}}/.agents/skills/pr-review/test_review.py
 
 [private]
 _build-contracts:
