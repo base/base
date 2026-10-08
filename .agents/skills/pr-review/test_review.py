@@ -33,10 +33,17 @@ deleted file mode 100644
 """
 
 
-def thread(thread_id: str, *, resolved: bool = False, bot: bool = True, body: str = "A problem.") -> dict:
+def thread(thread_id: str, *, resolved: bool = False, bot: bool = True, body: str = "A problem.",
+           comment_id: int | None = 100) -> dict:
     return {"thread_id": thread_id, "url": f"https://example.test/{thread_id}", "resolved": resolved,
             "outdated": False, "path": "src/a.rs", "line": 2, "owned_by_bot": bot,
+            "comment_id": comment_id, "first_body": body, "bot_resolved": bot and render.is_marked_resolved(body),
             "comments": [{"author": "github-actions", "body": body}]}
+
+
+def resolved_by_bot(thread_id: str, original: str = "**Major:** One.") -> dict:
+    """A thread the bot has already marked as resolved by editing its comment."""
+    return thread(thread_id, body=render.mark_resolved(f"{render.MARKER}\n{original}", "fixed in `run`"))
 
 
 def comment(**overrides) -> dict:
@@ -179,7 +186,7 @@ class FindingTests(unittest.TestCase):
                 self.assertEqual(finding.details(), "")
                 text = render.render_summary(
                     overview=None, new=[], outside=[finding], threads=[], reopened=set(), fixed=set(),
-                    fixed_open=set(), failed=[], details="d", repo="base/base", head_sha="abc",
+                    failed=[], details="d", repo="base/base", head_sha="abc",
                     replace_existing=False)
                 self.assertIn("### Outside the diff", text)
 
@@ -204,7 +211,7 @@ class FindingTests(unittest.TestCase):
                 self.assertEqual(render.thread_header(thread("t", body=body)), (None, "💬 (empty comment)"))
                 text = render.render_summary(
                     overview=None, new=[], outside=[], threads=[thread("t", body=body)], reopened=set(),
-                    fixed=set(), fixed_open=set(), failed=[], details="d", repo="base/base", head_sha="abc",
+                    fixed=set(), failed=[], details="d", repo="base/base", head_sha="abc",
                     replace_existing=False)
                 self.assertIn("(empty comment)", text)
 
@@ -252,30 +259,107 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(plan.new[0].severity, "critical")
         self.assertEqual([f.severity for f in plan.outside], ["minor"])
 
-    def test_reply_and_unresolve(self) -> None:
+    def test_reply_resolve_and_reopen(self) -> None:
+        self.threads.append(resolved_by_bot("marked"))
         plan = self.plan({"type": "reply", "thread_id": "open", "body": "more"},
-                         {"type": "unresolve", "thread_id": "done", "body": "still broken"})
+                         {"type": "resolve", "thread_id": "open", "body": "fixed in `run`"},
+                         {"type": "reopen", "thread_id": "marked", "body": "still broken"})
         self.assertEqual([r["thread_id"] for r in plan.replies], ["open"])
         self.assertIn("**Follow-up:** more", plan.replies[0]["body"])
-        self.assertEqual([r["thread_id"] for r in plan.unresolves], ["done"])
-        self.assertIn("**Reopened:** still broken", plan.unresolves[0]["body"])
+        [resolve] = plan.resolves
+        self.assertEqual((resolve["thread_id"], resolve["comment_id"]), ("open", 100))
+        self.assertTrue(resolve["body"].startswith(f"{render.MARKER}\n{render.RESOLVED_PREFIX}"))
+        self.assertIn("A problem.", resolve["body"])
+        [reopen] = plan.reopens
+        self.assertIn("**Reopened:** still broken", reopen["body"])
         self.assertEqual(plan.rejected, [])
 
-    def test_resolve_closes_an_open_bot_thread_only(self) -> None:
+    def test_resolve_applies_to_an_open_bot_thread_only(self) -> None:
+        self.threads.append(resolved_by_bot("marked"))
         plan = self.plan({"type": "resolve", "thread_id": "open", "body": "fixed"},
                          {"type": "resolve", "thread_id": "done", "body": "x"},
+                         {"type": "resolve", "thread_id": "marked", "body": "x"},
                          {"type": "resolve", "thread_id": "human", "body": "x"})
         self.assertEqual([r["thread_id"] for r in plan.resolves], ["open"])
-        self.assertIn("**Fixed:** fixed", plan.resolves[0]["body"])
-        self.assertEqual(len(plan.rejected), 2)
+        self.assertEqual(len(plan.rejected), 3)
+
+    def test_reopen_applies_to_a_thread_the_bot_marked_resolved_only(self) -> None:
+        self.threads.append(resolved_by_bot("marked"))
+        plan = self.plan({"type": "reopen", "thread_id": "open", "body": "x"},
+                         {"type": "reopen", "thread_id": "done", "body": "x"},
+                         {"type": "reopen", "thread_id": "human", "body": "x"})
+        self.assertEqual(plan.reopens, [])
+        self.assertEqual(len(plan.rejected), 3)
+
+    def test_a_thread_the_bot_marked_and_a_person_then_closed_is_not_reopened(self) -> None:
+        # The person closing it on GitHub is the final word; a new comment is the way to raise it again.
+        closed = {**resolved_by_bot("closed"), "resolved": True}
+        self.threads.append(closed)
+        plan = self.plan({"type": "reopen", "thread_id": "closed", "body": "it is back"})
+        self.assertEqual((plan.reopens, len(plan.rejected)), ([], 1))
+
+    def test_a_thread_gets_one_change_per_run(self) -> None:
+        plan = self.plan({"type": "resolve", "thread_id": "open", "body": "a"},
+                         {"type": "resolve", "thread_id": "open", "body": "b"})
+        self.assertEqual(len(plan.resolves), 1)
+        self.assertEqual(len(plan.rejected), 1)
+
+    def test_a_thread_with_no_comment_id_cannot_be_resolved(self) -> None:
+        self.threads.append(thread("noid", comment_id=None))
+        plan = self.plan({"type": "resolve", "thread_id": "noid", "body": "x"})
+        self.assertEqual((plan.resolves, len(plan.rejected)), ([], 1))
 
     def test_invalid_thread_actions_are_rejected(self) -> None:
         plan = self.plan({"type": "reply", "thread_id": "human", "body": "x"},
                          {"type": "reply", "thread_id": "missing", "body": "x"},
-                         {"type": "unresolve", "thread_id": "open", "body": "x"},
-                         {"type": "unresolve", "body": "x"})
-        self.assertEqual((plan.replies, plan.unresolves), ([], []))
-        self.assertEqual(len(plan.rejected), 4)
+                         {"type": "reopen", "thread_id": "open", "body": "x"})
+        self.assertEqual((plan.replies, plan.reopens), ([], []))
+        self.assertEqual(len(plan.rejected), 3)
+
+
+class MarkResolvedTests(unittest.TestCase):
+    ORIGINAL = f"{render.MARKER}\n🟠 **Major · Safety** — A title\n\nThe explanation.\n\n**Suggested fix:** Do x."
+
+    def test_marking_keeps_the_original_and_says_what_happened(self) -> None:
+        marked = render.mark_resolved(self.ORIGINAL, "fixed in `run`")
+        self.assertTrue(render.is_marked_resolved(marked))
+        self.assertIn("fixed in `run`", marked.splitlines()[1])
+        self.assertIn("<summary>Original comment</summary>", marked)
+        self.assertIn("The explanation.", marked)
+
+    def test_unmarking_restores_the_original_exactly(self) -> None:
+        marked = render.mark_resolved(self.ORIGINAL, "fixed")
+        self.assertEqual(render.unmark_resolved(marked), self.ORIGINAL)
+
+    def test_marking_twice_and_unmarking_twice_is_stable(self) -> None:
+        once = render.mark_resolved(self.ORIGINAL, "fixed")
+        self.assertEqual(render.unmark_resolved(render.mark_resolved(render.unmark_resolved(once), "fixed")),
+                         self.ORIGINAL)
+
+    def test_a_plain_comment_is_not_marked_and_cannot_be_unmarked(self) -> None:
+        self.assertFalse(render.is_marked_resolved(self.ORIGINAL))
+        self.assertIsNone(render.unmark_resolved(self.ORIGINAL))
+
+    def test_a_marked_thread_is_described_by_the_original_problem(self) -> None:
+        marked = render.mark_resolved(self.ORIGINAL, "fixed")
+        severity, text = render.thread_header({"comments": [{"body": marked}]})
+        self.assertEqual(severity, "major")
+        self.assertEqual(text, "🟠 **Major · Safety** — A title")
+
+    def test_a_marked_legacy_comment_is_described_by_the_original_problem(self) -> None:
+        marked = render.mark_resolved(f"{render.MARKER}\n**Minor:** Old style. More.", "fixed")
+        self.assertEqual(render.thread_header({"comments": [{"body": marked}]}),
+                         ("minor", "🟡 **Minor** — Old style."))
+
+    def test_a_marked_comment_with_a_damaged_original_still_renders(self) -> None:
+        damaged = f"{render.MARKER}\n{render.RESOLVED_PREFIX} — fixed\n\nno details block here"
+        severity, text = render.thread_header({"comments": [{"body": damaged}]})
+        self.assertIsNone(severity)
+        self.assertIn("Resolved by the bot", text)
+
+    def test_a_long_reason_is_clipped(self) -> None:
+        marked = render.mark_resolved(self.ORIGINAL, "word " * 400)
+        self.assertLess(len(marked.splitlines()[1]), 450)
 
 
 class SummaryTests(unittest.TestCase):
@@ -283,8 +367,8 @@ class SummaryTests(unittest.TestCase):
                 replace_existing: bool = False) -> str | None:
         return render.render_summary(
             overview="One panic path.", new=plan.new, outside=plan.outside, threads=threads or [],
-            reopened={u["thread_id"] for u in plan.unresolves}, fixed={r["thread_id"] for r in plan.resolves},
-            fixed_open=set(plan.asked), failed=failed or [], details="Details.",
+            reopened={u["thread_id"] for u in plan.reopens}, fixed={r["thread_id"] for r in plan.resolves},
+            failed=failed or [], details="Details.",
             repo="base/base", head_sha="abc123", replace_existing=replace_existing)
 
     def test_summary_lists_findings_with_links(self) -> None:
@@ -314,9 +398,10 @@ class SummaryTests(unittest.TestCase):
         self.assertNotIn("example.test/done", text)
 
     def test_reopened_thread_is_listed_separately(self) -> None:
-        plan = review.build_plan({"actions": [{"type": "unresolve", "thread_id": "done", "body": "again"}]},
-                                 [thread("done", resolved=True)], set())
-        text = self.summary(plan, [thread("done", resolved=True)])
+        marked = resolved_by_bot("marked")
+        plan = review.build_plan({"actions": [{"type": "reopen", "thread_id": "marked", "body": "again"}]},
+                                 [marked], set())
+        text = self.summary(plan, [marked])
         self.assertIn("### Reopened", text)
         self.assertNotIn("Open from earlier reviews", text)
 
@@ -328,6 +413,11 @@ class SummaryTests(unittest.TestCase):
         self.assertIn("### Fixed in this push", text)
         self.assertIn("- ✅ 🟠 **Major** — One.", text)
         self.assertIn("## 💬 1 open", text)
+
+    def test_a_thread_the_bot_marked_resolved_earlier_is_done(self) -> None:
+        text = self.summary(review.Plan(), [resolved_by_bot("marked")], replace_existing=True)
+        self.assertIn("## ✅ No open findings", text)
+        self.assertNotIn("Open from earlier reviews", text)
 
     def test_open_outdated_threads_stay_in_the_summary(self) -> None:
         outdated = {**thread("old", body=f"{render.MARKER}\n**Major:** Still broken."), "outdated": True}
@@ -384,7 +474,7 @@ class ThreadTests(unittest.TestCase):
     @staticmethod
     def node(thread_id: str, login: str, body: str, typename: str = "Bot", extra: list | None = None) -> dict:
         def c(url: str, who: str, text: str, kind: str) -> dict:
-            return {"url": url, "body": text, "author": {"login": who, "__typename": kind}}
+            return {"databaseId": 7, "url": url, "body": text, "author": {"login": who, "__typename": kind}}
 
         first = c(f"u/{thread_id}", login, body, typename)
         return {"id": thread_id, "isResolved": False, "isOutdated": False, "path": "a", "line": 1,
@@ -404,6 +494,16 @@ class ThreadTests(unittest.TestCase):
         self.assertEqual({t["thread_id"]: t["owned_by_bot"] for t in threads},
                          {"bot": True, "quoted": False, "lookalike": False, "human": False})
         self.assertEqual(threads[0]["url"], "u/bot")
+
+    def test_the_first_comment_decides_whether_the_bot_marked_the_thread_resolved(self) -> None:
+        marked = render.mark_resolved(f"{render.MARKER}\n**Major:** One.", "fixed")
+        threads = review.parse_threads([self.page(
+            self.node("marked", "github-actions", marked),
+            self.node("plain", "github-actions", "**Major:** One."),
+            self.node("faked", "alice", marked, typename="User"))])
+        self.assertEqual({t["thread_id"]: t["bot_resolved"] for t in threads},
+                         {"marked": True, "plain": False, "faked": False})
+        self.assertEqual((threads[0]["comment_id"], threads[0]["first_body"]), (7, marked))
 
     def test_pages_are_concatenated(self) -> None:
         threads = review.parse_threads([self.page(self.node("a", "github-actions", "x")),
@@ -712,22 +812,24 @@ class FakeGh:
 
 class ApplyPlanTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.threads = [thread("open", comment_id=11), thread("fixed", comment_id=22),
+                        resolved_by_bot("marked"), thread("done", resolved=True)]
         self.ctx = review.Context(description="d", title="t", files=["src/a.rs"], diff=DIFF, pr_number=7,
-                                  head_sha="abc", threads=[thread("open"), thread("done", resolved=True)])
+                                  head_sha="abc", threads=self.threads)
         decision = {"actions": [
             comment(), {"type": "reply", "thread_id": "open", "body": "more"},
-            {"type": "resolve", "thread_id": "open", "body": "fixed in `run`"},
-            {"type": "unresolve", "thread_id": "done", "body": "still broken"}]}
+            {"type": "resolve", "thread_id": "fixed", "body": "fixed in `run`"},
+            {"type": "reopen", "thread_id": "marked", "body": "still broken"}]}
         self.plan = review.build_plan(decision, self.ctx.threads, review.diff_new_lines(DIFF))
 
     def apply(self, gh: FakeGh) -> list[str]:
         def summarize(plan: review.Plan) -> str | None:
             return render.render_summary(
                 overview=None, new=plan.new, outside=plan.outside, threads=self.ctx.threads,
-                reopened={u["thread_id"] for u in plan.unresolves}, fixed={r["thread_id"] for r in plan.resolves},
-                fixed_open=set(plan.asked), failed=[], details="d",
-                repo="base/base", head_sha="abc", replace_existing=True)
+                reopened={u["thread_id"] for u in plan.reopens}, fixed={r["thread_id"] for r in plan.resolves},
+                failed=[], details="d", repo="base/base", head_sha="abc", replace_existing=True)
 
+        gh.responses.setdefault("pr view", json.dumps({"headRefOid": "abc"}))
         with mock.patch.object(review, "gh", gh):
             return review.apply_plan(self.plan, self.ctx, summarize)
 
@@ -741,12 +843,53 @@ class ApplyPlanTests(unittest.TestCase):
         self.assertEqual(len(deletes), 2)
         self.assertLess(comment_calls[0], min(deletes))
 
-    def test_this_job_never_changes_a_threads_state(self) -> None:
-        # Resolving needs a token this job may not have; the plan is handed to another job instead.
+    def test_resolving_edits_the_bots_own_comment_and_never_calls_the_resolve_mutation(self) -> None:
         gh = FakeGh()
         self.apply(gh)
         self.assertEqual(gh.matching("resolveReviewThread"), [])
-        self.assertEqual(gh.matching("unresolveReviewThread"), [])
+        [edit] = [(c, i) for c, i in zip(gh.calls, gh.inputs, strict=True)
+                  if "PATCH" in c and "pulls/comments/22" in " ".join(c)]
+        body = json.loads(edit[1])["body"]
+        self.assertTrue(body.startswith(f"{render.MARKER}\n{render.RESOLVED_PREFIX}"))
+        self.assertIn("fixed in `run`", body)
+
+    def test_reopening_puts_the_comment_back_and_replies(self) -> None:
+        gh = FakeGh()
+        self.apply(gh)
+        [edit] = [i for c, i in zip(gh.calls, gh.inputs, strict=True) if "PATCH" in c and "comments/100" in " ".join(c)]
+        self.assertFalse(render.is_marked_resolved(json.loads(edit)["body"]))
+        self.assertTrue([c for c in gh.matching("addPullRequestReviewThreadReply") if "Reopened" in " ".join(c)])
+
+    def test_a_failed_edit_is_not_reported_as_done(self) -> None:
+        gh = FakeGh(fail=("PATCH",))
+        problems = self.apply(gh)
+        self.assertEqual(len(problems), 2)
+        self.assertEqual((self.plan.resolves, self.plan.reopens), ([], []))
+        [summary] = [i for c, i in zip(gh.calls, gh.inputs, strict=True) if c[:2] == ["pr", "comment"]]
+        self.assertNotIn("### Fixed in this push", summary)
+        self.assertNotIn("### Reopened", summary)
+        # No reply claims the thread was reopened when the comment was not put back.
+        self.assertFalse([c for c in gh.matching("addPullRequestReviewThreadReply") if "Reopened" in " ".join(c)])
+
+    def test_a_dirty_tree_is_refused_when_posting_but_not_locally(self) -> None:
+        def fake_git(args):
+            return " M review.py\n" if args[0] == "status" else "a" * 40 + "\n"
+
+        for post, refused in ((True, True), (False, False)):
+            with self.subTest(post=post):
+                gh_fn, _ = PrContextTests().scripted()
+                with mock.patch.object(review, "gh", gh_fn), mock.patch.object(review, "git", fake_git):
+                    if refused:
+                        with self.assertRaises(review.ReviewError):
+                            review.pr_context(7, "base/base", post=post)
+                    else:
+                        review.pr_context(7, "base/base", post=post)
+
+    def test_nothing_is_posted_if_the_pull_request_moved_on(self) -> None:
+        gh = FakeGh(responses={"pr view": json.dumps({"headRefOid": "newer"})})
+        with self.assertRaises(review.ReviewError):
+            self.apply(gh)
+        self.assertEqual([c for c in gh.calls if c[0] != "pr"], [])
 
     def test_summary_query_only_matches_the_bot(self) -> None:
         gh = FakeGh()
@@ -764,38 +907,12 @@ class ApplyPlanTests(unittest.TestCase):
         self.assertIn("### Outside the diff", summary)
         self.assertIn("Panics on empty batch", summary)
 
-    def test_the_summary_lists_threads_that_the_other_job_will_change(self) -> None:
+    def test_the_summary_lists_the_threads_that_were_changed(self) -> None:
         gh = FakeGh()
         self.apply(gh)
         [summary] = [i for c, i in zip(gh.calls, gh.inputs, strict=True) if c[:2] == ["pr", "comment"]]
         self.assertIn("### Fixed in this push", summary)
         self.assertIn("### Reopened", summary)
-
-    def test_a_thread_already_marked_for_manual_resolve_is_not_asked_again(self) -> None:
-        asked = {**thread("open"), "comments": [
-            {"author": "github-actions", "body": "Problem."},
-            {"author": "github-actions", "body": f"**Fixed:** x\n\n{review.RESOLVE_REQUEST}"}]}
-        plan = review.build_plan({"actions": [{"type": "resolve", "thread_id": "open", "body": "fixed"}]},
-                                 [asked], set())
-        self.assertEqual((plan.resolves, plan.asked), ([], ["open"]))
-
-    def test_a_thread_already_handed_to_a_person_stays_fixed_even_if_the_decider_says_nothing(self) -> None:
-        asked = {**thread("open"), "comments": [
-            {"author": "github-actions", "body": "Problem."},
-            {"author": "github-actions", "body": review.RESOLVE_REQUEST}]}
-        plan = review.build_plan({"actions": []}, [asked, thread("other")], set())
-        self.assertEqual(plan.asked, ["open"])
-        text = render.render_summary(
-            overview=None, new=[], outside=[], threads=[asked, thread("other")], reopened=set(), fixed=set(),
-            fixed_open=set(plan.asked), failed=[], details="d", repo="base/base", head_sha="abc",
-            replace_existing=True)
-        self.assertIn("### Fixed in this push", text)
-        self.assertEqual(text.count("Open from earlier reviews"), 1)
-
-    def test_a_resolved_thread_is_not_marked_as_asked(self) -> None:
-        done = {**thread("done", resolved=True), "comments": [
-            {"author": "github-actions", "body": review.RESOLVE_REQUEST}]}
-        self.assertEqual(review.build_plan({"actions": []}, [done], set()).asked, [])
 
     def test_failing_to_list_old_summaries_still_posts_the_new_one(self) -> None:
         gh = FakeGh(fail=("startswith",))
@@ -806,7 +923,9 @@ class ApplyPlanTests(unittest.TestCase):
     def test_a_failed_reply_does_not_stop_the_summary(self) -> None:
         gh = FakeGh(fail=("addPullRequestReviewThreadReply",))
         problems = self.apply(gh)
-        self.assertEqual(len(problems), 1)
+        # The follow-up on one thread and the reply that goes with reopening another.
+        self.assertEqual(len(problems), 2)
+        self.assertEqual(self.plan.reopens, [])
         self.assertEqual(len(gh.matching("pulls/7/reviews")), 1)
         self.assertEqual(len([c for c in gh.calls if c[:2] == ["pr", "comment"]]), 1)
 
@@ -826,157 +945,6 @@ class ApplyPlanTests(unittest.TestCase):
         [item] = payload["comments"]
         self.assertEqual((item["path"], item["line"], item["side"]), ("src/a.rs", 3, "RIGHT"))
         self.assertTrue(item["body"].startswith(render.MARKER))
-
-
-class ThreadActionTests(unittest.TestCase):
-    """The second job: untrusted actions, checked against the live threads before anything changes."""
-
-    OPEN = "PRRT_kwDOopen00000001"
-    DONE = "PRRT_kwDOdone00000002"
-    HUMAN = "PRRT_kwDOhuman0000003"
-
-    def live_threads(self, **overrides: dict) -> list[dict]:
-        base = {self.OPEN: thread(self.OPEN), self.DONE: thread(self.DONE, resolved=True),
-                self.HUMAN: thread(self.HUMAN, bot=False)}
-        base.update(overrides)
-        return list(base.values())
-
-    def apply(self, actions, gh: FakeGh | None = None, threads: list[dict] | None = None):
-        gh = gh or FakeGh()
-        with mock.patch.object(review, "gh", gh), mock.patch.object(
-                review, "fetch_threads", return_value=self.live_threads() if threads is None else threads):
-            return review.apply_thread_actions(actions, 7, "base/base"), gh
-
-    def resolve(self, thread_id: str | None = None, **extra) -> dict:
-        return {"type": "resolve", "thread_id": thread_id or self.OPEN, "body": "fixed in `run`", **extra}
-
-    def test_a_valid_resolve_and_reopen_change_the_thread_and_explain_it(self) -> None:
-        problems, gh = self.apply([self.resolve(), {"type": "unresolve", "thread_id": self.DONE,
-                                                     "body": "still broken"}])
-        self.assertEqual(problems, [])
-        self.assertEqual(len(gh.matching("{ resolveReviewThread(")), 1)
-        self.assertEqual(len(gh.matching("{ unresolveReviewThread(")), 1)
-        text = [" ".join(c) for c in gh.calls]
-        self.assertLess(next(i for i, c in enumerate(text) if "{ resolveReviewThread(" in c),
-                        next(i for i, c in enumerate(text) if "addPullRequestReviewThreadReply" in c))
-
-    def test_only_threads_the_bot_started_can_be_changed(self) -> None:
-        problems, gh = self.apply([self.resolve(self.HUMAN)])
-        self.assertEqual(len(problems), 1)
-        self.assertEqual(gh.calls, [])
-
-    def test_a_thread_not_on_this_pull_request_is_skipped(self) -> None:
-        problems, gh = self.apply([self.resolve("PRRT_kwDOelsewhere000009")])
-        self.assertEqual((problems, gh.calls), ([], []))
-
-    def test_an_action_for_the_wrong_state_is_skipped(self) -> None:
-        # Resolved in the meantime, or reopened by a person: nothing to do and nothing to say.
-        problems, gh = self.apply([self.resolve(self.DONE), {"type": "unresolve", "thread_id": self.OPEN,
-                                                             "body": "x"}])
-        self.assertEqual((problems, gh.calls), ([], []))
-
-    def test_malformed_actions_are_ignored_and_reported(self) -> None:
-        bad = [{"type": "delete", "thread_id": self.OPEN, "body": "x"},
-               {"type": "resolve", "thread_id": "not-a-thread-id", "body": "x"},
-               {"type": "resolve", "thread_id": self.OPEN},
-               {"type": "resolve", "thread_id": ["PRRT_kwDOopen00000001"], "body": "x"},
-               "resolve", None, 7]
-        problems, gh = self.apply(bad)
-        self.assertEqual(len(problems), len(bad))
-        self.assertEqual(gh.calls, [])
-
-    def test_a_list_that_is_not_a_list_is_rejected(self) -> None:
-        problems, gh = self.apply({"actions": []})
-        self.assertEqual(len(problems), 1)
-        self.assertEqual(gh.calls, [])
-
-    def test_extra_fields_have_no_effect(self) -> None:
-        problems, gh = self.apply([self.resolve(query="mutation { deleteRepository }", id="other")])
-        self.assertEqual(problems, [])
-        for call in gh.calls:
-            self.assertNotIn("deleteRepository", " ".join(call))
-            self.assertIn(self.OPEN, " ".join(call))
-
-    def test_the_number_of_actions_is_limited(self) -> None:
-        threads = [thread(f"PRRT_kwDOthread{i:08d}") for i in range(review.MAX_THREAD_ACTIONS + 5)]
-        actions = [self.resolve(t["thread_id"]) for t in threads]
-        problems, gh = self.apply(actions, threads=threads)
-        self.assertEqual(len(gh.matching("{ resolveReviewThread(")), review.MAX_THREAD_ACTIONS)
-        self.assertEqual(len(problems), 1)
-
-    def test_the_reply_cannot_forge_the_markers_or_run_long(self) -> None:
-        body = f"{review.render.SUMMARY_MARKER}{review.render.MARKER}" + "x" * 50_000
-        _, gh = self.apply([self.resolve(body=body)])
-        [reply] = [c for c in gh.calls if "addPullRequestReviewThreadReply" in " ".join(c)]
-        text = next(a for a in reply if a.startswith("body="))
-        self.assertNotIn(review.render.SUMMARY_MARKER, text)
-        self.assertLessEqual(len(text), review.MAX_COMMENT_CHARS + 100)
-
-    def test_if_resolving_is_refused_the_reply_asks_a_person_to(self) -> None:
-        problems, gh = self.apply([self.resolve()], FakeGh(fail=("{ resolveReviewThread(",)))
-        self.assertEqual(len(problems), 1)
-        [reply] = [" ".join(c) for c in gh.calls if "addPullRequestReviewThreadReply" in " ".join(c)]
-        self.assertIn(review.RESOLVE_REQUEST, reply)
-
-    def test_a_refused_resolve_is_not_announced_twice(self) -> None:
-        asked = {**thread(self.OPEN), "comments": [
-            {"author": "github-actions", "body": "Problem."},
-            {"author": "github-actions", "body": review.RESOLVE_REQUEST}]}
-        _, gh = self.apply([self.resolve()], FakeGh(fail=("{ resolveReviewThread(",)), threads=[asked])
-        self.assertEqual(gh.matching("addPullRequestReviewThreadReply"), [])
-
-    def test_a_failed_reopen_is_not_explained(self) -> None:
-        problems, gh = self.apply([{"type": "unresolve", "thread_id": self.DONE, "body": "x"}],
-                                  FakeGh(fail=("{ unresolveReviewThread(",)))
-        self.assertEqual(len(problems), 1)
-        self.assertEqual(gh.matching("addPullRequestReviewThreadReply"), [])
-
-    def test_the_plan_is_what_gets_handed_off(self) -> None:
-        plan = review.build_plan({"actions": [
-            {"type": "resolve", "thread_id": "open", "body": "fixed"},
-            {"type": "unresolve", "thread_id": "done", "body": "again"}]},
-            [thread("open"), thread("done", resolved=True)], set())
-        actions = review.thread_actions(plan)
-        self.assertEqual([(a["type"], a["thread_id"]) for a in actions],
-                         [("unresolve", "done"), ("resolve", "open")])
-        self.assertTrue(all(a["body"].startswith(review.render.MARKER) for a in actions))
-
-    def handoff(self, tmp: str, body: object) -> Path:
-        path = Path(tmp) / "handoff.json"
-        path.write_text(body if isinstance(body, str) else json.dumps(body))
-        return path
-
-    def test_the_handoff_file_is_applied_when_the_head_matches(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
-                review, "gh", return_value=json.dumps({"headRefOid": "abc"})), mock.patch.object(
-                review, "apply_thread_actions", return_value=[]) as apply:
-            path = self.handoff(tmp, {"head_sha": "abc", "actions": [self.resolve()]})
-            self.assertEqual(review.apply_handoff(path, 7, "base/base"), 0)
-        self.assertEqual(apply.call_args.args[0], [self.resolve()])
-
-    def test_a_handoff_for_an_older_commit_is_dropped(self) -> None:
-        for reviewed in ("old", None):
-            with self.subTest(reviewed=reviewed), tempfile.TemporaryDirectory() as tmp, mock.patch.object(
-                    review, "gh", return_value=json.dumps({"headRefOid": "new"})), mock.patch.object(
-                    review, "apply_thread_actions") as apply:
-                path = self.handoff(tmp, {"head_sha": reviewed, "actions": [self.resolve()]})
-                self.assertEqual(review.apply_handoff(path, 7, "base/base"), 0)
-            apply.assert_not_called()
-
-    def test_problems_applying_the_handoff_fail_the_job(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
-                review, "gh", return_value=json.dumps({"headRefOid": "abc"})), mock.patch.object(
-                review, "apply_thread_actions", return_value=["boom"]):
-            path = self.handoff(tmp, {"head_sha": "abc", "actions": []})
-            self.assertEqual(review.apply_handoff(path, 7, "base/base"), 1)
-
-    def test_unreadable_handoff_files_are_errors(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            for text in ("not json", "[]", ""):
-                with self.subTest(text=text), self.assertRaises(review.ReviewError):
-                    review.apply_handoff(self.handoff(tmp, text), 7, "base/base")
-            with self.assertRaises(review.ReviewError):
-                review.apply_handoff(Path(tmp) / "missing.json", 7, "base/base")
 
 
 class PipelineFailureTests(unittest.TestCase):
@@ -1041,9 +1009,9 @@ class PipelineFailureTests(unittest.TestCase):
         self.assertIn("council-adversary", finding["support"])
 
     def test_one_member_failing_does_not_stop_the_council(self) -> None:
-        self.failing = {"council-tests"}
+        self.failing = {"council-design"}
         outcome = self.run_pipeline()
-        self.assertIn("council/council-tests", outcome.failed)
+        self.assertIn("council/council-design", outcome.failed)
         self.assertIn("council-chair", self.calls)
 
     def test_a_failed_decider_still_yields_a_summary_that_says_so(self) -> None:
@@ -1055,8 +1023,7 @@ class PipelineFailureTests(unittest.TestCase):
         self.assertIn("final step failed", outcome.decision["overview"])
 
     def test_every_reviewer_failing_is_an_error(self) -> None:
-        self.failing = {"review-general", "council-invariants", "council-adversary", "council-tests",
-                        "council-design"}
+        self.failing = {"review-general", "council-invariants", "council-adversary", "council-design"}
         with self.assertRaises(review.ReviewError):
             self.run_pipeline()
 

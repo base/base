@@ -4,8 +4,8 @@ _elf_stub := "BASE_SUCCINCT_ELF_STUB=1"
 default:
     @just --justfile {{source_file()}} --list --list-prefix '  check::'
 
-# Runs formatting, clippy, udeps, and deny checks
-all: format clippy udeps deny
+# Runs formatting, clippy, udeps, deny, and PR review pipeline checks
+all: format clippy udeps deny review-tests
 
 # Checks formatting
 format:
@@ -60,6 +60,10 @@ crate-deps:
 # Verifies git-based reth-* workspace deps match etc/upstream-pins/reth.toml
 reth-pin:
     python3 {{justfile_directory()}}/etc/scripts/local/pin-reth.py check
+
+# Runs the unit tests for the PR review pipeline (.agents/skills/pr-review)
+review-tests:
+    python3 {{justfile_directory()}}/.agents/skills/pr-review/test_review.py
 
 [private]
 _build-contracts:
