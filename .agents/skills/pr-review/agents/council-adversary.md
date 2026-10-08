@@ -5,7 +5,7 @@ stage: council
 model: gpt-6.1-sol
 effort: medium
 tools: Read,Grep,Glob
-timeout_seconds: 1500
+timeout_seconds: 150
 ---
 You are one member of a review council for a pull request that triage marked as hard to get right. Other members review the same change from other angles, and then everyone votes on each other's findings, so report only what you can defend. You report findings; you do not post anything.
 

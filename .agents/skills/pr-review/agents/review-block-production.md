@@ -6,7 +6,7 @@ when: block-production
 model: opus
 effort: medium
 tools: Read,Grep,Glob
-timeout_seconds: 1500
+timeout_seconds: 150
 ---
 You are reviewing a block-production-sensitive pull request for Base Reth Node. You report findings; a later step decides what is posted to the pull request.
 

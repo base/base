@@ -663,7 +663,17 @@ class BudgetTests(unittest.TestCase):
             self.assertLessEqual(now[0], 90 * 60 - 600)
 
     def test_the_default_budget_leaves_the_ci_job_time_to_post(self) -> None:
-        self.assertLessEqual(review.DEFAULT_BUDGET_SECONDS, 90 * 60 - 600)
+        job_limit = 15 * 60  # timeout-minutes in claude-review.yml
+        self.assertLessEqual(review.DEFAULT_BUDGET_SECONDS, job_limit - 300)
+        if WORKFLOW is not None:
+            self.assertIn(f"timeout-minutes: {job_limit // 60}\n", WORKFLOW.read_text())
+
+    def test_a_deep_review_is_meant_to_take_about_five_minutes(self) -> None:
+        # The whole pipeline stops at the budget, and no single agent may be allowed more than 3 minutes.
+        self.assertLessEqual(review.DEFAULT_BUDGET_SECONDS, 8 * 60)
+        for agent in review.load_agents():
+            with self.subTest(agent=agent.name):
+                self.assertLessEqual(agent.timeout_seconds, 180)
 
     def test_a_stage_that_ate_the_reserve_is_skipped_not_run_over(self) -> None:
         with mock.patch.object(review.time, "monotonic", lambda: 0.0):
@@ -684,6 +694,18 @@ class BudgetTests(unittest.TestCase):
             env = review.agent_env()
         self.assertEqual((env.get("GH_TOKEN"), env.get("GITHUB_TOKEN"), env.get("ANTHROPIC_API_KEY")),
                          (None, None, "z"))
+
+
+def find_workflow() -> Path | None:
+    """The review workflow, found by walking up from this file; None if the skill was copied elsewhere."""
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / ".github" / "workflows" / "claude-review.yml"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+WORKFLOW = find_workflow()
 
 
 class AgentRunTests(unittest.TestCase):
@@ -1147,6 +1169,7 @@ class PipelineFailureTests(unittest.TestCase):
         self.calls.append(label)
         if label in self.failing:
             raise review.ReviewError(f"{label} broke")
+        review.MODELS_RAN[agent.name] = model_override or agent.model  # what the real run_agent records
         if agent.stage == "triage":
             return self.triage
         if schema == "votes":
@@ -1189,6 +1212,14 @@ class PipelineFailureTests(unittest.TestCase):
         self.assertNotIn("id", finding)
         self.assertNotIn("reported_by", finding)
         self.assertIn("council-adversary", finding["support"])
+
+    def test_the_summary_does_not_claim_an_agent_that_failed_ran(self) -> None:
+        self.failing = {"council-design"}
+        outcome = self.run_pipeline()
+        models = {name: model for _, name, model in outcome.rows}
+        self.assertEqual(models["council-design"], "(did not finish)")
+        self.assertNotEqual(models["council-invariants"], "(did not finish)")
+        self.assertNotIn("(did not finish)", models["triage"])
 
     def test_one_member_failing_does_not_stop_the_council(self) -> None:
         self.failing = {"council-design"}
