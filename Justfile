@@ -20,6 +20,8 @@ mod check 'etc/just/check.just'
 mod build 'etc/just/build.just'
 # SP1 / succinct ELF builds and proving helpers
 mod succinct 'etc/just/succinct.just'
+# OpenVM ELF builds
+mod openvm 'etc/just/openvm.just'
 # Standalone user-funded prover stack (user RPCs + Succinct Network key)
 mod prover 'etc/just/prover.just'
 # Local Nitro proof stack for the single-Anvil L1 devnet
