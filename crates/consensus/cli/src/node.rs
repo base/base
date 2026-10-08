@@ -693,7 +693,7 @@ mod tests {
     use alloy_primitives::{B256, U256, address};
     use base_common_genesis::BaseUpgrade;
     use clap::{Args, Parser};
-    use rstest::rstest;
+    use rstest::{fixture, rstest};
 
     use super::*;
     use crate::SignerArgs;
@@ -720,6 +720,14 @@ mod tests {
             checkpoint_path: None,
             upgrade_signal: UpgradeSignalArgs::default(),
         }
+    }
+
+    #[fixture]
+    fn node_args() -> ConsensusNodeArgs {
+        ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            default_node_config_args(),
+        )
     }
 
     #[derive(Parser)]
@@ -936,19 +944,12 @@ mod tests {
         );
     }
 
-    #[test]
+    #[rstest]
     #[ignore = "spawned by validates_sequencer_key_from_env with isolated process env"]
-    fn validates_sequencer_key_from_env_child() {
-        let signer = SignerArgs::parse_from(["test"]);
-        let args = ConsensusNodeArgs::new(
-            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
-            ConsensusNodeConfigArgs {
-                node_mode: NodeMode::Sequencer,
-                p2p_flags: P2PArgs { signer, ..P2PArgs::default() },
-                ..default_node_config_args()
-            },
-        );
-        assert!(args.validate_sequencer_key().is_ok());
+    fn validates_sequencer_key_from_env_child(mut node_args: ConsensusNodeArgs) {
+        node_args.config.node_mode = NodeMode::Sequencer;
+        node_args.config.p2p_flags.signer = SignerArgs::parse_from(["test"]);
+        assert!(node_args.validate_sequencer_key().is_ok());
     }
 
     #[rstest]
@@ -973,49 +974,27 @@ mod tests {
         true
     )]
     fn validates_sequencer_key(
+        mut node_args: ConsensusNodeArgs,
         #[case] mode: NodeMode,
         #[case] signer: SignerArgs,
         #[case] expected_ok: bool,
     ) {
-        let args = ConsensusNodeArgs::new(
-            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
-            ConsensusNodeConfigArgs {
-                node_mode: mode,
-                p2p_flags: P2PArgs { signer, ..P2PArgs::default() },
-                ..default_node_config_args()
-            },
-        );
-        assert_eq!(args.validate_sequencer_key().is_ok(), expected_ok);
+        node_args.config.node_mode = mode;
+        node_args.config.p2p_flags.signer = signer;
+        assert_eq!(node_args.validate_sequencer_key().is_ok(), expected_ok);
     }
 
-    #[test]
-    fn shadow_sequencer_does_not_require_signing_key() {
-        let args = ConsensusNodeArgs::new(
-            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
-            ConsensusNodeConfigArgs {
-                node_mode: NodeMode::ShadowSequencer,
-                sequencer_flags: SequencerArgs {
-                    shadow_blocks_per_cycle: std::num::NonZeroU64::new(10),
-                    ..SequencerArgs::default()
-                },
-                ..default_node_config_args()
-            },
-        );
-
-        assert!(args.validate_sequencer_key().is_ok());
-    }
-
-    #[test]
-    fn isolated_sequencer_does_not_require_signing_key() {
-        let args = ConsensusNodeArgs::new(
-            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
-            ConsensusNodeConfigArgs {
-                node_mode: NodeMode::IsolatedSequencer,
-                ..default_node_config_args()
-            },
-        );
-
-        assert!(args.validate_sequencer_key().is_ok());
+    #[rstest]
+    #[case::shadow_sequencer(NodeMode::ShadowSequencer, std::num::NonZeroU64::new(10))]
+    #[case::isolated_sequencer(NodeMode::IsolatedSequencer, None)]
+    fn private_sequencer_does_not_require_signing_key(
+        mut node_args: ConsensusNodeArgs,
+        #[case] mode: NodeMode,
+        #[case] shadow_blocks_per_cycle: Option<std::num::NonZeroU64>,
+    ) {
+        node_args.config.node_mode = mode;
+        node_args.config.sequencer_flags.shadow_blocks_per_cycle = shadow_blocks_per_cycle;
+        assert!(node_args.validate_sequencer_key().is_ok());
     }
 
     #[rstest]
@@ -1033,20 +1012,15 @@ mod tests {
         }
     )]
     fn legacy_sequencer_flags_select_operating_mode(
+        mut node_args: ConsensusNodeArgs,
         #[case] sequencer_flags: SequencerArgs,
         #[case] expected: NodeOperatingMode,
     ) {
-        let args = ConsensusNodeArgs::new(
-            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
-            ConsensusNodeConfigArgs {
-                node_mode: NodeMode::Sequencer,
-                sequencer_flags,
-                ..default_node_config_args()
-            },
-        );
+        node_args.config.node_mode = NodeMode::Sequencer;
+        node_args.config.sequencer_flags = sequencer_flags;
 
-        assert_eq!(args.operating_mode().unwrap(), expected);
-        assert!(args.validate_sequencer_key().is_ok());
+        assert_eq!(node_args.operating_mode().unwrap(), expected);
+        assert!(node_args.validate_sequencer_key().is_ok());
     }
 
     #[rstest]
@@ -1059,98 +1033,58 @@ mod tests {
         endpoint: Some(Url::parse("http://localhost:8080").unwrap()),
         ..Default::default()
     })]
-    fn isolated_sequencer_rejects_signing_key(#[case] signer: SignerArgs) {
-        let args = ConsensusNodeArgs::new(
-            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
-            ConsensusNodeConfigArgs {
-                node_mode: NodeMode::IsolatedSequencer,
-                p2p_flags: P2PArgs { signer, ..P2PArgs::default() },
-                ..default_node_config_args()
-            },
-        );
+    fn isolated_sequencer_rejects_signing_key(
+        mut node_args: ConsensusNodeArgs,
+        #[case] signer: SignerArgs,
+    ) {
+        node_args.config.node_mode = NodeMode::IsolatedSequencer;
+        node_args.config.p2p_flags.signer = signer;
 
-        let error = args.validate_sequencer_key().unwrap_err();
+        let error = node_args.validate_sequencer_key().unwrap_err();
 
         assert_eq!(error.to_string(), "isolated sequencer must not configure a signing key");
     }
 
-    #[test]
-    fn shadow_funding_is_rejected_outside_shadow_sequencer_mode() {
-        let args = ConsensusNodeArgs::new(
-            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
-            ConsensusNodeConfigArgs {
-                node_mode: NodeMode::Sequencer,
-                sequencer_flags: SequencerArgs {
-                    shadow_funding_address: Some(address!(
-                        "2222222222222222222222222222222222222222"
-                    )),
-                    ..SequencerArgs::default()
-                },
-                ..default_node_config_args()
-            },
-        );
+    #[rstest]
+    #[case::outside_shadow_sequencer(None, None, false)]
+    #[case::shadow_sequencer(std::num::NonZeroU64::new(10), None, true)]
+    #[case::above_deposit_mint_limit(
+        std::num::NonZeroU64::new(10),
+        Some(U256::from(u128::MAX) + U256::from(1)),
+        false
+    )]
+    fn validates_shadow_funding(
+        mut node_args: ConsensusNodeArgs,
+        #[case] shadow_blocks_per_cycle: Option<std::num::NonZeroU64>,
+        #[case] shadow_funding_amount: Option<U256>,
+        #[case] expected_ok: bool,
+    ) {
+        node_args.config.node_mode = NodeMode::Sequencer;
+        node_args.config.sequencer_flags = SequencerArgs {
+            shadow_blocks_per_cycle,
+            shadow_funding_address: Some(address!("2222222222222222222222222222222222222222")),
+            shadow_funding_amount,
+            ..SequencerArgs::default()
+        };
 
-        assert!(args.validate_shadow_funding().is_err());
+        assert_eq!(node_args.validate_shadow_funding().is_ok(), expected_ok);
     }
 
-    #[test]
-    fn shadow_funding_is_accepted_in_shadow_sequencer_mode() {
-        let args = ConsensusNodeArgs::new(
-            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
-            ConsensusNodeConfigArgs {
-                node_mode: NodeMode::Sequencer,
-                sequencer_flags: SequencerArgs {
-                    shadow_blocks_per_cycle: std::num::NonZeroU64::new(10),
-                    shadow_funding_address: Some(address!(
-                        "2222222222222222222222222222222222222222"
-                    )),
-                    ..SequencerArgs::default()
-                },
-                ..default_node_config_args()
-            },
-        );
+    #[rstest]
+    #[case::sequencer_with_override(NodeMode::Sequencer, true, false)]
+    #[case::validator_with_override(NodeMode::Validator, true, true)]
+    #[case::sequencer_without_override(NodeMode::Sequencer, false, true)]
+    fn validates_da_batcher_sender_override(
+        mut node_args: ConsensusNodeArgs,
+        #[case] mode: NodeMode,
+        #[case] override_sender: bool,
+        #[case] expected_ok: bool,
+    ) {
+        node_args.config.node_mode = mode;
+        node_args.config.l1_rpc_args.l1_da_batcher_sender_override =
+            override_sender.then_some(address!("2222222222222222222222222222222222222222"));
 
-        assert!(args.validate_shadow_funding().is_ok());
-    }
-
-    #[test]
-    fn shadow_funding_above_deposit_mint_limit_is_rejected() {
-        let args = ConsensusNodeArgs::new(
-            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
-            ConsensusNodeConfigArgs {
-                node_mode: NodeMode::Sequencer,
-                sequencer_flags: SequencerArgs {
-                    shadow_blocks_per_cycle: std::num::NonZeroU64::new(10),
-                    shadow_funding_address: Some(address!(
-                        "2222222222222222222222222222222222222222"
-                    )),
-                    shadow_funding_amount: Some(U256::from(u128::MAX) + U256::from(1)),
-                    ..SequencerArgs::default()
-                },
-                ..default_node_config_args()
-            },
-        );
-
-        assert!(args.validate_shadow_funding().is_err());
-    }
-
-    #[test]
-    fn da_batcher_sender_override_is_rejected_in_sequencer_mode() {
-        let args = ConsensusNodeArgs::new(
-            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
-            ConsensusNodeConfigArgs {
-                node_mode: NodeMode::Sequencer,
-                l1_rpc_args: L1ClientArgs {
-                    l1_da_batcher_sender_override: Some(address!(
-                        "2222222222222222222222222222222222222222"
-                    )),
-                    ..L1ClientArgs::default()
-                },
-                ..default_node_config_args()
-            },
-        );
-
-        assert!(args.validate_da_batcher_sender_override().is_err());
+        assert_eq!(node_args.validate_da_batcher_sender_override().is_ok(), expected_ok);
     }
 
     #[test]
