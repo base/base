@@ -151,6 +151,7 @@ pub trait EthApiOverride {
         transaction: BaseTransactionRequest,
         block_number: Option<BlockId>,
         overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<U256>;
 
     /// Simulates transactions with flashblock state support.
@@ -482,28 +483,30 @@ where
         transaction: BaseTransactionRequest,
         block_number: Option<BlockId>,
         overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<U256> {
         debug!(
             message = "rpc::estimate_gas",
             transaction = ?transaction,
             block_number = ?block_number,
             overrides = ?overrides,
+            block_overrides = ?block_overrides,
         );
 
         let mut block_id = block_number.unwrap_or_default();
-        let mut pending_overrides = EvmOverrides::default();
+        let mut pending_state = None;
         // If the call is to pending block use cached override (if it exists)
         if block_id.is_pending() {
             Metrics::rpc_estimate_gas().increment(1);
             let pending_blocks = self.flashblocks_state.get_pending_blocks();
             if pending_blocks.is_some() {
                 block_id = pending_blocks.get_canonical_block_number().into();
-                pending_overrides.state = pending_blocks.get_state_overrides();
+                pending_state = pending_blocks.get_state_overrides();
             }
         }
 
         let mut state_overrides_builder =
-            StateOverridesBuilder::new(pending_overrides.state.unwrap_or_default());
+            StateOverridesBuilder::new(pending_state.unwrap_or_default());
         state_overrides_builder = state_overrides_builder.extend(overrides.unwrap_or_default());
         let final_overrides = state_overrides_builder.build();
 
@@ -517,7 +520,7 @@ where
                 &self.eth_api,
                 transaction,
                 block_id,
-                EvmOverrides::new(Some(final_overrides), pending_overrides.block),
+                EvmOverrides::new(Some(final_overrides), block_overrides),
             )
             .await;
         }
@@ -526,7 +529,7 @@ where
             &self.eth_api,
             transaction,
             block_id,
-            EvmOverrides::new(Some(final_overrides), pending_overrides.block),
+            EvmOverrides::new(Some(final_overrides), block_overrides),
         )
         .await
         .map_err(Into::into)

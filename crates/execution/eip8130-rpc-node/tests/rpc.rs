@@ -514,6 +514,30 @@ async fn eth_call_checks_the_validity_window_at_the_overridden_time() -> eyre::R
     Ok(())
 }
 
+/// `eth_estimateGas` honors block overrides: a request not yet valid at the head
+/// is rejected, but estimated under a `time` block override that opens its window.
+#[tokio::test]
+async fn estimate_gas_checks_the_validity_window_at_the_overridden_time() -> eyre::Result<()> {
+    let (_harness, client) = setup().await?;
+    let alice: Address = Account::Alice.address();
+    let valid_after_secs = 1_000_u64;
+    let request = json!({
+        "from": alice,
+        "calls": [],
+        "validAfter": format!("{valid_after_secs:#x}"),
+    });
+
+    let at_head: Result<U256, _> = client.request("eth_estimateGas", (&request, "latest")).await;
+    let err_str = at_head.expect_err("not yet valid at the head").to_string();
+    assert!(err_str.contains("not yet valid"), "expected a validity-window error, got: {err_str}");
+
+    let block_overrides = json!({ "time": format!("{valid_after_secs:#x}") });
+    let gas: U256 =
+        client.request("eth_estimateGas", (&request, "latest", json!({}), block_overrides)).await?;
+    assert!(gas > U256::ZERO);
+    Ok(())
+}
+
 /// `type: 0x79` alone marks an EIP-8130 request, so a top-level call is
 /// estimated through the EIP-8130 path rather than as a plain transfer.
 #[tokio::test]
