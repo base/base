@@ -115,14 +115,15 @@ impl std::fmt::Debug for InProcessConsensus {
 impl InProcessConsensus {
     /// Number of times to start a node whose freshly chosen ports were taken before it bound them.
     const PORT_BIND_ATTEMPTS: usize = 5;
-    /// Text in the startup error chain when libp2p cannot bind the gossip listen address.
-    const GOSSIP_BIND_FAILURE: &str = "error starting libp2p Swarm";
+    /// Text in the startup error chain when a listener cannot bind its address: the libp2p gossip
+    /// swarm, or the RPC server, which reports the raw `EADDRINUSE` error.
+    const BIND_FAILURES: [&str; 2] = ["error starting libp2p Swarm", "AddrInUse"];
 
     /// Starts an in-process consensus node with the given configuration.
     ///
     /// Ports that the caller leaves unset are chosen by binding port 0 and releasing it, so another
     /// test process can claim one before the node binds it. Several tests run at once, each in its
-    /// own process, so when the gossip listener fails to bind, the node is started again with newly
+    /// own process, so when a listener fails to bind, the node is started again with newly
     /// chosen ports. Ports the caller fixed are never retried.
     pub async fn start(config: InProcessConsensusConfig) -> Result<Self> {
         let ports_chosen_here = config.rpc_port.is_none()
@@ -134,7 +135,7 @@ impl InProcessConsensus {
                 Err(error)
                     if ports_chosen_here
                         && attempt < Self::PORT_BIND_ATTEMPTS
-                        && format!("{error:#}").contains(Self::GOSSIP_BIND_FAILURE) =>
+                        && Self::is_bind_failure(&error) =>
                 {
                     warn!(attempt, error = %error, "consensus node could not bind its ports, retrying");
                     attempt += 1;
@@ -142,6 +143,11 @@ impl InProcessConsensus {
                 result => return result,
             }
         }
+    }
+
+    fn is_bind_failure(error: &eyre::Report) -> bool {
+        let chain = format!("{error:#}");
+        Self::BIND_FAILURES.iter().any(|text| chain.contains(text))
     }
 
     /// Returns a UDP port that is free right now.
