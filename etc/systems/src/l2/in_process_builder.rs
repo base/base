@@ -37,6 +37,9 @@ use url::Url;
 use super::InProcessNodeRuntime;
 use crate::{config::BUILDER, setup::BUILDER_ENODE_ID};
 
+/// RPC namespaces served by the builder over loopback-only HTTP and WebSocket.
+const BUILDER_RPC_MODULES: &str = "admin,eth,web3,net,rpc,debug,trace,txpool,miner";
+
 /// Configuration for starting an in-process builder.
 #[derive(Debug)]
 pub struct InProcessBuilderConfig {
@@ -411,16 +414,8 @@ fn create_node_config(
         rpc.auth_port = port;
     }
 
-    rpc.http_api = Some(
-        "admin,eth,web3,net,rpc,debug,txpool,miner"
-            .parse()
-            .wrap_err("Failed to parse HTTP API modules")?,
-    );
-    rpc.ws_api = Some(
-        "admin,eth,web3,net,rpc,debug,txpool,miner"
-            .parse()
-            .wrap_err("Failed to parse WS API modules")?,
-    );
+    rpc.http_api = Some(BUILDER_RPC_MODULES.parse().wrap_err("Failed to parse HTTP API modules")?);
+    rpc.ws_api = Some(BUILDER_RPC_MODULES.parse().wrap_err("Failed to parse WS API modules")?);
 
     let mut network = if config.p2p_port.is_some() {
         NetworkArgs::default()
@@ -504,9 +499,15 @@ fn pool_component(_rollup_args: &RollupArgs) -> BasePoolBuilder<BasePooledTransa
 
 #[cfg(test)]
 mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use alloy_rpc_types_engine::JwtSecret;
+    use base_execution_chainspec::BaseChainSpec;
     use tempfile::TempDir;
 
-    use super::InProcessBuilder;
+    use super::{
+        InProcessBuilder, InProcessBuilderConfig, InProcessNodeRuntime, create_node_config,
+    };
 
     #[test]
     fn retains_caller_owned_datadir() {
@@ -533,6 +534,45 @@ mod tests {
             .expect_err("empty caller-owned datadir should be rejected");
 
         assert!(error.to_string().contains("does not contain an existing database"));
+    }
+
+    #[test]
+    fn serves_trace_on_loopback_http_and_ws() {
+        let datadir = TempDir::new().unwrap();
+        let config = InProcessBuilderConfig {
+            runtime: InProcessNodeRuntime::Host,
+            chain_spec: Arc::new(BaseChainSpec::mainnet()),
+            datadir: None,
+            jwt_secret: JwtSecret::random(),
+            http_port: None,
+            ws_port: None,
+            auth_port: None,
+            p2p_port: None,
+            flashblocks_port: None,
+            metrics_port: None,
+            payload_builder_cutover: false,
+            extra_extensions: Vec::new(),
+            block_time: Duration::from_secs(2),
+            persistence_threshold: None,
+            persistence_backpressure_threshold: None,
+            txpool_max_transactions: None,
+            txpool_max_size_mb: None,
+            txpool_max_account_slots: None,
+        };
+
+        let rpc = create_node_config(
+            Arc::clone(&config.chain_spec),
+            datadir.path(),
+            &datadir.path().join("jwt.hex"),
+            &config,
+        )
+        .unwrap()
+        .rpc;
+
+        let trace = "trace".parse().unwrap();
+        assert!(rpc.http && rpc.http_api.unwrap().contains(&trace));
+        assert!(rpc.ws && rpc.ws_api.unwrap().contains(&trace));
+        assert!(rpc.http_addr.is_loopback() && rpc.ws_addr.is_loopback());
     }
 
     #[test]
