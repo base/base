@@ -13,7 +13,7 @@ use alloy_eips::{
     eip7594::BlobTransactionSidecarVariant,
     eip7702::SignedAuthorization,
 };
-use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, TxKind, U256};
 use base_bundles::MeterBundleResponse;
 use base_common_consensus::{
     BaseTransactionSigned, EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Signed,
@@ -61,6 +61,8 @@ pub struct BasePooledTransaction<
     /// State predicates that must hold before this transaction is eligible for
     /// inclusion.
     validity_predicates: Vec<crate::ValidityPredicate>,
+    /// Sender authorization retained for builder forwarding.
+    validity_signature: Option<Signature>,
     /// The set of on-chain state surfaces whose change invalidates this
     /// transaction, computed once during validation and consumed by the pool's
     /// invalidation index. Empty until set; see [`crate::WatchSet`].
@@ -104,6 +106,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             encoded_2718: Default::default(),
             received_at,
             validity_predicates: Vec::new(),
+            validity_signature: None,
             watch_set: OnceLock::new(),
             limit_class: OnceLock::new(),
             watch_manifest: OnceLock::new(),
@@ -135,6 +138,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     ) -> Self {
         crate::ValidityPredicate::sort_batch(&mut validity_predicates);
         self.validity_predicates = validity_predicates;
+        self.validity_signature = None;
         self
     }
 
@@ -142,6 +146,25 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     #[must_use]
     pub fn validity_predicates(&self) -> &[crate::ValidityPredicate] {
         &self.validity_predicates
+    }
+
+    /// Attaches an admitted sidecar to its original signed transaction.
+    /// The witness comes from raw-ingress validation or explicitly trusted forwarding.
+    pub fn with_validity(
+        mut self,
+        validity: crate::ValidatedValidity,
+    ) -> Result<Self, crate::ValidityAuthorizationError> {
+        let hash =
+            *alloy_consensus::transaction::TxHashRef::tx_hash(self.inner.transaction.inner());
+        let validity = validity.into_sidecar(hash)?;
+        self = self.with_validity_predicates(validity.validity);
+        self.validity_signature = validity.validity_signature;
+        Ok(self)
+    }
+
+    /// Returns the sender's validity-sidecar signature, if any.
+    pub const fn validity_signature(&self) -> Option<Signature> {
+        self.validity_signature
     }
 
     /// Returns the estimated compressed size of a transaction in bytes.
