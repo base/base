@@ -714,13 +714,18 @@ def finding_order(f: render.Finding) -> tuple[int, str, int]:
 def build_plan(decision: dict[str, Any], threads: list[dict[str, Any]],
                valid_lines: set[tuple[str, int]], inline_room: int = MAX_INLINE_COMMENTS,
                allowed: frozenset[str] | set[str] | None = None,
-               replied: set[str] | None = None) -> Plan:
+               replied: set[str] | None = None,
+               seen: set[tuple[str | None, str]] | None = None) -> Plan:
     """Check the decider's actions against the diff and threads; demote what cannot be applied."""
     by_id = {t["thread_id"]: t for t in threads}
     plan = Plan()
     anchored: list[render.Finding] = []
     touched: set[str] = set()
-    replied = replied if replied is not None else set()  # shared across rounds so a thread gets one follow-up
+    # Threads that already got a follow-up in an earlier round, and findings an earlier round already posted.
+    # They are only read here: the caller records them once they were actually posted.
+    replied_before = set(replied or ())
+    replied_now: set[str] = set()
+    seen_here = set(seen or ())
     for action in decision.get("actions", []):
         kind = action["type"]
         if allowed is not None and kind not in allowed:
@@ -728,6 +733,10 @@ def build_plan(decision: dict[str, Any], threads: list[dict[str, Any]],
             continue
         if kind == "comment":
             finding = render.Finding.from_action(action)
+            key = (finding.path, finding.title.lower())
+            if key in seen_here:
+                continue  # already posted, by an earlier round or earlier in this one; it takes no slot
+            seen_here.add(key)
             (anchored if (finding.path, finding.line) in valid_lines else plan.outside).append(finding)
             continue
         thread = by_id.get(action.get("thread_id") or "")
@@ -735,10 +744,10 @@ def build_plan(decision: dict[str, Any], threads: list[dict[str, Any]],
         if thread is None or not thread["owned_by_bot"]:
             plan.rejected.append(f"{kind}: unknown or foreign thread {action.get('thread_id')}")
         elif kind == "reply":
-            if thread["thread_id"] in replied:
+            if thread["thread_id"] in replied_before or thread["thread_id"] in replied_now:
                 plan.rejected.append(f"reply: thread {thread['thread_id']} already got a follow-up in this run")
             else:
-                replied.add(thread["thread_id"])
+                replied_now.add(thread["thread_id"])
                 plan.replies.append({"thread_id": thread["thread_id"],
                                      "body": f"{render.MARKER}\n**Follow-up:** {body}"})
         elif thread["thread_id"] in touched:
@@ -849,9 +858,8 @@ def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None]
                        ["api", "-X", "PATCH", f"repos/{repo}/pulls/comments/{item['comment_id']}", "--input", "-"],
                        json.dumps({"body": body}))
 
-    for item in plan.replies:
-        reply(item)
-    # Keep only what was done, so the summary and the threads agree.
+    # Keep only what was done, so the summary, the threads and the next round agree.
+    plan.replies = [i for i in plan.replies if reply(i)]
     plan.resolves = [i for i in plan.resolves if edit_comment(i, i["body"])]
     # The comment is what the thread shows, so the thread counts as reopened once it is restored;
     # a failed reply is reported but does not hide it from the summary.
@@ -917,6 +925,14 @@ def post_summary(summary: str, ctx: Context) -> list[str]:
     return problems
 
 
+# GitHub lists at most this many commits of a pull request, however many pages are read.
+COMMIT_LIST_LIMIT = 250
+
+
+class CommitsUncountable(ReviewError):
+    """The pull request has more commits than GitHub will list, so commits after one cannot be counted."""
+
+
 def commits_after(number: int, repo: str, reviewed: str) -> int | None:
     """How many commits of the pull request were pushed after `reviewed`, or None if it is no longer in it.
 
@@ -925,6 +941,10 @@ def commits_after(number: int, repo: str, reviewed: str) -> int | None:
     """
     pages = json.loads(gh(["api", f"repos/{repo}/pulls/{number}/commits", "--paginate", "--slurp"]))
     shas = [c["sha"] for page in pages for c in page]
+    if len(shas) >= COMMIT_LIST_LIMIT:
+        # The list is cut off: the newest commits are missing, so a count would be too low, and a reviewed
+        # commit that is not in it may be beyond the cut rather than gone.
+        raise CommitsUncountable(f"the pull request has at least {COMMIT_LIST_LIMIT} commits")
     for index, sha in enumerate(shas):
         if sha == reviewed or sha.startswith(reviewed):
             return len(shas) - 1 - index
@@ -946,10 +966,16 @@ def refresh_status(number: int, repo: str) -> int:
         log("the latest summary does not record the commit it reviewed; leaving it as it is")
         return 0
     head = fetch_head(number, repo)
-    unreviewed = 0 if head.startswith(reviewed) or reviewed.startswith(head) else commits_after(number, repo, reviewed)
+    uncountable = False
+    unreviewed: int | None = 0
+    if not (head.startswith(reviewed) or reviewed.startswith(head)):
+        try:
+            unreviewed = commits_after(number, repo, reviewed)
+        except CommitsUncountable:
+            unreviewed, uncountable = None, True
     block = render.status_block(
         reviewed, unreviewed=unreviewed, compare_url=f"https://github.com/{repo}/compare/{reviewed}...{head}",
-        files_url=f"https://github.com/{repo}/pull/{number}/files")
+        files_url=f"https://github.com/{repo}/pull/{number}/files", uncountable=uncountable)
     body = render.replace_status(latest["body"], block)
     if body is None:
         log("the latest summary has no status line (it is from an older version); leaving it as it is")
@@ -959,7 +985,9 @@ def refresh_status(number: int, repo: str) -> int:
         return 0
     gh(["api", "-X", "PATCH", f"repos/{repo}/issues/comments/{latest['id']}", "--input", "-"],
        input_text=json.dumps({"body": body}))
-    log(f"updated the status line: {'rewritten branch' if unreviewed is None else f'{unreviewed} unreviewed commit(s)'}")
+    log("updated the status line: " + ("too many commits to count" if uncountable else
+                                         "rewritten branch" if unreviewed is None else
+                                         f"{unreviewed} unreviewed commit(s)"))
     return 0
 
 
@@ -1024,13 +1052,6 @@ def run_council(ctx: Context, triage: dict[str, Any], members: list[Agent], chai
     return merged, failed, True
 
 
-def drop_repeats(plan: Plan, seen: set[tuple[str | None, str]]) -> None:
-    """Remove findings that an earlier round already posted (same file and title) and remember the rest."""
-    plan.new = [f for f in plan.new if (f.path, f.title.lower()) not in seen]
-    plan.outside = [f for f in plan.outside if (f.path, f.title.lower()) not in seen]
-    seen.update((f.path, f.title.lower()) for f in plan.new + plan.outside)
-
-
 def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
                  model_override: str | None, post: bool = False) -> Outcome:
     """Run triage and the reviewers, deciding and posting each reviewer's findings as it finishes.
@@ -1086,6 +1107,10 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
         """Post one round, unless the pull request moved on; fold what happened into the whole plan."""
         if post:
             problems.extend(apply_plan(round_plan, ctx))
+        # Only now is it known what went out: a reply that failed to post must not stop a later round from
+        # trying again, and a finding that was posted must not be posted again.
+        replied.update(r["thread_id"] for r in round_plan.replies)
+        seen.update((f.path, f.title.lower()) for f in round_plan.new + round_plan.outside)
         plan.merge(round_plan)
 
     def findings_round(name: str, output: dict[str, Any]) -> None:
@@ -1103,8 +1128,7 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
             return
         dropped.extend(decision.get("dropped", []))
         round_plan = build_plan(decision, ctx.threads, valid_lines, inline_room=MAX_INLINE_COMMENTS - len(plan.new),
-                                allowed=FINDINGS_ROUND_ACTIONS, replied=replied)
-        drop_repeats(round_plan, seen)
+                                allowed=FINDINGS_ROUND_ACTIONS, replied=replied, seen=seen)
         publish(round_plan)
 
     def on_done(name: str, result: Any, still_running: set[str]) -> None:
@@ -1143,8 +1167,7 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
     rows.append(row(decide_agent))
     dropped.extend(decision.get("dropped", []))
     final_plan = build_plan(decision, ctx.threads, valid_lines, inline_room=MAX_INLINE_COMMENTS - len(plan.new),
-                            allowed=FINAL_ROUND_ACTIONS | {"comment"}, replied=replied)
-    drop_repeats(final_plan, seen)
+                            allowed=FINAL_ROUND_ACTIONS | {"comment"}, replied=replied, seen=seen)
     publish(final_plan)
     for name in unposted:
         # The final round took these findings, so the review is not missing them.
@@ -1160,15 +1183,19 @@ def status_for(ctx: Context) -> str | None:
     """
     if not (ctx.head_sha and ctx.pr_number):
         return None
+    uncountable = False
     try:
         head = fetch_head(ctx.pr_number, ctx.repo)
-        unreviewed = 0 if head == ctx.head_sha else commits_after(ctx.pr_number, ctx.repo, ctx.head_sha)
+        try:
+            unreviewed = 0 if head == ctx.head_sha else commits_after(ctx.pr_number, ctx.repo, ctx.head_sha)
+        except CommitsUncountable:
+            unreviewed, uncountable = None, True
     except (ReviewError, ValueError, KeyError) as exc:
         log(f"warning: could not count the commits after the review ({exc})")
         return None
     return render.status_block(
         ctx.head_sha, unreviewed=unreviewed, compare_url=f"https://github.com/{ctx.repo}/compare/{ctx.head_sha}...{head}",
-        files_url=f"https://github.com/{ctx.repo}/pull/{ctx.pr_number}/files")
+        files_url=f"https://github.com/{ctx.repo}/pull/{ctx.pr_number}/files", uncountable=uncountable)
 
 
 def build_summary(outcome: Outcome, plan: Plan, ctx: Context) -> str:
