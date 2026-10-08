@@ -150,6 +150,8 @@ base_metrics::define_metrics! {
     l1_verifier_derivation_head: counter,
     #[describe("Failed attempts to fetch a delayed L1 block for verifier confirmation")]
     l1_verifier_delayed_fetch_errors: counter,
+    #[describe("L1 heads skipped by the unsafe block signer scan after log fetch retries ran out")]
+    l1_watcher_log_fetch_failures: counter,
 }
 
 impl Metrics {

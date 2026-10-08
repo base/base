@@ -46,9 +46,7 @@ impl LogRetrier {
     /// Returns `Ok(Some(logs))` on success, `Ok(None)` if `cancel` fires during a backoff sleep,
     /// or `Err(`[`L1WatcherActorError::RetriesExhausted`]`)` once all attempts fail.
     ///
-    /// Provider failures, including request timeouts, use the same bounded retry path. Exhausting
-    /// those attempts returns an actor error so the node service can shut down instead of waiting
-    /// indefinitely on an L1 request.
+    /// Provider failures, including request timeouts, use the same bounded retry path.
     ///
     /// `initial_backoff` and `max_backoff` are caller-supplied so tests can use tiny values.
     pub async fn fetch_logs_with_retry<F>(
@@ -274,9 +272,9 @@ where
                             .address(filter_address)
                             .select(derivation_block.hash);
 
-                        // Log requests are retried with bounded backoff. If all attempts time out
-                        // or otherwise fail, the actor returns an error instead of hanging.
-                        let Some(logs) = LogRetrier::fetch_logs_with_retry(
+                        // The head stream already skips blocks, so this scan is best effort.
+                        // Skipping one block's logs is better than stopping the node.
+                        let logs = match LogRetrier::fetch_logs_with_retry(
                             &self.l1_provider,
                             filter,
                             &cancel,
@@ -284,9 +282,14 @@ where
                             INITIAL_BACKOFF,
                             MAX_BACKOFF,
                         )
-                        .await?
-                        else {
-                            return Ok(());
+                        .await
+                        {
+                            Ok(Some(logs)) => logs,
+                            Ok(None) => return Ok(()),
+                            Err(_) => {
+                                Metrics::l1_watcher_log_fetch_failures().increment(1);
+                                continue;
+                            }
                         };
                         let ecotone_active =
                             self.rollup_config.is_ecotone_active(derivation_block.timestamp);
@@ -624,6 +627,14 @@ mod tests {
         )
         .await;
         assert!(matches!(result, Ok(None)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn exhausted_log_retries_skip_head_and_continue() {
+        let (client, _, _) =
+            run_actor(MockFetcher::always_fail(), vec![block_at(100), block_at(101)], 0).await;
+
+        assert_eq!(client.sent_heads(), vec![block_at(100), block_at(101)]);
     }
 
     // ---------------------------------------------------------------------------
