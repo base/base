@@ -112,9 +112,12 @@ cast balance "$FUNDER_ADDRESS" --rpc-url "$BUILDER_RPC"
 ```
 
 The runtime JSON contains `status`, `chain_id`, `boundary_number`, `boundary_hash`,
-`block_interval_ms`, `block_gas_limit`, `builder_rpc_url`, `builder_flashblocks_url`, and
-`client_rpc_url`. Dynamic ports are the default and are safest for automation. `--stable-ports` binds
-the builder and client RPCs to ports 7545 and 8545, respectively, but fails if those ports are occupied.
+`block_interval_ms`, `block_gas_limit`, `builder_rpc_url`, `builder_ws_url`,
+`builder_flashblocks_url`, and `client_rpc_url`. Builder RPCs bind to localhost only and serve the
+`admin`, `eth`, `web3`, `net`, `rpc`, `debug`, `trace`, `txpool`, and `miner` namespaces over both
+HTTP and WebSocket. Dynamic ports are the default and are safest for automation. `--stable-ports`
+binds the builder and client RPCs to ports 7545 and 8545, respectively, but fails if those ports are
+occupied.
 
 To pin a run to a known snapshot boundary, pass all three of `--expected-head-number`,
 `--expected-head-hash`, and `--expected-head-timestamp`. Startup fails before load generation if
@@ -134,7 +137,8 @@ HTTP and WebSocket RPCs. The client RPC does not serve it. The method takes one 
 | `data`  | no       | hex bytes       | `0x`    |
 
 It returns the transaction hash after bounded admission, without waiting for inclusion; poll the
-standard `eth_getTransactionReceipt` for the result. The builder injects the request as an unsigned
+standard `eth_getTransactionReceipt` for the result. The same JSON-RPC request works over
+`builder_ws_url`. The builder injects the request as an unsigned
 synthetic L2 deposit from `from` into the first eligible payload that is not yet fixed. Nothing goes
 through L1.
 
