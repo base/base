@@ -62,27 +62,26 @@ mod tests {
 
     use alloy_eips::eip1559::BaseFeeParams;
     use alloy_primitives::{B64, Bytes};
+    use rstest::rstest;
 
     use super::JovianExtraData;
     use crate::extra::EIP1559ParamError;
 
-    #[test]
-    fn test_encode_with_explicit_params() {
-        let eip_1559_params = B64::from_str("0x0000000800000008").unwrap();
-        let extra_data = JovianExtraData::encode(eip_1559_params, BaseFeeParams::new(80, 60), 257);
-        assert_eq!(
-            extra_data.unwrap(),
-            Bytes::copy_from_slice(&[1, 0, 0, 0, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 1, 1])
-        );
-    }
-
-    #[test]
-    fn test_encode_with_defaults() {
-        let extra_data = JovianExtraData::encode(B64::ZERO, BaseFeeParams::new(80, 60), 0);
-        assert_eq!(
-            extra_data.unwrap(),
-            Bytes::copy_from_slice(&[1, 0, 0, 0, 80, 0, 0, 0, 60, 0, 0, 0, 0, 0, 0, 0, 0])
-        );
+    #[rstest]
+    #[case::explicit_params(
+        B64::from_str("0x0000000800000008").unwrap(),
+        257,
+        [1, 0, 0, 0, 8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 1, 1]
+    )]
+    #[case::defaults(B64::ZERO, 0, [1, 0, 0, 0, 80, 0, 0, 0, 60, 0, 0, 0, 0, 0, 0, 0, 0])]
+    fn test_encode(
+        #[case] eip_1559_params: B64,
+        #[case] min_base_fee: u64,
+        #[case] expected: [u8; 17],
+    ) {
+        let extra_data =
+            JovianExtraData::encode(eip_1559_params, BaseFeeParams::new(80, 60), min_base_fee);
+        assert_eq!(extra_data.unwrap(), Bytes::copy_from_slice(&expected));
     }
 
     #[test]
