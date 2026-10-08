@@ -1421,6 +1421,7 @@ mod tests {
             public_rpc: None,
             flashblocks_ws: Url::parse("ws://127.0.0.1:7111").unwrap(),
             l1_rpc: Url::parse("http://127.0.0.1:9545").unwrap(),
+            l1_beacon_rpc: None,
             consensus_node_rpc: None,
             chain_id,
             prover_rpc: None,
