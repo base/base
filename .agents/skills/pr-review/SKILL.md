@@ -71,7 +71,7 @@ Every agent is `agents/<name>.md`: front matter, then the system prompt.
 | `model` | Model ID passed to `claude --model`. |
 | `effort` | `low`, `medium`, `high`, `xhigh`, or `max`. Default `high`. |
 | `tools` | Tools the agent may use. Default `Read,Grep,Glob`. Keep it read-only. |
-| `timeout_seconds` | Wall-clock limit. Default 1800. |
+| `timeout_seconds` | Wall-clock limit for one attempt. Default 150. Set it to a few times what the agent normally needs, so a hung agent is cut off quickly. |
 | `max_budget_usd` | Optional spend cap for the agent. |
 | `max_output_tokens` | Optional. The CLI asks for 128k output tokens, which the gateway rejects for Gemini models (their limit is about 65k). Set this to 32000 for them. |
 
@@ -110,7 +110,12 @@ A Grok member was dropped: the gateway answers `403 Access denied to restricted 
 
 ## Time budget
 
-The whole run has a wall-clock budget (`--budget-seconds`, default 4800, inside the 90-minute CI job). Each stage's `timeout_seconds` is cut down so the stages after it still fit: the council's reviews leave time for the votes, the chair, and the decider. A stage with less than a minute left is skipped and reported as failed, so the run ends with a summary rather than a killed job. Council votes are capped at 10 minutes.
+A deep review is meant to finish in about 5 minutes, and the pipeline enforces that.
+
+- **Normal run:** the reviewers and council members run in parallel, so the slowest one sets the time. With medium effort (low for Gemini) they take 30-120 seconds, then votes, the chair and the decider take about 15-30 seconds each. A local run measured 2-3.5 minutes; a CI run adds about 15 seconds of setup.
+- **Per-agent limits:** `timeout_seconds` is 150 for reviewers and council members, 120 for the decider, and 60 for triage and the chair; votes are capped at 90. A hung or slow agent is cut off at its limit and reported as "did not finish" in the summary, and the review goes on without it.
+- **Whole-run budget:** `--budget-seconds` (default 450) caps the whole run. Each stage's limit is cut down so the stages after it still fit, and a stage with less than a minute left is skipped. The workflow job itself stops at 15 minutes.
+- **Why not higher effort:** `max` effort took 5-19 minutes per agent (up to 18 tool calls). Effort and the "Working fast" guide in `shared/working-fast.md` are the levers. If you raise either, raise the limits above with them, or the agent will be cut off.
 
 ## In CI
 
