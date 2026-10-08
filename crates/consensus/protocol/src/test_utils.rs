@@ -2,7 +2,7 @@
 
 use alloc::{boxed::Box, format, string::String, sync::Arc, vec::Vec};
 
-use alloy_primitives::hex;
+use alloy_primitives::{B256, hex};
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
 use spin::Mutex;
@@ -73,6 +73,14 @@ impl BatchValidationProvider for TestBatchValidator {
         self.blocks
             .iter()
             .find(|b| b.block_info.number == number)
+            .copied()
+            .ok_or_else(|| TestBatchValidatorError::BlockNotFound)
+    }
+
+    async fn l2_block_info_by_hash(&mut self, hash: B256) -> Result<L2BlockInfo, Self::Error> {
+        self.blocks
+            .iter()
+            .find(|b| b.block_info.hash == hash)
             .copied()
             .ok_or_else(|| TestBatchValidatorError::BlockNotFound)
     }

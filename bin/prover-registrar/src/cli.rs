@@ -9,6 +9,7 @@ use base_proof_tee_registrar::{
 };
 use base_tx_manager::{SignerConfig, TxManagerConfig};
 use clap::Parser;
+use reth_node_core::args::TraceArgs;
 use url::Url;
 
 // Generate env-var helper and CLI structs with the `BASE_REGISTRAR_` prefix.
@@ -40,7 +41,12 @@ pub(crate) struct Cli {
     aws_region: String,
 
     /// JSON-RPC port to poll on each prover instance.
-    #[arg(long, env = cli_env!("PROVER_PORT"), default_value_t = 8000)]
+    #[arg(
+        long,
+        env = cli_env!("PROVER_PORT"),
+        default_value_t = 8000,
+        value_parser = clap::value_parser!(u16).range(1..)
+    )]
     prover_port: u16,
 
     /// Signer configuration (local private key or remote sidecar).
@@ -55,7 +61,8 @@ pub(crate) struct Cli {
     #[arg(
         long = "max-attestation-age-secs",
         env = cli_env!("MAX_ATTESTATION_AGE_SECS"),
-        default_value_t = 3300
+        default_value_t = 3300,
+        value_parser = clap::value_parser!(u64).range(1..)
     )]
     max_attestation_age: u64,
 
@@ -122,6 +129,9 @@ pub(crate) struct Cli {
 
     #[command(flatten)]
     metrics: MetricsArgs,
+
+    #[command(flatten)]
+    pub(crate) traces: TraceArgs,
 }
 
 impl Cli {
@@ -185,6 +195,22 @@ mod tests {
     fn max_concurrency_zero_rejected() {
         let mut args = required_args();
         args.extend(["--max-concurrency", "0"]);
+
+        assert!(Cli::try_parse_from(args).is_err());
+    }
+
+    #[test]
+    fn max_attestation_age_zero_rejected() {
+        let mut args = required_args();
+        args.extend(["--max-attestation-age-secs", "0"]);
+
+        assert!(Cli::try_parse_from(args).is_err());
+    }
+
+    #[test]
+    fn prover_port_zero_rejected() {
+        let mut args = required_args();
+        args.extend(["--prover-port", "0"]);
 
         assert!(Cli::try_parse_from(args).is_err());
     }

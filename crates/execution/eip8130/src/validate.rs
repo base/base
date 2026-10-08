@@ -64,11 +64,14 @@ impl NonceValidator {
         now: u64,
     ) -> Result<NonceStatus, NonceError> {
         if tx.nonce_key == Eip8130Constants::NONCE_KEY_MAX {
-            // Nonce-free: no sequence channel. The structural rules
-            // (nonce_sequence == 0, validity window) are enforced upstream by
-            // `Eip8130Signed::validate_timestamp`; the only stateful check is
-            // that this logical transaction's replay hash is not already
-            // recorded and unexpired.
+            // Nonce-free: no sequence channel, so `nonce_sequence` must be zero.
+            // Checked here rather than only in pool admission so inclusion
+            // enforces it too. The validity window is checked by the caller;
+            // the stateful check is that this logical transaction's replay hash
+            // is not already recorded and unexpired.
+            if tx.nonce_sequence != 0 {
+                return Err(NonceError::NonceFreeSequence { got: tx.nonce_sequence });
+            }
             let replay = Self::replay_hash(tx, account);
             if storage.is_expiring_nonce_seen(replay, now)? {
                 return Err(NonceError::Replay);
@@ -246,5 +249,16 @@ mod tests {
             mgr.check_and_mark_expiring_nonce(replay, valid_before).unwrap();
         };
         assert_eq!(check(&tx, 0, NonceMode::Inclusion, now_secs, seed), Err(NonceError::Replay));
+    }
+
+    #[test]
+    fn nonce_free_with_nonzero_sequence_is_rejected() {
+        let tx = tx_with(Eip8130Constants::NONCE_KEY_MAX, 1);
+        for mode in [NonceMode::Pool, NonceMode::Inclusion] {
+            assert_eq!(
+                check(&tx, 0, mode, 1_000, |_| {}),
+                Err(NonceError::NonceFreeSequence { got: 1 })
+            );
+        }
     }
 }

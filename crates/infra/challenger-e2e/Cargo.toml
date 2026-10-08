@@ -18,9 +18,23 @@ tracing.workspace = true
 reqwest.workspace = true
 humantime.workspace = true
 alloy-provider.workspace = true
+alloy-consensus.workspace = true
+alloy-rpc-types-eth.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
 alloy-node-bindings.workspace = true
+base-proof-rpc.workspace = true
+base-tx-manager.workspace = true
 base-proof-contracts.workspace = true
+base-zk-fork-dispute.workspace = true
+# `test-utils` for the SP1 PLONK receipt fixture the mock prover returns.
+base-proof-submission = { workspace = true, features = ["test-utils"] }
+base-prover-service-protocol = { workspace = true, features = ["rpc-server"] }
+jsonrpsee = { workspace = true, features = ["server"] }
 clap = { workspace = true, features = ["derive", "env"] }
 tokio = { workspace = true, features = ["time"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+base-proof-primitives.workspace = true
+base-prover-service-client.workspace = true

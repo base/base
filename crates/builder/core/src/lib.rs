@@ -22,15 +22,15 @@ pub use execution::{
 mod execution_metering_mode;
 pub use execution_metering_mode::ExecutionMeteringMode;
 
+mod resting_predicate_mode;
+pub use resting_predicate_mode::RestingPredicateMode;
+
 mod traits;
 pub use base_execution_payload_builder::{
     MeteringProvider, NoopMeteringProvider, RejectionCache, ResourceMeteringConfig,
     SharedMeteringProvider,
 };
 pub use traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds};
-
-mod rejected_tx_forwarder;
-pub use rejected_tx_forwarder::RejectedTxForwarder;
 
 // Internal-only helpers for emitting builder transaction events. The event surface
 // is shared via `base-observability-events`, while this module keeps
@@ -39,18 +39,20 @@ mod transaction_events;
 
 mod flashblocks;
 pub use flashblocks::{
-    BasePayloadBuilderCtx, BestFlashblocksTxs, BlockPayloadJob, BlockPayloadJobGenerator,
-    BuildArguments, FLOW_STANDARD, FLOW_VALIDITY, FlashblockDiagnostics,
+    BasePayloadBuilderCtx, BestFlashblocksTxs, BlockDeferrals, BlockPayloadJob,
+    BlockPayloadJobGenerator, BuildArguments, FLOW_STANDARD, FLOW_VALIDITY, FlashblockDiagnostics,
     FlashblockSelectionOutcome, FlashblocksExtraCtx, FlashblocksServiceBuilder, InclusionFlow,
     InclusionTracker, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
     ParkedPredicateIndex, PayloadBuilder, PayloadHandler, PayloadJobDeadline,
     PayloadTransactionInvalidated, PredicateLoadTracker, PredicateReadRecorder, ResolvePayload,
-    StateChangeEffects, ValidityPredicateEvaluation, ValidityPredicateKey,
+    RestingPayloadTransactions, RestingStats, StateChangeEffects, ValidityPredicateEvaluation,
+    ValidityPredicateKey,
 };
 
 mod extension;
 pub use extension::{
-    BuilderApiExtension, BuilderApiExtensionConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
+    BuilderApiExtension, BuilderApiExtensionArgs, BuilderApiExtensionConfig,
+    DEFAULT_MAX_VALIDITY_PREDICATES,
 };
 
 mod shadow_validity;

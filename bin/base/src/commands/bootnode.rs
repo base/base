@@ -48,7 +48,7 @@ impl BootnodeCommand {
             self.consensus.check_ports()?;
 
             let mut consensus_bootnode = tokio::spawn(self.consensus.run(chain_id));
-            let mut execution_bootnode = tokio::spawn(Self::run_execution(self.execution));
+            let mut execution_bootnode = tokio::spawn(self.execution.execute());
 
             tokio::select! {
                 result = &mut consensus_bootnode => {
@@ -67,10 +67,6 @@ impl BootnodeCommand {
                 }
             }
         })
-    }
-
-    async fn run_execution(execution: ExecutionBootnodeCommand) -> eyre::Result<()> {
-        execution.execute().await
     }
 
     async fn stop_task(

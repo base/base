@@ -211,6 +211,26 @@ pub enum ApplyError {
     /// Mirrors `Keystore.SequenceSaturated`.
     #[error("account-change channel sequence is saturated")]
     SequenceSaturated,
+
+    /// A signed batch's sequence does not match the account's current sequence
+    /// for its channel. Mirrors `Keystore.BadSequence`.
+    #[error("config change sequence {got} does not match the expected {expected}")]
+    BadSequence {
+        /// The account's current sequence for the batch's channel.
+        expected: u64,
+        /// The sequence carried by the signed batch.
+        got: u64,
+    },
+
+    /// A Local-channel batch commits a local epoch other than the account's
+    /// current one. Mirrors `Keystore.StaleEpoch`.
+    #[error("config change local epoch {got} does not match the expected {expected}")]
+    StaleEpoch {
+        /// The account's current local epoch.
+        expected: u64,
+        /// The local epoch committed by the signed batch.
+        got: u64,
+    },
 }
 
 /// A created account's deferred code write: its counterfactual address and the
@@ -271,9 +291,6 @@ impl DelegationEffect {
             Bytecode::new_eip7702(self.target)
         };
         sctx.set_code(self.account, code)?;
-        // Protocol-injected: the Solidity contract never emits this on the EVM
-        // path; EIP-8130 requires the receipt log for successful delegation updates.
-        AccountConfigurationEvents::emit_delegation_applied(sctx, self.account, self.target)?;
         Ok(())
     }
 
@@ -476,19 +493,22 @@ impl AccountChangeApplier {
     ) -> Result<(), ApplyError> {
         match channel {
             AccountChangeChannel::Local => {
-                // Defense-in-depth: a Local sequence word is `epoch(hi 32) ||
-                // localSeq(lo 32)`, and the authorizer has already validated the
-                // epoch high-half against `state.local_epoch` before apply. Assert
-                // it here so a future direct caller of the `pub` apply entrypoints
-                // cannot advance the sequence against a stale epoch — the low-half
-                // advance below intentionally ignores the epoch bits.
-                debug_assert_eq!(
-                    (sequence >> 32) as u32,
-                    state.local_epoch as u32,
-                    "local sequence word epoch must match the account's local epoch",
-                );
+                // A Local sequence word is `epoch(hi 32) || localSeq(lo 32)`. The
+                // authorizer checks both before apply on the authorized path, but
+                // estimation applies changes without authorizing them, so they
+                // are enforced here in every build.
+                let epoch = u64::from((sequence >> 32) as u32);
+                if epoch != state.local_epoch {
+                    return Err(ApplyError::StaleEpoch { expected: state.local_epoch, got: epoch });
+                }
                 let seq = sequence as u32;
                 if seq != Eip8130Constants::UNSEQUENCED {
+                    if u64::from(seq) != state.local_sequence {
+                        return Err(ApplyError::BadSequence {
+                            expected: state.local_sequence,
+                            got: u64::from(seq),
+                        });
+                    }
                     state.local_sequence =
                         u64::from(seq).checked_add(1).ok_or(ApplyError::SequenceSaturated)?;
                 } else if !state.is_initialized() {
@@ -496,15 +516,13 @@ impl AccountChangeApplier {
                 }
             }
             AccountChangeChannel::Multichain => {
-                // Symmetric to the Local branch: the authorizer already validated
-                // `sequence` against the account's current multichain sequence
-                // before apply. Assert it here so a future direct caller of the
-                // `pub` apply entrypoints cannot advance against a mismatched
-                // sequence.
-                debug_assert_eq!(
-                    sequence, state.multichain_sequence,
-                    "multichain sequence must match the account's current multichain sequence",
-                );
+                // Enforced in every build, as for the Local channel.
+                if sequence != state.multichain_sequence {
+                    return Err(ApplyError::BadSequence {
+                        expected: state.multichain_sequence,
+                        got: sequence,
+                    });
+                }
                 state.multichain_sequence = state
                     .multichain_sequence
                     .checked_add(1)
@@ -1085,7 +1103,7 @@ mod tests {
     use revm::state::Bytecode;
 
     use super::*;
-    use crate::{AccountCreated, ActorAuthorized, ActorRevoked, DelegationApplied};
+    use crate::{AccountCreated, ActorAuthorized, ActorRevoked};
 
     const ACCOUNT: Address = address!("0x00000000000000000000000000000000000000a1");
     const K1: Address = Eip8130Constants::K1_AUTHENTICATOR;
@@ -1536,7 +1554,7 @@ mod tests {
                 ACCOUNT,
                 &expired,
                 AccountChangeChannel::Local,
-                5,
+                0,
                 now,
             )
             .unwrap();
@@ -2549,7 +2567,7 @@ mod tests {
     }
 
     #[test]
-    fn delegation_install_emits_delegation_applied() {
+    fn delegation_install_sets_indicator_without_logs() {
         let target = Address::repeat_byte(0x33);
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |sctx| {
@@ -2557,10 +2575,36 @@ mod tests {
         })
         .unwrap();
 
-        let events = storage.get_events(AccountConfigurationStorage::ADDRESS);
-        assert_eq!(events.len(), 1);
-        let applied = DelegationApplied::decode_log_data(&events[0]).unwrap();
-        assert_eq!(applied.account, ACCOUNT);
-        assert_eq!(applied.target, target);
+        let code = storage.get_account_info(ACCOUNT).and_then(|info| info.code.as_ref());
+        assert_eq!(code.and_then(Bytecode::eip7702_address), Some(target));
+        assert!(storage.get_events(AccountConfigurationStorage::ADDRESS).is_empty());
+    }
+
+    /// Apply enforces the channel sequence and local epoch itself, in every
+    /// build: estimation applies changes without authorizing them first.
+    #[test]
+    fn apply_rejects_mismatched_sequence_and_epoch() {
+        let config = expiring(2_000);
+        let ops = [authorize_op(NON_SELF, &config, &[])];
+        let apply = |channel, sequence| {
+            with_storage(|acc| {
+                AccountChangeApplier::apply_config_change(
+                    acc, ACCOUNT, &ops, channel, sequence, 1_000,
+                )
+            })
+        };
+        assert_eq!(
+            apply(AccountChangeChannel::Multichain, 3).unwrap_err(),
+            ApplyError::BadSequence { expected: 0, got: 3 }
+        );
+        assert_eq!(
+            apply(AccountChangeChannel::Local, 3).unwrap_err(),
+            ApplyError::BadSequence { expected: 0, got: 3 }
+        );
+        assert_eq!(
+            apply(AccountChangeChannel::Local, 1 << 32).unwrap_err(),
+            ApplyError::StaleEpoch { expected: 0, got: 1 }
+        );
+        apply(AccountChangeChannel::Multichain, 0).unwrap();
     }
 }

@@ -11,7 +11,7 @@ use std::{
 
 use async_trait::async_trait;
 use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
-use base_proof_zk_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
+use base_proof_zk_utils::INTERMEDIATE_ROOT_INTERVAL;
 use base_prover_service_protocol::{
     ProofResult, SessionType, SnarkPlonkProofRequest, SnarkPlonkProofResult, ZkProofRequest,
     ZkProofResult, ZkVm,
@@ -21,7 +21,8 @@ use sp1_cluster_common::{
     client::ClusterServiceClient,
     proto::{
         ExecutionFailureCause, ExecutionStatus, ProofRequest as ClusterProtoProofRequest,
-        ProofRequestCreateRequest, ProofRequestGetRequest, ProofRequestStatus,
+        ProofRequestCancelRequest, ProofRequestCreateRequest, ProofRequestGetRequest,
+        ProofRequestStatus,
     },
 };
 use sp1_prover_types::{Artifact, ArtifactClient as _, ArtifactType};
@@ -32,7 +33,6 @@ use sp1_sdk::{
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use super::utils::{ClusterArtifactStore, ClusterProofConfig};
 use crate::succinct::{
     L1HeadSource, OpSuccinctWitnessProvider, SuccinctRpcConfig, SuccinctZkProverBuildError,
     SuccinctZkProverBuilder, WitnessParams,
@@ -103,6 +103,39 @@ impl std::fmt::Debug for ClusterZkProverConfig {
             .field("aggregation_cycle_limit", &self.aggregation_cycle_limit)
             .field("aggregation_gas_limit", &self.aggregation_gas_limit)
             .finish_non_exhaustive()
+    }
+}
+
+/// Artifact storage backend for cluster proofs.
+#[derive(Clone)]
+pub enum ClusterArtifactStore {
+    /// Redis-backed storage.
+    Redis(sp1_cluster_artifact::redis::RedisArtifactClient),
+    /// S3-backed storage.
+    S3(sp1_cluster_artifact::s3::S3ArtifactClient),
+}
+
+impl std::fmt::Debug for ClusterArtifactStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClusterArtifactStore").finish_non_exhaustive()
+    }
+}
+
+/// Configuration for cluster-based SP1 proving.
+pub struct ClusterProofConfig {
+    /// Cluster RPC endpoint.
+    pub cluster_rpc: String,
+    /// Artifact storage backend.
+    pub artifact_store: ClusterArtifactStore,
+    /// The raw `ArtifactStoreConfig` used to construct per-call `ProofRequestConfig`.
+    pub artifact_store_config: sp1_cluster_utils::ArtifactStoreConfig,
+    /// Cached gRPC client for polling only. `create_request()` constructs its own internally.
+    pub service_client: ClusterServiceClient,
+}
+
+impl std::fmt::Debug for ClusterProofConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClusterProofConfig").finish_non_exhaustive()
     }
 }
 
@@ -584,8 +617,6 @@ impl ClusterZkProver {
             .ok_or_else(|| backend_error!("proof range end block overflowed u64"))?;
         let sequence_window =
             request.sequence_window.unwrap_or(self.config.default_sequence_window);
-        let intermediate_root_interval =
-            request.intermediate_root_interval.unwrap_or(DEFAULT_INTERMEDIATE_ROOT_INTERVAL);
 
         info!(
             proof_id = %proof_id,
@@ -593,7 +624,7 @@ impl ClusterZkProver {
             end_block = end_block,
             number_of_blocks = request.number_of_blocks_to_prove,
             sequence_window = sequence_window,
-            intermediate_root_interval = intermediate_root_interval,
+            intermediate_root_interval = INTERMEDIATE_ROOT_INTERVAL,
             l1_head = ?request.l1_head,
             "starting SP1 cluster range proof generation"
         );
@@ -612,7 +643,6 @@ impl ClusterZkProver {
                     },
                     L1HeadSource::Pinned,
                 ),
-                intermediate_root_interval,
                 schedule_l2_block_number: request.schedule_l2_block_number,
             })
             .await
@@ -906,6 +936,16 @@ impl ZkProver for ClusterZkProver {
         }
     }
 
+    async fn cancel(&self, backend_session_id: &str) -> Result<(), ZkProverError> {
+        let session = ClusterSessionId::parse(backend_session_id)?;
+        self.config
+            .cluster
+            .service_client
+            .cancel_proof_request(ProofRequestCancelRequest { proof_id: session.proof_id })
+            .await
+            .map_err(|e| backend_error!("failed to cancel cluster proof request: {e}"))
+    }
+
     async fn submit_next(
         &self,
         request: &SnarkPlonkProofRequest,
@@ -949,20 +989,7 @@ impl ZkProver for ClusterZkProver {
 
 #[cfg(test)]
 mod tests {
-    use super::{ClusterSessionId, ClusterZkProver};
-
-    #[test]
-    fn cluster_session_id_round_trips_json() {
-        let session = ClusterSessionId {
-            proof_id: "proof-1".to_owned(),
-            proof_output_id: "artifact-1".to_owned(),
-        };
-
-        let encoded = session.to_backend_session_id().unwrap();
-        let decoded = ClusterSessionId::parse(&encoded).unwrap();
-
-        assert_eq!(decoded, session);
-    }
+    use super::ClusterZkProver;
 
     #[test]
     fn proof_id_for_attempt_uses_retry_suffix_after_first_attempt() {

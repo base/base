@@ -25,8 +25,16 @@ pub use account_changes::{
 mod tx;
 pub use tx::TxEip8130;
 
+#[cfg(feature = "serde")]
+mod payer_serde;
+#[cfg(feature = "serde")]
+pub use payer_serde::Eip8130PayerSerde;
+
 mod coinbase_tip;
 pub use coinbase_tip::CoinbaseTip;
 
 mod signed;
 pub use signed::{Eip8130Signed, Eip8130StaticError, Eip8130TimestampError};
+
+mod structure;
+pub use structure::{Eip8130StructuralError, Eip8130Structure};

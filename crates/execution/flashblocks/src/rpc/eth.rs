@@ -63,18 +63,21 @@ use alloy_rpc_types_eth::Filter;
 use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_network::Base;
 use base_common_rpc_types::{BaseLogResponse, BaseRpcTypes, BaseTransactionRequest};
-use base_execution_eip8130_rpc::{ChannelNonceReader, Eip8130CobaltGate, Eip8130GasEstimator};
+use base_execution_chainspec::BaseChainSpec;
+use base_execution_eip8130_rpc::{ChannelNonceReader, Eip8130EverestGate, Eip8130GasEstimator};
+use base_execution_evm::BaseNextBlockEnvAttributes;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
-use reth_evm::TxEnvFor;
+use reth_chainspec::ChainSpecProvider;
+use reth_evm::{ConfigureEvm, TxEnvFor};
 use reth_provider::CanonStateSubscriptions;
 use reth_rpc::eth::EthFilter;
 use reth_rpc_eth_api::{
-    EthApiTypes, EthFilterApiServer, FromEthApiError, RpcBlock, RpcReceipt, RpcTransaction,
-    helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi, LoadPendingBlock},
+    EthApiTypes, EthFilterApiServer, RpcBlock, RpcReceipt, RpcTransaction,
+    helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi},
 };
 use reth_rpc_eth_types::EthApiError;
 use revm::context::TxEnv;
@@ -148,6 +151,7 @@ pub trait EthApiOverride {
         transaction: BaseTransactionRequest,
         block_number: Option<BlockId>,
         overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<U256>;
 
     /// Simulates transactions with flashblock state support.
@@ -188,17 +192,9 @@ impl<Eth: EthApiTypes, FB> EthApiExt<Eth, FB> {
 #[async_trait]
 impl<Eth, FB> EthApiOverrideServer for EthApiExt<Eth, FB>
 where
-    Eth: FullEthApi<NetworkTypes = BaseRpcTypes>
-        + LoadPendingBlock
-        + Clone
-        + Send
-        + Sync
-        + 'static,
-    Eth::Error: FromEthApiError,
-    <Eth as reth_rpc_eth_api::RpcNodeCore>::Provider:
-        reth_chainspec::ChainSpecProvider + reth_provider::BlockReaderIdExt,
-    <<Eth as reth_rpc_eth_api::RpcNodeCore>::Provider as reth_chainspec::ChainSpecProvider>::ChainSpec:
-        base_common_chains::Upgrades,
+    Eth: FullEthApi<NetworkTypes = BaseRpcTypes>,
+    Eth::Evm: ConfigureEvm<NextBlockEnvCtx = BaseNextBlockEnvAttributes>,
+    Eth::Provider: ChainSpecProvider<ChainSpec = BaseChainSpec>,
     TxEnvFor<Eth::Evm>: From<BaseRevm<TxEnv>>,
     reth_evm::EvmFactoryFor<Eth::Evm>: alloy_evm::EvmFactory<BlockEnv = revm::context::BlockEnv>,
     FB: FlashblocksAPI + Send + Sync + 'static,
@@ -220,13 +216,9 @@ where
             if pending_blocks.as_ref().is_some() {
                 return Ok(pending_blocks.get_block(full));
             }
-            // No pending state available — treat `pending` as `latest`
-            EthBlocks::rpc_block(&self.eth_api, BlockNumberOrTag::Latest.into(), full)
-                .await
-                .map_err(Into::into)
-        } else {
-            EthBlocks::rpc_block(&self.eth_api, number.into(), full).await.map_err(Into::into)
         }
+
+        EthBlocks::rpc_block(&self.eth_api, number.into(), full).await.map_err(Into::into)
     }
 
     async fn get_transaction_receipt(
@@ -296,14 +288,18 @@ where
         if let Some(key) = nonce_key
             && key != U256::ZERO
         {
-            Eip8130CobaltGate::check(&self.eth_api, block_id)?;
+            Eip8130EverestGate::check(&self.eth_api, block_id)?;
             Metrics::rpc_get_transaction_count().increment(1);
             let (resolved_block, overrides) = if block_id.is_pending() {
                 let pending_blocks = self.flashblocks_state.get_pending_blocks();
-                (
-                    pending_blocks.get_canonical_block_number().into(),
-                    pending_blocks.get_state_overrides(),
-                )
+                if pending_blocks.is_some() {
+                    (
+                        pending_blocks.get_canonical_block_number().into(),
+                        pending_blocks.get_state_overrides(),
+                    )
+                } else {
+                    (block_id, None)
+                }
             } else {
                 (block_id, None)
             };
@@ -322,15 +318,17 @@ where
         if block_id.is_pending() {
             Metrics::rpc_get_transaction_count().increment(1);
             let pending_blocks = self.flashblocks_state.get_pending_blocks();
-            let canon_block = pending_blocks.get_canonical_block_number();
-            let fb_count = pending_blocks.get_transaction_count(address);
+            if pending_blocks.is_some() {
+                let canon_block = pending_blocks.get_canonical_block_number();
+                let fb_count = pending_blocks.get_transaction_count(address);
 
-            let canon_count =
-                EthState::transaction_count(&self.eth_api, address, Some(canon_block.into()))
-                    .await
-                    .map_err(Into::into)?;
+                let canon_count =
+                    EthState::transaction_count(&self.eth_api, address, Some(canon_block.into()))
+                        .await
+                        .map_err(Into::into)?;
 
-            return Ok(canon_count + fb_count);
+                return Ok(canon_count + fb_count);
+            }
         }
 
         EthState::transaction_count(&self.eth_api, address, block_number).await.map_err(Into::into)
@@ -443,8 +441,10 @@ where
         if block_id.is_pending() {
             Metrics::rpc_call().increment(1);
             let pending_blocks = self.flashblocks_state.get_pending_blocks();
-            block_id = pending_blocks.get_canonical_block_number().into();
-            pending_overrides.state = pending_blocks.get_state_overrides();
+            if pending_blocks.is_some() {
+                block_id = pending_blocks.get_canonical_block_number().into();
+                pending_overrides.state = pending_blocks.get_state_overrides();
+            }
         }
 
         // Apply user's overrides on top
@@ -453,6 +453,19 @@ where
         state_overrides_builder =
             state_overrides_builder.extend(state_overrides.unwrap_or_default());
         let final_overrides = state_overrides_builder.build();
+
+        // EIP-8130 request: run the EIP-8130 simulation, gated on the Everest
+        // fork. The standard call path cannot represent the transaction.
+        if transaction.as_eip8130().is_some() {
+            Eip8130EverestGate::check(&self.eth_api, block_id)?;
+            return Eip8130GasEstimator::call(
+                &self.eth_api,
+                transaction,
+                block_id,
+                EvmOverrides::new(Some(final_overrides), block_overrides),
+            )
+            .await;
+        }
 
         // Delegate to the underlying eth_api
         EthCall::call(
@@ -470,40 +483,44 @@ where
         transaction: BaseTransactionRequest,
         block_number: Option<BlockId>,
         overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<U256> {
         debug!(
             message = "rpc::estimate_gas",
             transaction = ?transaction,
             block_number = ?block_number,
             overrides = ?overrides,
+            block_overrides = ?block_overrides,
         );
 
         let mut block_id = block_number.unwrap_or_default();
-        let mut pending_overrides = EvmOverrides::default();
+        let mut pending_state = None;
         // If the call is to pending block use cached override (if it exists)
         if block_id.is_pending() {
             Metrics::rpc_estimate_gas().increment(1);
             let pending_blocks = self.flashblocks_state.get_pending_blocks();
-            block_id = pending_blocks.get_canonical_block_number().into();
-            pending_overrides.state = pending_blocks.get_state_overrides();
+            if pending_blocks.is_some() {
+                block_id = pending_blocks.get_canonical_block_number().into();
+                pending_state = pending_blocks.get_state_overrides();
+            }
         }
 
         let mut state_overrides_builder =
-            StateOverridesBuilder::new(pending_overrides.state.unwrap_or_default());
+            StateOverridesBuilder::new(pending_state.unwrap_or_default());
         state_overrides_builder = state_overrides_builder.extend(overrides.unwrap_or_default());
         let final_overrides = state_overrides_builder.build();
 
         // EIP-8130 request: estimate via a single read-only simulation against
-        // the (pending-merged) block state, gated on the Cobalt fork. The
+        // the (pending-merged) block state, gated on the Everest fork. The
         // deterministic, signature-independent EIP-8130 gas charge means no
         // gas-limit binary search is needed.
         if transaction.as_eip8130().is_some() {
-            Eip8130CobaltGate::check(&self.eth_api, block_id)?;
+            Eip8130EverestGate::check(&self.eth_api, block_id)?;
             return Eip8130GasEstimator::estimate(
                 &self.eth_api,
                 transaction,
                 block_id,
-                EvmOverrides::new(Some(final_overrides), pending_overrides.block),
+                EvmOverrides::new(Some(final_overrides), block_overrides),
             )
             .await;
         }
@@ -512,7 +529,7 @@ where
             &self.eth_api,
             transaction,
             block_id,
-            EvmOverrides::new(Some(final_overrides), pending_overrides.block),
+            EvmOverrides::new(Some(final_overrides), block_overrides),
         )
         .await
         .map_err(Into::into)
@@ -535,8 +552,10 @@ where
         if block_id.is_pending() {
             Metrics::rpc_simulate_v1().increment(1);
             let pending_blocks = self.flashblocks_state.get_pending_blocks();
-            block_id = pending_blocks.get_canonical_block_number().into();
-            pending_overrides.state = pending_blocks.get_state_overrides();
+            if pending_blocks.is_some() {
+                block_id = pending_blocks.get_canonical_block_number().into();
+                pending_overrides.state = pending_blocks.get_state_overrides();
+            }
         }
 
         // Prepend flashblocks pending overrides to the block state calls
@@ -584,6 +603,9 @@ where
         let mut all_logs = Vec::new();
 
         let pending_blocks = self.flashblocks_state.get_pending_blocks();
+        if pending_blocks.is_none() {
+            return self.eth_filter.logs(filter).await;
+        }
 
         let mut fetched_logs = HashSet::new();
         // Get historical logs if fromBlock is not pending
@@ -634,14 +656,6 @@ where
                 let count = block.transactions.len();
                 return Ok(Some(U256::from(count)));
             }
-            // No pending state available — treat `pending` as `latest`
-            return EthBlocks::block_transaction_count(
-                &self.eth_api,
-                BlockNumberOrTag::Latest.into(),
-            )
-            .await
-            .map(|opt| opt.map(U256::from))
-            .map_err(Into::into);
         }
 
         EthBlocks::block_transaction_count(&self.eth_api, number.into())

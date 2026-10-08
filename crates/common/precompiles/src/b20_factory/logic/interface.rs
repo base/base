@@ -6,20 +6,21 @@ use base_precompile_storage::Result;
 
 use crate::{B20FactoryStorage, IB20Factory};
 
+/// Borrowed `createB20` initialization calldata.
+pub type InitCalls<'a> = [&'a [u8]];
+
 /// The B-20 token factory logic interface.
 ///
 /// This trait is append-only: new versions add methods, never remove or change the
 /// signature of an existing one.
 pub trait Factory {
-    /// Creates a token at a deterministic address derived from `(caller, variant, salt)`.
-    ///
-    /// `address_hash` must be `keccak256(abi_encode(caller, call.salt))`. Computing (and
-    /// metering) that hash is the dispatcher's responsibility; this method only consumes
-    /// the result. `upgrade` selects the policy-logic version the created token is bound to.
-    fn create_b20(
+    /// Creates a token from decoded `createB20` fields.
+    fn create_b20_decoded(
         &self,
         storage: &mut B20FactoryStorage<'_>,
-        call: IB20Factory::createB20Call,
+        variant: IB20Factory::B20Variant,
+        params: &[u8],
+        init_calls: &InitCalls<'_>,
         address_hash: B256,
         upgrade: BaseUpgrade,
     ) -> Result<Address>;

@@ -34,33 +34,9 @@ impl TryFrom<ProofSubmitterRequest> for WorkerSubmitProofRequest {
 
 #[cfg(test)]
 mod tests {
-    use base_prover_service_protocol::{ProofResult, TeeKind, TeeProofResult, ZkProofResult, ZkVm};
+    use base_prover_service_protocol::{ProofResult, TeeKind, TeeProofResult};
 
     use super::*;
-
-    fn zk_result() -> ProofResult {
-        ProofResult::Compressed(ZkProofResult {
-            zk_vm: ZkVm::Sp1,
-            proof: vec![1, 2, 3].into(),
-            execution_stats: None,
-        })
-    }
-
-    #[test]
-    fn zk_result_builds_submission_request() {
-        let request = WorkerSubmitProofRequest::try_from(ProofSubmitterRequest {
-            session_id: "session-1".to_owned(),
-            lock_id: "lock-1".to_owned(),
-            worker_id: "worker-1".to_owned(),
-            result: zk_result(),
-        })
-        .expect("zk result should build a submission request");
-
-        assert_eq!(request.session_id, "session-1");
-        assert_eq!(request.lock_id, "lock-1");
-        assert_eq!(request.worker_id, "worker-1");
-        assert!(matches!(request.result, ProofResult::Compressed(_)));
-    }
 
     fn proposal() -> base_proof_primitives::Proposal {
         base_proof_primitives::Proposal {

@@ -5,12 +5,20 @@ CLI parser, command implementations, and interactive monitor for Base infrastruc
 ## Overview
 
 Owns the `basectl` clap parser and all command behavior, including block, sync,
-txpool, peer, proof, conductor, sequencer, and diagnostic workflows. `Cli::run`
+txpool, peer, proof, conductor, sequencer, batcher, and diagnostic workflows. `Cli::run`
 dispatches parsed commands and returns a process outcome.
 
 The crate also provides the interactive terminal monitor for block production,
 node sync status, flashblock throughput, and system metrics, plus the
 non-interactive `basectl flashblocks` JSON-lines stream.
+
+## Denim Readiness
+
+The upgrades monitor attaches `BaseTime` checks to Denim, using the live consensus
+node's `optimism_rollupConfig` Denim timestamp. `DenimChecker` checks a hash-pinned
+L2 snapshot for `BaseTime` installation, update metadata and receipt, storage/getter
+agreement, 200ms cadence, and millisecond RPC fields. Active-only checks start at
+Denim.
 
 ## Pods View
 

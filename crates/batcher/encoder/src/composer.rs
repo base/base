@@ -62,11 +62,9 @@ impl BatchComposer {
 
 #[cfg(test)]
 mod tests {
-    use std::vec;
-
     use alloy_consensus::{BlockBody, Header, SignableTransaction, TxLegacy};
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{B256, Bytes, Sealed, Signature};
+    use alloy_primitives::{Address, B256, Bytes, Sealed, Signature, U256};
     use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
     use base_protocol::{L1BlockInfoBedrock, L1BlockInfoTx};
     use rstest::rstest;
@@ -94,6 +92,8 @@ mod tests {
         BaseTxEnvelope::Legacy(signed)
     }
 
+    /// A block with no transaction, a first transaction that is not a deposit, or an L1-info
+    /// deposit whose calldata does not decode cannot become a batch, each with its own error.
     #[rstest]
     #[case::empty_block(make_block(vec![]), BatchComposeError::EmptyBlock)]
     #[case::not_deposit(make_block(vec![non_deposit_tx()]), BatchComposeError::NotDepositTx)]
@@ -102,6 +102,7 @@ mod tests {
         assert_eq!(BatchComposer::block_to_single_batch(&block).unwrap_err(), expected);
     }
 
+    /// Deposits are left out of the batch, since derivation rebuilds them from L1.
     #[test]
     fn test_deposits_filtered() {
         let block = make_block(vec![valid_deposit_tx(), deposit_tx(Bytes::new())]);
@@ -109,6 +110,7 @@ mod tests {
         assert!(batch.transactions.is_empty());
     }
 
+    /// User transactions go into the batch in their EIP-2718 encoding.
     #[test]
     fn test_user_txs_encoded() {
         let user_tx = non_deposit_tx();
@@ -118,20 +120,25 @@ mod tests {
         assert_eq!(batch.transactions, vec![expected]);
     }
 
+    /// The batch takes its parent hash and timestamp from the block header, and its epoch from
+    /// the L1 origin the L1-info deposit names.
     #[test]
     fn test_fields_match_block() {
-        let parent_hash = B256::from([0xAB; 32]);
-        let timestamp = 1_234_567_u64;
-        let mut block = make_block(vec![valid_deposit_tx()]);
+        let parent_hash = B256::repeat_byte(0xab);
+        let timestamp = 1_234_567;
+        let epoch_hash = B256::repeat_byte(0xcd);
+        let info =
+            L1BlockInfoBedrock::new(42, 0, 0, epoch_hash, 0, Address::ZERO, U256::ZERO, U256::ZERO);
+        let mut block =
+            make_block(vec![deposit_tx(L1BlockInfoTx::Bedrock(info).encode_calldata())]);
         block.header.parent_hash = parent_hash;
         block.header.timestamp = timestamp;
 
-        let info = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::default());
         let batch = BatchComposer::block_to_single_batch(&block).unwrap();
 
         assert_eq!(batch.parent_hash, parent_hash);
         assert_eq!(batch.timestamp, timestamp);
-        assert_eq!(batch.epoch_num, info.id().number);
-        assert_eq!(batch.epoch_hash, info.id().hash);
+        assert_eq!(batch.epoch_num, 42);
+        assert_eq!(batch.epoch_hash, epoch_hash);
     }
 }
