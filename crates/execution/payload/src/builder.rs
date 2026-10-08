@@ -22,7 +22,8 @@ use base_execution_txpool::{
     estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::{
-    GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventType, transaction_event,
+    GlobalTransactionEventWriter, TransactionEventBuilder, TransactionEventProducer,
+    TransactionEventType, transaction_event,
 };
 use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
@@ -57,9 +58,9 @@ use crate::{
     Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics,
     CoinbaseTipAffordability, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
     ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
-    PredicateReadRecorder, RejectionCacheMetrics, StateChangeEffects, ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    PredicateReadRecorder, RejectionCacheMetrics, ResourceConstraint, ResourceLimitHit,
+    ResourceLimitRejections, StateChangeEffects, ValidityMetrics, ValidityPredicateEvaluation,
+    config::BaseBuilderConfig, error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -605,16 +606,15 @@ impl ExecutionInfo {
         }
     }
 
-    /// Returns true if the transaction would exceed the block limits:
-    /// - block gas limit: ensures the transaction still fits into the block. `tx_reserved_gas` is
-    ///   the gas reserved against the block budget: `gas_limit` for ordinary transactions, and
+    /// Returns the first limit the transaction would exceed, or `None` if it fits:
+    /// - tx DA limit: if configured, the tx must not exceed the maximum allowed DA size per tx.
+    /// - block DA limit: if configured, the tx's DA size must fit the remaining block DA budget.
+    /// - DA footprint: post-Jovian, the block's DA footprint must stay within the block gas limit.
+    /// - block gas limit: the transaction must still fit into the block. `tx_reserved_gas` is the
+    ///   gas reserved against the block budget: `gas_limit` for ordinary transactions, and
     ///   `gas_limit + payer_auth` for EIP-8130, since payer authentication is metered on top of the
     ///   declared gas limit (see `IntrinsicGas::max_payer_auth_cost`).
-    /// - tx DA limit: if configured, ensures the tx does not exceed the maximum allowed DA limit
-    ///   per tx.
-    /// - block DA limit: if configured, ensures the transaction's DA size does not exceed the
-    ///   maximum allowed DA limit per block.
-    pub fn is_tx_over_limits(
+    pub fn exceeded_limit(
         &self,
         tx_da_size: u64,
         block_gas_limit: u64,
@@ -622,28 +622,55 @@ impl ExecutionInfo {
         block_data_limit: Option<u64>,
         tx_reserved_gas: u64,
         da_footprint_gas_scalar: Option<u16>,
-    ) -> bool {
+    ) -> Option<TransactionLimitExceeded> {
         if tx_data_limit.is_some_and(|da_limit| tx_da_size > da_limit) {
-            return true;
+            return Some(TransactionLimitExceeded::TransactionDaSize);
         }
 
         let total_da_bytes_used = self.cumulative_da_bytes_used.saturating_add(tx_da_size);
 
-        if block_data_limit.is_some_and(|da_limit| total_da_bytes_used > da_limit) {
-            return true;
+        if let Some(da_limit) = block_data_limit
+            && total_da_bytes_used > da_limit
+        {
+            return Some(TransactionLimitExceeded::Block(ResourceLimitHit {
+                constraint: ResourceConstraint::BlockDaSize,
+                limit: Some(da_limit),
+                used: Some(self.cumulative_da_bytes_used),
+                required: Some(tx_da_size),
+            }));
         }
 
         // Post Jovian: the tx DA footprint must be less than the block gas limit
         if let Some(da_footprint_gas_scalar) = da_footprint_gas_scalar {
-            let tx_da_footprint =
-                total_da_bytes_used.saturating_mul(da_footprint_gas_scalar as u64);
-            if tx_da_footprint > block_gas_limit {
-                return true;
+            let scalar = da_footprint_gas_scalar as u64;
+            if total_da_bytes_used.saturating_mul(scalar) > block_gas_limit {
+                return Some(TransactionLimitExceeded::Block(ResourceLimitHit {
+                    constraint: ResourceConstraint::BlockDaFootprint,
+                    limit: Some(block_gas_limit),
+                    used: Some(self.cumulative_da_bytes_used.saturating_mul(scalar)),
+                    required: Some(tx_da_size.saturating_mul(scalar)),
+                }));
             }
         }
 
-        self.cumulative_gas_used.saturating_add(tx_reserved_gas) > block_gas_limit
+        (self.cumulative_gas_used.saturating_add(tx_reserved_gas) > block_gas_limit).then_some(
+            TransactionLimitExceeded::Block(ResourceLimitHit {
+                constraint: ResourceConstraint::BlockGas,
+                limit: Some(block_gas_limit),
+                used: Some(self.cumulative_gas_used),
+                required: Some(tx_reserved_gas),
+            }),
+        )
     }
+}
+
+/// The limit a candidate transaction exceeded in [`ExecutionInfo::exceeded_limit`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransactionLimitExceeded {
+    /// The transaction's own DA size exceeds the per-transaction limit, so it fits no block.
+    TransactionDaSize,
+    /// The transaction does not fit what remains of a block-level budget.
+    Block(ResourceLimitHit),
 }
 
 /// Container type that holds all necessities to build a new payload.
@@ -770,6 +797,57 @@ where
                 "permanent" => permanent,
             }
         );
+    }
+
+    /// Closes the current resource-limit interval, journaling one
+    /// `BUILDER_RESOURCE_LIMIT_REACHED` for each constraint that rejected a candidate since the
+    /// last inclusion.
+    ///
+    /// `payload_tx_count` is the number of transactions already in the payload, and
+    /// `last_included` the last pool transaction this scan included, if any.
+    fn close_resource_limit_interval(
+        &self,
+        rejections: &mut ResourceLimitRejections,
+        payload_tx_count: u64,
+        last_included: Option<TxHash>,
+    ) {
+        if rejections.is_empty() {
+            return;
+        }
+        let closed = rejections.take(payload_tx_count, last_included);
+        if GlobalTransactionEventWriter::get().is_none() {
+            return;
+        }
+        for reached in closed {
+            let constraint = reached.constraint.as_str();
+            let after_tx_index = reached.after_tx_index;
+            let serde_json::Value::Object(mut data) =
+                serde_json::to_value(reached).expect("resource limit summary must serialize")
+            else {
+                unreachable!("resource limit summary serializes as an object");
+            };
+            data.insert("builder_mode".into(), "native".into());
+            data.insert("source_queue".into(), "txpool_best".into());
+            data.insert("parent_hash".into(), format!("{:#x}", self.parent().hash()).into());
+            let result = TransactionEventBuilder::new(
+                TransactionEventProducer::BaseBuilder,
+                TransactionEventType::BuilderResourceLimitReached,
+            )
+            .block_number(self.parent().number().saturating_add(1))
+            .payload_id(self.payload_id().to_string())
+            .id_part("constraint", constraint)
+            .id_part("after_tx_index", after_tx_index)
+            .data(data)
+            .emit_global();
+            if let Err(error) = result {
+                warn!(
+                    target: "payload_builder",
+                    error = %error,
+                    constraint,
+                    "failed to enqueue native builder resource limit event"
+                );
+            }
+        }
     }
 
     /// Executes all sequencer transactions that are included in the payload attributes.
@@ -927,6 +1005,12 @@ where
         let can_finalize_early = self.is_denim_active();
         let resource_metering = &self.builder_config.resource_metering;
         let mut resource_throttled = 0u64;
+        // Block-level limit rejections since the last inclusion, and the payload position they
+        // follow. `ordering_position` counts every candidate the scan yields.
+        let mut limit_rejections = ResourceLimitRejections::default();
+        let mut payload_tx_count = builder.executor().receipts().len() as u64;
+        let mut last_included = None;
+        let mut ordering_position = 0_u64;
         while let Some(tx) = best_txs.next(()) {
             if self.cancel.is_cancelled() {
                 return Ok(Some(()));
@@ -934,6 +1018,7 @@ where
             if can_finalize_early && self.cancel.is_finalization_requested() {
                 break;
             }
+            ordering_position += 1;
 
             let tx_hash = *tx.hash();
             let replay_independent = tx.eip8130_replay_id().is_some();
@@ -1216,19 +1301,30 @@ where
                 // the current iterator.
                 if admission.is_permanent() {
                     info.permanently_rejected_txs.push(tx_hash);
+                } else {
+                    limit_rejections.record(
+                        ResourceLimitHit {
+                            constraint: ResourceConstraint::ResourceMeteringBlockBudget,
+                            limit: None,
+                            used: None,
+                            required: None,
+                        },
+                        tx_hash,
+                        ordering_position,
+                    );
                 }
                 trace!(
                     target: "payload_builder",
                     tx_hash = %tx_hash,
                     "skipping transaction excluded by simulated resource metering"
                 );
-                if has_validity_predicates {
+                if has_validity_predicates && admission.is_permanent() {
                     self.emit_validity_rejection(
                         tx_hash,
                         validity_consideration_index,
                         "resource_metering_excluded",
                         "simulated resource usage exceeds the resource metering budget",
-                        admission.is_permanent(),
+                        true,
                     );
                 }
                 Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
@@ -1246,7 +1342,7 @@ where
                     ),
                 );
 
-            if info.is_tx_over_limits(
+            if let Some(exceeded) = info.exceeded_limit(
                 tx_da_size,
                 block_gas_limit,
                 tx_da_limit,
@@ -1257,14 +1353,20 @@ where
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
                 // the iterator before we can continue
-                if has_validity_predicates {
-                    self.emit_validity_rejection(
-                        tx_hash,
-                        validity_consideration_index,
-                        "block_limits_exceeded",
-                        "transaction does not fit the remaining block gas or DA budget",
-                        false,
-                    );
+                match exceeded {
+                    TransactionLimitExceeded::Block(hit) => {
+                        limit_rejections.record(hit, tx_hash, ordering_position);
+                    }
+                    TransactionLimitExceeded::TransactionDaSize if has_validity_predicates => {
+                        self.emit_validity_rejection(
+                            tx_hash,
+                            validity_consideration_index,
+                            "tx_da_size_exceeded",
+                            "transaction DA size exceeds the per-transaction limit",
+                            true,
+                        );
+                    }
+                    TransactionLimitExceeded::TransactionDaSize => {}
                 }
                 Self::skip_current(&mut best_txs, tx.signer(), tx.nonce(), replay_independent);
                 continue;
@@ -1320,23 +1422,34 @@ where
                 Ok(Some(gas_output)) => gas_output,
                 Ok(None) => {
                     resource_throttled += 1;
-                    if executed_decision.as_ref().is_some_and(|decision| decision.is_permanent()) {
+                    let permanent =
+                        executed_decision.as_ref().is_some_and(|decision| decision.is_permanent());
+                    if permanent {
                         info.permanently_rejected_txs.push(tx_hash);
+                    } else {
+                        limit_rejections.record(
+                            ResourceLimitHit {
+                                constraint: ResourceConstraint::ResourceMeteringBlockBudget,
+                                limit: None,
+                                used: None,
+                                required: None,
+                            },
+                            tx_hash,
+                            ordering_position,
+                        );
                     }
                     trace!(
                         target: "payload_builder",
                         tx_hash = %tx_hash,
                         "skipping transaction excluded by resource metering"
                     );
-                    if has_validity_predicates {
+                    if has_validity_predicates && permanent {
                         self.emit_validity_rejection(
                             tx_hash,
                             validity_consideration_index,
                             "resource_metering_excluded",
                             "executed resource usage exceeds the resource metering budget",
-                            executed_decision
-                                .as_ref()
-                                .is_some_and(|decision| decision.is_permanent()),
+                            true,
                         );
                     }
                     Self::skip_current(&mut best_txs, tx.signer(), tx.nonce(), replay_independent);
@@ -1383,6 +1496,13 @@ where
                 }
             };
 
+            self.close_resource_limit_interval(
+                &mut limit_rejections,
+                payload_tx_count,
+                last_included,
+            );
+            payload_tx_count += 1;
+            last_included = Some(tx_hash);
             info.cumulative_gas_used += gas_output.tx_gas_used();
             info.cumulative_da_bytes_used += tx_da_size;
             if let Some(usage) = pending_resource_usage {
@@ -1492,6 +1612,8 @@ where
             }
         }
 
+        self.close_resource_limit_interval(&mut limit_rejections, payload_tx_count, last_included);
+
         if let Some(predicate_eval_duration) = predicate_eval_duration {
             ValidityMetrics::record_predicate_eval_duration(predicate_eval_duration);
         }
@@ -1568,12 +1690,12 @@ mod tests {
     };
     use revm::{Database, state::EvmState};
 
-    use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
+    use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo, TransactionLimitExceeded};
     use crate::{
         BasePayloadBuilderAttributes, MeteringProvider, NoopMeteringProvider,
-        ParkablePayloadTransactions, ResourceMeteringConfig, ResourceMeteringDimension,
-        ResourceMeteringOperation, ResourceMeteringSchedule, SharedMeteringProvider,
-        config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
+        ParkablePayloadTransactions, ResourceConstraint, ResourceLimitHit, ResourceMeteringConfig,
+        ResourceMeteringDimension, ResourceMeteringOperation, ResourceMeteringSchedule,
+        SharedMeteringProvider, config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
     };
 
     #[derive(Debug)]
@@ -1644,16 +1766,22 @@ mod tests {
     /// declared `gas_limit`: a transaction that fits on `gas_limit` alone is still
     /// over the block limit once payer authentication is metered on top.
     #[test]
-    fn is_tx_over_limits_reserves_eip8130_payer_auth() {
+    fn exceeded_limit_reserves_eip8130_payer_auth() {
         let mut info = ExecutionInfo::new();
         info.cumulative_gas_used = 979_000;
         let block_gas_limit = 1_000_000;
 
         // gas_limit alone fits exactly (979_000 + 21_000 = 1_000_000).
-        assert!(!info.is_tx_over_limits(0, block_gas_limit, None, None, 21_000, None));
+        assert_eq!(info.exceeded_limit(0, block_gas_limit, None, None, 21_000, None), None);
 
         // payer_auth metered on top (reserved = 21_000 + 2_100) pushes over the block limit.
-        assert!(info.is_tx_over_limits(0, block_gas_limit, None, None, 21_000 + 2_100, None));
+        assert!(matches!(
+            info.exceeded_limit(0, block_gas_limit, None, None, 21_000 + 2_100, None),
+            Some(TransactionLimitExceeded::Block(ResourceLimitHit {
+                constraint: ResourceConstraint::BlockGas,
+                ..
+            }))
+        ));
     }
 
     #[test]
@@ -1791,11 +1919,20 @@ mod tests {
     }
 
     fn pool_transaction_to(nonce: u64, to: Address, value: U256) -> BasePooledTransaction {
+        pool_transaction_with_gas_limit(nonce, to, value, 100_000)
+    }
+
+    fn pool_transaction_with_gas_limit(
+        nonce: u64,
+        to: Address,
+        value: U256,
+        gas_limit: u64,
+    ) -> BasePooledTransaction {
         let envelope = BaseTxEnvelope::Eip1559(
             TxEip1559 {
                 chain_id: 8_453,
                 nonce,
-                gas_limit: 100_000,
+                gas_limit,
                 max_fee_per_gas: 2_000_000_000,
                 max_priority_fee_per_gas: 1,
                 to: TxKind::Call(to),
@@ -2077,6 +2214,82 @@ mod tests {
             .map(|event| event.event_type)
             .collect::<Vec<_>>();
         assert_eq!(gated_events, [TransactionEventType::BuilderDeferred]);
+    }
+
+    /// Candidates that miss the block gas budget are summarized once per interval between
+    /// inclusions instead of being journaled one by one, and an inclusion starts a new interval.
+    #[test]
+    fn native_builder_summarizes_block_limit_rejections_per_inclusion_interval() {
+        let event_capture = TransactionEventCapture::install();
+        // The test signature recovers a distinct sender per transaction, and event capture is
+        // process-global, so each transaction gets a unique recipient.
+        let transaction = |byte: u8, gas_limit: u64| {
+            pool_transaction_with_gas_limit(0, Address::repeat_byte(byte), U256::ZERO, gas_limit)
+        };
+        let first = transaction(0x61, 100_000);
+        let too_large = transaction(0x62, 200_000);
+        let also_too_large = transaction(0x63, 140_000);
+        let second = transaction(0x64, 100_000);
+        // A validity-gated candidate used to get its own `BUILDER_REJECTED` for a block-limit
+        // miss; it is now summarized with the others.
+        let gated_too_large = transaction(0x65, 120_000).with_validity_predicates(vec![
+            ValidityPredicate::BlockNumber { op: ValidityOperator::Equal, value: U256::ONE },
+        ]);
+        let transactions = vec![first, too_large, also_too_large, second, gated_too_large];
+        let funded_senders: Vec<_> = transactions.iter().map(|tx| tx.sender()).collect();
+        let hashes: Vec<_> = transactions.iter().map(|tx| *tx.hash()).collect();
+
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP);
+        ctx.config.attributes.gas_limit = Some(150_000);
+        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
+            ctx,
+            TestParkableTransactions::new(transactions),
+            &funded_senders,
+        ) else {
+            panic!("Denim payload must freeze")
+        };
+        let included: Vec<_> =
+            payload.block().body().transactions.iter().map(|tx| *tx.tx_hash()).collect();
+        assert_eq!(included, [hashes[0], hashes[3]]);
+
+        let events = event_capture.events();
+        let summaries: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                event.event_type == TransactionEventType::BuilderResourceLimitReached
+                    && event.data["sampled_tx_hashes"].as_array().is_some_and(|sample| {
+                        sample.contains(&hashes[1].to_string().into())
+                            || sample.contains(&hashes[4].to_string().into())
+                    })
+            })
+            .collect();
+        assert_eq!(summaries.len(), 2, "one summary per interval, got {summaries:?}");
+        let first_interval = &summaries[0].data;
+        assert_eq!(first_interval["constraint"], "block_gas");
+        assert_eq!(first_interval["builder_mode"], "native");
+        assert_eq!(first_interval["limit"], 150_000);
+        assert_eq!(first_interval["rejected_count"], 2);
+        assert_eq!(first_interval["min_required"], 140_000);
+        assert_eq!(first_interval["max_required"], 200_000);
+        assert_eq!(first_interval["after_tx_hash"], hashes[0].to_string());
+        assert_eq!(
+            first_interval["sampled_tx_hashes"],
+            serde_json::json!([hashes[1].to_string(), hashes[2].to_string()])
+        );
+        assert!(summaries[0].tx_hash.is_none(), "the summary is payload-scoped");
+        let second_interval = &summaries[1].data;
+        assert_eq!(second_interval["rejected_count"], 1);
+        assert_eq!(second_interval["after_tx_hash"], hashes[3].to_string());
+        assert_eq!(
+            second_interval["after_tx_index"].as_u64(),
+            first_interval["after_tx_index"].as_u64().map(|index| index + 1)
+        );
+
+        assert!(
+            events.iter().all(|event| event.event_type != TransactionEventType::BuilderRejected
+                || !event.tx_hash.is_some_and(|hash| hashes.contains(&hash))),
+            "block-limit misses must not be journaled per transaction"
+        );
     }
 
     #[test]

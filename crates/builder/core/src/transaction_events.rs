@@ -1,6 +1,7 @@
 //! Builder transaction event emission.
 
 use alloy_primitives::{B256, TxHash};
+use base_execution_payload_builder::ResourceLimitReached;
 use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventBuilder, TransactionEventProducer,
     TransactionEventType, WriteEventError,
@@ -484,6 +485,44 @@ pub(crate) fn emit_builder_payload_event<D, F>(
                 "flashblock_index",
                 ctx.flashblock_index.map(|index| index.to_string()).unwrap_or_default(),
             )
+            .data(data)
+            .build_with_network(network)
+    });
+    record_builder_event_enqueue(event_type, None, result);
+}
+
+/// Emits one `BUILDER_RESOURCE_LIMIT_REACHED` payload event if a sink is configured.
+///
+/// The event ID covers the flashblock, constraint, and payload position, so each interval
+/// between inclusions yields at most one event per constraint.
+pub(crate) fn emit_resource_limit_reached_event(
+    ctx: BuilderTransactionEventContext,
+    reached: ResourceLimitReached,
+) {
+    let Some(writer) = GlobalTransactionEventWriter::get() else {
+        return;
+    };
+
+    let event_type = TransactionEventType::BuilderResourceLimitReached;
+    let event_time = Utc::now();
+    let result = writer.try_write_with(move |network| {
+        let constraint = reached.constraint.as_str();
+        let after_tx_index = reached.after_tx_index;
+        let data = serialize_builder_event_data(BuilderEventData {
+            context: ctx.event_data(),
+            event: reached,
+        });
+        TransactionEventBuilder::new(TransactionEventProducer::BaseBuilder, event_type)
+            .event_time(event_time)
+            .maybe_block_hash(ctx.block_hash)
+            .block_number(ctx.block_number)
+            .payload_id(ctx.payload_id)
+            .id_part(
+                "flashblock_index",
+                ctx.flashblock_index.map(|index| index.to_string()).unwrap_or_default(),
+            )
+            .id_part("constraint", constraint)
+            .id_part("after_tx_index", after_tx_index)
             .data(data)
             .build_with_network(network)
     });

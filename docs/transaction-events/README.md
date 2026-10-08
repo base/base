@@ -252,16 +252,19 @@ Builder:
 - `BUILDER_FLASHBLOCK_STARTED`
 - `BUILDER_FLASHBLOCK_PUBLISHED`
 - `BUILDER_FLASHBLOCK_BUILD_STOPPED`
+- `BUILDER_RESOURCE_LIMIT_REACHED`
 
 Builder caveat: `BUILDER_ACCEPTED`, `BUILDER_REJECTED`, `BUILDER_DEFERRED`,
 and `BUILDER_EXPIRED` are emitted per payload-building attempt and include
 `payload_id`, `block_number`, and `flashblock_index` when applicable. The same
 transaction can therefore produce multiple decision events across flashblocks.
 Neither builder emits `BUILDER_CONSIDERED`: every candidate gets one of the
-decision events above, which carries the same budget and position fields. The
-native builder journals only validity-gated candidates; a candidate whose
-predicates pass but which is then skipped (block limits, resource metering,
-coinbase tip, nonce or EVM validation) gets `BUILDER_REJECTED`. A parked
+decision events above, which carries the same budget and position fields, or is
+counted in a `BUILDER_RESOURCE_LIMIT_REACHED` summary. The native builder
+journals only validity-gated candidates; a candidate whose predicates pass but
+which is then skipped (permanent resource metering exclusion, the
+per-transaction DA limit, coinbase tip, nonce or EVM validation) gets
+`BUILDER_REJECTED`. A parked
 transaction is parked again on every later flashblock and after every
 promote-and-repark, but both builders emit `BUILDER_DEFERRED` only the first
 time they defer a transaction in a block build and again when the
@@ -293,6 +296,23 @@ also include top-level `block_hash`, `data.transaction_count`, `data.byte_size`,
 and `data.build_duration_ms`. Build-stopped events use `data.reason` to
 distinguish control-flow stops such as payload resolution winning before
 publish.
+
+`BUILDER_RESOURCE_LIMIT_REACHED` replaces per-candidate `BUILDER_REJECTED`
+events for block-level budgets, whose outcome depends on what the payload
+already contains: block gas, block DA size, DA footprint, block uncompressed
+size, and non-permanent resource metering block budgets. Both builders emit it
+for every candidate, validity-gated or not. It is payload-scoped (no top-level
+`tx_hash`) and is emitted at most once per `data.constraint` per interval
+between two inclusions in a scan, when the next transaction is included or the
+scan ends. `data.after_tx_index` and `data.after_tx_hash` give the payload
+position the interval followed; `data.limit`, `data.used`, `data.min_required`,
+and `data.max_required` share the constraint's unit and are omitted for
+resource metering budgets. `data.rejected_count`,
+`data.first_ordering_position`, and `data.last_ordering_position` describe the
+rejected candidates, and `data.sampled_tx_hashes` holds the first 8 rejected
+hashes in scan order. A transaction absent from the sample is not journaled
+individually for that miss. Limits intrinsic to one transaction, such as the
+per-transaction DA size and execution time limits, stay `BUILDER_REJECTED`.
 
 Canonicality caveat: builder events are local payload construction signals, not
 canonical-chain or consensus-finality observations. A builder event with

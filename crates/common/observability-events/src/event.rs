@@ -197,6 +197,13 @@ pub enum TransactionEventType {
     /// The builder stopped flashblock construction before publishing.
     #[serde(rename = "BUILDER_FLASHBLOCK_BUILD_STOPPED")]
     BuilderFlashblockBuildStopped,
+    /// A block-level resource budget rejected one or more candidates since the last included
+    /// transaction.
+    ///
+    /// Payload-scoped: emitted at most once per resource constraint per interval between
+    /// inclusions, in place of a `BUILDER_REJECTED` per candidate the constraint rejected.
+    #[serde(rename = "BUILDER_RESOURCE_LIMIT_REACHED")]
+    BuilderResourceLimitReached,
 }
 
 impl TransactionEventType {
@@ -253,6 +260,7 @@ impl fmt::Display for TransactionEventType {
             Self::BuilderFlashblockStarted => "BUILDER_FLASHBLOCK_STARTED",
             Self::BuilderFlashblockPublished => "BUILDER_FLASHBLOCK_PUBLISHED",
             Self::BuilderFlashblockBuildStopped => "BUILDER_FLASHBLOCK_BUILD_STOPPED",
+            Self::BuilderResourceLimitReached => "BUILDER_RESOURCE_LIMIT_REACHED",
         };
         f.write_str(value)
     }

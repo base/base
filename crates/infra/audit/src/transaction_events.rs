@@ -272,7 +272,8 @@ impl TransactionEventRetentionClass {
             | TransactionEventType::BuilderPayloadFinalized
             | TransactionEventType::BuilderFlashblockStarted
             | TransactionEventType::BuilderFlashblockPublished
-            | TransactionEventType::BuilderFlashblockBuildStopped => Self::Cold,
+            | TransactionEventType::BuilderFlashblockBuildStopped
+            | TransactionEventType::BuilderResourceLimitReached => Self::Cold,
         }
     }
 
@@ -2141,6 +2142,12 @@ mod tests {
         assert_eq!(
             TransactionEventRetentionClass::for_event_type(
                 TransactionEventType::BuilderPayloadFinalized
+            ),
+            TransactionEventRetentionClass::Cold
+        );
+        assert_eq!(
+            TransactionEventRetentionClass::for_event_type(
+                TransactionEventType::BuilderResourceLimitReached
             ),
             TransactionEventRetentionClass::Cold
         );

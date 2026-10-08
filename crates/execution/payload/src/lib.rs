@@ -43,6 +43,11 @@ pub use metrics::{BuilderMetrics, ValidityMetrics};
 mod deferrals;
 pub use deferrals::BlockDeferrals;
 
+mod resource_limits;
+pub use resource_limits::{
+    ResourceConstraint, ResourceLimitHit, ResourceLimitReached, ResourceLimitRejections,
+};
+
 mod inclusion;
 pub use inclusion::{FLOW_STANDARD, FLOW_VALIDITY, InclusionFlow, InclusionTracker};
 

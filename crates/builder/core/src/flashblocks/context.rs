@@ -21,7 +21,7 @@ use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics, CoinbaseTipAffordability,
-    ValidityMetrics, error::BasePayloadBuilderError,
+    ResourceLimitRejections, ValidityMetrics, error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, PredicateContext, TimestampedTransaction,
@@ -51,7 +51,7 @@ use crate::{
     transaction_events::{
         BuilderAcceptedEventData, BuilderDeferredEventData, BuilderExpiredEventData,
         BuilderRejectedEventData, BuilderTransactionEventContext, emit_builder_transaction_event,
-        rejection_reason_code,
+        emit_resource_limit_reached_event, rejection_reason_code,
     },
 };
 
@@ -445,6 +445,30 @@ impl BasePayloadBuilderCtx {
         }
     }
 
+    /// Closes the current resource-limit interval, journaling one
+    /// `BUILDER_RESOURCE_LIMIT_REACHED` for each constraint that rejected a candidate since the
+    /// last inclusion. The interval follows the payload's current last transaction.
+    fn close_resource_limit_interval(
+        &self,
+        payload_id: &str,
+        rejections: &mut ResourceLimitRejections,
+        info: &ExecutionInfo,
+    ) {
+        if rejections.is_empty() {
+            return;
+        }
+        let closed = rejections.take(
+            info.executed_transactions.len() as u64,
+            info.executed_transactions.last().map(|tx| tx.tx_hash()),
+        );
+        for reached in closed {
+            emit_resource_limit_reached_event(
+                self.builder_transaction_event_context(payload_id, None, None),
+                reached,
+            );
+        }
+    }
+
     fn emit_builder_decision_event<D, F>(
         &self,
         payload_id: &str,
@@ -782,9 +806,13 @@ impl BasePayloadBuilderCtx {
         let mut predicate_eval_cutoff_hit = false;
         // Time spent on validity candidates from yield to the predicate gate decision.
         let mut validity_handling = Duration::ZERO;
+        // Block-level limit rejections since the last inclusion. A flashblock scan starts a new
+        // interval because its limits differ from the previous flashblock's.
+        let mut limit_rejections = ResourceLimitRejections::default();
 
         while let Some(tx) = best_txs.next(()) {
             if self.cancel.is_cancelled() {
+                self.close_resource_limit_interval(&payload_id, &mut limit_rejections, info);
                 diag.cancelled = true;
                 diag.txs_considered = num_txs_considered;
                 diag.txs_included =
@@ -1168,20 +1196,25 @@ impl BasePayloadBuilderCtx {
                         diag.permanently_rejected_txs.push(tx_hash);
                     }
 
-                    self.emit_builder_decision_event(
-                        &payload_id,
-                        TransactionEventType::BuilderRejected,
-                        tx_hash,
-                        Some(ordering_position),
-                        || {
-                            BuilderRejectedEventData::from_error(
-                                &err,
-                                info,
-                                limits,
-                                Some(&tx_resources),
-                            )
-                        },
-                    );
+                    // Block-level limits are summarized per constraint when the interval closes;
+                    // only limits intrinsic to the transaction are journaled per candidate.
+                    match err.resource_limit_hit(limits) {
+                        Some(hit) => limit_rejections.record(hit, tx_hash, ordering_position),
+                        None => self.emit_builder_decision_event(
+                            &payload_id,
+                            TransactionEventType::BuilderRejected,
+                            tx_hash,
+                            Some(ordering_position),
+                            || {
+                                BuilderRejectedEventData::from_error(
+                                    &err,
+                                    info,
+                                    limits,
+                                    Some(&tx_resources),
+                                )
+                            },
+                        ),
+                    }
                     log_txn(Err(err));
                     Self::skip_current(best_txs, tx.signer(), tx.nonce(), replay_independent);
                     continue;
@@ -1371,6 +1404,7 @@ impl BasePayloadBuilderCtx {
             // record uncompressed tx size
             info.cumulative_uncompressed_bytes += tx_uncompressed_size;
 
+            self.close_resource_limit_interval(&payload_id, &mut limit_rejections, info);
             self.emit_builder_decision_event(
                 &payload_id,
                 TransactionEventType::BuilderAccepted,
@@ -1533,6 +1567,7 @@ impl BasePayloadBuilderCtx {
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
         }
+        self.close_resource_limit_interval(&payload_id, &mut limit_rejections, info);
 
         // Record accumulated validity-predicate evaluation time once per flashblock build.
         // `None` means no validity transactions were evaluated, so nothing is emitted and
@@ -1670,6 +1705,8 @@ impl BasePayloadBuilderCtx {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+
     use alloy_consensus::{Header, TxEip1559};
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, TxKind, U256};
@@ -1677,11 +1714,13 @@ mod tests {
     use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_txpool::BasePooledTransaction;
+    use base_observability_events::TransactionEventCapture;
     use reth_chainspec::ChainSpec;
     use reth_payload_util::PayloadTransactions;
     use reth_primitives_traits::{Recovered, SealedHeader, WithEncoded};
     use reth_provider::noop::NoopProvider;
     use reth_revm::{State, database::StateProviderDatabase};
+    use revm::state::AccountInfo;
 
     use super::*;
     use crate::{
@@ -1804,6 +1843,54 @@ mod tests {
         }
     }
 
+    /// Yields a fixed list of candidates in order and ignores lifecycle calls.
+    struct ScriptedTransactions(VecDeque<BasePooledTransaction>);
+
+    impl PayloadTransactions for ScriptedTransactions {
+        type Transaction = BasePooledTransaction;
+
+        fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
+            self.0.pop_front()
+        }
+
+        fn mark_invalid(&mut self, _sender: Address, _nonce: u64) {}
+    }
+
+    impl RestingPayloadTransactions for ScriptedTransactions {}
+
+    impl ParkablePayloadTransactions for ScriptedTransactions {
+        fn park_current(&mut self) {}
+
+        fn mark_current_committed(&mut self) {}
+
+        fn promote(&mut self, _transaction_hash: TxHash) -> bool {
+            false
+        }
+
+        fn discard_parked(&mut self, _transaction_hash: TxHash) -> bool {
+            false
+        }
+    }
+
+    /// Signs a transfer from a fresh signer.
+    fn signed_transfer(gas_limit: u64, input: Bytes) -> BasePooledTransaction {
+        let signer = PrivateKeySigner::random();
+        let transaction = TxEip1559 {
+            chain_id: 901,
+            nonce: 0,
+            gas_limit,
+            max_fee_per_gas: 1_000_000_000,
+            max_priority_fee_per_gas: 0,
+            to: TxKind::Call(Address::repeat_byte(0x77)),
+            input,
+            ..Default::default()
+        };
+        let recovered = sign_base_tx(&signer, BaseTypedTransaction::Eip1559(transaction))
+            .expect("sign test transaction");
+        let encoded_len = recovered.encode_2718_len();
+        BasePooledTransaction::new(recovered, encoded_len)
+    }
+
     #[derive(Default)]
     struct LifecycleRecorder {
         invalid: usize,
@@ -1903,6 +1990,113 @@ mod tests {
         assert_eq!(diagnostics.txs_rejected_gas, 1);
         assert_eq!(best_txs.over_limit_rejections, 1);
         assert!(best_txs.over_limit_remaining > OVER_LIMIT - 10);
+    }
+
+    /// Block-level limit misses are summarized once per constraint per interval between
+    /// inclusions, an inclusion starts a new interval, and limits intrinsic to one transaction
+    /// are still journaled per transaction.
+    #[test]
+    fn block_limit_rejections_are_summarized_per_constraint_per_inclusion_interval() {
+        let event_capture = TransactionEventCapture::install();
+        let ctx = test_builder_context();
+        let first = signed_transfer(100_000, Bytes::new());
+        let over_gas = signed_transfer(200_000, Bytes::new());
+        // Incompressible calldata over the per-transaction DA limit.
+        let over_tx_da = signed_transfer(
+            200_000,
+            (0..100).flat_map(|_| B256::random().0).collect::<Vec<u8>>().into(),
+        );
+        // Zero calldata compresses well but is large uncompressed.
+        let over_uncompressed = signed_transfer(40_000, vec![0_u8; 800].into());
+        let also_over_gas = signed_transfer(140_000, Bytes::new());
+        let second = signed_transfer(100_000, Bytes::new());
+        let over_gas_after_second = signed_transfer(120_000, Bytes::new());
+        let candidates = vec![
+            first,
+            over_gas,
+            over_tx_da,
+            over_uncompressed,
+            also_over_gas,
+            second,
+            over_gas_after_second,
+        ];
+        let hashes: Vec<TxHash> = candidates.iter().map(|tx| *tx.hash()).collect();
+
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        for candidate in &candidates {
+            state.insert_account(
+                candidate.sender(),
+                AccountInfo { balance: U256::from(10).pow(U256::from(18)), ..Default::default() },
+            );
+        }
+        let mut info = ExecutionInfo::default();
+        let limits = ResourceLimits {
+            block_gas_limit: 150_000,
+            tx_data_limit: Some(1_000),
+            block_uncompressed_size_limit: Some(600),
+            ..Default::default()
+        };
+
+        ctx.execute_best_transactions(
+            &mut info,
+            &mut BlockDeferrals::default(),
+            &mut state,
+            &mut ScriptedTransactions(candidates.into()),
+            &limits,
+        )
+        .expect("selection should succeed");
+        let included: Vec<_> = info.executed_transactions.iter().map(|tx| tx.tx_hash()).collect();
+        assert_eq!(included, [hashes[0], hashes[5]]);
+
+        let events = event_capture.events();
+        let ours = |event: &&base_observability_events::TransactionEvent| {
+            event.data["sampled_tx_hashes"].as_array().is_some_and(|sample| {
+                hashes.iter().any(|hash| sample.contains(&hash.to_string().into()))
+            })
+        };
+        let summaries: Vec<_> = events
+            .iter()
+            .filter(|event| event.event_type == TransactionEventType::BuilderResourceLimitReached)
+            .filter(ours)
+            .map(|event| {
+                (
+                    event.data["constraint"].as_str().unwrap().to_string(),
+                    event.data["after_tx_index"].as_u64().unwrap(),
+                    event.data["rejected_count"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            summaries,
+            [
+                ("block_gas".to_string(), 1, 2),
+                ("block_uncompressed_size".to_string(), 1, 1),
+                ("block_gas".to_string(), 2, 1),
+            ]
+        );
+        let first_gas = events
+            .iter()
+            .find(|event| {
+                event.event_type == TransactionEventType::BuilderResourceLimitReached && ours(event)
+            })
+            .unwrap();
+        assert!(first_gas.tx_hash.is_none(), "the summary is payload-scoped");
+        assert_eq!(first_gas.data["after_tx_hash"], hashes[0].to_string());
+        assert_eq!(first_gas.data["used"], 21_000);
+        assert_eq!(first_gas.data["limit"], 150_000);
+        assert_eq!(first_gas.data["flashblock_index"], 0);
+
+        let rejected: Vec<_> = events
+            .iter()
+            .filter(|event| event.event_type == TransactionEventType::BuilderRejected)
+            .filter_map(|event| {
+                event.tx_hash.filter(|hash| hashes.contains(hash)).map(|hash| {
+                    (hash, event.data["rejection_reason"].as_str().unwrap().to_string())
+                })
+            })
+            .collect();
+        assert_eq!(rejected, [(hashes[2], "tx_da_size_exceeded".to_string())]);
     }
 
     #[test]

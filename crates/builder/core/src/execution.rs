@@ -8,6 +8,7 @@ use ExecutionMeteringLimitExceeded::TransactionExecutionTime;
 use alloy_primitives::{Address, U256};
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
 use base_common_evm::BaseTransactionError;
+use base_execution_payload_builder::{ResourceConstraint, ResourceLimitHit};
 use derive_more::Display;
 use thiserror::Error;
 
@@ -174,6 +175,59 @@ impl TxnExecutionError {
                 )
                 | Self::MaxGasUsageExceeded
         )
+    }
+
+    /// Returns the block-level resource constraint this rejection hit, if it is one.
+    ///
+    /// These rejections depend on what the payload already contains, so builders summarize them
+    /// per constraint as `BUILDER_RESOURCE_LIMIT_REACHED` rather than journaling each candidate.
+    /// Rejections intrinsic to the transaction, including the per-transaction DA size and
+    /// execution time limits, return `None`.
+    pub const fn resource_limit_hit(&self, limits: &ResourceLimits) -> Option<ResourceLimitHit> {
+        let (constraint, limit, used, required) = match *self {
+            Self::BlockDASizeExceeded { total_da_used, tx_da_size, block_da_limit } => {
+                (ResourceConstraint::BlockDaSize, block_da_limit, total_da_used, tx_da_size)
+            }
+            Self::DAFootprintLimitExceeded { tx_da_size, da_footprint, .. } => {
+                let scalar = match limits.da_footprint_gas_scalar {
+                    Some(scalar) => scalar as u64,
+                    None => 0,
+                };
+                let limit = match limits.block_da_footprint_limit {
+                    Some(limit) => limit,
+                    None => limits.block_gas_limit,
+                };
+                let required = tx_da_size.saturating_mul(scalar);
+                (
+                    ResourceConstraint::BlockDaFootprint,
+                    limit,
+                    da_footprint.saturating_sub(required),
+                    required,
+                )
+            }
+            Self::TransactionGasLimitExceeded {
+                cumulative_gas_used,
+                tx_gas_limit,
+                block_gas_limit,
+            } => (ResourceConstraint::BlockGas, block_gas_limit, cumulative_gas_used, tx_gas_limit),
+            Self::BlockUncompressedSizeExceeded {
+                total_uncompressed,
+                tx_uncompressed_size,
+                block_limit,
+            } => (
+                ResourceConstraint::BlockUncompressedSize,
+                block_limit,
+                total_uncompressed,
+                tx_uncompressed_size,
+            ),
+            _ => return None,
+        };
+        Some(ResourceLimitHit {
+            constraint,
+            limit: Some(limit),
+            used: Some(used),
+            required: Some(required),
+        })
     }
 }
 
@@ -387,6 +441,76 @@ mod tests {
 
         let result = info.is_tx_over_limits(&tx, &limits);
         assert!(matches!(result, Err(TxnExecutionError::TransactionGasLimitExceeded { .. })));
+    }
+
+    #[test]
+    fn only_block_level_limits_are_resource_constraints() {
+        let limits = ResourceLimits {
+            tx_data_limit: Some(1_000),
+            block_data_limit: Some(10_000),
+            da_footprint_gas_scalar: Some(10),
+            block_da_footprint_limit: Some(50_000),
+            tx_execution_time_limit_us: Some(100),
+            block_uncompressed_size_limit: Some(20_000),
+            ..default_limits()
+        };
+        let constraint = |info: &ExecutionInfo, tx: TxResources| {
+            info.is_tx_over_limits(&tx, &limits)
+                .expect_err("transaction must exceed a limit")
+                .resource_limit_hit(&limits)
+        };
+
+        let mut info = ExecutionInfo::with_capacity(0);
+        info.cumulative_gas_used = 29_990_000;
+        assert_eq!(
+            constraint(&info, TxResources { gas_limit: 21_000, ..Default::default() }),
+            Some(ResourceLimitHit {
+                constraint: ResourceConstraint::BlockGas,
+                limit: Some(30_000_000),
+                used: Some(29_990_000),
+                required: Some(21_000),
+            })
+        );
+
+        let mut info = ExecutionInfo::with_capacity(0);
+        info.cumulative_da_bytes_used = 9_500;
+        assert_eq!(
+            constraint(&info, TxResources { da_size: 600, ..Default::default() }).map(|hit| (
+                hit.constraint,
+                hit.used,
+                hit.required
+            )),
+            Some((ResourceConstraint::BlockDaSize, Some(9_500), Some(600)))
+        );
+
+        let mut info = ExecutionInfo::with_capacity(0);
+        info.cumulative_da_bytes_used = 4_900;
+        assert_eq!(
+            constraint(&info, TxResources { da_size: 200, ..Default::default() }),
+            Some(ResourceLimitHit {
+                constraint: ResourceConstraint::BlockDaFootprint,
+                limit: Some(50_000),
+                used: Some(49_000),
+                required: Some(2_000),
+            })
+        );
+
+        let mut info = ExecutionInfo::with_capacity(0);
+        info.cumulative_uncompressed_bytes = 19_900;
+        assert_eq!(
+            constraint(&info, TxResources { uncompressed_size: 200, ..Default::default() })
+                .map(|hit| hit.constraint),
+            Some(ResourceConstraint::BlockUncompressedSize)
+        );
+
+        let empty = ExecutionInfo::with_capacity(0);
+        assert_eq!(constraint(&empty, TxResources { da_size: 1_001, ..Default::default() }), None);
+        assert_eq!(
+            constraint(&empty, TxResources { execution_time_us: Some(101), ..Default::default() }),
+            None
+        );
+        assert_eq!(TxnExecutionError::NonceTooLow.resource_limit_hit(&limits), None);
+        assert_eq!(TxnExecutionError::MaxGasUsageExceeded.resource_limit_hit(&limits), None);
     }
 
     // ==================== DA Limit Tests ====================
