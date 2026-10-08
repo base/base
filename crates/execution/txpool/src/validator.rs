@@ -1627,6 +1627,7 @@ where
             NonceError::NonceFreeSequence { .. } => {
                 Self::eip8130_error("nonce-free transaction has a non-zero nonce sequence")
             }
+            NonceError::SequenceSaturated => Self::eip8130_error("nonce sequence is saturated"),
             NonceError::Storage(_) => Self::eip8130_error("nonce state read failed"),
         }
     }
