@@ -58,7 +58,7 @@ use reth_transaction_pool::{
 
 use crate::{
     BasePayloadBuilderCtx, FlashblockBlockDriver, FlashblockBlockOutcome,
-    ParkableBestPayloadTransactions, RejectionCache,
+    ParkableBestPayloadTransactions, RejectionCache, RestingPredicateMode,
 };
 
 type Ordering = BaseOrdering<BasePooledTransaction>;
@@ -105,6 +105,9 @@ pub struct FlashblockWorkload {
     pub transfers_touch_watched_state: bool,
     /// Validity transactions whose predicates are satisfied, arriving before each flashblock.
     pub satisfied_validity_per_flashblock: usize,
+    /// Resting-predicate mode of the flashblocks iterator (`--builder.resting-predicates`).
+    /// The native builder has no such mode, so it runs only workloads that leave it off.
+    pub resting_predicate_mode: RestingPredicateMode,
 }
 
 impl FlashblockWorkload {
@@ -140,6 +143,7 @@ impl FlashblockWorkload {
         predicate_state: PredicateState::Unique,
         transfers_touch_watched_state: false,
         satisfied_validity_per_flashblock: 0,
+        resting_predicate_mode: RestingPredicateMode::Off,
     };
 
     /// A backlog of single-predicate validity transactions that stay unsatisfied and are
@@ -204,7 +208,37 @@ impl FlashblockWorkload {
         ..Self::TRANSFERS
     };
 
-    /// The benchmark workload matrix, in reporting order.
+    /// [`Self::RESTING_BACKLOG`] with resting predicates enforced: the iterator parks each
+    /// resting transaction after its first evaluation and skips it until a commit changes the
+    /// state its predicate reads.
+    pub const RESTING_BACKLOG_ENFORCE: Self = Self {
+        name: "resting_backlog_enforce",
+        resting_predicate_mode: RestingPredicateMode::Enforce,
+        ..Self::RESTING_BACKLOG
+    };
+
+    /// [`Self::WAKE_RESCAN`] with resting predicates enforced, so every commit to a watched
+    /// account wakes the resting index as well as the parked rescan.
+    pub const WAKE_RESCAN_ENFORCE: Self = Self {
+        name: "wake_rescan_enforce",
+        resting_predicate_mode: RestingPredicateMode::Enforce,
+        ..Self::WAKE_RESCAN
+    };
+
+    /// [`Self::BACKLOG_GROWTH`] with resting predicates enforced, so arrivals are added to a
+    /// growing resting index between flashblocks.
+    pub const BACKLOG_GROWTH_ENFORCE: Self = Self {
+        name: "backlog_growth_enforce",
+        resting_predicate_mode: RestingPredicateMode::Enforce,
+        ..Self::BACKLOG_GROWTH
+    };
+
+    /// Scenarios that run on the flashblocks builder only, because they set a flashblocks
+    /// iterator mode the native builder does not have.
+    pub const FLASHBLOCKS_ONLY: [Self; 3] =
+        [Self::RESTING_BACKLOG_ENFORCE, Self::WAKE_RESCAN_ENFORCE, Self::BACKLOG_GROWTH_ENFORCE];
+
+    /// The benchmark workload matrix for both builders, in reporting order.
     pub const MATRIX: [Self; 8] = [
         Self::TRANSFERS,
         Self::RESTING_BACKLOG,
@@ -216,9 +250,12 @@ impl FlashblockWorkload {
         Self::SATISFIED_VALIDITY,
     ];
 
-    /// Returns the matrix workload with `name`.
+    /// Returns the workload with `name` from [`Self::MATRIX`] or [`Self::FLASHBLOCKS_ONLY`].
     pub fn by_name(name: &str) -> Option<Self> {
-        Self::MATRIX.into_iter().find(|workload| workload.name == name)
+        Self::MATRIX
+            .into_iter()
+            .chain(Self::FLASHBLOCKS_ONLY)
+            .find(|workload| workload.name == name)
     }
 
     /// Gas each flashblock adds to the block's cumulative gas target.
@@ -303,7 +340,15 @@ impl FlashblockWorkloadFixture {
 
     /// Builds the fixture for [`Self::run_native_block`]: every arrival is already in the pool,
     /// and Denim is active at genesis with the `BaseTime` proxy it requires.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `workload` enables a resting-predicate mode, which the native builder lacks.
     pub fn new_native(workload: FlashblockWorkload) -> Self {
+        assert!(
+            !workload.resting_predicate_mode.is_enabled(),
+            "the native builder has no resting-predicate mode"
+        );
         let mut fixture = Self::with_denim(workload, true);
         for transaction in fixture.arrivals.drain(..).flatten() {
             fixture.pool.add_transaction(transaction, 0);
@@ -356,6 +401,7 @@ impl FlashblockWorkloadFixture {
         let driver = FlashblockBlockDriver {
             flashblocks: FlashblockWorkload::FLASHBLOCKS,
             gas_per_flashblock: self.workload.gas_per_flashblock(),
+            resting_predicate_mode: self.workload.resting_predicate_mode,
         };
         let pool = &mut self.pool;
         let arrivals = &mut self.arrivals;

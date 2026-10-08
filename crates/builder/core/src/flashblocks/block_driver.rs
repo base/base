@@ -25,7 +25,7 @@ use reth_revm::State;
 use super::payload::{build_block, emit_final_inclusion_events, execute_pre_steps};
 use crate::{
     BasePayloadBuilderCtx, BestFlashblocksTxs, BlockDeferrals, ParkableBestPayloadTransactions,
-    RejectionCache, ResourceLimits,
+    RejectionCache, ResourceLimits, RestingPredicateMode,
 };
 
 /// Selection totals for one block built by [`FlashblockBlockDriver`].
@@ -49,6 +49,9 @@ pub struct FlashblockBlockDriver {
     pub flashblocks: u64,
     /// Gas each flashblock adds to the cumulative block gas target.
     pub gas_per_flashblock: u64,
+    /// Resting-predicate mode applied to the iterator, as the payload builder applies
+    /// `--builder.resting-predicates`.
+    pub resting_predicate_mode: RestingPredicateMode,
 }
 
 impl FlashblockBlockDriver {
@@ -79,7 +82,8 @@ impl FlashblockBlockDriver {
         let mut info = execute_pre_steps(state, ctx)?;
         let mut deferrals = BlockDeferrals::default();
         let mut outcome = FlashblockBlockOutcome::default();
-        let mut best = BestFlashblocksTxs::new(next_iterator(0), rejection_cache);
+        let mut best = BestFlashblocksTxs::new(next_iterator(0), rejection_cache)
+            .with_resting_predicate_mode(self.resting_predicate_mode);
 
         for flashblock_index in 0..self.flashblocks {
             let target_gas = (flashblock_index + 1) * self.gas_per_flashblock;
