@@ -23,7 +23,7 @@ use tracing::debug;
 
 use super::metrics::Metrics as BuilderApiMetrics;
 use crate::{
-    BasePooledTransaction, ExtensionError, NoExtensions, PoolRejectionLabel, ValidatedTransaction,
+    BasePooledTransaction, NoExtensions, PoolRejectionLabel, ValidatedTransaction,
     ValidatedTransactionExtensions, ValiditySignatureMetrics, ValiditySignatureMode,
 };
 
@@ -178,23 +178,11 @@ where
         }
         // Attach any extension data carried on the wire. This is a no-op for
         // `NoExtensions`, the default payload.
-        // Applying validity extensions validates authorization before producing a
-        // transaction-bound sidecar. Wire senders are checked against the envelope.
-        let pool_tx =
-            tx.extensions.apply(pool_tx, self.validity_signature_mode).map_err(|error| {
-                let reason = match &error {
-                    ExtensionError::Authorization(error) => {
-                        ValiditySignatureMetrics::rejected("builder", error.as_label())
-                            .increment(1);
-                        Some(error.as_label())
-                    }
-                    ExtensionError::Invalid(_) => {
-                        BuilderApiMetrics::extension_errors().increment(1);
-                        None
-                    }
-                };
-                ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), error.to_string(), reason)
-            })?;
+        // Forwarding mempool nodes are trusted to authorize sidecars at raw ingress.
+        let pool_tx = tx.extensions.apply(pool_tx).map_err(|error| {
+            BuilderApiMetrics::extension_errors().increment(1);
+            ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), error.to_string(), None::<()>)
+        })?;
         // Every extension implementation must obey this builder's local rollout policy.
         self.validity_signature_mode
             .check(pool_tx.validity_predicates(), pool_tx.validity_signature().as_ref())
@@ -343,21 +331,26 @@ mod tests {
         unsigned.extensions.validity_signature = None;
         let error = handler.insert_validated_transaction(unsigned).await.unwrap_err();
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
-        assert!(error.message().contains("require a sender signature"));
+        assert_eq!(error.data().unwrap().get(), r#""missing""#);
         let mut ordinary = tx;
         ordinary.extensions = TransactionValidity::default();
         let error = handler.insert_validated_transaction(ordinary).await.unwrap_err();
         assert!(error.message().starts_with("pool rejected transaction:"));
     }
 
+    #[rstest::rstest]
+    #[case::optional(ValiditySignatureMode::VerifyIfPresent)]
+    #[case::required(ValiditySignatureMode::Required)]
     #[tokio::test]
-    async fn signed_validity_builder_rejects_tampering_and_untrusted_sender() {
+    async fn signed_validity_builder_trusts_forwarded_authorization(
+        #[case] mode: ValiditySignatureMode,
+    ) {
         let handler = BuilderApiImpl::<_, TransactionValidity>::with_extensions(
             NoopTransactionPool::<BasePooledTransaction>::new(),
             true,
             DEFAULT_MAX_VALIDITY_PREDICATES,
         )
-        .with_validity_signature_mode(ValiditySignatureMode::Required);
+        .with_validity_signature_mode(mode);
         let tx = signed_validity_transaction();
         let mut changed = tx.clone();
         changed.extensions.validity.push(ValidityPredicate::Balance {
@@ -369,10 +362,15 @@ mod tests {
         forged.sender = Address::ZERO;
         let mut replayed = tx;
         replayed.raw = signed_validity_transaction().raw;
-        for altered in [changed, forged, replayed] {
+        let mut malformed = signed_validity_transaction();
+        malformed.extensions.validity_signature =
+            Some(Signature::new(U256::ZERO, U256::ZERO, false));
+        for altered in [changed, forged, replayed, malformed] {
             let error = handler.insert_validated_transaction(altered).await.unwrap_err();
-            assert_eq!(error.code(), ErrorCode::InvalidParams.code());
-            assert!(error.message().contains("signature") || error.message().contains("sender"));
+            assert!(
+                error.message().starts_with("pool rejected transaction:"),
+                "trusted insert must not re-verify envelope or sidecar signatures: {error}"
+            );
         }
     }
 
@@ -404,9 +402,8 @@ mod tests {
 
     #[rstest::rstest]
     #[case::missing(ValiditySignatureMode::Required, "missing")]
-    #[case::invalid(ValiditySignatureMode::Required, "invalid")]
-    #[case::sender_mismatch(ValiditySignatureMode::Required, "sender_mismatch")]
-    #[case::optional_invalid(ValiditySignatureMode::VerifyIfPresent, "invalid")]
+    #[case::unexpected(ValiditySignatureMode::Required, "unexpected")]
+    #[case::optional_unexpected(ValiditySignatureMode::VerifyIfPresent, "unexpected")]
     #[tokio::test]
     async fn signature_rejections_have_dedicated_builder_metrics(
         #[case] mode: ValiditySignatureMode,
@@ -424,12 +421,7 @@ mod tests {
         let mut tx = signed_validity_transaction();
         match reason {
             "missing" => tx.extensions.validity_signature = None,
-            "invalid" => tx.extensions.validity.push(ValidityPredicate::Balance {
-                address: Address::ZERO,
-                op: ValidityOperator::Equal,
-                value: U256::ZERO,
-            }),
-            "sender_mismatch" => tx.sender = Address::ZERO,
+            "unexpected" => tx.extensions.validity.clear(),
             _ => unreachable!(),
         }
         let error = handler.insert_validated_transaction(tx).await.unwrap_err();
@@ -527,12 +519,9 @@ mod tests {
         fn apply(
             self,
             tx: BasePooledTransaction,
-            _mode: ValiditySignatureMode,
         ) -> Result<BasePooledTransaction, crate::ExtensionError> {
             if self.reject == Some(true) {
-                return Err(crate::ExtensionError::Invalid(
-                    "rejected by test extension".to_string(),
-                ));
+                return Err(crate::ExtensionError("rejected by test extension".to_string()));
             }
             Ok(tx)
         }

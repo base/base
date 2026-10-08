@@ -9,7 +9,6 @@ use serde::{Deserializer, de};
 
 use crate::{
     BasePooledTransaction, ExtensionError, ValidatedTransactionExtensions, ValidityAuthorization,
-    ValiditySignatureMode,
 };
 
 /// Default maximum number of experimental validity predicates carried by one transaction.
@@ -654,7 +653,7 @@ impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidi
 
     fn validate(&self, max_items: usize) -> Result<(), ExtensionError> {
         if self.validity.len() > max_items {
-            return Err(ExtensionError::Invalid(format!(
+            return Err(ExtensionError(format!(
                 "too many validity predicates: {} (maximum {max_items})",
                 self.validity.len()
             )));
@@ -677,16 +676,12 @@ impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidi
     /// defense-in-depth against a misbehaving upstream. Unlike the mempool
     /// ingress, an empty predicate set is not rejected: the builder legitimately
     /// receives ordinary transactions that carry no predicates.
-    fn apply(
-        self,
-        tx: BasePooledTransaction,
-        mode: ValiditySignatureMode,
-    ) -> Result<BasePooledTransaction, ExtensionError> {
+    fn apply(self, tx: BasePooledTransaction) -> Result<BasePooledTransaction, ExtensionError> {
         for (index, predicate) in self.validity.iter().enumerate() {
-            predicate.validate_params(index).map_err(|e| ExtensionError::Invalid(e.to_string()))?;
+            predicate.validate_params(index).map_err(|e| ExtensionError(e.to_string()))?;
         }
-        let validity = ValidityAuthorization::validate(&tx, self, mode)?;
-        tx.with_validity(validity).map_err(ExtensionError::from)
+        let validity = ValidityAuthorization::trust_forwarded(&tx, self);
+        Ok(tx.with_validity(validity).expect("forwarded sidecar is bound to this same transaction"))
     }
 }
 
@@ -1038,7 +1033,7 @@ mod tests {
         let extension =
             TransactionValidity { validity: expected.clone(), validity_signature: None };
 
-        let transaction = extension.apply(transaction, ValiditySignatureMode::Off).unwrap();
+        let transaction = extension.apply(transaction).unwrap();
 
         assert_eq!(transaction.validity_predicates(), expected);
     }
@@ -1114,7 +1109,7 @@ mod tests {
             validity_signature: None,
         };
 
-        let transaction = extension.apply(transaction, ValiditySignatureMode::Off).unwrap();
+        let transaction = extension.apply(transaction).unwrap();
 
         assert_eq!(transaction.validity_predicates(), [timing_predicate, state_predicate]);
     }
@@ -1276,7 +1271,7 @@ mod tests {
             validity_signature: None,
         };
 
-        let error = extension.apply(transaction, ValiditySignatureMode::Off).unwrap_err();
+        let error = extension.apply(transaction).unwrap_err();
 
         assert!(error.to_string().contains("outside its mask"));
     }
@@ -1307,7 +1302,7 @@ mod tests {
             validity_signature: None,
         };
 
-        let error = extension.apply(transaction, ValiditySignatureMode::Off).unwrap_err();
+        let error = extension.apply(transaction).unwrap_err();
 
         assert!(error.to_string().contains("can never be satisfied"));
     }
@@ -1333,8 +1328,7 @@ mod tests {
 
         // The builder path legitimately receives ordinary transactions with no
         // predicates; unlike the mempool ingress, `apply` must not reject them.
-        let transaction =
-            TransactionValidity::default().apply(transaction, ValiditySignatureMode::Off).unwrap();
+        let transaction = TransactionValidity::default().apply(transaction).unwrap();
 
         assert!(transaction.validity_predicates().is_empty());
     }

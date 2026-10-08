@@ -385,14 +385,9 @@ where
         );
 
         // Retain predicates and their authorization for canonical forwarding to builders.
-        let transaction = transaction.with_validity(validity).map_err(|error| {
-            ValiditySignatureMetrics::rejected("ingress", error.as_label()).increment(1);
-            ErrorObjectOwned::owned(
-                ErrorCode::InvalidParams.code(),
-                error.to_string(),
-                Some(error.as_label()),
-            )
-        })?;
+        let transaction = transaction
+            .with_validity(validity)
+            .expect("validity was validated against this same recovered transaction");
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         self.transaction_sender
             .send(BatchTxRequest::new(TransactionOrigin::Private, transaction, response_tx))

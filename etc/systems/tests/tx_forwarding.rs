@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use alloy_consensus::{SignableTransaction, TxReceipt};
 use alloy_eips::eip2718::Encodable2718;
+use alloy_json_rpc::RpcError;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
@@ -185,7 +186,10 @@ async fn signed_validity_forwarding_is_included_by_an_enforcing_builder() -> Res
         .request::<_, B256>("base_sendRawTransactionValidity", (raw.clone(), unsigned))
         .await
         .expect_err("required ingress must reject unsigned predicates");
-    assert!(error.to_string().contains("require a sender signature"));
+    let RpcError::ErrorResp(error) = error else {
+        panic!("expected a JSON-RPC signature policy error, got {error}");
+    };
+    assert_eq!(error.data.expect("signature rejection reason").get(), r#""missing""#);
     let signature = signer.sign_hash_sync(&ValidityAuthorization::signing_hash(
         L2_CHAIN_ID,
         tx_hash,
@@ -682,6 +686,7 @@ async fn test_validity_transaction_lands_after_nonce_predicate_becomes_true() ->
                         },
                         block_expiry_bound(current_block),
                     ],
+                    validity_signature: None,
                 },
             ),
         )

@@ -16,15 +16,16 @@ pub enum ValiditySignatureMode {
     /// Accept unsigned or signed sidecars without verifying supplied signatures.
     #[default]
     Off,
-    /// Accept unsigned predicates, but verify every supplied signature.
+    /// Accept unsigned predicates; raw ingress verifies every supplied signature.
     VerifyIfPresent,
-    /// Require a valid sender signature for every non-empty predicate batch.
+    /// Require a sender signature for every non-empty batch; raw ingress verifies it.
     Required,
 }
 
 impl ValiditySignatureMode {
     /// Checks sidecar shape and signature presence before cryptographic verification.
-    /// This does not verify signatures; use [`crate::ValidityAuthorization`] for admission.
+    /// Trusted builder insert uses only this check. Raw ingress must also verify
+    /// signatures with [`crate::ValidityAuthorization`].
     pub const fn check(
         self,
         predicates: &[ValidityPredicate],

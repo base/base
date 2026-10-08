@@ -5,8 +5,6 @@ use base_bundles::MeterBundleResponse;
 use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::{ValidityAuthorizationError, ValiditySignatureMode};
-
 /// Default extension payload for [`ValidatedTransaction`], contributing no
 /// additional wire fields.
 ///
@@ -18,14 +16,8 @@ pub struct NoExtensions {}
 
 /// Error returned when applying extension data to a pooled transaction fails.
 #[derive(Debug, thiserror::Error)]
-pub enum ExtensionError {
-    /// Malformed or unsupported extension parameters.
-    #[error("failed to apply transaction extensions: {0}")]
-    Invalid(String),
-    /// Validity signature policy or sender authorization failed.
-    #[error(transparent)]
-    Authorization(#[from] ValidityAuthorizationError),
-}
+#[error("failed to apply transaction extensions: {0}")]
+pub struct ExtensionError(pub String);
 
 /// Pluggable extension payload carried alongside a [`ValidatedTransaction`].
 ///
@@ -64,7 +56,7 @@ pub trait ValidatedTransactionExtensions<T: PoolTransaction>:
     ///
     /// Called by the builder RPC handler before the transaction is inserted
     /// into the pool.
-    fn apply(self, tx: T, mode: ValiditySignatureMode) -> Result<T, ExtensionError>;
+    fn apply(self, tx: T) -> Result<T, ExtensionError>;
 }
 
 impl<T: PoolTransaction> ValidatedTransactionExtensions<T> for NoExtensions {
@@ -76,7 +68,7 @@ impl<T: PoolTransaction> ValidatedTransactionExtensions<T> for NoExtensions {
         Self {}
     }
 
-    fn apply(self, tx: T, _mode: ValiditySignatureMode) -> Result<T, ExtensionError> {
+    fn apply(self, tx: T) -> Result<T, ExtensionError> {
         Ok(tx)
     }
 }

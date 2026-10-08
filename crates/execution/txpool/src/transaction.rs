@@ -148,8 +148,8 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
         &self.validity_predicates
     }
 
-    /// Attaches a policy-validated sidecar to its original signed transaction.
-    /// Validation is required even when the selected rollout mode permits unsigned predicates.
+    /// Attaches an admitted sidecar to its original signed transaction.
+    /// The witness comes from raw-ingress validation or explicitly trusted forwarding.
     pub fn with_validity(
         mut self,
         validity: crate::ValidatedValidity,

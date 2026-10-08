@@ -23,7 +23,6 @@ Downstream node builds substitute their own payload by implementing
 use base_execution_txpool::{
     BuilderApiImpl, BuilderApiServer, DEFAULT_MAX_VALIDITY_PREDICATES, ExtensionError,
     ValidatedTransactionExtensions,
-    ValiditySignatureMode,
 };
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -34,7 +33,7 @@ struct MyExtensions {
 
 impl ValidatedTransactionExtensions<MyPooledTx> for MyExtensions {
     fn extract(tx: &ValidPoolTransaction<MyPooledTx>) -> Self { /* ... */ }
-    fn apply(self, tx: MyPooledTx, mode: ValiditySignatureMode) -> Result<MyPooledTx, ExtensionError> { /* ... */ }
+    fn apply(self, tx: MyPooledTx) -> Result<MyPooledTx, ExtensionError> { /* ... */ }
 }
 
 // Builder (ingress) side, in place of the stock `BuilderApiExtension`:
@@ -63,7 +62,7 @@ parameters are still rejected. On builders the mode covers both
 `base_sendRawTransactionValidity` and `base_insertValidatedTransaction`.
 
 In `off` mode, nodes accept signed clients during rollout, but do not authenticate them.
-Deploy `verify-if-present` to **every** ingress and builder to verify supplied signatures
+Deploy `verify-if-present` to **every** ingress and builder so raw ingress verifies supplied signatures
 while continuing to accept unsigned predicates. Migrate wallets and load clients to
 signing, observe signed/unsigned admission counters, then switch the fleet to `required`.
 Required mode rejects any non-empty predicate batch without valid user authorization.
@@ -103,8 +102,8 @@ Retain duplicates. Conjunction permutations produce the same digest; adding,
 removing, or changing a predicate changes it. Evaluation uses its independent
 cheap-first ordering and does not affect the signing contract.
 
-Verification recovers the actual envelope sender rather than trusting the builder
-payload's `sender`, and rejects high-s signatures. Only sender-address secp256k1
+Raw ingress reuses the recovered envelope sender to verify sidecar signatures
+and rejects high-s signatures. Only sender-address secp256k1
 authorization is supported; contract wallets or EIP-8130 actors without that
 key cannot use signed sidecars. Deposits and unprotected legacy transactions
 have no chain-bound signing domain and cannot authorize signed predicates.
@@ -113,13 +112,15 @@ Predicates remain builder-side metadata, not on-chain consensus rules: a holder
 can still strip the entire sidecar and submit the underlying plain transaction.
 This feature prevents unauthorized predicate attachment, not all sandwich attacks.
 
-`ValidityAuthorization::validate_recovered` reuses the sender recovered by raw
-ingress. Builder-wire admission uses `validate` to check the envelope sender.
-Both return an opaque `ValidatedValidity`, bound to the transaction hash, which
-`with_validity` requires before attachment. This witness is not deserializable.
-Builders verify incoming wire signatures in `verify-if-present` and `required`;
-`off` preserves them without verification. A `ValidatedValidity` records policy admission,
-not proof that its signature was verified.
+`ValidityAuthorization::validate_recovered` reuses the sender already recovered at raw
+ingress, including the builder's own `base_sendRawTransactionValidity` endpoint.
+`base_insertValidatedTransaction` trusts forwarding mempool nodes to verify signatures
+and only checks the local mode against signature presence. It does not recover either
+the envelope sender or the sidecar signer again; restrict this endpoint to trusted forwarders.
+Generic extension attachment does not take a validity-specific mode or enforce signature policy.
+Both raw admission and trusted forwarding produce an opaque, transaction-bound
+`ValidatedValidity`, which `with_validity` requires before attachment. This witness is not
+deserializable and records admission, not proof that its signature was verified.
 
 `txpool.validity_signature.rejected{site,reason}` records bounded rejection reasons
 at `ingress` and `builder`, independently of generic extension errors.

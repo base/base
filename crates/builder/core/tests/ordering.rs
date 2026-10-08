@@ -207,6 +207,7 @@ async fn nonce_predicate_promotes_after_watched_sender_executes() -> eyre::Resul
                 op: ValidityOperator::Equal,
                 value: U256::from(watched_nonce + 1),
             }],
+            validity_signature: None,
         },
     };
     driver
@@ -435,6 +436,7 @@ async fn resting_transaction_is_included_once_its_blocking_state_changes() -> ey
                         op: ValidityOperator::Equal,
                         value: U256::from(1),
                     }],
+                    validity_signature: None,
                 },
             },),
         )

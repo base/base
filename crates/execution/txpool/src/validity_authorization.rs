@@ -1,6 +1,6 @@
 //! Sender authorization for off-chain validity predicates.
 
-use alloy_consensus::{Transaction, transaction::SignerRecoverable};
+use alloy_consensus::Transaction;
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{SolStruct, eip712_domain};
 use reth_transaction_pool::PoolTransaction;
@@ -22,12 +22,6 @@ pub enum ValidityAuthorizationError {
     /// Deposits and unprotected legacy transactions have no signing domain.
     #[error("signed validity predicates require a chain-protected transaction")]
     MissingChainId,
-    /// The transaction's sender could not be recovered from its envelope.
-    #[error("failed to recover validity transaction sender")]
-    InvalidTransactionSender,
-    /// A builder's pre-recovered sender differs from the actual envelope sender.
-    #[error("validity transaction sender does not match its envelope")]
-    SenderMismatch,
     /// A validated sidecar was attached to a different transaction.
     #[error("validity authorization belongs to a different transaction")]
     TransactionMismatch,
@@ -43,19 +37,17 @@ impl ValidityAuthorizationError {
             Self::MissingSignature => "missing",
             Self::UnexpectedSignature => "unexpected",
             Self::MissingChainId => "missing_chain_id",
-            Self::InvalidTransactionSender => "invalid_transaction_sender",
-            Self::SenderMismatch => "sender_mismatch",
             Self::InvalidSignature => "invalid",
             Self::TransactionMismatch => "transaction_mismatch",
         }
     }
 }
 
-/// Policy-validated validity sidecar bound to the exact signed transaction hash.
+/// Admitted validity sidecar bound to the exact signed transaction hash.
 ///
 /// Only [`ValidityAuthorization`] constructs this type. It deliberately has no
-/// deserializer or public constructor. Unsigned sidecars may be accepted by the
-/// configured rollout mode; validation does not imply that a signature was verified.
+/// deserializer or public constructor. Admission may rely on a trusted forwarder
+/// or permit unverified signatures under the configured rollout mode.
 #[derive(Debug)]
 pub struct ValidatedValidity {
     transaction_hash: B256,
@@ -85,25 +77,16 @@ impl ValidatedValidity {
 pub struct ValidityAuthorization;
 
 impl ValidityAuthorization {
-    /// Validates a sidecar at the builder wire boundary, checking the actual
-    /// envelope sender rather than trusting the wire's pre-recovered address.
-    pub fn validate(
+    /// Binds a sidecar supplied by a trusted forwarding mempool node.
+    ///
+    /// This does not verify either signature or enforce the local rollout mode.
+    /// The builder RPC checks signature presence after applying extensions; raw
+    /// ingress must use [`Self::validate_recovered`] instead.
+    pub fn trust_forwarded(
         tx: &BasePooledTransaction,
         sidecar: TransactionValidity,
-        mode: ValiditySignatureMode,
-    ) -> Result<ValidatedValidity, ValidityAuthorizationError> {
-        mode.check(&sidecar.validity, sidecar.validity_signature.as_ref())?;
-        if mode != ValiditySignatureMode::Off && sidecar.validity_signature.is_some() {
-            let sender = tx
-                .consensus_ref()
-                .inner()
-                .recover_signer()
-                .map_err(|_| ValidityAuthorizationError::InvalidTransactionSender)?;
-            if sender != tx.sender() {
-                return Err(ValidityAuthorizationError::SenderMismatch);
-            }
-        }
-        Self::validate_recovered(tx, sidecar, mode)
+    ) -> ValidatedValidity {
+        ValidatedValidity { transaction_hash: *tx.hash(), sidecar }
     }
 
     /// Validates a sidecar at raw ingress after `recover_raw_transaction` has
@@ -211,7 +194,7 @@ mod tests {
         predicates: &[ValidityPredicate],
         signature: Option<&Signature>,
     ) -> Result<(), ValidityAuthorizationError> {
-        ValidityAuthorization::validate(
+        ValidityAuthorization::validate_recovered(
             tx,
             TransactionValidity {
                 validity: predicates.to_vec(),
@@ -336,7 +319,7 @@ mod tests {
             Err(ValidityAuthorizationError::MissingChainId),
         );
         assert!(
-            ValidityAuthorization::validate(
+            ValidityAuthorization::validate_recovered(
                 &tx,
                 TransactionValidity { validity: predicates(), validity_signature: Some(signature) },
                 ValiditySignatureMode::Off,
@@ -381,7 +364,7 @@ mod tests {
         let decoded: ValidatedTransaction<TransactionValidity> =
             serde_json::from_str(&serde_json::to_string(&wire).unwrap()).unwrap();
         let inbound = BasePooledTransaction::recover_raw_transaction(&decoded.raw).unwrap();
-        let inbound = decoded.extensions.apply(inbound, ValiditySignatureMode::Required).unwrap();
+        let inbound = decoded.extensions.apply(inbound).unwrap();
         assert_eq!(inbound.validity_signature(), Some(signature));
         assert_eq!(
             verify(&inbound, inbound.validity_predicates(), inbound.validity_signature().as_ref(),),
@@ -504,7 +487,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_cross_transaction_and_cross_chain_replay_and_spoofed_wire_sender() {
+    fn rejects_cross_transaction_and_cross_chain_replay() {
         let signer = PrivateKeySigner::random();
         let tx = transaction(&signer, 8453, 0);
         let predicates = predicates();
@@ -521,17 +504,6 @@ mod tests {
         assert_eq!(
             verify(&tx, &predicates, Some(&wrong_domain)),
             Err(ValidityAuthorizationError::InvalidSignature)
-        );
-        let forged = BasePooledTransaction::new(
-            alloy_consensus::transaction::Recovered::new_unchecked(
-                tx.clone_into_consensus().into_inner(),
-                Address::ZERO,
-            ),
-            tx.encoded_2718().len(),
-        );
-        assert_eq!(
-            verify(&forged, &predicates, Some(&signature)),
-            Err(ValidityAuthorizationError::SenderMismatch)
         );
     }
 
@@ -587,7 +559,7 @@ mod tests {
             let validated = if recovered {
                 ValidityAuthorization::validate_recovered(&tx, sidecar, ValiditySignatureMode::Off)
             } else {
-                ValidityAuthorization::validate(&tx, sidecar, ValiditySignatureMode::Off)
+                Ok(ValidityAuthorization::trust_forwarded(&tx, sidecar))
             }
             .unwrap();
             let attached = tx.clone().with_validity(validated).unwrap();

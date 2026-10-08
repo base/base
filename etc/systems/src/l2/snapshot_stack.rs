@@ -12,6 +12,7 @@ use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
 use base_common_network::Base;
 use base_consensus_node::StandalonePrefund;
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_txpool::ValiditySignatureMode;
 use eyre::{Result, WrapErr, ensure};
 use reth_ethereum_forks::ForkCondition;
 use url::Url;
@@ -103,7 +104,7 @@ impl SnapshotL2Stack {
             block_time: block_interval.duration(),
             payload_builder_cutover: block_interval == DevnetBlockInterval::TwoHundredMilliseconds,
             extra_extensions: Vec::new(),
-            validity_signature_mode: base_execution_txpool::ValiditySignatureMode::Off,
+            validity_signature_mode: ValiditySignatureMode::Off,
             persistence_threshold: Some(0),
             persistence_backpressure_threshold: Some(snapshot_persistence_backpressure_threshold(
                 block_interval,
@@ -161,7 +162,7 @@ impl SnapshotL2Stack {
             tx_forwarding_config: None,
             upgrade_signal: None,
             extra_extensions: Vec::new(),
-            validity_signature_mode: base_execution_txpool::ValiditySignatureMode::Off,
+            validity_signature_mode: ValiditySignatureMode::Off,
         })
         .await
         .wrap_err("failed to start snapshot client")?;

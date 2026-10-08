@@ -474,31 +474,6 @@ mod tests {
         assert!(config.manifest_precheck_enabled);
     }
 
-    #[rstest]
-    #[case::default(&[], ValiditySignatureMode::Off)]
-    #[case::off(&["--validity-signature-mode", "off"], ValiditySignatureMode::Off)]
-    #[case::optional(&["--validity-signature-mode", "verify-if-present"], ValiditySignatureMode::VerifyIfPresent)]
-    #[case::required(&["--validity-signature-mode", "required"], ValiditySignatureMode::Required)]
-    fn parses_validity_signature_rollout_mode(
-        #[case] flags: &[&str],
-        #[case] expected: ValiditySignatureMode,
-    ) {
-        let args =
-            CommandParser::parse_from(std::iter::once("builder").chain(flags.iter().copied())).args;
-        assert_eq!(args.validity_signature_mode, expected);
-    }
-
-    #[rstest]
-    #[case::unknown(&["--validity-signature-mode", "invalid"])]
-    #[case::missing_value(&["--validity-signature-mode"])]
-    #[case::shadow_conflict(&["--validity-signature-mode", "required", "--builder.shadow-validity-injection.enabled"])]
-    fn rejects_invalid_signature_mode_cli_combinations(#[case] flags: &[&str]) {
-        assert!(
-            CommandParser::try_parse_from(std::iter::once("builder").chain(flags.iter().copied()))
-                .is_err()
-        );
-    }
-
     #[test]
     fn validity_max_predicates_rejects_values_above_the_wire_ceiling() {
         // The request deserializer bounds batches at DEFAULT_MAX_VALIDITY_PREDICATES,

@@ -2,6 +2,7 @@
 
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_eips::eip2718::Encodable2718;
+use alloy_json_rpc::RpcError;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, Signature, TxHash, TxKind, U256};
 use alloy_rpc_client::RpcClient;
@@ -312,9 +313,9 @@ async fn test_send_raw_transaction_validity_enforces_configured_limit() -> eyre:
     true
 )]
 #[case::forwarded_signed_optional(true, ValiditySignatureMode::VerifyIfPresent, true, false, true)]
-#[case::forwarded_bad_optional(true, ValiditySignatureMode::VerifyIfPresent, true, true, false)]
+#[case::forwarded_bad_optional(true, ValiditySignatureMode::VerifyIfPresent, true, true, true)]
 #[case::forwarded_unsigned_required(true, ValiditySignatureMode::Required, false, false, false)]
-#[case::forwarded_bad_required(true, ValiditySignatureMode::Required, true, true, false)]
+#[case::forwarded_bad_required(true, ValiditySignatureMode::Required, true, true, true)]
 #[case::forwarded_signed_required(true, ValiditySignatureMode::Required, true, false, true)]
 #[tokio::test]
 async fn signed_predicates_at_both_builder_endpoints(
@@ -374,7 +375,12 @@ async fn signed_predicates_at_both_builder_endpoints(
         result?;
     } else {
         let error = result.expect_err("unauthorized sidecar must not enter the pool");
-        assert!(error.to_string().contains("signature"), "{error}");
+        let RpcError::ErrorResp(error) = error else {
+            panic!("expected a JSON-RPC signature policy error, got {error}");
+        };
+        let reason: String =
+            serde_json::from_str(error.data.expect("signature rejection reason").get())?;
+        assert_eq!(reason, if sign { "invalid" } else { "missing" });
     }
     Ok(())
 }
