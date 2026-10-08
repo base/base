@@ -19,43 +19,64 @@ permissions:
   contents: read
 
 jobs:
-  # Decides whether a comment may start a review. It has no concurrency group on purpose: GitHub keeps only one
-  # run waiting per group, so a request that is going to be refused (a member without write access) must be
-  # refused here, before it can take the place of an authorized `/review` that is waiting in the review job's
-  # group. It needs no secrets and runs on a hosted runner.
+  # Decides whether a request may start a review, before it joins the review job's concurrency group. It has no
+  # group of its own on purpose: GitHub keeps only one run waiting per group, so a request that is going to
+  # be refused (a member without write access, or a pull request that was marked ready again after it already
+  # got a review) must be refused here, or it could take the place of an authorized `/review` that is waiting.
+  # It does not catch a review that is still running and has not posted its summary yet; in that case a
+  # second request can still take the waiting place, and the person asking has to ask again. It needs no
+  # secret other than the token and runs on a hosted runner.
   authorize:
     name: Authorize request
     permissions:
       contents: read
+      pull-requests: read
     if: >-
-      github.event_name == 'issue_comment'
-      && github.event.issue.pull_request && github.event.issue.state == 'open'
-      && (github.event.comment.body == '/review'
-          || startsWith(github.event.comment.body, '/review ')
-          || startsWith(github.event.comment.body, format('/review{0}', fromJSON('"\n"')))
-          || startsWith(github.event.comment.body, format('/review{0}', fromJSON('"\r"'))))
-      && github.event.comment.user.type != 'Bot'
-      && contains(fromJSON('["OWNER","MEMBER"]'), github.event.comment.author_association)
+      (github.event_name == 'pull_request' && github.event.action != 'synchronize'
+        && github.event.pull_request.draft == false
+        && github.event.pull_request.head.repo.full_name == github.repository)
+      || (github.event_name == 'issue_comment'
+        && github.event.issue.pull_request && github.event.issue.state == 'open'
+        && (github.event.comment.body == '/review'
+            || startsWith(github.event.comment.body, '/review ')
+            || startsWith(github.event.comment.body, format('/review{0}', fromJSON('"\n"')))
+            || startsWith(github.event.comment.body, format('/review{0}', fromJSON('"\r"'))))
+        && github.event.comment.user.type != 'Bot'
+        && contains(fromJSON('["OWNER","MEMBER"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
       allowed: ${{ steps.check.outputs.allowed }}
     steps:
-      - name: Check that the commenter has write access
+      - name: Check the request
         id: check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           COMMENTER: ${{ github.event.comment.user.login }}
         run: |
           set -euo pipefail
-          can_push=$(gh api "repos/$REPO/collaborators/$COMMENTER/permission" --jq '.user.permissions.push' 2>/dev/null || echo false)
-          if [ "$can_push" = true ]; then
-            echo "allowed=true" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT" = issue_comment ]; then
+            # A comment needs the commenter to have write access, not only to be in the organization.
+            can_push=$(gh api "repos/$REPO/collaborators/$COMMENTER/permission" --jq '.user.permissions.push' 2>/dev/null || echo false)
+            if [ "$can_push" != true ]; then
+              echo "::notice::Not reviewing: $COMMENTER does not have write access to this repository."
+              echo "allowed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           else
-            echo "::notice::Not reviewing: $COMMENTER does not have write access to this repository."
-            echo "allowed=false" >> "$GITHUB_OUTPUT"
+            # Opening a pull request or marking it ready reviews it once; a second ready event must not buy another.
+            existing=$(gh api "repos/$REPO/issues/$NUMBER/comments" --paginate --jq \
+              '.[] | select(.user.login == "github-actions[bot]" and .user.type == "Bot") | select(.body | startswith("<!-- CLAUDE_REVIEW_SUMMARY -->")) | .id' | wc -l)
+            if [ "$existing" -gt 0 ]; then
+              echo "::notice::Not reviewing: this pull request already has a review. Comment /review for a new one."
+              echo "allowed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           fi
+          echo "allowed=true" >> "$GITHUB_OUTPUT"
 
   review:
     name: Review PR
@@ -71,20 +92,14 @@ jobs:
       cancel-in-progress: false
     # Note: This job runs on the BaseRunnerGroup to be able to access LLM Gateway
     # It will not work on other runners
-    # Runs for a pull request that is opened or marked ready (not a draft, not a fork: secrets and the runner
-    # group are unavailable to forks), or for a comment that the `authorize` job let through: `/review` itself,
-    # alone or followed by a space or a line break, on an open pull request, from a member of the organization
-    # with write access. Everything that can refuse a request is decided in `authorize`, before this job joins
-    # the concurrency group below, because GitHub keeps one waiting run per group and a request that will be
-    # refused must not take the place of one that is waiting. `!cancelled()` is needed because `authorize` is
-    # skipped for a pull request event, and a job whose dependency was skipped is skipped too without it.
+    # Runs only for a request that the `authorize` job let through: a pull request that is opened or marked
+    # ready (not a draft, not a fork: secrets and the runner group are unavailable to forks, and it has no
+    # review yet), or a `/review` comment, alone or followed by a space or a line break, from a member of the
+    # organization with write access. Everything that can refuse a request is decided in `authorize`, before
+    # this job joins the concurrency group below, because GitHub keeps one waiting run per group.
+    # `!cancelled()` is there so that a skipped `authorize` (a push, a draft, a fork) skips this job cleanly.
     if: >-
-      !cancelled() && (
-        (github.event_name == 'pull_request' && github.event.action != 'synchronize'
-          && github.event.pull_request.draft == false
-          && github.event.pull_request.head.repo.full_name == github.repository)
-        || (github.event_name == 'issue_comment' && needs.authorize.result == 'success'
-          && needs.authorize.outputs.allowed == 'true'))
+      !cancelled() && needs.authorize.result == 'success' && needs.authorize.outputs.allowed == 'true'
     runs-on:
       group: BaseRunnerGroup
     # Agents have no time limit of their own, so this is the only bound. About 1 in 9 Opus calls takes 5-13
@@ -139,7 +154,8 @@ jobs:
             echo "::error::Unexpected head commit from the API."
             exit 1
           fi
-          # Marking a draft ready again must not pay for a second review; `/review` asks for one explicitly.
+          # A second look at what `authorize` checked, taken after any wait in the concurrency group: a review
+          # that was running when `authorize` ran has posted its summary by now.
           if [ "$EVENT" = pull_request ]; then
             existing=$(gh api "repos/$REPO/issues/$NUMBER/comments" --paginate --jq \
               '.[] | select(.user.login == "github-actions[bot]" and .user.type == "Bot") | select(.body | startswith("<!-- CLAUDE_REVIEW_SUMMARY -->")) | .id' | wc -l)
