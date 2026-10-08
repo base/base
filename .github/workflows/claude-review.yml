@@ -71,7 +71,7 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
 
       - name: Install Claude Code
-        run: npm install --global @anthropic-ai/claude-code@2.1.284
+        run: npm install --global @anthropic-ai/claude-code@2.1.293
 
       - name: Review pull request
         run: python3 "$SCRIPT" --pr "$PR_NUMBER" --post --artifacts-dir "$RUNNER_TEMP/pr-review"

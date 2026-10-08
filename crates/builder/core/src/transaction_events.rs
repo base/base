@@ -2,9 +2,10 @@
 
 use alloy_primitives::{B256, TxHash};
 use base_observability_events::{
-    GlobalTransactionEventWriter, TransactionEventEmitOutcome, TransactionEventProducer,
-    TransactionEventType, transaction_event,
+    GlobalTransactionEventWriter, TransactionEventBuilder, TransactionEventProducer,
+    TransactionEventType, WriteEventError,
 };
+use chrono::Utc;
 use serde::Serialize;
 use serde_json::{Map, Value};
 use tracing::warn;
@@ -413,43 +414,93 @@ pub(crate) const fn rejection_reason_code(err: &TxnExecutionError) -> &'static s
 
 /// Emits one builder transaction event if a sink is configured.
 ///
-/// `data` is lazy so disabled writers skip hot-path payload construction.
+/// `data` is lazy so disabled writers skip hot-path payload construction. The event ID, data
+/// serialization, and JSON encoding run on the writer thread, off the build loop.
 pub(crate) fn emit_builder_transaction_event<D, F>(
     ctx: BuilderTransactionEventContext,
     event_type: TransactionEventType,
     tx_hash: TxHash,
     data: F,
 ) where
-    D: Serialize,
+    D: Serialize + Send + 'static,
     F: FnOnce() -> D,
 {
-    if GlobalTransactionEventWriter::get().is_none() {
+    let Some(writer) = GlobalTransactionEventWriter::get() else {
         return;
-    }
+    };
 
-    let event_type_label = event_type.to_string();
-    let data =
-        serialize_builder_event_data(BuilderEventData { context: ctx.event_data(), event: data() });
+    let event = data();
+    let event_time = Utc::now();
+    let result = writer.try_write_with(move |network| {
+        let data =
+            serialize_builder_event_data(BuilderEventData { context: ctx.event_data(), event });
+        TransactionEventBuilder::new(TransactionEventProducer::BaseBuilder, event_type)
+            .event_time(event_time)
+            .tx_hash(tx_hash)
+            .maybe_block_hash(ctx.block_hash)
+            .block_number(ctx.block_number)
+            .payload_id(ctx.payload_id)
+            .id_part(
+                "flashblock_index",
+                ctx.flashblock_index.map(|index| index.to_string()).unwrap_or_default(),
+            )
+            .id_part(
+                "ordering_position",
+                ctx.ordering_position.map(|position| position.to_string()).unwrap_or_default(),
+            )
+            .data(data)
+            .build_with_network(network)
+    });
+    record_builder_event_enqueue(event_type, Some(tx_hash), result);
+}
 
-    match transaction_event!(
-        producer: TransactionEventProducer::BaseBuilder,
-        event_type: event_type,
-        tx_hash: tx_hash,
-        maybe_block_hash: ctx.block_hash,
-        block_number: ctx.block_number,
-        payload_id: ctx.payload_id,
-        id: {
-            "flashblock_index" => ctx.flashblock_index.map(|index| index.to_string()).unwrap_or_default(),
-            "ordering_position" => ctx.ordering_position.map(|position| position.to_string()).unwrap_or_default(),
-        },
-        data: data,
-    ) {
-        Ok(TransactionEventEmitOutcome::Emitted) => {
-            BuilderMetrics::builder_transaction_events_emitted(event_type_label).increment(1);
+/// Emits one builder payload event if a sink is configured.
+///
+/// `data` is lazy so disabled writers skip hot-path payload construction. The event ID, data
+/// serialization, and JSON encoding run on the writer thread, off the build loop.
+pub(crate) fn emit_builder_payload_event<D, F>(
+    ctx: BuilderTransactionEventContext,
+    event_type: TransactionEventType,
+    data: F,
+) where
+    D: Serialize + Send + 'static,
+    F: FnOnce() -> D,
+{
+    let Some(writer) = GlobalTransactionEventWriter::get() else {
+        return;
+    };
+
+    let event = data();
+    let event_time = Utc::now();
+    let result = writer.try_write_with(move |network| {
+        let data =
+            serialize_builder_event_data(BuilderEventData { context: ctx.event_data(), event });
+        TransactionEventBuilder::new(TransactionEventProducer::BaseBuilder, event_type)
+            .event_time(event_time)
+            .maybe_block_hash(ctx.block_hash)
+            .block_number(ctx.block_number)
+            .payload_id(ctx.payload_id)
+            .id_part(
+                "flashblock_index",
+                ctx.flashblock_index.map(|index| index.to_string()).unwrap_or_default(),
+            )
+            .data(data)
+            .build_with_network(network)
+    });
+    record_builder_event_enqueue(event_type, None, result);
+}
+
+fn record_builder_event_enqueue(
+    event_type: TransactionEventType,
+    tx_hash: Option<TxHash>,
+    result: Result<(), WriteEventError>,
+) {
+    match result {
+        Ok(()) => {
+            BuilderMetrics::builder_transaction_events_emitted(event_type.to_string()).increment(1);
         }
-        Ok(TransactionEventEmitOutcome::NotConfigured) => {}
         Err(err) => {
-            BuilderMetrics::builder_transaction_events_dropped(event_type_label, "write")
+            BuilderMetrics::builder_transaction_events_dropped(event_type.to_string(), "write")
                 .increment(1);
             warn!(
                 target: "payload_builder",
@@ -462,59 +513,11 @@ pub(crate) fn emit_builder_transaction_event<D, F>(
     }
 }
 
-/// Emits one builder payload event if a sink is configured.
-///
-/// `data` is lazy so disabled writers skip hot-path payload construction.
-pub(crate) fn emit_builder_payload_event<D, F>(
-    ctx: BuilderTransactionEventContext,
-    event_type: TransactionEventType,
-    data: F,
-) where
-    D: Serialize,
-    F: FnOnce() -> D,
-{
-    if GlobalTransactionEventWriter::get().is_none() {
-        return;
-    }
-
-    let event_type_label = event_type.to_string();
-    let data =
-        serialize_builder_event_data(BuilderEventData { context: ctx.event_data(), event: data() });
-
-    match transaction_event!(
-        producer: TransactionEventProducer::BaseBuilder,
-        event_type: event_type,
-        maybe_block_hash: ctx.block_hash,
-        block_number: ctx.block_number,
-        payload_id: ctx.payload_id,
-        id: {
-            "flashblock_index" => ctx.flashblock_index.map(|index| index.to_string()).unwrap_or_default(),
-        },
-        data: data,
-    ) {
-        Ok(TransactionEventEmitOutcome::Emitted) => {
-            BuilderMetrics::builder_transaction_events_emitted(event_type_label).increment(1);
-        }
-        Ok(TransactionEventEmitOutcome::NotConfigured) => {}
-        Err(err) => {
-            BuilderMetrics::builder_transaction_events_dropped(event_type_label, "write")
-                .increment(1);
-            warn!(
-                target: "payload_builder",
-                error = %err,
-                event_type = %event_type,
-                "failed to enqueue builder transaction event"
-            );
-        }
-    }
-}
-
 fn serialize_builder_event_data<T: Serialize>(data: BuilderEventData<T>) -> Map<String, Value> {
-    serde_json::to_value(data)
-        .expect("builder event data must serialize")
-        .as_object()
-        .expect("builder event data must serialize as an object")
-        .clone()
+    match serde_json::to_value(data).expect("builder event data must serialize") {
+        Value::Object(map) => map,
+        _ => panic!("builder event data must serialize as an object"),
+    }
 }
 
 #[cfg(test)]

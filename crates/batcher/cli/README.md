@@ -17,11 +17,11 @@ from the rollup config of the node whose derivation the batcher follows.
 `--sequencer-urls` / `BASE_BATCHER_SEQUENCER_URLS` takes the sequencer HTTP
 endpoints, comma-separated. The batcher submits the unsafe blocks of the leader,
 read with `eth_getBlockByNumber`. A single endpoint is the leader. Among several,
-the leader is the first whose `admin_sequencerActive` answers `true`: an endpoint
-that answers `false`, answers an error or does not answer within 2 seconds is
-not active. The batcher waits for a leader at startup, up to
-`--wait-node-sync-timeout`, then looks for it again every `--poll-interval`, and
-keeps reading from the last one while none is.
+the leader is the first whose `admin_sequencerActive` answers `true`, and one that
+answers anything else, or does not answer within 2 seconds, or within
+`--network-timeout` if that is shorter, is not active. The batcher waits for a
+leader at startup, up to `--wait-node-sync-timeout`, then looks for it again every
+`--poll-interval`, and keeps reading from the last one while none is.
 
 A canonical batcher also reads the rollup config of the leader
 (`optimism_rollupConfig`) and follows its derivation (`optimism_syncStatus`).
@@ -44,9 +44,16 @@ reaches the target. `--max-blobs-per-tx` caps blob packing per L1 transaction,
 while `--max-calldata-size-bytes` caps calldata transactions. `--brotli-quality`
 selects Brotli quality `0..=11` (default 9). `--data-availability-type`
 selects blobs or calldata; `--max-channel-duration` and `--sub-safety-margin`
-control channel lifetime. For calldata configurations,
-`--no-force-blobs-when-throttling` disables the throttle-driven blob override.
-The corresponding environment variables use the `BASE_BATCHER_` prefix.
+control channel lifetime. `--throttle-start-threshold` sets the DA backlog from
+which the batcher throttles, `--throttle-full-threshold` the one from which it
+throttles the most, and `--throttle-strategy` how the intensity grows between
+them: `off`, `step`, `linear` or `quadratic` (default). Unlike
+`--no-throttle`, `off` keeps pushing the DA limits, at their highest. For
+calldata configurations, `--no-force-blobs-when-throttling` disables the
+throttle-driven blob override. `--network-timeout` bounds the RPC calls to L1,
+the sequencers and the parity validator, so an endpoint that stops answering
+never blocks the batcher. The corresponding environment variables use the
+`BASE_BATCHER_` prefix.
 
 ## Shadow mode
 

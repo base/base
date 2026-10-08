@@ -7,7 +7,7 @@ use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use base_builder_core::{
     BuilderApiExtension, BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
-    MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS, ShadowValidityConfig,
+    MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS, RestingPredicateMode, ShadowValidityConfig,
     test_utils::{ChainDriverExt, LocalInstanceBuilder, ONE_ETH, setup_test_instance},
 };
 use base_execution_txpool::{
@@ -176,6 +176,62 @@ async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre:
     Ok(())
 }
 
+/// A nonce-gated transaction wakes within the same block after the watched sender executes.
+#[tokio::test]
+async fn nonce_predicate_promotes_after_watched_sender_executes() -> eyre::Result<()> {
+    let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
+        .install_ext::<BuilderApiExtension>(
+            BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
+        )
+        .build()
+        .await?;
+    let driver = instance.driver().await?;
+    let accounts = driver.fund_accounts(2, ONE_ETH).await?;
+    let watched_nonce = driver.provider().get_transaction_count(accounts[1].address()).await?;
+    let gated = driver
+        .create_transaction()
+        .with_signer(&accounts[0])
+        .with_to(Address::random())
+        .with_max_priority_fee_per_gas(100)
+        .build()
+        .await;
+    let gated_hash = gated.tx_hash();
+    let validated = ValidatedTransaction {
+        sender: accounts[0].address(),
+        raw: gated.encoded_2718().into(),
+        metering: None,
+        extensions: TransactionValidity {
+            validity: vec![ValidityPredicate::Nonce {
+                address: accounts[1].address(),
+                op: ValidityOperator::Equal,
+                value: U256::from(watched_nonce + 1),
+            }],
+        },
+    };
+    driver
+        .provider()
+        .raw_request::<_, ()>("base_insertValidatedTransaction".into(), (validated,))
+        .await?;
+    let trigger_hash = *driver
+        .create_transaction()
+        .with_signer(&accounts[1])
+        .with_to(Address::random())
+        .with_max_priority_fee_per_gas(50)
+        .send()
+        .await?
+        .tx_hash();
+
+    let block = driver.build_new_block().await?;
+    let tracked = [trigger_hash, gated_hash];
+    let actual = block
+        .transactions
+        .into_transactions()
+        .filter_map(|tx| tracked.contains(&tx.tx_hash()).then(|| tx.tx_hash()))
+        .collect::<Vec<_>>();
+    assert_eq!(actual, tracked);
+    Ok(())
+}
+
 /// Once a flashblock's validity-predicate evaluation time budget is exhausted, further
 /// validity-gated transactions are deferred without evaluation rather than checked, even when
 /// their predicate is already satisfied. An ordinary transaction is unaffected by the cutoff, so
@@ -329,6 +385,77 @@ async fn shadow_validity_injection_preserves_forwarded_transaction() -> eyre::Re
         recipient_balance_before + U256::from(value),
         "the original state transition must execute"
     );
+
+    Ok(())
+}
+
+/// With resting predicates enforced, a transaction whose predicate is unsatisfied is still
+/// included in the block whose execution first satisfies it.
+#[tokio::test]
+async fn resting_transaction_is_included_once_its_blocking_state_changes() -> eyre::Result<()> {
+    let instance = LocalInstanceBuilder::new(
+        BuilderConfig::for_tests().with_resting_predicate_mode(RestingPredicateMode::Enforce),
+    )
+    .install_ext::<BuilderApiExtension>(
+        BuilderApiExtensionConfig::new(DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
+    )
+    .build()
+    .await?;
+    let driver = instance.driver().await?;
+    let accounts = driver.fund_accounts(2, ONE_ETH).await?;
+    let watched = Address::random();
+
+    let resting = driver
+        .create_transaction()
+        .with_signer(&accounts[0])
+        .with_nonce(0)
+        .with_to(Address::random())
+        .with_max_priority_fee_per_gas(100)
+        .build()
+        .await;
+    let resting_hash = resting.tx_hash();
+    driver
+        .provider()
+        .raw_request::<_, ()>(
+            "base_insertValidatedTransaction".into(),
+            (ValidatedTransaction {
+                sender: accounts[0].address(),
+                raw: resting.encoded_2718().into(),
+                metering: None,
+                extensions: TransactionValidity {
+                    validity: vec![ValidityPredicate::Balance {
+                        address: watched,
+                        op: ValidityOperator::Equal,
+                        value: U256::from(1),
+                    }],
+                },
+            },),
+        )
+        .await?;
+
+    let unsatisfied = driver.build_new_block().await?;
+    assert!(!unsatisfied.transactions.hashes().any(|hash| hash == resting_hash));
+
+    let trigger_hash = *driver
+        .create_transaction()
+        .with_signer(&accounts[1])
+        .with_to(watched)
+        .with_value(1)
+        .with_max_priority_fee_per_gas(50)
+        .send()
+        .await?
+        .tx_hash();
+
+    let block = driver.build_new_block().await?;
+    let tracked = [trigger_hash, resting_hash];
+    let actual = block
+        .transactions
+        .into_transactions()
+        .filter_map(|transaction| {
+            tracked.contains(&transaction.tx_hash()).then(|| transaction.tx_hash())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(actual, tracked);
 
     Ok(())
 }

@@ -6,9 +6,6 @@ pub use config::{
     PredicateAddress, PredicateValue, SlotTemplate, TxConfig, TxType, ValidityPredicateTemplate,
 };
 
-mod backoff;
-pub use backoff::AdaptiveBackoff;
-
 mod flashblock_watcher;
 pub use flashblock_watcher::FlashblockWatcher;
 

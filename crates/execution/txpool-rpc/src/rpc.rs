@@ -494,6 +494,11 @@ mod tests {
                 op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
                 value: U256::from(1),
             },
+            ValidityPredicate::Nonce {
+                address: Address::repeat_byte(0x11),
+                op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
+                value: U256::from(1),
+            },
             ValidityPredicate::Storage {
                 address: Address::repeat_byte(0xab),
                 slot: U256::from(1),
@@ -646,6 +651,14 @@ mod tests {
             json!([
                 {
                     "type": "balance",
+                    "params": {
+                        "address": "0x1111111111111111111111111111111111111111",
+                        "op": ">=",
+                        "value": "0x1",
+                    },
+                },
+                {
+                    "type": "nonce",
                     "params": {
                         "address": "0x1111111111111111111111111111111111111111",
                         "op": ">=",
