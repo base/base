@@ -73,6 +73,9 @@ pub enum FlashblockSelectionOutcome {
     PoolEmpty,
     /// Transaction selection stopped after draining the candidate pool.
     PoolDrained,
+    /// Transaction selection stopped because the remaining flashblock gas could not fit any
+    /// further candidate; the pool may still hold transactions.
+    GasExhausted,
 }
 
 impl FlashblockSelectionOutcome {
@@ -82,6 +85,7 @@ impl FlashblockSelectionOutcome {
             Self::Cancelled => "cancelled",
             Self::PoolEmpty => "pool_empty",
             Self::PoolDrained => "pool_drained",
+            Self::GasExhausted => "gas_exhausted",
         }
     }
 }
@@ -91,6 +95,8 @@ impl FlashblockSelectionOutcome {
 pub struct FlashblockDiagnostics {
     /// Whether the flashblock timer or block cancel fired during execution.
     pub cancelled: bool,
+    /// Whether the scan stopped on the gas-exhaustion guard with candidates left in the pool.
+    pub gas_exhausted: bool,
     /// Number of transactions considered from the pool.
     pub txs_considered: u64,
     /// Number of transactions included in the flashblock.
@@ -126,6 +132,8 @@ impl FlashblockDiagnostics {
     pub const fn selection_outcome(&self) -> FlashblockSelectionOutcome {
         if self.cancelled {
             FlashblockSelectionOutcome::Cancelled
+        } else if self.gas_exhausted {
+            FlashblockSelectionOutcome::GasExhausted
         } else if self.txs_considered == 0 {
             FlashblockSelectionOutcome::PoolEmpty
         } else {
@@ -787,11 +795,17 @@ impl BasePayloadBuilderCtx {
         // Stop scanning once the remaining flashblock gas cannot fit even the smallest possible
         // transaction. Every candidate past this point would be rejected by `is_tx_over_limits`
         // after a full pool scan, and in a congested pool that scan is the dominant builder-thread
-        // cost. Candidates the scan leaves unconsidered stay in the pool and are picked up by the
-        // next flashblock or block, so inclusion is unchanged.
-        while limits.block_gas_limit.saturating_sub(info.cumulative_gas_used) >= MIN_TX_RESERVED_GAS
-            && let Some(tx) = best_txs.next(())
-        {
+        // cost. Candidates the scan leaves unconsidered remain in the pool for later selection,
+        // so inclusion is unchanged.
+        loop {
+            if limits.block_gas_limit.saturating_sub(info.cumulative_gas_used) < MIN_TX_RESERVED_GAS
+            {
+                diag.gas_exhausted = true;
+                break;
+            }
+            let Some(tx) = best_txs.next(()) else {
+                break;
+            };
             if self.cancel.is_cancelled() {
                 diag.cancelled = true;
                 diag.txs_considered = num_txs_considered;
@@ -1913,6 +1927,11 @@ mod tests {
         assert!(best_txs.over_limit_remaining > OVER_LIMIT - 10);
     }
 
+    /// Hand-rolled rather than `mockall::automock` because these tests assert on the number of
+    /// `next` calls as a call log that must stay at zero when the gas-exhaustion guard skips the
+    /// pool entirely, and because the double implements all three `PayloadTransactions`
+    /// supertraits while only `next` is ever exercised.
+    ///
     /// Yields one pooled transaction and records how many times `next` was called, so a test can
     /// assert whether the gas-exhaustion guard touched the pool at all.
     #[derive(Debug)]
@@ -2024,6 +2043,16 @@ mod tests {
             FlashblockDiagnostics { txs_considered: 3, txs_included: 1, ..Default::default() };
         assert_eq!(diag.selection_outcome(), FlashblockSelectionOutcome::PoolDrained);
         assert_eq!(diag.selection_outcome().as_str(), "pool_drained");
+
+        let diag =
+            FlashblockDiagnostics { gas_exhausted: true, txs_considered: 3, ..Default::default() };
+        assert_eq!(diag.selection_outcome(), FlashblockSelectionOutcome::GasExhausted);
+        assert_eq!(diag.selection_outcome().as_str(), "gas_exhausted");
+
+        // Cancellation takes precedence when both flags are set.
+        let diag =
+            FlashblockDiagnostics { cancelled: true, gas_exhausted: true, ..Default::default() };
+        assert_eq!(diag.selection_outcome(), FlashblockSelectionOutcome::Cancelled);
 
         let diag = FlashblockDiagnostics { cancelled: true, ..Default::default() };
         assert_eq!(diag.selection_outcome(), FlashblockSelectionOutcome::Cancelled);

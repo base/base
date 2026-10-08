@@ -59,13 +59,15 @@ pub struct TxResources {
     pub uncompressed_size: u64,
 }
 
-/// The smallest amount of gas a pool transaction can reserve against the block gas budget.
+/// A conservative lower bound on the gas a pool transaction reserves against the block gas
+/// budget, not a minimum transaction cost.
 ///
 /// A candidate reserves its `gas_limit` plus its EIP-8130 payer-authentication ceiling
-/// ([`TxResources::payer_auth`]), and a valid transaction's `gas_limit` is at least its
-/// intrinsic gas. A standard transaction's intrinsic floor is [`MIN_TRANSACTION_GAS`]
-/// (21,000), while an EIP-8130 transaction's is its `AA_BASE_COST` (15,000), so the
-/// conservative bound across both transaction families is the smaller value. Once the
+/// ([`TxResources::payer_auth`]). For a sponsored EIP-8130 transaction, `gas_limit` covers the
+/// sender's intrinsic gas and the AA floor, and `payer_auth` is reserved on top, so the total
+/// reserved gas is at least this bound. A standard transaction's intrinsic floor is
+/// [`MIN_TRANSACTION_GAS`] (21,000), while an EIP-8130 transaction's is its `AA_BASE_COST`
+/// (15,000), so the conservative bound across both families is the smaller value. Once the
 /// remaining block gas drops below this, no candidate can fit and the scan can stop.
 pub const MIN_TX_RESERVED_GAS: u64 = if Eip8130GasSchedule::AA_BASE_COST < MIN_TRANSACTION_GAS {
     Eip8130GasSchedule::AA_BASE_COST
