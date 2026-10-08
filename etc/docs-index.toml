@@ -339,8 +339,8 @@ summary = "Node extension wiring the standalone EIP-8130 eth_getTransactionCount
 digest = "2d0cf30e0d"
 
 ["crates/execution/eip8130-rpc/README.md"]
-summary = "EIP-8130 RPC helpers: ChannelNonceReader for 2D nonce reads by nonce_key and Eip8130GasEstimator doing one simulation for eth_estimateGas. Use when debugging AA nonce or gas estimation RPCs."
-digest = "565c03ca22"
+summary = "EIP-8130 RPC helpers: ChannelNonceReader for 2D nonce reads by nonce_key and Eip8130GasEstimator, one simulation for eth_estimateGas and eth_call. Use when debugging AA nonce, call or gas RPCs."
+digest = "9c987d9934"
 
 ["crates/execution/eip8130/README.md"]
 summary = "Native EIP-8130 account abstraction validation: enshrined authenticators (not precompiles) needing parity with contracts, validation layers, intrinsic gas formula, EIP-7623 floor, fee checks."
