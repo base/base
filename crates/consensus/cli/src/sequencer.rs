@@ -51,6 +51,16 @@ pub struct SequencerArgs {
     )]
     pub recover: bool,
 
+    /// Catch up to the canonical chain on startup, then sequence privately without following or
+    /// publishing to it.
+    #[arg(
+        long = "sequencer.isolated",
+        default_value = "false",
+        env = "BASE_NODE_SEQUENCER_ISOLATED",
+        conflicts_with_all = ["shadow_blocks_per_cycle", "conductor_rpc", "recover"]
+    )]
+    pub isolated: bool,
+
     /// Number of private blocks to build before reconciling to canonical P2P payloads.
     ///
     /// Providing this value enables shadow sequencer mode.
@@ -117,7 +127,6 @@ impl SequencerArgs {
         SequencerConfig {
             sequencer_stopped: self.stopped,
             sequencer_recovery_mode: self.recover,
-            shadow_blocks_per_cycle: self.shadow_blocks_per_cycle,
             shadow_funding: self.shadow_funding_address.map(|address| {
                 ShadowFunding::new(
                     address,
@@ -144,7 +153,7 @@ mod tests {
         utils::{Unit, parse_ether},
     };
     use base_consensus_node::ShadowFunding;
-    use clap::Parser;
+    use clap::{Parser, error::ErrorKind};
 
     use super::{SequencerArgs, SequencerConfig};
     use crate::L1ClientArgs;
@@ -201,7 +210,52 @@ mod tests {
         ]);
 
         assert_eq!(args.shadow_blocks_per_cycle, NonZeroU64::new(12));
-        assert_eq!(args.config().shadow_blocks_per_cycle, NonZeroU64::new(12));
+    }
+
+    #[test]
+    fn parses_isolated_flag() {
+        let args = SequencerArgs::try_parse_from(["base-consensus", "--sequencer.isolated"])
+            .expect("isolated flag should parse");
+
+        assert!(args.isolated);
+    }
+
+    #[test]
+    fn rejects_isolated_with_shadow_mode() {
+        let error = SequencerArgs::try_parse_from([
+            "base-consensus",
+            "--sequencer.isolated",
+            "--sequencer.shadow-blocks-per-cycle",
+            "12",
+        ])
+        .unwrap_err();
+
+        assert_eq!(error.kind(), ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn rejects_isolated_with_conductor_rpc() {
+        let error = SequencerArgs::try_parse_from([
+            "base-consensus",
+            "--sequencer.isolated",
+            "--conductor.rpc",
+            "http://localhost:9090",
+        ])
+        .unwrap_err();
+
+        assert_eq!(error.kind(), ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn rejects_isolated_with_recover() {
+        let error = SequencerArgs::try_parse_from([
+            "base-consensus",
+            "--sequencer.isolated",
+            "--sequencer.recover",
+        ])
+        .unwrap_err();
+
+        assert_eq!(error.kind(), ErrorKind::ArgumentConflict);
     }
 
     #[test]

@@ -3,7 +3,6 @@
 use alloc::vec::Vec;
 
 use alloy_eips::{
-    Decodable2718,
     eip1559::BaseFeeParams,
     eip2718::{Eip2718Result, WithEncoded},
 };
@@ -11,7 +10,7 @@ use alloy_primitives::{B64, B256, Bytes, keccak256};
 use alloy_rlp::{Encodable, Result};
 use alloy_rpc_types_engine::{PayloadAttributes, PayloadId};
 use base_common_consensus::{
-    BaseTxEnvelope, EIP1559ParamError, HoloceneExtraData, JovianExtraData,
+    BaseTxEnvelope, EIP1559ParamError, HoloceneExtraData, JovianExtraData, decode_2718_canonical,
 };
 use sha2::Digest;
 
@@ -148,10 +147,7 @@ impl BasePayloadAttributes {
     ///
     /// This iterator will be empty if there are no transactions in the attributes.
     pub fn decoded_transactions(&self) -> impl Iterator<Item = Eip2718Result<BaseTxEnvelope>> + '_ {
-        self.transactions
-            .iter()
-            .flatten()
-            .map(|tx_bytes| BaseTxEnvelope::decode_2718_exact(tx_bytes.as_ref()))
+        self.transactions.iter().flatten().map(|tx_bytes| decode_2718_canonical(tx_bytes.as_ref()))
     }
 
     /// Returns iterator over decoded transactions with their original encoded bytes.
@@ -215,10 +211,37 @@ mod test {
     use alloc::vec;
     use core::str::FromStr;
 
-    use alloy_primitives::{Address, B256, FixedBytes, address, b64, b256, bytes};
+    use alloy_consensus::{SignableTransaction, TxEip1559};
+    use alloy_eips::Encodable2718;
+    use alloy_primitives::{
+        Address, B256, Bytes, FixedBytes, Signature, address, b64, b256, bytes,
+    };
     use alloy_rpc_types_engine::PayloadAttributes;
 
     use super::*;
+
+    #[test]
+    fn decoded_transactions_reject_non_canonical_encoding() {
+        let encoded = TxEip1559 {
+            chain_id: 8453,
+            nonce: 1,
+            gas_limit: 21_000,
+            max_fee_per_gas: 2,
+            max_priority_fee_per_gas: 1,
+            to: Address::ZERO.into(),
+            value: Default::default(),
+            access_list: Default::default(),
+            input: Default::default(),
+        }
+        .into_signed(Signature::test_signature())
+        .encoded_2718();
+        let attributes = BasePayloadAttributes {
+            transactions: Some(vec![Bytes::copy_from_slice(&encoded[1..])]),
+            ..Default::default()
+        };
+
+        assert!(attributes.decoded_transactions().next().unwrap().is_err());
+    }
 
     #[test]
     fn test_payload_id_parity_op_geth() {

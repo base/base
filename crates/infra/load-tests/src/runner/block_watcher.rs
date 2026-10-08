@@ -6,7 +6,6 @@
 //! in a complete end-of-run pass for final metrics.
 
 use std::{
-    collections::{HashMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -22,17 +21,14 @@ use base_common_network::Base;
 use futures::{StreamExt, stream};
 use tokio::sync::{Semaphore, mpsc};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, warn};
 
 use super::{BlockObservation, BlockReceipt, InclusionPulse, ResultsTracker};
-use crate::utils::{BaselineError, Result};
 
-/// How frequently confirmation-only helpers poll for canonical blocks.
-const CONFIRMATION_POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// Delay between probes while a scheduled block is becoming visible over RPC.
 const BLOCK_AVAILABILITY_PROBE_INTERVAL: Duration = Duration::from_millis(10);
-/// Maximum missed canonical blocks recovered after the newest pulse is published.
-const MAX_LIVE_CATCHUP_BLOCKS: u64 = 8;
+/// Maximum age of missed canonical blocks recovered after the newest pulse is published.
+const LIVE_CATCHUP_WINDOW: Duration = Duration::from_secs(16);
 /// Canonical blocks between live gas-calibration receipt samples.
 const LIVE_RECEIPT_SAMPLE_BLOCKS: u64 = 10;
 /// Maximum time to wait for a block watcher RPC request.
@@ -43,9 +39,9 @@ const RECEIPT_RPC_TIMEOUT: Duration = Duration::from_secs(50);
 ///
 /// If early polls fail (rate limits, RPC errors) while submissions are already
 /// landing, a tiny lookback permanently misses those inclusions and every tx
-/// eventually expires as "without confirmation". Sized for ~2s L2 blocks over
-/// the pending-confirmation timeout (~200s) plus margin.
-const CATCHUP_BLOCK_LOOKBACK: u64 = 256;
+/// eventually expires as "without confirmation". Covers the pending-confirmation
+/// timeout (~200s) plus margin, preserving the legacy 256-block horizon at 2s.
+const STARTUP_CATCHUP_WINDOW: Duration = Duration::from_secs(512);
 /// Maximum concurrent `eth_getBlockReceipts` requests during the end-of-run pass.
 /// Blocks are independent, so they are fetched in parallel up to this bound.
 const RECEIPT_FETCH_CONCURRENCY: usize = 3;
@@ -81,15 +77,18 @@ pub struct BlockClock {
 }
 
 impl BlockClock {
-    /// Creates a clock aligned to the boundary after `block_timestamp`.
-    pub fn from_block_timestamp(
+    /// Creates a clock aligned to the boundary after `block_timestamp_ms`.
+    pub fn from_block_timestamp_ms(
         block_time: Duration,
-        block_timestamp: u64,
+        block_timestamp_ms: u64,
         system_now: SystemTime,
         instant_now: Instant,
     ) -> Self {
-        let block_timestamp = Duration::from_secs(block_timestamp);
+        let block_timestamp = Duration::from_millis(block_timestamp_ms);
         let system_elapsed = system_now.duration_since(UNIX_EPOCH).unwrap_or_default();
+        if block_timestamp > system_elapsed.saturating_add(block_time) {
+            return Self::from_now(block_time, instant_now);
+        }
         let mut next_elapsed = block_timestamp.saturating_add(block_time);
         while next_elapsed.saturating_add(block_time) <= system_elapsed {
             next_elapsed = next_elapsed.saturating_add(block_time);
@@ -140,7 +139,7 @@ struct ObservedBlock {
     gas_used: u64,
     gas_limit: u64,
     base_fee: u128,
-    timestamp: u64,
+    timestamp_ms: u64,
 }
 
 /// Polls canonical blocks and reports their transaction hashes for landing detection.
@@ -180,9 +179,9 @@ impl BlockWatcher {
         let mut clock = baseline.as_ref().map_or_else(
             || BlockClock::from_now(self.block_time, Instant::now()),
             |block| {
-                BlockClock::from_block_timestamp(
+                BlockClock::from_block_timestamp_ms(
                     self.block_time,
-                    block.timestamp,
+                    block.timestamp_ms,
                     SystemTime::now(),
                     Instant::now(),
                 )
@@ -267,6 +266,7 @@ impl BlockWatcher {
                 continue;
             };
             let latest_number = latest.observation.number;
+            let latest_tx_count = latest.tx_hashes.len();
             let blocks_advanced =
                 last_seen_block.map_or(1, |seen| latest_number.saturating_sub(seen).max(1));
             let pulse_expected_boundary = expected_boundary
@@ -346,22 +346,35 @@ impl BlockWatcher {
             } else if last_progress_log.elapsed() >= Duration::from_secs(15)
                 && self.results_tracker.pending_count() > 0
             {
+                let (measured_pending, measured_pending_gas) =
+                    self.results_tracker.measured_unconfirmed_inventory();
                 warn!(
                     pending = self.results_tracker.pending_count(),
+                    in_flight = self.results_tracker.total_in_flight(),
+                    measured_pending,
+                    measured_pending_gas,
                     latest = latest_number,
+                    latest_txs = latest_tx_count,
+                    latest_gas_used = latest.gas_used,
+                    latest_gas_limit = latest.gas_limit,
+                    blocks_advanced,
+                    block_has_measured_pending = has_measured_pending,
                     "block watcher scanned block but matched no pending hashes"
                 );
                 last_progress_log = Instant::now();
             }
 
             let catchup_first = match last_seen_block {
-                Some(previous) if latest_number > previous.saturating_add(1) => Some(
-                    previous
-                        .saturating_add(1)
-                        .max(latest_number.saturating_sub(MAX_LIVE_CATCHUP_BLOCKS)),
-                ),
+                Some(previous) if latest_number > previous.saturating_add(1) => {
+                    Some(previous.saturating_add(1).max(latest_number.saturating_sub(
+                        Self::catchup_blocks(LIVE_CATCHUP_WINDOW, self.block_time),
+                    )))
+                }
                 None if self.results_tracker.pending_count() > 0 => {
-                    Some(latest_number.saturating_sub(CATCHUP_BLOCK_LOOKBACK))
+                    Some(latest_number.saturating_sub(Self::catchup_blocks(
+                        STARTUP_CATCHUP_WINDOW,
+                        self.block_time,
+                    )))
                 }
                 _ => None,
             };
@@ -409,7 +422,7 @@ impl BlockWatcher {
     ///
     /// Returns `None` if the tip cannot be read before cancellation or the short
     /// startup budget expires; the main loop then falls back to
-    /// [`CATCHUP_BLOCK_LOOKBACK`] on its first success.
+    /// [`STARTUP_CATCHUP_WINDOW`] on its first success.
     async fn establish_tip_baseline(&self) -> Option<ObservedBlock> {
         let started = Instant::now();
         let budget = Duration::from_secs(3);
@@ -476,224 +489,13 @@ impl BlockWatcher {
             gas_used: block.header.gas_used,
             gas_limit: block.header.gas_limit,
             base_fee: u128::from(block.header.base_fee_per_gas.unwrap_or_default()),
-            timestamp: block.header.timestamp,
+            timestamp_ms: Self::block_timestamp_ms(&block),
         }))
     }
 
-    /// Waits until every hash in `pending` lands in a canonical block, then batch-fetches
-    /// receipts for the touched blocks and returns them keyed by hash.
-    ///
-    /// Issues one `eth_getBlockReceipts` call per distinct block instead of one
-    /// `eth_getTransactionReceipt` poll per transaction, so confirming thousands of setup
-    /// or funding transactions costs a handful of RPC calls rather than thousands. Any hash
-    /// the batch call didn't resolve — e.g. because the RPC doesn't implement
-    /// `eth_getBlockReceipts` at all — falls back to an individual
-    /// `eth_getTransactionReceipt`, so callers get a complete result as long as every hash
-    /// landed in a block. A hash still missing from the returned map means even that
-    /// fallback failed; callers should treat that as inconclusive, not as a revert.
-    /// `on_landed` is invoked once per hash as it lands in a block (before receipts are
-    /// fetched), so callers can drive a progress indicator.
-    pub async fn confirm_and_fetch_receipts(
-        provider: &RootProvider<Base>,
-        mut pending: HashSet<TxHash>,
-        timeout: Duration,
-        mut on_landed: impl FnMut(TxHash),
-    ) -> Result<HashMap<TxHash, BlockReceipt>> {
-        let mut blocks_by_hash = HashMap::with_capacity(pending.len());
-        Self::await_hashes(provider, &mut pending, timeout, |hash, block_number| {
-            blocks_by_hash.insert(hash, block_number);
-            on_landed(hash);
-        })
-        .await?;
-
-        let block_numbers: Vec<u64> =
-            blocks_by_hash.values().copied().collect::<HashSet<_>>().into_iter().collect();
-        let (block_receipts, failed_blocks) = Self::fetch_receipts(provider, &block_numbers).await;
-        let mut receipts: HashMap<TxHash, BlockReceipt> =
-            block_receipts.into_iter().map(|receipt| (receipt.tx_hash, receipt)).collect();
-
-        let missing: Vec<TxHash> =
-            blocks_by_hash.keys().copied().filter(|hash| !receipts.contains_key(hash)).collect();
-        if !missing.is_empty() {
-            warn!(
-                failed_blocks,
-                total_blocks = block_numbers.len(),
-                missing = missing.len(),
-                "some transactions missing from batched block receipts; falling back to individual eth_getTransactionReceipt"
-            );
-            let fallback: Vec<(TxHash, Option<BlockReceipt>)> = stream::iter(missing)
-                .map(|hash| Self::fetch_transaction_receipt(provider, hash))
-                .buffer_unordered(RECEIPT_FETCH_CONCURRENCY)
-                .collect()
-                .await;
-            for (hash, receipt) in fallback {
-                if let Some(receipt) = receipt {
-                    receipts.insert(hash, receipt);
-                }
-            }
-        }
-
-        Ok(receipts)
-    }
-
-    /// Fetches a single transaction's receipt directly, for hashes a batched
-    /// `eth_getBlockReceipts` call didn't resolve (e.g. unsupported by the RPC).
-    async fn fetch_transaction_receipt(
-        provider: &RootProvider<Base>,
-        tx_hash: TxHash,
-    ) -> (TxHash, Option<BlockReceipt>) {
-        let receipt =
-            tokio::time::timeout(RECEIPT_RPC_TIMEOUT, provider.get_transaction_receipt(tx_hash))
-                .await;
-        let receipt = match receipt {
-            Ok(Ok(Some(receipt))) => Some(BlockReceipt {
-                tx_hash: receipt.transaction_hash(),
-                block_number: receipt.block_number().unwrap_or_default(),
-                gas_used: receipt.gas_used(),
-                effective_gas_price: receipt.effective_gas_price(),
-                success: receipt.status(),
-            }),
-            Ok(Ok(None)) => {
-                debug!(tx_hash = %tx_hash, "eth_getTransactionReceipt returned no receipt");
-                None
-            }
-            Ok(Err(e)) => {
-                debug!(tx_hash = %tx_hash, error = %e, "eth_getTransactionReceipt failed");
-                None
-            }
-            Err(_) => {
-                debug!(
-                    tx_hash = %tx_hash,
-                    timeout_secs = RECEIPT_RPC_TIMEOUT.as_secs(),
-                    "eth_getTransactionReceipt timed out"
-                );
-                None
-            }
-        };
-        (tx_hash, receipt)
-    }
-
-    /// Waits until every hash in `pending` appears in a canonical block.
-    ///
-    /// Polls `eth_getBlockByNumber` (hash-only bodies) and checks hashes off as they
-    /// land, instead of issuing one receipt/balance RPC per transaction. `on_confirmed`
-    /// is invoked with the block number once per newly observed hash.
-    pub async fn await_hashes(
-        provider: &RootProvider<Base>,
-        pending: &mut HashSet<TxHash>,
-        timeout: Duration,
-        mut on_confirmed: impl FnMut(TxHash, u64),
-    ) -> Result<()> {
-        if pending.is_empty() {
-            return Ok(());
-        }
-
-        let started = Instant::now();
-        let initial_pending = pending.len();
-        info!(
-            pending = initial_pending,
-            timeout_secs = timeout.as_secs(),
-            "waiting for transaction hashes in canonical blocks"
-        );
-        let mut last_seen_block: Option<u64> = None;
-        let mut last_progress_log = Instant::now();
-        let mut backoff = Duration::from_millis(100);
-        let max_backoff = Duration::from_secs(5);
-
-        while !pending.is_empty() {
-            if started.elapsed() >= timeout {
-                return Err(BaselineError::Timeout {
-                    operation: format!(
-                        "confirming {} transaction hash(es) via block watcher",
-                        pending.len()
-                    ),
-                    duration: timeout,
-                });
-            }
-
-            match Self::fetch_block_hashes(provider, BlockNumberOrTag::Latest).await {
-                Err(e) => {
-                    warn!(
-                        error = %e,
-                        backoff_ms = backoff.as_millis(),
-                        pending = pending.len(),
-                        "block hash confirmation poll failed, retrying"
-                    );
-                    tokio::time::sleep(backoff.min(timeout.saturating_sub(started.elapsed())))
-                        .await;
-                    backoff = (backoff * 2).min(max_backoff);
-                    continue;
-                }
-                Ok(None) => {}
-                Ok(Some((latest_number, latest_hashes))) => {
-                    backoff = Duration::from_millis(100);
-                    let first_block = last_seen_block.map_or_else(
-                        || latest_number.saturating_sub(CATCHUP_BLOCK_LOOKBACK),
-                        |block| block.saturating_add(1),
-                    );
-
-                    if first_block <= latest_number {
-                        let mut latest_hashes = Some(latest_hashes);
-                        for block_number in first_block..=latest_number {
-                            let hashes = if block_number == latest_number {
-                                latest_hashes.take().unwrap_or_default()
-                            } else {
-                                match Self::fetch_block_hashes(
-                                    provider,
-                                    BlockNumberOrTag::Number(block_number),
-                                )
-                                .await
-                                {
-                                    Ok(Some((_, hashes))) => hashes,
-                                    Ok(None) => break,
-                                    Err(e) => {
-                                        warn!(
-                                            block = block_number,
-                                            error = %e,
-                                            "failed to fetch block hashes during confirmation"
-                                        );
-                                        break;
-                                    }
-                                }
-                            };
-
-                            for hash in hashes {
-                                if pending.remove(&hash) {
-                                    trace!(tx_hash = %hash, block = block_number, "transaction confirmed in block");
-                                    on_confirmed(hash, block_number);
-                                }
-                            }
-                            last_seen_block = Some(block_number);
-                            if pending.is_empty() {
-                                info!(
-                                    confirmed = initial_pending,
-                                    elapsed_ms = started.elapsed().as_millis() as u64,
-                                    "all watched transaction hashes confirmed"
-                                );
-                                return Ok(());
-                            }
-                        }
-                    }
-                }
-            }
-
-            if last_progress_log.elapsed() >= Duration::from_secs(5) {
-                info!(
-                    remaining = pending.len(),
-                    initial = initial_pending,
-                    elapsed_secs = started.elapsed().as_secs(),
-                    "still waiting for transaction hash confirmations"
-                );
-                last_progress_log = Instant::now();
-            }
-
-            tokio::time::sleep(
-                CONFIRMATION_POLL_INTERVAL.min(timeout.saturating_sub(started.elapsed())),
-            )
-            .await;
-        }
-
-        Ok(())
+    /// Returns the full RPC millisecond timestamp, or derives it from legacy seconds.
+    pub fn block_timestamp_ms(block: &<Base as alloy_network::Network>::BlockResponse) -> u64 {
+        block.header.timestamp_ms.unwrap_or_else(|| block.header.timestamp.saturating_mul(1_000))
     }
 
     async fn fetch_block_hashes(
@@ -711,6 +513,12 @@ impl BlockWatcher {
             return Ok(None);
         };
         Ok(Some((block.header.number, block.transactions.hashes().collect())))
+    }
+
+    /// Converts a catch-up duration to a block count, rounding partial blocks up.
+    pub fn catchup_blocks(window: Duration, block_time: Duration) -> u64 {
+        assert!(!block_time.is_zero(), "block time must be greater than zero");
+        u64::try_from(window.as_nanos().div_ceil(block_time.as_nanos())).unwrap_or(u64::MAX)
     }
 
     /// Fetches canonical receipts for the given block numbers in a single batch pass.
@@ -798,18 +606,77 @@ impl BlockWatcher {
 mod tests {
     use super::*;
 
+    fn rpc_block(
+        timestamp: u64,
+        timestamp_ms: Option<u64>,
+    ) -> <Base as alloy_network::Network>::BlockResponse {
+        let block = <Base as alloy_network::Network>::BlockResponse::default();
+        let mut json = serde_json::to_value(block).unwrap();
+        json["timestamp"] = serde_json::json!(format!("0x{timestamp:x}"));
+        if let Some(timestamp_ms) = timestamp_ms {
+            json["timestampMs"] = serde_json::json!(format!("0x{timestamp_ms:x}"));
+        }
+        serde_json::from_value(json).unwrap()
+    }
+
+    #[test]
+    fn rpc_block_uses_full_millisecond_timestamp() {
+        let block = rpc_block(100, Some(100_800));
+
+        assert_eq!(BlockWatcher::block_timestamp_ms(&block), 100_800);
+    }
+
+    #[test]
+    fn rpc_block_falls_back_to_legacy_second_timestamp() {
+        let block = rpc_block(100, None);
+
+        assert_eq!(BlockWatcher::block_timestamp_ms(&block), 100_000);
+    }
+
+    #[test]
+    fn clock_preserves_millisecond_timestamp_across_second_boundary() {
+        let instant_now = Instant::now();
+        let clock = BlockClock::from_block_timestamp_ms(
+            Duration::from_millis(200),
+            100_800,
+            UNIX_EPOCH + Duration::from_millis(100_850),
+            instant_now,
+        );
+
+        assert_eq!(
+            clock.expected_boundary().duration_since(instant_now),
+            Duration::from_millis(150)
+        );
+    }
+
     #[test]
     fn clock_keeps_recent_boundary_in_the_past_for_immediate_probe() {
         let instant_now = Instant::now();
         let system_now = UNIX_EPOCH + Duration::from_millis(100_100);
 
-        let clock =
-            BlockClock::from_block_timestamp(Duration::from_secs(2), 98, system_now, instant_now);
+        let clock = BlockClock::from_block_timestamp_ms(
+            Duration::from_secs(2),
+            98_000,
+            system_now,
+            instant_now,
+        );
 
         assert_eq!(
             instant_now.saturating_duration_since(clock.expected_boundary()),
             Duration::from_millis(100)
         );
+    }
+
+    #[test]
+    fn clock_uses_monotonic_interval_when_chain_timestamp_is_far_ahead() {
+        let instant_now = Instant::now();
+        let block_time = Duration::from_millis(200);
+        let system_now = UNIX_EPOCH + Duration::from_millis(100_100);
+
+        let clock =
+            BlockClock::from_block_timestamp_ms(block_time, 105_000, system_now, instant_now);
+
+        assert_eq!(clock.expected_boundary().duration_since(instant_now), block_time);
     }
 
     #[test]
@@ -841,5 +708,36 @@ mod tests {
         clock.correct_earlier();
 
         assert_eq!(before.duration_since(clock.expected_boundary()), Duration::from_millis(25));
+    }
+
+    #[test]
+    fn catchup_windows_preserve_two_second_behavior_and_scale_for_denim() {
+        assert_eq!(BlockWatcher::catchup_blocks(LIVE_CATCHUP_WINDOW, Duration::from_secs(2)), 8);
+        assert_eq!(
+            BlockWatcher::catchup_blocks(STARTUP_CATCHUP_WINDOW, Duration::from_secs(2)),
+            256
+        );
+        assert_eq!(
+            BlockWatcher::catchup_blocks(LIVE_CATCHUP_WINDOW, Duration::from_millis(200)),
+            80
+        );
+        assert_eq!(
+            BlockWatcher::catchup_blocks(STARTUP_CATCHUP_WINDOW, Duration::from_millis(200)),
+            2_560
+        );
+    }
+
+    #[test]
+    fn catchup_blocks_rounds_partial_intervals_up() {
+        assert_eq!(
+            BlockWatcher::catchup_blocks(Duration::from_millis(201), Duration::from_millis(200)),
+            2
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "block time must be greater than zero")]
+    fn catchup_blocks_rejects_zero_block_time() {
+        BlockWatcher::catchup_blocks(Duration::from_secs(1), Duration::ZERO);
     }
 }

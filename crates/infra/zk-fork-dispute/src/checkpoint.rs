@@ -75,7 +75,7 @@ impl Checkpoint {
             Self::from_roots(starting_block, interval, index, &roots, roots[root_index])?;
         let canonical = config.output_root_at_block(checkpoint.target_block()).await?;
         let mut patched_root = canonical;
-        *patched_root.0.last_mut().expect("B256 is non-empty") ^= 1;
+        *patched_root.0.last_mut().ok_or_else(|| eyre!("B256 has no bytes to patch"))? ^= 1;
         if patched_root == canonical {
             bail!("failed to derive a patched root distinct from canonical {canonical}");
         }
@@ -84,6 +84,16 @@ impl Checkpoint {
 
         checkpoint.expected_root = canonical;
         Ok(checkpoint)
+    }
+
+    /// Restores this checkpoint's canonical root on an Anvil fork.
+    pub async fn restore(
+        self,
+        config: &Config,
+        verifier: &AggregateVerifierContractClient,
+    ) -> Result<()> {
+        let roots = verifier.intermediate_output_roots(config.game_address).await?;
+        AnvilPatch::apply(config, verifier, &roots, self.index, self.expected_root).await
     }
 
     /// Finds an already-invalid intermediate root by comparing on-chain vs canonical.
@@ -195,7 +205,6 @@ impl Checkpoint {
                 number_of_blocks_to_prove: self.block_count,
                 sequence_window: None,
                 l1_head: Some(l1_head),
-                intermediate_root_interval: Some(self.interval),
                 schedule_l2_block_number: Some(game_l2_block_number),
                 zk_vm: ZkVm::Sp1,
                 zk_backend: config.zk_backend,
@@ -387,7 +396,7 @@ impl AnvilPatch {
             invalid_index = index,
             from = %original_root,
             to = %patched_root,
-            "patched invalid intermediate root on fork"
+            "updated intermediate output root on fork"
         );
         Ok(())
     }
@@ -521,7 +530,7 @@ impl AnvilPatch {
                 continue;
             }
             let bytes = value.to_be_bytes::<32>();
-            let stored_type = u32::from_be_bytes(bytes[..4].try_into().expect("4-byte game type"));
+            let stored_type = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
             let stored_game = Address::from_slice(&bytes[12..]);
             if stored_type == game_type && stored_game == game_address {
                 return Ok((mapping_slot, B256::from_slice(&bytes)));
@@ -724,6 +733,26 @@ mod tests {
                 &after[args_start + 20..args_start + 52],
                 roots[2].as_slice(),
                 "rootClaim must remain unchanged"
+            );
+
+            let restored = patch_cwia_root_in_bytecode(
+                after.as_ref(),
+                1000,
+                parent,
+                &after_roots,
+                index,
+                current_roots[index],
+            )
+            .expect("restore CWIA root");
+            provider
+                .client()
+                .request::<_, ()>("anvil_setCode", (game, Bytes::from(restored)))
+                .await
+                .expect("set restored game code");
+            let restored = provider.get_code_at(game).await.expect("read restored game code");
+            assert_eq!(
+                read_cwia_roots(restored.as_ref(), 1000, parent, roots.len()),
+                current_roots
             );
         }
     }

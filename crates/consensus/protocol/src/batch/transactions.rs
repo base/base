@@ -426,7 +426,7 @@ impl SpanBatchTransactions {
                     .1;
                     let payer_proof = SpanBatchEip8130TransactionData::split_auth(
                         signed.payer_auth(),
-                        inner.payer.is_some(),
+                        SpanBatchEip8130TransactionData::named_payer(inner.payer),
                     )?
                     .1;
                     self.eip8130_auth_data.push((sender_proof, payer_proof));
@@ -474,7 +474,8 @@ mod tests {
     use alloy_primitives::{B256, Signature, TxKind, address};
     use base_common_consensus::{
         AccountChange, AccountChangeChannel, Call, ChangeType, CreateEntry, Delegation,
-        Eip8130Signed, InitialActor, SignedAccountChanges, SignedChange, TxEip8130,
+        Eip8130Constants, Eip8130Signed, InitialActor, SignedAccountChanges, SignedChange,
+        TxEip8130,
     };
 
     use super::*;
@@ -644,6 +645,7 @@ mod tests {
             tx.max_fee_per_gas = 5_000_000_000;
             tx.calls = vec![vec![Call {
                 to: address!("00000000000000000000000000000000000000dd"),
+                value: U256::ZERO,
                 data: bytes!("deadbeef"),
             }]];
             eip8130_raw(tx, Bytes::from_static(&[0xab; 65]), Bytes::new())
@@ -704,14 +706,16 @@ mod tests {
                 vec![
                     Call {
                         to: address!("0000000000000000000000000000000000000001"),
+                        value: U256::ZERO,
                         data: bytes!("11"),
                     },
                     Call {
                         to: address!("0000000000000000000000000000000000000002"),
+                        value: U256::ZERO,
                         data: bytes!("2222"),
                     },
                 ],
-                vec![Call { to: Address::ZERO, data: Bytes::new() }],
+                vec![Call { to: Address::ZERO, value: U256::ZERO, data: Bytes::new() }],
             ];
             tx.metadata = bytes!("decafbad");
             let mut sender_auth = sender.as_slice().to_vec();
@@ -722,7 +726,18 @@ mod tests {
         // Minimal body: empty auth, no account changes or calls.
         let minimal = eip8130_raw(eip8130_body(), Bytes::new(), Bytes::new());
 
-        assert_span_batch_roundtrip(vec![eoa, configured, rich, minimal], EIP8130_CHAIN_ID);
+        // Open payer: `payer` is the single byte 0x00 and `payer_auth` is a raw
+        // signature with no authenticator prefix.
+        let open_payer = {
+            let mut tx = eip8130_body();
+            tx.payer = Some(Eip8130Constants::OPEN_PAYER);
+            eip8130_raw(tx, Bytes::from_static(&[0xab; 65]), Bytes::from_static(&[0xcd; 65]))
+        };
+
+        assert_span_batch_roundtrip(
+            vec![eoa, configured, rich, minimal, open_payer],
+            EIP8130_CHAIN_ID,
+        );
     }
 
     #[test]

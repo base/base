@@ -5,31 +5,35 @@ use std::{sync::Arc, time::Duration};
 use alloy_consensus::SignableTransaction;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::TransactionBuilder;
-use alloy_primitives::Bytes;
+use alloy_primitives::{Bytes, TxHash, U256, keccak256};
 use alloy_provider::Provider;
 use alloy_signer::SignerSync;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{
-    DEFAULT_MAX_VALIDITY_PREDICATES, TransactionValidity, ValidatedTransaction,
+    TransactionValidity, ValidatedTransaction, ValidityOperator, ValidityPredicate,
 };
 use base_node_runner::test_utils::TestHarness;
 use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis};
 use base_tx_forwarding::{TxForwardingConfig, TxForwardingExtension};
-use base_txpool_rpc::{SendRawTransactionValidityExtension, SendRawTransactionValidityRequest};
+use base_txpool_rpc::{
+    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension,
+    SendRawTransactionValidityOptions,
+};
 use eyre::{Result, WrapErr};
 use jsonrpsee::{
     RpcModule,
     server::{ServerBuilder, ServerHandle},
 };
 use tokio::{
-    sync::{Barrier, Notify, mpsc},
+    sync::{Barrier, Notify, Semaphore, mpsc},
     time::timeout,
 };
 use url::Url;
 
 const WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 const ISOLATION_TIMEOUT: Duration = Duration::from_millis(500);
+const SNAPSHOT_AGE_OUT: Duration = Duration::from_millis(50);
 
 struct MockBuilder {
     url: Url,
@@ -41,10 +45,11 @@ impl MockBuilder {
         received: mpsc::UnboundedSender<ValidatedTransaction<TransactionValidity>>,
         entered: Option<Arc<Barrier>>,
         release: Option<Arc<Notify>>,
+        gate: Option<Arc<Semaphore>>,
     ) -> Result<Self> {
         let server = ServerBuilder::default().build("127.0.0.1:0").await?;
         let address = server.local_addr()?;
-        let mut module = RpcModule::new((received, entered, release));
+        let mut module = RpcModule::new((received, entered, release, gate));
         module.register_async_method(
             "base_insertValidatedTransaction",
             |params, context, _| async move {
@@ -54,6 +59,12 @@ impl MockBuilder {
                 if let (Some(entered), Some(release)) = (&context.1, &context.2) {
                     entered.wait().await;
                     release.notified().await;
+                }
+
+                // Each call holds the gate until it returns, so the destination stays blocked
+                // until the test opens it and then accepts every later call.
+                if let Some(gate) = &context.3 {
+                    let _open = gate.acquire().await.expect("gate is never closed");
                 }
 
                 Ok::<(), jsonrpsee::types::ErrorObjectOwned>(())
@@ -73,16 +84,24 @@ impl MockBuilder {
 }
 
 fn signed_eip1559_transaction() -> Bytes {
-    let account = Account::Alice;
+    signed_transfer(Account::Alice, 0, 1_000_000_000, 0)
+}
+
+fn signed_transfer(
+    account: Account,
+    nonce: u64,
+    max_fee_per_gas: u128,
+    max_priority_fee_per_gas: u128,
+) -> Bytes {
     let request = BaseTransactionRequest::default()
         .from(account.address())
         .transaction_type(2u8)
         .with_gas_limit(21_000)
-        .with_max_fee_per_gas(1_000_000_000)
-        .with_max_priority_fee_per_gas(0)
+        .with_max_fee_per_gas(max_fee_per_gas)
+        .with_max_priority_fee_per_gas(max_priority_fee_per_gas)
         .with_chain_id(DEVNET_CHAIN_ID)
         .to(Account::Bob.address())
-        .with_nonce(0);
+        .with_nonce(nonce);
     let transaction = request.build_typed_tx().expect("valid transaction request");
     let signature = account
         .signer()
@@ -95,7 +114,7 @@ fn signed_eip1559_transaction() -> Bytes {
 #[tokio::test]
 async fn forwards_to_healthy_destination_while_another_destination_is_blocked() -> Result<()> {
     let (healthy_tx, mut healthy_rx) = mpsc::unbounded_channel();
-    let healthy = MockBuilder::spawn(healthy_tx, None, None).await?;
+    let healthy = MockBuilder::spawn(healthy_tx, None, None, None).await?;
 
     let slow_entered = Arc::new(Barrier::new(2));
     let slow_release = Arc::new(Notify::new());
@@ -104,6 +123,7 @@ async fn forwards_to_healthy_destination_while_another_destination_is_blocked() 
         slow_tx,
         Some(Arc::clone(&slow_entered)),
         Some(Arc::clone(&slow_release)),
+        None,
     )
     .await?;
 
@@ -149,19 +169,20 @@ async fn forwards_to_healthy_destination_while_another_destination_is_blocked() 
 #[tokio::test]
 async fn forwards_validity_to_every_builder() -> Result<()> {
     let (first_tx, mut first_rx) = mpsc::unbounded_channel();
-    let first = MockBuilder::spawn(first_tx, None, None).await?;
+    let first = MockBuilder::spawn(first_tx, None, None, None).await?;
     let (second_tx, mut second_rx) = mpsc::unbounded_channel();
-    let second = MockBuilder::spawn(second_tx, None, None).await?;
+    let second = MockBuilder::spawn(second_tx, None, None, None).await?;
     let config = TxForwardingConfig::new(vec![first.url.clone(), second.url.clone()]);
-    // EIP-1559 validity transactions are gated by the experimental flag alone (not Cobalt), so this
-    // exercises the flow against a pre-Cobalt genesis.
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
-    let harness = TestHarness::builder()
-        .with_ext::<SendRawTransactionValidityExtension>(DEFAULT_MAX_VALIDITY_PREDICATES)
-        .with_ext::<TxForwardingExtension>(config)
-        .with_chain_spec(chain_spec)
-        .build()
-        .await?;
+    let harness =
+        TestHarness::builder()
+            .with_ext::<SendRawTransactionValidityExtension>(
+                SendRawTransactionValidityConfig::default(),
+            )
+            .with_ext::<TxForwardingExtension>(config)
+            .with_chain_spec(chain_spec)
+            .build()
+            .await?;
     let raw = signed_eip1559_transaction();
     let validity = serde_json::from_value(serde_json::json!({
         "type": "storage",
@@ -172,12 +193,18 @@ async fn forwards_validity_to_every_builder() -> Result<()> {
             "value": "0x2"
         }
     }))?;
-    let expected = vec![validity];
+    let expected = vec![
+        ValidityPredicate::BlockNumber {
+            op: ValidityOperator::LessThanOrEqual,
+            value: U256::from(31),
+        },
+        validity,
+    ];
     let client = harness.rpc_client()?;
     let _: alloy_primitives::TxHash = client
         .request(
             "base_sendRawTransactionValidity",
-            (SendRawTransactionValidityRequest { tx: raw.clone(), validity: expected.clone() },),
+            (raw.clone(), SendRawTransactionValidityOptions { validity: expected.clone() }),
         )
         .await?;
 
@@ -202,5 +229,87 @@ async fn forwards_validity_to_every_builder() -> Result<()> {
     drop(harness);
     first.shutdown().await?;
     second.shutdown().await?;
+    Ok(())
+}
+
+/// Sends a backlog of cheap transfers and then one high bid to a destination that is stalled, and
+/// returns the order the destination received them in once it recovers, as hashes.
+///
+/// Batches of one and a queue of one keep the forwarding order visible: everything except the
+/// in-flight blocker and the single queued transaction waits in the pool, where the reader's lanes
+/// decide what goes next.
+async fn forwarding_order_after_stall(fifo_percent: u8) -> Result<(Vec<TxHash>, TxHash)> {
+    const MAX_FEE: u128 = 10_000_000_000;
+    const CHEAP_TIP: u128 = 1_000;
+    const HIGH_TIP: u128 = 1_000_000_000;
+
+    let gate = Arc::new(Semaphore::new(0));
+    let (received_tx, mut received_rx) = mpsc::unbounded_channel();
+    let builder = MockBuilder::spawn(received_tx, None, None, Some(Arc::clone(&gate))).await?;
+    let config = TxForwardingConfig::new(vec![builder.url.clone()])
+        .with_max_batch_size(1)
+        .with_queue_capacity(Some(1))
+        .with_fifo_percent(fifo_percent);
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
+    let harness = TestHarness::builder()
+        .with_ext::<TxForwardingExtension>(config)
+        .with_chain_spec(chain_spec)
+        .build()
+        .await?;
+    let provider = harness.provider();
+
+    // Stall the destination on a first transaction before the backlog arrives.
+    let _pending = provider
+        .send_raw_transaction(&signed_transfer(Account::Alice, 0, MAX_FEE, CHEAP_TIP))
+        .await?;
+    timeout(WAIT_TIMEOUT, received_rx.recv()).await.wrap_err("blocker was not forwarded")?;
+
+    let mut sent = 1;
+    for nonce in 0..3 {
+        let _pending = provider
+            .send_raw_transaction(&signed_transfer(Account::Bob, nonce, MAX_FEE, CHEAP_TIP))
+            .await?;
+        let _pending = provider
+            .send_raw_transaction(&signed_transfer(Account::Deployer, nonce, MAX_FEE, CHEAP_TIP))
+            .await?;
+        sent += 2;
+    }
+    let high = signed_transfer(Account::Charlie, 0, MAX_FEE, HIGH_TIP);
+    let _pending = provider.send_raw_transaction(&high).await?;
+    sent += 1;
+
+    // The reader reuses a pool snapshot for up to 10ms; give it time to age out so the reader
+    // sees the high bid when the destination recovers.
+    tokio::time::sleep(SNAPSHOT_AGE_OUT).await;
+    gate.add_permits(1);
+    let mut order = Vec::with_capacity(sent - 1);
+    while order.len() < sent - 1 {
+        let forwarded = timeout(WAIT_TIMEOUT, received_rx.recv())
+            .await
+            .wrap_err("backlog was not fully forwarded")?
+            .ok_or_else(|| eyre::eyre!("builder channel closed"))?;
+        order.push(keccak256(&forwarded.raw));
+    }
+
+    drop(harness);
+    builder.shutdown().await?;
+    Ok((order, keccak256(&high)))
+}
+
+#[tokio::test]
+async fn priority_lane_forwards_a_late_high_bid_ahead_of_the_backlog() -> Result<()> {
+    let (order, high) = forwarding_order_after_stall(0).await?;
+
+    // The one transaction already queued during the stall goes first; the high bid is next.
+    let position = order.iter().position(|hash| *hash == high).expect("high bid forwarded");
+    assert!(position <= 1, "high bid forwarded at position {position} of {}", order.len());
+    Ok(())
+}
+
+#[tokio::test]
+async fn pure_fifo_forwards_a_late_high_bid_last() -> Result<()> {
+    let (order, high) = forwarding_order_after_stall(100).await?;
+
+    assert_eq!(order.last(), Some(&high));
     Ok(())
 }

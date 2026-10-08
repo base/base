@@ -9,8 +9,8 @@
 
 mod guard;
 pub use guard::{
-    Admission, AdmissionRecord, DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT, GuardLimits,
-    LimitClass, LimitRejection, MempoolGuard,
+    Admission, AdmissionRecord, DEFAULT_ALLOWLISTED_PAYMENT_LIMIT, DEFAULT_PAYMENT_LIMIT,
+    DEFAULT_SIGNATURE_LIMIT, GuardLimits, LimitClass, LimitRejection, MempoolGuard,
 };
 
 mod invalidation;
@@ -29,12 +29,13 @@ mod best;
 
 mod validity;
 pub use validity::{
-    DEFAULT_MAX_VALIDITY_PREDICATES, FIRST_POOL_FLASHBLOCK_INDEX, PredicateContext,
-    TransactionValidity, ValidityOperator, ValidityPredicate, ValidityPredicateError,
+    DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES, FIRST_POOL_FLASHBLOCK_INDEX,
+    PredicateContext, TransactionValidity, ValidityOperator, ValidityPredicate,
+    ValidityPredicateError, deserialize_bounded_predicates,
 };
 
 mod block_expiry;
-pub use block_expiry::BlockExpiryIndex;
+pub use block_expiry::{BlockExpiryIndex, ExpiryPosition, FlashblockExpiry};
 
 mod transaction;
 pub use transaction::{
@@ -65,7 +66,7 @@ mod pool_error_label;
 pub use pool_error_label::PoolRejectionLabel;
 
 mod builder;
-pub use builder::{BuilderApiImpl, BuilderApiMetrics, BuilderApiServer};
+pub use builder::{BuilderApiImpl, BuilderApiMetrics, BuilderApiServer, InsertMetering};
 
 mod wire;
 pub use wire::{

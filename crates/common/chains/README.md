@@ -9,7 +9,9 @@ upgrade timestamps, genesis data, base fee params, contract addresses, and embed
 Const chain configuration instances eliminate duplicated configuration across the workspace.
 
 Also provides the `BaseUpgrade` enum, `BaseUpgrades` trait, and `BaseChainUpgrades` for the
-Base upgrade sequence (Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Azul).
+Base upgrade sequence. See [`BaseUpgrade::EXECUTION_VARIANTS`]
+([source](https://github.com/base/base/blob/main/crates/common/genesis/src/chain/upgrade.rs))
+for the canonical execution fork ladder.
 
 ## Usage
 

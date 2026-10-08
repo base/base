@@ -11,7 +11,7 @@
 extern crate tracing;
 
 mod admin;
-pub use admin::{AdminRpc, NetworkAdminQuery};
+pub use admin::{AdminNetworkAccess, AdminRpc, NetworkAdminQuery, NetworkAdminQuerySender};
 
 mod base;
 pub use base::BaseRpc;

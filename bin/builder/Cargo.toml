@@ -38,3 +38,8 @@ clap.workspace = true
 [features]
 default = [ "jemalloc" ]
 jemalloc = [ "base-builder-core/jemalloc", "base-execution-cli/jemalloc" ]
+jemalloc-prof = [
+	"base-builder-core/jemalloc-prof",
+	"base-execution-cli/jemalloc-symbols",
+	"jemalloc",
+]

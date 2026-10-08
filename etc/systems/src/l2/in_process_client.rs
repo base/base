@@ -11,13 +11,15 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
 };
-use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_node_core::args::RollupArgs;
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_tx_forwarding::{TxForwardingConfig, TxForwardingExtension};
-use base_txpool_rpc::{SendRawTransactionValidityExtension, TxPoolRpcConfig, TxPoolRpcExtension};
+use base_txpool_rpc::{
+    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
+    TxPoolRpcExtension,
+};
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use eyre::{Context, Result, eyre};
 use reth_db::{ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments};
@@ -28,10 +30,12 @@ use reth_node_core::{
     exit::NodeExitFuture,
 };
 use reth_provider::providers::BlockchainProvider;
-use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig};
+use reth_tasks::{Runtime, RuntimeBuilder, TokioConfig};
 use tempfile::TempDir;
 use tracing::warn;
 use url::Url;
+
+use super::InProcessNodeRuntime;
 
 type BuiltExtensions = (Vec<Box<dyn BaseNodeExtension>>, Option<FlashblocksConfig>);
 
@@ -47,6 +51,8 @@ pub enum ChainSpecSource {
 /// Configuration for starting an in-process client node.
 #[derive(Debug)]
 pub struct InProcessClientConfig {
+    /// Runtime sizing policy for the execution node.
+    pub runtime: InProcessNodeRuntime,
     /// Chain specification source.
     pub chain_spec: ChainSpecSource,
     /// Existing caller-owned datadir. A temporary datadir is created when omitted.
@@ -71,11 +77,11 @@ pub struct InProcessClientConfig {
     pub metrics_port: Option<u16>,
     /// Optional canonical block persistence threshold.
     pub persistence_threshold: Option<u64>,
+    /// Optional number of unpersisted blocks allowed before Engine API intake is stalled.
+    pub persistence_backpressure_threshold: Option<u64>,
     /// Optional transaction forwarding configuration.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
-    /// Whether to register the experimental validity transaction RPC.
-    pub enable_experimental_validity_transactions: bool,
     /// Optional L1 upgrade signal configuration.
     ///
     /// When the mode applies at startup, the schedule is read from L1 and applied to the chain
@@ -128,7 +134,9 @@ impl InProcessClient {
 
         let (data_dir, temp_dir) = Self::prepare_datadir(config.datadir.clone())?;
         let runtime = RuntimeBuilder::new(
-            RuntimeConfig::default()
+            config
+                .runtime
+                .config()
                 .with_tokio(TokioConfig::existing_handle(tokio::runtime::Handle::current())),
         )
         .build()?;
@@ -208,6 +216,14 @@ impl InProcessClient {
         let mut node_config = NodeConfig::new(Arc::clone(&chain_spec))
             .with_network(network_config)
             .with_rpc(rpc_args);
+        if config.datadir.is_some() {
+            node_config.debug.startup_sync_state_idle = true;
+        }
+        // In-process system-test datadirs are disposable and may be restored from snapshots.
+        // Never reinsert a transaction journal captured in the source snapshot or write a new
+        // journal that can contaminate a later benchmark clone.
+        node_config.txpool.disable_transactions_backup = true;
+        node_config.txpool.transactions_backup_path = None;
         let metrics_addr = SocketAddr::new(
             std::net::Ipv4Addr::LOCALHOST.into(),
             config.metrics_port.unwrap_or_else(get_available_port),
@@ -222,6 +238,11 @@ impl InProcessClient {
         }
         if let Some(persistence_threshold) = config.persistence_threshold {
             node_config.engine.persistence_threshold = persistence_threshold;
+        }
+        if let Some(persistence_backpressure_threshold) = config.persistence_backpressure_threshold
+        {
+            node_config.engine.persistence_backpressure_threshold =
+                Some(persistence_backpressure_threshold);
         }
 
         let datadir_path = MaybePlatformPath::<DataDirPath>::from(data_dir.clone());
@@ -409,12 +430,9 @@ impl InProcessClient {
 
         // TxForwarding extension (optional - forwards txs to builder RPC)
         if let Some(ref tx_fwd_config) = config.tx_forwarding_config {
-            if config.enable_experimental_validity_transactions
-                && tx_fwd_config.enabled
-                && !tx_fwd_config.builder_urls.is_empty()
-            {
+            if tx_fwd_config.enabled && !tx_fwd_config.builder_urls.is_empty() {
                 extensions.push(Box::new(SendRawTransactionValidityExtension::from_config(
-                    DEFAULT_MAX_VALIDITY_PREDICATES,
+                    SendRawTransactionValidityConfig::default(),
                 )));
             }
             extensions.push(Box::new(TxForwardingExtension::from_config(tx_fwd_config.clone())));

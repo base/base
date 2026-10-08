@@ -5,9 +5,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_consensus::{BlockHeader, Transaction, Typed2718};
-use alloy_evm::{Evm as AlloyEvm, block::TxResult};
-use alloy_primitives::{B256, U256};
+use alloy_consensus::{BlockHeader, Transaction, Typed2718, transaction::TxHashRef};
+use alloy_evm::{
+    Evm as AlloyEvm,
+    block::{CommitChanges, TxResult},
+};
+use alloy_primitives::{Address, B256, TxHash, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
@@ -32,7 +35,6 @@ use reth_evm::{
         BlockBuilder, BlockBuilderOutcome, BlockExecutionError, BlockExecutor, BlockValidationError,
     },
 };
-use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
 use reth_execution_types::BlockExecutionOutput;
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock};
@@ -49,14 +51,15 @@ use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, Transac
 use reth_trie_common::ExecutionWitnessMode;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
 use revm::context::{Block, BlockEnv};
-use tracing::{debug, debug_span, instrument, trace, warn};
+use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
-    Attributes, BasePayloadBuilderAttributes, BuilderMetrics, CoinbaseTipAffordability,
-    InclusionTracker, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
-    ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder,
-    StateChangeEffects, ValidityMetrics, ValidityPredicateEvaluation, config::BaseBuilderConfig,
-    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
+    Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics,
+    CoinbaseTipAffordability, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
+    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
+    PredicateReadRecorder, RejectionCacheMetrics, StateChangeEffects, ValidityMetrics,
+    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
+    payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -98,7 +101,6 @@ pub struct BasePayloadBuilder<
     Pool,
     Client,
     Evm,
-    Txs = (),
     Attrs = BasePayloadBuilderAttributes<TxTy<<Evm as ConfigureEvm>::Primitives>>,
 > {
     /// The type responsible for creating the evm.
@@ -109,19 +111,15 @@ pub struct BasePayloadBuilder<
     pub client: Client,
     /// Settings for the builder, e.g. DA settings.
     pub config: BaseBuilderConfig,
-    /// The type responsible for yielding the best transactions for the payload if mempool
-    /// transactions are allowed.
-    pub best_transactions: Txs,
     /// Marker for the payload attributes type.
     _pd: PhantomData<Attrs>,
 }
 
-impl<Pool, Client, Evm, Txs, Attrs> Clone for BasePayloadBuilder<Pool, Client, Evm, Txs, Attrs>
+impl<Pool, Client, Evm, Attrs> Clone for BasePayloadBuilder<Pool, Client, Evm, Attrs>
 where
     Pool: Clone,
     Client: Clone,
     Evm: ConfigureEvm,
-    Txs: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -129,13 +127,12 @@ where
             pool: self.pool.clone(),
             client: self.client.clone(),
             config: self.config.clone(),
-            best_transactions: self.best_transactions.clone(),
             _pd: PhantomData,
         }
     }
 }
 
-impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, (), Attrs> {
+impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, Attrs> {
     /// `BasePayloadBuilder` constructor.
     ///
     /// Configures the builder with the default settings.
@@ -150,31 +147,13 @@ impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, (), Attrs> 
         evm_config: Evm,
         config: BaseBuilderConfig,
     ) -> Self {
-        Self { pool, client, evm_config, config, best_transactions: (), _pd: PhantomData }
+        Self { pool, client, evm_config, config, _pd: PhantomData }
     }
 }
 
-impl<Pool, Client, Evm, Txs, Attrs> BasePayloadBuilder<Pool, Client, Evm, Txs, Attrs> {
-    /// Configures the type responsible for yielding the transactions that should be included in the
-    /// payload.
-    pub fn with_transactions<T>(
-        self,
-        best_transactions: T,
-    ) -> BasePayloadBuilder<Pool, Client, Evm, T, Attrs> {
-        BasePayloadBuilder {
-            pool: self.pool,
-            client: self.client,
-            evm_config: self.evm_config,
-            best_transactions,
-            config: self.config,
-            _pd: PhantomData,
-        }
-    }
-}
-
-impl<Pool, Client, Evm, N, T, Attrs> BasePayloadBuilder<Pool, Client, Evm, T, Attrs>
+impl<Pool, Client, Evm, N, Attrs> BasePayloadBuilder<Pool, Client, Evm, Attrs>
 where
-    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>>,
+    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>> + Clone,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades> + BlockReader,
     N: PayloadPrimitives,
     Evm: ConfigureEvm<
@@ -225,25 +204,25 @@ where
         tracing::Span::current().record("payload_id", tracing::field::display(ctx.payload_id()));
         tracing::Span::current().record("parent_num", ctx.parent().number());
 
-        let builder = Builder::new(best);
+        let pool = self.pool.clone();
+        let builder = Builder::new(best).with_permanent_eviction(move |hashes| {
+            let _ = pool.remove_transactions(hashes);
+        });
 
-        let mut state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
-        if let Some(execution_cache) = execution_cache {
-            state_provider = Box::new(CachedStateProvider::new(
-                state_provider,
-                execution_cache.cache().clone(),
-                Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder)),
-            ));
-        }
-        let state = StateProviderDatabase::new(state_provider.as_ref());
+        let state_provider = crate::BuilderStateProvider::new(
+            self.client.state_by_block_hash(ctx.parent().hash())?,
+            execution_cache.map(|cache| cache.cache().clone()),
+            self.config.state_provider_metrics,
+        );
+        let state = StateProviderDatabase::new(state_provider.provider());
 
         if ctx.attributes().no_tx_pool() {
-            builder.build(state, state_provider.as_ref(), state_root_handle, ctx)
+            builder.build(state, state_provider.provider(), state_root_handle, ctx)
         } else {
             // sequencer mode we can reuse cachedreads from previous runs
             builder.build(
                 cached_reads.as_db_mut(state),
-                state_provider.as_ref(),
+                state_provider.provider(),
                 state_root_handle,
                 ctx,
             )
@@ -252,10 +231,13 @@ where
     }
 
     /// Computes the witness for the payload.
+    ///
+    /// Stops early with [`BasePayloadBuilderError::Cancelled`] once `cancel` is cancelled.
     pub fn payload_witness(
         &self,
         parent: SealedHeader<N::BlockHeader>,
         attributes: Attrs::RpcPayloadAttributes,
+        cancel: CancelOnDrop,
     ) -> Result<ExecutionWitness, PayloadBuilderError>
     where
         Attrs: Attributes,
@@ -270,7 +252,7 @@ where
             builder_config: self.config.clone(),
             chain_spec: self.client.chain_spec(),
             config,
-            cancel: Default::default(),
+            cancel,
             best_payload: Default::default(),
         };
 
@@ -282,17 +264,15 @@ where
 }
 
 /// Implementation of the [`PayloadBuilder`] trait for [`BasePayloadBuilder`].
-impl<Pool, Client, Evm, N, Txs, Attrs> PayloadBuilder
-    for BasePayloadBuilder<Pool, Client, Evm, Txs, Attrs>
+impl<Pool, Client, Evm, N, Attrs> PayloadBuilder for BasePayloadBuilder<Pool, Client, Evm, Attrs>
 where
     N: PayloadPrimitives,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades> + BlockReader + Clone,
-    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>>,
+    Pool: ParkableTransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>>,
     Evm: ConfigureEvm<
             Primitives = N,
             NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, Client::ChainSpec>,
         >,
-    Txs: BasePayloadTransactions<Pool>,
     Attrs: Attributes<Transaction = N::SignedTx>,
 {
     type Attributes = Attrs;
@@ -302,8 +282,11 @@ where
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
     ) -> Result<BuildOutcome<Self::BuiltPayload>, PayloadBuilderError> {
-        let pool = self.pool.clone();
-        self.build_payload(args, |attrs| self.best_transactions.best_transactions(pool, attrs))
+        self.build_payload(args, |attrs| {
+            ParkableBestPayloadTransactions::new(
+                self.pool.best_transactions_with_attributes_and_parking(attrs),
+            )
+        })
     }
 
     fn on_missing_payload(
@@ -355,12 +338,22 @@ pub struct Builder<'a, Txs> {
     /// Yields the best transaction to include if transactions from the mempool are allowed.
     #[debug(skip)]
     best: Box<dyn FnOnce(BestTransactionsAttributes) -> Txs + 'a>,
+    /// Permanently removes mempool transactions that exceeded a per-transaction resource limit.
+    #[debug(skip)]
+    evict_permanently_rejected: Box<dyn FnOnce(Vec<TxHash>) + 'a>,
 }
 
 impl<'a, Txs> Builder<'a, Txs> {
     /// Creates a new [`Builder`].
     pub fn new(best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a) -> Self {
-        Self { best: Box::new(best) }
+        Self { best: Box::new(best), evict_permanently_rejected: Box::new(|_| {}) }
+    }
+
+    /// Sets the callback used to permanently remove mempool transactions that exceeded a
+    /// per-transaction resource limit.
+    pub fn with_permanent_eviction(mut self, evict: impl FnOnce(Vec<TxHash>) + 'a) -> Self {
+        self.evict_permanently_rejected = Box::new(evict);
+        self
     }
 }
 
@@ -385,7 +378,7 @@ impl<Txs> Builder<'_, Txs> {
         >,
         Attrs: Attributes<Transaction = N::SignedTx>,
     {
-        let Self { best } = self;
+        let Self { best, evict_permanently_rejected } = self;
         debug!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number(), "building new payload");
 
         let mut db = State::builder().with_database(db).with_bundle_update().build();
@@ -413,7 +406,26 @@ impl<Txs> Builder<'_, Txs> {
         // 3. if mem pool transactions are requested we execute them
         if !ctx.attributes().no_tx_pool() {
             let best_txs = best(ctx.best_transaction_attributes(builder.evm_mut().block()));
-            if ctx.execute_best_transactions(&mut info, &mut builder, best_txs)?.is_some() {
+            let cancelled = ctx.execute_best_transactions(&mut info, &mut builder, best_txs)?;
+            if !info.permanently_rejected_txs.is_empty() {
+                let rejected = std::mem::take(&mut info.permanently_rejected_txs);
+                let count = rejected.len();
+                ctx.builder_config.rejection_cache.mark_rejected(&rejected);
+                RejectionCacheMetrics::insertions().increment(count as u64);
+                RejectionCacheMetrics::size()
+                    .set(ctx.builder_config.rejection_cache.entry_count() as f64);
+                MeteringProvider::remove(
+                    ctx.builder_config.resource_metering.provider.as_ref(),
+                    &rejected,
+                );
+                evict_permanently_rejected(rejected);
+                info!(
+                    target: "payload_builder",
+                    count,
+                    "evicted permanently rejected transactions from pool",
+                );
+            }
+            if cancelled.is_some() {
                 return Ok(BuildOutcomeKind::Cancelled);
             }
 
@@ -512,6 +524,10 @@ impl<Txs> Builder<'_, Txs> {
         Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = N::SignedTx>>,
         Attrs: Attributes<Transaction = N::SignedTx>,
     {
+        if ctx.cancel.is_cancelled() {
+            return Err(PayloadBuilderError::other(BasePayloadBuilderError::Cancelled));
+        }
+
         let mut db = State::builder()
             .with_database(StateProviderDatabase::new(&state_provider))
             .with_bundle_update()
@@ -523,6 +539,10 @@ impl<Txs> Builder<'_, Txs> {
         builder.apply_pre_execution_changes()?;
         ctx.execute_sequencer_transactions(&mut builder)?;
         builder.into_executor().apply_post_execution_changes()?;
+
+        if ctx.cancel.is_cancelled() {
+            return Err(PayloadBuilderError::other(BasePayloadBuilderError::Cancelled));
+        }
 
         if ctx.chain_spec.is_isthmus_active_at_timestamp(ctx.attributes().timestamp()) {
             // force load `L2ToL1MessagePasser.sol` so l2 withdrawals root can be computed even if
@@ -538,55 +558,6 @@ impl<Txs> Builder<'_, Txs> {
             mode,
         )?;
         Ok(witness)
-    }
-}
-
-/// A type that returns the [`PayloadTransactions`] that should be included in the payload.
-pub trait BasePayloadTransactions<Pool>: Clone + Send + Sync + Unpin + 'static
-where
-    Pool: TransactionPool,
-    Pool::Transaction: BasePooledTx,
-{
-    /// Returns an iterator that yields the transaction in the order they should get included in the
-    /// new payload.
-    ///
-    /// Custom iterators without lane-aware parking can use [`NonParkablePayloadTransactions`].
-    fn best_transactions(
-        &self,
-        pool: Pool,
-        attr: BestTransactionsAttributes,
-    ) -> impl ParkablePayloadTransactions<Transaction = Pool::Transaction>;
-}
-
-impl<Pool> BasePayloadTransactions<Pool> for ()
-where
-    Pool: ParkableTransactionPool,
-    Pool::Transaction: BasePooledTx,
-{
-    fn best_transactions(
-        &self,
-        pool: Pool,
-        attr: BestTransactionsAttributes,
-    ) -> impl ParkablePayloadTransactions<Transaction = Pool::Transaction> {
-        ParkableBestPayloadTransactions::new(
-            pool.best_transactions_with_attributes_and_parking(attr),
-        )
-    }
-}
-
-impl<Pool, F, Transactions> BasePayloadTransactions<Pool> for F
-where
-    Pool: TransactionPool,
-    Pool::Transaction: BasePooledTx,
-    F: Fn(Pool, BestTransactionsAttributes) -> Transactions + Clone + Send + Sync + Unpin + 'static,
-    Transactions: ParkablePayloadTransactions<Transaction = Pool::Transaction>,
-{
-    fn best_transactions(
-        &self,
-        pool: Pool,
-        attr: BestTransactionsAttributes,
-    ) -> impl ParkablePayloadTransactions<Transaction = Pool::Transaction> {
-        self(pool, attr)
     }
 }
 
@@ -614,6 +585,11 @@ pub struct ExecutionInfo {
     pub total_fees: U256,
     /// Inclusion and fee revenue from executed mempool transactions.
     pub inclusion: InclusionTracker,
+    /// Cumulative resource-metering units for the current payload, aligned with the snapped schedule.
+    pub resource_metering_usage: Vec<u128>,
+    /// Transaction hashes that exceeded a per-transaction resource limit and should be
+    /// permanently removed from the pool and recorded in the shared rejection cache.
+    pub permanently_rejected_txs: Vec<TxHash>,
 }
 
 impl ExecutionInfo {
@@ -624,6 +600,8 @@ impl ExecutionInfo {
             cumulative_da_bytes_used: 0,
             total_fees: U256::ZERO,
             inclusion: InclusionTracker::default(),
+            resource_metering_usage: Vec::new(),
+            permanently_rejected_txs: Vec::new(),
         }
     }
 
@@ -754,6 +732,46 @@ where
             .map_err(PayloadBuilderError::other)
     }
 
+    /// Closes the iterator's current candidate.
+    ///
+    /// Replay-ID entries are independent, so they are committed rather than
+    /// invalidating the sender's nonce lane.
+    fn skip_current<B>(best_txs: &mut B, sender: Address, nonce: u64, replay_independent: bool)
+    where
+        B: ParkablePayloadTransactions,
+        B::Transaction: PoolTransaction,
+    {
+        if replay_independent {
+            best_txs.mark_current_committed();
+        } else {
+            best_txs.mark_invalid(sender, nonce);
+        }
+    }
+
+    /// Journals `BUILDER_REJECTED` for a validity-gated candidate that passed its predicates but
+    /// was skipped for another reason. With no `BUILDER_CONSIDERED`, this is the only builder
+    /// event such a candidate gets.
+    fn emit_validity_rejection(
+        &self,
+        tx_hash: TxHash,
+        consideration_index: u64,
+        reason: &'static str,
+        detail: &'static str,
+        permanent: bool,
+    ) {
+        emit_native_validity_event!(
+            self,
+            TransactionEventType::BuilderRejected,
+            tx_hash,
+            consideration_index,
+            {
+                "rejection_reason" => reason,
+                "rejection_detail" => detail,
+                "permanent" => permanent,
+            }
+        );
+    }
+
     /// Executes all sequencer transactions that are included in the payload attributes.
     ///
     /// When `no_tx_pool` is set the attribute-supplied transaction list is the consensus input
@@ -768,13 +786,18 @@ where
     /// When `no_tx_pool` is `false` the builder is composing a new block from mempool plus
     /// attribute pre-includes; pre-includes there may legitimately be skipped on `InvalidTx`,
     /// so the historical skip-and-continue behavior is preserved.
-    #[instrument(skip_all, fields(phase = "sequencer_txs"))]
+    #[instrument(
+        skip_all,
+        fields(phase = "sequencer_txs", block_number = tracing::field::Empty)
+    )]
     pub fn execute_sequencer_transactions(
         &self,
         builder: &mut impl BlockBuilder<Primitives = Evm::Primitives>,
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
+        tracing::Span::current().record("block_number", self.parent().number().saturating_add(1));
         let mut info = ExecutionInfo::new();
         let no_tx_pool = self.attributes().no_tx_pool();
+        let resource_metering = &self.builder_config.resource_metering;
 
         for sequencer_tx in self.attributes().sequencer_transactions() {
             // A sequencer's block should never contain blob transactions.
@@ -792,8 +815,38 @@ where
                 PayloadBuilderError::other(BasePayloadBuilderError::TransactionEcRecoverFailed)
             })?;
 
-            let gas_output = match builder.execute_transaction(sequencer_tx.clone()) {
-                Ok(gas_output) => gas_output,
+            let mut pending_resource_usage = None;
+            let tx_hash = *sequencer_tx.tx_hash();
+            let gas_output = match builder.execute_transaction_with_commit_condition(
+                sequencer_tx.clone(),
+                |result| {
+                    let result_and_state = result.result();
+                    pending_resource_usage = resource_metering.unthrottled_usage(
+                        &tx_hash,
+                        result_and_state.result.tx_gas_used(),
+                        &result_and_state.state,
+                    );
+                    CommitChanges::Yes
+                },
+            ) {
+                Ok(Some(gas_output)) => gas_output,
+                // Resource metering always returns [`CommitChanges::Yes`]. This arm
+                // is the BlockBuilder commit-condition contract, not a metering skip.
+                // Under `no_tx_pool` the attribute list is consensus input, so a
+                // refused commit is fatal — same as `InvalidTx` in that mode.
+                Ok(None) if !no_tx_pool => {
+                    warn!(
+                        target: "payload_builder",
+                        tx_hash = %tx_hash,
+                        "sequencer transaction commit was refused"
+                    );
+                    continue;
+                }
+                Ok(None) => {
+                    return Err(PayloadBuilderError::other(
+                        BasePayloadBuilderError::SequencerTransactionCommitRefused,
+                    ));
+                }
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                     error,
                     ..
@@ -807,12 +860,26 @@ where
             };
 
             info.cumulative_gas_used += gas_output.tx_gas_used();
+            if let Some(usage) = pending_resource_usage {
+                resource_metering.apply_accounted_usage(
+                    &tx_hash,
+                    &usage,
+                    &mut info.resource_metering_usage,
+                );
+            }
         }
-
         Ok(info)
     }
 
     /// Executes the given best transactions and updates the execution info.
+    ///
+    /// Transaction-scope resource-throttling excludes are recorded on
+    /// [`ExecutionInfo::permanently_rejected_txs`] for the payload job to remove from the
+    /// pool and insert into [`crate::config::BaseBuilderConfig::rejection_cache`] after this scan.
+    /// Later jobs sharing that cache skip the hash even if the pool has it again.
+    /// Nonce-lane descendants are skipped for this scan via `mark_invalid`;
+    /// skipping those descendants across later jobs is Flashblocks-only.
+    /// Block-scope excludes only skip the current iterator.
     ///
     /// Returns `Ok(Some(()))` if the job was cancelled.
     #[instrument(skip_all, fields(phase = "mempool_txs"))]
@@ -842,17 +909,24 @@ where
         let block_number =
             builder.evm_mut().block().number().try_into().expect("block number must fit in u64");
         let predicate_context = PredicateContext { block_number, flashblock_index: 0 };
-        let mut predicate_index = ParkedPredicateIndex::default();
+        let mut predicate_index =
+            ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
         let mut predicate_loads = PredicateLoadTracker::default();
         let mut predicate_eval_duration = None;
         let mut predicate_bucket_wakeups = 0;
         let mut validity_consideration_index = 0_u64;
+        // A blocked transaction is parked again each time a promotion re-yields it. Post-Denim
+        // the payload is built once, so this covers the whole block; pre-Denim rebuilds start a
+        // fresh scan and report deferrals again.
+        let mut deferrals = BlockDeferrals::default();
         let mut validity_candidates_evaluated = 0_u64;
         let mut validity_candidates_deferred = 0_u64;
         let mut predicate_eval_cutoff_hit = false;
 
         let block_timestamp = self.attributes().timestamp();
         let can_finalize_early = self.is_denim_active();
+        let resource_metering = &self.builder_config.resource_metering;
+        let mut resource_throttled = 0u64;
         while let Some(tx) = best_txs.next(()) {
             if self.cancel.is_cancelled() {
                 return Ok(Some(()));
@@ -862,21 +936,27 @@ where
             }
 
             let tx_hash = *tx.hash();
+            let replay_independent = tx.eip8130_replay_id().is_some();
+            if self.builder_config.rejection_cache.is_rejected(&tx_hash) {
+                RejectionCacheMetrics::hits().increment(1);
+                RejectionCacheMetrics::size()
+                    .set(self.builder_config.rejection_cache.entry_count() as f64);
+                trace!(
+                    target: "payload_builder",
+                    tx_hash = %tx_hash,
+                    "skipping previously rejected transaction"
+                );
+                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
+                continue;
+            }
+
             let has_validity_predicates = !tx.validity_predicates().is_empty();
-            let has_coinbase_tip = tx
-                .as_eip8130()
-                .is_some_and(|signed| CoinbaseTip::decode(signed.tx(), tx.sender()).is_some());
+            let coinbase_tip = tx.as_eip8130().and_then(|signed| CoinbaseTip::decode(signed.tx()));
+            let has_coinbase_tip = coinbase_tip.is_some();
+            // Every validity candidate ends with a decision event, so there is no separate
+            // `BUILDER_CONSIDERED`.
             if has_validity_predicates {
                 validity_consideration_index += 1;
-                emit_native_validity_event!(
-                    self,
-                    TransactionEventType::BuilderConsidered,
-                    tx_hash,
-                    validity_consideration_index,
-                    {
-                        "validity_predicate_count" => tx.validity_predicates().len(),
-                    }
-                );
             }
             if tx
                 .validity_predicates()
@@ -901,11 +981,7 @@ where
                     tx_hash = ?tx_hash,
                     "skipping transaction with unsupported flashblock-index predicate"
                 );
-                if tx.eip8130_replay_id().is_none() {
-                    best_txs.mark_invalid(tx.sender(), tx.nonce());
-                } else {
-                    best_txs.mark_current_committed();
-                }
+                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
                 continue;
             }
 
@@ -923,7 +999,8 @@ where
                     tx_hash = ?tx_hash,
                     "deferring validity-gated transaction: predicate evaluation budget exhausted"
                 );
-                if best_txs.park_current() {
+                best_txs.park_current();
+                if deferrals.record(tx_hash, "predicate_eval_budget_exhausted") {
                     emit_native_validity_event!(
                         self,
                         TransactionEventType::BuilderDeferred,
@@ -934,23 +1011,6 @@ where
                             "defer_detail" => "validity-predicate evaluation time budget exhausted for this payload build",
                         }
                     );
-                } else {
-                    emit_native_validity_event!(
-                        self,
-                        TransactionEventType::BuilderRejected,
-                        tx_hash,
-                        validity_consideration_index,
-                        {
-                            "rejection_reason" => "predicate_eval_budget_exhausted",
-                            "rejection_detail" => "validity-predicate evaluation time budget exhausted and the configured transaction selector cannot park the transaction",
-                            "permanent" => false,
-                        }
-                    );
-                    if tx.eip8130_replay_id().is_none() {
-                        best_txs.mark_invalid(tx.sender(), tx.nonce());
-                    } else {
-                        best_txs.mark_current_committed();
-                    }
                 }
                 continue;
             }
@@ -994,14 +1054,19 @@ where
                             tx_hash = ?tx_hash,
                             "skipping transaction with expired validity predicate"
                         );
-                        if tx.eip8130_replay_id().is_none() {
-                            best_txs.mark_invalid(tx.sender(), tx.nonce());
-                        } else {
-                            best_txs.mark_current_committed();
-                        }
+                        Self::skip_current(
+                            &mut best_txs,
+                            tx.sender(),
+                            tx.nonce(),
+                            replay_independent,
+                        );
                         continue;
                     }
-                    Ok(ValidityPredicateEvaluation::Unsatisfied { blocker, expired: false }) => {
+                    Ok(ValidityPredicateEvaluation::Unsatisfied {
+                        blocker,
+                        blocker_index,
+                        expired: false,
+                    }) => {
                         ValidityMetrics::validity_predicate_evaluations_total("not_satisfied")
                             .increment(1);
                         trace!(
@@ -1010,7 +1075,8 @@ where
                             ?blocker,
                             "parking transaction with unsatisfied validity predicate"
                         );
-                        if best_txs.park_current() {
+                        best_txs.park_current();
+                        if deferrals.record(tx_hash, "validity_predicate_not_satisfied") {
                             emit_native_validity_event!(
                                 self,
                                 TransactionEventType::BuilderDeferred,
@@ -1021,25 +1087,9 @@ where
                                     "defer_detail" => "a validity predicate is not satisfied by the current build state",
                                 }
                             );
-                            predicate_index.park(tx_hash, tx, blocker);
-                        } else {
-                            emit_native_validity_event!(
-                                self,
-                                TransactionEventType::BuilderRejected,
-                                tx_hash,
-                                validity_consideration_index,
-                                {
-                                    "rejection_reason" => "validity_predicate_parking_unsupported",
-                                    "rejection_detail" => "the configured transaction selector cannot park validity transactions",
-                                    "permanent" => false,
-                                }
-                            );
-                            if tx.eip8130_replay_id().is_none() {
-                                best_txs.mark_invalid(tx.sender(), tx.nonce());
-                            } else {
-                                best_txs.mark_current_committed();
-                            }
                         }
+                        let predicate = tx.validity_predicates()[blocker_index].clone();
+                        predicate_index.park(tx_hash, tx, predicate);
                         continue;
                     }
                     Err(error) => {
@@ -1062,11 +1112,12 @@ where
                             error = ?error,
                             "failed to read validity predicate state"
                         );
-                        if tx.eip8130_replay_id().is_none() {
-                            best_txs.mark_invalid(tx.sender(), tx.nonce());
-                        } else {
-                            best_txs.mark_current_committed();
-                        }
+                        Self::skip_current(
+                            &mut best_txs,
+                            tx.sender(),
+                            tx.nonce(),
+                            replay_independent,
+                        );
                         continue;
                     }
                 }
@@ -1083,15 +1134,16 @@ where
                     "skipping EIP-8130 transaction with stale authorization manifest"
                 );
                 GuardMetrics::record_builder_precheck_drop(&stale);
-                // Nonce-free replay-ID entries are independent. The upstream
-                // payload adapter invalidates by sender (not by replay ID), so
-                // marking one would suppress unrelated entries from this sender.
-                // This transaction has already been consumed from the iterator.
-                if tx.eip8130_replay_id().is_none() {
-                    best_txs.mark_invalid(tx.sender(), tx.nonce());
-                } else {
-                    best_txs.mark_current_committed();
+                if has_validity_predicates {
+                    self.emit_validity_rejection(
+                        tx_hash,
+                        validity_consideration_index,
+                        "manifest_precheck_stale",
+                        stale.cause(),
+                        false,
+                    );
                 }
+                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
                 continue;
             }
 
@@ -1111,13 +1163,21 @@ where
                             tx_hash = ?tx.hash(),
                             "skipping EIP-8130 transaction with unschedulable payer authenticator"
                         );
-                        // Mirror the manifest pre-check above: a nonce-free replay-ID entry is
-                        // independent, so invalidating by sender would suppress unrelated entries.
-                        if tx.eip8130_replay_id().is_none() {
-                            best_txs.mark_invalid(tx.sender(), tx.nonce());
-                        } else {
-                            best_txs.mark_current_committed();
+                        if has_validity_predicates {
+                            self.emit_validity_rejection(
+                                tx_hash,
+                                validity_consideration_index,
+                                "unschedulable_payer_authenticator",
+                                "EIP-8130 payer authenticator cannot be scheduled against the gas budget",
+                                false,
+                            );
                         }
+                        Self::skip_current(
+                            &mut best_txs,
+                            tx.sender(),
+                            tx.nonce(),
+                            replay_independent,
+                        );
                         continue;
                     }
                 },
@@ -1134,11 +1194,44 @@ where
                     tx_hash = ?tx.hash(),
                     "skipping transaction unable to pay gas plus declared coinbase tip"
                 );
-                if tx.eip8130_replay_id().is_none() {
-                    best_txs.mark_invalid(tx.sender(), tx.nonce());
-                } else {
-                    best_txs.mark_current_committed();
+                if has_validity_predicates {
+                    self.emit_validity_rejection(
+                        tx_hash,
+                        validity_consideration_index,
+                        "unaffordable_coinbase_tip",
+                        "sender and gas payer cannot cover worst-case gas plus the declared coinbase tip",
+                        false,
+                    );
                 }
+                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
+                continue;
+            }
+
+            let (simulated, admission) =
+                resource_metering.check_simulated_usage(&tx_hash, &info.resource_metering_usage);
+            if admission.should_exclude() {
+                resource_throttled += 1;
+                // Transaction-scope excludes cannot fit any block and are collected for
+                // permanent pool eviction after this scan. Block-scope excludes only skip
+                // the current iterator.
+                if admission.is_permanent() {
+                    info.permanently_rejected_txs.push(tx_hash);
+                }
+                trace!(
+                    target: "payload_builder",
+                    tx_hash = %tx_hash,
+                    "skipping transaction excluded by simulated resource metering"
+                );
+                if has_validity_predicates {
+                    self.emit_validity_rejection(
+                        tx_hash,
+                        validity_consideration_index,
+                        "resource_metering_excluded",
+                        "simulated resource usage exceeds the resource metering budget",
+                        admission.is_permanent(),
+                    );
+                }
+                Self::skip_current(&mut best_txs, tx.sender(), tx.nonce(), replay_independent);
                 continue;
             }
 
@@ -1164,38 +1257,124 @@ where
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
                 // the iterator before we can continue
-                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                if has_validity_predicates {
+                    self.emit_validity_rejection(
+                        tx_hash,
+                        validity_consideration_index,
+                        "block_limits_exceeded",
+                        "transaction does not fit the remaining block gas or DA budget",
+                        false,
+                    );
+                }
+                Self::skip_current(&mut best_txs, tx.signer(), tx.nonce(), replay_independent);
                 continue;
             }
 
             // A sequencer's block should never contain blob or deposit transactions from the pool.
             if tx.is_eip4844() || tx.is_deposit() {
-                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                if has_validity_predicates {
+                    self.emit_validity_rejection(
+                        tx_hash,
+                        validity_consideration_index,
+                        "sequencer_transaction",
+                        "blob and deposit transactions are not built from the pool",
+                        true,
+                    );
+                }
+                Self::skip_current(&mut best_txs, tx.signer(), tx.nonce(), replay_independent);
                 continue;
             }
 
+            if self.cancel.is_cancelled() {
+                return Ok(Some(()));
+            }
+
             let mut state_change_effects = StateChangeEffects::default();
-            let gas_output = match builder.execute_transaction_with_result_closure(
+            let mut pending_resource_usage = None;
+            let mut executed_decision = None;
+            let gas_output = match builder.execute_transaction_with_commit_condition(
                 tx.clone(),
                 |result| {
-                    if !predicate_index.is_empty() {
-                        state_change_effects =
-                            predicate_index.affected_by_state(&result.result().state);
-                        predicate_bucket_wakeups += state_change_effects.woken_buckets as u64;
+                    let result_and_state = result.result();
+                    let decision = resource_metering.check_executed_usage(
+                        &tx_hash,
+                        result_and_state.result.tx_gas_used(),
+                        &result_and_state.state,
+                        simulated.as_ref(),
+                        &info.resource_metering_usage,
+                    );
+                    if decision.should_exclude() {
+                        executed_decision = Some(decision);
+                        CommitChanges::No
+                    } else {
+                        pending_resource_usage = decision.committed_usage();
+                        if !predicate_index.is_empty() {
+                            state_change_effects =
+                                predicate_index.affected_by_state(&result_and_state.state);
+                            predicate_bucket_wakeups += state_change_effects.woken_buckets as u64;
+                        }
+                        CommitChanges::Yes
                     }
                 },
             ) {
-                Ok(gas_output) => gas_output,
+                Ok(Some(gas_output)) => gas_output,
+                Ok(None) => {
+                    resource_throttled += 1;
+                    if executed_decision.as_ref().is_some_and(|decision| decision.is_permanent()) {
+                        info.permanently_rejected_txs.push(tx_hash);
+                    }
+                    trace!(
+                        target: "payload_builder",
+                        tx_hash = %tx_hash,
+                        "skipping transaction excluded by resource metering"
+                    );
+                    if has_validity_predicates {
+                        self.emit_validity_rejection(
+                            tx_hash,
+                            validity_consideration_index,
+                            "resource_metering_excluded",
+                            "executed resource usage exceeds the resource metering budget",
+                            executed_decision
+                                .as_ref()
+                                .is_some_and(|decision| decision.is_permanent()),
+                        );
+                    }
+                    Self::skip_current(&mut best_txs, tx.signer(), tx.nonce(), replay_independent);
+                    continue;
+                }
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                     error,
                     ..
                 })) => {
                     if error.is_nonce_too_low() {
                         trace!(target: "payload_builder", %error, ?tx, "skipping nonce too low transaction");
+                        if has_validity_predicates {
+                            self.emit_validity_rejection(
+                                tx_hash,
+                                validity_consideration_index,
+                                "nonce_too_low",
+                                "transaction nonce is below the sender's current nonce",
+                                true,
+                            );
+                        }
                         best_txs.mark_current_committed();
                     } else {
                         trace!(target: "payload_builder", %error, ?tx, "skipping invalid transaction and its descendants");
-                        best_txs.mark_invalid(tx.signer(), tx.nonce());
+                        if has_validity_predicates {
+                            self.emit_validity_rejection(
+                                tx_hash,
+                                validity_consideration_index,
+                                "invalid_transaction",
+                                "transaction failed EVM validation",
+                                false,
+                            );
+                        }
+                        Self::skip_current(
+                            &mut best_txs,
+                            tx.signer(),
+                            tx.nonce(),
+                            replay_independent,
+                        );
                     }
                     continue;
                 }
@@ -1206,6 +1385,13 @@ where
 
             info.cumulative_gas_used += gas_output.tx_gas_used();
             info.cumulative_da_bytes_used += tx_da_size;
+            if let Some(usage) = pending_resource_usage {
+                resource_metering.apply_accounted_usage(
+                    &tx_hash,
+                    &usage,
+                    &mut info.resource_metering_usage,
+                );
+            }
 
             best_txs.mark_current_committed();
             let predicates_need_rescan = !state_change_effects.affected_transactions.is_empty();
@@ -1248,12 +1434,14 @@ where
                         predicate_index.remove(parked_hash);
                         best_txs.promote(parked_hash);
                     }
-                    Ok(ValidityPredicateEvaluation::Unsatisfied { blocker, .. }) => {
+                    Ok(ValidityPredicateEvaluation::Unsatisfied { blocker_index, .. }) => {
                         ValidityMetrics::validity_predicate_evaluations_total(
                             "rescan_not_satisfied",
                         )
                         .increment(1);
-                        predicate_index.reindex(parked_hash, blocker);
+                        let predicate =
+                            parked_transaction.validity_predicates()[blocker_index].clone();
+                        predicate_index.reindex(parked_hash, predicate);
                     }
                     Err(error) => {
                         ValidityMetrics::validity_predicate_evaluations_total("rescan_read_error")
@@ -1279,7 +1467,13 @@ where
                 .expect("fee is always valid; execution succeeded");
             let gas_used = gas_output.tx_gas_used();
             info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
-            info.inclusion.record(has_validity_predicates, gas_used, miner_fee, base_fee);
+            info.inclusion.record(
+                has_validity_predicates,
+                gas_used,
+                miner_fee,
+                base_fee,
+                coinbase_tip.unwrap_or_default(),
+            );
             BuilderMetrics::record_tip_per_gas(
                 has_validity_predicates,
                 has_coinbase_tip,
@@ -1311,6 +1505,14 @@ where
             predicate_bucket_wakeups,
             &predicate_index,
         );
+        if resource_throttled > 0 {
+            info!(
+                target: "payload_builder",
+                throttled = resource_throttled,
+                permanently_rejected = info.permanently_rejected_txs.len(),
+                "resource metering throttled transactions during payload scan"
+            );
+        }
 
         // A cancellation that raced the finalization break (or an empty iterator) must still
         // win, so re-check it before the finalized payload is assembled. Gated on Denim so
@@ -1328,13 +1530,15 @@ mod tests {
     use std::{
         collections::{HashMap, VecDeque},
         mem::ManuallyDrop,
-        sync::Arc,
+        sync::{Arc, Mutex},
         time::Duration,
     };
 
     use alloy_consensus::{Header, SignableTransaction, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Address, B256, Signature, StorageKey, TxKind, U256};
+    use alloy_evm::Evm;
+    use alloy_primitives::{Address, B256, Signature, StorageKey, TxHash, TxKind, U256};
+    use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
     use base_common_chains::BaseUpgrade;
     use base_common_consensus::{BasePrimitives, BaseTxEnvelope, Predeploys};
     use base_common_evm::BaseTime;
@@ -1345,12 +1549,14 @@ mod tests {
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
     use reth_chainspec::ChainSpec;
     use reth_ethereum_forks::ForkCondition;
+    use reth_evm::execute::BlockBuilder;
     use reth_payload_builder::PayloadId;
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
-    use reth_primitives_traits::{Account, SealedHeader, SignedTransaction};
+    use reth_primitives_traits::{Account, SealedHeader, SignedTransaction, WithEncoded};
     use reth_provider::noop::NoopProvider;
     use reth_revm::{
-        cancelled::CancelOnDrop, database::StateProviderDatabase, test_utils::StateProviderTest,
+        cancelled::CancelOnDrop, database::StateProviderDatabase, db::State,
+        test_utils::StateProviderTest,
     };
     use reth_transaction_pool::PoolTransaction;
     use reth_trie_common::{HashedPostState, updates::TrieUpdates};
@@ -1360,11 +1566,13 @@ mod tests {
             PayloadStateRootHandle, StateRootComputeOutcome, StateRootSink, StateRootUpdateStream,
         },
     };
-    use revm::state::EvmState;
+    use revm::{Database, state::EvmState};
 
     use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
     use crate::{
-        BasePayloadBuilderAttributes, NonParkablePayloadTransactions, ParkablePayloadTransactions,
+        BasePayloadBuilderAttributes, MeteringProvider, NoopMeteringProvider,
+        ParkablePayloadTransactions, ResourceMeteringConfig, ResourceMeteringDimension,
+        ResourceMeteringOperation, ResourceMeteringSchedule, SharedMeteringProvider,
         config::BaseBuilderConfig, payload::EthPayloadBuilderAttributes,
     };
 
@@ -1492,14 +1700,10 @@ mod tests {
         transactions: Txs,
     ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>
     where
-        Txs: PayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
+        Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
     {
         let funded_sender = pool_transaction(0).sender();
-        build_parkable_pool_payload(
-            ctx,
-            NonParkablePayloadTransactions::new(transactions),
-            &[funded_sender],
-        )
+        build_parkable_pool_payload(ctx, transactions, &[funded_sender])
     }
 
     fn build_parkable_pool_payload<Txs>(
@@ -1531,6 +1735,53 @@ mod tests {
             );
         }
         Builder::new(|_| transactions)
+            .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle()), ctx)
+            .expect("payload must build")
+    }
+
+    fn build_pool_payload_with<Txs>(
+        ctx: BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec>,
+        transactions: Txs,
+        evict: impl FnOnce(Vec<TxHash>),
+    ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>
+    where
+        Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
+    {
+        let funded_sender = pool_transaction(0).sender();
+        build_parkable_pool_payload_with(ctx, transactions, &[funded_sender], evict)
+    }
+
+    fn build_parkable_pool_payload_with<Txs>(
+        ctx: BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec>,
+        transactions: Txs,
+        funded_senders: &[Address],
+        evict: impl FnOnce(Vec<TxHash>),
+    ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>
+    where
+        Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
+    {
+        let mut storage = HashMap::default();
+        storage.insert(
+            StorageKey::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
+            U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()),
+        );
+        let mut provider = StateProviderTest::default();
+        provider.insert_account(
+            Predeploys::BASE_TIME,
+            Account::default(),
+            Some(BaseTime::proxy_bytecode()),
+            storage,
+        );
+        for sender in funded_senders {
+            provider.insert_account(
+                *sender,
+                Account { balance: U256::MAX, ..Default::default() },
+                None,
+                HashMap::default(),
+            );
+        }
+        Builder::new(|_| transactions)
+            .with_permanent_eviction(evict)
             .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle()), ctx)
             .expect("payload must build")
     }
@@ -1567,16 +1818,36 @@ mod tests {
         ready: VecDeque<BasePooledTransaction>,
         parked: HashMap<B256, BasePooledTransaction>,
         current: Option<BasePooledTransaction>,
+        /// Whether promoted transactions are yielded before the remaining queued ones, as when
+        /// they outbid them.
+        promoted_first: bool,
+        invalid: Arc<Mutex<Vec<(Address, u64)>>>,
     }
 
     impl TestParkableTransactions {
         fn new(transactions: Vec<BasePooledTransaction>) -> Self {
+            Self::recording(transactions, Arc::default())
+        }
+
+        /// Records every `(sender, nonce)` the builder marks invalid into `invalid`.
+        fn recording(
+            transactions: Vec<BasePooledTransaction>,
+            invalid: Arc<Mutex<Vec<(Address, u64)>>>,
+        ) -> Self {
             Self {
                 queued: transactions.into(),
                 ready: VecDeque::new(),
                 parked: HashMap::default(),
                 current: None,
+                promoted_first: true,
+                invalid,
             }
+        }
+
+        /// Yields promoted transactions only after every queued one, so queued transactions can
+        /// change state between a promotion and the re-yield.
+        fn with_promoted_last(transactions: Vec<BasePooledTransaction>) -> Self {
+            Self { promoted_first: false, ..Self::new(transactions) }
         }
     }
 
@@ -1585,23 +1856,26 @@ mod tests {
 
         fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
             assert!(self.current.is_none(), "current transaction was not lifecycle-managed");
-            let transaction = self.ready.pop_front().or_else(|| self.queued.pop_front())?;
+            let transaction = if self.promoted_first {
+                self.ready.pop_front().or_else(|| self.queued.pop_front())
+            } else {
+                self.queued.pop_front().or_else(|| self.ready.pop_front())
+            }?;
             self.current = Some(transaction.clone());
             Some(transaction)
         }
 
-        fn mark_invalid(&mut self, _sender: Address, _nonce: u64) {
+        fn mark_invalid(&mut self, sender: Address, nonce: u64) {
             self.current = None;
+            self.invalid.lock().unwrap().push((sender, nonce));
         }
     }
 
     impl ParkablePayloadTransactions for TestParkableTransactions {
-        fn park_current(&mut self) -> bool {
-            let Some(transaction) = self.current.take() else {
-                return false;
-            };
-            self.parked.insert(*transaction.hash(), transaction);
-            true
+        fn park_current(&mut self) {
+            if let Some(transaction) = self.current.take() {
+                self.parked.insert(*transaction.hash(), transaction);
+            }
         }
 
         fn mark_current_committed(&mut self) {
@@ -1622,7 +1896,7 @@ mod tests {
     }
 
     struct FinalizeAfterFirstTransaction {
-        transactions: std::vec::IntoIter<BasePooledTransaction>,
+        transactions: TestParkableTransactions,
         calls: usize,
         // Models the resolver retaining its clone until the finalized payload is returned.
         cancel: ManuallyDrop<CancelOnDrop>,
@@ -1636,10 +1910,30 @@ mod tests {
             if self.calls == 2 {
                 self.cancel.request_finalization();
             }
-            self.transactions.next()
+            self.transactions.next(())
         }
 
-        fn mark_invalid(&mut self, _sender: Address, _nonce: u64) {}
+        fn mark_invalid(&mut self, sender: Address, nonce: u64) {
+            self.transactions.mark_invalid(sender, nonce);
+        }
+    }
+
+    impl ParkablePayloadTransactions for FinalizeAfterFirstTransaction {
+        fn park_current(&mut self) {
+            self.transactions.park_current();
+        }
+
+        fn mark_current_committed(&mut self) {
+            self.transactions.mark_current_committed();
+        }
+
+        fn promote(&mut self, transaction_hash: B256) -> bool {
+            self.transactions.promote(transaction_hash)
+        }
+
+        fn discard_parked(&mut self, transaction_hash: B256) -> bool {
+            self.transactions.discard_parked(transaction_hash)
+        }
     }
 
     #[test]
@@ -1647,7 +1941,7 @@ mod tests {
         let ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
         ctx.cancel.request_finalization();
         let transactions = FinalizeAfterFirstTransaction {
-            transactions: vec![pool_transaction(0)].into_iter(),
+            transactions: TestParkableTransactions::new(vec![pool_transaction(0)]),
             calls: 0,
             cancel: ManuallyDrop::new(ctx.cancel.clone()),
         };
@@ -1662,7 +1956,10 @@ mod tests {
     fn denim_finalization_preserves_completed_pool_transactions() {
         let ctx = pool_payload_context(DENIM_TIMESTAMP);
         let transactions = FinalizeAfterFirstTransaction {
-            transactions: vec![pool_transaction(0), pool_transaction(1)].into_iter(),
+            transactions: TestParkableTransactions::new(vec![
+                pool_transaction(0),
+                pool_transaction(1),
+            ]),
             calls: 0,
             cancel: ManuallyDrop::new(ctx.cancel.clone()),
         };
@@ -1700,15 +1997,86 @@ mod tests {
             .into_iter()
             .filter(|event| event.tx_hash == Some(transaction_hash))
             .collect::<Vec<_>>();
-        assert!(transaction_events.iter().any(|event| {
-            event.event_type == TransactionEventType::BuilderConsidered
-                && event.data["builder_mode"] == "native"
-        }));
-        assert!(
-            transaction_events
-                .iter()
-                .any(|event| event.event_type == TransactionEventType::BuilderAccepted)
+        let event_types =
+            transaction_events.iter().map(|event| event.event_type).collect::<Vec<_>>();
+        assert_eq!(event_types, [TransactionEventType::BuilderAccepted]);
+        assert_eq!(transaction_events[0].data["builder_mode"], "native");
+    }
+
+    #[test]
+    fn native_builder_rejects_validity_candidate_that_fails_after_its_predicates_match() {
+        let event_capture = TransactionEventCapture::install();
+        // The funded sender is at nonce 0, so nonce 5 fails EVM validation after the predicate
+        // has matched.
+        let transaction =
+            pool_transaction(5).with_validity_predicates(vec![ValidityPredicate::BlockNumber {
+                op: ValidityOperator::Equal,
+                value: U256::ONE,
+            }]);
+        let sender = transaction.sender();
+        let transaction_hash = *transaction.hash();
+
+        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
+            pool_payload_context(DENIM_TIMESTAMP),
+            TestParkableTransactions::new(vec![transaction]),
+            &[sender],
+        ) else {
+            panic!("Denim payload must freeze")
+        };
+
+        assert!(payload.block().body().transactions.is_empty());
+        let rejections = event_capture
+            .events()
+            .into_iter()
+            .filter(|event| event.tx_hash == Some(transaction_hash))
+            .map(|event| (event.event_type, event.data["rejection_reason"].clone()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rejections,
+            [(TransactionEventType::BuilderRejected, "invalid_transaction".into())]
         );
+    }
+
+    /// A promoted transaction whose predicate is broken again before it is re-yielded is parked a
+    /// second time for the same reason, which the journal records once.
+    #[test]
+    fn native_builder_reports_a_repeated_deferral_once() {
+        let event_capture = TransactionEventCapture::install();
+        // Event capture is process-global, so these transactions must not share hashes with other
+        // tests.
+        let watched_address = Address::repeat_byte(0x46);
+        let gated = pool_transaction_to(0, Address::repeat_byte(0x57), U256::ZERO)
+            .with_validity_predicates(vec![ValidityPredicate::Balance {
+                address: watched_address,
+                op: ValidityOperator::Equal,
+                value: U256::ONE,
+            }]);
+        // The first trigger satisfies the predicate and promotes `gated`; the second breaks it
+        // again before `gated` is re-yielded.
+        let satisfy = pool_transaction_to(0, watched_address, U256::ONE);
+        let unsatisfy = pool_transaction_to(0, watched_address, U256::from(2));
+        let funded_senders = [gated.sender(), satisfy.sender(), unsatisfy.sender()];
+        let gated_hash = *gated.hash();
+
+        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
+            pool_payload_context(DENIM_TIMESTAMP),
+            TestParkableTransactions::with_promoted_last(vec![gated, satisfy, unsatisfy]),
+            &funded_senders,
+        ) else {
+            panic!("Denim payload must freeze")
+        };
+
+        assert!(
+            !payload.block().body().transactions.iter().any(|tx| *tx.tx_hash() == gated_hash),
+            "gated transaction must stay parked"
+        );
+        let gated_events = event_capture
+            .events()
+            .into_iter()
+            .filter(|event| event.tx_hash == Some(gated_hash))
+            .map(|event| event.event_type)
+            .collect::<Vec<_>>();
+        assert_eq!(gated_events, [TransactionEventType::BuilderDeferred]);
     }
 
     #[test]
@@ -1747,6 +2115,37 @@ mod tests {
         };
 
         assert!(payload.block().body().transactions.is_empty());
+    }
+
+    #[test]
+    fn native_builder_promotes_transaction_after_watched_nonce_advances() {
+        let trigger = pool_transaction_to(0, Address::repeat_byte(0x64), U256::ZERO);
+        let gated = pool_transaction_to(0, Address::repeat_byte(0x65), U256::ZERO)
+            .with_validity_predicates(vec![ValidityPredicate::Nonce {
+                address: trigger.sender(),
+                op: ValidityOperator::Equal,
+                value: U256::ONE,
+            }]);
+        let funded_senders = [gated.sender(), trigger.sender()];
+        let gated_hash = *gated.hash();
+        let trigger_hash = *trigger.hash();
+
+        let BuildOutcomeKind::Freeze(payload) = build_parkable_pool_payload(
+            pool_payload_context(DENIM_TIMESTAMP),
+            TestParkableTransactions::new(vec![gated, trigger]),
+            &funded_senders,
+        ) else {
+            panic!("Denim payload must freeze")
+        };
+
+        let included_hashes = payload
+            .block()
+            .body()
+            .transactions
+            .iter()
+            .map(|transaction| *transaction.tx_hash())
+            .collect::<Vec<_>>();
+        assert_eq!(included_hashes, vec![trigger_hash, gated_hash]);
     }
 
     #[test]
@@ -1829,5 +2228,650 @@ mod tests {
             build_pool_payload(ctx, NoopPayloadTransactions::<BasePooledTransaction>::default()),
             BuildOutcomeKind::Cancelled
         ));
+    }
+
+    #[test]
+    fn cancelled_ctx_stops_witness() {
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        ctx.config.attributes.transactions = vec![sequencer_attribute_tx(&pool_transaction(0))];
+        drop(ctx.cancel.clone());
+
+        let err = Builder::new(|_| NoopPayloadTransactions::<BasePooledTransaction>::default())
+            .witness(test_state_provider(), NoopProvider::default(), &ctx)
+            .unwrap_err();
+        assert!(err.to_string().contains("cancelled"), "{err}");
+    }
+
+    #[derive(Debug)]
+    struct MapProvider(Mutex<HashMap<TxHash, MeterBundleResponse>>);
+
+    impl MeteringProvider for MapProvider {
+        fn get(&self, tx_hash: &TxHash) -> Option<MeterBundleResponse> {
+            self.0.lock().unwrap().get(tx_hash).cloned()
+        }
+    }
+
+    fn cpu_schedule(
+        block_limit: u64,
+        transaction_limit: Option<u64>,
+        dry_run: bool,
+    ) -> ResourceMeteringSchedule {
+        ResourceMeteringSchedule::new(vec![ResourceMeteringDimension {
+            name: "cpu".to_string(),
+            block_limit,
+            transaction_limit: transaction_limit.unwrap_or(block_limit),
+            base_gas_weight: 1,
+            operations: Vec::new(),
+            dry_run,
+        }])
+    }
+
+    fn metering_config(
+        schedule: ResourceMeteringSchedule,
+        provider: SharedMeteringProvider,
+    ) -> ResourceMeteringConfig {
+        ResourceMeteringConfig {
+            enabled: true,
+            schedule: Arc::new(schedule.compile().unwrap()),
+            provider,
+        }
+    }
+
+    fn meter_for(tx_hash: TxHash, gas_used: u64) -> MeterBundleResponse {
+        MeterBundleResponse {
+            results: vec![TransactionResult {
+                coinbase_diff: Default::default(),
+                eth_sent_to_coinbase: Default::default(),
+                from_address: Default::default(),
+                gas_fees: Default::default(),
+                gas_price: Default::default(),
+                gas_used,
+                to_address: None,
+                tx_hash,
+                value: Default::default(),
+                execution_time_us: 0,
+                opcode_gas: Vec::new(),
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn overflowing_schedule() -> ResourceMeteringSchedule {
+        ResourceMeteringSchedule::new(vec![ResourceMeteringDimension {
+            name: "cpu".to_string(),
+            block_limit: 1,
+            transaction_limit: 1,
+            base_gas_weight: u64::MAX,
+            operations: vec![ResourceMeteringOperation {
+                name: "SSTORE".to_string(),
+                gas_used_weight: u64::MAX,
+                count_cost: 0,
+            }],
+            dry_run: false,
+        }])
+    }
+
+    fn overflowing_meter(tx_hash: TxHash) -> MeterBundleResponse {
+        MeterBundleResponse {
+            results: vec![TransactionResult {
+                coinbase_diff: Default::default(),
+                eth_sent_to_coinbase: Default::default(),
+                from_address: Default::default(),
+                gas_fees: Default::default(),
+                gas_price: Default::default(),
+                gas_used: u64::MAX,
+                to_address: None,
+                tx_hash,
+                value: Default::default(),
+                execution_time_us: 0,
+                opcode_gas: vec![OpcodeGas {
+                    contract_address: Default::default(),
+                    opcode: "SSTORE".to_string(),
+                    count: 1,
+                    gas_used: u64::MAX,
+                }],
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn pool_scan_outcome(
+        resource_metering: ResourceMeteringConfig,
+        tx: BasePooledTransaction,
+        evicted: Arc<Mutex<Vec<TxHash>>>,
+        invalid: Arc<Mutex<Vec<(Address, u64)>>>,
+    ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>> {
+        pool_scan_outcomes(resource_metering, vec![tx], evicted, invalid)
+    }
+
+    fn pool_scan_outcomes(
+        resource_metering: ResourceMeteringConfig,
+        txs: Vec<BasePooledTransaction>,
+        evicted: Arc<Mutex<Vec<TxHash>>>,
+        invalid: Arc<Mutex<Vec<(Address, u64)>>>,
+    ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>> {
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        ctx.builder_config.resource_metering = resource_metering;
+        let transactions = TestParkableTransactions::recording(txs, invalid);
+        build_pool_payload_with(ctx, transactions, move |hashes| {
+            evicted.lock().unwrap().extend(hashes);
+        })
+    }
+
+    fn included_tx_count(
+        outcome: BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>,
+    ) -> usize {
+        match outcome {
+            BuildOutcomeKind::Better { payload } | BuildOutcomeKind::Freeze(payload) => {
+                payload.block().body().transactions.len()
+            }
+            other => panic!("expected a built payload, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn predicted_transaction_scope_exclude_evicts_from_pool() {
+        let tx = pool_transaction(0);
+        let tx_hash = *tx.hash();
+        let provider: SharedMeteringProvider =
+            Arc::new(MapProvider(Mutex::new(HashMap::from([(
+                tx_hash,
+                meter_for(tx_hash, 21_000),
+            )]))));
+        let evicted = Arc::new(Mutex::new(Vec::new()));
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+        let outcome = pool_scan_outcome(
+            metering_config(cpu_schedule(1_000_000, Some(100), false), provider),
+            tx,
+            Arc::clone(&evicted),
+            Arc::clone(&invalid),
+        );
+
+        assert_eq!(included_tx_count(outcome), 0);
+        assert_eq!(*evicted.lock().unwrap(), vec![tx_hash]);
+        assert_eq!(invalid.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn executed_transaction_scope_exclude_evicts_from_pool() {
+        let tx = pool_transaction(0);
+        let tx_hash = *tx.hash();
+        let evicted = Arc::new(Mutex::new(Vec::new()));
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+        let outcome = pool_scan_outcome(
+            metering_config(
+                cpu_schedule(1_000_000, Some(100), false),
+                Arc::new(NoopMeteringProvider),
+            ),
+            tx,
+            Arc::clone(&evicted),
+            Arc::clone(&invalid),
+        );
+
+        assert_eq!(included_tx_count(outcome), 0);
+        assert_eq!(*evicted.lock().unwrap(), vec![tx_hash]);
+        assert_eq!(invalid.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn block_scope_exclude_skips_scan_without_pool_eviction() {
+        let first = pool_transaction(0);
+        let second = pool_transaction(1);
+        let evicted = Arc::new(Mutex::new(Vec::new()));
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+        // Own cost (~21_000) is ≤ block_limit so an omitted transaction limit still
+        // classifies the second tx as block-scope after the first fills the budget.
+        let outcome = pool_scan_outcomes(
+            metering_config(cpu_schedule(30_000, None, false), Arc::new(NoopMeteringProvider)),
+            vec![first, second],
+            Arc::clone(&evicted),
+            Arc::clone(&invalid),
+        );
+
+        assert_eq!(included_tx_count(outcome), 1);
+        assert!(evicted.lock().unwrap().is_empty());
+        assert_eq!(invalid.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn predicted_block_scope_exclude_skips_scan_without_pool_eviction() {
+        let first = pool_transaction(0);
+        let second = pool_transaction(1);
+        let first_hash = *first.hash();
+        let second_hash = *second.hash();
+        let provider: SharedMeteringProvider = Arc::new(MapProvider(Mutex::new(HashMap::from([
+            (first_hash, meter_for(first_hash, 21_000)),
+            (second_hash, meter_for(second_hash, 21_000)),
+        ]))));
+        let evicted = Arc::new(Mutex::new(Vec::new()));
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+        let outcome = pool_scan_outcomes(
+            metering_config(cpu_schedule(30_000, None, false), provider),
+            vec![first, second],
+            Arc::clone(&evicted),
+            Arc::clone(&invalid),
+        );
+
+        assert_eq!(included_tx_count(outcome), 1);
+        assert!(evicted.lock().unwrap().is_empty());
+        assert_eq!(invalid.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn dry_run_transaction_scope_does_not_evict() {
+        let tx = pool_transaction(0);
+        let tx_hash = *tx.hash();
+        let provider: SharedMeteringProvider =
+            Arc::new(MapProvider(Mutex::new(HashMap::from([(
+                tx_hash,
+                meter_for(tx_hash, 21_000),
+            )]))));
+        let evicted = Arc::new(Mutex::new(Vec::new()));
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+        let outcome = pool_scan_outcome(
+            metering_config(cpu_schedule(1_000_000, Some(100), true), provider),
+            tx,
+            Arc::clone(&evicted),
+            Arc::clone(&invalid),
+        );
+
+        assert_eq!(included_tx_count(outcome), 1);
+        assert!(evicted.lock().unwrap().is_empty());
+        assert!(invalid.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn calculation_failure_does_not_evict() {
+        let tx = pool_transaction(0);
+        let tx_hash = *tx.hash();
+        let provider: SharedMeteringProvider =
+            Arc::new(MapProvider(Mutex::new(HashMap::from([(
+                tx_hash,
+                overflowing_meter(tx_hash),
+            )]))));
+        let evicted = Arc::new(Mutex::new(Vec::new()));
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+        let outcome = pool_scan_outcome(
+            metering_config(overflowing_schedule(), provider),
+            tx,
+            Arc::clone(&evicted),
+            Arc::clone(&invalid),
+        );
+
+        assert_eq!(included_tx_count(outcome), 1);
+        assert!(evicted.lock().unwrap().is_empty());
+        assert!(invalid.lock().unwrap().is_empty());
+    }
+
+    fn pool_scan_with_ctx(
+        ctx: BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec>,
+        tx: BasePooledTransaction,
+        evicted: Arc<Mutex<Vec<TxHash>>>,
+        invalid: Arc<Mutex<Vec<(Address, u64)>>>,
+    ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>> {
+        let transactions = TestParkableTransactions::recording(vec![tx], invalid);
+        build_pool_payload_with(ctx, transactions, move |hashes| {
+            evicted.lock().unwrap().extend(hashes);
+        })
+    }
+
+    #[test]
+    fn rejected_hash_skipped_on_subsequent_job_even_if_in_pool() {
+        let tx = pool_transaction(0);
+        let tx_hash = *tx.hash();
+        let provider: SharedMeteringProvider =
+            Arc::new(MapProvider(Mutex::new(HashMap::from([(
+                tx_hash,
+                meter_for(tx_hash, 21_000),
+            )]))));
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        ctx.builder_config.resource_metering =
+            metering_config(cpu_schedule(1_000_000, Some(100), false), provider);
+        let cache = ctx.builder_config.rejection_cache.clone();
+
+        let evicted = Arc::new(Mutex::new(Vec::new()));
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+        let outcome =
+            pool_scan_with_ctx(ctx, tx.clone(), Arc::clone(&evicted), Arc::clone(&invalid));
+
+        assert_eq!(included_tx_count(outcome), 0);
+        assert_eq!(*evicted.lock().unwrap(), vec![tx_hash]);
+        assert!(cache.is_rejected(&tx_hash));
+
+        // Later job: the tx is in the iterator again (P2P re-insert). Metering is
+        // fail-open without a sample, so a skip must come from the shared cache.
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        ctx.builder_config.rejection_cache = cache;
+        ctx.builder_config.resource_metering = metering_config(
+            cpu_schedule(1_000_000, Some(100), false),
+            Arc::new(NoopMeteringProvider),
+        );
+        let evicted = Arc::new(Mutex::new(Vec::new()));
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+        let outcome = pool_scan_with_ctx(ctx, tx, Arc::clone(&evicted), Arc::clone(&invalid));
+
+        assert_eq!(included_tx_count(outcome), 0);
+        assert!(evicted.lock().unwrap().is_empty());
+        assert_eq!(invalid.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn block_scope_exclude_is_not_cached() {
+        let first = pool_transaction(0);
+        let second = pool_transaction(1);
+        let second_hash = *second.hash();
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        ctx.builder_config.resource_metering =
+            metering_config(cpu_schedule(30_000, None, false), Arc::new(NoopMeteringProvider));
+        let cache = ctx.builder_config.rejection_cache.clone();
+
+        let evicted = Arc::new(Mutex::new(Vec::new()));
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+        let transactions = TestParkableTransactions::recording(vec![first, second], invalid);
+        let outcome = build_pool_payload_with(ctx, transactions, {
+            let evicted = Arc::clone(&evicted);
+            move |hashes| {
+                evicted.lock().unwrap().extend(hashes);
+            }
+        });
+
+        assert_eq!(included_tx_count(outcome), 1);
+        assert!(evicted.lock().unwrap().is_empty());
+        assert!(!cache.is_rejected(&second_hash));
+    }
+
+    #[test]
+    fn dry_run_transaction_scope_is_not_cached() {
+        let tx = pool_transaction(0);
+        let tx_hash = *tx.hash();
+        let provider: SharedMeteringProvider =
+            Arc::new(MapProvider(Mutex::new(HashMap::from([(
+                tx_hash,
+                meter_for(tx_hash, 21_000),
+            )]))));
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        ctx.builder_config.resource_metering =
+            metering_config(cpu_schedule(1_000_000, Some(100), true), provider);
+        let cache = ctx.builder_config.rejection_cache.clone();
+
+        let evicted = Arc::new(Mutex::new(Vec::new()));
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+        let outcome = pool_scan_with_ctx(ctx, tx, Arc::clone(&evicted), Arc::clone(&invalid));
+
+        assert_eq!(included_tx_count(outcome), 1);
+        assert!(evicted.lock().unwrap().is_empty());
+        assert!(!cache.is_rejected(&tx_hash));
+    }
+
+    #[test]
+    fn calculation_failure_is_not_cached() {
+        let tx = pool_transaction(0);
+        let tx_hash = *tx.hash();
+        let provider: SharedMeteringProvider =
+            Arc::new(MapProvider(Mutex::new(HashMap::from([(
+                tx_hash,
+                overflowing_meter(tx_hash),
+            )]))));
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        ctx.builder_config.resource_metering = metering_config(overflowing_schedule(), provider);
+        let cache = ctx.builder_config.rejection_cache.clone();
+
+        let evicted = Arc::new(Mutex::new(Vec::new()));
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+        let outcome = pool_scan_with_ctx(ctx, tx, Arc::clone(&evicted), Arc::clone(&invalid));
+
+        assert_eq!(included_tx_count(outcome), 1);
+        assert!(evicted.lock().unwrap().is_empty());
+        assert!(!cache.is_rejected(&tx_hash));
+    }
+
+    fn sequencer_attribute_tx(tx: &BasePooledTransaction) -> WithEncoded<BaseTxEnvelope> {
+        let encoded = tx.encoded_2718().clone();
+        let envelope = tx.clone_into_consensus().into_inner();
+        WithEncoded::new(encoded, envelope)
+    }
+
+    fn meter_with_sstore(tx_hash: TxHash, gas_used: u64, sstore_count: u64) -> MeterBundleResponse {
+        MeterBundleResponse {
+            results: vec![TransactionResult {
+                coinbase_diff: Default::default(),
+                eth_sent_to_coinbase: Default::default(),
+                from_address: Default::default(),
+                gas_fees: Default::default(),
+                gas_price: Default::default(),
+                gas_used,
+                to_address: None,
+                tx_hash,
+                value: Default::default(),
+                execution_time_us: 0,
+                opcode_gas: vec![OpcodeGas {
+                    contract_address: Default::default(),
+                    opcode: "SSTORE".to_string(),
+                    count: sstore_count,
+                    gas_used: 0,
+                }],
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn cpu_schedule_with_sstore(
+        block_limit: u64,
+        transaction_limit: Option<u64>,
+        sstore_count_cost: u64,
+    ) -> ResourceMeteringSchedule {
+        ResourceMeteringSchedule::new(vec![ResourceMeteringDimension {
+            name: "cpu".to_string(),
+            block_limit,
+            transaction_limit: transaction_limit.unwrap_or(block_limit),
+            base_gas_weight: 1,
+            operations: vec![ResourceMeteringOperation {
+                name: "SSTORE".to_string(),
+                gas_used_weight: 0,
+                count_cost: sstore_count_cost,
+            }],
+            dry_run: false,
+        }])
+    }
+
+    fn test_state_provider() -> StateProviderTest {
+        let mut storage = HashMap::default();
+        storage.insert(
+            StorageKey::from(BaseTime::ADMIN_SLOT.to_be_bytes::<32>()),
+            U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()),
+        );
+        let mut provider = StateProviderTest::default();
+        provider.insert_account(
+            Predeploys::BASE_TIME,
+            Account::default(),
+            Some(BaseTime::proxy_bytecode()),
+            storage,
+        );
+        provider.insert_account(
+            pool_transaction(0).sender(),
+            Account { balance: U256::MAX, ..Default::default() },
+            None,
+            HashMap::default(),
+        );
+        provider
+    }
+
+    #[test]
+    fn sequencer_over_budget_is_included_and_counted_against_mempool() {
+        let sequencer = pool_transaction(0);
+        let mempool = pool_transaction(1);
+        let sequencer_hash = *sequencer.hash();
+        let provider: SharedMeteringProvider =
+            Arc::new(MapProvider(Mutex::new(HashMap::from([(
+                sequencer_hash,
+                meter_with_sstore(sequencer_hash, 21_000, 3),
+            )]))));
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        ctx.config.attributes.transactions = vec![sequencer_attribute_tx(&sequencer)];
+        // Sequencer cost is 21_000 + 3 * 10_000 = 51_000, which exceeds block_limit.
+        // Mempool cost is ~21_000, which would fit an empty block.
+        ctx.builder_config.resource_metering =
+            metering_config(cpu_schedule_with_sstore(40_000, None, 10_000), provider);
+
+        let evicted = Arc::new(Mutex::new(Vec::new()));
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+        let transactions = TestParkableTransactions::recording(vec![mempool], Arc::clone(&invalid));
+        let outcome = build_pool_payload_with(ctx, transactions, {
+            let evicted = Arc::clone(&evicted);
+            move |hashes| {
+                evicted.lock().unwrap().extend(hashes);
+            }
+        });
+
+        let payload = match outcome {
+            BuildOutcomeKind::Better { payload } | BuildOutcomeKind::Freeze(payload) => payload,
+            other => panic!("expected a built payload, got {other:?}"),
+        };
+        let hashes: Vec<_> =
+            payload.block().body().transactions.iter().map(|tx| *tx.tx_hash()).collect();
+        assert_eq!(hashes, vec![sequencer_hash]);
+        assert!(evicted.lock().unwrap().is_empty());
+        assert_eq!(invalid.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn executed_throttle_discards_state_and_usage() {
+        let tx = pool_transaction(0);
+        let sender = tx.sender();
+        let mut ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        ctx.builder_config.resource_metering = metering_config(
+            cpu_schedule(1_000_000, Some(100), false),
+            Arc::new(NoopMeteringProvider),
+        );
+        let provider = test_state_provider();
+        let mut db = State::builder()
+            .with_database(StateProviderDatabase::new(&provider))
+            .with_bundle_update()
+            .build();
+        db.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("L1 block info must load");
+        let mut builder = ctx.block_builder(&mut db).expect("block builder");
+        builder.apply_pre_execution_changes().expect("pre-execution changes");
+        let mut info = ctx.execute_sequencer_transactions(&mut builder).expect("sequencer");
+        let usage_before = info.resource_metering_usage.clone();
+        let nonce_before = builder
+            .evm_mut()
+            .db_mut()
+            .basic(sender)
+            .ok()
+            .flatten()
+            .map(|account| account.nonce)
+            .unwrap_or(0);
+
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+        let transactions = TestParkableTransactions::recording(vec![tx], invalid);
+        ctx.execute_best_transactions(&mut info, &mut builder, transactions).expect("mempool scan");
+        let nonce_after = builder
+            .evm_mut()
+            .db_mut()
+            .basic(sender)
+            .ok()
+            .flatten()
+            .map(|account| account.nonce)
+            .unwrap_or(0);
+
+        assert_eq!(info.resource_metering_usage, usage_before);
+        assert_eq!(nonce_after, nonce_before);
+        assert_eq!(info.cumulative_gas_used, 0);
+        assert!(!info.permanently_rejected_txs.is_empty());
+    }
+
+    #[test]
+    fn check_simulated_usage_missing_meter_data_still_executes() {
+        let tx = pool_transaction(0);
+        let evicted = Arc::new(Mutex::new(Vec::new()));
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+        let outcome = pool_scan_outcome(
+            metering_config(
+                cpu_schedule(1_000_000, Some(1_000_000), false),
+                Arc::new(NoopMeteringProvider),
+            ),
+            tx,
+            Arc::clone(&evicted),
+            Arc::clone(&invalid),
+        );
+
+        assert_eq!(included_tx_count(outcome), 1);
+        assert!(evicted.lock().unwrap().is_empty());
+        assert!(invalid.lock().unwrap().is_empty());
+    }
+
+    /// The build loop wraps its state provider in `InstrumentedStateProvider` *outside*
+    /// `CachedStateProvider`, so the recorded latency is the total cost of a read as the builder
+    /// experiences it. This asserts the consequence: a cache hit and a read-through are both
+    /// timed. Wrapping the other way round would record only the read-through, and a warm cache
+    /// would then look like no improvement rather than a faster one.
+    ///
+    /// Hits are told apart from read-throughs by value: the cache and the provider underneath
+    /// hold different balances for the same address, so the returned balance names the source.
+    /// `CachedStateProvider::new` is lookup-only and never populates on a miss, so the cached
+    /// entry here stands in for one the engine placed there.
+    #[test]
+    fn instrumentation_times_both_cache_hits_and_read_throughs() {
+        const FROM_CACHE: u64 = 1;
+        const FROM_PROVIDER: u64 = 999;
+
+        let cached_address = Address::with_last_byte(0x11);
+        let uncached_address = Address::with_last_byte(0x22);
+
+        let mut provider = reth_revm::test_utils::StateProviderTest::default();
+        for address in [cached_address, uncached_address] {
+            provider.insert_account(
+                address,
+                reth_primitives_traits::Account {
+                    balance: U256::from(FROM_PROVIDER),
+                    ..Default::default()
+                },
+                None,
+                HashMap::default(),
+            );
+        }
+
+        let cache = reth_execution_cache::ExecutionCache::new(1_000_000);
+        cache.insert_account(
+            cached_address,
+            Some(reth_primitives_traits::Account {
+                balance: U256::from(FROM_CACHE),
+                ..Default::default()
+            }),
+        );
+
+        let instrumented = crate::BuilderStateProvider::new(provider, Some(cache), true);
+        let stats = Arc::clone(instrumented.stats().expect("instrumentation enabled"));
+
+        let hit = reth_storage_api::AccountReader::basic_account(
+            instrumented.provider(),
+            &cached_address,
+        )
+        .unwrap()
+        .expect("cached account");
+        assert_eq!(
+            hit.balance,
+            U256::from(FROM_CACHE),
+            "read should have been served by the cache, not the provider underneath"
+        );
+
+        let miss = reth_storage_api::AccountReader::basic_account(
+            instrumented.provider(),
+            &uncached_address,
+        )
+        .unwrap()
+        .expect("uncached account");
+        assert_eq!(
+            miss.balance,
+            U256::from(FROM_PROVIDER),
+            "read should have fallen through to the provider underneath"
+        );
+
+        assert_eq!(
+            stats.total_account_fetches(),
+            2,
+            "the cache hit must be timed as well as the read-through; recording only the \
+             read-through would hide the benefit of a warm cache"
+        );
     }
 }

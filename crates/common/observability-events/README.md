@@ -19,7 +19,9 @@ stdout/stderr and the normal Kubernetes log pipeline.
   can deduplicate retries.
 - **`TransactionEventWriter`**: Non-blocking JSONL append writer with bounded
   queueing, aggregate dropped-event metrics, write-error metrics, and bytes
-  written metrics.
+  written metrics. Event construction, validation, and JSON serialization run on
+  the writer thread, so producers only pay for the enqueue; `try_write_with`
+  also defers building the event itself.
 - **`TransactionEventBuilder`** and **`transaction_event!`**: Helpers for
   producer call sites that use the process-global transaction event writer while
   filling common envelope fields such as `event_time`, `network`, join keys,
@@ -37,9 +39,11 @@ forwarding headers in transaction events. Rust validation rejects a small exact
 denylist; collector pipelines should enforce broader key-pattern filtering before
 ingest.
 
-The writer is best-effort after initialization. Runtime write or flush failures
-are reported through metrics and logs, but they do not block transaction-serving
-paths. Collectors must tolerate and skip malformed JSONL lines because storage
+The writer is best-effort after initialization. Events that fail validation or
+serialization on the writer thread, or that arrive while the queue is full, are
+dropped and counted in the dropped-event metric rather than returned to the
+producer. Runtime write or flush failures are reported through metrics and logs,
+but they do not block transaction-serving paths. Collectors must tolerate and skip malformed JSONL lines because storage
 failures such as disk-full conditions can leave a partial line in the file.
 
 ## License

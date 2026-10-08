@@ -8,10 +8,10 @@ use serde::{Deserialize, Serialize};
 pub struct ShadowBlockRow {
     /// Block number.
     pub number: i64,
-    /// Raw block hash.
-    pub hash: Vec<u8>,
+    /// Block hash, as `0x`-prefixed lowercase hex. See [`crate::ShadowHash`].
+    pub hash: String,
     /// Replacement block hash at this height, absent until that block is canonical.
-    pub canonical_hash: Option<Vec<u8>>,
+    pub canonical_hash: Option<String>,
     /// Creation time.
     pub created_at: DateTime<Utc>,
     /// Database-maintained update time.
@@ -28,8 +28,8 @@ pub struct ShadowBlockRow {
 pub struct ShadowCanonicalRef {
     /// Block number.
     pub number: i64,
-    /// Raw block hash.
-    pub hash: Vec<u8>,
+    /// Block hash, as `0x`-prefixed lowercase hex. See [`crate::ShadowHash`].
+    pub hash: String,
 }
 
 /// A unit of work applied to `shadow_blocks`, carried in the order the `ExEx` produced it.
