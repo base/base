@@ -41,6 +41,10 @@ CATEGORIES = {
 HEADER_RE = re.compile(r"^(?:🔴|🟠|🟡) \*\*(Critical|Major|Minor) · [^*]+\*\* — .+$", re.MULTILINE)
 # Matches the plain label the first version of this pipeline put in front of a comment.
 LEGACY_RE = re.compile(r"^\*\*(Critical|Major|Minor):\*\*\s*(.+)", re.DOTALL)
+# The first line of a bot comment that the bot has marked as resolved (see mark_resolved).
+RESOLVED_PREFIX = "✅ **Resolved by the bot**"
+ORIGINAL_OPEN = "<details>\n<summary>Original comment</summary>\n\n"
+ORIGINAL_CLOSE = "\n\n</details>"
 MAX_TITLE_CHARS = 80
 # GitHub rejects comment bodies over 65,536 characters; stay well under.
 MAX_BODY_CHARS = 30_000
@@ -61,6 +65,30 @@ def clip_words(text: str, limit: int) -> str:
     cut = text[: limit - 1]
     cut = cut[: cut.rfind(" ")] if " " in cut else cut
     return cut.rstrip(" ,;:(") + "…"
+
+
+def is_marked_resolved(body: str) -> bool:
+    """Whether a bot comment has been marked as resolved by `mark_resolved`."""
+    return body.replace(MARKER, "").lstrip().startswith(RESOLVED_PREFIX)
+
+
+def mark_resolved(body: str, reason: str) -> str:
+    """The bot's own comment rewritten to say that the problem is fixed, keeping the original collapsed.
+
+    GitHub does not let the Actions token resolve a review thread, so the thread stays open on GitHub
+    and the comment says what happened instead.
+    """
+    original = body.replace(MARKER, "").strip()
+    return f"{MARKER}\n{RESOLVED_PREFIX} — {clip_words(reason, 300)}\n\n{ORIGINAL_OPEN}{original}{ORIGINAL_CLOSE}"
+
+
+def unmark_resolved(body: str) -> str | None:
+    """The comment as it was before `mark_resolved`, or None if it does not have that shape."""
+    start = body.find(ORIGINAL_OPEN)
+    end = body.rfind(ORIGINAL_CLOSE)
+    if start < 0 or end < start:
+        return None
+    return f"{MARKER}\n{body[start + len(ORIGINAL_OPEN):end].strip()}"
 
 
 def severity_rank(severity: str) -> int:
@@ -116,7 +144,11 @@ class Finding:
 
 def thread_header(thread: dict[str, Any]) -> tuple[str | None, str]:
     """The severity (if known) and one-line description of an existing thread's first comment."""
-    first = thread["comments"][0]["body"].replace(MARKER, "").strip()
+    first = thread["comments"][0]["body"]
+    if is_marked_resolved(first):
+        # Describe the problem, not the note about it: read the original comment kept underneath.
+        first = unmark_resolved(first) or first
+    first = first.replace(MARKER, "").strip()
     match = HEADER_RE.search(first)
     if match:
         return match.group(1).lower(), match.group(0)
@@ -151,18 +183,17 @@ def cell(text: str) -> str:
 
 
 def render_summary(*, overview: str | None, new: list[Finding], outside: list[Finding],
-                   threads: list[dict[str, Any]], reopened: set[str], fixed: set[str], fixed_open: set[str],
-                   failed: list[str], details: str, repo: str, head_sha: str | None,
-                   replace_existing: bool) -> str | None:
+                   threads: list[dict[str, Any]], reopened: set[str], fixed: set[str], failed: list[str],
+                   details: str, repo: str, head_sha: str | None, replace_existing: bool) -> str | None:
     """The top-level summary: headline counts, new findings, and what is still open.
 
     Returns None when there is nothing to report and no earlier summary to replace.
     """
-    # An outdated thread is still open until someone resolves it, so it still counts.
-    settled = fixed | fixed_open
-    carried = [t for t in threads if t["owned_by_bot"] and t["thread_id"] not in settled
-               and (t["thread_id"] in reopened or not t["resolved"])]
-    resolved_now = [t for t in threads if t["thread_id"] in settled]
+    # An outdated thread is still open until someone resolves it, so it still counts. A thread the bot
+    # marked as resolved in an earlier run is done, unless it was reopened in this one.
+    carried = [t for t in threads if t["owned_by_bot"] and t["thread_id"] not in fixed and not t["resolved"]
+               and (t["thread_id"] in reopened or not t["bot_resolved"])]
+    resolved_now = [t for t in threads if t["thread_id"] in fixed]
     if not (new or outside or carried or resolved_now or failed) and not replace_existing:
         return None
     counts: collections.Counter = collections.Counter(f.severity for f in new + outside)
@@ -193,8 +224,7 @@ def render_summary(*, overview: str | None, new: list[Finding], outside: list[Fi
         out += ["", "### Fixed in this push", ""]
         for t in resolved_now:
             link = f" ([thread]({t['url']}))" if t.get("url") else ""
-            note = " — fixed, but still open on GitHub; please resolve it" if t["thread_id"] in fixed_open else ""
-            out.append(f"- ✅ {thread_header(t)[1]}{link}{note}")
+            out.append(f"- ✅ {thread_header(t)[1]}{link}")
 
     if outside:
         out += ["", "### Outside the diff", ""]

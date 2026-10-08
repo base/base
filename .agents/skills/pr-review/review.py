@@ -13,10 +13,9 @@ Stages (each is a prompt file in agents/, see SKILL.md):
 Locally (default) the change is the current branch against the base branch and
 the result is printed; nothing is posted. In CI, `--pr N --post` reads the PR
 from GitHub and applies the decider's actions: new inline comments, replies on
-existing threads, and a replacement summary comment. render.py turns actions into
-Markdown. Resolving or reopening a thread needs a token the review job may not have,
-so with --handoff-file those changes are written to a file and a later job makes them
-with --apply-thread-actions, after re-checking each against GitHub.
+existing threads, edits that mark a fixed thread as resolved (or undo that), and a
+replacement summary comment. render.py turns actions into Markdown. The Actions token
+cannot resolve a review thread, so the bot edits its own comment instead.
 
 Only the Python standard library, the `claude` CLI, and (for PR mode) `gh` are
 required. Agents get read-only tools; this script does all the posting.
@@ -410,7 +409,7 @@ query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
     }
   }
 }
-fragment C on PullRequestReviewComment { url body author { login __typename } }
+fragment C on PullRequestReviewComment { databaseId url body author { login __typename } }
 """
 
 
@@ -428,14 +427,18 @@ def parse_threads(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if not comments:
                 continue
             author = comments[0]["author"] or {}
+            owned = author.get("login") == BOT_LOGIN and author.get("__typename") == "Bot"
             threads.append({
                 "thread_id": node["id"],
                 "url": comments[0]["url"],
+                "comment_id": comments[0].get("databaseId"),
+                "first_body": comments[0]["body"],
                 "resolved": node["isResolved"],
                 "outdated": node["isOutdated"],
                 "path": node["path"],
                 "line": node["line"],
-                "owned_by_bot": author.get("login") == BOT_LOGIN and author.get("__typename") == "Bot",
+                "owned_by_bot": owned,
+                "bot_resolved": owned and render.is_marked_resolved(comments[0]["body"]),
                 "comments": [{"author": (c["author"] or {}).get("login", "ghost"), "body": c["body"]}
                              for c in comments],
             })
@@ -463,9 +466,12 @@ def fetch_threads(number: int, repo: str) -> list[dict[str, Any]]:
         "-f", f"name={name}", "-F", f"number={number}"])))
 
 
+def fetch_head(number: int, repo: str) -> str:
+    """The commit the pull request points at right now."""
+    return json.loads(gh(["pr", "view", str(number), "--repo", repo, "--json", "headRefOid"]))["headRefOid"]
+
+
 def pr_context(number: int, repo: str, post: bool = False) -> Context:
-    def head() -> str:
-        return json.loads(gh(["pr", "view", str(number), "--repo", repo, "--json", "headRefOid"]))["headRefOid"]
 
     # Read the metadata and the diff at one head commit, or comments could target the wrong lines.
     for _ in range(3):
@@ -476,7 +482,7 @@ def pr_context(number: int, repo: str, post: bool = False) -> Context:
         except ReviewError as exc:
             log(f"gh pr diff failed ({exc}); rebuilding the diff from the files API")
             diff = diff_from_files(number, repo)
-        if head() == info["headRefOid"]:
+        if fetch_head(number, repo) == info["headRefOid"]:
             break
     else:
         raise ReviewError("the pull request kept changing while it was being read")
@@ -494,6 +500,11 @@ def pr_context(number: int, repo: str, post: bool = False) -> Context:
         if post:
             raise ReviewError(f"{message}; a newer push has started its own review, so this one stops")
         log(f"warning: {message}; check out the PR head for line numbers to match")
+    if post and git(["status", "--porcelain", "--untracked-files=no"]).strip():
+        # The agents read the working tree, so edits that GitHub does not have would be reviewed
+        # and then posted as if they were in the pull request.
+        raise ReviewError("the working tree has uncommitted changes to tracked files; "
+                          "commit or stash them before posting")
     threads = fetch_threads(number, repo)
     try:
         summaries = gh(["api", f"repos/{repo}/issues/{number}/comments", "--paginate", "--jq",
@@ -607,8 +618,15 @@ def chair_prompt(ctx: Context, triage: dict[str, Any], candidates: list[dict[str
 
 def decide_prompt(ctx: Context, triage: dict[str, Any], reviews: dict[str, dict[str, Any]],
                   failed: dict[str, str]) -> str:
-    threads = [{**t, "comments": [{**c, "body": clip(c["body"], MAX_COMMENT_CHARS)}
-                                  for c in t["comments"]]} for t in ctx.threads]
+    def status(t: dict[str, Any]) -> str:
+        if t["resolved"]:
+            return "resolved on GitHub"
+        return "marked resolved by the bot" if t["bot_resolved"] else "open"
+
+    threads = [{"thread_id": t["thread_id"], "status": status(t), "owned_by_bot": t["owned_by_bot"],
+                "outdated": t["outdated"], "path": t["path"], "line": t["line"],
+                "comments": [{**c, "body": clip(c["body"], MAX_COMMENT_CHARS)} for c in t["comments"]]}
+               for t in ctx.threads]
     failures = "".join(f"- {name}: {why}\n" for name, why in failed.items()) or "none\n"
     return (
         change_block(ctx)
@@ -629,10 +647,9 @@ class Plan:
     new: list[render.Finding] = dataclasses.field(default_factory=list)
     outside: list[render.Finding] = dataclasses.field(default_factory=list)
     replies: list[dict[str, Any]] = dataclasses.field(default_factory=list)
-    unresolves: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    # Threads whose comment is rewritten to say the bot resolved it, and threads whose comment is put back.
     resolves: list[dict[str, Any]] = dataclasses.field(default_factory=list)
-    # Fixed threads where an earlier run already asked a person to resolve, so we do not ask again.
-    asked: list[str] = dataclasses.field(default_factory=list)
+    reopens: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     rejected: list[str] = dataclasses.field(default_factory=list)
     summary: str | None = None
 
@@ -646,10 +663,8 @@ def build_plan(decision: dict[str, Any], threads: list[dict[str, Any]],
     """Check the decider's actions against the diff and threads; demote what cannot be applied."""
     by_id = {t["thread_id"]: t for t in threads}
     plan = Plan()
-    # A bot thread that already asks a person to resolve it is fixed, however the decider treats it now.
-    plan.asked = [t["thread_id"] for t in threads if t["owned_by_bot"] and not t["resolved"]
-                  and any(c["author"] == BOT_LOGIN and RESOLVE_REQUEST in c["body"] for c in t["comments"])]
     anchored: list[render.Finding] = []
+    touched: set[str] = set()
     for action in decision.get("actions", []):
         kind = action["type"]
         if kind == "comment":
@@ -663,19 +678,24 @@ def build_plan(decision: dict[str, Any], threads: list[dict[str, Any]],
         elif kind == "reply":
             plan.replies.append({"thread_id": thread["thread_id"],
                                  "body": f"{render.MARKER}\n**Follow-up:** {body}"})
+        elif thread["thread_id"] in touched:
+            plan.rejected.append(f"{kind}: thread {thread['thread_id']} already has a change in this run")
         elif kind == "resolve":
-            if thread["resolved"]:
+            if thread["resolved"] or thread["bot_resolved"]:
                 plan.rejected.append(f"resolve: thread {thread['thread_id']} is already resolved")
-            elif thread["thread_id"] in plan.asked:
-                continue
+            elif thread["comment_id"] is None:
+                plan.rejected.append(f"resolve: thread {thread['thread_id']} has no comment to edit")
             else:
-                plan.resolves.append({"thread_id": thread["thread_id"],
-                                      "body": f"{render.MARKER}\n✅ **Fixed:** {body}"})
-        elif not thread["resolved"]:
-            plan.rejected.append(f"unresolve: thread {thread['thread_id']} is not resolved")
+                touched.add(thread["thread_id"])
+                plan.resolves.append({"thread_id": thread["thread_id"], "comment_id": thread["comment_id"],
+                                      "body": render.mark_resolved(thread["first_body"], body)})
+        elif not thread["bot_resolved"] or thread["resolved"]:
+            plan.rejected.append(f"reopen: thread {thread['thread_id']} is not marked resolved by the bot")
         else:
-            plan.unresolves.append({"thread_id": thread["thread_id"],
-                                    "body": f"{render.MARKER}\n🔄 **Reopened:** {body}"})
+            touched.add(thread["thread_id"])
+            plan.reopens.append({"thread_id": thread["thread_id"], "comment_id": thread["comment_id"],
+                                 "edit": render.unmark_resolved(thread["first_body"]),
+                                 "body": f"{render.MARKER}\n🔄 **Reopened:** {body}"})
 
     def order(f: render.Finding) -> tuple[int, str, int]:
         return render.severity_rank(f.severity), f.path or "", f.line or 0
@@ -696,34 +716,49 @@ def graphql(query: str, **fields: str) -> list[str]:
 
 REPLY_MUTATION = ("mutation($id: ID!, $body: String!) { addPullRequestReviewThreadReply("
                   "input: {pullRequestReviewThreadId: $id, body: $body}) { comment { id } } }")
-# Added to a "Fixed" reply when the thread could not be resolved; also how later runs recognize it.
-RESOLVE_REQUEST = "I could not resolve this thread automatically; please resolve it."
-UNRESOLVE_MUTATION = "mutation($id: ID!) { unresolveReviewThread(input: {threadId: $id}) { thread { id } } }"
-RESOLVE_MUTATION = "mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { id } } }"
-
 
 def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None]) -> list[str]:
     """Post a validated plan to the pull request and return what could not be posted.
 
     Each GitHub write fails on its own: a rejected inline comment moves into the summary and
     a failed reply is reported, but neither stops the summary from being posted.
+
+    The Actions token cannot resolve a review thread, so a fixed thread is marked by editing the
+    bot's own comment, and a reopened one by putting the comment back and replying.
     """
     assert ctx.pr_number is not None
     repo, number = ctx.repo, ctx.pr_number
     problems: list[str] = []
+    if ctx.head_sha and fetch_head(number, repo) != ctx.head_sha:
+        raise ReviewError("the pull request has a newer commit than the one reviewed; nothing was posted")
 
-    def attempt(what: str, args: list[str], input_text: str | None = None, *, essential: bool = True) -> bool:
+    def attempt(what: str, args: list[str], input_text: str | None = None) -> bool:
         try:
             gh(args, input_text=input_text)
             return True
         except ReviewError as exc:
-            if essential:
-                problems.append(f"{what}: {exc}")
+            problems.append(f"{what}: {exc}")
             log(f"  could not post: {what}: {exc}")
             return False
 
+    def reply(item: dict[str, Any]) -> bool:
+        return attempt(f"reply on {item['thread_id']}",
+                       graphql(REPLY_MUTATION, id=item["thread_id"], body=item["body"]))
+
+    def edit_comment(item: dict[str, Any], body: str) -> bool:
+        return attempt(f"edit comment {item['comment_id']}",
+                       ["api", "-X", "PATCH", f"repos/{repo}/pulls/comments/{item['comment_id']}", "--input", "-"],
+                       json.dumps({"body": body}))
+
     for item in plan.replies:
-        attempt(f"reply on {item['thread_id']}", graphql(REPLY_MUTATION, id=item["thread_id"], body=item["body"]))
+        reply(item)
+    # Keep only what was done, so the summary and the threads agree.
+    plan.resolves = [i for i in plan.resolves if edit_comment(i, i["body"])]
+    reopened = []
+    for item in plan.reopens:
+        if (item["edit"] is None or edit_comment(item, item["edit"])) and reply(item):
+            reopened.append(item)
+    plan.reopens = reopened
 
     if plan.new:
         review = {"event": "COMMENT", "commit_id": ctx.head_sha, "body": "",
@@ -751,74 +786,6 @@ def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None]
             for comment_id in old_ids:
                 attempt(f"delete old summary {comment_id}",
                         ["api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment_id}"])
-    return problems
-
-
-THREAD_ID_RE = re.compile(r"^PRRT_[A-Za-z0-9_-]{8,}$")
-THREAD_ACTION_TYPES = ("resolve", "unresolve")
-MAX_THREAD_ACTIONS = 50
-
-
-def thread_actions(plan: Plan) -> list[dict[str, str]]:
-    """The thread state changes in a plan, in the form that is handed to `apply_thread_actions`."""
-    return ([{"type": "unresolve", **i} for i in plan.unresolves]
-            + [{"type": "resolve", **i} for i in plan.resolves])
-
-
-def apply_thread_actions(actions: Any, number: int, repo: str) -> list[str]:
-    """Resolve or reopen bot threads on a pull request and explain each change. Returns the problems.
-
-    Resolving a thread needs a token that the job running the agents does not have, so that job
-    only writes the actions down and a second job calls this. The actions are therefore untrusted:
-    they come from a job that read the pull request's content through a model. Nothing in them is
-    used beyond the thread id and a short reply, and every action is checked against the thread as
-    it is on GitHub now: it must be on this pull request, started by the Actions bot, and in the
-    state the action expects. The worst a forged list can do is resolve or reopen the bot's own
-    threads on this pull request and post short bot replies on them.
-    """
-    if not isinstance(actions, list):
-        return ["thread actions: expected a list"]
-    problems: list[str] = []
-    live = {t["thread_id"]: t for t in fetch_threads(number, repo)}
-
-    def attempt(what: str, args: list[str]) -> bool:
-        try:
-            gh(args)
-            return True
-        except ReviewError as exc:
-            problems.append(f"{what}: {exc}")
-            log(f"  could not {what}: {exc}")
-            return False
-
-    for action in actions[:MAX_THREAD_ACTIONS]:
-        kind = action.get("type") if isinstance(action, dict) else None
-        thread_id, body = action.get("thread_id") if kind else None, action.get("body") if kind else None
-        if (kind not in THREAD_ACTION_TYPES or not isinstance(thread_id, str)
-                or not THREAD_ID_RE.match(thread_id) or not isinstance(body, str)):
-            problems.append(f"thread actions: ignored a malformed action {str(action)[:120]!r}")
-            continue
-        thread = live.get(thread_id)
-        if thread is None:
-            log(f"  {thread_id}: no longer on this pull request, skipping")
-            continue
-        if not thread["owned_by_bot"]:
-            problems.append(f"{kind} {thread_id}: not started by the bot, refused")
-            continue
-        if thread["resolved"] != (kind == "unresolve"):
-            log(f"  {thread_id}: already {'resolved' if thread['resolved'] else 'open'}, skipping {kind}")
-            continue
-        text = render.clip(body.replace(render.MARKER, "").replace(render.SUMMARY_MARKER, "").strip(),
-                           MAX_COMMENT_CHARS)
-        mutation = RESOLVE_MUTATION if kind == "resolve" else UNRESOLVE_MUTATION
-        if attempt(f"{kind} {thread_id}", graphql(mutation, id=thread_id)):
-            attempt(f"reply on {thread_id}", graphql(REPLY_MUTATION, id=thread_id,
-                                                     body=f"{render.MARKER}\n{text}"))
-        elif kind == "resolve" and not any(RESOLVE_REQUEST in c["body"] for c in thread["comments"]):
-            # Say the problem is fixed even though the thread could not be closed, so a person can.
-            attempt(f"reply on {thread_id}", graphql(REPLY_MUTATION, id=thread_id,
-                                                     body=f"{render.MARKER}\n{text}\n\n{RESOLVE_REQUEST}"))
-    if len(actions) > MAX_THREAD_ACTIONS:
-        problems.append(f"thread actions: ignored {len(actions) - MAX_THREAD_ACTIONS} beyond the limit")
     return problems
 
 
@@ -957,9 +924,8 @@ def build_summary(outcome: Outcome, plan: Plan, ctx: Context) -> str | None:
         dropped=outcome.decision.get("dropped", []))
     return render.render_summary(
         overview=outcome.decision.get("overview"), new=plan.new, outside=plan.outside,
-        threads=ctx.threads, reopened={u["thread_id"] for u in plan.unresolves},
+        threads=ctx.threads, reopened={u["thread_id"] for u in plan.reopens},
         fixed={r["thread_id"] for r in plan.resolves},
-        fixed_open=set(plan.asked),
         failed=list(outcome.failed), details=details, repo=ctx.repo, head_sha=ctx.head_sha,
         replace_existing=ctx.previous_summary is not None)
 
@@ -971,8 +937,8 @@ def render_report(plan: Plan) -> str:
         out.append(f"**{render.location('', None, f.path, f.line) or f'{f.path}:{f.line}'}**\n\n{f.markdown()}\n")
     if not plan.new:
         out.append("none\n")
-    for heading, items in (("Replies", plan.replies), ("Threads to reopen", plan.unresolves),
-                           ("Threads to resolve", plan.resolves)):
+    for heading, items in (("Replies", plan.replies), ("Threads to reopen", plan.reopens),
+                           ("Threads to mark resolved", plan.resolves)):
         if items:
             out.append(f"# {heading}\n")
             out += [f"{i['thread_id']}\n\n{i['body'].removeprefix(render.MARKER).strip()}\n" for i in items]
@@ -993,49 +959,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--agents-dir", type=Path, default=AGENTS_DIR)
     parser.add_argument("--artifacts-dir", type=Path, help="where to keep prompts and raw results")
     parser.add_argument("--json", action="store_true", help="print the decider's raw output as JSON")
-    parser.add_argument("--handoff-file", type=Path,
-                        help="with --post: write the thread resolve/reopen actions here for a later job "
-                             "with the right permissions, instead of making them in this process")
-    parser.add_argument("--apply-thread-actions", type=Path, metavar="FILE",
-                        help="resolve/reopen the threads listed in a --handoff-file (no review is run)")
     parser.add_argument("--budget-seconds", type=int, default=DEFAULT_BUDGET_SECONDS,
                         help="total wall-clock allowance; stage timeouts shrink to fit (default: %(default)s)")
     args = parser.parse_args(argv)
-    if (args.post or args.apply_thread_actions) and args.pr is None:
-        parser.error("--post and --apply-thread-actions require --pr")
-    if args.handoff_file and not args.post:
-        parser.error("--handoff-file requires --post")
+    if args.post and args.pr is None:
+        parser.error("--post requires --pr")
     return args
-
-
-def apply_handoff(path: Path, number: int, repo: str) -> int:
-    """The second job: make the thread changes that the review job wrote down.
-
-    The changes were judged against one commit. If the pull request has moved on, they are dropped:
-    the next run reviews the new commit and decides again.
-    """
-    try:
-        handoff = json.loads(path.read_text())
-        actions, reviewed = handoff.get("actions", []), handoff.get("head_sha")
-    except (OSError, json.JSONDecodeError, AttributeError) as exc:
-        raise ReviewError(f"could not read thread actions from {path}: {exc}") from exc
-    current = json.loads(gh(["pr", "view", str(number), "--repo", repo, "--json", "headRefOid"]))["headRefOid"]
-    if not reviewed or reviewed != current:
-        log(f"the pull request is at {current[:12]}, not the reviewed {str(reviewed)[:12]}; "
-            f"dropping {len(actions)} thread action(s)")
-        return 0
-    problems = apply_thread_actions(actions, number, repo)
-    log(f"{len(actions)} thread action(s) read, {len(problems)} problem(s)")
-    for problem in problems:
-        log(f"  {problem}")
-    return 1 if problems else 0
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        if args.apply_thread_actions:
-            return apply_handoff(args.apply_thread_actions, args.pr, args.repo)
         agents = load_agents(args.agents_dir)
         ctx = pr_context(args.pr, args.repo, post=args.post) if args.pr else local_context(args.base)
         artifacts = args.artifacts_dir or Path(tempfile.mkdtemp(prefix="pr-review-"))
@@ -1048,14 +982,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.post:
             problems = apply_plan(plan, ctx, lambda p: build_summary(outcome, p, ctx))
             (artifacts / "posted.json").write_text(dumps(dataclasses.asdict(plan)))
-            if args.handoff_file:
-                args.handoff_file.parent.mkdir(parents=True, exist_ok=True)
-                args.handoff_file.write_text(dumps({"head_sha": ctx.head_sha, "actions": thread_actions(plan)}))
-            else:
-                problems += apply_thread_actions(thread_actions(plan), args.pr, args.repo)
-            where = "handed off" if args.handoff_file else "changed"
             log(f"Posted {len(plan.new)} comment(s) and {len(plan.replies)} reply(ies); "
-                f"{len(plan.unresolves)} reopen(s) and {len(plan.resolves)} resolve(s) {where}")
+                f"{len(plan.resolves)} thread(s) marked resolved and {len(plan.reopens)} reopened")
             if problems:
                 log(f"{len(problems)} write(s) failed; see above")
                 return 1
