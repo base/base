@@ -16,6 +16,15 @@ from typing import Any
 # marker used by the previous workflow so old summaries are still replaced.
 MARKER = "<!-- pr-review -->"
 SUMMARY_MARKER = "<!-- CLAUDE_REVIEW_SUMMARY -->"
+# The summary records the commit it reviewed, so later pushes can be counted against it. The status block
+# is the part that is rewritten on a push, without running the review again.
+REVIEWED_RE = re.compile(r"<!-- pr-review:reviewed=([0-9a-f]{7,40}) -->")
+STATUS_START = "<!-- pr-review:status -->"
+STATUS_END = "<!-- /pr-review:status -->"
+RERUN_HELP = ("Reviews run when a pull request is opened or marked ready for review, not on every push. "
+              "To review the latest commit, comment `/review` on this pull request; the review then posts a new "
+              "summary in place of this one. The pull request's author and the repository's members and "
+              "collaborators can do this.")
 
 # Ordered most to least severe.
 SEVERITIES = {
@@ -89,6 +98,40 @@ def unmark_resolved(body: str) -> str | None:
     if start < 0 or end < start:
         return None
     return f"{MARKER}\n{body[start + len(ORIGINAL_OPEN):end].strip()}"
+
+
+def reviewed_sha(body: str) -> str | None:
+    """The commit a summary comment says it reviewed, or None for a summary from before this was recorded."""
+    match = REVIEWED_RE.search(body)
+    return match.group(1) if match else None
+
+
+def status_block(reviewed: str, *, unreviewed: int | None, compare_url: str, files_url: str) -> str:
+    """The line that says how far the pull request has moved past the reviewed commit.
+
+    `unreviewed` is the number of commits pushed since, 0 if none, or None when the branch was rewritten
+    and they cannot be counted.
+    """
+    short = reviewed[:7]
+    if unreviewed == 0:
+        line = f"✅ Reviewed `{short}`, the latest commit."
+    elif unreviewed is None:
+        line = (f"⚠️ **The branch was rewritten after the review of `{short}`**, so the commits that have not "
+                f"been reviewed cannot be counted. [View all changes]({files_url}) · comment `/review` to review them.")
+    else:
+        noun, verb = ("commit", "has") if unreviewed == 1 else ("commits", "have")
+        line = (f"⚠️ **{unreviewed} {noun} pushed after `{short}` {verb} not been reviewed.** "
+                f"[View the diff]({compare_url}) · comment `/review` to review {'it' if unreviewed == 1 else 'them'}.")
+    return f"{STATUS_START}\n> {line}\n{STATUS_END}"
+
+
+def replace_status(body: str, block: str) -> str | None:
+    """`body` with its status block replaced, or None if it has none (an older summary)."""
+    start = body.find(STATUS_START)
+    end = body.find(STATUS_END, start + 1) if start >= 0 else -1
+    if start < 0 or end < 0:
+        return None
+    return body[:start] + block + body[end + len(STATUS_END):]
 
 
 def severity_rank(severity: str) -> int:
@@ -184,23 +227,27 @@ def cell(text: str) -> str:
 
 def render_summary(*, overview: str | None, new: list[Finding], outside: list[Finding],
                    threads: list[dict[str, Any]], reopened: set[str], fixed: set[str], failed: list[str],
-                   details: str, repo: str, head_sha: str | None, replace_existing: bool,
-                   back: set[str] | frozenset[str] = frozenset()) -> str | None:
-    """The top-level summary: headline counts, new findings, and what is still open.
+                   details: str, repo: str, head_sha: str | None,
+                   back: set[str] | frozenset[str] = frozenset(), status: str | None = None) -> str:
+    """The top-level summary: the reviewed commit, headline counts, new findings, and what is still open.
 
-    Returns None when there is nothing to report and no earlier summary to replace.
+    It is always posted, even when nothing was found: it says that the review ran, on which commit, and how
+    to run it again.
     """
     # An outdated thread is still open until someone resolves it, so it still counts. A thread the bot
     # marked as resolved in an earlier run is done, unless it was reopened in this one.
     carried = [t for t in threads if t["owned_by_bot"] and t["thread_id"] not in fixed and not t["resolved"]
                and (t["thread_id"] in reopened or t["thread_id"] in back or not t["bot_resolved"])]
     resolved_now = [t for t in threads if t["thread_id"] in fixed]
-    if not (new or outside or carried or resolved_now or failed) and not replace_existing:
-        return None
     counts: collections.Counter = collections.Counter(f.severity for f in new + outside)
     counts.update(thread_header(t)[0] for t in carried)
 
-    out = [SUMMARY_MARKER, "", f"## {headline(counts)}"]
+    out = [SUMMARY_MARKER]
+    if head_sha:
+        out += [f"<!-- pr-review:reviewed={head_sha} -->", "", f"## {headline(counts)}", "",
+                status or status_block(head_sha, unreviewed=0, compare_url="", files_url="")]
+    else:
+        out += ["", f"## {headline(counts)}"]
     if failed:
         names = ", ".join(f"`{name}`" for name in failed)
         out += ["", f"> ⚠️ **Incomplete review:** {names} failed, so some findings may be missing."]
@@ -240,7 +287,10 @@ def render_summary(*, overview: str | None, new: list[Finding], outside: list[Fi
 
     out += ["", "<details>", "<summary>How this was reviewed</summary>", "", clip(details, MAX_DETAILS_CHARS),
             "", "</details>"]
-    return clip("\n".join(out), MAX_BODY_CHARS) + "\n"
+    # Only a summary on a pull request says how to ask for another review.
+    footer = f"\n\n---\n{RERUN_HELP}\n" if head_sha else "\n"
+    # Cut the middle if the comment is too long, never the footer: it is how people find out about /review.
+    return clip("\n".join(out), MAX_BODY_CHARS - len(footer)) + footer
 
 
 def render_details(*, triage: dict[str, Any], rows: list[tuple[str, str, str]],
