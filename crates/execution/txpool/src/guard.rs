@@ -191,6 +191,12 @@ impl MempoolGuard {
         self.records.contains_key(hash)
     }
 
+    /// Returns the tracked transactions watching `key`.
+    #[must_use]
+    pub fn watchers(&self, key: &InvalidationKey) -> Vec<TxHash> {
+        self.index.watchers(key).map(|hashes| hashes.iter().copied().collect()).unwrap_or_default()
+    }
+
     /// Returns the hashes of every currently tracked transaction. Used by the
     /// pool's per-block reconcile to find and release records whose transaction
     /// has left both pools through a path the guard did not observe.
