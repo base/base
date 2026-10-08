@@ -12,8 +12,8 @@ use base_prover_service_protocol::{
     ProveBlockRangeRequest, ZkBackend, ZkProofRequest, ZkVm,
 };
 use eyre::{Result, WrapErr, ensure};
-use nanoid::nanoid;
 use tokio::time::{sleep, timeout};
+use uuid::Uuid;
 
 use crate::types::{ZkBenchConfig, ZkBenchProofOutcome, ZkBenchSummary, ZkBenchTarget};
 
@@ -113,7 +113,7 @@ impl ZkBenchRunner {
         let client_config = ProverServiceClientConfig::new(config.prover_url.as_str());
         let client = ProofRequesterClient::connect(&client_config)
             .wrap_err_with(|| format!("failed to connect prover service {}", config.prover_url))?;
-        let session_id = format!("zk-benchmarks-{}-{}", zk_backend.as_str(), nanoid!());
+        let session_id = format!("zk-benchmarks-{}-{}", zk_backend.as_str(), Uuid::new_v4());
         let request = Self::proof_request(session_id, start_block_number, l1_head, zk_backend);
         let proof_started = Instant::now();
         let response =
