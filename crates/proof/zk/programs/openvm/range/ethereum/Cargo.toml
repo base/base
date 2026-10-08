@@ -1,0 +1,29 @@
+[package]
+name = "range"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+rkyv.workspace = true
+openvm = { workspace = true, features = ["std"] }
+
+# base-consensus / base-proof
+# EIP-8130 execution without Tokio (`base-proof/std` pulls Tokio).
+base-proof = { workspace = true, features = ["evm-std"] }
+
+# base zk guest helpers
+base-proof-zk-utils.workspace = true
+base-proof-openvm-range-utils.workspace = true
+
+# `tracing-subscriber` feature dependencies
+tracing-subscriber = { workspace = true, optional = true }
+
+[features]
+tracing-subscriber = [ "dep:tracing-subscriber" ]
+
+[lints]
+workspace = true
