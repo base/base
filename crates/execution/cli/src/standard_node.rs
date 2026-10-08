@@ -2,7 +2,15 @@
 
 use std::{env, path::PathBuf, sync::Arc, time::Duration};
 
+use base_builder_metering::{
+    DEFAULT_METERING_STORE_MAX_CAPACITY, DEFAULT_METERING_STORE_TTL_SECS, MeteringStore,
+    MeteringStoreExtension,
+};
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
+use base_execution_payload_builder::{
+    NoopMeteringProvider, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache,
+    ResourceMeteringConfig, SharedMeteringProvider,
+};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension};
@@ -18,15 +26,20 @@ use base_shadow_indexer_db::{
     DEFAULT_DATABASE, DEFAULT_PORT, DEFAULT_USERNAME, PgConnectionParams, ShadowDbConfig,
 };
 use base_tx_forwarding::{
+    DEFAULT_FIFO_PERCENT, DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY,
+    DEFAULT_INLINE_SIMULATION_TIMEOUT_MS, DEFAULT_INLINE_SIMULATION_WORKERS,
     DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
     TxForwardingExtension,
 };
 use base_txpool_rpc::{
-    DEFAULT_MAX_VALIDITY_PREDICATES, SendRawTransactionValidityExtension, TxPoolRpcConfig,
+    DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
+    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
     TxPoolRpcExtension,
 };
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
-use base_upgrade_signal::UpgradeSignalStartupMode;
+use base_upgrade_signal::{
+    UpgradeSignalMetricLayer, UpgradeSignalMetrics, UpgradeSignalStartupMode,
+};
 use tracing::warn;
 use url::Url;
 
@@ -37,8 +50,13 @@ use crate::upgrade_signal::{
 /// CLI arguments for metering RPC.
 #[derive(Debug, Clone, PartialEq, Eq, Default, clap::Args)]
 pub struct MeteringArgs {
-    /// Enable metering RPC for transaction bundle simulation
-    #[arg(long = "enable-metering", value_name = "ENABLE_METERING")]
+    /// Enable metering RPC for transaction bundle simulation.
+    ///
+    /// Turns on `base_meterBundle`. The native payload builder throttles
+    /// transactions against resource-unit budgets only when this is set and
+    /// `--payload.resource-metering-schedule` is a non-empty file. The
+    /// Flashblocks builder uses `--builder.enable-resource-metering` instead.
+    #[arg(long = "enable-metering", env = "ENABLE_METERING", value_name = "ENABLE_METERING")]
     pub enable_metering: bool,
 
     /// Comma-separated list of EVM opcodes to track for gas metering
@@ -69,6 +87,48 @@ pub struct MeteringArgs {
         hide = true
     )]
     pub metering_target_flashblocks_per_block: Option<usize>,
+
+    /// Resource-unit schedule used to throttle transactions in the native
+    /// payload builder.
+    #[command(flatten)]
+    pub resource_metering: ResourceMeteringArgs,
+}
+
+/// CLI arguments for payload resource metering.
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
+pub struct ResourceMeteringArgs {
+    /// JSON file containing the startup resource-metering schedule.
+    ///
+    /// The native payload builder throttles transactions against this schedule
+    /// when `--enable-metering` is set and the file is non-empty. Per-dimension
+    /// `dryRun` observes a budget without excluding transactions.
+    #[arg(long = "payload.resource-metering-schedule", env = "PAYLOAD_RESOURCE_METERING_SCHEDULE")]
+    pub resource_metering_schedule: Option<PathBuf>,
+
+    /// Maximum number of permanently rejected transaction hashes retained by the
+    /// native payload builder.
+    #[arg(
+        long = "payload.rejection-cache-max-capacity",
+        default_value_t = REJECTION_CACHE_MAX_CAPACITY
+    )]
+    pub rejection_cache_max_capacity: u64,
+
+    /// TTL in seconds for native payload rejection-cache entries.
+    #[arg(
+        long = "payload.rejection-cache-ttl-secs",
+        default_value_t = REJECTION_CACHE_TTL.as_secs()
+    )]
+    pub rejection_cache_ttl_secs: u64,
+}
+
+impl Default for ResourceMeteringArgs {
+    fn default() -> Self {
+        Self {
+            resource_metering_schedule: None,
+            rejection_cache_max_capacity: REJECTION_CACHE_MAX_CAPACITY,
+            rejection_cache_ttl_secs: REJECTION_CACHE_TTL.as_secs(),
+        }
+    }
 }
 
 /// Default maximum number of open shadow indexer database connections.
@@ -288,22 +348,25 @@ pub struct RpcStandardNodeArgs {
     )]
     pub enable_tx_forwarding: bool,
 
-    /// Enable the experimental validity transaction RPC.
+    /// Maximum validity predicates accepted per validity transaction.
     ///
-    /// When transaction forwarding is enabled, validity predicates are forwarded to builders, which
-    /// evaluate and enforce them during block construction. This can also be enabled on a standalone
-    /// sequencer (e.g. a local devnet) that builds blocks itself, in which case forwarding is not
-    /// required.
-    #[arg(long = "enable-experimental-validity-transactions")]
-    pub enable_experimental_validity_transactions: bool,
-
-    /// Maximum validity predicates accepted per experimental transaction.
+    /// Capped at [`DEFAULT_MAX_VALIDITY_PREDICATES`], the fixed wire ceiling the
+    /// request deserializer enforces. Values above it can never be honored and
+    /// are rejected at startup rather than silently truncated.
     #[arg(
-        long = "experimental-validity-max-predicates",
+        long = "validity-max-predicates",
         default_value_t = DEFAULT_MAX_VALIDITY_PREDICATES,
-        requires = "enable_experimental_validity_transactions"
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new()
+            .range(1..=DEFAULT_MAX_VALIDITY_PREDICATES as u64),
     )]
-    pub experimental_validity_max_predicates: usize,
+    pub validity_max_predicates: usize,
+
+    /// Maximum lifetime, in seconds, for a validity transaction.
+    #[arg(
+        long = "validity-max-expiry-secs",
+        default_value_t = DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
+    )]
+    pub validity_max_expiry_secs: u64,
 
     /// Builder RPC endpoints for transaction forwarding (one forwarder per URL), used by mempool nodes
     #[arg(
@@ -340,6 +403,64 @@ pub struct RpcStandardNodeArgs {
         requires = "enable_tx_forwarding"
     )]
     pub tx_forwarding_max_rps: u32,
+
+    /// Percentage of forwarded transactions picked oldest-first (0-100).
+    ///
+    /// The rest are picked by highest tip per gas. 100 is pure FIFO. Only matters while a builder
+    /// queue is backed up; with no backlog every pending transaction goes in the next batch.
+    #[arg(
+        long = "tx-forwarding-fifo-percent",
+        value_name = "TX_FORWARDING_FIFO_PERCENT",
+        default_value_t = DEFAULT_FIFO_PERCENT,
+        value_parser = clap::value_parser!(u8).range(0..=100),
+        requires = "enable_tx_forwarding"
+    )]
+    pub tx_forwarding_fifo_percent: u8,
+
+    /// Per-builder forwarding queue capacity [default: 2x the batch size].
+    ///
+    /// A transaction's forwarding order is fixed once it enters this queue, so a deeper queue
+    /// delays the point where FIFO and priority picks apply.
+    #[arg(
+        long = "tx-forwarding-queue-capacity",
+        value_name = "TX_FORWARDING_QUEUE_CAPACITY",
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..),
+        requires = "enable_tx_forwarding"
+    )]
+    pub tx_forwarding_queue_capacity: Option<usize>,
+
+    /// Run `meter_bundle` on the mempool node before inserting into the forwarding pool.
+    ///
+    /// Has no effect until the sim-worker path is wired; keep off in production.
+    #[arg(long = "enable-inline-simulation", requires = "enable_tx_forwarding")]
+    pub enable_inline_simulation: bool,
+
+    /// Number of in-process `meter_bundle` workers.
+    #[arg(
+        long = "inline-simulation-workers",
+        value_name = "INLINE_SIMULATION_WORKERS",
+        default_value_t = DEFAULT_INLINE_SIMULATION_WORKERS,
+        requires = "enable_inline_simulation"
+    )]
+    pub inline_simulation_workers: usize,
+
+    /// Bounded queue of txs waiting for `meter_bundle`.
+    #[arg(
+        long = "inline-simulation-queue-capacity",
+        value_name = "INLINE_SIMULATION_QUEUE_CAPACITY",
+        default_value_t = DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY,
+        requires = "enable_inline_simulation"
+    )]
+    pub inline_simulation_queue_capacity: usize,
+
+    /// Per-transaction `meter_bundle` timeout in milliseconds.
+    #[arg(
+        long = "inline-simulation-timeout-ms",
+        value_name = "INLINE_SIMULATION_TIMEOUT_MS",
+        default_value_t = DEFAULT_INLINE_SIMULATION_TIMEOUT_MS,
+        requires = "enable_inline_simulation"
+    )]
+    pub inline_simulation_timeout_ms: u64,
 }
 
 impl From<RpcStandardNodeArgs> for StandardNodeArgs {
@@ -458,6 +579,12 @@ impl From<&StandardNodeArgs> for TxForwardingConfig {
             .with_resend_after_ms(args.rpc.tx_forwarding_resend_after_ms)
             .with_max_batch_size(args.rpc.tx_forwarding_batch_size)
             .with_max_rps(args.rpc.tx_forwarding_max_rps)
+            .with_fifo_percent(args.rpc.tx_forwarding_fifo_percent)
+            .with_queue_capacity(args.rpc.tx_forwarding_queue_capacity)
+            .with_inline_simulation(args.rpc.enable_inline_simulation)
+            .with_inline_simulation_workers(args.rpc.inline_simulation_workers)
+            .with_inline_simulation_queue_capacity(args.rpc.inline_simulation_queue_capacity)
+            .with_inline_simulation_timeout_ms(args.rpc.inline_simulation_timeout_ms)
     }
 }
 
@@ -511,7 +638,14 @@ impl StandardBaseRethNode {
         runner: &mut BaseNodeRunner<SB>,
         rollup_args: &RollupArgs,
     ) -> eyre::Result<()> {
-        let Some(config) = Self::upgrade_signal_config(rollup_args)? else {
+        let config = Self::upgrade_signal_config(rollup_args)?;
+        let mode = config.as_ref().map(|config| config.signal_config.mode);
+        // Unified nodes may install their recorder during launch. Include disabled nodes too.
+        runner.add_started_callback(move || {
+            UpgradeSignalMetrics::record_mode(UpgradeSignalMetricLayer::Execution, mode);
+            Ok(())
+        });
+        let Some(config) = config else {
             return Ok(());
         };
 
@@ -561,6 +695,34 @@ impl StandardBaseRethNode {
         // Fail fast on an incomplete upgrade-signal configuration before installing extensions.
         Self::validate_upgrade_signal_args(&rollup_args)?;
         let mut runner = BaseNodeRunner::new(rollup_args.clone());
+        let resource_metering_enabled = args.metering.enable_metering;
+        let provider: SharedMeteringProvider = if resource_metering_enabled
+            && args.metering.resource_metering.resource_metering_schedule.is_some()
+        {
+            // Shared defaults with the Flashblocks builder CLI.
+            let store: SharedMeteringProvider = Arc::new(MeteringStore::new(
+                true,
+                DEFAULT_METERING_STORE_MAX_CAPACITY as usize,
+                Duration::from_secs(DEFAULT_METERING_STORE_TTL_SECS),
+            ));
+            runner.install_ext::<MeteringStoreExtension>(Arc::clone(&store));
+            store
+        } else {
+            Arc::new(NoopMeteringProvider)
+        };
+        let resource_metering = ResourceMeteringConfig::from_parts(
+            resource_metering_enabled,
+            args.metering.resource_metering.resource_metering_schedule.as_deref(),
+            provider,
+        )?;
+        let schedule_operation_names: Vec<String> =
+            resource_metering.schedule.priced_operation_names().map(str::to_string).collect();
+        let rejection_cache = RejectionCache::new(
+            args.metering.resource_metering.rejection_cache_max_capacity,
+            Duration::from_secs(args.metering.resource_metering.rejection_cache_ttl_secs),
+        );
+        runner =
+            runner.with_resource_metering(resource_metering).with_rejection_cache(rejection_cache);
 
         // Create flashblocks config first so we can share its state with metering.
         let flashblocks_config: Option<FlashblocksConfig> = (&args).into();
@@ -608,10 +770,14 @@ impl StandardBaseRethNode {
         }
 
         let metering_config = if args.metering.enable_metering {
-            let metered_opcodes = if args.metering.metering_metered_opcodes.is_empty() {
+            let opcode_names = inspector_opcode_names(
+                args.metering.metering_metered_opcodes.clone(),
+                schedule_operation_names,
+            );
+            let metered_opcodes = if opcode_names.is_empty() {
                 MeteredOpcodes::default()
             } else {
-                MeteredOpcodes::parse(&args.metering.metering_metered_opcodes)?
+                MeteredOpcodes::parse(&opcode_names)?
             }
             .with_all_precompiles();
 
@@ -625,9 +791,20 @@ impl StandardBaseRethNode {
         runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
-        if args.rpc.enable_experimental_validity_transactions {
+        // Query nodes proxy validity metadata to their sequencer; forwarders submit locally.
+        if args.rpc.enable_tx_forwarding || args.rpc.rollup_args.sequencer.is_some() {
             runner.install_ext::<SendRawTransactionValidityExtension>(
-                args.rpc.experimental_validity_max_predicates,
+                SendRawTransactionValidityConfig {
+                    max_validity_predicates: args.rpc.validity_max_predicates,
+                    max_validity_expiry_secs: args.rpc.validity_max_expiry_secs,
+                    sequencer_url: args
+                        .rpc
+                        .rollup_args
+                        .sequencer
+                        .clone()
+                        .filter(|_| !args.rpc.enable_tx_forwarding),
+                    sequencer_headers: args.rpc.rollup_args.sequencer_headers,
+                },
             );
         }
         runner.install_ext::<TxForwardingExtension>(tx_forwarding_config);
@@ -774,6 +951,32 @@ fn parse_otel_resource_attribute(key: &str) -> Option<String> {
     })
 }
 
+/// Opcode and precompile names the metering inspector can parse.
+///
+/// Schedule `STATE_*` post-state effects are not EVM opcodes; unknown names are
+/// skipped so a loaded schedule cannot fail node startup.
+fn inspector_opcode_names(
+    cli_names: impl IntoIterator<Item = String>,
+    schedule_names: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Vec<String> {
+    let mut names: Vec<String> = cli_names.into_iter().collect();
+    for name in schedule_names {
+        let name = name.as_ref();
+        if !is_inspector_opcode_name(name) {
+            continue;
+        }
+        if !names.iter().any(|existing| existing.eq_ignore_ascii_case(name)) {
+            names.push(name.to_string());
+        }
+    }
+    names
+}
+
+fn is_inspector_opcode_name(name: &str) -> bool {
+    !name.to_ascii_uppercase().starts_with("STATE_")
+        && MeteredOpcodes::parse(&[name.to_string()]).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
@@ -799,12 +1002,18 @@ mod tests {
             enable_transaction_event_journal: false,
             transaction_event_journal_path: None,
             enable_tx_forwarding: false,
-            enable_experimental_validity_transactions: false,
-            experimental_validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
+            validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
+            validity_max_expiry_secs: DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
             builder_rpc_urls: Vec::new(),
             tx_forwarding_resend_after_ms: DEFAULT_RESEND_AFTER_MS,
             tx_forwarding_batch_size: DEFAULT_MAX_BATCH_SIZE,
             tx_forwarding_max_rps: DEFAULT_MAX_RPS,
+            tx_forwarding_fifo_percent: DEFAULT_FIFO_PERCENT,
+            tx_forwarding_queue_capacity: None,
+            enable_inline_simulation: false,
+            inline_simulation_workers: DEFAULT_INLINE_SIMULATION_WORKERS,
+            inline_simulation_queue_capacity: DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY,
+            inline_simulation_timeout_ms: DEFAULT_INLINE_SIMULATION_TIMEOUT_MS,
         }
     }
 
@@ -922,53 +1131,182 @@ mod tests {
         let config = TxForwardingConfig::from(&standard_args);
 
         assert_eq!(standard_args.rpc.rollup_args.sequencer, None);
-        assert!(!standard_args.rpc.enable_experimental_validity_transactions);
-        assert_eq!(
-            standard_args.rpc.experimental_validity_max_predicates,
-            DEFAULT_MAX_VALIDITY_PREDICATES
-        );
+        assert_eq!(standard_args.rpc.validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
+        assert_eq!(standard_args.rpc.validity_max_expiry_secs, DEFAULT_MAX_VALIDITY_EXPIRY_SECS);
         assert!(!config.enabled);
         assert!(config.builder_urls.is_empty());
+        assert!(!config.inline_simulation);
     }
 
     #[test]
-    fn experimental_validity_transactions_parse_without_forwarding() {
-        let args = CommandParser::<StandardNodeArgs>::parse_from([
-            "base-reth",
-            "--enable-experimental-validity-transactions",
-        ])
-        .args;
-
-        assert!(args.rpc.enable_experimental_validity_transactions);
-        assert!(!args.rpc.enable_tx_forwarding);
-    }
-
-    #[test]
-    fn experimental_validity_transactions_parse_with_forwarding() {
+    fn validity_args_parse_with_forwarding() {
         let args = CommandParser::<StandardNodeArgs>::parse_from([
             "base-reth",
             "--enable-tx-forwarding",
             "--builder-rpc-urls",
             "http://localhost:8545",
-            "--enable-experimental-validity-transactions",
-            "--experimental-validity-max-predicates",
+            "--validity-max-predicates",
             "8",
+            "--validity-max-expiry-secs",
+            "45",
         ])
         .args;
 
         assert!(args.rpc.enable_tx_forwarding);
-        assert!(args.rpc.enable_experimental_validity_transactions);
-        assert_eq!(args.rpc.experimental_validity_max_predicates, 8);
+        assert_eq!(args.rpc.validity_max_predicates, 8);
+        assert_eq!(args.rpc.validity_max_expiry_secs, 45);
         assert_eq!(args.rpc.builder_rpc_urls.len(), 1);
     }
 
     #[test]
-    fn programmatic_validity_config_without_forwarding_is_valid() {
-        let mut args = StandardNodeArgs::from(default_rpc_standard_node_args());
-        args.rpc.enable_experimental_validity_transactions = true;
+    fn validity_max_predicates_rejects_values_above_the_wire_ceiling() {
+        // The request deserializer bounds batches at DEFAULT_MAX_VALIDITY_PREDICATES,
+        // so a larger configured maximum could never be honored. Reject it at
+        // startup instead of silently accepting an unenforceable limit.
+        let error = CommandParser::<StandardNodeArgs>::try_parse_from([
+            "base-reth",
+            "--validity-max-predicates",
+            &(DEFAULT_MAX_VALIDITY_PREDICATES + 1).to_string(),
+        ])
+        .expect_err("a maximum above the wire ceiling should be rejected");
 
-        StandardBaseRethNode::runner(args)
-            .expect("validity transactions should not require forwarding");
+        assert!(error.to_string().contains("--validity-max-predicates"));
+    }
+
+    #[test]
+    fn validity_max_predicates_rejects_zero() {
+        let error = CommandParser::<StandardNodeArgs>::try_parse_from([
+            "base-reth",
+            "--validity-max-predicates",
+            "0",
+        ])
+        .expect_err("a maximum of zero should be rejected");
+
+        assert!(error.to_string().contains("--validity-max-predicates"));
+    }
+
+    #[test]
+    fn inline_simulation_requires_forwarding() {
+        let error = CommandParser::<StandardNodeArgs>::try_parse_from([
+            "base-reth",
+            "--enable-inline-simulation",
+        ])
+        .expect_err("inline simulation should require forwarding");
+
+        assert!(error.to_string().contains("--enable-tx-forwarding"));
+    }
+
+    #[test]
+    fn inline_simulation_workers_require_enable_flag() {
+        let error = CommandParser::<StandardNodeArgs>::try_parse_from([
+            "base-reth",
+            "--enable-tx-forwarding",
+            "--builder-rpc-urls",
+            "http://localhost:8545",
+            "--inline-simulation-workers",
+            "8",
+        ])
+        .expect_err("worker count should require --enable-inline-simulation");
+
+        assert!(error.to_string().contains("--enable-inline-simulation"));
+    }
+
+    #[test]
+    fn forwarding_without_inline_simulation_stays_off() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "base-reth",
+            "--enable-tx-forwarding",
+            "--builder-rpc-urls",
+            "http://localhost:8545",
+        ])
+        .args;
+        let config = TxForwardingConfig::from(&args);
+
+        assert!(config.enabled);
+        assert!(!config.inline_simulation);
+        assert_eq!(config.inline_simulation_workers, DEFAULT_INLINE_SIMULATION_WORKERS);
+        assert_eq!(
+            config.inline_simulation_queue_capacity,
+            DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY
+        );
+        assert_eq!(config.inline_simulation_timeout_ms, DEFAULT_INLINE_SIMULATION_TIMEOUT_MS);
+    }
+
+    #[test]
+    fn parses_inline_simulation_flags() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "base-reth",
+            "--enable-tx-forwarding",
+            "--builder-rpc-urls",
+            "http://localhost:8545",
+            "--enable-inline-simulation",
+            "--inline-simulation-workers",
+            "8",
+            "--inline-simulation-queue-capacity",
+            "32",
+            "--inline-simulation-timeout-ms",
+            "500",
+        ])
+        .args;
+        let config = TxForwardingConfig::from(&args);
+
+        assert!(args.rpc.enable_inline_simulation);
+        assert_eq!(args.rpc.inline_simulation_workers, 8);
+        assert_eq!(args.rpc.inline_simulation_queue_capacity, 32);
+        assert_eq!(args.rpc.inline_simulation_timeout_ms, 500);
+        assert!(config.inline_simulation);
+        assert_eq!(config.inline_simulation_workers, 8);
+        assert_eq!(config.inline_simulation_queue_capacity, 32);
+        assert_eq!(config.inline_simulation_timeout_ms, 500);
+    }
+
+    #[test]
+    fn forwarding_lane_flags_reach_the_config() {
+        let defaults = TxForwardingConfig::from(
+            &CommandParser::<StandardNodeArgs>::parse_from([
+                "base-reth",
+                "--enable-tx-forwarding",
+                "--builder-rpc-urls",
+                "http://localhost:8545",
+            ])
+            .args,
+        );
+        let configured = TxForwardingConfig::from(
+            &CommandParser::<StandardNodeArgs>::parse_from([
+                "base-reth",
+                "--enable-tx-forwarding",
+                "--builder-rpc-urls",
+                "http://localhost:8545",
+                "--tx-forwarding-fifo-percent",
+                "35",
+                "--tx-forwarding-queue-capacity",
+                "64",
+            ])
+            .args,
+        );
+
+        assert_eq!(defaults.fifo_percent, DEFAULT_FIFO_PERCENT);
+        assert_eq!(defaults.queue_capacity, None);
+        assert_eq!(configured.fifo_percent, 35);
+        assert_eq!(configured.queue_capacity, Some(64));
+    }
+
+    #[test]
+    fn forwarding_lane_flags_reject_out_of_range_values() {
+        for (flag, value) in
+            [("--tx-forwarding-fifo-percent", "101"), ("--tx-forwarding-queue-capacity", "0")]
+        {
+            let result = CommandParser::<StandardNodeArgs>::try_parse_from([
+                "base-reth",
+                "--enable-tx-forwarding",
+                "--builder-rpc-urls",
+                "http://localhost:8545",
+                flag,
+                value,
+            ]);
+
+            assert!(result.is_err(), "{flag} {value} must be rejected");
+        }
     }
 
     #[test]
@@ -1165,6 +1503,23 @@ mod tests {
     }
 
     #[test]
+    fn test_standard_node_args_parses_resource_metering_flags() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "reth",
+            "--enable-metering",
+            "--payload.resource-metering-schedule",
+            "/tmp/resource-metering.json",
+        ])
+        .args;
+
+        assert!(args.metering.enable_metering);
+        assert_eq!(
+            args.metering.resource_metering.resource_metering_schedule.as_deref(),
+            Some(std::path::Path::new("/tmp/resource-metering.json"))
+        );
+    }
+
+    #[test]
     fn transaction_event_journal_requires_path_when_no_env_path_exists() {
         let args = CommandParser::<RpcStandardNodeArgs>::parse_from([
             "base-reth",
@@ -1225,5 +1580,86 @@ mod tests {
         assert_eq!(args.metering.metering_gas_limit, Some(30_000_000));
         assert_eq!(args.metering.metering_da_bytes, Some(1_572_860));
         assert_eq!(args.metering.metering_target_flashblocks_per_block, Some(4));
+        assert!(args.metering.resource_metering.resource_metering_schedule.is_none());
+
+        let config = ResourceMeteringConfig::from_parts(
+            args.metering.enable_metering,
+            args.metering.resource_metering.resource_metering_schedule.as_deref(),
+            Arc::new(NoopMeteringProvider),
+        )
+        .expect("enable-metering without a schedule must still boot");
+        assert!(config.enabled);
+        assert!(!config.is_active());
+    }
+
+    #[test]
+    fn test_standard_node_args_parses_rejection_cache_flags() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "reth",
+            "--payload.rejection-cache-max-capacity",
+            "50",
+            "--payload.rejection-cache-ttl-secs",
+            "60",
+        ])
+        .args;
+
+        assert_eq!(args.metering.resource_metering.rejection_cache_max_capacity, 50);
+        assert_eq!(args.metering.resource_metering.rejection_cache_ttl_secs, 60);
+    }
+
+    #[test]
+    fn test_standard_node_args_rejection_cache_defaults() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from(["reth"]).args;
+
+        assert_eq!(
+            args.metering.resource_metering.rejection_cache_max_capacity,
+            REJECTION_CACHE_MAX_CAPACITY
+        );
+        assert_eq!(
+            args.metering.resource_metering.rejection_cache_ttl_secs,
+            REJECTION_CACHE_TTL.as_secs()
+        );
+    }
+
+    #[test]
+    fn inspector_opcode_names_skips_state_prefix_and_unparseable() {
+        let names = inspector_opcode_names(
+            ["SLOAD".to_string()],
+            ["SSTORE", "STATE_NEW_STORAGE_SLOT", "NOT_AN_OPCODE", "sstore"],
+        );
+        assert_eq!(names, vec!["SLOAD".to_string(), "SSTORE".to_string()]);
+    }
+
+    #[test]
+    fn runner_accepts_schedule_state_effect_operation_names() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("schedule.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "version": 1,
+                "dimensions": [{
+                    "name": "cpu",
+                    "blockLimit": 1000000,
+                    "operations": [
+                        {"name": "SSTORE", "countCost": 1},
+                        {"name": "STATE_NEW_STORAGE_SLOT", "countCost": 1},
+                        {"name": "NOT_AN_OPCODE", "countCost": 1}
+                    ]
+                }]
+            }"#,
+        )
+        .expect("write schedule");
+
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "reth",
+            "--enable-metering",
+            "--payload.resource-metering-schedule",
+            path.to_str().expect("utf-8 path"),
+        ])
+        .args;
+
+        StandardBaseRethNode::runner(args)
+            .expect("STATE_ and unknown schedule names must not fail opcode parse");
     }
 }

@@ -1,14 +1,17 @@
 //! Shadow-builder validity predicate injection for forwarded transactions.
 
-use alloy_primitives::U256;
+use std::sync::Arc;
+
+use alloy_primitives::{TxHash, U256};
+use base_bundles::MeterBundleResponse;
 use base_execution_txpool::{
-    BasePooledTransaction, BuilderApiImpl, BuilderApiServer, TransactionValidity,
+    BasePooledTransaction, BuilderApiImpl, BuilderApiServer, InsertMetering, TransactionValidity,
     ValidatedTransaction, ValidityOperator, ValidityPredicate,
 };
 use jsonrpsee::core::RpcResult;
 use reth_transaction_pool::TransactionPool;
 
-use crate::{BuilderApiExtensionConfig, BuilderMetrics};
+use crate::{BuilderApiExtensionConfig, BuilderMetrics, SharedMeteringProvider};
 
 /// Number of basis points representing a 100% sampling rate.
 pub const MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS: u16 = 10_000;
@@ -19,9 +22,6 @@ pub enum ShadowValidityConfigError {
     /// The configured sampling rate is zero or exceeds 100%.
     #[error("shadow validity sample rate must be between 1 and 10000 basis points")]
     InvalidSampleRate,
-    /// Injection was enabled without enabling validity extensions.
-    #[error("shadow validity injection requires experimental validity transactions to be enabled")]
-    ValidityTransactionsDisabled,
 }
 
 /// Configuration for decorating forwarded transactions with shadow-only validity predicates.
@@ -107,6 +107,16 @@ impl Default for ShadowValidityConfig {
     }
 }
 
+/// Adapts [`SharedMeteringProvider`] to the insert-path metering sink.
+#[derive(Debug, Clone)]
+struct InsertMeteringAdapter(SharedMeteringProvider);
+
+impl InsertMetering for InsertMeteringAdapter {
+    fn insert_metering(&self, tx_hash: TxHash, metering: MeterBundleResponse) {
+        self.0.insert(tx_hash, metering);
+    }
+}
+
 /// Builder API that decorates sampled transactions before normal validated insertion.
 #[derive(Debug)]
 pub struct ShadowValidityBuilderApi<P> {
@@ -116,13 +126,14 @@ pub struct ShadowValidityBuilderApi<P> {
 
 impl<P> ShadowValidityBuilderApi<P> {
     /// Creates a builder API using validated configuration.
-    pub const fn new(pool: P, config: BuilderApiExtensionConfig) -> Self {
+    pub fn new(
+        pool: P,
+        config: BuilderApiExtensionConfig,
+        metering_provider: SharedMeteringProvider,
+    ) -> Self {
         Self {
-            inner: BuilderApiImpl::with_extensions(
-                pool,
-                config.accept_experimental_validity_transactions,
-                config.max_validity_predicates,
-            ),
+            inner: BuilderApiImpl::with_extensions(pool, true, config.max_validity_predicates)
+                .with_metering_cache(Arc::new(InsertMeteringAdapter(metering_provider))),
             config: config.shadow_validity,
         }
     }
@@ -176,6 +187,7 @@ mod tests {
         ValidatedTransaction {
             sender: Address::repeat_byte(0x11),
             raw,
+            metering: None,
             extensions: TransactionValidity::default(),
         }
     }
@@ -223,11 +235,9 @@ mod tests {
     }
 
     #[test]
-    fn configuration_rejects_unsafe_combinations() {
+    fn configuration_rejects_out_of_range_sample_rates() {
         assert!(ShadowValidityConfig::enabled(0).is_err());
         assert!(ShadowValidityConfig::enabled(MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS + 1).is_err());
-        let shadow = ShadowValidityConfig::enabled(1).unwrap();
-        assert!(BuilderApiExtensionConfig::new(false, 1).with_shadow_validity(shadow).is_err());
-        assert!(BuilderApiExtensionConfig::new(true, 1).with_shadow_validity(shadow).is_ok());
+        assert!(ShadowValidityConfig::enabled(MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS).is_ok());
     }
 }

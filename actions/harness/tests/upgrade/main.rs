@@ -1,6 +1,7 @@
 //! Action tests for upgrade activation and fork-specific protocol behavior.
 
 mod activation;
+mod denim;
 mod ecotone;
 mod holocene;
 mod isthmus;

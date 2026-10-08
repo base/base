@@ -11,6 +11,7 @@ exclude = [".github/"]
 resolver = "2"
 exclude = ["actions/fixtures", "crates/proof/zk/programs"]
 members = [
+  "acceptance",
   "actions/*",
   "bin/[a-o]*",
   "bin/[q-z]*",
@@ -121,16 +122,6 @@ inherits = "release"
 lto = "fat"
 codegen-units = 1
 
-# `release` and `maxperf` both set `strip = "symbols"` (see above), which makes
-# every CPU profiler produce address-only output. This profile keeps production
-# codegen identical (opt-level=3, lto="fat", codegen-units=1, panic="unwind")
-# while restoring symbols. Debug info is not loaded at runtime, so it costs
-# nothing but binary size.
-[profile.maxperf-symbols]
-inherits = "maxperf"
-debug = "line-tables-only"
-strip = "none"
-
 # `release` sets `strip = "symbols"` (see above). This profile keeps `release` codegen identical
 # (opt-level=3, lto="thin", codegen-units=16, panic="unwind") while restoring
 # symbols. Debug info is not loaded at runtime, so it costs nothing but binary
@@ -150,8 +141,8 @@ inherits = "release"
 debug = true
 strip = false
 
-# TODO: add `rustflags = ["-Cforce-frame-pointers=yes"]` here once
-# `profile-rustflags` is stabilized (tracking: rust-lang/cargo#10271)
+# Docker profiling builds add `-Cforce-frame-pointers=yes` in docker-bake.hcl.
+# Move it here once profile-rustflags is stabilized (tracking: rust-lang/cargo#10271).
 [profile.profiling]
 inherits = "release"
 lto = false
@@ -178,6 +169,7 @@ base-common-evm2 = { path = "crates/common/evm2", default-features = false }
 base-common-flz = { path = "crates/common/flz", default-features = false }
 base-common-l1-fees = { path = "crates/common/l1-fees", default-features = false }
 base-common-genesis = { path = "crates/common/genesis", default-features = false }
+base-common-eip8130 = { path = "crates/common/eip8130", default-features = false }
 base-common-consensus = { path = "crates/common/consensus", default-features = false }
 base-common-precompiles = { path = "crates/common/precompiles", default-features = false }
 base-precompile-storage = { path = "crates/common/precompile-storage", default-features = false }
@@ -232,13 +224,13 @@ base-execution-eip8130-rpc-node = { path = "crates/execution/eip8130-rpc-node" }
 base-execution-eip8130 = { path = "crates/execution/eip8130", default-features = false }
 
 # Infra
+base-acceptance = { path = "acceptance" }
 basectl-cli = { path = "crates/infra/basectl" }
 base-roxy = { path = "crates/infra/roxy" }
 base-sidecrush = { path = "crates/infra/sidecrush" }
 audit-archiver-lib = { path = "crates/infra/audit" }
 base-snark-e2e = { path = "crates/infra/snark-e2e" }
 base-load-tests = { path = "crates/infra/load-tests" }
-ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
 base-snapshotter = { path = "crates/infra/snapshotter" }
 websocket-proxy = { path = "crates/infra/websocket-proxy" }
 base-telemetry-service = { path = "crates/infra/telemetry" }
@@ -280,6 +272,7 @@ base-proof-succinct-elfs = { path = "crates/proof/zk/backend/elfs" }
 
 # Batcher
 base-blobs = { path = "crates/batcher/blobs" }
+base-batcher-cli = { path = "crates/batcher/cli" }
 base-batcher-core = { path = "crates/batcher/core" }
 base-batcher-admin = { path = "crates/batcher/admin" }
 base-batcher-source = { path = "crates/batcher/source" }
@@ -333,6 +326,7 @@ alloy-rlp = { version = "0.3.16", default-features = false }
 alloy-trie = { version = "0.9.4", default-features = false }
 alloy-eips = { version = "2.3.0", default-features = false }
 alloy-evm = { version = "0.38.0", default-features = false }
+revm-inspectors = { version = "0.42.2", default-features = false }
 alloy-serde = { version = "2.3.0", default-features = false }
 alloy-chains = { version = "0.2.33", default-features = false }
 alloy-genesis = { version = "2.3.0", default-features = false }
@@ -350,72 +344,74 @@ alloy-network-primitives = { version = "2.3.0", default-features = false }
 reth-zstd-compressors = { version = "0.6.0", default-features = false }
 reth-primitives-traits = { version = "0.6.0", default-features = false }
 reth-codecs = { version = "0.6.0", default-features = false, features = ["alloy"] }
-reth-db = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-cli = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-ipc = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-evm = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-rpc = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-revm = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-trie = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-exex = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-tasks = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-ecies = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-db-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-discv4 = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-discv5 = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-trie-db = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-rpc-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-network = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-net-nat = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-tracing = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-eth-wire = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-provider = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-cli-util = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-node-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-db-common = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-rpc-layer = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-node-core = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-consensus = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-chainspec = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-cli-runner = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-rpc-convert = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-network-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-network-p2p = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-storage-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-rpc-eth-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-chain-state = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-trie-common = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-payload-util = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-node-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-node-metrics = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-cli-commands = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-evm-ethereum = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-tracing-otlp = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-testing-utils = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-rpc-eth-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-network-peers = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-node-ethereum = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-rpc-engine-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-e2e-test-utils = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-eth-wire-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-payload-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-execution-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-execution-cache = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-exex-test-utils = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-rpc-server-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-transaction-pool = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-execution-errors = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-payload-validator = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-payload-primitives = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-ethereum-primitives = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-basic-payload-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-payload-builder-primitives = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
-reth-prune-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3", default-features = false }
-reth-stages-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3", default-features = false }
-reth-storage-errors = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3", default-features = false }
-reth-ethereum-forks = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3", default-features = false }
-reth-consensus-common = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3", default-features = false }
-reth-trie-parallel = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
+reth-db = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-cli = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-ipc = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-evm = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-rpc = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-revm = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-errors = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-trie = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-exex = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-tasks = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-ecies = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-db-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-discv4 = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-discv5 = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-trie-db = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-rpc-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-network = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-net-nat = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-tracing = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-eth-wire = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-provider = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-cli-util = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-node-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-db-common = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-rpc-layer = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-node-core = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-consensus = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-chainspec = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-cli-runner = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-rpc-convert = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-network-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-network-p2p = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-storage-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-rpc-eth-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-chain-state = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-trie-common = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-engine-tree = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-payload-util = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-node-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-node-metrics = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-cli-commands = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-evm-ethereum = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-tracing-otlp = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-testing-utils = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-rpc-eth-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-network-peers = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-node-ethereum = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-rpc-engine-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-e2e-test-utils = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-eth-wire-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-payload-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-execution-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-execution-cache = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-exex-test-utils = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-rpc-server-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-transaction-pool = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-execution-errors = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-payload-validator = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-payload-primitives = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-ethereum-primitives = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-basic-payload-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-payload-builder-primitives = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
+reth-prune-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7", default-features = false }
+reth-stages-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7", default-features = false }
+reth-storage-errors = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7", default-features = false }
+reth-ethereum-forks = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7", default-features = false }
+reth-consensus-common = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7", default-features = false }
+reth-trie-parallel = { git = "https://github.com/base/reth", tag = "base-v2.5.2.7" }
 
 # tokio
 tokio = "1.53.1"
@@ -444,8 +440,6 @@ arboard = "3.6.1"
 ratatui = "0.30.0"
 crossterm = "0.29"
 indicatif = "0.18"
-human_bytes = "0.4.3"
-clap_builder = "4.6.5"
 tracing-indicatif = "0.3"
 
 # tracing
@@ -455,10 +449,8 @@ tracing = { version = "0.1.43", default-features = false }
 
 # OpenTelemetry
 opentelemetry = "0.32"
-opentelemetry-appender-tracing = "0.32"
 opentelemetry_sdk = { version = "0.32", default-features = false }
 opentelemetry-http = { version = "0.32", default-features = false }
-opentelemetry-otlp = { version = "0.32", default-features = false }
 
 # metrics
 cadence = "1.5"
@@ -476,12 +468,12 @@ aws-sdk-ec2 = { version = "1.217.0", default-features = false }
 aws-credential-types = { version = "1.1.7", default-features = false }
 aws-sdk-elasticloadbalancingv2 = { version = "1.109.0", default-features = false }
 
-# SP1 v6.4.0 (Hypercube) — used by crates/proof/zk
-sp1-prover-types = "=6.4.0"
-sp1-sdk = { version = "=6.4.0" }
-sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.7.2" }
-sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.7.2" }
-sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.7.2" }
+# SP1 v6.8.1 (Hypercube) — used by crates/proof/zk
+sp1-prover-types = "=6.8.1"
+sp1-sdk = { version = "=6.8.1" }
+sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.8.4" }
+sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.8.4" }
+sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.8.4" }
 
 # crypto
 sha3 = "0.10"
@@ -517,7 +509,6 @@ discv5 = "0.10"
 libp2p = "0.56.0"
 multihash = "0.19"
 libp2p-identity = "0.2.12"
-libp2p-stream = "0.4.0-alpha"
 unsigned-varint = { version = "0.8", default-features = false }
 
 # serde
@@ -537,7 +528,6 @@ serde_json = { version = "1.0.151", default-features = false }
 
 # testing
 arbtest = "0.3"
-test-case = "3"
 mockall = "0.14"
 tempfile = "3.27"
 rstest = "0.26.1"
@@ -548,7 +538,6 @@ proptest = "1.10.0"
 similar-asserts = "1"
 iai-callgrind = "0.16.1"
 arbitrary = { version = "1", default-features = false }
-wiremock = { version = "0.6.2", default-features = false }
 testcontainers = { version = "0.25", default-features = false }
 testcontainers-modules = { version = "0.13", default-features = false }
 
@@ -597,11 +586,9 @@ bytes = "1.12.1"
 # identifiers and randomness
 rand = "0.9"
 uuid = "1.24"
-nanoid = "0.4"
 rand_08 = { package = "rand", version = "0.8" }
 
 # time
-time = "0.3.55"
 chrono = "0.4.42"
 humantime = "2.3"
 
@@ -625,7 +612,6 @@ derive_more = { version = "2.1.0", default-features = false }
 spin = "0.10"
 cfg-if = "1.0"
 alloc-no-stdlib = "2.0"
-lazy_static = { version = "1.5.0", features = ["spin_no_std"] }
 
 # system
 libc = "0.2"
@@ -636,7 +622,6 @@ tikv-jemallocator = "0.6"
 
 # tooling
 notify = "8.2"
-cargo_metadata = "0.18.1"
 
 # rate limiting
 governor = "0.7"

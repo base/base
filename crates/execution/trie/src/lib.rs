@@ -31,16 +31,17 @@ pub use db::{
     MdbxAccountCursor, MdbxBatchSession, MdbxProofsStorage, MdbxProofsStorageOptions,
     MdbxStorageCursor, MdbxTrieCursor, ProofWindowValue, RocksDbHistoryTable,
     RocksDbLatestVersionResult, RocksdbAccountCursor, RocksdbBatchSession,
-    RocksdbHistoryDeleteBatch, RocksdbPreparedHistoryDeletes, RocksdbPreparedPrune,
-    RocksdbProofsStorage, RocksdbProofsStorageOptions, RocksdbPrunePlan, RocksdbReadSnapshot,
-    RocksdbReplacementState, RocksdbStorageCursor, RocksdbTrieCursor, RocksdbVersionedCursor,
+    RocksdbHistoryDeleteBatch, RocksdbHistoryIterator, RocksdbPreparedHistoryDeletes,
+    RocksdbPreparedPrune, RocksdbProofsStorage, RocksdbProofsStorageOptions, RocksdbPrunePlan,
+    RocksdbReadSnapshot, RocksdbReplacementState, RocksdbStorageCursor, RocksdbTrieCursor,
+    RocksdbVersionedCursor,
 };
 
 pub mod metrics;
 #[cfg(feature = "metrics")]
 pub use metrics::{
     BaseProofsHashedAccountCursor, BaseProofsHashedStorageCursor, BaseProofsStorage,
-    BaseProofsTrieCursor, StorageMetrics,
+    BaseProofsTrieCursor, StateMetrics, StateSeekKind, StorageMetrics,
 };
 
 #[cfg(not(feature = "metrics"))]
@@ -66,6 +67,12 @@ pub mod cursor_factory;
 pub use cursor_factory::{
     BaseProofsBatchHashedAccountCursorFactory, BaseProofsBatchTrieCursorFactory,
     BaseProofsHashedAccountCursorFactory, BaseProofsTrieCursorFactory,
+};
+
+mod cursor_cache;
+pub use cursor_cache::{
+    CachedHashedCursor, CachedHashedCursorFactory, CachedTrieCursor, CachedTrieCursorFactory,
+    CursorMemo, CursorOp, CursorResultCache, CursorResultMap,
 };
 
 pub mod error;

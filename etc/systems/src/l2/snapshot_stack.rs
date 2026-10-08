@@ -7,8 +7,8 @@ use std::{
 
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::JwtSecret;
-use base_common_chains::ChainConfig;
-use base_common_genesis::{BaseUpgrade, RollupConfig};
+use alloy_rpc_types_eth::SyncStatus as EthSyncStatus;
+use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
 use base_common_network::Base;
 use base_consensus_node::StandalonePrefund;
 use base_execution_chainspec::BaseChainSpec;
@@ -19,12 +19,24 @@ use url::Url;
 use super::{
     ChainSpecSource, InProcessBuilder, InProcessBuilderConfig, InProcessClient,
     InProcessClientConfig, InProcessFollowConsensus, InProcessFollowConsensusConfig,
-    InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig, L2ContainerConfig,
-    SnapshotBoundary,
+    InProcessNodeRuntime, InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig,
+    L2ContainerConfig, SnapshotBoundary,
 };
 use crate::{DevnetBlockInterval, DevnetSnapshotConfig};
 
-const SNAPSHOT_STARTUP_LEAD: Duration = Duration::from_secs(10);
+const SNAPSHOT_STARTUP_LEAD: Duration = Duration::from_secs(30);
+const SNAPSHOT_EL_READY_TIMEOUT: Duration = Duration::from_secs(30);
+const SNAPSHOT_ADVANCE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Keeps Reth's default 16-block persistence-backpressure window equivalent in wall-clock time.
+/// At a 200ms cadence, 160 blocks provide the same 32 seconds of persistence headroom as 16
+/// two-second blocks instead of stalling Engine API intake after only 3.2 seconds.
+const fn snapshot_persistence_backpressure_threshold(interval: DevnetBlockInterval) -> u64 {
+    match interval {
+        DevnetBlockInterval::TwoSeconds => 16,
+        DevnetBlockInterval::TwoHundredMilliseconds => 160,
+    }
+}
 
 /// Configuration for an L1-free snapshot-backed L2 stack.
 #[derive(Debug, Clone)]
@@ -45,6 +57,9 @@ pub struct SnapshotL2Stack {
     follow_consensus: Option<InProcessFollowConsensus>,
     follow_config: Option<InProcessFollowConsensusConfig>,
     block_interval: DevnetBlockInterval,
+    block_gas_limit: u64,
+    rollup_config: Arc<RollupConfig>,
+    chain_id: u64,
 }
 
 impl SnapshotL2Stack {
@@ -64,12 +79,18 @@ impl SnapshotL2Stack {
             .prefund
             .map(|value| StandalonePrefund { address: value.address, amount: value.amount });
         let block_interval = config.snapshot.block_interval;
-        let canonical_rollup_config = Arc::new(ChainConfig::mainnet().rollup_config());
+        let chain = config.snapshot.chain.resolve()?;
+        let canonical_rollup_config = Arc::clone(&chain.rollup_config);
         let first_block_timestamp = Self::schedule_anchor(SystemTime::now())?;
-        let chain_spec = Arc::new(Self::chain_spec(first_block_timestamp, block_interval));
+        let chain_spec = Arc::new(Self::chain_spec(
+            (*chain.chain_spec).clone(),
+            first_block_timestamp,
+            block_interval,
+        ));
         let jwt_secret = JwtSecret::random();
 
         let builder = InProcessBuilder::start(InProcessBuilderConfig {
+            runtime: InProcessNodeRuntime::Host,
             chain_spec: Arc::clone(&chain_spec),
             datadir: Some(config.snapshot.builder_datadir),
             jwt_secret,
@@ -80,10 +101,12 @@ impl SnapshotL2Stack {
             flashblocks_port: container.and_then(|value| value.builder_flashblocks_port),
             metrics_port: None,
             block_time: block_interval.duration(),
-            enable_experimental_validity_transactions: false,
-            payload_builder_cutover: false,
+            payload_builder_cutover: block_interval == DevnetBlockInterval::TwoHundredMilliseconds,
             extra_extensions: Vec::new(),
             persistence_threshold: Some(0),
+            persistence_backpressure_threshold: Some(snapshot_persistence_backpressure_threshold(
+                block_interval,
+            )),
             txpool_max_transactions: Some(150_000),
             txpool_max_size_mb: Some(1_024),
             txpool_max_account_slots: Some(1_024),
@@ -92,8 +115,8 @@ impl SnapshotL2Stack {
         .wrap_err("failed to start snapshot builder")?;
         let boundary = SnapshotBoundary::read(
             builder.rpc_url()?,
-            canonical_rollup_config,
-            config.snapshot.expected_chain_id,
+            Arc::clone(&canonical_rollup_config),
+            chain.l2_chain_id,
             config.snapshot.expected_head,
         )
         .await
@@ -102,14 +125,22 @@ impl SnapshotL2Stack {
             first_block_timestamp > boundary.head.timestamp,
             "snapshot boundary timestamp must be earlier than the local schedule anchor"
         );
-        Self::ensure_schedule_anchor_is_future(first_block_timestamp, SystemTime::now())?;
+        let system_config = Self::with_snapshot_overrides(
+            boundary.system_config,
+            block_interval,
+            config.snapshot.block_gas_limit,
+            config.snapshot.eip1559_elasticity_override,
+        );
+        let block_gas_limit = system_config.gas_limit;
         let rollup_config = Arc::new(Self::anchored_rollup_config(
+            (*canonical_rollup_config).clone(),
             boundary.head.number,
             first_block_timestamp,
             block_interval,
         )?);
 
         let client = InProcessClient::start(InProcessClientConfig {
+            runtime: InProcessNodeRuntime::Host,
             chain_spec: ChainSpecSource::Parsed(chain_spec),
             datadir: Some(config.snapshot.client_datadir),
             jwt_secret,
@@ -123,13 +154,20 @@ impl SnapshotL2Stack {
             p2p_port: container.and_then(|value| value.client_p2p_port),
             metrics_port: None,
             persistence_threshold: Some(0),
+            persistence_backpressure_threshold: Some(snapshot_persistence_backpressure_threshold(
+                block_interval,
+            )),
             tx_forwarding_config: None,
             upgrade_signal: None,
-            enable_experimental_validity_transactions: false,
             extra_extensions: Vec::new(),
         })
         .await
         .wrap_err("failed to start snapshot client")?;
+        tokio::try_join!(
+            Self::wait_for_el_ready(builder.rpc_url()?, SNAPSHOT_EL_READY_TIMEOUT),
+            Self::wait_for_el_ready(client.rpc_url()?, SNAPSHOT_EL_READY_TIMEOUT),
+        )?;
+        Self::ensure_schedule_anchor_is_future(first_block_timestamp, SystemTime::now())?;
 
         let unused_l1_url = Url::parse("http://127.0.0.1:1").expect("valid unused L1 URL");
         let follow_config = InProcessFollowConsensusConfig {
@@ -152,7 +190,7 @@ impl SnapshotL2Stack {
                 jwt_secret,
                 l2_engine_url: builder.engine_url()?,
                 l1_info: boundary.l1_info,
-                system_config: boundary.system_config,
+                system_config,
                 prefund,
             })
             .await
@@ -164,7 +202,7 @@ impl SnapshotL2Stack {
             .checked_add(2)
             .ok_or_else(|| eyre::eyre!("snapshot boundary block number overflow"))?;
         tokio::select! {
-            result = Self::wait_for_block(builder.rpc_url()?, target, Duration::from_secs(30)) => {
+            result = Self::wait_for_block(builder.rpc_url()?, target, SNAPSHOT_ADVANCE_TIMEOUT) => {
                 result.wrap_err("snapshot builder did not produce two descendants")?;
             }
             error = standalone_consensus.next_error() => {
@@ -180,6 +218,9 @@ impl SnapshotL2Stack {
             follow_consensus: None,
             follow_config: Some(follow_config),
             block_interval,
+            block_gas_limit,
+            rollup_config: canonical_rollup_config,
+            chain_id: chain.l2_chain_id,
         })
     }
 
@@ -218,11 +259,11 @@ impl SnapshotL2Stack {
 
     /// Anchors the deterministic local block schedule at the first post-snapshot block.
     pub fn anchored_rollup_config(
+        mut config: RollupConfig,
         boundary_number: u64,
         first_block_timestamp: u64,
         block_interval: DevnetBlockInterval,
     ) -> Result<RollupConfig> {
-        let mut config = ChainConfig::mainnet().rollup_config();
         let first_block_number = boundary_number
             .checked_add(1)
             .ok_or_else(|| eyre::eyre!("snapshot boundary block number overflow"))?;
@@ -249,15 +290,30 @@ impl SnapshotL2Stack {
 
     /// Builds the execution chain specification for a local snapshot schedule.
     pub fn chain_spec(
+        mut chain_spec: BaseChainSpec,
         first_block_timestamp: u64,
         block_interval: DevnetBlockInterval,
     ) -> BaseChainSpec {
-        let mut chain_spec = BaseChainSpec::mainnet();
         if block_interval == DevnetBlockInterval::TwoHundredMilliseconds {
             chain_spec
                 .set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(first_block_timestamp));
         }
         chain_spec
+    }
+
+    /// Applies local snapshot overrides to the recovered system configuration.
+    fn with_snapshot_overrides(
+        mut system_config: SystemConfig,
+        block_interval: DevnetBlockInterval,
+        block_gas_limit: Option<u64>,
+        elasticity_override: Option<u32>,
+    ) -> SystemConfig {
+        system_config.gas_limit =
+            block_gas_limit.unwrap_or_else(|| block_interval.snapshot_block_gas_limit());
+        if let Some(elasticity) = elasticity_override {
+            system_config.eip1559_elasticity = Some(elasticity);
+        }
+        system_config
     }
 
     fn schedule_anchor(now: SystemTime) -> Result<u64> {
@@ -295,6 +351,21 @@ impl SnapshotL2Stack {
         Ok(())
     }
 
+    async fn wait_for_el_ready(rpc_url: Url, timeout: Duration) -> Result<()> {
+        let provider = RootProvider::<Base>::new_http(rpc_url.clone());
+        tokio::time::timeout(timeout, async {
+            loop {
+                if matches!(provider.syncing().await?, EthSyncStatus::None) {
+                    return Ok::<_, eyre::Report>(());
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .wrap_err_with(|| format!("timed out waiting for snapshot EL readiness at {rpc_url}"))??;
+        Ok(())
+    }
+
     /// Returns the validated immutable snapshot boundary.
     pub const fn boundary(&self) -> &SnapshotBoundary {
         &self.boundary
@@ -305,9 +376,24 @@ impl SnapshotL2Stack {
         self.block_interval
     }
 
+    /// Returns the block gas limit for locally produced descendants.
+    pub const fn block_gas_limit(&self) -> u64 {
+        self.block_gas_limit
+    }
+
+    /// Returns the L2 chain ID of the continued snapshot.
+    pub const fn chain_id(&self) -> u64 {
+        self.chain_id
+    }
+
     /// Returns the builder RPC URL.
     pub fn builder_rpc_url(&self) -> Result<Url> {
         self.builder.rpc_url()
+    }
+
+    /// Returns the builder WebSocket RPC URL.
+    pub fn builder_ws_url(&self) -> Result<Url> {
+        self.builder.ws_url()
     }
 
     /// Returns the client RPC URL.
@@ -334,8 +420,8 @@ impl SnapshotL2Stack {
     pub async fn current_builder_boundary(&self) -> Result<SnapshotBoundary> {
         SnapshotBoundary::read(
             self.builder.rpc_url()?,
-            Arc::new(ChainConfig::mainnet().rollup_config()),
-            ChainConfig::mainnet().chain_id,
+            Arc::clone(&self.rollup_config),
+            self.chain_id,
             None,
         )
         .await
@@ -366,16 +452,34 @@ impl SnapshotL2Stack {
 
 #[cfg(test)]
 mod tests {
-    use base_common_chains::Upgrades;
-    use base_common_genesis::BaseUpgrade;
+    use base_common_chains::{ChainConfig, Upgrades};
+    use base_common_genesis::{BaseUpgrade, SystemConfig};
+    use base_execution_chainspec::BaseChainSpec;
     use reth_ethereum_forks::ForkCondition;
 
-    use super::SnapshotL2Stack;
+    use super::{
+        SNAPSHOT_STARTUP_LEAD, SnapshotL2Stack, snapshot_persistence_backpressure_threshold,
+    };
     use crate::DevnetBlockInterval;
+
+    #[test]
+    fn persistence_backpressure_window_scales_with_cadence() {
+        assert_eq!(
+            snapshot_persistence_backpressure_threshold(DevnetBlockInterval::TwoSeconds),
+            16
+        );
+        assert_eq!(
+            snapshot_persistence_backpressure_threshold(
+                DevnetBlockInterval::TwoHundredMilliseconds
+            ),
+            160
+        );
+    }
 
     #[test]
     fn anchors_two_second_schedule_at_first_descendant() {
         let config = SnapshotL2Stack::anchored_rollup_config(
+            ChainConfig::mainnet().rollup_config(),
             30_000_000,
             2_000_000_000,
             DevnetBlockInterval::TwoSeconds,
@@ -389,6 +493,7 @@ mod tests {
     #[test]
     fn anchors_subsecond_schedule_with_rollover() {
         let config = SnapshotL2Stack::anchored_rollup_config(
+            ChainConfig::mainnet().rollup_config(),
             30_000_000,
             2_000_000_000,
             DevnetBlockInterval::TwoHundredMilliseconds,
@@ -405,13 +510,17 @@ mod tests {
     fn subsecond_cl_and_el_activate_denim_at_same_timestamp() {
         let activation = 2_000_000_000;
         let rollup = SnapshotL2Stack::anchored_rollup_config(
+            ChainConfig::mainnet().rollup_config(),
             30_000_000,
             activation,
             DevnetBlockInterval::TwoHundredMilliseconds,
         )
         .unwrap();
-        let chain_spec =
-            SnapshotL2Stack::chain_spec(activation, DevnetBlockInterval::TwoHundredMilliseconds);
+        let chain_spec = SnapshotL2Stack::chain_spec(
+            BaseChainSpec::mainnet(),
+            activation,
+            DevnetBlockInterval::TwoHundredMilliseconds,
+        );
 
         assert!(!rollup.is_denim_active(activation - 1));
         assert!(rollup.is_denim_active(activation));
@@ -421,12 +530,56 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_overrides_replace_gas_limit_and_elasticity() {
+        let original = SystemConfig {
+            gas_limit: 1_200_000_000,
+            eip1559_denominator: Some(50),
+            eip1559_elasticity: Some(6),
+            min_base_fee: Some(5_000_000),
+            ..Default::default()
+        };
+
+        let overridden = SnapshotL2Stack::with_snapshot_overrides(
+            original,
+            DevnetBlockInterval::TwoSeconds,
+            Some(12_000_000_000),
+            Some(1),
+        );
+
+        assert_eq!(overridden.eip1559_elasticity, Some(1));
+        assert_eq!(overridden.eip1559_denominator, original.eip1559_denominator);
+        assert_eq!(overridden.gas_limit, 12_000_000_000);
+        assert_eq!(overridden.min_base_fee, original.min_base_fee);
+    }
+
+    #[test]
+    fn snapshot_gas_limit_defaults_follow_block_interval() {
+        let original = SystemConfig { gas_limit: 1_200_000_000, ..Default::default() };
+
+        let two_second = SnapshotL2Stack::with_snapshot_overrides(
+            original,
+            DevnetBlockInterval::TwoSeconds,
+            None,
+            None,
+        );
+        let subsecond = SnapshotL2Stack::with_snapshot_overrides(
+            original,
+            DevnetBlockInterval::TwoHundredMilliseconds,
+            None,
+            None,
+        );
+
+        assert_eq!(two_second.gas_limit, 10_000_000_000);
+        assert_eq!(subsecond.gas_limit, 1_000_000_000);
+    }
+
+    #[test]
     fn schedule_anchor_uses_startup_lead() {
         let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(2_000_000_000);
 
         let anchor = SnapshotL2Stack::schedule_anchor(now).unwrap();
 
-        assert_eq!(anchor, 2_000_000_000 + 10);
+        assert_eq!(anchor, 2_000_000_000 + SNAPSHOT_STARTUP_LEAD.as_secs());
         SnapshotL2Stack::ensure_schedule_anchor_is_future(anchor, now).unwrap();
     }
 

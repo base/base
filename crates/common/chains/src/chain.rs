@@ -175,7 +175,10 @@ mod tests {
             base_mainnet_forks[Beryl],
             ForkCondition::Timestamp(ChainConfig::mainnet().beryl_timestamp.unwrap())
         );
-        assert_eq!(base_mainnet_forks[Cobalt], ForkCondition::Never);
+        assert_eq!(
+            base_mainnet_forks[Cobalt],
+            ForkCondition::Timestamp(ChainConfig::mainnet().cobalt_timestamp.unwrap())
+        );
         assert_eq!(base_mainnet_forks[Denim], ForkCondition::Never);
         assert_eq!(base_mainnet_forks[Zenith], ForkCondition::Never);
     }
@@ -227,8 +230,14 @@ mod tests {
             base_sepolia_forks[Beryl],
             ForkCondition::Timestamp(ChainConfig::sepolia().beryl_timestamp.unwrap())
         );
-        assert_eq!(base_sepolia_forks[Cobalt], ForkCondition::Never);
-        assert_eq!(base_sepolia_forks[Denim], ForkCondition::Never);
+        assert_eq!(
+            base_sepolia_forks[Cobalt],
+            ForkCondition::Timestamp(ChainConfig::sepolia().cobalt_timestamp.unwrap())
+        );
+        assert_eq!(
+            base_sepolia_forks[Denim],
+            ForkCondition::Timestamp(ChainConfig::sepolia().denim_timestamp.unwrap())
+        );
         assert_eq!(base_sepolia_forks[Zenith], ForkCondition::Never);
     }
 
@@ -313,6 +322,21 @@ mod tests {
     }
 
     #[test]
+    fn is_cobalt_active_at_timestamp() {
+        let base_mainnet_forks = ChainUpgrades::mainnet();
+        assert!(!base_mainnet_forks.is_cobalt_active_at_timestamp(0));
+        assert!(!base_mainnet_forks.is_cobalt_active_at_timestamp(1_790_791_199));
+        assert!(base_mainnet_forks.is_cobalt_active_at_timestamp(1_790_791_200));
+        assert!(base_mainnet_forks.is_cobalt_active_at_timestamp(u64::MAX));
+
+        let base_sepolia_forks = ChainUpgrades::sepolia();
+        assert!(!base_sepolia_forks.is_cobalt_active_at_timestamp(0));
+        assert!(!base_sepolia_forks.is_cobalt_active_at_timestamp(1_790_186_399));
+        assert!(base_sepolia_forks.is_cobalt_active_at_timestamp(1_790_186_400));
+        assert!(base_sepolia_forks.is_cobalt_active_at_timestamp(u64::MAX));
+    }
+
+    #[test]
     fn is_zenith_active_at_timestamp() {
         let base_mainnet_forks = ChainUpgrades::mainnet();
         assert!(!base_mainnet_forks.is_zenith_active_at_timestamp(0));
@@ -324,10 +348,16 @@ mod tests {
 
     #[test]
     fn is_denim_active_at_timestamp() {
-        // Denim is unscheduled on all built-in chains.
+        // Denim is unscheduled on Base Mainnet and devnet.
         let base_mainnet_forks = ChainUpgrades::mainnet();
         assert!(!base_mainnet_forks.is_denim_active_at_timestamp(0));
         assert!(!base_mainnet_forks.is_denim_active_at_timestamp(u64::MAX));
+
+        let base_sepolia_forks = ChainUpgrades::sepolia();
+        assert!(!base_sepolia_forks.is_denim_active_at_timestamp(0));
+        assert!(!base_sepolia_forks.is_denim_active_at_timestamp(1_792_605_599));
+        assert!(base_sepolia_forks.is_denim_active_at_timestamp(1_792_605_600));
+        assert!(base_sepolia_forks.is_denim_active_at_timestamp(u64::MAX));
 
         let devnet_forks = ChainUpgrades::devnet();
         assert!(!devnet_forks.is_denim_active_at_timestamp(0));

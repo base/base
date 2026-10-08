@@ -40,6 +40,15 @@ impl BlobPayload {
     pub fn frames(&self) -> &[Arc<Frame>] {
         &self.frames
     }
+
+    /// Returns the encoded frame bytes packed into this blob.
+    ///
+    /// Excludes the derivation-version prefix, so the result is directly comparable
+    /// to [`DaEgress::BLOB_CAPACITY`](crate::DaEgress::BLOB_CAPACITY), the budget the
+    /// packer fills.
+    pub fn frame_bytes(&self) -> usize {
+        self.frames.iter().map(|frame| frame.encoded_len()).sum()
+    }
 }
 
 /// Payload carried by one L1 batch transaction.
@@ -107,15 +116,6 @@ impl BatchSubmission {
                 blobs.iter().flat_map(|blob| &blob.frames).map(|frame| frame.data.len()).sum()
             }
             SubmissionPayload::Calldata(frame) => frame.data.len(),
-        }
-    }
-
-    /// Returns the first frame in this submission, if it contains one.
-    #[cfg(test)]
-    pub fn first_frame(&self) -> Option<&Arc<Frame>> {
-        match &self.payload {
-            SubmissionPayload::Blobs(blobs) => blobs.first()?.frames.first(),
-            SubmissionPayload::Calldata(frame) => Some(frame),
         }
     }
 }

@@ -2,13 +2,16 @@
 
 use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
+use base_execution_payload_builder::{
+    RejectionCache,
+    config::{BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
+};
 use base_execution_rpc::eth::BaseEthApiBuilder;
 use base_execution_txpool::GuardLimits;
 use base_node_core::{
-    BaseConsensusBuilder, BaseEngineApiBuilder, BaseEngineTypes, BaseExecutorBuilder,
-    BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes, BasePayloadValidatorBuilder,
-    BaseStorage,
+    BaseAddOns, BaseAddOnsBuilder, BaseConsensusBuilder, BaseEngineApiBuilder, BaseEngineTypes,
+    BaseExecutorBuilder, BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes,
+    BasePayloadValidatorBuilder, BaseStorage,
     args::RollupArgs,
     node::{BasePayloadBuilder, BasePayloadServiceBuilder, BasePoolBuilder},
 };
@@ -20,8 +23,6 @@ use reth_node_builder::{
 };
 use reth_provider::providers::ProviderFactoryBuilder;
 use reth_rpc_api::eth::RpcTypes;
-
-use crate::{BaseAddOns, BaseAddOnsBuilder};
 
 /// Type configuration for a regular Base node.
 #[derive(Debug, Clone)]
@@ -43,6 +44,10 @@ pub struct BaseNode {
     /// Whether to drop positively stale EIP-8130 transactions using their
     /// captured authorization manifest before execution.
     pub manifest_precheck_enabled: bool,
+    /// Resource metering by opcode for native payload admission.
+    pub resource_metering: ResourceMeteringConfig,
+    /// Shared, cross-job cache of permanently rejected transaction hashes.
+    pub rejection_cache: RejectionCache,
 }
 
 impl Default for BaseNode {
@@ -59,6 +64,8 @@ impl BaseNode {
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
+            resource_metering: ResourceMeteringConfig::default(),
+            rejection_cache: RejectionCache::default(),
         }
     }
 
@@ -80,6 +87,18 @@ impl BaseNode {
         self
     }
 
+    /// Configure resource metering by opcode for the native payload builder.
+    pub fn with_resource_metering(mut self, resource_metering: ResourceMeteringConfig) -> Self {
+        self.resource_metering = resource_metering;
+        self
+    }
+
+    /// Configure the shared rejection cache for permanently rejected transactions.
+    pub fn with_rejection_cache(mut self, rejection_cache: RejectionCache) -> Self {
+        self.rejection_cache = rejection_cache;
+        self
+    }
+
     /// Returns the components for the given [`RollupArgs`].
     pub fn components<Node>(&self) -> BaseNodeComponentBuilder<Node>
     where
@@ -90,6 +109,7 @@ impl BaseNode {
             max_inflight_delegated_slots,
             mempool_sender_limit,
             mempool_payer_limit,
+            mempool_allowlisted_payer_limit,
             ..
         } = self.args;
         ComponentsBuilder::default()
@@ -100,17 +120,21 @@ impl BaseNode {
                     .with_guard_limits(GuardLimits {
                         signature_limit: mempool_sender_limit,
                         payment_limit: mempool_payer_limit,
+                        allowlisted_payment_limit: mempool_allowlisted_payer_limit,
                     })
                     .with_additional_trusted_delegation_targets(
                         self.args.mempool_trusted_delegation_targets.iter().copied(),
-                    ),
+                    )
+                    .with_allowlisted_payers(self.args.mempool_allowlisted_payers.iter().copied()),
             )
             .executor(BaseExecutorBuilder::default())
             .payload(BasePayloadServiceBuilder::new(
                 BasePayloadBuilder::new()
                     .with_da_config(self.da_config.clone())
                     .with_gas_limit_config(self.gas_limit_config.clone())
-                    .with_manifest_precheck_enabled(self.manifest_precheck_enabled),
+                    .with_manifest_precheck_enabled(self.manifest_precheck_enabled)
+                    .with_resource_metering(self.resource_metering.clone())
+                    .with_rejection_cache(self.rejection_cache.clone()),
             ))
             .network(BaseNetworkBuilder::new(!discovery_v4))
             .consensus(BaseConsensusBuilder::default())

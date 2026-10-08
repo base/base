@@ -19,8 +19,21 @@ impl PrometheusServer {
     /// Initialize a Prometheus metrics server on the given address and port.
     /// The interval specifies how often system metrics are collected, in seconds.
     pub fn init(addr: IpAddr, metrics_port: u16, interval: u64) -> Result<(), BuildError> {
+        Self::init_with_builder(addr, metrics_port, interval, Ok)
+    }
+
+    /// Initialize a Prometheus metrics server with a customized builder.
+    pub fn init_with_builder<F>(
+        addr: IpAddr,
+        metrics_port: u16,
+        interval: u64,
+        configure: F,
+    ) -> Result<(), BuildError>
+    where
+        F: FnOnce(PrometheusBuilder) -> Result<PrometheusBuilder, BuildError>,
+    {
         let prometheus_addr = SocketAddr::from((addr, metrics_port));
-        let builder = PrometheusBuilder::new().with_http_listener(prometheus_addr);
+        let builder = configure(PrometheusBuilder::new().with_http_listener(prometheus_addr))?;
 
         builder.install()?;
         base_metrics::initialize_registered_metrics();
@@ -73,8 +86,16 @@ impl Default for MetricsConfig {
 impl MetricsConfig {
     /// Initialize the Prometheus metrics recorder.
     pub fn init(&self) -> Result<(), BuildError> {
+        self.init_with_builder(Ok)
+    }
+
+    /// Initialize the Prometheus metrics recorder with a customized builder.
+    pub fn init_with_builder<F>(&self, configure: F) -> Result<(), BuildError>
+    where
+        F: FnOnce(PrometheusBuilder) -> Result<PrometheusBuilder, BuildError>,
+    {
         if self.enabled {
-            PrometheusServer::init(self.addr, self.port, self.interval)?;
+            PrometheusServer::init_with_builder(self.addr, self.port, self.interval, configure)?;
         }
         Ok(())
     }

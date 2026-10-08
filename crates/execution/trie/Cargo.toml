@@ -48,6 +48,8 @@ bincode = { workspace = true, features = ["serde"] }
 
 # misc
 tracing.workspace = true
+rayon.workspace = true
+dashmap.workspace = true
 thiserror.workspace = true
 auto_impl.workspace = true
 parking_lot.workspace = true
@@ -60,10 +62,10 @@ static_assertions.workspace = true
 [dev-dependencies]
 alloy-rpc-types-debug.workspace = true
 eyre.workspace = true
+rstest.workspace = true
 mockall.workspace = true
 rand_08.workspace = true
 tempfile.workspace = true
-test-case.workspace = true
 reth-node-api.workspace = true
 alloy-genesis.workspace = true
 reth-chainspec.workspace = true
@@ -91,6 +93,18 @@ harness = false
 
 [[bench]]
 name = "deep_history_reads"
+harness = false
+
+[[bench]]
+name = "cursor_iteration"
+harness = false
+
+[[bench]]
+name = "tombstone_skip_reads"
+harness = false
+
+[[bench]]
+name = "dead_key_reads"
 harness = false
 
 [features]

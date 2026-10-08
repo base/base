@@ -4,16 +4,17 @@ use std::{
     fmt,
     fs::{File, OpenOptions, create_dir_all, read_dir, remove_file, rename},
     io::{self, Write},
+    panic::{AssertUnwindSafe, catch_unwind},
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        mpsc::{Receiver, SyncSender, TrySendError, sync_channel},
     },
+    thread::{self, JoinHandle},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use tracing::warn;
-use tracing_appender::non_blocking::{ErrorCounter, NonBlocking, NonBlockingBuilder, WorkerGuard};
 
 use crate::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, Metrics, TransactionEvent,
@@ -90,6 +91,9 @@ impl TransactionEventRecorder {
     }
 }
 
+/// Builds one transaction event on the writer thread from the writer's network label.
+pub type DeferredTransactionEvent = Box<dyn FnOnce(&str) -> TransactionEvent + Send>;
+
 /// Non-blocking handle for appending transaction events to JSONL.
 #[derive(Clone)]
 pub struct TransactionEventWriter {
@@ -104,15 +108,26 @@ struct WriterInner {
 enum WriterBackend {
     Disabled,
     File {
-        writer: NonBlocking,
-        dropped: ErrorCounter,
-        observed_drops: AtomicUsize,
-        _guard: WorkerGuard,
+        // Deferred events awaiting the writer thread. Taken on drop to stop the thread.
+        sender: Option<SyncSender<DeferredTransactionEvent>>,
+        worker: Option<JoinHandle<()>>,
     },
     #[cfg(any(test, feature = "test-utils"))]
     Memory {
         recorder: TransactionEventRecorder,
     },
+}
+
+impl Drop for WriterInner {
+    fn drop(&mut self) {
+        if let WriterBackend::File { sender, worker } = &mut self.backend {
+            // Closing the queue lets the writer thread drain queued events and exit.
+            drop(sender.take());
+            if let Some(worker) = worker.take() {
+                let _ = worker.join();
+            }
+        }
+    }
 }
 
 impl fmt::Debug for TransactionEventWriter {
@@ -202,23 +217,77 @@ impl TransactionEventWriter {
             }
         };
 
-        let queue_capacity = config.queue_capacity.max(1);
-        let (writer, guard) = NonBlockingBuilder::default()
-            .lossy(true)
-            .buffered_lines_limit(queue_capacity)
-            .thread_name("transaction-event-writer")
-            .finish(MetricWriter::new(file));
-        let dropped = writer.error_counter();
+        match Self::spawn_file_writer(file, config.queue_capacity, config.network.clone()) {
+            Ok(writer) => Ok(writer),
+            Err(err) if config.required => {
+                Err(eyre::eyre!("failed to start required transaction event writer thread: {err}"))
+            }
+            Err(err) => {
+                Metrics::write_errors("write").increment(1);
+                warn!(
+                    error = %err,
+                    "transaction event writer disabled after writer thread failed to start"
+                );
+                Ok(Self::disabled(config))
+            }
+        }
+    }
 
-        Ok(Self::new(
-            WriterBackend::File {
-                writer,
-                dropped,
-                observed_drops: AtomicUsize::new(0),
-                _guard: guard,
-            },
-            config.network,
-        ))
+    /// Starts the writer thread that builds, validates, serializes, and appends queued events
+    /// to `sink`.
+    fn spawn_file_writer<W>(sink: W, queue_capacity: usize, network: String) -> io::Result<Self>
+    where
+        W: Write + Send + 'static,
+    {
+        let (sender, receiver) = sync_channel(queue_capacity.max(1));
+        let worker_network = network.clone();
+        let worker = thread::Builder::new()
+            .name("transaction-event-writer".to_string())
+            .spawn(move || Self::run_writer(&receiver, MetricWriter::new(sink), &worker_network))?;
+        Ok(Self::new(WriterBackend::File { sender: Some(sender), worker: Some(worker) }, network))
+    }
+
+    fn run_writer<W: Write>(
+        receiver: &Receiver<DeferredTransactionEvent>,
+        mut sink: W,
+        network: &str,
+    ) {
+        for build in receiver {
+            if let Some(line) = Self::encode(build, network) {
+                // `MetricWriter` records write failures; a failed line is dropped.
+                let _ = sink.write_all(&line);
+            }
+        }
+        let _ = sink.flush();
+    }
+
+    /// Builds one queued event and encodes it as a JSONL line, or records why it was dropped.
+    fn encode(build: DeferredTransactionEvent, network: &str) -> Option<Vec<u8>> {
+        let Ok(event) = catch_unwind(AssertUnwindSafe(|| build(network))) else {
+            Metrics::dropped_events("serialization").increment(1);
+            warn!("transaction event builder panicked; event dropped");
+            return None;
+        };
+        if let Err(err) = event.validate() {
+            Metrics::dropped_events("validation").increment(1);
+            warn!(error = %err, event_type = %event.event_type, "invalid transaction event dropped");
+            return None;
+        }
+        match serde_json::to_vec(&event) {
+            Ok(mut line) => {
+                line.push(b'\n');
+                Some(line)
+            }
+            Err(err) => {
+                Metrics::dropped_events("serialization").increment(1);
+                warn!(
+                    error = %err,
+                    event_type = %event.event_type,
+                    "failed to serialize transaction event"
+                );
+                None
+            }
+        }
     }
 
     /// Creates a disabled writer handle.
@@ -238,6 +307,20 @@ impl TransactionEventWriter {
 
     /// Attempts to enqueue one event without blocking the caller.
     pub fn try_write(&self, event: &TransactionEvent) -> Result<(), WriteEventError> {
+        let event = event.clone();
+        self.try_write_with(move |_| event)
+    }
+
+    /// Attempts to enqueue one event without blocking the caller, deferring its construction.
+    ///
+    /// File-backed writers call `build` with the writer's network label on the writer thread, then
+    /// validate and serialize the event there, so the caller only pays for the enqueue. Events that
+    /// fail validation or serialization there, or that arrive while the queue is full, are dropped
+    /// and counted in the dropped-event metric instead of being reported to the caller.
+    pub fn try_write_with<F>(&self, build: F) -> Result<(), WriteEventError>
+    where
+        F: FnOnce(&str) -> TransactionEvent + Send + 'static,
+    {
         match &self.inner.backend {
             WriterBackend::Disabled => {
                 Metrics::dropped_events("disabled").increment(1);
@@ -245,26 +328,31 @@ impl TransactionEventWriter {
             }
             #[cfg(any(test, feature = "test-utils"))]
             WriterBackend::Memory { recorder } => {
-                Self::validate_event(event)?;
-                recorder.push(event.clone());
+                let event = build(&self.inner.network);
+                Self::validate_event(&event)?;
+                recorder.push(event);
                 Metrics::submitted_events().increment(1);
                 Ok(())
             }
-            WriterBackend::File { writer, .. } => {
-                Self::validate_event(event)?;
-                let mut line = serde_json::to_vec(event).map_err(|err| {
-                    Metrics::dropped_events("serialization").increment(1);
-                    WriteEventError::Serialize(err)
-                })?;
-                line.push(b'\n');
-                let _ = writer.clone().write_all(&line);
-                self.observe_dropped_events();
-                Metrics::submitted_events().increment(1);
+            WriterBackend::File { sender, .. } => {
+                let Some(sender) = sender else {
+                    return Err(WriteEventError::Disabled);
+                };
+                match sender.try_send(Box::new(build)) {
+                    Ok(()) => Metrics::submitted_events().increment(1),
+                    Err(TrySendError::Full(_)) => {
+                        Metrics::dropped_events("backpressure").increment(1);
+                    }
+                    Err(TrySendError::Disconnected(_)) => {
+                        Metrics::dropped_events("disconnected").increment(1);
+                    }
+                }
                 Ok(())
             }
         }
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     fn validate_event(event: &TransactionEvent) -> Result<(), WriteEventError> {
         event.validate().map_err(|err| {
             Metrics::dropped_events("validation").increment(1);
@@ -276,29 +364,6 @@ impl TransactionEventWriter {
     pub fn network(&self) -> &str {
         &self.inner.network
     }
-
-    fn observe_dropped_events(&self) -> usize {
-        let WriterBackend::File { dropped, observed_drops, .. } = &self.inner.backend else {
-            return 0;
-        };
-
-        loop {
-            let current = dropped.dropped_lines();
-            let previous = observed_drops.load(Ordering::Relaxed);
-            if current <= previous {
-                return 0;
-            }
-
-            if observed_drops
-                .compare_exchange_weak(previous, current, Ordering::Relaxed, Ordering::Relaxed)
-                .is_ok()
-            {
-                let delta = current - previous;
-                Metrics::dropped_events("backpressure").increment(delta as u64);
-                return delta;
-            }
-        }
-    }
 }
 
 /// Error returned when an event cannot be queued.
@@ -307,9 +372,6 @@ pub enum WriteEventError {
     /// Writer is disabled.
     #[error("transaction event writer is disabled")]
     Disabled,
-    /// Serialization failed.
-    #[error("failed to serialize transaction event: {0}")]
-    Serialize(serde_json::Error),
     /// Event failed contract validation.
     #[error("invalid transaction event: {0}")]
     Invalid(TransactionEventValidationError),
@@ -526,32 +588,32 @@ mod tests {
     where
         W: Write + Send + 'static,
     {
-        let config = TransactionEventWriterConfig {
-            enabled: true,
-            file_path: PathBuf::from("test.jsonl"),
-            queue_capacity,
-            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
-            max_files: DEFAULT_MAX_FILES,
-            required: true,
-            producer: TransactionEventProducer::BaseRethNode,
-            network: "base-mainnet".to_string(),
-        };
-        let (writer, guard) = NonBlockingBuilder::default()
-            .lossy(true)
-            .buffered_lines_limit(queue_capacity)
-            .thread_name("transaction-event-writer-test")
-            .finish(MetricWriter::new(sink));
-        let dropped = writer.error_counter();
+        TransactionEventWriter::spawn_file_writer(sink, queue_capacity, "base-mainnet".to_string())
+            .unwrap()
+    }
 
-        TransactionEventWriter::new(
-            WriterBackend::File {
-                writer,
-                dropped,
-                observed_drops: AtomicUsize::new(0),
-                _guard: guard,
-            },
-            config.network,
-        )
+    #[derive(Clone, Default)]
+    struct SharedSink(Arc<Mutex<Vec<u8>>>);
+
+    impl SharedSink {
+        fn lines(&self) -> Vec<String> {
+            String::from_utf8(self.0.lock().unwrap().clone())
+                .unwrap()
+                .lines()
+                .map(str::to_string)
+                .collect()
+        }
+    }
+
+    impl Write for SharedSink {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
     }
 
     #[test]
@@ -808,13 +870,14 @@ mod tests {
     }
 
     #[test]
-    fn writer_observes_aggregate_backpressure_drops() {
-        struct SlowWriter;
+    fn writer_drops_events_when_the_queue_is_full() {
+        #[derive(Clone)]
+        struct SlowSink(SharedSink);
 
-        impl Write for SlowWriter {
+        impl Write for SlowSink {
             fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
                 thread::sleep(Duration::from_millis(50));
-                Ok(buf.len())
+                self.0.write(buf)
             }
 
             fn flush(&mut self) -> io::Result<()> {
@@ -822,20 +885,57 @@ mod tests {
             }
         }
 
-        let writer = writer_with_sink(SlowWriter, 0);
-        let WriterBackend::File { observed_drops, .. } = &writer.inner.backend else {
-            panic!("backpressure test requires a file-backed writer");
-        };
+        let sink = SharedSink::default();
+        let writer = writer_with_sink(SlowSink(sink.clone()), 1);
 
-        for _ in 0..10_000 {
+        for _ in 0..100 {
             writer.try_write(&sample_event()).unwrap();
-            if observed_drops.load(Ordering::Relaxed) > 0 {
-                break;
-            }
         }
+        drop(writer);
 
-        let dropped = observed_drops.load(Ordering::Relaxed);
-        assert!(dropped > 0, "lossy writer should report aggregate drops under backpressure");
+        let written = sink.lines().len();
+        assert!(written > 0);
+        assert!(written < 100, "a full queue should drop events instead of blocking the caller");
+    }
+
+    #[test]
+    fn writer_builds_deferred_events_on_the_writer_thread() {
+        let sink = SharedSink::default();
+        let writer = writer_with_sink(sink.clone(), 8);
+
+        writer
+            .try_write_with(|network| {
+                assert_eq!(thread::current().name(), Some("transaction-event-writer"));
+                let mut event = sample_event();
+                event.network = Some(network.to_string());
+                event
+            })
+            .unwrap();
+        drop(writer);
+
+        let lines = sink.lines();
+        assert_eq!(lines.len(), 1);
+        let value: Value = serde_json::from_str(&lines[0]).unwrap();
+        assert_eq!(value["network"], "base-mainnet");
+    }
+
+    #[test]
+    fn writer_drops_invalid_and_panicking_deferred_events() {
+        let sink = SharedSink::default();
+        let writer = writer_with_sink(sink.clone(), 8);
+
+        writer
+            .try_write_with(|_| {
+                let mut event = sample_event();
+                event.event_id = String::new();
+                event
+            })
+            .unwrap();
+        writer.try_write_with(|_| panic!("event data failed to serialize")).unwrap();
+        writer.try_write(&sample_event()).unwrap();
+        drop(writer);
+
+        assert_eq!(sink.lines().len(), 1, "only the valid event is written");
     }
 
     #[test]

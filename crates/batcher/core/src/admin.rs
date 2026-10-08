@@ -2,7 +2,7 @@
 
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{ThrottleConfig, ThrottleInfo, ThrottleStrategy};
+use crate::{ThrottleConfig, ThrottleConfigError, ThrottleInfo, ThrottleStrategy};
 
 /// Capacity of the admin command channel.
 ///
@@ -15,7 +15,7 @@ pub const ADMIN_CHANNEL_CAPACITY: usize = 32;
 /// Serialised directly as the `admin_getBatcherStatus` JSON-RPC response.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BatcherStatus {
-    /// Whether block ingestion is currently stopped (paused via admin or `--stopped` flag).
+    /// Whether block ingestion is currently stopped (via admin or the `--stopped` flag).
     pub stopped: bool,
     /// Number of L1 transactions submitted but not yet confirmed.
     pub in_flight: usize,
@@ -32,25 +32,39 @@ pub enum AdminError {
     /// The requested operation is not yet supported.
     #[error("not yet supported: {0}")]
     NotSupported(&'static str),
+    /// The operation needs a running batcher, but it is stopped.
+    #[error("batcher is stopped")]
+    Stopped,
+    /// The requested throttle configuration is invalid.
+    #[error("invalid throttle config: {0}")]
+    InvalidThrottleConfig(#[from] ThrottleConfigError),
 }
 
 /// Result type alias for admin operations.
 pub type AdminResult<T> = Result<T, AdminError>;
 
 /// Commands the admin HTTP server can send to the running driver task.
+///
+/// Every command carries a reply channel, answered once the driver has applied it.
 #[derive(derive_more::Debug)]
 pub enum AdminCommand {
-    /// Resume block ingestion after a [`Pause`](Self::Pause).
-    Resume,
-    /// Pause block ingestion without stopping the driver task.
-    Pause,
+    /// Start block ingestion again after a [`Stop`](Self::Stop).
+    Start {
+        /// Answered once ingestion is running.
+        #[debug(skip)]
+        reply: oneshot::Sender<()>,
+    },
+    /// Stop block ingestion; the driver task keeps running.
+    Stop {
+        /// Answered once ingestion is stopped.
+        #[debug(skip)]
+        reply: oneshot::Sender<()>,
+    },
     /// Flush the current encoding channel.
     Flush {
-        /// Fired once the driver's encoding and submission are both fully drained (not just
-        /// after the first frame) — see [`AdminHandle::flush_and_wait`] for the precise
-        /// "whole pipeline idle, not just this flush" caveat.
+        /// Answered once the pipeline is flushed, or with an error if the batcher is stopped.
         #[debug(skip)]
-        ack: Option<oneshot::Sender<()>>,
+        reply: oneshot::Sender<AdminResult<()>>,
     },
     /// Replace the throttle strategy and configuration.
     SetThrottle {
@@ -59,18 +73,19 @@ pub enum AdminCommand {
         /// The new throttle configuration to apply.
         #[debug(skip)]
         config: ThrottleConfig,
+        /// Answered once the new controller is in place.
+        #[debug(skip)]
+        reply: oneshot::Sender<()>,
     },
-    /// Clear the throttle dedup cache so limits are re-applied unconditionally.
-    ResetThrottle,
-    /// Read current throttle state; reply sent via the embedded oneshot sender.
+    /// Read the current throttle state.
     GetThrottleInfo {
-        /// Channel to send the throttle info snapshot back on.
+        /// Answered with a snapshot of the throttle state.
         #[debug(skip)]
         reply: oneshot::Sender<ThrottleInfo>,
     },
-    /// Read current driver runtime state; reply sent via the embedded oneshot sender.
+    /// Read the current driver runtime state.
     GetStatus {
-        /// Channel to send the batcher status back on.
+        /// Answered with the batcher status.
         #[debug(skip)]
         reply: oneshot::Sender<BatcherStatus>,
     },
@@ -78,8 +93,10 @@ pub enum AdminCommand {
 
 /// Cloneable handle to the driver's admin command channel.
 ///
-/// Create with [`AdminHandle::channel`]; wire the returned
-/// [`mpsc::Receiver`] into the driver via [`BatchDriver::with_admin_rx`].
+/// Create with [`AdminHandle::channel`]; hand the returned [`mpsc::Receiver`] to the
+/// driver as [`BatchDriverInputs::admin_rx`](crate::BatchDriverInputs::admin_rx). Every
+/// method that sends a command returns once the driver has applied it, or
+/// [`AdminError::ChannelClosed`] once the driver is gone.
 #[derive(Clone, Debug)]
 pub struct AdminHandle {
     tx: mpsc::Sender<AdminCommand>,
@@ -92,79 +109,49 @@ impl AdminHandle {
         (Self { tx }, rx)
     }
 
-    /// Resume block ingestion if currently paused.
-    pub async fn resume(&self) -> AdminResult<()> {
-        self.send(AdminCommand::Resume).await
+    /// Start block ingestion again. Does nothing if the batcher is already running.
+    pub async fn start(&self) -> AdminResult<()> {
+        self.request(|reply| AdminCommand::Start { reply }).await
     }
 
-    /// Pause block ingestion without stopping the driver task.
+    /// Stop block ingestion; the driver task keeps running.
     ///
     /// In-flight submissions continue to resolve; no new blocks are ingested
-    /// until [`resume`](Self::resume) is called.
-    pub async fn pause(&self) -> AdminResult<()> {
-        self.send(AdminCommand::Pause).await
+    /// until [`start`](Self::start) is called. Does nothing if the batcher is already stopped.
+    pub async fn stop(&self) -> AdminResult<()> {
+        self.request(|reply| AdminCommand::Stop { reply }).await
     }
 
-    /// Flush the current encoding channel, submitting any buffered frames.
+    /// Flush the current encoding channel, making its frames eligible for submission.
     ///
-    /// Returns once the command is queued — use
-    /// [`flush_and_wait`](Self::flush_and_wait) if the caller needs to know when the
-    /// resulting frames have actually been handed to the tx manager.
+    /// Answered once the channel is closed, before its frames are submitted; it does not
+    /// wait for L1 inclusion. Returns [`AdminError::Stopped`] if the batcher is stopped.
     pub async fn flush(&self) -> AdminResult<()> {
-        self.send(AdminCommand::Flush { ack: None }).await
-    }
-
-    /// Flush the current encoding channel and wait until every resulting frame has
-    /// been encoded and handed to the tx manager.
-    ///
-    /// Unlike [`flush`](Self::flush), which only guarantees the command was queued, this
-    /// waits for the driver to report that encoding and submission are both fully drained.
-    /// At that point every frame produced by this flush has been handed to the tx manager.
-    ///
-    /// The wait is for the *whole pipeline* going idle, not specifically for this flush's own
-    /// frames: if new blocks keep arriving and producing fresh encoding/submission work while
-    /// this call is outstanding, the ack is delayed until that work drains too, and under
-    /// sustained continuous ingestion it may not fire at all. This call therefore gives a
-    /// precise, meaningful guarantee only when the source is otherwise quiesced (as in the
-    /// action-test harness, which never calls this while blocks are still streaming in).
-    pub async fn flush_and_wait(&self) -> AdminResult<()> {
-        let (tx, rx) = oneshot::channel();
-        self.send(AdminCommand::Flush { ack: Some(tx) }).await?;
-        rx.await.map_err(|_| AdminError::ChannelClosed)
+        self.request(|reply| AdminCommand::Flush { reply }).await?
     }
 
     /// Replace the throttle strategy and configuration.
     ///
-    /// The full [`ThrottleConfig`] is required — partial updates are not
-    /// supported. Callers that want to change only one field should call
-    /// [`get_throttle_info`](Self::get_throttle_info) first to read the
-    /// current config, adjust the desired field, and pass the result here.
+    /// The full [`ThrottleConfig`] is required because partial updates are not supported. The
+    /// new limits are pushed to the block builders. An invalid `config` is rejected with
+    /// [`AdminError::InvalidThrottleConfig`] before reaching the driver.
     pub async fn set_throttle(
         &self,
         strategy: ThrottleStrategy,
         config: ThrottleConfig,
     ) -> AdminResult<()> {
-        self.send(AdminCommand::SetThrottle { strategy, config }).await
-    }
-
-    /// Clear the throttle dedup cache so limits are re-applied unconditionally
-    /// on the next driver iteration.
-    pub async fn reset_throttle(&self) -> AdminResult<()> {
-        self.send(AdminCommand::ResetThrottle).await
+        config.validate()?;
+        self.request(|reply| AdminCommand::SetThrottle { strategy, config, reply }).await
     }
 
     /// Read the current throttle controller state.
     pub async fn get_throttle_info(&self) -> AdminResult<ThrottleInfo> {
-        let (tx, rx) = oneshot::channel();
-        self.send(AdminCommand::GetThrottleInfo { reply: tx }).await?;
-        rx.await.map_err(|_| AdminError::ChannelClosed)
+        self.request(|reply| AdminCommand::GetThrottleInfo { reply }).await
     }
 
     /// Read the current driver runtime state.
     pub async fn get_status(&self) -> AdminResult<BatcherStatus> {
-        let (tx, rx) = oneshot::channel();
-        self.send(AdminCommand::GetStatus { reply: tx }).await?;
-        rx.await.map_err(|_| AdminError::ChannelClosed)
+        self.request(|reply| AdminCommand::GetStatus { reply }).await
     }
 
     /// Dynamic log level changes require a `tracing-subscriber` reload handle
@@ -177,35 +164,13 @@ impl AdminHandle {
         Err(AdminError::NotSupported("set_log_level"))
     }
 
-    async fn send(&self, cmd: AdminCommand) -> AdminResult<()> {
-        self.tx.send(cmd).await.map_err(|_| AdminError::ChannelClosed)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn resume_returns_channel_closed_when_rx_dropped() {
-        let (handle, rx) = AdminHandle::channel();
-        drop(rx);
-        let err = handle.resume().await.unwrap_err();
-        assert!(matches!(err, AdminError::ChannelClosed));
-    }
-
-    #[tokio::test]
-    async fn get_status_returns_channel_closed_when_rx_dropped() {
-        let (handle, rx) = AdminHandle::channel();
-        drop(rx);
-        let err = handle.get_status().await.unwrap_err();
-        assert!(matches!(err, AdminError::ChannelClosed));
-    }
-
-    #[test]
-    fn set_log_level_returns_not_supported() {
-        let (handle, _rx) = AdminHandle::channel();
-        let err = handle.set_log_level("debug".to_string()).unwrap_err();
-        assert!(matches!(err, AdminError::NotSupported(_)));
+    /// Send a command and wait for the driver's answer.
+    async fn request<T>(
+        &self,
+        command: impl FnOnce(oneshot::Sender<T>) -> AdminCommand,
+    ) -> AdminResult<T> {
+        let (reply, rx) = oneshot::channel();
+        self.tx.send(command(reply)).await.map_err(|_| AdminError::ChannelClosed)?;
+        rx.await.map_err(|_| AdminError::ChannelClosed)
     }
 }

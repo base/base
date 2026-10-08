@@ -69,6 +69,8 @@ pub enum SubmitCohort {
     Plain,
     /// Validity submission carrying resolved predicates.
     ValidityPass,
+    /// Validity submission priced ahead of the plain cohort.
+    ValidityPassPriorityLead,
 }
 
 impl SubmitCohort {
@@ -82,6 +84,7 @@ impl SubmitCohort {
         match self {
             Self::Plain => "plain",
             Self::ValidityPass => "validity_pass",
+            Self::ValidityPassPriorityLead => "validity_pass_priority_lead",
         }
     }
 
@@ -89,7 +92,9 @@ impl SubmitCohort {
     pub const fn to_metric_label(self) -> crate::metrics::SubmitCohortLabel {
         match self {
             Self::Plain => crate::metrics::SubmitCohortLabel::Plain,
-            Self::ValidityPass => crate::metrics::SubmitCohortLabel::ValidityPass,
+            Self::ValidityPass | Self::ValidityPassPriorityLead => {
+                crate::metrics::SubmitCohortLabel::ValidityPass
+            }
         }
     }
 }
@@ -133,8 +138,26 @@ impl GasPricer {
 
     /// Fees for a measured-load submission at the given base fee.
     pub fn fees_for(&self, base_fee: u128) -> Fees {
+        self.fees_for_cohort(base_fee, SubmitCohort::Plain, 1, 1)
+    }
+
+    /// Fees for measured load, pricing the bulk and priority-lead validity cohorts separately.
+    pub fn fees_for_cohort(
+        &self,
+        base_fee: u128,
+        cohort: SubmitCohort,
+        validity_priority_fee_divisor: u128,
+        validity_priority_lead_multiplier: u128,
+    ) -> Fees {
         let priority_fee =
             (base_fee / 10).max(MIN_PRIORITY_FEE).min(self.max_gas_price.saturating_sub(base_fee));
+        let priority_fee = match cohort {
+            SubmitCohort::Plain => priority_fee,
+            SubmitCohort::ValidityPass => priority_fee / validity_priority_fee_divisor,
+            SubmitCohort::ValidityPassPriorityLead => priority_fee
+                .saturating_mul(validity_priority_lead_multiplier)
+                .min(self.max_gas_price.saturating_sub(base_fee)),
+        };
         let max_fee =
             SubmissionPipeline::submission_max_fee(base_fee, priority_fee, self.max_gas_price);
         Fees { max_fee, priority_fee }
@@ -366,6 +389,10 @@ pub struct SignerContext {
     pub chain_id: u64,
     /// Maximum allowed gas price.
     pub max_gas_price: u128,
+    /// Priority-tip multiplier for the validity priority-lead cohort.
+    pub validity_priority_lead_multiplier: u128,
+    /// Priority-tip divisor for validity-cohort measured transactions.
+    pub validity_priority_fee_divisor: u128,
     /// Sender for signed batches.
     pub signed_batch_tx: mpsc::Sender<SignedBatch>,
     /// Signed queue accounting.
@@ -379,6 +406,8 @@ impl fmt::Debug for SignerContext {
             .field("nonce_managers", &self.nonce_managers.len())
             .field("chain_id", &self.chain_id)
             .field("max_gas_price", &self.max_gas_price)
+            .field("validity_priority_lead_multiplier", &self.validity_priority_lead_multiplier)
+            .field("validity_priority_fee_divisor", &self.validity_priority_fee_divisor)
             .finish_non_exhaustive()
     }
 }
@@ -388,14 +417,10 @@ impl fmt::Debug for SignerContext {
 pub struct SenderContext {
     /// Transaction submission RPC clients.
     pub submission_batch_rpcs: Arc<Vec<BatchRpcClient>>,
-    /// Nonce managers by sender address.
-    pub nonce_managers: Arc<HashMap<Address, NonceManager<RootProvider<Ethereum>>>>,
     /// Results tracker updated after RPC acceptance.
     pub results_tracker: ResultsTracker,
     /// Events emitted to the runner.
     pub submit_event_tx: mpsc::Sender<SubmitEvent>,
-    /// Whether nonce return is enabled for rejected signed transactions.
-    pub return_reserved_nonces: bool,
     /// Optional cap on concurrent outbound submission RPC requests, shared across
     /// all sender workers. Bounds request *rate* to the endpoint independently of
     /// how many transactions are in flight (unconfirmed) or how many sender
@@ -408,8 +433,6 @@ impl fmt::Debug for SenderContext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SenderContext")
             .field("submission_batch_rpcs", &self.submission_batch_rpcs.len())
-            .field("nonce_managers", &self.nonce_managers.len())
-            .field("return_reserved_nonces", &self.return_reserved_nonces)
             .finish_non_exhaustive()
     }
 }
@@ -432,6 +455,10 @@ pub struct PipelineStartConfig {
     pub chain_id: u64,
     /// Maximum allowed gas price.
     pub max_gas_price: u128,
+    /// Priority-tip multiplier for the validity priority-lead cohort.
+    pub validity_priority_lead_multiplier: u128,
+    /// Priority-tip divisor for validity-cohort measured transactions.
+    pub validity_priority_fee_divisor: u128,
     /// Optional cap on concurrent outbound submission RPC requests across all
     /// sender workers and per-batch RPC chunks. `None` leaves those requests
     /// unconstrained by a shared semaphore.
@@ -485,6 +512,8 @@ impl SubmissionPipeline {
                 submit_event_tx: submit_event_tx.clone(),
                 chain_id: config.chain_id,
                 max_gas_price: config.max_gas_price,
+                validity_priority_lead_multiplier: config.validity_priority_lead_multiplier,
+                validity_priority_fee_divisor: config.validity_priority_fee_divisor,
                 signed_batch_tx: signed_batch_tx.clone(),
                 signed_queue: Arc::clone(&signed_queue),
             };
@@ -499,10 +528,8 @@ impl SubmissionPipeline {
         for _ in 0..sender_worker_count {
             let ctx = SenderContext {
                 submission_batch_rpcs: Arc::clone(&submission_batch_rpcs),
-                nonce_managers: Arc::clone(&nonce_managers),
                 results_tracker: results_tracker.clone(),
                 submit_event_tx: submit_event_tx.clone(),
-                return_reserved_nonces: false,
                 submit_request_limiter: submit_request_limiter.clone(),
             };
             let queue = Arc::clone(&signed_queue);
@@ -598,6 +625,7 @@ impl SubmissionPipeline {
 
     /// Closes both queues and summarizes queued-but-not-started batch failures.
     pub async fn close_and_fail_queued(&self, reason: &'static str) -> QueuedSubmitFailures {
+        self.shutdown.cancel();
         let mut failures = QueuedSubmitFailures::new(reason);
         let abandoned_prepared = {
             let mut receiver = self.prepared_queue.receiver.lock().await;
@@ -637,8 +665,15 @@ impl SubmissionPipeline {
     pub async fn shutdown_and_join(&mut self, timeout: Duration) {
         self.shutdown.cancel();
 
+        let deadline = Instant::now() + timeout;
         for mut worker in self.signer_workers.drain(..).chain(self.sender_workers.drain(..)) {
-            match tokio::time::timeout(timeout, &mut worker).await {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                warn!("submission worker shutdown deadline elapsed, aborting");
+                worker.abort();
+                continue;
+            }
+            match tokio::time::timeout(remaining, &mut worker).await {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) if e.is_cancelled() => {}
                 Ok(Err(e)) => warn!(error = %e, "submission worker panicked"),
@@ -647,18 +682,6 @@ impl SubmissionPipeline {
                     worker.abort();
                 }
             }
-        }
-    }
-
-    /// Fails prepared transactions.
-    pub async fn fail_prepared_batch(
-        submit_event_tx: &mpsc::Sender<SubmitEvent>,
-        prepared_txs: Vec<PreparedTransaction>,
-        reason: &'static str,
-    ) {
-        for prepared in prepared_txs {
-            Self::release_prepared(submit_event_tx, &prepared).await;
-            let _ = submit_event_tx.send(SubmitEvent::Failed(reason.into())).await;
         }
     }
 
@@ -869,6 +892,22 @@ impl SubmissionPipeline {
         let measured = batch.measured;
         let mut submitted = 0u64;
 
+        // Register deterministic signed hashes before awaiting the RPC response so a very fast
+        // local chain cannot mine a transaction before the block watcher knows about it.
+        ctx.results_tracker.sent_transactions(
+            batch
+                .txs
+                .iter()
+                .map(|signed| SentTransaction {
+                    tx_hash: signed.tx_hash,
+                    from: signed.from,
+                    estimated_gas: signed.estimated_gas,
+                    measured,
+                    cohort: signed.cohort,
+                })
+                .collect(),
+        );
+
         loop {
             if batch.txs.is_empty() {
                 return submitted;
@@ -983,7 +1022,7 @@ impl SubmissionPipeline {
                             if terminal_rejection_error.is_none() {
                                 terminal_rejection_error = Some(message.clone());
                             }
-                            Self::return_signed_nonce(&ctx, &signed).await;
+                            ctx.results_tracker.discard_transaction(signed.tx_hash);
                             Self::release_signed(&ctx.submit_event_tx, &signed, false).await;
                             let _ = ctx.submit_event_tx.send(SubmitEvent::Failed(message)).await;
                         }
@@ -1086,17 +1125,18 @@ impl SubmissionPipeline {
                 server = %tx_hash,
                 "tx hash mismatch, using server hash"
             );
+            ctx.results_tracker.discard_transaction(signed.tx_hash);
+            ctx.results_tracker.sent_transactions(vec![SentTransaction {
+                tx_hash,
+                from: signed.from,
+                estimated_gas: signed.estimated_gas,
+                measured,
+                cohort: signed.cohort,
+            }]);
             tx_hash
         } else {
             signed.tx_hash
         };
-        ctx.results_tracker.sent_transactions(vec![SentTransaction {
-            tx_hash: tracked_hash,
-            from: signed.from,
-            estimated_gas: signed.estimated_gas,
-            measured,
-            cohort: signed.cohort,
-        }]);
         Self::release_signed(&ctx.submit_event_tx, &signed, true).await;
         let _ = ctx.submit_event_tx.send(SubmitEvent::Submitted(tracked_hash)).await;
         1
@@ -1120,22 +1160,10 @@ impl SubmissionPipeline {
         reason: &'static str,
     ) {
         for signed in signed_txs {
-            Self::return_signed_nonce(ctx, &signed).await;
+            ctx.results_tracker.discard_transaction(signed.tx_hash);
             Self::release_signed(submit_event_tx, &signed, false).await;
             let _ = submit_event_tx.send(SubmitEvent::Failed(reason.into())).await;
         }
-    }
-
-    async fn return_signed_nonce(ctx: &SenderContext, signed: &SignedTransaction) {
-        if !ctx.return_reserved_nonces {
-            return;
-        }
-
-        let Some(nonce_manager) = ctx.nonce_managers.get(&signed.from) else {
-            warn!(from = %signed.from, nonce = signed.nonce, "no nonce manager for nonce return");
-            return;
-        };
-        nonce_manager.return_reserved_nonce(signed.nonce).await;
     }
 
     async fn release_prepared(
@@ -1170,7 +1198,12 @@ impl SubmissionPipeline {
         prepared: &PreparedTransaction,
         base_fee: u128,
     ) -> Option<SignedTransaction> {
-        let fees = GasPricer::new(ctx.max_gas_price).fees_for(base_fee);
+        let fees = GasPricer::new(ctx.max_gas_price).fees_for_cohort(
+            base_fee,
+            prepared.cohort,
+            ctx.validity_priority_fee_divisor,
+            ctx.validity_priority_lead_multiplier,
+        );
 
         let Some(signer) = ctx.signers.get(&prepared.from) else {
             warn!(from = %prepared.from, "no signer for sender");
@@ -1249,7 +1282,7 @@ mod tests {
 
     use alloy_primitives::{Address, Bytes, TxHash, U256};
     use alloy_signer_local::PrivateKeySigner;
-    use tokio::sync::mpsc;
+    use tokio::sync::{mpsc, oneshot};
     use tokio_util::sync::CancellationToken;
 
     use super::{
@@ -1379,6 +1412,26 @@ mod tests {
     }
 
     #[test]
+    fn gas_pricer_divides_only_validity_tip_and_covers_it() {
+        let pricer = GasPricer::new(10_000);
+        let plain = pricer.fees_for_cohort(100, SubmitCohort::Plain, 5, 3);
+        let validity = pricer.fees_for_cohort(100, SubmitCohort::ValidityPass, 5, 3);
+        let priority_lead =
+            pricer.fees_for_cohort(100, SubmitCohort::ValidityPassPriorityLead, 5, 3);
+
+        assert_eq!(plain.priority_fee, 10);
+        assert_eq!(validity.priority_fee, 2);
+        assert_eq!(priority_lead.priority_fee, 30);
+        assert!(validity.max_fee >= 102);
+
+        let capped = GasPricer::new(130).fees_for_cohort(100, SubmitCohort::ValidityPass, 5, 3);
+        assert_eq!(capped, Fees { max_fee: 130, priority_fee: 2 });
+        let capped_lead =
+            GasPricer::new(120).fees_for_cohort(100, SubmitCohort::ValidityPassPriorityLead, 5, 3);
+        assert_eq!(capped_lead, Fees { max_fee: 120, priority_fee: 20 });
+    }
+
+    #[test]
     fn gas_pricer_bumped_scales_and_caps_at_max_gas_price() {
         let pricer = GasPricer::new(1_000);
         let fees = Fees { max_fee: 100, priority_fee: 10 };
@@ -1494,6 +1547,64 @@ mod tests {
         assert_eq!(pipeline.pending_batches(), 0);
         assert!(matches!(submit_event_rx.try_recv(), Ok(SubmitEvent::Failed(_))));
         assert!(submit_event_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn close_and_fail_queued_cancels_workers_before_locking_receivers() {
+        let (_prepared_tx, prepared_rx) = mpsc::channel(1);
+        let (_signed_tx, signed_rx) = mpsc::channel(1);
+        let prepared_queue = Arc::new(PipelineQueue::new(prepared_rx));
+        let signed_queue = Arc::new(PipelineQueue::new(signed_rx));
+        let shutdown = CancellationToken::new();
+        let queue = Arc::clone(&signed_queue);
+        let worker_shutdown = shutdown.clone();
+        let (locked_tx, locked_rx) = oneshot::channel();
+        let holder = tokio::spawn(async move {
+            let _receiver = queue.receiver.lock().await;
+            let _ = locked_tx.send(());
+            worker_shutdown.cancelled().await;
+        });
+        locked_rx.await.expect("receiver holder must start");
+
+        let pipeline = SubmissionPipeline {
+            prepared_batch_tx: None,
+            signed_batch_tx: None,
+            prepared_queue,
+            signed_queue,
+            shutdown,
+            signer_workers: Vec::new(),
+            sender_workers: Vec::new(),
+        };
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            pipeline.close_and_fail_queued("submit queue abandoned"),
+        )
+        .await
+        .expect("queue close must release receiver holders before acquiring their locks");
+        holder.await.expect("receiver holder must stop cleanly");
+    }
+
+    #[tokio::test]
+    async fn shutdown_timeout_is_shared_across_all_workers() {
+        let (_prepared_tx, prepared_rx) = mpsc::channel(1);
+        let (_signed_tx, signed_rx) = mpsc::channel(1);
+        let blocked_worker = || tokio::spawn(std::future::pending::<()>());
+        let mut pipeline = SubmissionPipeline {
+            prepared_batch_tx: None,
+            signed_batch_tx: None,
+            prepared_queue: Arc::new(PipelineQueue::new(prepared_rx)),
+            signed_queue: Arc::new(PipelineQueue::new(signed_rx)),
+            shutdown: CancellationToken::new(),
+            signer_workers: vec![blocked_worker(), blocked_worker()],
+            sender_workers: vec![blocked_worker(), blocked_worker()],
+        };
+
+        tokio::time::timeout(
+            Duration::from_millis(250),
+            pipeline.shutdown_and_join(Duration::from_millis(100)),
+        )
+        .await
+        .expect("worker shutdown must use one shared timeout");
     }
 
     #[test]

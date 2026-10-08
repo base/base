@@ -1,6 +1,6 @@
 //! Fluent builder that wires a deterministic in-memory actor harness.
 
-use std::sync::Arc;
+use std::{num::NonZeroU64, sync::Arc};
 
 use alloy_consensus::Header as ConsensusHeader;
 use alloy_eips::{BlockNumHash, BlockNumberOrTag};
@@ -8,7 +8,7 @@ use base_common_genesis::{ChainGenesis, RollupConfig};
 use base_consensus_derive::test_utils::new_test_pipeline;
 use base_consensus_engine::{Engine, EngineState};
 use base_consensus_safedb::SafeHeadResponse;
-use base_protocol::{BlockInfo, L2BlockInfo};
+use base_protocol::L2BlockInfo;
 use tokio::{
     sync::{mpsc, oneshot, watch},
     task::JoinHandle,
@@ -16,28 +16,24 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    FakeEngineClient, FakeEngineClientHandle, FakeGossipTransport, FakeL1, FakeSafeDB,
-    FakeSafeDBHandle, ScriptedForkchoiceResponse,
+    FakeEngineClient, FakeEngineClientHandle, FakeL1, FakeSafeDB, FakeSafeDBHandle,
+    ScriptedForkchoiceResponse,
 };
 use crate::{
     DerivationActor, DerivationActorRequest, DerivationState, EngineActorRequest, EngineProcessor,
-    EngineRequestReceiver, NodeActor, NodeMode, QueuedDerivationEngineClient,
+    EngineRequestReceiver, NodeActor, NodeMode, NodeOperatingMode, QueuedDerivationEngineClient,
     QueuedEngineDerivationClient, SequencerEngineRequestCoordinator, ValidatorEngineRequestHandler,
 };
 
 /// Live actor-system harness assembled by [`HarnessBuilder`].
 #[derive(Debug)]
 pub struct Harness {
-    role: NodeMode,
-    fake_engine_client: FakeEngineClient,
     fake_engine_handle: FakeEngineClientHandle,
     fake_l1: FakeL1,
-    fake_safedb: FakeSafeDB,
     fake_safedb_handle: FakeSafeDBHandle,
     engine_state_rx: watch::Receiver<EngineState>,
     derivation_request_tx: mpsc::Sender<DerivationActorRequest>,
     engine_request_tx: mpsc::Sender<EngineActorRequest>,
-    _fake_gossip: FakeGossipTransport,
     _cancellation: CancellationToken,
     _engine_handle: JoinHandle<()>,
     _derivation_handle: JoinHandle<()>,
@@ -55,16 +51,6 @@ impl Drop for Harness {
 }
 
 impl Harness {
-    /// Returns the node role configured for this harness.
-    pub const fn role(&self) -> NodeMode {
-        self.role
-    }
-
-    /// Returns the fake engine client.
-    pub fn fake_engine_client(&self) -> &FakeEngineClient {
-        &self.fake_engine_client
-    }
-
     /// Returns the fake engine handle for call assertions.
     pub fn fake_engine_handle(&self) -> &FakeEngineClientHandle {
         &self.fake_engine_handle
@@ -73,11 +59,6 @@ impl Harness {
     /// Returns the fake L1 simulator.
     pub fn fake_l1(&self) -> &FakeL1 {
         &self.fake_l1
-    }
-
-    /// Returns the fake safedb instance.
-    pub fn fake_safedb(&self) -> &FakeSafeDB {
-        &self.fake_safedb
     }
 
     /// Returns the fake safedb handle.
@@ -117,20 +98,6 @@ impl Harness {
         *self.engine_state_rx.borrow()
     }
 
-    /// Returns the current derivation state, or `None` if the actor channel has closed.
-    pub async fn try_derivation_state(&self) -> Option<DerivationState> {
-        let (result_tx, result_rx) = oneshot::channel();
-        if self
-            .derivation_request_tx
-            .send(DerivationActorRequest::CurrentStateRequest(result_tx))
-            .await
-            .is_err()
-        {
-            return None;
-        }
-        result_rx.await.ok()
-    }
-
     /// Returns the current derivation state.
     pub async fn derivation_state(&self) -> DerivationState {
         let (result_tx, result_rx) = oneshot::channel();
@@ -147,9 +114,10 @@ impl Harness {
 pub struct HarnessBuilder {
     role: NodeMode,
     scripted_el_responses: Vec<ScriptedForkchoiceResponse>,
-    l1_chain: Vec<BlockInfo>,
     initial_safedb: Vec<SafeHeadResponse>,
+    initial_l2_head: L2BlockInfo,
     reset_recovery_support: bool,
+    sequencer_stopped: bool,
 }
 
 impl Default for HarnessBuilder {
@@ -157,9 +125,10 @@ impl Default for HarnessBuilder {
         Self {
             role: NodeMode::Validator,
             scripted_el_responses: Vec::new(),
-            l1_chain: Vec::new(),
             initial_safedb: Vec::new(),
+            initial_l2_head: L2BlockInfo::default(),
             reset_recovery_support: false,
+            sequencer_stopped: false,
         }
     }
 }
@@ -185,18 +154,24 @@ impl HarnessBuilder {
         self
     }
 
-    /// Seeds the fake L1 chain.
-    pub fn with_l1_chain(mut self, blocks: impl IntoIterator<Item = BlockInfo>) -> Self {
-        self.l1_chain.extend(blocks);
-        self
-    }
-
     /// Seeds the fake safe-head DB.
     pub fn with_initial_safedb(
         mut self,
         entries: impl IntoIterator<Item = SafeHeadResponse>,
     ) -> Self {
         self.initial_safedb.extend(entries);
+        self
+    }
+
+    /// Sets the execution layer's latest L2 head returned during engine bootstrap.
+    pub const fn with_initial_l2_head(mut self, head: L2BlockInfo) -> Self {
+        self.initial_l2_head = head;
+        self
+    }
+
+    /// Configures a sequencer as stopped, which follows the conductor-follower bootstrap path.
+    pub const fn with_sequencer_stopped(mut self, stopped: bool) -> Self {
+        self.sequencer_stopped = stopped;
         self
     }
 
@@ -243,7 +218,7 @@ impl HarnessBuilder {
         fake_engine_handle.push_scripted_fcu_v3(self.scripted_el_responses);
 
         fake_engine_client
-            .set_l2_block_info_by_label(BlockNumberOrTag::Latest, L2BlockInfo::default());
+            .set_l2_block_info_by_label(BlockNumberOrTag::Latest, self.initial_l2_head);
         if self.reset_recovery_support {
             fake_engine_handle.set_l2_block_by_label(BlockNumberOrTag::Latest, Default::default());
         }
@@ -254,30 +229,35 @@ impl HarnessBuilder {
         let engine = Engine::new(initial_state, engine_state_tx, engine_queue_tx);
 
         let engine_processor = EngineProcessor::new(
-            Arc::new(fake_engine_client.clone()),
+            Arc::new(fake_engine_client),
             Arc::clone(&config),
             QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone()),
             engine,
         );
-        let role = self.role;
+        let shadow_blocks_per_cycle =
+            (self.role == NodeMode::ShadowSequencer).then_some(NonZeroU64::MIN);
+        let operating_mode = self
+            .role
+            .try_into_operating_mode(false, shadow_blocks_per_cycle)
+            .expect("harness role resolves to an operating mode");
         let engine_handle = tokio::spawn(async move {
             // Same rationale as the derivation actor above: panic on `Err` so
             // engine-side failures fail tests fast with the real error instead
             // of hanging until the tick budget expires and reporting a
             // misleading `ProgressTimeout`.
-            let result = match role {
-                NodeMode::Validator => {
+            let result = match operating_mode {
+                NodeOperatingMode::Validator => {
                     ValidatorEngineRequestHandler::new(engine_processor)
                         .start(engine_actor_request_rx)
                         .await
                 }
-                NodeMode::Sequencer => {
+                operating_mode => {
                     let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
                     SequencerEngineRequestCoordinator::new(
                         engine_processor,
-                        false,
+                        operating_mode,
                         None,
-                        false,
+                        self.sequencer_stopped,
                         unsafe_head_tx,
                     )
                     .start(engine_actor_request_rx)
@@ -294,7 +274,7 @@ impl HarnessBuilder {
             cancellation.clone(),
             derivation_actor_request_rx,
             new_test_pipeline(),
-            Arc::new(fake_safedb.clone()),
+            Arc::new(fake_safedb),
             // The actor only needs the Sender half of this unsafe-head watch;
             // the harness never observes the channel, so the Receiver is
             // intentionally dropped here.
@@ -315,23 +295,14 @@ impl HarnessBuilder {
             Some(derivation_actor_request_tx.clone()),
             Some(fake_engine_handle.clone()),
         );
-        let fake_gossip = FakeGossipTransport::new(1024);
-
-        for block in self.l1_chain {
-            fake_l1.extend(block).await;
-        }
 
         Harness {
-            role: self.role,
-            fake_engine_client,
             fake_engine_handle,
             fake_l1,
-            fake_safedb,
             fake_safedb_handle,
             engine_state_rx,
             derivation_request_tx: derivation_actor_request_tx,
             engine_request_tx: engine_actor_request_tx,
-            _fake_gossip: fake_gossip,
             _cancellation: cancellation,
             _engine_handle: engine_handle,
             _derivation_handle: derivation_handle,

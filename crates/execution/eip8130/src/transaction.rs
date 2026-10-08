@@ -3,7 +3,8 @@
 //! their authorization, then authenticates the final sender/payer signatures
 //! against the resulting post-apply state.
 
-use base_common_consensus::{AccountChange, Delegation, Eip8130Signed};
+use alloy_primitives::{Address, B256};
+use base_common_consensus::{AccountChange, Delegation, Eip8130Constants, Eip8130Signed};
 
 use crate::{
     AccountChangeApplier, AccountConfigurationStorage, ActorTxVerifier, AppliedAccountChanges,
@@ -192,6 +193,113 @@ impl TransactionAuthorizer {
         }
 
         Ok(AppliedTransaction { actors, config_changes, applied, revoke_discount_slots })
+    }
+
+    /// Authorizes `signed` without the Keystore, as before Zenith.
+    ///
+    /// Never reads or writes `AccountConfiguration` storage. Every sender and
+    /// payer is authenticated by native secp256k1 recovery alone, and the
+    /// recovered key is the account's own full-authority key:
+    ///
+    /// - a bare `sender_auth` recovers the sender; a named sender needs
+    ///   `K1_AUTHENTICATOR || sig` recovering to that address;
+    /// - an open payer is whoever signed `payer_auth`; a named payer needs
+    ///   `K1_AUTHENTICATOR || sig` recovering to that address;
+    /// - the only account change is delegation, recorded as a deferred code
+    ///   effect.
+    ///
+    /// Anything else is rejected by [`Self::check_without_keystore`].
+    pub fn authorize_without_keystore(
+        signed: &Eip8130Signed,
+    ) -> Result<AppliedTransaction, TxAuthError> {
+        Self::check_without_keystore(signed)?;
+        let tx = signed.tx();
+
+        let sender = match signed.explicit_sender() {
+            Some(account) => {
+                Self::recover_named_k1(account, tx.sender_signature_hash(), signed.sender_auth())?
+            }
+            None => RecoveredActorId::recover_eoa_sender(signed)
+                .map_err(|_| TxAuthError::SenderRecovery)?
+                .ok_or(TxAuthError::SenderRecovery)?
+                .address(),
+        };
+
+        let payer = match tx.payer {
+            None => None,
+            Some(_) if tx.is_open_payer() => Some(
+                RecoveredActorId::recover_k1(tx.payer_signature_hash(sender), signed.payer_auth())
+                    .map_err(|_| TxAuthError::PayerRecovery)?
+                    .address(),
+            ),
+            Some(account) => Some(Self::recover_named_k1(
+                account,
+                tx.payer_signature_hash(sender),
+                signed.payer_auth(),
+            )?),
+        };
+
+        let mut applied = AppliedAccountChanges::default();
+        for change in &tx.account_changes {
+            let AccountChange::Delegation(Delegation { target }) = change else {
+                return Err(TxAuthError::UnsupportedAccountChange);
+            };
+            if applied.delegation.is_some() {
+                return Err(ApplyError::MultipleDelegations.into());
+            }
+            applied.delegation = Some(DelegationEffect::new(sender, *target));
+        }
+
+        let owner = |account| AuthorizedActor {
+            account,
+            resolved: ResolvedActor::unrestricted(AccountConfigurationStorage::self_actor_id(
+                account,
+            )),
+        };
+        Ok(AppliedTransaction {
+            actors: TxActors { sender: owner(sender), payer: payer.map(owner) },
+            config_changes: Vec::new(),
+            applied,
+            revoke_discount_slots: 0,
+        })
+    }
+
+    /// Checks the shape of `signed` without the Keystore, before any signature
+    /// is recovered: delegation is the only account change, and a named sender
+    /// or payer selects the native secp256k1 authenticator. An open payer's
+    /// `payer_auth` is a raw signature and carries no selector.
+    pub fn check_without_keystore(signed: &Eip8130Signed) -> Result<(), TxAuthError> {
+        let tx = signed.tx();
+        if tx.account_changes.iter().any(|change| !matches!(change, AccountChange::Delegation(_))) {
+            return Err(TxAuthError::UnsupportedAccountChange);
+        }
+        if tx.payer.is_none() && !signed.payer_auth().is_empty() {
+            return Err(TxAuthError::UnexpectedPayerAuth);
+        }
+        let named_k1 =
+            |auth: &[u8]| auth.starts_with(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
+        if (tx.sender.is_some() && !named_k1(signed.sender_auth()))
+            || (tx.payer.is_some() && !tx.is_open_payer() && !named_k1(signed.payer_auth()))
+        {
+            return Err(TxAuthError::UnsupportedAuthenticator);
+        }
+        Ok(())
+    }
+
+    /// Recovers `auth` (`K1_AUTHENTICATOR || r || s || v`) over `hash` and
+    /// requires it to be `account`.
+    fn recover_named_k1(account: Address, hash: B256, auth: &[u8]) -> Result<Address, TxAuthError> {
+        let Some(signature) = auth.strip_prefix(Eip8130Constants::K1_AUTHENTICATOR.as_slice())
+        else {
+            return Err(TxAuthError::UnsupportedAuthenticator);
+        };
+        let recovered = RecoveredActorId::recover_k1(hash, signature)
+            .map_err(|error| TxAuthError::Authorize(AuthorizeError::Authenticate(error)))?
+            .address();
+        if recovered != account {
+            return Err(TxAuthError::SignerMismatch);
+        }
+        Ok(account)
     }
 
     /// Requires a delegation's final sender to be an admin (unrestricted) actor
@@ -1188,6 +1296,90 @@ mod tests {
                 matches!(err, TxAuthError::Apply(ApplyError::CreateAndDelegation)),
                 "expected CreateAndDelegation, got {err:?}"
             );
+        });
+    }
+
+    /// Without the Keystore, delegation and native k1 keys (named, bare, or an
+    /// open payer's raw signature) authorize; every other account change or
+    /// authenticator is unsupported.
+    #[test]
+    fn authorizes_without_keystore_only_delegation_and_k1() {
+        let sender_key = key(0x61);
+        let payer_key = key(0x62);
+        let sender = addr(&sender_key);
+        let payer = addr(&payer_key);
+        let p256 = address!("0x0000000000000000000000000000000000000100");
+        let delegation = AccountChange::Delegation(Delegation { target: payer });
+
+        let eoa = eoa_signed(tx_with(None, None, vec![delegation]), &sender_key);
+        let applied = TransactionAuthorizer::authorize_without_keystore(&eoa).unwrap();
+        assert_eq!(applied.actors.sender.account, sender);
+        assert!(applied.actors.sender.resolved.is_admin());
+        assert!(applied.applied.delegation.is_some());
+
+        let named = configured_signed(
+            tx_with(Some(sender), Some(payer), Vec::new()),
+            &sender_key,
+            Some(&payer_key),
+        );
+        let applied = TransactionAuthorizer::authorize_without_keystore(&named).unwrap();
+        assert_eq!(applied.actors.payer.map(|actor| actor.account), Some(payer));
+
+        let open_tx = tx_with(None, Some(Eip8130Constants::OPEN_PAYER), Vec::new());
+        let payer_auth = sig(&payer_key, open_tx.payer_signature_hash(sender));
+        let sender_auth = sig(&sender_key, open_tx.sender_signature_hash());
+        let open = Eip8130Signed::new(open_tx, Bytes::from(sender_auth), Bytes::from(payer_auth));
+        let applied = TransactionAuthorizer::authorize_without_keystore(&open).unwrap();
+        assert_eq!(applied.actors.payer.map(|actor| actor.account), Some(payer));
+
+        let p256_sender = Eip8130Signed::new(
+            tx_with(Some(sender), None, Vec::new()),
+            auth_blob(p256, &[0; 64]),
+            Bytes::new(),
+        );
+        assert!(matches!(
+            TransactionAuthorizer::authorize_without_keystore(&p256_sender),
+            Err(TxAuthError::UnsupportedAuthenticator)
+        ));
+
+        let config_change = eoa_signed(
+            tx_with(
+                None,
+                None,
+                vec![AccountChange::ConfigChange(SignedAccountChanges {
+                    channel: AccountChangeChannel::Local,
+                    sequence: 0,
+                    changes: Vec::new(),
+                    signature: Bytes::new(),
+                })],
+            ),
+            &sender_key,
+        );
+        assert!(matches!(
+            TransactionAuthorizer::authorize_without_keystore(&config_change),
+            Err(TxAuthError::UnsupportedAccountChange)
+        ));
+    }
+
+    /// A self-paid transaction carrying `payer_auth` is rejected on both
+    /// inclusion paths, before and after Zenith.
+    #[test]
+    fn self_pay_with_payer_auth_is_rejected_at_inclusion() {
+        let sender_key = key(0x63);
+        let tx = tx_with(None, None, Vec::new());
+        let sender_auth = sig(&sender_key, tx.sender_signature_hash());
+        let padded =
+            Eip8130Signed::new(tx, Bytes::from(sender_auth), Bytes::from_static(&[0xab; 32]));
+
+        assert!(matches!(
+            TransactionAuthorizer::authorize_without_keystore(&padded),
+            Err(TxAuthError::UnexpectedPayerAuth)
+        ));
+        with_storage(|acc| {
+            assert!(matches!(
+                TransactionAuthorizer::authorize_and_apply(&padded, acc, LOCAL, NOW),
+                Err(TxAuthError::UnexpectedPayerAuth)
+            ));
         });
     }
 }

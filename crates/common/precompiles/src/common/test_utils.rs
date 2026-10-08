@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use alloy_primitives::{Address, B256, LogData, U256};
+use alloy_primitives::{Address, B256, LogData, U256, keccak256};
 use base_precompile_storage::Result;
 
 use crate::{
@@ -246,16 +246,23 @@ impl TokenAccounting for InMemoryTokenAccounting {
         self.events.push(log);
         Ok(())
     }
+
+    /// In-memory double has no gas meter: hashes without charging. Real gas enforcement is
+    /// exercised against the EVM harness in the dispatch tests.
+    fn metered_keccak256(&self, data: &[u8]) -> Result<B256> {
+        Ok(keccak256(data))
+    }
+
+    /// In-memory double has no gas meter: charging is a no-op. Real `OutOfGas` enforcement is
+    /// exercised against the EVM harness in the dispatch tests.
+    fn deduct_gas(&self, _gas: u64) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl StablecoinAccounting for InMemoryTokenAccounting {
     fn currency(&self) -> Result<String> {
         Ok(self.currency.clone())
-    }
-
-    fn set_currency(&mut self, currency: String) -> Result<()> {
-        self.currency = currency;
-        Ok(())
     }
 }
 
@@ -310,10 +317,6 @@ impl FakePolicyAccounting {
 }
 
 impl PolicyAccounting for FakePolicyAccounting {
-    fn registry_address(&self) -> Address {
-        Address::repeat_byte(0x02)
-    }
-
     fn caller(&self) -> Address {
         self.caller
     }

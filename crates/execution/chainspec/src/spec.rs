@@ -1,4 +1,5 @@
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
+use core::num::NonZeroU64;
 
 use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, EMPTY_ROOT_HASH, Header, proofs::storage_root_unhashed};
@@ -9,7 +10,8 @@ use alloy_primitives::{Address, B256, U256};
 use base_common_chains::{BaseUpgradeExt, ChainConfig, Upgrades};
 use base_common_consensus::Predeploys;
 use base_common_genesis::{
-    BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation, UpgradeActivationSink,
+    BaseUpgrade, DenimTimestampSchedule, RuntimeUpgradeRegistry, UpgradeActivation,
+    UpgradeActivationSink,
 };
 use base_protocol::OutputRoot;
 use derive_more::{Constructor, Deref, Into};
@@ -29,6 +31,9 @@ pub enum BaseChainSpecError {
     /// Genesis JSON failed to deserialize.
     #[error("invalid genesis JSON: {0}")]
     GenesisJson(#[from] serde_json::Error),
+    /// Denim is scheduled without a usable legacy block interval.
+    #[error("Denim is scheduled but config.blockTime is missing or zero")]
+    InvalidDenimBlockTime,
     /// Beryl is scheduled but no activation registry admin address is configured.
     #[error("missing activation admin address for Beryl-enabled chain ID: {chain_id}")]
     MissingActivationAdminAddress {
@@ -101,6 +106,9 @@ pub struct BaseChainSpec {
     /// Activation registry admin address.
     #[deref(ignore)]
     pub activation_admin_address: Option<Address>,
+    /// Legacy L2 block interval in seconds.
+    #[deref(ignore)]
+    pub block_time: Option<u64>,
 }
 
 impl BaseChainSpec {
@@ -135,6 +143,8 @@ impl BaseChainSpec {
         let base_genesis_info = GenesisInfo::extract_from(&genesis);
         let genesis_info = base_genesis_info.base_chain_info.genesis_info.unwrap_or_default();
         let activation_admin_address = genesis_info.activation_admin_address;
+        // Parse this fallibly: dropping malformed timing config must not disable the schedule.
+        let block_time = genesis.config.extra_fields.get_deserialized("blockTime").transpose()?;
 
         // Block-based upgrades in canonical fork ID order.
         let block_upgrade_opts = [
@@ -177,6 +187,7 @@ impl BaseChainSpec {
         let beryl_time = genesis_info.base.beryl;
         let cobalt_time = genesis_info.base.cobalt;
         let denim_time = genesis_info.base.denim;
+        let everest_time = genesis_info.base.everest;
         let zenith_time = genesis_info.base.zenith;
         let time_upgrade_opts = [
             (BaseUpgrade::Regolith.boxed(), genesis_info.regolith_time),
@@ -195,6 +206,7 @@ impl BaseChainSpec {
             (BaseUpgrade::Beryl.boxed(), beryl_time),
             (BaseUpgrade::Cobalt.boxed(), cobalt_time),
             (BaseUpgrade::Denim.boxed(), denim_time),
+            (BaseUpgrade::Everest.boxed(), everest_time),
             (BaseUpgrade::Zenith.boxed(), zenith_time),
         ];
 
@@ -222,6 +234,7 @@ impl BaseChainSpec {
                 ..Default::default()
             },
             activation_admin_address,
+            block_time,
         })
     }
 
@@ -235,7 +248,33 @@ impl BaseChainSpec {
             activation_admin_address,
             value.chain.id(),
         )?;
-        Ok(Self { inner: value, activation_admin_address })
+        let block_time =
+            value.genesis.config.extra_fields.get_deserialized("blockTime").transpose()?;
+        Ok(Self { inner: value, activation_admin_address, block_time })
+    }
+
+    /// Returns the runtime-aware Denim timestamp schedule, or `Ok(None)` when unscheduled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BaseChainSpecError::InvalidDenimBlockTime`] when Denim is scheduled but the
+    /// legacy block interval is missing or zero.
+    pub fn denim_timestamp_schedule(
+        &self,
+    ) -> Result<Option<DenimTimestampSchedule>, BaseChainSpecError> {
+        let ForkCondition::Timestamp(denim_activation_timestamp) = self.fork(BaseUpgrade::Denim)
+        else {
+            return Ok(None);
+        };
+        let Some(legacy_block_interval) = self.block_time.and_then(NonZeroU64::new) else {
+            return Err(BaseChainSpecError::InvalidDenimBlockTime);
+        };
+        Ok(Some(DenimTimestampSchedule {
+            genesis_block_number: self.genesis_header.number(),
+            genesis_timestamp: self.genesis_header.timestamp(),
+            legacy_block_interval,
+            denim_activation_timestamp,
+        }))
     }
 
     /// Validates that Beryl-enabled chains have a valid activation registry admin address:
@@ -303,7 +342,7 @@ impl BaseChainSpec {
 
     /// Parses a chain name into an [`BaseChainSpec`], if recognized.
     pub fn parse_chain(s: &str) -> Option<Arc<Self>> {
-        let cfg = ChainConfig::by_name(s)?;
+        let cfg = ChainConfig::by_any_name(s)?;
         Some(Arc::new(
             Self::try_from(cfg).expect("recognized Base chain config must build a valid chainspec"),
         ))
@@ -579,6 +618,7 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
                 ..Default::default()
             },
             activation_admin_address,
+            block_time: Some(cfg.block_time),
         })
     }
 }
@@ -1051,12 +1091,26 @@ mod tests {
     }
 
     #[test]
-    fn builtin_chain_specs_never_activate_denim_or_zenith() {
-        // Built-in production schedules do not configure Denim or genesis-only Zenith.
-        for spec in [BaseChainSpec::mainnet(), BaseChainSpec::sepolia(), BaseChainSpec::devnet()] {
+    fn builtin_chain_specs_schedule_denim_only_on_sepolia() {
+        for spec in [BaseChainSpec::mainnet(), BaseChainSpec::devnet()] {
             assert_eq!(spec.fork(BaseUpgrade::Denim), ForkCondition::Never);
             assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, 0));
             assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, u64::MAX));
+        }
+
+        let sepolia = BaseChainSpec::sepolia();
+        let denim_timestamp = ChainConfig::sepolia().denim_timestamp.unwrap();
+        assert_eq!(sepolia.fork(BaseUpgrade::Denim), ForkCondition::Timestamp(denim_timestamp));
+        assert!(!sepolia.is_fork_active_at_timestamp(BaseUpgrade::Denim, denim_timestamp - 1));
+        assert!(sepolia.is_fork_active_at_timestamp(BaseUpgrade::Denim, denim_timestamp));
+    }
+
+    #[test]
+    fn builtin_chain_specs_never_activate_everest_or_zenith() {
+        // Built-in production schedules do not configure Everest or genesis-only Zenith.
+        for spec in [BaseChainSpec::mainnet(), BaseChainSpec::sepolia(), BaseChainSpec::devnet()] {
+            assert_eq!(spec.fork(BaseUpgrade::Everest), ForkCondition::Never);
+            assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Everest, u64::MAX));
             assert_eq!(spec.fork(BaseUpgrade::Zenith), ForkCondition::Never);
             assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 0));
             assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, u64::MAX));
@@ -1321,7 +1375,7 @@ mod tests {
     fn latest_base_mainnet_fork_id() {
         let base_mainnet_spec = BaseChainSpec::mainnet();
         assert_eq!(
-            base_mainnet_spec.hardfork_fork_id(BaseUpgrade::Beryl).unwrap(),
+            base_mainnet_spec.hardfork_fork_id(BaseUpgrade::Cobalt).unwrap(),
             base_mainnet_spec.latest_fork_id()
         )
     }
@@ -1331,7 +1385,7 @@ mod tests {
         let base_mainnet_spec = BaseChainSpec::mainnet();
         let base_mainnet = BaseChainSpecBuilder::base_mainnet().build();
         assert_eq!(
-            base_mainnet_spec.hardfork_fork_id(BaseUpgrade::Beryl).unwrap(),
+            base_mainnet_spec.hardfork_fork_id(BaseUpgrade::Cobalt).unwrap(),
             base_mainnet.latest_fork_id()
         )
     }
@@ -1355,6 +1409,7 @@ mod tests {
           "v2": 60,
           "v3": 65,
           "denim": 900000,
+          "everest": 950000,
           "zenith": 1000000
         },
         "activationAdminAddress": "0xcb00000000000000000000000000000000000000",
@@ -1400,6 +1455,8 @@ mod tests {
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Cobalt, 65));
         assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, 899_999));
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, 900_000));
+        assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Everest, 949_999));
+        assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Everest, 950_000));
         assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 999_999));
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 1_000_000));
     }
@@ -1828,5 +1885,82 @@ mod tests {
         for eth_hf in EthereumHardfork::VARIANTS {
             assert!(!content.contains(eth_hf.name()));
         }
+    }
+
+    #[test]
+    fn custom_genesis_timestamp_schedule_preserves_interval_and_anchor() {
+        let genesis: Genesis = serde_json::from_value(serde_json::json!({
+            "number": "0x7", "timestamp": "0x64",
+            "config": { "chainId": 9100010, "blockTime": 3, "base": { "denim": 107 } }
+        }))
+        .unwrap();
+        let parsed = BaseChainSpec::from_genesis(genesis.clone());
+        let built = BaseChainSpecBuilder::default()
+            .chain(9100010.into())
+            .genesis(genesis)
+            .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(107))
+            .build();
+        let converted = BaseChainSpec::from(parsed.inner.clone());
+        for spec in [parsed, built, converted] {
+            let schedule = spec.denim_timestamp_schedule().unwrap().unwrap();
+            assert!(!schedule.is_denim_active_at_block(9));
+            assert!(schedule.is_denim_active_at_block(10));
+            assert_eq!(schedule.block_timestamp_parts(9), (106, 0));
+            assert_eq!(schedule.block_timestamp_parts(10), (109, 0));
+            assert_eq!(schedule.block_timestamp_parts(11), (109, 200));
+            assert_eq!(schedule.block_timestamp_parts(15), (110, 0));
+        }
+    }
+
+    #[test]
+    fn malformed_block_time_does_not_disable_denim() {
+        let genesis: Genesis = serde_json::from_value(serde_json::json!({
+            "config": { "blockTime": "invalid", "base": { "denim": 100 } }
+        }))
+        .unwrap();
+        let chain_spec = ChainSpec { genesis: genesis.clone(), ..Default::default() };
+        for result in [
+            BaseChainSpecBuilder::default()
+                .chain(9_100_012.into())
+                .block_time(2)
+                .genesis(genesis.clone())
+                .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(100))
+                .try_build(),
+            BaseChainSpec::try_from_genesis(genesis),
+            BaseChainSpec::try_from_chainspec(chain_spec, None),
+        ] {
+            assert!(matches!(result, Err(BaseChainSpecError::GenesisJson(_))));
+        }
+    }
+
+    #[test]
+    fn runtime_denim_schedule_requires_block_time_and_observes_changes() {
+        let chain_id = 9_100_011;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        let mut spec = BaseChainSpecBuilder::default()
+            .chain(chain_id.into())
+            .genesis(Genesis { timestamp: 100, ..Default::default() })
+            .build();
+        assert!(spec.denim_timestamp_schedule().unwrap().is_none());
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Denim, 105);
+        for interval in [None, Some(0)] {
+            spec.block_time = interval;
+            assert!(matches!(
+                spec.denim_timestamp_schedule(),
+                Err(BaseChainSpecError::InvalidDenimBlockTime)
+            ));
+        }
+        spec.block_time = Some(2);
+        assert_eq!(
+            spec.denim_timestamp_schedule().unwrap().unwrap().block_timestamp_parts(4),
+            (106, 200)
+        );
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Denim, 107);
+        assert_eq!(
+            spec.denim_timestamp_schedule().unwrap().unwrap().block_timestamp_parts(4),
+            (108, 0)
+        );
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        assert!(spec.denim_timestamp_schedule().unwrap().is_none());
     }
 }

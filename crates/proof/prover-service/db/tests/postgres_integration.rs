@@ -18,18 +18,18 @@ use std::time::Duration;
 use alloy_primitives::Address;
 use base_proof_primitives::Proposal;
 use base_prover_service_db::{
-    ApiProofType, ClaimProofJob, CompleteClaimedProofJob, CreateProofRequest,
-    CreateProofRequestError, CreateProofRequestOutcome, CreateProofSession,
-    DeleteProofRequestOutcome, FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob,
-    ProofJobStatus, ProofRequestPage, ProofRequestRepo, ProofStatus, ProofType,
+    AbandonProofJob, AbandonProofOutcome, ApiProofType, CancelProofRequestOutcome, ClaimProofJob,
+    CompleteClaimedProofJob, CreateProofRequest, CreateProofRequestError,
+    CreateProofRequestOutcome, DeleteProofRequestOutcome, FailExpiredProofJobs, HeartbeatOutcome,
+    HeartbeatProofJob, ProofJobStatus, ProofRequestPage, ProofRequestRepo, ProofStatus, ProofType,
     RecordSessionOutcome, RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind,
-    UpdateProofSession, UpdateReceipt, WorkerSessionUpsert, ZkVmKind,
+    WorkerSessionUpsert, ZkVmKind,
 };
 use base_prover_service_protocol::{
-    ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
-    ProofResult as ProtocolProofResult, SnarkPlonkProofRequest, SnarkPlonkProofResult,
-    TeeKind as ProtocolTeeKind, TeeProofRequest, TeeProofResult, ZkBackend, ZkProofRequest,
-    ZkProofResult, ZkVm,
+    PROOF_REQUEST_CANCELLED_MESSAGE, ProofRequest as ProtocolProofRequest,
+    ProofRequestKind as ProtocolProofRequestKind, ProofResult as ProtocolProofResult,
+    SnarkPlonkProofRequest, SnarkPlonkProofResult, TeeKind as ProtocolTeeKind, TeeProofRequest,
+    TeeProofResult, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
 };
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
@@ -73,7 +73,6 @@ fn compressed_request_at_with_backend(
             number_of_blocks_to_prove: 5,
             sequence_window: Some(50),
             l1_head: None,
-            intermediate_root_interval: None,
             schedule_l2_block_number: None,
             zk_vm: ZkVm::Sp1,
             zk_backend,
@@ -90,7 +89,6 @@ fn compressed_request_with_l1_head(l1_head: &str) -> CreateProofRequest {
             number_of_blocks_to_prove: 5,
             sequence_window: Some(50),
             l1_head: Some(l1_head.parse().expect("valid hash")),
-            intermediate_root_interval: None,
             schedule_l2_block_number: None,
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
@@ -112,7 +110,6 @@ fn snark_request() -> CreateProofRequest {
                         .parse()
                         .expect("valid hash"),
                 ),
-                intermediate_root_interval: None,
                 schedule_l2_block_number: None,
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
@@ -142,21 +139,49 @@ fn set_request_session_id(req: &mut CreateProofRequest, session_id: impl Into<St
     req.request_payload.session_id = session_id;
 }
 
+/// Set `status` and `job_status` directly, bypassing the repo.
+async fn set_request_state(
+    pool: &PgPool,
+    id: Uuid,
+    status: ProofStatus,
+    job_status: ProofJobStatus,
+) {
+    sqlx::query("UPDATE proof_requests SET status = $1, job_status = $2 WHERE id = $3")
+        .bind(status.as_str())
+        .bind(job_status.as_str())
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// Insert a RUNNING proof session row directly.
+async fn insert_running_session(
+    pool: &PgPool,
+    proof_request_id: Uuid,
+    session_type: SessionType,
+    backend_session_id: &str,
+) {
+    sqlx::query(
+        "INSERT INTO proof_sessions (proof_request_id, session_type, backend_session_id, status) \
+         VALUES ($1, $2, $3, $4)",
+    )
+    .bind(proof_request_id)
+    .bind(session_type.as_str())
+    .bind(backend_session_id)
+    .bind(SessionStatus::Running.as_str())
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 /// Create a request in RUNNING state with an associated proof session.
 /// Returns `(request_id, backend_session_id)`.
-async fn setup_running_request(repo: &ProofRequestRepo) -> (Uuid, String) {
+async fn setup_running_request(pool: &PgPool, repo: &ProofRequestRepo) -> (Uuid, String) {
     let id = repo.create(compressed_request()).await.unwrap();
-    repo.atomic_claim_task(id).await.unwrap();
+    set_request_state(pool, id, ProofStatus::Running, ProofJobStatus::Pending).await;
     let backend_id = format!("session-{}", Uuid::new_v4());
-    repo.transition_pending_to_running(CreateProofSession {
-        proof_request_id: id,
-        session_type: SessionType::Stark,
-        backend_session_id: backend_id.clone(),
-        metadata: None,
-    })
-    .await
-    .unwrap()
-    .expect("transition should succeed");
+    insert_running_session(pool, id, SessionType::Stark, &backend_id).await;
     (id, backend_id)
 }
 
@@ -267,9 +292,9 @@ async fn test_legacy_rollout_request_without_protocol_storage_is_readable_and_re
         r#"
         INSERT INTO proof_requests (
             id, start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, status,
-            prover_address, l1_head, intermediate_root_interval
+            prover_address, l1_head
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         "#,
     )
     .bind(explicit_id)
@@ -280,7 +305,6 @@ async fn test_legacy_rollout_request_without_protocol_storage_is_readable_and_re
     .bind(ProofStatus::Created.as_str())
     .bind(&req.prover_address)
     .bind(&req.l1_head)
-    .bind(req.intermediate_root_interval.map(|value| i64::try_from(value).unwrap()))
     .execute(&pool)
     .await
     .unwrap();
@@ -317,526 +341,26 @@ async fn test_get_nonexistent_returns_none() {
 }
 
 // ============================================================
-// Guarded state transition tests
-// ============================================================
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_transition_pending_to_running() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let id = repo.create(compressed_request()).await.unwrap();
-    repo.atomic_claim_task(id).await.unwrap();
-
-    let backend_id = format!("ptr-{}", Uuid::new_v4());
-    let session_id = repo
-        .transition_pending_to_running(CreateProofSession {
-            proof_request_id: id,
-            session_type: SessionType::Stark,
-            backend_session_id: backend_id.clone(),
-            metadata: None,
-        })
-        .await
-        .unwrap();
-    assert!(session_id.is_some());
-
-    let req = repo.get(id).await.unwrap().unwrap();
-    assert_eq!(req.status, ProofStatus::Running);
-
-    let session =
-        repo.get_session_by_backend_id(&backend_id).await.unwrap().expect("should find session");
-    assert_eq!(session.status, SessionStatus::Running);
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_transition_pending_to_running_race() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let id = repo.create(compressed_request()).await.unwrap();
-    repo.atomic_claim_task(id).await.unwrap();
-
-    let first = repo
-        .transition_pending_to_running(CreateProofSession {
-            proof_request_id: id,
-            session_type: SessionType::Stark,
-            backend_session_id: format!("first-{}", Uuid::new_v4()),
-            metadata: None,
-        })
-        .await
-        .unwrap();
-    assert!(first.is_some());
-
-    let second = repo
-        .transition_pending_to_running(CreateProofSession {
-            proof_request_id: id,
-            session_type: SessionType::Stark,
-            backend_session_id: format!("second-{}", Uuid::new_v4()),
-            metadata: None,
-        })
-        .await
-        .unwrap();
-    assert!(second.is_none(), "second transition should lose the race");
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_transition_pending_to_failed() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let id = repo.create(compressed_request()).await.unwrap();
-    repo.atomic_claim_task(id).await.unwrap();
-
-    let updated = repo.transition_pending_to_failed(id, "submission timeout".into()).await.unwrap();
-    assert!(updated);
-
-    let req = repo.get(id).await.unwrap().unwrap();
-    assert_eq!(req.status, ProofStatus::Failed);
-    assert_eq!(req.error_message.as_deref(), Some("submission timeout"));
-    assert!(req.completed_at.is_some());
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_transition_pending_to_failed_wrong_state() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let id = repo.create(compressed_request()).await.unwrap();
-    // Still CREATED, not PENDING
-    let updated = repo.transition_pending_to_failed(id, "should not work".into()).await.unwrap();
-    assert!(!updated);
-
-    let req = repo.get(id).await.unwrap().unwrap();
-    assert_eq!(req.status, ProofStatus::Created);
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_transition_running_to_failed() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let (id, _backend_id) = setup_running_request(&repo).await;
-
-    let updated =
-        repo.transition_running_to_failed(id, Some("cluster timeout".into())).await.unwrap();
-    assert!(updated);
-
-    let req = repo.get(id).await.unwrap().unwrap();
-    assert_eq!(req.status, ProofStatus::Failed);
-    assert_eq!(req.error_message.as_deref(), Some("cluster timeout"));
-    assert!(req.completed_at.is_some());
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_transition_running_to_failed_wrong_state() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let id = repo.create(compressed_request()).await.unwrap();
-    repo.atomic_claim_task(id).await.unwrap();
-    // PENDING, not RUNNING
-    let updated =
-        repo.transition_running_to_failed(id, Some("should not work".into())).await.unwrap();
-    assert!(!updated);
-
-    let req = repo.get(id).await.unwrap().unwrap();
-    assert_eq!(req.status, ProofStatus::Pending);
-}
-
-// ============================================================
-// Receipt update tests
-// ============================================================
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_update_receipt_if_running() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let (id, _backend_id) = setup_running_request(&repo).await;
-
-    // Intermediate receipt update while RUNNING succeeds and keeps status RUNNING.
-    let updated = repo
-        .update_receipt_if_running(UpdateReceipt {
-            id,
-            stark_receipt: Some(vec![1, 2, 3]),
-            snark_receipt: None,
-            status: ProofStatus::Running,
-            error_message: None,
-        })
-        .await
-        .unwrap();
-    assert!(updated);
-    let req = repo.get(id).await.unwrap().unwrap();
-    assert_eq!(req.status, ProofStatus::Running);
-    assert_eq!(req.stark_receipt.as_deref(), Some(&[1u8, 2, 3][..]));
-
-    // A later intermediate update overwrites the receipt while still RUNNING.
-    let updated = repo
-        .update_receipt_if_running(UpdateReceipt {
-            id,
-            stark_receipt: Some(vec![4, 5, 6]),
-            snark_receipt: None,
-            status: ProofStatus::Running,
-            error_message: None,
-        })
-        .await
-        .unwrap();
-    assert!(updated);
-    let req = repo.get(id).await.unwrap().unwrap();
-    assert_eq!(req.stark_receipt.as_deref(), Some(&[4u8, 5, 6][..]));
-
-    // Once the request leaves RUNNING, intermediate updates are skipped.
-    assert!(repo.transition_running_to_failed(id, Some("done".into())).await.unwrap());
-    let updated = repo
-        .update_receipt_if_running(UpdateReceipt {
-            id,
-            stark_receipt: Some(vec![7, 8, 9]),
-            snark_receipt: None,
-            status: ProofStatus::Running,
-            error_message: None,
-        })
-        .await
-        .unwrap();
-    assert!(!updated, "updates must be skipped once not RUNNING");
-}
-
-// ============================================================
-// Atomic claim tests
-// ============================================================
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_atomic_claim_task() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let id = repo.create(compressed_request()).await.unwrap();
-
-    // First claim should succeed (CREATED -> PENDING)
-    let claimed = repo.atomic_claim_task(id).await.unwrap();
-    assert!(claimed);
-
-    let req = repo.get(id).await.unwrap().unwrap();
-    assert_eq!(req.status, ProofStatus::Pending);
-
-    // Second claim should fail (already PENDING)
-    let claimed = repo.atomic_claim_task(id).await.unwrap();
-    assert!(!claimed);
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_atomic_claim_nonexistent() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let claimed = repo.atomic_claim_task(Uuid::new_v4()).await.unwrap();
-    assert!(!claimed);
-}
-
-// ============================================================
 // Proof session tests
 // ============================================================
 
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_create_proof_session() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let req_id = repo.create(compressed_request()).await.unwrap();
-    let session_id = repo
-        .create_proof_session(CreateProofSession {
-            proof_request_id: req_id,
-            session_type: SessionType::Stark,
-            backend_session_id: format!("test-session-{}", Uuid::new_v4()),
-            metadata: Some(serde_json::json!({"key": "value"})),
-        })
-        .await
-        .unwrap();
-
-    assert!(session_id > 0);
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_get_session_by_backend_id() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let req_id = repo.create(compressed_request()).await.unwrap();
-    let backend_id = format!("backend-{}", Uuid::new_v4());
-
-    repo.create_proof_session(CreateProofSession {
-        proof_request_id: req_id,
-        session_type: SessionType::Stark,
-        backend_session_id: backend_id.clone(),
-        metadata: None,
-    })
-    .await
-    .unwrap();
-
-    let session =
-        repo.get_session_by_backend_id(&backend_id).await.unwrap().expect("should find session");
-    assert_eq!(session.proof_request_id, req_id);
-    assert_eq!(session.session_type, SessionType::Stark);
-    assert_eq!(session.status, SessionStatus::Running);
-    assert_eq!(session.backend_session_id, backend_id);
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_get_sessions_for_request() {
     let pool = test_pool().await;
-    let repo = test_repo(pool);
+    let repo = test_repo(pool.clone());
 
     let req_id = repo.create(snark_request()).await.unwrap();
 
-    // Create STARK session
-    repo.create_proof_session(CreateProofSession {
-        proof_request_id: req_id,
-        session_type: SessionType::Stark,
-        backend_session_id: format!("stark-{}", Uuid::new_v4()),
-        metadata: None,
-    })
-    .await
-    .unwrap();
-
-    // Create SNARK session
-    repo.create_proof_session(CreateProofSession {
-        proof_request_id: req_id,
-        session_type: SessionType::Snark,
-        backend_session_id: format!("snark-{}", Uuid::new_v4()),
-        metadata: None,
-    })
-    .await
-    .unwrap();
+    insert_running_session(&pool, req_id, SessionType::Stark, &format!("stark-{}", Uuid::new_v4()))
+        .await;
+    insert_running_session(&pool, req_id, SessionType::Snark, &format!("snark-{}", Uuid::new_v4()))
+        .await;
 
     let sessions = repo.get_sessions_for_request(req_id).await.unwrap();
     assert_eq!(sessions.len(), 2);
     assert_eq!(sessions[0].session_type, SessionType::Stark);
     assert_eq!(sessions[1].session_type, SessionType::Snark);
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_update_proof_session() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let req_id = repo.create(compressed_request()).await.unwrap();
-    let backend_id = format!("session-update-{}", Uuid::new_v4());
-
-    repo.create_proof_session(CreateProofSession {
-        proof_request_id: req_id,
-        session_type: SessionType::Stark,
-        backend_session_id: backend_id.clone(),
-        metadata: None,
-    })
-    .await
-    .unwrap();
-
-    repo.update_proof_session(UpdateProofSession {
-        backend_session_id: backend_id.clone(),
-        status: SessionStatus::Completed,
-        error_message: None,
-        metadata: Some(serde_json::json!({"output_id": "abc123"})),
-    })
-    .await
-    .unwrap();
-
-    let session = repo.get_session_by_backend_id(&backend_id).await.unwrap().unwrap();
-    assert_eq!(session.status, SessionStatus::Completed);
-    assert!(session.completed_at.is_some());
-    assert_eq!(session.metadata.unwrap()["output_id"].as_str(), Some("abc123"));
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_update_proof_session_if_non_terminal() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let req_id = repo.create(compressed_request()).await.unwrap();
-    let backend_id = format!("session-nonterminal-{}", Uuid::new_v4());
-
-    repo.create_proof_session(CreateProofSession {
-        proof_request_id: req_id,
-        session_type: SessionType::Stark,
-        backend_session_id: backend_id.clone(),
-        metadata: None,
-    })
-    .await
-    .unwrap();
-
-    // First update: RUNNING -> COMPLETED (should succeed)
-    let updated = repo
-        .update_proof_session_if_non_terminal(UpdateProofSession {
-            backend_session_id: backend_id.clone(),
-            status: SessionStatus::Completed,
-            error_message: None,
-            metadata: None,
-        })
-        .await
-        .unwrap();
-    assert!(updated);
-
-    // Second update: COMPLETED -> FAILED (should be skipped since COMPLETED is terminal)
-    let updated = repo
-        .update_proof_session_if_non_terminal(UpdateProofSession {
-            backend_session_id: backend_id.clone(),
-            status: SessionStatus::Failed,
-            error_message: Some("late failure".into()),
-            metadata: None,
-        })
-        .await
-        .unwrap();
-    assert!(!updated);
-
-    let session = repo.get_session_by_backend_id(&backend_id).await.unwrap().unwrap();
-    assert_eq!(session.status, SessionStatus::Completed); // unchanged
-}
-
-// ============================================================
-// Atomic transaction tests
-// ============================================================
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_fail_session_and_request() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let (req_id, backend_id) = setup_running_request(&repo).await;
-
-    let updated = repo
-        .fail_session_and_request(&backend_id, req_id, Some("cluster timeout".into()))
-        .await
-        .unwrap();
-    assert!(updated);
-
-    let req = repo.get(req_id).await.unwrap().unwrap();
-    assert_eq!(req.status, ProofStatus::Failed);
-    assert_eq!(req.error_message.as_deref(), Some("cluster timeout"));
-    assert!(req.completed_at.is_some());
-
-    let session = repo.get_session_by_backend_id(&backend_id).await.unwrap().unwrap();
-    assert_eq!(session.status, SessionStatus::Failed);
-    assert!(session.completed_at.is_some());
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_fail_session_and_request_skips_terminal() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let (req_id, backend_id) = setup_running_request(&repo).await;
-
-    repo.complete_session_and_update_receipt(
-        &backend_id,
-        UpdateReceipt {
-            id: req_id,
-            stark_receipt: Some(vec![0xDE, 0xAD]),
-            snark_receipt: None,
-            status: ProofStatus::Succeeded,
-            error_message: None,
-        },
-    )
-    .await
-    .unwrap();
-
-    // Now try to fail — request should NOT be updated (already SUCCEEDED, not RUNNING)
-    let updated = repo
-        .fail_session_and_request(&backend_id, req_id, Some("late error".into()))
-        .await
-        .unwrap();
-    assert!(!updated);
-
-    let req = repo.get(req_id).await.unwrap().unwrap();
-    assert_eq!(req.status, ProofStatus::Succeeded);
-
-    let session = repo.get_session_by_backend_id(&backend_id).await.unwrap().unwrap();
-    assert_eq!(session.status, SessionStatus::Completed);
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_complete_session_and_update_receipt() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let (req_id, backend_id) = setup_running_request(&repo).await;
-
-    let stark_data = vec![0xCA, 0xFE, 0xBA, 0xBE];
-    let updated = repo
-        .complete_session_and_update_receipt(
-            &backend_id,
-            UpdateReceipt {
-                id: req_id,
-                stark_receipt: Some(stark_data.clone()),
-                snark_receipt: None,
-                status: ProofStatus::Succeeded,
-                error_message: None,
-            },
-        )
-        .await
-        .unwrap();
-    assert!(updated);
-
-    let req = repo.get(req_id).await.unwrap().unwrap();
-    assert_eq!(req.status, ProofStatus::Succeeded);
-    assert_eq!(req.stark_receipt.as_deref(), Some(stark_data.as_slice()));
-    assert!(req.completed_at.is_some());
-
-    let session = repo.get_session_by_backend_id(&backend_id).await.unwrap().unwrap();
-    assert_eq!(session.status, SessionStatus::Completed);
-    assert!(session.completed_at.is_some());
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_complete_session_and_update_receipt_skips_non_running() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let id = repo.create(compressed_request()).await.unwrap();
-    repo.atomic_claim_task(id).await.unwrap();
-    // Request is PENDING, not RUNNING
-    let backend_id = format!("complete-pending-{}", Uuid::new_v4());
-    repo.create_proof_session(CreateProofSession {
-        proof_request_id: id,
-        session_type: SessionType::Stark,
-        backend_session_id: backend_id.clone(),
-        metadata: None,
-    })
-    .await
-    .unwrap();
-
-    let updated = repo
-        .complete_session_and_update_receipt(
-            &backend_id,
-            UpdateReceipt {
-                id,
-                stark_receipt: Some(vec![1, 2, 3]),
-                snark_receipt: None,
-                status: ProofStatus::Succeeded,
-                error_message: None,
-            },
-        )
-        .await
-        .unwrap();
-    assert!(!updated, "should not update a PENDING request");
-
-    let req = repo.get(id).await.unwrap().unwrap();
-    assert_eq!(req.status, ProofStatus::Pending); // unchanged
 }
 
 // ============================================================
@@ -850,7 +374,7 @@ async fn test_retry_or_fail_stuck_request_retries() {
     let repo = test_repo(pool.clone());
 
     let id = repo.create(compressed_request()).await.unwrap();
-    repo.atomic_claim_task(id).await.unwrap();
+    set_request_state(&pool, id, ProofStatus::Pending, ProofJobStatus::Pending).await;
     sqlx::query(
         r#"
         UPDATE proof_requests
@@ -892,10 +416,10 @@ async fn test_retry_or_fail_stuck_request_retries() {
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_retry_or_fail_stuck_request_retries_tee_request() {
     let pool = test_pool().await;
-    let repo = test_repo(pool);
+    let repo = test_repo(pool.clone());
 
     let id = repo.create(tee_request()).await.unwrap();
-    repo.atomic_claim_task(id).await.unwrap();
+    set_request_state(&pool, id, ProofStatus::Pending, ProofJobStatus::Pending).await;
 
     let stuck_requests = repo.get_stuck_requests(-1).await.unwrap();
     assert!(
@@ -916,19 +440,19 @@ async fn test_retry_or_fail_stuck_request_retries_tee_request() {
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_retry_or_fail_stuck_request_exhausted() {
     let pool = test_pool().await;
-    let repo = test_repo(pool);
+    let repo = test_repo(pool.clone());
 
     let id = repo.create(compressed_request()).await.unwrap();
 
     // Retry 3 times: each cycle is claim → retry (resets to CREATED) → claim again
     for i in 0..3 {
-        repo.atomic_claim_task(id).await.unwrap();
+        set_request_state(&pool, id, ProofStatus::Pending, ProofJobStatus::Pending).await;
         let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck").await.unwrap();
         assert!(matches!(outcome, RetryOutcome::Retried), "retry {i} should succeed");
     }
 
     // retry_count is now 3, claim once more
-    repo.atomic_claim_task(id).await.unwrap();
+    set_request_state(&pool, id, ProofStatus::Pending, ProofJobStatus::Pending).await;
 
     // This time should permanently fail (retry_count >= max_retries)
     let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck").await.unwrap();
@@ -949,9 +473,9 @@ async fn test_retry_or_fail_stuck_request_exhausted() {
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_retry_or_fail_stuck_request_wrong_state() {
     let pool = test_pool().await;
-    let repo = test_repo(pool);
+    let repo = test_repo(pool.clone());
 
-    let (id, _backend_id) = setup_running_request(&repo).await;
+    let (id, _backend_id) = setup_running_request(&pool, &repo).await;
 
     // Request is RUNNING, not PENDING — should be skipped
     let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck").await.unwrap();
@@ -967,7 +491,7 @@ async fn test_get_stuck_requests_includes_migration_parked_running_request() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
 
-    let (id, _backend_id) = setup_running_request(&repo).await;
+    let (id, _backend_id) = setup_running_request(&pool, &repo).await;
     sqlx::query(
         "UPDATE proof_requests SET job_status = 'CLAIMED', lock_expires_at = NULL WHERE id = $1",
     )
@@ -990,7 +514,7 @@ async fn test_retry_or_fail_stuck_request_requeues_migration_parked_running_requ
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
 
-    let (id, backend_id) = setup_running_request(&repo).await;
+    let (id, backend_id) = setup_running_request(&pool, &repo).await;
     sqlx::query(
         "UPDATE proof_requests SET job_status = 'CLAIMED', lock_expires_at = NULL WHERE id = $1",
     )
@@ -1040,13 +564,18 @@ async fn test_retry_or_fail_stuck_request_requeues_migration_parked_running_requ
 // Worker queue create tests
 // ============================================================
 
-/// `CREATED` -> `PENDING` -> `FAILED` (same transitions as a failed worker attempt).
-async fn drive_to_failed(repo: &ProofRequestRepo, id: Uuid, error_message: &str) {
-    assert!(repo.atomic_claim_task(id).await.unwrap(), "claim CREATED -> PENDING");
-    assert!(
-        repo.transition_pending_to_failed(id, error_message.into()).await.unwrap(),
-        "transition PENDING -> FAILED",
-    );
+/// Mark a request `FAILED` directly (same end state as a failed worker attempt).
+async fn drive_to_failed(pool: &PgPool, id: Uuid, error_message: &str) {
+    sqlx::query(
+        "UPDATE proof_requests SET status = $1, error_message = $2, completed_at = NOW() \
+         WHERE id = $3",
+    )
+    .bind(ProofStatus::Failed.as_str())
+    .bind(error_message)
+    .bind(id)
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -1160,7 +689,7 @@ async fn test_create_for_worker_queue_requeues_failed_row() {
     let first =
         repo.create_for_worker_queue(req.clone(), TEST_MAX_PROOF_RETRIES, true).await.unwrap();
     assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
-    drive_to_failed(&repo, explicit_id, "transient backend error").await;
+    drive_to_failed(&pool, explicit_id, "transient backend error").await;
 
     sqlx::query(
         "UPDATE proof_requests SET job_status = 'FAILED', worker_id = 'stale-worker', \
@@ -1195,7 +724,8 @@ async fn test_create_for_worker_queue_requeues_failed_row() {
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_create_for_worker_queue_does_not_requeue_failed_row_without_approval() {
-    let repo = test_repo(test_pool().await);
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
@@ -1204,7 +734,7 @@ async fn test_create_for_worker_queue_does_not_requeue_failed_row_without_approv
     let first =
         repo.create_for_worker_queue(req.clone(), TEST_MAX_PROOF_RETRIES, true).await.unwrap();
     assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
-    drive_to_failed(&repo, explicit_id, "transient backend error").await;
+    drive_to_failed(&pool, explicit_id, "transient backend error").await;
 
     let second = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES, false).await.unwrap();
     assert!(matches!(
@@ -1290,6 +820,87 @@ async fn test_create_for_worker_queue_rejects_succeeded_row_with_new_l1_head() {
 
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_cancel_proof_request_by_session_id_rejects_tee_and_dry_run() {
+    let repo = test_repo(test_pool().await);
+
+    let cluster_session = Uuid::new_v4().to_string();
+    let mut cluster = compressed_request_at_with_backend(100, ZkBackend::Cluster);
+    set_request_session_id(&mut cluster, cluster_session.clone());
+    repo.create_for_worker_queue(cluster, TEST_MAX_PROOF_RETRIES, true).await.unwrap();
+
+    let CancelProofRequestOutcome::Cancelled(job) =
+        repo.cancel_proof_request_by_session_id(&cluster_session).await.unwrap()
+    else {
+        panic!("cluster cancel should succeed");
+    };
+    assert_eq!(job.job_status, ProofJobStatus::Failed);
+    assert_eq!(job.error_message.as_deref(), Some(PROOF_REQUEST_CANCELLED_MESSAGE));
+    assert!(matches!(
+        repo.cancel_proof_request_by_session_id(&cluster_session).await.unwrap(),
+        CancelProofRequestOutcome::AlreadyCancelled
+    ));
+
+    for mut request in [tee_request(), compressed_request_at_with_backend(100, ZkBackend::DryRun)] {
+        let session_id = Uuid::new_v4().to_string();
+        set_request_session_id(&mut request, session_id.clone());
+        repo.create_for_worker_queue(request, TEST_MAX_PROOF_RETRIES, true).await.unwrap();
+        assert!(matches!(
+            repo.cancel_proof_request_by_session_id(&session_id).await.unwrap(),
+            CancelProofRequestOutcome::UnsupportedBackend
+        ));
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_cancel_proof_request_blocks_replay_and_worker_session_writes() {
+    let repo = test_repo(test_pool().await);
+    drain_claimable_compressed_jobs(&repo).await;
+
+    let session_id = Uuid::new_v4().to_string();
+    let mut request = compressed_request();
+    set_request_session_id(&mut request, session_id.clone());
+    repo.create_for_worker_queue(request.clone(), TEST_MAX_PROOF_RETRIES, true).await.unwrap();
+    let claim = repo
+        .claim_next_proof_job(compressed_claim("cancel-worker", 1))
+        .await
+        .unwrap()
+        .expect("compressed job should be claimed");
+    assert_eq!(claim.session_id, session_id);
+
+    assert!(matches!(
+        repo.cancel_proof_request_by_session_id(&session_id).await.unwrap(),
+        CancelProofRequestOutcome::Cancelled(_)
+    ));
+
+    // A replay with the default retry_failed = true must not requeue a cancelled request.
+    assert!(matches!(
+        repo.create_for_worker_queue(request, TEST_MAX_PROOF_RETRIES, true).await.unwrap(),
+        CreateProofRequestOutcome::Cancelled(_)
+    ));
+    let job = repo.get_proof_job_by_session_id(&session_id).await.unwrap().unwrap();
+    assert_eq!(job.job_status, ProofJobStatus::Failed);
+    assert_eq!(job.error_message.as_deref(), Some(PROOF_REQUEST_CANCELLED_MESSAGE));
+
+    // The previous owner recording a backend session it submitted just before the cancel
+    // is told the job was cancelled, so it can stop that backend proof.
+    let recorded = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id,
+            lock_id: claim.lock_id.expect("claimed job has lock"),
+            worker_id: "cancel-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: "backend-after-cancel".to_owned(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(recorded, RecordSessionOutcome::Cancelled));
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_delete_proof_request_by_session_id_deletes_terminal_rows() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
@@ -1360,70 +971,12 @@ async fn test_delete_proof_request_by_session_id_rejects_non_terminal_row() {
 
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_get_running_sessions() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let req_id = repo.create(compressed_request()).await.unwrap();
-    let running_id = format!("running-session-{}", Uuid::new_v4());
-    let completed_id = format!("completed-session-{}", Uuid::new_v4());
-
-    // Create a running session
-    repo.create_proof_session(CreateProofSession {
-        proof_request_id: req_id,
-        session_type: SessionType::Stark,
-        backend_session_id: running_id.clone(),
-        metadata: None,
-    })
-    .await
-    .unwrap();
-
-    // Create and complete another session
-    repo.create_proof_session(CreateProofSession {
-        proof_request_id: req_id,
-        session_type: SessionType::Snark,
-        backend_session_id: completed_id.clone(),
-        metadata: None,
-    })
-    .await
-    .unwrap();
-    repo.update_proof_session(UpdateProofSession {
-        backend_session_id: completed_id.clone(),
-        status: SessionStatus::Completed,
-        error_message: None,
-        metadata: None,
-    })
-    .await
-    .unwrap();
-
-    let running = repo.get_running_sessions().await.unwrap();
-    let has_running = running.iter().any(|s| s.backend_session_id == running_id);
-    let has_completed = running.iter().any(|s| s.backend_session_id == completed_id);
-    assert!(has_running, "should include running session");
-    assert!(!has_completed, "should not include completed session");
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_get_running_proof_requests() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let (id, _backend_id) = setup_running_request(&repo).await;
-
-    let running = repo.get_running_proof_requests().await.unwrap();
-    let found = running.iter().any(|r| r.id == id);
-    assert!(found, "should include our running request");
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_list_with_filter() {
     let pool = test_pool().await;
-    let repo = test_repo(pool);
+    let repo = test_repo(pool.clone());
 
     let id1 = repo.create(compressed_request()).await.unwrap();
-    let (id2, _backend_id) = setup_running_request(&repo).await;
+    let (id2, _backend_id) = setup_running_request(&pool, &repo).await;
 
     // List only CREATED
     let created_list = repo.list(Some(ProofStatus::Created), 100).await.unwrap();
@@ -1436,110 +989,6 @@ async fn test_list_with_filter() {
     let all_list = repo.list(None, 100).await.unwrap();
     assert!(all_list.iter().any(|r| r.id == id1));
     assert!(all_list.iter().any(|r| r.id == id2));
-}
-
-// ============================================================
-// Two-stage SNARK pipeline test
-// ============================================================
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_full_snark_pipeline() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    // 1. Create SNARK request
-    let req_id = repo.create(snark_request()).await.unwrap();
-
-    // 2. Claim task (CREATED -> PENDING)
-    assert!(repo.atomic_claim_task(req_id).await.unwrap());
-
-    // 3. Submit STARK session (PENDING -> RUNNING)
-    let stark_backend_id = format!("stark-pipeline-{}", Uuid::new_v4());
-    let session_id = repo
-        .transition_pending_to_running(CreateProofSession {
-            proof_request_id: req_id,
-            session_type: SessionType::Stark,
-            backend_session_id: stark_backend_id.clone(),
-            metadata: None,
-        })
-        .await
-        .unwrap();
-    assert!(session_id.is_some());
-
-    // 4. STARK completes — store receipt but keep RUNNING (awaiting SNARK)
-    let stark_receipt = vec![0x01, 0x02, 0x03];
-    repo.complete_session_and_update_receipt(
-        &stark_backend_id,
-        UpdateReceipt {
-            id: req_id,
-            stark_receipt: Some(stark_receipt.clone()),
-            snark_receipt: None,
-            status: ProofStatus::Running, // still running — SNARK stage not done
-            error_message: None,
-        },
-    )
-    .await
-    .unwrap();
-
-    let req = repo.get(req_id).await.unwrap().unwrap();
-    assert_eq!(req.status, ProofStatus::Running);
-    assert_eq!(req.stark_receipt.as_deref(), Some(stark_receipt.as_slice()));
-    assert!(req.snark_receipt.is_none());
-    assert!(req.result_payload.is_none());
-
-    // 5. Submit SNARK session
-    let snark_backend_id = format!("snark-pipeline-{}", Uuid::new_v4());
-    repo.create_proof_session(CreateProofSession {
-        proof_request_id: req_id,
-        session_type: SessionType::Snark,
-        backend_session_id: snark_backend_id.clone(),
-        metadata: None,
-    })
-    .await
-    .unwrap();
-
-    // 6. SNARK completes — store receipt, mark SUCCEEDED
-    let snark_receipt = vec![0xAA, 0xBB, 0xCC];
-    repo.complete_session_and_update_receipt(
-        &snark_backend_id,
-        UpdateReceipt {
-            id: req_id,
-            stark_receipt: None, // don't overwrite
-            snark_receipt: Some(snark_receipt.clone()),
-            status: ProofStatus::Succeeded,
-            error_message: None,
-        },
-    )
-    .await
-    .unwrap();
-
-    // 7. Verify final state
-    let req = repo.get(req_id).await.unwrap().unwrap();
-    assert_eq!(req.status, ProofStatus::Succeeded);
-    assert_eq!(req.stark_receipt.as_deref(), Some(stark_receipt.as_slice())); // preserved
-    assert_eq!(req.snark_receipt.as_deref(), Some(snark_receipt.as_slice()));
-    let result_payload = req.result_payload.expect("SNARK result payload should be stored");
-    let result: ProtocolProofResult =
-        serde_json::from_value(result_payload).expect("SNARK result payload should deserialize");
-    assert_eq!(
-        result,
-        ProtocolProofResult::SnarkPlonk(SnarkPlonkProofResult {
-            proof: ZkProofResult {
-                zk_vm: ZkVm::Sp1,
-                proof: snark_receipt.into(),
-                execution_stats: None
-            }
-        })
-    );
-    assert!(req.completed_at.is_some());
-
-    let sessions = repo.get_sessions_for_request(req_id).await.unwrap();
-    assert_eq!(sessions.len(), 2);
-    assert_eq!(sessions[0].session_type, SessionType::Stark);
-    assert_eq!(sessions[0].status, SessionStatus::Completed);
-    assert_eq!(sessions[1].session_type, SessionType::Snark);
-    assert_eq!(sessions[1].status, SessionStatus::Completed);
 }
 
 // ============================================================
@@ -1835,6 +1284,118 @@ async fn test_heartbeat_proof_job_guards_current_expired_and_reclaimed_locks() {
         .await
         .unwrap();
     assert!(matches!(stale, HeartbeatOutcome::StaleLock(_)));
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_abandon_proof_job_requeues_then_terminally_fails_with_fencing() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    drain_claimable_compressed_jobs(&repo).await;
+    let session_id = Uuid::new_v4().to_string();
+    let mut request = compressed_request();
+    set_request_session_id(&mut request, session_id.clone());
+    let id = repo.create(request).await.unwrap();
+    let first = repo
+        .claim_next_proof_job(compressed_claim("abandon-worker-a", 2))
+        .await
+        .unwrap()
+        .expect("first claim should succeed");
+    let first_lock = first.lock_id.expect("first claim has lock");
+
+    repo.record_worker_proof_session(WorkerSessionUpsert {
+        session_id: session_id.clone(),
+        lock_id: first_lock,
+        worker_id: "abandon-worker-a".to_owned(),
+        session_type: SessionType::Stark,
+        backend_session_id: "abandon-backend-session".to_owned(),
+        status: SessionStatus::Running,
+        error_message: None,
+    })
+    .await
+    .unwrap();
+
+    let stale = repo
+        .abandon_proof_job(AbandonProofJob {
+            session_id: session_id.clone(),
+            lock_id: Uuid::new_v4(),
+            worker_id: "abandon-worker-a".to_owned(),
+            error_message: "stale failure".to_owned(),
+            max_attempts: 2,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(stale, AbandonProofOutcome::StaleLock(_)));
+
+    let requeued = repo
+        .abandon_proof_job(AbandonProofJob {
+            session_id: session_id.clone(),
+            lock_id: first_lock,
+            worker_id: "abandon-worker-a".to_owned(),
+            error_message: "first generation failure".to_owned(),
+            max_attempts: 2,
+        })
+        .await
+        .unwrap();
+    let AbandonProofOutcome::Requeued(requeued) = requeued else {
+        panic!("first abandon should requeue the job");
+    };
+    assert_eq!(requeued.attempt, 1);
+    assert_eq!(requeued.job_status, ProofJobStatus::Pending);
+    assert!(requeued.lock_id.is_none());
+    assert!(requeued.error_message.is_none());
+    assert_eq!(
+        repo.get_active_session(&session_id, SessionType::Stark)
+            .await
+            .unwrap()
+            .expect("active session should survive requeue")
+            .backend_session_id,
+        "abandon-backend-session"
+    );
+
+    let second = repo
+        .claim_next_proof_job(compressed_claim("abandon-worker-b", 2))
+        .await
+        .unwrap()
+        .expect("abandoned job should be immediately reclaimable");
+    assert_eq!(second.id, id);
+    assert_eq!(second.attempt, 2);
+    let second_lock = second.lock_id.expect("second claim has lock");
+
+    let old_fence = repo
+        .abandon_proof_job(AbandonProofJob {
+            session_id: session_id.clone(),
+            lock_id: first_lock,
+            worker_id: "abandon-worker-a".to_owned(),
+            error_message: "old worker failure".to_owned(),
+            max_attempts: 2,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(old_fence, AbandonProofOutcome::StaleLock(_)));
+
+    let failed = repo
+        .abandon_proof_job(AbandonProofJob {
+            session_id: session_id.clone(),
+            lock_id: second_lock,
+            worker_id: "abandon-worker-b".to_owned(),
+            error_message: "final generation failure".to_owned(),
+            max_attempts: 2,
+        })
+        .await
+        .unwrap();
+    let AbandonProofOutcome::Failed(failed) = failed else {
+        panic!("second abandon should exhaust the reclaim budget");
+    };
+    assert_eq!(failed.job_status, ProofJobStatus::Failed);
+    assert_eq!(failed.attempt, 2);
+    assert_eq!(failed.error_message.as_deref(), Some("final generation failure"));
+    assert!(repo.get_active_session(&session_id, SessionType::Stark).await.unwrap().is_none());
+    let sessions = repo.get_sessions_for_request(id).await.unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].status, SessionStatus::Failed);
+    assert_eq!(sessions[0].error_message.as_deref(), Some("final generation failure"));
 }
 
 #[tokio::test]
@@ -2277,9 +1838,11 @@ async fn test_record_worker_proof_session_records_resumes_and_updates() {
     assert_eq!(active.backend_session_id, updated_backend_id);
 
     let stored = repo
-        .get_session_by_backend_id(&updated_backend_id)
+        .get_sessions_for_request(id)
         .await
         .unwrap()
+        .into_iter()
+        .find(|session| session.backend_session_id == updated_backend_id)
         .expect("session row should persist");
     assert_eq!(stored.status, SessionStatus::Running);
     assert!(stored.error_message.is_none());
@@ -2290,7 +1853,7 @@ async fn test_record_worker_proof_session_records_resumes_and_updates() {
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_record_worker_proof_session_preserves_terminal_backend_sessions() {
     let pool = test_pool().await;
-    let repo = test_repo(pool);
+    let repo = test_repo(pool.clone());
 
     drain_claimable_compressed_jobs(&repo).await;
     let id = repo.create(compressed_request()).await.unwrap();
@@ -2319,12 +1882,13 @@ async fn test_record_worker_proof_session_preserves_terminal_backend_sessions() 
         .unwrap();
     assert!(matches!(recorded, RecordSessionOutcome::Recorded(_)));
 
-    repo.update_proof_session(UpdateProofSession {
-        backend_session_id: terminal_backend_id.clone(),
-        status: SessionStatus::Completed,
-        error_message: None,
-        metadata: None,
-    })
+    sqlx::query(
+        "UPDATE proof_sessions SET status = $1, completed_at = NOW() \
+         WHERE backend_session_id = $2",
+    )
+    .bind(SessionStatus::Completed.as_str())
+    .bind(&terminal_backend_id)
+    .execute(&pool)
     .await
     .unwrap();
 

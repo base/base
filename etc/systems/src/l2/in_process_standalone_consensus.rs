@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::{RollupConfig, SystemConfig};
-use base_consensus_node::{EngineConfig, NodeMode, StandalonePrefund, StandaloneSequencerNode};
+use base_consensus_node::{
+    EngineConfig, NodeOperatingMode, StandalonePrefund, StandaloneSequencerNode,
+};
 use base_protocol::L1BlockInfoTx;
 use eyre::{Result, WrapErr};
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -52,7 +54,7 @@ impl InProcessStandaloneSequencer {
             // The engine client constructs this provider lazily. Standalone sequencing never
             // issues an L1 request.
             l1_url: Url::parse("http://127.0.0.1:1").expect("valid unused L1 URL"),
-            mode: NodeMode::Sequencer,
+            mode: NodeOperatingMode::Sequencer,
             l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
         };
         let engine_client = Arc::new(

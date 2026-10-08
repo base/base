@@ -9,31 +9,10 @@ mod v1;
 pub use v1::IPolicyRegistry as IPolicyRegistryV1;
 
 mod v2;
-pub use v2::{IPolicyRegistry, IPolicyRegistry as IPolicyRegistryV2};
+pub use v2::IPolicyRegistry as IPolicyRegistryV2;
 
-impl IPolicyRegistry::IPolicyRegistryCalls {
-    /// Returns the stable metric label for this decoded policy-registry call.
-    pub const fn as_label(&self) -> &'static str {
-        match self {
-            Self::createPolicy(_) => "policy.createPolicy",
-            Self::createPolicyWithAccounts(_) => "policy.createPolicyWithAccounts",
-            Self::createCompositePolicy(_) => "policy.createCompositePolicy",
-            Self::updateComposite(_) => "policy.updateComposite",
-            Self::stageUpdateAdmin(_) => "policy.stageUpdateAdmin",
-            Self::finalizeUpdateAdmin(_) => "policy.finalizeUpdateAdmin",
-            Self::renounceAdmin(_) => "policy.renounceAdmin",
-            Self::updateAllowlist(_) => "policy.updateAllowlist",
-            Self::updateBlocklist(_) => "policy.updateBlocklist",
-            Self::isAuthorized(_) => "policy.isAuthorized",
-            Self::MIN_COMPOSITE_CHILD_POLICIES(_) => "policy.MIN_COMPOSITE_CHILD_POLICIES",
-            Self::MAX_COMPOSITE_CHILD_POLICIES(_) => "policy.MAX_COMPOSITE_CHILD_POLICIES",
-            Self::policyExists(_) => "policy.policyExists",
-            Self::policyAdmin(_) => "policy.policyAdmin",
-            Self::pendingPolicyAdmin(_) => "policy.pendingPolicyAdmin",
-            Self::compositePolicyChildIds(_) => "policy.compositePolicyChildIds",
-        }
-    }
-}
+mod v3;
+pub use v3::{IPolicyRegistry, IPolicyRegistry as IPolicyRegistryV3};
 
 impl IPolicyRegistry::PolicyType {
     /// Returns the raw `u8` discriminant for this policy type.
@@ -44,10 +23,10 @@ impl IPolicyRegistry::PolicyType {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, b256};
+    use alloy_primitives::{B256, b256};
     use alloy_sol_types::{SolEnum, SolError, SolEvent, SolInterface};
 
-    use super::{IPolicyRegistry, IPolicyRegistryV1};
+    use super::{IPolicyRegistry, IPolicyRegistryV1, IPolicyRegistryV2, IPolicyRegistryV3};
     use crate::AbiFingerprint;
 
     /// Absolute wire fingerprint for Beryl's surface. Catches both-sides drift that relative
@@ -55,11 +34,15 @@ mod tests {
     const V1_ABI_FINGERPRINT: B256 =
         b256!("1ae189209c8c4875de2caa707322ea74f0d1f3e74a1104ecee6884e8984415da");
 
-    /// Absolute wire fingerprint for Cobalt's (canonical) surface.
+    /// Absolute wire fingerprint for Cobalt's surface.
     const V2_ABI_FINGERPRINT: B256 =
         b256!("da3137a81688286fb3af7f0f09a6369ae7c1197c08844a29dbde13f8c036394d");
 
-    /// These two surfaces pass no enum ordinals to [`AbiFingerprint`], so the pinned constants
+    /// Absolute wire fingerprint for Denim's (canonical) surface.
+    const V3_ABI_FINGERPRINT: B256 =
+        b256!("bb97c5e5d9be7ba918aa74de1d7fa405fbc8fd7f77084f1d40217920ee17690e");
+
+    /// These three surfaces pass no enum ordinals to [`AbiFingerprint`], so the pinned constants
     /// above keep the values they were blessed with. `PolicyType` ordinals *are* load-bearing —
     /// the discriminant rides the top byte of every policy ID via `PolicyRegistryV1::make_id` —
     /// and `shared_policy_type_discriminants_agree_across_surfaces` below only catches a reorder
@@ -77,10 +60,20 @@ mod tests {
 
     fn v2_abi_fingerprint() -> B256 {
         AbiFingerprint::compute(
-            IPolicyRegistry::IPolicyRegistryCalls::selectors(),
-            IPolicyRegistry::IPolicyRegistryEvents::SELECTORS.iter().copied().map(B256::new),
-            IPolicyRegistry::IPolicyRegistryErrors::selectors(),
-            IPolicyRegistry::PolicyType::COUNT,
+            IPolicyRegistryV2::IPolicyRegistryCalls::selectors(),
+            IPolicyRegistryV2::IPolicyRegistryEvents::SELECTORS.iter().copied().map(B256::new),
+            IPolicyRegistryV2::IPolicyRegistryErrors::selectors(),
+            IPolicyRegistryV2::PolicyType::COUNT,
+            [],
+        )
+    }
+
+    fn v3_abi_fingerprint() -> B256 {
+        AbiFingerprint::compute(
+            IPolicyRegistryV3::IPolicyRegistryCalls::selectors(),
+            IPolicyRegistryV3::IPolicyRegistryEvents::SELECTORS.iter().copied().map(B256::new),
+            IPolicyRegistryV3::IPolicyRegistryErrors::selectors(),
+            IPolicyRegistryV3::PolicyType::COUNT,
             [],
         )
     }
@@ -96,22 +89,16 @@ mod tests {
     }
 
     #[test]
+    fn v3_abi_fingerprint_is_pinned() {
+        assert_eq!(v3_abi_fingerprint(), V3_ABI_FINGERPRINT);
+    }
+
+    #[test]
     fn every_policy_type_discriminant_decodes() {
         for discriminant in 0..IPolicyRegistry::PolicyType::COUNT {
             IPolicyRegistry::PolicyType::try_from(discriminant as u8)
                 .expect("generated PolicyType discriminant should decode");
         }
-    }
-
-    #[test]
-    fn policy_call_labels_are_stable() {
-        assert_eq!(
-            IPolicyRegistry::IPolicyRegistryCalls::isAuthorized(
-                IPolicyRegistry::isAuthorizedCall { policyId: 0, account: Address::ZERO },
-            )
-            .as_label(),
-            "policy.isAuthorized"
-        );
     }
 
     /// The leaf discriminants must mean the same thing on both surfaces. `PolicyType` rides the

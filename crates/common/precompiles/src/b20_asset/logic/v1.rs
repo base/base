@@ -989,6 +989,12 @@ mod tests {
             self.events.push(log);
             Ok(())
         }
+        fn metered_keccak256(&self, data: &[u8]) -> Result<B256> {
+            Ok(keccak256(data))
+        }
+        fn deduct_gas(&self, _gas: u64) -> Result<()> {
+            Ok(())
+        }
     }
 
     impl AssetAccounting for FakeAccounting {
@@ -1053,9 +1059,6 @@ mod tests {
     }
 
     impl PolicyAccounting for FakePolicyAccounting {
-        fn registry_address(&self) -> Address {
-            Address::repeat_byte(0x02)
-        }
         fn caller(&self) -> Address {
             self.caller
         }

@@ -1,12 +1,14 @@
 //! Rollup Config Types
 
+use core::num::NonZeroU64;
+
 use alloy_chains::Chain;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
 
 use crate::{
-    BaseUpgrade, ChainGenesis, FeeConfig, RuntimeUpgradeRegistry, UpgradeActivation,
-    UpgradeActivationSink, UpgradeConfig,
+    BaseUpgrade, ChainGenesis, DenimTimestampSchedule, FeeConfig, RuntimeUpgradeRegistry,
+    UpgradeActivation, UpgradeActivationSink, UpgradeConfig,
 };
 
 /// The Rollup configuration.
@@ -24,7 +26,8 @@ pub struct RollupConfig {
     /// Note: When L1 has many 1 second consecutive blocks, and L2 grows at fixed 2 seconds,
     /// the L2 time may still grow beyond this difference.
     ///
-    /// Note: After the Fjord hardfork, this value becomes a constant of `1800`.
+    /// Note: After the Fjord hardfork, this value becomes a constant of `1800`, and after the
+    /// Denim hardfork a constant of `21600`.
     pub max_sequencer_drift: u64,
     /// The sequencer window size.
     pub seq_window_size: u64,
@@ -330,6 +333,11 @@ impl RollupConfig {
         [upgrade_activation_timestamp(BaseUpgrade::Denim)],
         "Denim";
 
+        is_everest_active,
+        is_first_everest_block,
+        [upgrade_activation_timestamp(BaseUpgrade::Everest)],
+        "Everest";
+
         is_zenith_active,
         is_first_zenith_block,
         [upgrade_activation_timestamp(BaseUpgrade::Zenith)],
@@ -338,7 +346,9 @@ impl RollupConfig {
 
     /// Returns the max sequencer drift for the given timestamp.
     pub fn max_sequencer_drift(&self, timestamp: u64) -> u64 {
-        if self.is_fjord_active(timestamp) {
+        if self.is_denim_active(timestamp) {
+            Self::DENIM_MAX_SEQUENCER_DRIFT
+        } else if self.is_fjord_active(timestamp) {
             Self::FJORD_MAX_SEQUENCER_DRIFT
         } else {
             self.max_sequencer_drift
@@ -363,30 +373,38 @@ impl RollupConfig {
         }
     }
 
-    /// Returns the L2 block number at which Denim activates.
+    /// Returns the L2 block offset from genesis at which Denim activates.
     ///
-    /// If Denim is not configured, returns [`None`].
+    /// If Denim is not configured or the block time is zero, returns [`None`].
     pub fn denim_activation_block_number(&self) -> Option<u64> {
-        let denim_timestamp = self.upgrade_activation_timestamp(BaseUpgrade::Denim)?;
+        self.denim_timestamp_schedule().map(|schedule| schedule.denim_activation_block_number())
+    }
 
-        if self.block_time == 0 {
-            panic!("rollup config: block time cannot be 0");
-        }
-
-        Some(denim_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(self.block_time))
+    /// Returns the legacy-to-Denim timestamp schedule.
+    ///
+    /// Returns `None` when Denim is unscheduled or the legacy block time is zero.
+    /// [`Self::l2_block_timestamp_millis`] uses the legacy formula in that case.
+    pub fn denim_timestamp_schedule(&self) -> Option<DenimTimestampSchedule> {
+        Some(DenimTimestampSchedule {
+            genesis_block_number: self.genesis.l2.number,
+            genesis_timestamp: self.genesis.l2_time,
+            legacy_block_interval: NonZeroU64::new(self.block_time)?,
+            denim_activation_timestamp: self.upgrade_activation_timestamp(BaseUpgrade::Denim)?,
+        })
     }
 
     /// Returns the L2 block number at which the genesis-only Zenith testing gate activates.
     ///
-    /// If Zenith is not configured, returns [`None`].
+    /// If Zenith is not configured or the block time is zero, returns [`None`].
     pub fn zenith_activation_block_number(&self) -> Option<u64> {
         let zenith_timestamp = self.upgrade_activation_timestamp(BaseUpgrade::Zenith)?;
+        let block_time = self.block_time;
 
-        if self.block_time == 0 {
-            panic!("rollup config: block time cannot be 0");
+        if block_time == 0 {
+            return None;
         }
 
-        Some(zenith_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(self.block_time))
+        Some(zenith_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(block_time))
     }
 
     /// Returns the deterministic timestamp of an L2 block in milliseconds.
@@ -398,32 +416,15 @@ impl RollupConfig {
     /// block number (`self.genesis.l2.number`), which is non-zero for chains whose L2 genesis
     /// was anchored at a later block.
     pub fn l2_block_timestamp_millis(&self, block_number: u64) -> u64 {
-        let blocks_since_genesis = block_number.saturating_sub(self.genesis.l2.number);
-
-        let legacy_seconds = self
-            .genesis
-            .l2_time
-            .saturating_add(blocks_since_genesis.saturating_mul(self.block_time));
-        let legacy_millis = legacy_seconds.saturating_mul(1_000);
-
-        let Some(denim_activation_block) = self.denim_activation_block_number() else {
-            return legacy_millis;
-        };
-
-        if blocks_since_genesis < denim_activation_block {
-            return legacy_millis;
+        if let Some(schedule) = self.denim_timestamp_schedule() {
+            return schedule.block_timestamp_millis(block_number);
         }
-
-        let denim_activation_seconds = self
-            .genesis
+        self.genesis
             .l2_time
-            .saturating_add(denim_activation_block.saturating_mul(self.block_time));
-        let denim_activation_full_millis = denim_activation_seconds.saturating_mul(1_000);
-        denim_activation_full_millis.saturating_add(
-            blocks_since_genesis
-                .saturating_sub(denim_activation_block)
-                .saturating_mul(Self::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS),
-        )
+            .saturating_add(
+                block_number.saturating_sub(self.genesis.l2.number).saturating_mul(self.block_time),
+            )
+            .saturating_mul(1_000)
     }
 
     /// Returns the deterministic whole-second timestamp of an L2 block.
@@ -480,11 +481,15 @@ impl RollupConfig {
     /// The max sequencer drift when the Fjord hardfork is active.
     pub const FJORD_MAX_SEQUENCER_DRIFT: u64 = 1800;
 
+    /// The max sequencer drift when the Denim hardfork is active, in seconds (6 hours).
+    pub const DENIM_MAX_SEQUENCER_DRIFT: u64 = 6 * 60 * 60;
+
     /// The channel timeout once the Granite hardfork is active.
     pub const GRANITE_CHANNEL_TIMEOUT: u64 = 50;
 
     /// The fixed cadence once subsecond blocks activates.
-    pub const NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS: u64 = 200;
+    pub const NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS: u64 =
+        DenimTimestampSchedule::DENIM_BLOCK_INTERVAL_MILLIS;
 
     /// The number of Denim blocks produced in one legacy two-second block interval.
     pub const DENIM_GAS_PARAMETER_SCALING_FACTOR: u32 = 10;
@@ -520,6 +525,8 @@ impl RollupConfig {
             Some(BaseUpgrade::Cobalt)
         } else if self.is_first_denim_block(timestamp, parent_timestamp) {
             Some(BaseUpgrade::Denim)
+        } else if self.is_first_everest_block(timestamp, parent_timestamp) {
+            Some(BaseUpgrade::Everest)
         } else {
             None
         };
@@ -615,6 +622,7 @@ mod tests {
                     beryl: Some(120),
                     cobalt: Some(130),
                     denim: None,
+                    everest: None,
                     zenith: None,
                 },
             },
@@ -697,6 +705,7 @@ mod tests {
                     beryl: Some(120),
                     cobalt: None,
                     denim: None,
+                    everest: None,
                     zenith: None,
                 },
                 ..Default::default()
@@ -729,6 +738,9 @@ mod tests {
         config.upgrades.fjord_time = Some(10);
         assert_eq!(config.max_sequencer_drift(0), 100);
         assert_eq!(config.max_sequencer_drift(10), RollupConfig::FJORD_MAX_SEQUENCER_DRIFT);
+        config.upgrades.base.denim = Some(20);
+        assert_eq!(config.max_sequencer_drift(19), RollupConfig::FJORD_MAX_SEQUENCER_DRIFT);
+        assert_eq!(config.max_sequencer_drift(20), RollupConfig::DENIM_MAX_SEQUENCER_DRIFT);
     }
 
     #[test]
@@ -979,6 +991,7 @@ mod tests {
             beryl: None,
             cobalt: None,
             denim: None,
+            everest: None,
             zenith: None,
         };
         assert_eq!(
@@ -993,6 +1006,7 @@ mod tests {
             beryl: Some(800),
             cobalt: None,
             denim: None,
+            everest: None,
             zenith: None,
         };
         assert_eq!(
@@ -1009,6 +1023,7 @@ mod tests {
             beryl: Some(800),
             cobalt: None,
             denim: None,
+            everest: None,
             zenith: None,
         };
         assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Osaka), ForkCondition::Never);
@@ -1205,9 +1220,52 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "rollup config: block time cannot be 0")]
-    fn denim_activation_block_number_rejects_zero_block_time() {
-        rollup_config_with_denim(100, 0, Some(101)).denim_activation_block_number();
+    fn denim_activation_block_number_returns_none_for_zero_block_time() {
+        let cfg = rollup_config_with_denim(100, 0, Some(101));
+
+        assert_eq!(cfg.denim_activation_block_number(), None);
+        assert_eq!(cfg.l2_block_timestamp_millis(1), 100_000);
+    }
+
+    #[test]
+    fn l2_block_full_millis_is_relative_to_nonzero_genesis_block() {
+        let mut cfg = rollup_config_with_denim(10, 2, Some(15));
+        cfg.genesis.l2.number = 50;
+
+        assert_eq!(cfg.denim_activation_block_number(), Some(3));
+        assert_eq!(cfg.l2_block_timestamp_millis(52), 14_000);
+        assert_eq!(cfg.l2_block_timestamp_millis(53), 16_000);
+        assert_eq!(cfg.l2_block_timestamp_millis(54), 16_200);
+    }
+
+    #[test]
+    fn later_zenith_activation_does_not_change_denim_cadence() {
+        let mut with_zenith = rollup_config_with_denim(10, 2, Some(15));
+        with_zenith.upgrades.base.zenith = Some(20);
+        let without_zenith = rollup_config_with_denim(10, 2, Some(15));
+
+        for block_number in 0..30 {
+            assert_eq!(
+                with_zenith.l2_block_timestamp_millis(block_number),
+                without_zenith.l2_block_timestamp_millis(block_number)
+            );
+        }
+    }
+
+    #[test]
+    fn runtime_denim_reschedule_moves_native_cadence_boundary() {
+        let chain_id = 9_100_099;
+        let cfg = RollupConfig {
+            l2_chain_id: Chain::from_id(chain_id),
+            ..rollup_config_with_denim(10, 2, Some(20))
+        };
+        crate::RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Denim, 15);
+
+        assert_eq!(cfg.denim_activation_block_number(), Some(3));
+        assert_eq!(cfg.l2_block_timestamp_millis(3), 16_000);
+        assert_eq!(cfg.l2_block_timestamp_millis(4), 16_200);
+
+        crate::RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
     fn rollup_config_with_zenith(
@@ -1236,9 +1294,11 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "rollup config: block time cannot be 0")]
-    fn zenith_activation_block_number_rejects_zero_block_time() {
-        rollup_config_with_zenith(100, 0, Some(101)).zenith_activation_block_number();
+    fn zenith_activation_block_number_returns_none_for_zero_block_time() {
+        assert_eq!(
+            rollup_config_with_zenith(100, 0, Some(101)).zenith_activation_block_number(),
+            None
+        );
     }
 
     #[test]

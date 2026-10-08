@@ -4,20 +4,17 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use audit_archiver_lib::{
-    AuditArchiver, AuditArchiverApiServer, AuditArchiverRpc, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
+    AuditArchiverApiServer, AuditArchiverRpc, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
+    DEFAULT_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS,
     DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS, DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS,
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
     DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
-    DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE,
+    DEFAULT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS,
     DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS,
-    DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES,
-    DEFAULT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS,
-    DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, Metrics, PgTransactionEventSink, RpcEventReader,
-    S3EventReaderWriter, TransactionEventIngestConfig, TransactionEventRetentionConfig,
+    DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS,
+    MAX_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS, Metrics, PgTransactionEventSink,
+    TransactionEventIngestConfig, TransactionEventRetentionConfig,
 };
-use aws_config::{BehaviorVersion, Region};
-use aws_credential_types::Credentials;
-use aws_sdk_s3::{Client as S3Client, config::Builder as S3ConfigBuilder};
 use axum::{
     BoxError,
     error_handling::HandleErrorLayer,
@@ -29,23 +26,15 @@ use axum::{
 use base_cli_utils::LogConfig;
 use clap::{Parser, ValueEnum};
 use jsonrpsee::server::{ServerBuilder, stop_channel};
-use moka::{policy::EvictionPolicy, sync::Cache};
 use tokio::{
     net::TcpListener,
-    sync::mpsc,
     time::{MissedTickBehavior, interval},
 };
 use tower::ServiceBuilder;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 base_cli_utils::define_log_args!("TIPS_AUDIT");
 base_cli_utils::define_metrics_args!("TIPS_AUDIT", 9002);
-
-#[derive(Debug, Clone, ValueEnum)]
-enum S3ConfigType {
-    Aws,
-    Manual,
-}
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum Command {
@@ -64,7 +53,7 @@ enum MigrationDirection {
 
 #[derive(Debug, Clone)]
 struct HealthState {
-    transaction_event_sink: Option<PgTransactionEventSink>,
+    transaction_event_sink: PgTransactionEventSink,
 }
 
 #[derive(Parser, Debug)]
@@ -76,53 +65,17 @@ struct Args {
     #[arg(value_enum)]
     migration_direction: Option<MigrationDirection>,
 
-    #[arg(long, env = "TIPS_AUDIT_S3_BUCKET")]
-    s3_bucket: Option<String>,
-
     #[command(flatten)]
     log: LogArgs,
 
     #[command(flatten)]
     metrics: MetricsArgs,
 
-    #[arg(long, env = "TIPS_AUDIT_S3_CONFIG_TYPE", default_value = "aws")]
-    s3_config_type: S3ConfigType,
-
-    #[arg(long, env = "TIPS_AUDIT_S3_ENDPOINT")]
-    s3_endpoint: Option<String>,
-
-    #[arg(long, env = "TIPS_AUDIT_S3_REGION", default_value = "us-east-1")]
-    s3_region: String,
-
-    #[arg(long, env = "TIPS_AUDIT_S3_ACCESS_KEY_ID")]
-    s3_access_key_id: Option<String>,
-
-    #[arg(long, env = "TIPS_AUDIT_S3_SECRET_ACCESS_KEY")]
-    s3_secret_access_key: Option<String>,
-
-    #[arg(long, env = "TIPS_AUDIT_WORKER_POOL_SIZE", default_value = "80")]
-    worker_pool_size: usize,
-
-    #[arg(long, env = "TIPS_AUDIT_CHANNEL_BUFFER_SIZE", default_value = "1024")]
-    channel_buffer_size: usize,
-
     #[arg(long, env = "TIPS_AUDIT_RPC_PORT", default_value = "9100")]
     rpc_port: u16,
 
-    #[arg(long, env = "TIPS_AUDIT_NOOP_ARCHIVE", default_value = "false")]
-    noop_archive: bool,
-
-    /// Maximum number of dedup-cache entries (event-key → ()). Cross-pod dedup
-    /// is enforced at the S3 layer; this cache short-circuits in-pod dupes.
-    #[arg(long, env = "TIPS_AUDIT_RPC_CACHE_CAPACITY", default_value = "100000")]
-    rpc_cache_capacity: u64,
-
-    /// Time-to-live in seconds for entries in the dedup cache.
-    #[arg(long, env = "TIPS_AUDIT_RPC_CACHE_TTL_SECS", default_value = "300")]
-    rpc_cache_ttl_secs: u64,
-
-    /// Postgres connection URL for transaction observability events. When unset,
-    /// the HTTP transaction-event ingest endpoint is disabled.
+    /// Postgres connection URL for transaction observability events. Required
+    /// when serving HTTP ingest and RPC queries.
     #[arg(long, env = "TIPS_AUDIT_POSTGRES_URL")]
     postgres_url: Option<String>,
 
@@ -130,11 +83,10 @@ struct Args {
     #[arg(long, env = "TIPS_AUDIT_POSTGRES_MAX_CONNECTIONS", default_value = "10")]
     postgres_max_connections: u32,
 
-    /// Seconds between transaction-event retention delete passes. The first
-    /// pass runs immediately at startup; later passes wait this interval.
-    /// An expire scan cycle older than this interval is restarted at the
-    /// configured batch size after at least one returned attempt, except
-    /// while a post-timeout LIMIT 1 is still queued.
+    /// Seconds between transaction-event partition maintenance passes. The
+    /// first pass runs immediately at startup; later passes wait this
+    /// interval. Each pass creates upcoming day partitions and drops expired
+    /// ones.
     #[arg(
         long,
         env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS",
@@ -142,7 +94,8 @@ struct Args {
     )]
     transaction_event_retention_interval_secs: u64,
 
-    /// Days to keep high-volume proxy and builder-decision events.
+    /// Days to keep high-volume proxy and builder-decision events, by
+    /// `event_time`.
     #[arg(
         long,
         env = "TIPS_AUDIT_TRANSACTION_EVENT_HOT_RETENTION_DAYS",
@@ -150,7 +103,8 @@ struct Args {
     )]
     transaction_event_hot_retention_days: u32,
 
-    /// Days to keep ingress, simulation-success, and txpool-forward events.
+    /// Days to keep ingress, simulation-success, and txpool-forward events, by
+    /// `event_time`.
     #[arg(
         long,
         env = "TIPS_AUDIT_TRANSACTION_EVENT_WARM_RETENTION_DAYS",
@@ -158,7 +112,8 @@ struct Args {
     )]
     transaction_event_warm_retention_days: u32,
 
-    /// Days to keep failures, drops, inclusion, and flashblock events.
+    /// Days to keep failures, drops, inclusion, and flashblock events, by
+    /// `event_time`.
     #[arg(
         long,
         env = "TIPS_AUDIT_TRANSACTION_EVENT_COLD_RETENTION_DAYS",
@@ -166,35 +121,28 @@ struct Args {
     )]
     transaction_event_cold_retention_days: u32,
 
-    /// Maximum rows deleted in one retention statement.
-    #[arg(
-        long,
-        env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE",
-        default_value_t = DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE
-    )]
-    transaction_event_retention_batch_size: u32,
-
-    /// Maximum delete statements in one locked retention pass. Shared across
-    /// hot, then warm, then cold; raise this if a hot backlog starves warmer
-    /// classes.
-    #[arg(
-        long,
-        env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES",
-        default_value_t = DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES
-    )]
-    transaction_event_retention_max_batches: u32,
-
-    /// Postgres statement timeout for one retention delete, in milliseconds.
+    /// Postgres `lock_timeout` for one partition create, detach, or drop, in
+    /// milliseconds.
     ///
-    /// Bounds a sparse expire scan so it cannot hold the advisory lock for
-    /// hours. On timeout, expire tries `LIMIT 1` then bisects the batch size.
-    /// A `LIMIT 1` timeout advances to the next retention class.
+    /// Detach briefly queues inserts for its retention class, so a blocked
+    /// statement gives up after this timeout and retries on the next pass.
     #[arg(
         long,
-        env = "TIPS_AUDIT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS",
-        default_value_t = DEFAULT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS
+        env = "TIPS_AUDIT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS",
+        default_value_t = DEFAULT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS
     )]
-    transaction_event_retention_statement_timeout_ms: u64,
+    transaction_event_partition_lock_timeout_ms: u64,
+
+    /// Seconds between BRIN summary passes over the day partitions that take
+    /// inserts. Zero disables the passes. Each pass leaves at most this many
+    /// seconds of new rows outside the BRIN summaries used by warehouse
+    /// extraction.
+    #[arg(
+        long,
+        env = "TIPS_AUDIT_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS",
+        default_value_t = DEFAULT_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS
+    )]
+    transaction_event_brin_summary_interval_secs: u64,
 
     /// HTTP path for Vector transaction-event batch ingest.
     #[arg(
@@ -276,69 +224,46 @@ async fn run_migrations(args: &Args) -> Result<()> {
 }
 
 async fn run_server(args: Args) -> Result<()> {
-    let s3_bucket = args
-        .s3_bucket
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("TIPS_AUDIT_S3_BUCKET must be set for serve"))?;
+    let postgres_url = args
+        .postgres_url
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("TIPS_AUDIT_POSTGRES_URL must be set for serve"))?;
 
     let retention_config = TransactionEventRetentionConfig {
         hot_days: args.transaction_event_hot_retention_days,
         warm_days: args.transaction_event_warm_retention_days,
         cold_days: args.transaction_event_cold_retention_days,
-        delete_batch_size: args.transaction_event_retention_batch_size,
-        max_batches: args.transaction_event_retention_max_batches,
-        statement_timeout_ms: args.transaction_event_retention_statement_timeout_ms,
+        partition_lock_timeout_ms: args.transaction_event_partition_lock_timeout_ms,
         interval_secs: args.transaction_event_retention_interval_secs,
-        test_hot_sleep_ms: None,
-        test_hot_sleep_min_limit: None,
     }
     .validate()?;
     let retention_interval = Duration::from_secs(retention_config.interval_secs);
+    let brin_summary_interval =
+        brin_summary_interval(args.transaction_event_brin_summary_interval_secs)?;
 
     info!(
-        s3_bucket = %s3_bucket,
         metrics_addr = %args.metrics.addr,
         metrics_port = args.metrics.port,
         rpc_port = args.rpc_port,
         transaction_event_http_path = %args.transaction_event_http_path,
-        transaction_event_http_enabled = args.postgres_url.is_some(),
         transaction_event_hot_retention_days = retention_config.hot_days,
         transaction_event_warm_retention_days = retention_config.warm_days,
         transaction_event_cold_retention_days = retention_config.cold_days,
-        transaction_event_retention_batch_size = retention_config.delete_batch_size,
-        transaction_event_retention_max_batches = retention_config.max_batches,
-        transaction_event_retention_statement_timeout_ms = retention_config.statement_timeout_ms,
+        transaction_event_partition_lock_timeout_ms = retention_config.partition_lock_timeout_ms,
         transaction_event_retention_interval_secs = retention_interval.as_secs(),
-        rpc_cache_capacity = args.rpc_cache_capacity,
-        rpc_cache_ttl_secs = args.rpc_cache_ttl_secs,
-        channel_buffer_size = args.channel_buffer_size,
+        transaction_event_brin_summary_interval_secs =
+            brin_summary_interval.map_or(0, |interval| interval.as_secs()),
         "Starting audit archiver"
     );
 
-    let s3_client = create_s3_client(&args).await?;
-    let writer = S3EventReaderWriter::new(s3_client, s3_bucket);
-
-    let dedup_cache: Cache<String, ()> = Cache::builder()
-        .max_capacity(args.rpc_cache_capacity)
-        .eviction_policy(EvictionPolicy::lru())
-        .time_to_live(Duration::from_secs(args.rpc_cache_ttl_secs))
-        .build();
-
-    let (event_tx, event_rx) = mpsc::channel(args.channel_buffer_size);
-    let reader = RpcEventReader::new(event_rx);
-
     let rpc_addr = SocketAddr::from(([0, 0, 0, 0], args.rpc_port));
-    let transaction_event_sink = if let Some(postgres_url) = &args.postgres_url {
-        Some(PgTransactionEventSink::connect(postgres_url, args.postgres_max_connections).await?)
-    } else {
-        None
-    };
+    let transaction_event_sink =
+        PgTransactionEventSink::connect(postgres_url, args.postgres_max_connections)
+            .await?
+            .with_retention_config(retention_config)?;
+    transaction_event_sink.check_schema_ready().await?;
 
-    let mut rpc_module =
-        AuditArchiverRpc::with_bundle_events(Arc::new(writer.clone()), dedup_cache, event_tx);
-    if let Some(sink) = transaction_event_sink.clone() {
-        rpc_module = rpc_module.with_transaction_event_store(sink);
-    }
+    let rpc_module = AuditArchiverRpc::new(transaction_event_sink.clone());
     // The jsonrpsee service is driven by the axum listener below. Keep the
     // stop handle passed into the service builder; axum owns the HTTP server
     // lifecycle for this combined RPC and transaction-event endpoint.
@@ -355,85 +280,111 @@ async fn run_server(args: Args) -> Result<()> {
         .service(rpc_service);
 
     let retention_sink = transaction_event_sink.clone();
+    let brin_summary_sink = transaction_event_sink.clone();
     let health_router = health_router(transaction_event_sink.clone());
-    let http_app = if let Some(sink) = transaction_event_sink {
-        let config = TransactionEventIngestConfig {
-            path: args.transaction_event_http_path.clone(),
-            max_batch_size: args.transaction_event_max_batch_size,
-            max_event_bytes: args.transaction_event_max_event_bytes,
-            max_data_bytes: args.transaction_event_max_data_bytes,
-            max_request_bytes: args.transaction_event_max_request_bytes,
-        };
-        let path = config.path.clone();
-        info!(rpc_addr = %rpc_addr, %path, "transaction event HTTP ingest enabled on audit RPC server");
-        config.into_router(Arc::new(sink)).merge(health_router).fallback_service(rpc_service)
-    } else {
-        info!("transaction event HTTP ingest disabled; TIPS_AUDIT_POSTGRES_URL is not set");
-        health_router.fallback_service(rpc_service)
+    let config = TransactionEventIngestConfig {
+        path: args.transaction_event_http_path.clone(),
+        max_batch_size: args.transaction_event_max_batch_size,
+        max_event_bytes: args.transaction_event_max_event_bytes,
+        max_data_bytes: args.transaction_event_max_data_bytes,
+        max_request_bytes: args.transaction_event_max_request_bytes,
     };
+    let path = config.path.clone();
+    info!(rpc_addr = %rpc_addr, %path, "transaction event HTTP ingest enabled on audit RPC server");
+    let http_app = config
+        .into_router(Arc::new(transaction_event_sink))
+        .merge(health_router)
+        .fallback_service(rpc_service);
 
     let http_listener = TcpListener::bind(rpc_addr).await?;
     let http_server = axum::serve(http_listener, http_app);
     info!(rpc_addr = %rpc_addr, "Audit archiver HTTP server started");
 
-    let mut archiver = AuditArchiver::new(
-        reader,
-        writer,
-        args.worker_pool_size,
-        args.channel_buffer_size,
-        args.noop_archive,
-    );
-
-    info!("Audit archiver initialized, starting main loop");
-    let retention_worker =
-        run_retention_worker(retention_sink, retention_config, retention_interval);
+    let retention_worker = run_retention_worker(retention_sink, retention_interval);
+    let brin_summary_worker = run_brin_summary_worker(brin_summary_sink, brin_summary_interval);
 
     tokio::select! {
-        result = archiver.run() => result,
         result = http_server => {
             result.map_err(|e| anyhow::anyhow!("audit archiver HTTP server stopped unexpectedly: {e}"))
         }
         result = retention_worker => result,
+        result = brin_summary_worker => result,
+    }
+}
+
+/// Validates the BRIN summary interval. `None` disables the passes.
+fn brin_summary_interval(secs: u64) -> Result<Option<Duration>> {
+    if secs > MAX_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS {
+        anyhow::bail!(
+            "TIPS_AUDIT_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS must be at most {MAX_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS}, got {secs}"
+        );
+    }
+    Ok((secs > 0).then(|| Duration::from_secs(secs)))
+}
+
+async fn run_brin_summary_worker(
+    transaction_event_sink: PgTransactionEventSink,
+    summary_interval: Option<Duration>,
+) -> Result<()> {
+    let Some(summary_interval) = summary_interval else {
+        info!("transaction event BRIN summary passes disabled");
+        return std::future::pending().await;
+    };
+    let mut ticker = interval(summary_interval);
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+    loop {
+        ticker.tick().await;
+        match transaction_event_sink.summarize_brin_indexes().await {
+            Ok(outcome) if outcome.migration_pending => {
+                warn!(
+                    "transaction event BRIN summary function is missing; run migrate up to apply migration 005"
+                );
+            }
+            Ok(_) => {}
+            Err(err) => {
+                Metrics::transaction_event_brin_summary_failures().increment(1);
+                error!(error = %err, "transaction event BRIN summary failed");
+            }
+        }
     }
 }
 
 async fn run_retention_worker(
-    transaction_event_sink: Option<PgTransactionEventSink>,
-    retention_config: TransactionEventRetentionConfig,
+    transaction_event_sink: PgTransactionEventSink,
     retention_interval: Duration,
 ) -> Result<()> {
-    let Some(sink) = transaction_event_sink else {
-        return std::future::pending().await;
-    };
-
-    // First tick is immediate so a new replica starts expiry without waiting
-    // a full interval. Skip missed ticks so a slow pass does not catch up.
+    // First tick is immediate so a new replica creates today's and upcoming
+    // partitions without waiting a full interval. Skip missed ticks so a slow
+    // pass does not catch up.
     let mut ticker = interval(retention_interval);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     loop {
         ticker.tick().await;
-        match sink.expire_old_events(retention_config).await {
-            Ok(outcome) if outcome.rows_deleted > 0 => {
+        match transaction_event_sink.maintain_partitions().await {
+            Ok(outcome)
+                if outcome.partitions_created > 0
+                    || outcome.partitions_dropped > 0
+                    || outcome.lock_timeouts > 0 =>
+            {
                 info!(
-                    rows_deleted = outcome.rows_deleted,
-                    hot_rows_deleted = outcome.hot_rows_deleted,
-                    warm_rows_deleted = outcome.warm_rows_deleted,
-                    cold_rows_deleted = outcome.cold_rows_deleted,
-                    batches = outcome.batches,
-                    "transaction event retention deleted expired rows"
+                    partitions_created = outcome.partitions_created,
+                    partitions_dropped = outcome.partitions_dropped,
+                    lock_timeouts = outcome.lock_timeouts,
+                    "transaction event partition maintenance changed partitions"
                 );
             }
             Ok(_) => {}
             Err(err) => {
                 Metrics::transaction_event_retention_failures().increment(1);
-                error!(error = %err, "transaction event retention failed");
+                error!(error = %err, "transaction event partition maintenance failed");
             }
         }
     }
 }
 
-fn health_router(transaction_event_sink: Option<PgTransactionEventSink>) -> axum::Router {
+fn health_router(transaction_event_sink: PgTransactionEventSink) -> axum::Router {
     axum::Router::new()
         .route("/healthz", get(healthz_handler))
         .route("/readyz", get(readyz_handler))
@@ -445,9 +396,7 @@ async fn healthz_handler() -> &'static str {
 }
 
 async fn readyz_handler(State(state): State<HealthState>) -> Response {
-    match PgTransactionEventSink::check_optional_schema_ready(state.transaction_event_sink.as_ref())
-        .await
-    {
+    match state.transaction_event_sink.check_schema_ready().await {
         Ok(()) => (StatusCode::OK, "ready\n".to_string()).into_response(),
         Err(err) => {
             error!(error = %err, "audit archiver readiness check failed");
@@ -456,34 +405,28 @@ async fn readyz_handler(State(state): State<HealthState>) -> Response {
     }
 }
 
-async fn create_s3_client(args: &Args) -> Result<S3Client> {
-    match args.s3_config_type {
-        S3ConfigType::Manual => {
-            let region = args.s3_region.clone();
-            let mut config_builder =
-                aws_config::defaults(BehaviorVersion::latest()).region(Region::new(region));
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-            if let Some(endpoint) = &args.s3_endpoint {
-                config_builder = config_builder.endpoint_url(endpoint);
-            }
+    #[tokio::test]
+    async fn serve_without_postgres_fails_before_accepting_events() {
+        let mut args = Args::parse_from(["audit-archiver"]);
+        args.postgres_url = None;
 
-            if let (Some(access_key), Some(secret_key)) =
-                (&args.s3_access_key_id, &args.s3_secret_access_key)
-            {
-                let credentials = Credentials::new(access_key, secret_key, None, None, "manual");
-                config_builder = config_builder.credentials_provider(credentials);
-            }
+        let error = run_server(args).await.expect_err("serve must require durable event storage");
+        assert!(error.to_string().contains("TIPS_AUDIT_POSTGRES_URL must be set for serve"));
+    }
 
-            let config = config_builder.load().await;
-            let s3_config_builder = S3ConfigBuilder::from(&config).force_path_style(true);
-
-            info!(message = "manually configuring s3 client");
-            Ok(S3Client::from_conf(s3_config_builder.build()))
-        }
-        S3ConfigType::Aws => {
-            info!(message = "using aws s3 client");
-            let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
-            Ok(S3Client::new(&config))
-        }
+    #[test]
+    fn brin_summary_interval_zero_disables_and_rejects_above_max() {
+        assert_eq!(brin_summary_interval(0).unwrap(), None);
+        assert_eq!(
+            brin_summary_interval(MAX_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS).unwrap(),
+            Some(Duration::from_secs(MAX_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS))
+        );
+        assert!(
+            brin_summary_interval(MAX_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS + 1).is_err()
+        );
     }
 }
