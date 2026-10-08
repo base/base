@@ -1,14 +1,19 @@
 name: Claude Code Review
 
+# The review is expensive, so it does not run on every push:
+#  - once, when a pull request is opened or marked ready for review;
+#  - again when the pull request's author, or a repository member or collaborator, comments `/review`.
+# A push only updates one line of the review comment, which counts the commits that have not been reviewed.
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
+    types: [opened, ready_for_review, synchronize]
+  # An `issue_comment` run uses the workflow file on the default branch, never the pull request's copy, so a
+  # pull request cannot change how its own `/review` is handled. `/review` therefore starts working once
+  # this file is on the default branch.
+  issue_comment:
+    types: [created]
 
-concurrency:
-  group: claude-review-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
-# This job can post comments and edit its own comments. It cannot push commits or modify files in the
+# This workflow can post comments and edit its own comments. It cannot push commits or modify files in the
 # repo, and GitHub does not let this token resolve review threads (see .agents/skills/pr-review/SKILL.md).
 permissions:
   contents: read
@@ -19,10 +24,26 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+    # Concurrency is set on the job, not the workflow: every comment on every pull request starts a run of this
+    # workflow, and a comment that is not a review request must not get in the way of a review in progress.
+    # A second request waits for the first rather than cancelling it, because a review cannot be redone cheaply.
+    concurrency:
+      group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: false
     # Note: This job runs on the BaseRunnerGroup to be able to access LLM Gateway
     # It will not work on other runners
-    # Skip for external contributor PRs (forks) — secrets and runner group are unavailable
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Runs for a pull request that is opened or marked ready (not a draft, not a fork: secrets and the runner
+    # group are unavailable to forks), or for a comment that starts with `/review` on an open pull request by
+    # its author or by someone with write access. The first step checks the comment is exactly `/review`.
+    if: >-
+      (github.event_name == 'pull_request' && github.event.action != 'synchronize'
+        && github.event.pull_request.draft == false
+        && github.event.pull_request.head.repo.full_name == github.repository)
+      || (github.event_name == 'issue_comment'
+        && github.event.issue.pull_request && github.event.issue.state == 'open'
+        && startsWith(github.event.comment.body, '/review') && github.event.comment.user.type != 'Bot'
+        && (github.event.comment.user.login == github.event.issue.user.login
+            || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)))
     runs-on:
       group: BaseRunnerGroup
     timeout-minutes: 15
@@ -39,12 +60,63 @@ jobs:
             release-assets.githubusercontent.com:443
             ${{ vars.LLM_GATEWAY_HOSTNAME }}:443
 
+      # Read the pull request from the API, not from the event: a comment event does not carry it, and the
+      # head may have moved since a queued run was triggered. The comment text goes through the environment,
+      # never into the script.
+      - name: Find the pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          EVENT: ${{ github.event_name }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = issue_comment ] && ! [[ "$COMMENT_BODY" =~ ^/review([[:space:]]|$) ]]; then
+            echo "::notice::Not reviewing: the comment is not a /review request."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          read -r state head_repo head_sha base_ref draft < <(gh api "repos/$REPO/pulls/$NUMBER" \
+            --jq '[.state, .head.repo.full_name, .head.sha, .base.ref, .draft] | @tsv')
+          if [ "$state" != open ] || [ "$head_repo" != "$REPO" ]; then
+            echo "::notice::Not reviewing: the pull request is not open, or it comes from a fork."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$draft" = true ]; then
+            echo "::notice::Not reviewing: the pull request is a draft. Mark it ready for review."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Unexpected head commit from the API."
+            exit 1
+          fi
+          # Marking a draft ready again must not pay for a second review; `/review` asks for one explicitly.
+          if [ "$EVENT" = pull_request ]; then
+            existing=$(gh api "repos/$REPO/issues/$NUMBER/comments" --paginate --jq \
+              '.[] | select(.user.login == "github-actions[bot]" and .user.type == "Bot") | select(.body | startswith("<!-- CLAUDE_REVIEW_SUMMARY -->")) | .id' | wc -l)
+            if [ "$existing" -gt 0 ]; then
+              echo "::notice::Not reviewing: this pull request already has a review. Comment /review for a new one."
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          {
+            echo "ok=true"
+            echo "head_sha=$head_sha"
+            echo "base_ref=$base_ref"
+          } >> "$GITHUB_OUTPUT"
+
       # Agents read the PR's files, so check out the PR head (not the default merge commit) to make the
       # line numbers they report match the diff that comments are anchored to. Do not leave the job
       # token in .git/config, where an agent reading untrusted PR content could copy it.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        if: steps.pr.outputs.ok == 'true'
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ steps.pr.outputs.head_sha }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -52,9 +124,97 @@ jobs:
       # Run the pipeline from a clean checkout of the base branch, so a PR cannot add or replace files
       # (agents, prompts, or a module that shadows the standard library) in the code that holds the
       # tokens. The agents read the PR's files from the working directory, and `--setting-sources user`
-      # keeps the PR's own Claude settings and hooks out. This does not cover this workflow file: a
-      # `pull_request` run uses the PR's copy of it, which is why only same-repository PRs run.
+      # keeps the PR's own Claude settings and hooks out. For a `pull_request` run this does not cover this
+      # workflow file, which is the PR's own copy; that is why only same-repository PRs run.
       # The PR that introduces the pipeline has no base copy and runs its own.
+      - name: Check out the review pipeline from the base branch
+        id: pipeline
+        if: steps.pr.outputs.ok == 'true'
+        run: |
+          git fetch --depth 1 origin "$BASE_REF"
+          script=.agents/skills/pr-review/review.py
+          if git cat-file -e "FETCH_HEAD:$script" 2>/dev/null; then
+            rm -rf "$RUNNER_TEMP/pipeline"
+            git worktree prune
+            git worktree add --force --detach "$RUNNER_TEMP/pipeline" FETCH_HEAD
+            script="$RUNNER_TEMP/pipeline/$script"
+          fi
+          echo "script=$script" >> "$GITHUB_OUTPUT"
+        env:
+          BASE_REF: ${{ steps.pr.outputs.base_ref }}
+
+      - name: Install Claude Code
+        if: steps.pr.outputs.ok == 'true'
+        run: npm install --global @anthropic-ai/claude-code@2.1.293
+
+      # The script exits with 3 when the pull request's head is no longer the commit that was checked out. The
+      # review runs once per pull request, so it must not be lost to a push that landed a moment earlier:
+      # follow the pull request to its new head and try once more.
+      - name: Review pull request
+        if: steps.pr.outputs.ok == 'true'
+        run: |
+          review() { python3 "$SCRIPT" --pr "$NUMBER" --post --artifacts-dir "$RUNNER_TEMP/pr-review"; }
+          code=0
+          review || code=$?
+          if [ "$code" -eq 3 ]; then
+            head=$(gh api "repos/$REPO/pulls/$NUMBER" --jq .head.sha)
+            echo "::notice::The pull request moved to $head while the review started; reviewing that commit."
+            [[ "$head" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Unexpected head commit from the API."; exit 1; }
+            git fetch --depth 1 origin "$head"
+            git checkout --detach "$head"
+            code=0
+            review || code=$?
+          fi
+          exit "$code"
+        env:
+          SCRIPT: ${{ steps.pipeline.outputs.script }}
+          NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          ANTHROPIC_BASE_URL: https://${{ vars.LLM_GATEWAY_HOSTNAME }}
+          ANTHROPIC_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
+
+      - name: Upload review artifacts
+        if: always() && steps.pr.outputs.ok == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr-review
+          path: ${{ runner.temp }}/pr-review
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # Keeps the review comment honest after a push: rewrites one line to say how many commits came after the
+  # one that was reviewed, with a link to their diff. Runs no model and needs no gateway access.
+  status:
+    name: Update review status
+    if: >-
+      github.event_name == 'pull_request' && github.event.action == 'synchronize'
+      && github.event.pull_request.draft == false
+      && github.event.pull_request.head.repo.full_name == github.repository
+    # A newer push makes an older update pointless.
+    concurrency:
+      group: claude-review-status-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      # The same rule as the review job: the base branch's copy of the script, unless the pull request
+      # is the one that introduces it.
       - name: Check out the review pipeline from the base branch
         id: pipeline
         run: |
@@ -70,24 +230,10 @@ jobs:
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
 
-      - name: Install Claude Code
-        run: npm install --global @anthropic-ai/claude-code@2.1.293
-
-      - name: Review pull request
-        run: python3 "$SCRIPT" --pr "$PR_NUMBER" --post --artifacts-dir "$RUNNER_TEMP/pr-review"
+      - name: Update the count of unreviewed commits
+        run: python3 "$SCRIPT" --pr "$PR_NUMBER" --refresh-status
         env:
           SCRIPT: ${{ steps.pipeline.outputs.script }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          ANTHROPIC_BASE_URL: https://${{ vars.LLM_GATEWAY_HOSTNAME }}
-          ANTHROPIC_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
-
-      - name: Upload review artifacts
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: pr-review
-          path: ${{ runner.temp }}/pr-review
-          retention-days: 7
-          if-no-files-found: ignore
