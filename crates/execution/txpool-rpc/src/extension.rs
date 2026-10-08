@@ -2,7 +2,7 @@
 
 use base_execution_rpc::SequencerClient;
 pub use base_execution_txpool::{
-    DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
+    DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES, ValiditySignatureMode,
 };
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use reth_rpc_server_types::RethRpcModule;
@@ -53,8 +53,8 @@ pub struct SendRawTransactionValidityConfig {
     pub max_validity_predicates: usize,
     /// Maximum validity-transaction lifetime, in seconds.
     pub max_validity_expiry_secs: u64,
-    /// Require EIP-712 sender signatures for validity predicates (default: false).
-    pub require_validity_signature: bool,
+    /// Staged sender-signature policy for validity predicates (default: off).
+    pub validity_signature_mode: ValiditySignatureMode,
     /// Upstream sequencer RPC for query nodes that proxy rather than build transactions.
     pub sequencer_url: Option<String>,
     /// HTTP headers sent to the upstream sequencer, in `name=value` form.
@@ -66,7 +66,7 @@ impl Default for SendRawTransactionValidityConfig {
         Self {
             max_validity_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
             max_validity_expiry_secs: DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
-            require_validity_signature: false,
+            validity_signature_mode: ValiditySignatureMode::Off,
             sequencer_url: None,
             sequencer_headers: Vec::new(),
         }
@@ -90,7 +90,7 @@ impl BaseNodeExtension for SendRawTransactionValidityExtension {
                 config.max_validity_expiry_secs,
                 transaction_sender,
             )
-            .with_required_validity_signature(config.require_validity_signature);
+            .with_validity_signature_mode(config.validity_signature_mode);
             if let Some(url) = &config.sequencer_url {
                 api = api.with_sequencer_client(SequencerClient::new_http_with_headers(
                     url,

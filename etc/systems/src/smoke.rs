@@ -21,6 +21,7 @@ use alloy_signer_local::PrivateKeySigner;
 #[cfg(feature = "upgrade-signal")]
 use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation};
 use base_common_network::Base;
+use base_execution_txpool::ValiditySignatureMode;
 use base_node_runner::BaseNodeExtension;
 use base_tx_forwarding::TxForwardingConfig;
 #[cfg(feature = "upgrade-signal")]
@@ -394,6 +395,7 @@ pub struct SystemTestStackBuilder {
     base_zenith_activation_block: Option<u64>,
     output_dir: Option<PathBuf>,
     tx_forwarding_config: Option<TxForwardingConfig>,
+    validity_signature_mode: ValiditySignatureMode,
     payload_builder_cutover: bool,
     verifier_l1_confs: u64,
     force_batch_submission: bool,
@@ -601,6 +603,12 @@ impl SystemTestStackBuilder {
     /// Delays starting configured shadow sequencers until the active builder reaches `block`.
     pub const fn with_shadow_start_block(mut self, block: u64) -> Self {
         self.shadow_start_block = Some(block);
+        self
+    }
+
+    /// Sets the same staged validity signature policy on forwarding ingress and the builder.
+    pub const fn with_validity_signature_mode(mut self, mode: ValiditySignatureMode) -> Self {
+        self.validity_signature_mode = mode;
         self
     }
 
@@ -931,6 +939,7 @@ impl SystemTestStackBuilder {
             l1_slot_duration: slot_duration,
             container_config: l2_container_config,
             tx_forwarding_config: self.tx_forwarding_config,
+            validity_signature_mode: self.validity_signature_mode,
             payload_builder_cutover: self.payload_builder_cutover,
             verifier_l1_confs: self.verifier_l1_confs,
             force_batch_submission: self.force_batch_submission,

@@ -50,6 +50,29 @@ cargo test -p base-load-tests
 cargo run -p base-load-tester-bin --bin base-load-tester -- path/to/config.yaml
 ```
 
+## Signed validity rollout
+
+Validity workloads default to `validity.signing: adaptive`: requests start
+unsigned. An explicit signature-required ingress error switches that endpoint
+to signing and retries the same raw transaction with a user-authorized sidecar.
+The endpoint state is shared by workers; subsequent requests sign immediately.
+Retries remain bounded, transaction hashes and nonces are unchanged, and signed
+submissions never silently downgrade to unsigned or plain transactions.
+
+For proactive migration during the fleet's `verify-if-present` stage, configure:
+
+```yaml
+validity:
+  signing: signed
+```
+
+Keep the existing validity ratio and predicate configuration alongside that setting.
+Signing uses the controlled sender's key and the EIP-712 contract documented in
+[base-execution-txpool](../../execution/txpool/README.md#signed-validity-predicates).
+Adaptive mode observes ingress errors only: an asynchronous builder drop cannot
+trigger it. Operators must deploy compatibility support fleet-wide before migrating
+clients, and should use explicit signing before enabling required enforcement.
+
 ## 200ms devnet profile
 
 `examples/denim-devnet.yaml` uses canonical polling at 200ms, without a Flashblocks WebSocket.
@@ -494,8 +517,8 @@ If `validity.ratio > 0` but the ingress endpoint does not serve
 `base_sendRawTransactionValidity`, the run fails loudly at startup rather than
 silently degrading to plain submission.
 
-**Interpreting the results.** There is no validity-specific builder rejection
-metric, so a transaction whose predicate is false is skipped by the builder and
+**Interpreting the results.** Signature-rejection metrics describe admission policy,
+not unsatisfied predicates. A transaction whose predicate is false is skipped by the builder and
 simply never confirms (it is not distinguishable from an ordinary drop by a
 counter alone). Compare the `by_cohort` inclusion rates *relative to each other*
 rather than against an absolute target; to confirm the skip path directly,

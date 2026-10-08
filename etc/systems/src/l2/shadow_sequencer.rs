@@ -96,6 +96,7 @@ impl ShadowSequencer {
             metrics_port: None,
             payload_builder_cutover: false,
             extra_extensions: Vec::new(),
+            validity_signature_mode: base_execution_txpool::ValiditySignatureMode::Off,
             block_time: Duration::from_secs(config.rollup_config.block_time),
             persistence_threshold: None,
             persistence_backpressure_threshold: None,

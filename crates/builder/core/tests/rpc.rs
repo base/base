@@ -12,6 +12,7 @@ use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_txpool::{
     BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, NoExtensions, TransactionValidity,
     ValidatedTransaction, ValidityAuthorization, ValidityOperator, ValidityPredicate,
+    ValiditySignatureMode,
 };
 use base_node_runner::test_utils::TestHarness;
 use base_test_utils::Account;
@@ -50,16 +51,16 @@ fn create_deposit_tx() -> (Address, Bytes) {
 /// Sets up a test harness with builder insertion and public validity ingress.
 async fn setup_with_validity_ingress(
     max_validity_predicates: usize,
-    require_validity_signature: bool,
+    validity_signature_mode: ValiditySignatureMode,
 ) -> eyre::Result<(TestHarness, RpcClient)> {
     let config = BuilderApiExtensionConfig::new(max_validity_predicates)
-        .with_required_validity_signature(require_validity_signature)
+        .with_validity_signature_mode(validity_signature_mode)
         .with_noop_metering();
     let harness = TestHarness::builder()
         .with_ext::<BuilderApiExtension>(config)
         .with_ext::<SendRawTransactionValidityExtension>(SendRawTransactionValidityConfig {
             max_validity_predicates,
-            require_validity_signature,
+            validity_signature_mode,
             ..Default::default()
         })
         .build()
@@ -227,7 +228,8 @@ async fn test_validity_transactions_enforce_configured_limit() -> eyre::Result<(
 #[tokio::test]
 async fn test_send_raw_transaction_validity_accepted() -> eyre::Result<()> {
     let (enabled_harness, enabled_client) =
-        setup_with_validity_ingress(DEFAULT_MAX_VALIDITY_PREDICATES, false).await?;
+        setup_with_validity_ingress(DEFAULT_MAX_VALIDITY_PREDICATES, ValiditySignatureMode::Off)
+            .await?;
     let enabled: Result<TxHash, _> = enabled_client
         .request(
             "base_sendRawTransactionValidity",
@@ -263,7 +265,7 @@ async fn test_send_raw_transaction_validity_accepted() -> eyre::Result<()> {
 /// Verifies public validity ingress enforces the builder's configured predicate limit.
 #[tokio::test]
 async fn test_send_raw_transaction_validity_enforces_configured_limit() -> eyre::Result<()> {
-    let (harness, client) = setup_with_validity_ingress(1, false).await?;
+    let (harness, client) = setup_with_validity_ingress(1, ValiditySignatureMode::Off).await?;
     let predicate = ValidityPredicate::Balance {
         address: Account::Alice.address(),
         op: ValidityOperator::Equal,
@@ -288,57 +290,92 @@ async fn test_send_raw_transaction_validity_enforces_configured_limit() -> eyre:
     Ok(())
 }
 
-/// Both real builder RPC boundaries reject unsigned/tampered sidecars and admit user-signed predicates.
+/// Both real builder boundaries enforce their local staged signature policy.
+#[rstest::rstest]
+#[case::raw_unsigned_off(false, ValiditySignatureMode::Off, false, false, true)]
+#[case::raw_signed_off(false, ValiditySignatureMode::Off, true, false, false)]
+#[case::raw_unsigned_optional(false, ValiditySignatureMode::VerifyIfPresent, false, false, true)]
+#[case::raw_signed_optional(false, ValiditySignatureMode::VerifyIfPresent, true, false, true)]
+#[case::raw_bad_optional(false, ValiditySignatureMode::VerifyIfPresent, true, true, false)]
+#[case::raw_unsigned_required(false, ValiditySignatureMode::Required, false, false, false)]
+#[case::raw_bad_required(false, ValiditySignatureMode::Required, true, true, false)]
+#[case::raw_signed_required(false, ValiditySignatureMode::Required, true, false, true)]
+#[case::forwarded_unsigned_off(true, ValiditySignatureMode::Off, false, false, true)]
+#[case::forwarded_signed_off(true, ValiditySignatureMode::Off, true, false, false)]
+#[case::forwarded_unsigned_optional(
+    true,
+    ValiditySignatureMode::VerifyIfPresent,
+    false,
+    false,
+    true
+)]
+#[case::forwarded_signed_optional(true, ValiditySignatureMode::VerifyIfPresent, true, false, true)]
+#[case::forwarded_bad_optional(true, ValiditySignatureMode::VerifyIfPresent, true, true, false)]
+#[case::forwarded_unsigned_required(true, ValiditySignatureMode::Required, false, false, false)]
+#[case::forwarded_bad_required(true, ValiditySignatureMode::Required, true, true, false)]
+#[case::forwarded_signed_required(true, ValiditySignatureMode::Required, true, false, true)]
 #[tokio::test]
-async fn signed_predicates_required_at_both_builder_endpoints() -> eyre::Result<()> {
-    for forwarded in [false, true] {
-        let (harness, client) =
-            setup_with_validity_ingress(DEFAULT_MAX_VALIDITY_PREDICATES, true).await?;
-        let raw = signed_eip1559_tx(harness.chain_id());
-        let pooled: BasePooledTransaction = BasePooledTransaction::recover_raw_transaction(&raw)?;
-        let validity = vec![ValidityPredicate::BlockNumber {
+async fn signed_predicates_at_both_builder_endpoints(
+    #[case] forwarded: bool,
+    #[case] mode: ValiditySignatureMode,
+    #[case] sign: bool,
+    #[case] tamper: bool,
+    #[case] accepted: bool,
+) -> eyre::Result<()> {
+    let (harness, client) =
+        setup_with_validity_ingress(DEFAULT_MAX_VALIDITY_PREDICATES, mode).await?;
+    let raw = signed_eip1559_tx(harness.chain_id());
+    let pooled: BasePooledTransaction = BasePooledTransaction::recover_raw_transaction(&raw)?;
+    let mut validity = vec![
+        ValidityPredicate::BlockNumber {
             op: ValidityOperator::LessThanOrEqual,
             value: U256::from(31),
-        }];
-        let signature = Account::Alice.signer().sign_hash_sync(
-            &ValidityAuthorization::signing_hash(harness.chain_id(), *pooled.hash(), &validity),
-        )?;
-        let signed = TransactionValidity { validity, validity_signature: Some(signature) };
-        let mut unsigned = signed.clone();
-        unsigned.validity_signature = None;
-        let mut tampered = signed.clone();
-        tampered.validity.push(ValidityPredicate::Balance {
+        },
+        ValidityPredicate::Nonce {
+            address: Account::Alice.address(),
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        },
+    ];
+    let signature = if sign {
+        Some(Account::Alice.signer().sign_hash_sync(&ValidityAuthorization::signing_hash(
+            harness.chain_id(),
+            *pooled.hash(),
+            &validity,
+        ))?)
+    } else {
+        None
+    };
+    if tamper {
+        validity.push(ValidityPredicate::Balance {
             address: Account::Alice.address(),
             op: ValidityOperator::GreaterThan,
             value: U256::ZERO,
         });
-        for (sidecar, authorized) in [(unsigned, false), (tampered, false), (signed, true)] {
-            let result = if forwarded {
-                let tx = ValidatedTransaction {
-                    sender: Account::Alice.address(),
-                    raw: raw.clone(),
-                    metering: None,
-                    extensions: sidecar,
-                };
-                client.request::<_, ()>("base_insertValidatedTransaction", (tx,)).await
-            } else {
-                let options = SendRawTransactionValidityOptions {
-                    validity: sidecar.validity,
-                    validity_signature: sidecar.validity_signature,
-                };
-                client
-                    .request::<_, TxHash>("base_sendRawTransactionValidity", (raw.clone(), options))
-                    .await
-                    .map(|_| ())
-            };
-            if authorized {
-                result?;
-            } else {
-                let error =
-                    result.expect_err("unauthorized predicates must never enter the real pool");
-                assert!(error.to_string().contains("signature"), "{error}");
-            }
-        }
+    }
+    let result = if forwarded {
+        let tx = ValidatedTransaction {
+            sender: Account::Alice.address(),
+            raw,
+            metering: None,
+            extensions: TransactionValidity { validity, validity_signature: signature },
+        };
+        client.request::<_, ()>("base_insertValidatedTransaction", (tx,)).await
+    } else {
+        let options = SendRawTransactionValidityOptions { validity, validity_signature: signature };
+        client
+            .request::<_, TxHash>("base_sendRawTransactionValidity", (raw, options))
+            .await
+            .map(|_| ())
+    };
+    if accepted {
+        result?;
+    } else {
+        let error = result.expect_err("unauthorized sidecar must not enter the pool");
+        assert!(
+            error.to_string().contains("signature") || error.to_string().contains("disabled"),
+            "{error}"
+        );
     }
     Ok(())
 }

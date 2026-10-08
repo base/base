@@ -1,44 +1,19 @@
 //! Sender authorization for off-chain validity predicates.
 
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
-use alloy_primitives::{Address, B256, Signature, U256};
-use alloy_sol_types::{SolStruct, eip712_domain, sol};
+use alloy_primitives::{Address, B256, U256};
+use alloy_sol_types::{SolStruct, eip712_domain};
 use reth_transaction_pool::PoolTransaction;
 
-use crate::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
-
-sol! {
-    /// EIP-712 encoding of one validity predicate. Unused fields are zero.
-    #[derive(Debug)]
-    struct ValidityPredicateData {
-        /// Balance = 0, storage = 1, block number = 2, flashblock index = 3.
-        uint8 kind;
-        /// Less = 0, less/equal = 1, equal = 2, not equal = 3, greater = 4, greater/equal = 5.
-        uint8 operator;
-        /// Account read by a balance or storage predicate.
-        address account;
-        /// Storage slot; zero for other predicates.
-        uint256 slot;
-        /// Storage mask; zero for other predicates.
-        uint256 mask;
-        /// Right-hand comparison value.
-        uint256 value;
-    }
-
-    /// EIP-712 authorization binding predicates to one signed transaction.
-    #[derive(Debug)]
-    struct ValidityAuthorizationData {
-        /// Hash of the signed EIP-2718 transaction envelope.
-        bytes32 transactionHash;
-        /// Predicates in canonical evaluation order.
-        ValidityPredicateData[] validity;
-    }
-}
+use crate::{
+    BasePooledTransaction, Eip712ValidityAuthorization, Eip712ValidityPredicate,
+    TransactionValidity, ValidityPredicate, ValiditySignatureMode,
+};
 
 /// Failure to authorize a validity sidecar with the transaction sender's key.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ValidityAuthorizationError {
-    /// Signed sidecars cannot be accepted while enforcement is disabled.
+    /// Signed sidecars cannot be accepted in off mode.
     #[error("signed validity predicates are disabled")]
     Disabled,
     /// Non-empty predicates require a sender signature.
@@ -56,9 +31,57 @@ pub enum ValidityAuthorizationError {
     /// A builder's pre-recovered sender differs from the actual envelope sender.
     #[error("validity transaction sender does not match its envelope")]
     SenderMismatch,
+    /// A validated sidecar was attached to a different transaction.
+    #[error("validity authorization belongs to a different transaction")]
+    TransactionMismatch,
     /// The signature is malformed, non-canonical, or belongs to another key.
     #[error("invalid validity signature: must be signed by the transaction sender")]
     InvalidSignature,
+}
+
+impl ValidityAuthorizationError {
+    /// Returns a stable, low-cardinality metric and RPC rejection reason.
+    pub const fn as_label(&self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::MissingSignature => "missing",
+            Self::UnexpectedSignature => "unexpected",
+            Self::MissingChainId => "missing_chain_id",
+            Self::InvalidTransactionSender => "invalid_transaction_sender",
+            Self::SenderMismatch => "sender_mismatch",
+            Self::InvalidSignature => "invalid",
+            Self::TransactionMismatch => "transaction_mismatch",
+        }
+    }
+}
+
+/// Policy-validated validity sidecar bound to the exact signed transaction hash.
+///
+/// Only [`ValidityAuthorization`] constructs this type. It deliberately has no
+/// deserializer or public constructor. Unsigned sidecars may be accepted by the
+/// configured rollout mode; validation does not imply they have a signature.
+#[derive(Debug)]
+pub struct ValidatedValidity {
+    transaction_hash: B256,
+    sidecar: TransactionValidity,
+}
+
+impl ValidatedValidity {
+    /// Returns the original predicate batch for admission journaling.
+    pub fn predicates(&self) -> &[ValidityPredicate] {
+        &self.sidecar.validity
+    }
+
+    /// Releases the validated sidecar only for its original transaction.
+    pub fn into_sidecar(
+        self,
+        transaction_hash: B256,
+    ) -> Result<TransactionValidity, ValidityAuthorizationError> {
+        if transaction_hash != self.transaction_hash {
+            return Err(ValidityAuthorizationError::TransactionMismatch);
+        }
+        Ok(self.sidecar)
+    }
 }
 
 /// EIP-712 signing and verification for transaction validity sidecars.
@@ -66,43 +89,65 @@ pub enum ValidityAuthorizationError {
 pub struct ValidityAuthorization;
 
 impl ValidityAuthorization {
-    /// Enforces the default-off signed-predicate policy at transaction ingress.
-    ///
-    /// With enforcement off, legacy unsigned predicates remain supported, but
-    /// signed sidecars are rejected rather than silently downgrading their protection.
+    /// Validates a sidecar at the builder wire boundary, checking the actual
+    /// envelope sender rather than trusting the wire's pre-recovered address.
     pub fn validate(
         tx: &BasePooledTransaction,
-        predicates: &[ValidityPredicate],
-        signature: Option<&Signature>,
-        require_signature: bool,
-    ) -> Result<(), ValidityAuthorizationError> {
-        if require_signature {
-            Self::verify(tx, predicates, signature)
-        } else if signature.is_some() {
-            Err(ValidityAuthorizationError::Disabled)
-        } else {
-            Ok(())
+        sidecar: TransactionValidity,
+        mode: ValiditySignatureMode,
+    ) -> Result<ValidatedValidity, ValidityAuthorizationError> {
+        mode.check(&sidecar.validity, sidecar.validity_signature.as_ref())?;
+        if sidecar.validity_signature.is_some() {
+            let sender = tx
+                .consensus_ref()
+                .inner()
+                .recover_signer()
+                .map_err(|_| ValidityAuthorizationError::InvalidTransactionSender)?;
+            if sender != tx.sender() {
+                return Err(ValidityAuthorizationError::SenderMismatch);
+            }
         }
+        Self::validate_recovered(tx, sidecar, mode)
+    }
+
+    /// Validates a sidecar at raw ingress after `recover_raw_transaction` has
+    /// recovered the sender. Never use this for a sender supplied on the wire.
+    pub fn validate_recovered(
+        tx: &BasePooledTransaction,
+        sidecar: TransactionValidity,
+        mode: ValiditySignatureMode,
+    ) -> Result<ValidatedValidity, ValidityAuthorizationError> {
+        mode.check(&sidecar.validity, sidecar.validity_signature.as_ref())?;
+        if let Some(signature) = &sidecar.validity_signature {
+            let chain_id = tx.chain_id().ok_or(ValidityAuthorizationError::MissingChainId)?;
+            if signature.normalize_s().is_some() {
+                return Err(ValidityAuthorizationError::InvalidSignature);
+            }
+            let digest = Self::signing_hash(chain_id, *tx.hash(), &sidecar.validity);
+            let signer = signature
+                .recover_address_from_prehash(&digest)
+                .map_err(|_| ValidityAuthorizationError::InvalidSignature)?;
+            if signer != tx.sender() {
+                return Err(ValidityAuthorizationError::InvalidSignature);
+            }
+        }
+        Ok(ValidatedValidity { transaction_hash: *tx.hash(), sidecar })
     }
 
     /// Returns the EIP-712 digest a sender must sign to authorize these predicates.
     ///
     /// The domain is `Base Transaction Validity`, version `1`, with the transaction's
-    /// chain ID. The message binds the complete signed transaction hash and every
-    /// predicate field. Predicates are stable-sorted with
-    /// [`ValidityPredicate::sort_batch`] before hashing, so forwarding may put timing
-    /// predicates first without invalidating the signature. Relative order within
-    /// each evaluation rank remains signed. Omitted storage masks sign as `U256::MAX`.
+    /// chain ID. The message binds the complete signed transaction hash and all
+    /// predicate fields. Sorting by EIP-712 struct hash makes conjunction order
+    /// irrelevant, while retaining duplicates and normalizing omitted storage masks.
     pub fn signing_hash(
         chain_id: u64,
         transaction_hash: B256,
         predicates: &[ValidityPredicate],
     ) -> B256 {
-        let mut predicates = predicates.to_vec();
-        ValidityPredicate::sort_batch(&mut predicates);
-        let message = ValidityAuthorizationData {
+        let message = Eip712ValidityAuthorization {
             transactionHash: transaction_hash,
-            validity: predicates.iter().map(Self::predicate_data).collect(),
+            validity: Self::canonical_predicates(predicates),
         };
         message.eip712_signing_hash(&eip712_domain! {
             name: "Base Transaction Validity",
@@ -111,73 +156,37 @@ impl ValidityAuthorization {
         })
     }
 
-    /// Converts a predicate to its canonical EIP-712 representation.
-    pub const fn predicate_data(predicate: &ValidityPredicate) -> ValidityPredicateData {
-        let (kind, account, slot, mask, op, value) = match predicate {
-            ValidityPredicate::Balance { address, op, value } => {
-                (0, *address, U256::ZERO, U256::ZERO, *op, *value)
-            }
-            ValidityPredicate::Storage { address, slot, mask, op, value } => {
-                (1, *address, *slot, *mask, *op, *value)
-            }
-            ValidityPredicate::BlockNumber { op, value } => {
-                (2, Address::ZERO, U256::ZERO, U256::ZERO, *op, *value)
-            }
-            ValidityPredicate::FlashblockIndex { op, value } => {
-                (3, Address::ZERO, U256::ZERO, U256::ZERO, *op, *value)
-            }
-        };
-        let operator = match op {
-            ValidityOperator::LessThan => 0,
-            ValidityOperator::LessThanOrEqual => 1,
-            ValidityOperator::Equal => 2,
-            ValidityOperator::NotEqual => 3,
-            ValidityOperator::GreaterThan => 4,
-            ValidityOperator::GreaterThanOrEqual => 5,
-        };
-        ValidityPredicateData { kind, operator, account, slot, mask, value }
+    /// Returns wallet-facing predicates sorted by their EIP-712 struct hashes.
+    /// Evaluation ordering remains independent; duplicate predicates are retained.
+    pub fn canonical_predicates(predicates: &[ValidityPredicate]) -> Vec<Eip712ValidityPredicate> {
+        let mut data: Vec<_> = predicates.iter().map(Self::predicate_data).collect();
+        data.sort_by_cached_key(SolStruct::eip712_hash_struct);
+        data
     }
 
-    /// Verifies the sidecar against the actual transaction sender, never a trusted
-    /// builder-wire sender alone. Plain transactions need no extra signature.
-    ///
-    /// This supports secp256k1 authorization by the sender address. Contract wallets
-    /// and configured EIP-8130 actors without that key cannot use this sidecar; their
-    /// transaction authenticator is not an authorization of these separate predicates.
-    pub fn verify(
-        tx: &BasePooledTransaction,
-        predicates: &[ValidityPredicate],
-        signature: Option<&Signature>,
-    ) -> Result<(), ValidityAuthorizationError> {
-        if predicates.is_empty() {
-            return if signature.is_none() {
-                Ok(())
-            } else {
-                Err(ValidityAuthorizationError::UnexpectedSignature)
-            };
+    /// Converts a predicate to its canonical EIP-712 representation.
+    pub const fn predicate_data(predicate: &ValidityPredicate) -> Eip712ValidityPredicate {
+        let (account, slot, mask, op, value) = match predicate {
+            ValidityPredicate::Balance { address, op, value }
+            | ValidityPredicate::Nonce { address, op, value } => {
+                (*address, U256::ZERO, U256::ZERO, *op, *value)
+            }
+            ValidityPredicate::Storage { address, slot, mask, op, value } => {
+                (*address, *slot, *mask, *op, *value)
+            }
+            ValidityPredicate::BlockNumber { op, value }
+            | ValidityPredicate::FlashblockIndex { op, value } => {
+                (Address::ZERO, U256::ZERO, U256::ZERO, *op, *value)
+            }
+        };
+        Eip712ValidityPredicate {
+            kind: predicate.kind() as u8,
+            operator: op as u8,
+            account,
+            slot,
+            mask,
+            value,
         }
-        let signature = signature.ok_or(ValidityAuthorizationError::MissingSignature)?;
-        let chain_id = tx.chain_id().ok_or(ValidityAuthorizationError::MissingChainId)?;
-        let sender = tx
-            .consensus_ref()
-            .inner()
-            .recover_signer()
-            .map_err(|_| ValidityAuthorizationError::InvalidTransactionSender)?;
-        if sender != tx.sender() {
-            return Err(ValidityAuthorizationError::SenderMismatch);
-        }
-        // Do not normalize a high-s signature into a valid one: reject it.
-        if signature.normalize_s().is_some() {
-            return Err(ValidityAuthorizationError::InvalidSignature);
-        }
-        let digest = Self::signing_hash(chain_id, *tx.hash(), predicates);
-        let signer = signature
-            .recover_address_from_prehash(&digest)
-            .map_err(|_| ValidityAuthorizationError::InvalidSignature)?;
-        if signer != sender {
-            return Err(ValidityAuthorizationError::InvalidSignature);
-        }
-        Ok(())
     }
 }
 
@@ -185,7 +194,7 @@ impl ValidityAuthorization {
 mod tests {
     use alloy_consensus::{SignableTransaction, TxEip1559, TxLegacy};
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::TxKind;
+    use alloy_primitives::{Signature, TxKind};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
@@ -194,7 +203,26 @@ mod tests {
     };
 
     use super::*;
-    use crate::{TransactionValidity, ValidatedTransaction, ValidatedTransactionExtensions};
+    use crate::{
+        TransactionValidity, ValidatedTransaction, ValidatedTransactionExtensions,
+        ValidityOperator, ValidityPredicateKind,
+    };
+
+    fn verify(
+        tx: &BasePooledTransaction,
+        predicates: &[ValidityPredicate],
+        signature: Option<&Signature>,
+    ) -> Result<(), ValidityAuthorizationError> {
+        ValidityAuthorization::validate(
+            tx,
+            TransactionValidity {
+                validity: predicates.to_vec(),
+                validity_signature: signature.copied(),
+            },
+            ValiditySignatureMode::Required,
+        )
+        .map(|_| ())
+    }
 
     fn transaction(signer: &PrivateKeySigner, chain_id: u64, nonce: u64) -> BasePooledTransaction {
         let tx = TxEip1559 {
@@ -254,11 +282,27 @@ mod tests {
     #[test]
     fn eip712_digest_matches_independently_encoded_vector() {
         // Independently encoded with Keccak-256 and the documented EIP-712 types:
-        // chain 8453, hash 0x44...44, all four predicate variants in canonical order.
+        // chain 8453, hash 0x44...44, balance/storage/block/flashblock predicates in canonical order.
         let expected: B256 =
-            "0x59e764e61b4a14f778650f1f053e388f0bca5dc6b25a342f4f182dfe92b73614".parse().unwrap();
+            "0xccc8fc76b39e370a65b7e6c377ad2f7a00d309b80f5e100cf119b03f41de294d".parse().unwrap();
         assert_eq!(
             ValidityAuthorization::signing_hash(8453, B256::repeat_byte(0x44), &predicates()),
+            expected,
+        );
+    }
+
+    #[test]
+    fn nonce_digest_matches_independently_encoded_vector() {
+        let predicate = ValidityPredicate::Nonce {
+            address: Address::repeat_byte(0x44),
+            op: ValidityOperator::Equal,
+            value: U256::from(7),
+        };
+        // Independent Keccak-256 encoding: nonce kind 4, operator 2, zero slot/mask.
+        let expected: B256 =
+            "0x021385c3ddaed95323b4f834b255046fb76b8a315ea935efaec986ae00d2ffec".parse().unwrap();
+        assert_eq!(
+            ValidityAuthorization::signing_hash(8453, B256::repeat_byte(0x44), &[predicate]),
             expected,
         );
     }
@@ -290,7 +334,7 @@ mod tests {
             BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Legacy(legacy), signature);
         let tx = BasePooledTransaction::recover_raw_transaction(&signed.encoded_2718()).unwrap();
         assert_eq!(
-            ValidityAuthorization::verify(&tx, &predicates(), Some(&signature)),
+            verify(&tx, &predicates(), Some(&signature)),
             Err(ValidityAuthorizationError::MissingChainId),
         );
     }
@@ -299,11 +343,21 @@ mod tests {
     fn user_authorization_survives_sorting_and_builder_wire_forwarding() {
         let signer = PrivateKeySigner::random();
         let tx = transaction(&signer, 8453, 0);
-        let validity = predicates();
+        let mut validity = predicates();
+        validity.push(ValidityPredicate::Nonce {
+            address: Address::repeat_byte(0x44),
+            op: ValidityOperator::Equal,
+            value: U256::from(7),
+        });
         let signature = sign(&signer, &tx, &validity);
-        assert_eq!(ValidityAuthorization::verify(&tx, &validity, Some(&signature)), Ok(()));
-        let tx =
-            tx.with_validity(TransactionValidity { validity, validity_signature: Some(signature) });
+        assert_eq!(verify(&tx, &validity, Some(&signature)), Ok(()));
+        let validity = ValidityAuthorization::validate_recovered(
+            &tx,
+            TransactionValidity { validity, validity_signature: Some(signature) },
+            ValiditySignatureMode::Required,
+        )
+        .unwrap();
+        let tx = tx.with_validity(validity).unwrap();
         let pooled = ValidPoolTransaction {
             transaction: tx,
             transaction_id: TransactionId::new(0.into(), 0),
@@ -321,21 +375,17 @@ mod tests {
         let decoded: ValidatedTransaction<TransactionValidity> =
             serde_json::from_str(&serde_json::to_string(&wire).unwrap()).unwrap();
         let inbound = BasePooledTransaction::recover_raw_transaction(&decoded.raw).unwrap();
-        let inbound = decoded.extensions.apply(inbound).unwrap();
+        let inbound = decoded.extensions.apply(inbound, ValiditySignatureMode::Required).unwrap();
         assert_eq!(inbound.validity_signature(), Some(signature));
         assert_eq!(
-            ValidityAuthorization::verify(
-                &inbound,
-                inbound.validity_predicates(),
-                inbound.validity_signature().as_ref(),
-            ),
+            verify(&inbound, inbound.validity_predicates(), inbound.validity_signature().as_ref(),),
             Ok(())
         );
         // Replacing predicates through the unsigned API must not retain stale authorization.
         let unsigned = inbound.with_validity_predicates(predicates());
         assert_eq!(unsigned.validity_signature(), None);
         assert_eq!(
-            ValidityAuthorization::verify(
+            verify(
                 &unsigned,
                 unsigned.validity_predicates(),
                 unsigned.validity_signature().as_ref(),
@@ -350,12 +400,12 @@ mod tests {
         let tx = transaction(&signer, 8453, 0);
         let predicates = predicates();
         assert_eq!(
-            ValidityAuthorization::verify(&tx, &predicates, None),
+            verify(&tx, &predicates, None),
             Err(ValidityAuthorizationError::MissingSignature)
         );
         let wrong_signature = sign(&PrivateKeySigner::random(), &tx, &predicates);
         assert_eq!(
-            ValidityAuthorization::verify(&tx, &predicates, Some(&wrong_signature)),
+            verify(&tx, &predicates, Some(&wrong_signature)),
             Err(ValidityAuthorizationError::InvalidSignature)
         );
         let signature = sign(&signer, &tx, &predicates);
@@ -363,12 +413,12 @@ mod tests {
             "0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141".parse().unwrap();
         let high_s = Signature::new(signature.r(), curve_order - signature.s(), !signature.v());
         assert_eq!(
-            ValidityAuthorization::verify(&tx, &predicates, Some(&high_s)),
+            verify(&tx, &predicates, Some(&high_s)),
             Err(ValidityAuthorizationError::InvalidSignature)
         );
         let malformed = Signature::new(U256::ZERO, U256::ZERO, false);
         assert_eq!(
-            ValidityAuthorization::verify(&tx, &predicates, Some(&malformed)),
+            verify(&tx, &predicates, Some(&malformed)),
             Err(ValidityAuthorizationError::InvalidSignature)
         );
     }
@@ -377,8 +427,14 @@ mod tests {
     fn rejects_predicate_addition_removal_and_every_field_mutation() {
         let signer = PrivateKeySigner::random();
         let tx = transaction(&signer, 8453, 0);
-        let predicates = predicates();
+        let mut predicates = predicates();
+        predicates.push(ValidityPredicate::Nonce {
+            address: Address::repeat_byte(0x44),
+            op: ValidityOperator::Equal,
+            value: U256::from(7),
+        });
         let signature = sign(&signer, &tx, &predicates);
+        assert_eq!(verify(&tx, &predicates, Some(&signature)), Ok(()));
         let mut mutations = Vec::new();
         let mut added = predicates.clone();
         added.push(predicates[0].clone());
@@ -390,6 +446,7 @@ mod tests {
             let mut changed = predicates.clone();
             match &mut changed[index] {
                 ValidityPredicate::Balance { value, .. }
+                | ValidityPredicate::Nonce { value, .. }
                 | ValidityPredicate::Storage { value, .. }
                 | ValidityPredicate::BlockNumber { value, .. }
                 | ValidityPredicate::FlashblockIndex { value, .. } => *value += U256::from(1),
@@ -398,16 +455,18 @@ mod tests {
             let mut changed = predicates.clone();
             match &mut changed[index] {
                 ValidityPredicate::Balance { op, .. }
+                | ValidityPredicate::Nonce { op, .. }
                 | ValidityPredicate::Storage { op, .. }
                 | ValidityPredicate::BlockNumber { op, .. }
                 | ValidityPredicate::FlashblockIndex { op, .. } => *op = ValidityOperator::NotEqual,
             }
             mutations.push(changed);
         }
-        for index in [0, 1] {
+        for index in [0, 1, 4] {
             let mut changed = predicates.clone();
             match &mut changed[index] {
                 ValidityPredicate::Balance { address, .. }
+                | ValidityPredicate::Nonce { address, .. }
                 | ValidityPredicate::Storage { address, .. } => *address = Address::ZERO,
                 _ => unreachable!(),
             }
@@ -423,18 +482,16 @@ mod tests {
             *mask = U256::MAX;
         }
         mutations.push(mask);
-        let mut kind = predicates.clone();
+        let mut kind = predicates;
         kind[2] = ValidityPredicate::FlashblockIndex {
             op: ValidityOperator::LessThanOrEqual,
             value: U256::from(100),
         };
         mutations.push(kind);
-        let mut reordered = predicates;
-        reordered.swap(0, 1);
-        mutations.push(reordered);
+
         for changed in mutations {
             assert_eq!(
-                ValidityAuthorization::verify(&tx, &changed, Some(&signature)),
+                verify(&tx, &changed, Some(&signature)),
                 Err(ValidityAuthorizationError::InvalidSignature)
             );
         }
@@ -448,7 +505,7 @@ mod tests {
         let signature = sign(&signer, &tx, &predicates);
         for other in [transaction(&signer, 8453, 1), transaction(&signer, 84532, 0)] {
             assert_eq!(
-                ValidityAuthorization::verify(&other, &predicates, Some(&signature)),
+                verify(&other, &predicates, Some(&signature)),
                 Err(ValidityAuthorizationError::InvalidSignature)
             );
         }
@@ -456,7 +513,7 @@ mod tests {
             .sign_hash_sync(&ValidityAuthorization::signing_hash(84532, *tx.hash(), &predicates))
             .unwrap();
         assert_eq!(
-            ValidityAuthorization::verify(&tx, &predicates, Some(&wrong_domain)),
+            verify(&tx, &predicates, Some(&wrong_domain)),
             Err(ValidityAuthorizationError::InvalidSignature)
         );
         let forged = BasePooledTransaction::new(
@@ -467,34 +524,121 @@ mod tests {
             tx.encoded_2718().len(),
         );
         assert_eq!(
-            ValidityAuthorization::verify(&forged, &predicates, Some(&signature)),
+            verify(&forged, &predicates, Some(&signature)),
             Err(ValidityAuthorizationError::SenderMismatch)
         );
     }
 
+    #[rstest::rstest]
+    #[case::legacy_unsigned(ValiditySignatureMode::Off, false, Ok(()))]
+    #[case::legacy_signed(
+        ValiditySignatureMode::Off,
+        true,
+        Err(ValidityAuthorizationError::Disabled)
+    )]
+    #[case::optional_unsigned(ValiditySignatureMode::VerifyIfPresent, false, Ok(()))]
+    #[case::optional_signed(ValiditySignatureMode::VerifyIfPresent, true, Ok(()))]
+    #[case::required_unsigned(
+        ValiditySignatureMode::Required,
+        false,
+        Err(ValidityAuthorizationError::MissingSignature)
+    )]
+    #[case::required_signed(ValiditySignatureMode::Required, true, Ok(()))]
+    fn staged_policy_authorizes_sidecars(
+        #[case] mode: ValiditySignatureMode,
+        #[case] signed: bool,
+        #[case] expected: Result<(), ValidityAuthorizationError>,
+    ) {
+        let signer = PrivateKeySigner::random();
+        let tx = transaction(&signer, 8453, 0);
+        let predicates = predicates();
+        let signature = signed.then(|| sign(&signer, &tx, &predicates));
+        let result = ValidityAuthorization::validate_recovered(
+            &tx,
+            TransactionValidity { validity: predicates, validity_signature: signature },
+            mode,
+        )
+        .map(|_| ());
+        assert_eq!(result, expected);
+    }
+
+    #[rstest::rstest]
+    #[case::optional(ValiditySignatureMode::VerifyIfPresent)]
+    #[case::required(ValiditySignatureMode::Required)]
+    fn optional_verification_never_accepts_a_bad_signature(#[case] mode: ValiditySignatureMode) {
+        let signer = PrivateKeySigner::random();
+        let tx = transaction(&signer, 8453, 0);
+        let predicates = predicates();
+        let signature = sign(&PrivateKeySigner::random(), &tx, &predicates);
+        assert_eq!(
+            ValidityAuthorization::validate_recovered(
+                &tx,
+                TransactionValidity { validity: predicates, validity_signature: Some(signature) },
+                mode
+            )
+            .map(|_| ()),
+            Err(ValidityAuthorizationError::InvalidSignature)
+        );
+    }
+
     #[test]
-    fn flag_off_preserves_unsigned_behavior_and_rejects_signed_sidecars() {
+    fn a_validated_sidecar_cannot_be_attached_to_another_transaction() {
         let signer = PrivateKeySigner::random();
         let tx = transaction(&signer, 8453, 0);
         let predicates = predicates();
         let signature = sign(&signer, &tx, &predicates);
-        assert_eq!(ValidityAuthorization::validate(&tx, &predicates, None, false), Ok(()));
+        let validated = ValidityAuthorization::validate_recovered(
+            &tx,
+            TransactionValidity { validity: predicates, validity_signature: Some(signature) },
+            ValiditySignatureMode::Required,
+        )
+        .unwrap();
+        let other = transaction(&signer, 8453, 1);
         assert_eq!(
-            ValidityAuthorization::validate(&tx, &predicates, Some(&signature), false),
-            Err(ValidityAuthorizationError::Disabled)
+            other.with_validity(validated).unwrap_err(),
+            ValidityAuthorizationError::TransactionMismatch
+        );
+    }
+
+    #[test]
+    fn signing_is_permutation_independent_but_keeps_duplicate_multiplicity() {
+        let signer = PrivateKeySigner::random();
+        let tx = transaction(&signer, 8453, 0);
+        let mut predicates = predicates();
+        let signature = sign(&signer, &tx, &predicates);
+        predicates.reverse();
+        assert_eq!(verify(&tx, &predicates, Some(&signature)), Ok(()));
+        predicates.rotate_left(1);
+        assert_eq!(verify(&tx, &predicates, Some(&signature)), Ok(()));
+        predicates.push(predicates[0].clone());
+        assert_eq!(
+            verify(&tx, &predicates, Some(&signature)),
+            Err(ValidityAuthorizationError::InvalidSignature)
+        );
+    }
+
+    #[test]
+    fn wire_discriminants_are_pinned_by_the_wallet_contract() {
+        assert_eq!(
+            [
+                ValidityPredicateKind::Balance as u8,
+                ValidityPredicateKind::Storage as u8,
+                ValidityPredicateKind::BlockNumber as u8,
+                ValidityPredicateKind::FlashblockIndex as u8,
+                ValidityPredicateKind::Nonce as u8,
+            ],
+            [0, 1, 2, 3, 4]
         );
         assert_eq!(
-            ValidityAuthorization::validate(&tx, &predicates, None, true),
-            Err(ValidityAuthorizationError::MissingSignature)
-        );
-        assert_eq!(
-            ValidityAuthorization::validate(&tx, &predicates, Some(&signature), true),
-            Ok(())
-        );
-        assert_eq!(ValidityAuthorization::validate(&tx, &[], None, true), Ok(()));
-        assert_eq!(
-            ValidityAuthorization::validate(&tx, &[], Some(&signature), true),
-            Err(ValidityAuthorizationError::UnexpectedSignature)
+            [
+                ValidityOperator::LessThan as u8,
+                ValidityOperator::LessThanOrEqual as u8,
+                ValidityOperator::Equal as u8,
+                ValidityOperator::NotEqual as u8,
+                ValidityOperator::GreaterThan as u8,
+                ValidityOperator::GreaterThanOrEqual as u8,
+            ],
+            [0, 1, 2, 3, 4, 5]
         );
     }
 
@@ -507,7 +651,7 @@ mod tests {
         );
         let signature = Signature::new(U256::from(1), U256::from(1), false);
         assert_eq!(
-            ValidityAuthorization::verify(&tx, &predicates(), Some(&signature)),
+            verify(&tx, &predicates(), Some(&signature)),
             Err(ValidityAuthorizationError::MissingChainId)
         );
     }

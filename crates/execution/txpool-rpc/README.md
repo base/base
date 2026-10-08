@@ -13,11 +13,12 @@ allows clients to query the current status of individual transactions by hash. T
 `SendRawTransactionValidityExtension` registers local ingress through
 `base_sendRawTransactionValidity` on forwarding ingress nodes and builders. Typed
 validity predicates and their optional `validity_signature` are preserved in the pool and
-while forwarding to builders. The endpoint is registered at startup. Signature enforcement
-is default-off: opt in with `--validity-require-signature` on forwarding ingress nodes and
-every builder. On builders, this single flag covers both raw and forwarded ingress.
-Enforcement rejects unsigned predicates, tampered sidecars, and signatures from another key.
-When off, legacy unsigned submissions remain accepted and signed sidecars are rejected.
+while forwarding to builders. The endpoint is registered at startup. Use one shared
+`--validity-signature-mode off|verify-if-present|required` option on ingress and builders.
+It defaults to `off` (legacy unsigned submissions only). Deploy `verify-if-present`
+fleet-wide to accept unsigned submissions while checking all supplied signatures,
+migrate clients, then enable `required` to reject unsigned predicates.
+Optional verification does not protect against signature stripping and unsigned resubmission.
 Predicates are enforced during block construction; an unsatisfied transaction is deferred
 and an expired one is evicted. Regular RPC nodes with a configured sequencer URL proxy
 the complete sidecar and upstream error response instead of admitting it locally.

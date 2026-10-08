@@ -8,7 +8,8 @@ use base_common_genesis::RollupConfig;
 use base_execution_rpc::SequencerClient;
 use base_execution_txpool::{
     BasePooledTransaction, DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
-    TransactionValidity, ValidityAuthorization, ValidityPredicate, deserialize_bounded_predicates,
+    TransactionValidity, ValidityAuthorization, ValidityPredicate, ValiditySignatureMetrics,
+    ValiditySignatureMode, deserialize_bounded_predicates,
 };
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
@@ -120,7 +121,7 @@ pub struct SendRawTransactionValidityApiImpl<Provider> {
     provider: Provider,
     max_validity_predicates: usize,
     max_validity_expiry_secs: u64,
-    require_validity_signature: bool,
+    validity_signature_mode: ValiditySignatureMode,
     sequencer_client: Option<SequencerClient>,
     transaction_sender: tokio::sync::mpsc::UnboundedSender<BatchTxRequest<BasePooledTransaction>>,
 }
@@ -170,16 +171,16 @@ impl<Provider> SendRawTransactionValidityApiImpl<Provider> {
             provider,
             max_validity_predicates,
             max_validity_expiry_secs,
-            require_validity_signature: false,
+            validity_signature_mode: ValiditySignatureMode::Off,
             sequencer_client: None,
             transaction_sender,
         }
     }
 
-    /// Requires sender-signed validity predicates; disabled by default.
+    /// Sets the staged validity-signature rollout policy (default: off).
     #[must_use]
-    pub const fn with_required_validity_signature(mut self, required: bool) -> Self {
-        self.require_validity_signature = required;
+    pub const fn with_validity_signature_mode(mut self, mode: ValiditySignatureMode) -> Self {
+        self.validity_signature_mode = mode;
         self
     }
 
@@ -352,15 +353,25 @@ where
             ));
         }
 
-        ValidityAuthorization::validate(
+        let signed = options.validity_signature.is_some();
+        let validity = ValidityAuthorization::validate_recovered(
             &transaction,
-            &options.validity,
-            options.validity_signature.as_ref(),
-            self.require_validity_signature,
+            TransactionValidity {
+                validity: options.validity,
+                validity_signature: options.validity_signature,
+            },
+            self.validity_signature_mode,
         )
         .map_err(|error| {
-            ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), error.to_string(), None::<()>)
+            ValiditySignatureMetrics::rejected("ingress", error.as_label()).increment(1);
+            ErrorObjectOwned::owned(
+                ErrorCode::InvalidParams.code(),
+                error.to_string(),
+                Some(error.as_label()),
+            )
         })?;
+        ValiditySignatureMetrics::accepted("ingress", if signed { "signed" } else { "unsigned" })
+            .increment(1);
 
         let tx_hash = *transaction.hash();
         let _ = transaction_event!(
@@ -369,15 +380,19 @@ where
             tx_hash: tx_hash,
             data: {
                 "rpc_method" => "base_sendRawTransactionValidity",
-                "validity_predicates" => &options.validity,
+                "validity_predicates" => validity.predicates(),
             },
         );
 
         // Retain predicates and their authorization for canonical forwarding to builders.
-        let transaction = transaction.with_validity(TransactionValidity {
-            validity: options.validity,
-            validity_signature: options.validity_signature,
-        });
+        let transaction = transaction.with_validity(validity).map_err(|error| {
+            ValiditySignatureMetrics::rejected("ingress", error.as_label()).increment(1);
+            ErrorObjectOwned::owned(
+                ErrorCode::InvalidParams.code(),
+                error.to_string(),
+                Some(error.as_label()),
+            )
+        })?;
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         self.transaction_sender
             .send(BatchTxRequest::new(TransactionOrigin::Private, transaction, response_tx))
@@ -474,46 +489,108 @@ mod tests {
         (raw, options)
     }
 
+    #[rstest::rstest]
+    #[case::off_unsigned(ValiditySignatureMode::Off, false, false, false, None)]
+    #[case::off_signed(ValiditySignatureMode::Off, true, false, false, Some("disabled"))]
+    #[case::optional_unsigned(ValiditySignatureMode::VerifyIfPresent, false, false, false, None)]
+    #[case::optional_signed(ValiditySignatureMode::VerifyIfPresent, true, false, false, None)]
+    #[case::optional_tampered(
+        ValiditySignatureMode::VerifyIfPresent,
+        true,
+        true,
+        false,
+        Some("invalid")
+    )]
+    #[case::optional_wrong_key(
+        ValiditySignatureMode::VerifyIfPresent,
+        true,
+        false,
+        true,
+        Some("invalid")
+    )]
+    #[case::required_missing(ValiditySignatureMode::Required, false, false, false, Some("missing"))]
+    #[case::required_signed(ValiditySignatureMode::Required, true, false, false, None)]
+    #[case::required_tampered(ValiditySignatureMode::Required, true, true, false, Some("invalid"))]
+    #[case::required_wrong_key(ValiditySignatureMode::Required, true, false, true, Some("invalid"))]
     #[tokio::test]
-    async fn signed_validity_ingress_enforces_sender_authorization_before_admission() {
+    async fn signature_policy_at_ingress_records_admission_and_rejection(
+        #[case] mode: ValiditySignatureMode,
+        #[case] sign: bool,
+        #[case] tamper: bool,
+        #[case] wrong_key: bool,
+        #[case] reason: Option<&str>,
+    ) {
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
         let signer = PrivateKeySigner::random();
-        let (raw, signed_options) = signed_validity_request(&signer);
+        let (raw, mut options) = signed_validity_request(&signer);
+        if !sign {
+            options.validity_signature = None;
+        }
+        if wrong_key {
+            let tx: BasePooledTransaction =
+                BasePooledTransaction::recover_raw_transaction(&raw).unwrap();
+            options.validity_signature = Some(
+                PrivateKeySigner::random()
+                    .sign_hash_sync(&ValidityAuthorization::signing_hash(
+                        8453,
+                        *tx.hash(),
+                        &options.validity,
+                    ))
+                    .unwrap(),
+            );
+        }
+        if tamper {
+            options.validity.push(ValidityPredicate::Balance {
+                address: Address::ZERO,
+                op: base_execution_txpool::ValidityOperator::Equal,
+                value: U256::ZERO,
+            });
+        }
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
         let rpc = SendRawTransactionValidityApiImpl::new(everest_provider(), sender)
-            .with_required_validity_signature(true);
-        let mut unsigned = signed_options.clone();
-        unsigned.validity_signature = None;
-        let mut tampered = signed_options.clone();
-        tampered.validity.push(ValidityPredicate::Balance {
-            address: Address::ZERO,
-            op: base_execution_txpool::ValidityOperator::Equal,
-            value: U256::ZERO,
-        });
-        let mut wrong_key = signed_options.clone();
-        let tx: BasePooledTransaction =
-            BasePooledTransaction::recover_raw_transaction(&raw).unwrap();
-        wrong_key.validity_signature = Some(
-            PrivateKeySigner::random()
-                .sign_hash_sync(&ValidityAuthorization::signing_hash(
-                    8453,
-                    *tx.hash(),
-                    &wrong_key.validity,
-                ))
-                .unwrap(),
-        );
-        for options in [unsigned, tampered, wrong_key] {
-            let error = rpc.send_raw_transaction_validity(raw.clone(), options).await.unwrap_err();
+            .with_validity_signature_mode(mode);
+        let response = rpc.send_raw_transaction_validity(raw, options);
+        tokio::pin!(response);
+        if let Some(reason) = reason {
+            let error = response.await.unwrap_err();
             assert_eq!(error.code(), ErrorCode::InvalidParams.code());
-            assert!(error.message().contains("signature"));
+            assert_eq!(
+                serde_json::from_str::<String>(error.data().unwrap().get()).unwrap(),
+                reason
+            );
             assert!(matches!(
                 receiver.try_recv(),
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty)
             ));
+        } else {
+            let queued = tokio::select! {
+                result = &mut response => panic!("valid sidecar failed before pool submission: {result:?}"),
+                request = receiver.recv() => request.expect("valid sidecar should be submitted to the pool"),
+            };
+            drop(queued);
         }
-        // The noop pool's insertion error proves valid authorization cleared RPC admission.
-        let rpc = validity_rpc(everest_provider()).with_required_validity_signature(true);
-        let error = rpc.send_raw_transaction_validity(raw, signed_options).await.unwrap_err();
-        assert_ne!(error.code(), ErrorCode::InvalidParams.code(), "{error}");
+        let snapshot = snapshotter.snapshot().into_vec();
+        let expected_name = if reason.is_some() {
+            "txpool.validity_signature.rejected"
+        } else {
+            "txpool.validity_signature.accepted"
+        };
+        let expected_label = reason.unwrap_or(if sign { "signed" } else { "unsigned" });
+        let label_name = if reason.is_some() { "reason" } else { "signature" };
+        assert!(
+            snapshot.iter().any(|(key, _, _, value)| {
+                key.key().name() == expected_name
+                    && key.key().labels().any(|l| l.key() == "site" && l.value() == "ingress")
+                    && key
+                        .key()
+                        .labels()
+                        .any(|l| l.key() == label_name && l.value() == expected_label)
+                    && matches!(value, metrics_util::debugging::DebugValue::Counter(1))
+            }),
+            "signature rollout must be observable through its dedicated metrics"
+        );
     }
 
     #[tokio::test]
@@ -532,7 +609,8 @@ mod tests {
                 ))
                 .unwrap(),
         );
-        let rpc = validity_rpc(everest_provider()).with_required_validity_signature(true);
+        let rpc = validity_rpc(everest_provider())
+            .with_validity_signature_mode(ValiditySignatureMode::Required);
         let error = rpc.send_raw_transaction_validity(raw, options).await.unwrap_err();
         assert_ne!(error.code(), ErrorCode::InvalidParams.code(), "{error}");
     }

@@ -114,6 +114,19 @@ impl ValidityPoolMetrics {
 }
 
 base_metrics::define_metrics! {
+    txpool.validity_signature,
+    struct = ValiditySignatureMetrics,
+    #[describe("Validity sidecars rejected by signature policy or authorization at an admission boundary")]
+    #[label(name = "site", default = ["ingress", "builder"])]
+    #[label(name = "reason", default = ["disabled", "missing", "unexpected", "missing_chain_id", "invalid_transaction_sender", "sender_mismatch", "invalid", "transaction_mismatch"])]
+    rejected: counter,
+    #[describe("Policy-validated validity sidecars by signature presence, for staged rollout readiness")]
+    #[label(name = "site", default = ["ingress", "builder"])]
+    #[label(name = "signature", default = ["signed", "unsigned"])]
+    accepted: counter,
+}
+
+base_metrics::define_metrics! {
     txpool.validator,
     struct = ValidatorMetrics,
     #[describe("End-to-end mempool validation wall time by transaction kind")]

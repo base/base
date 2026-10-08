@@ -411,8 +411,8 @@ summary = "base-tx-forwarding: forwards mempool txs to builder RPCs via per-dest
 digest = "b72a1536e1"
 
 ["crates/execution/txpool-rpc/README.md"]
-summary = "Txpool RPC APIs: admin management, transaction status, and base_sendRawTransactionValidity; default-off sender signature enforcement, predicate forwarding and sequencer proxy behavior."
-digest = "d1e2024180"
+summary = "Txpool RPC admin/status APIs and validity submissions; shared staged signature modes, signature rejection metrics, predicate forwarding and sequencer proxy behavior."
+digest = "bee09ffead"
 
 ["crates/execution/txpool-tracing/README.md"]
 summary = "Txpool tracing extension: tracks mempool lifecycle events, txpool_transactionStatus RPC, enabling CLI flags, and reth_transaction_tracing_tx_event histogram. Use to debug tx latency or drops."
@@ -423,8 +423,8 @@ summary = "Plan to forward mempool txs to builders via base_insertValidatedTrans
 digest = "2e785bfe9d"
 
 ["crates/execution/txpool/README.md"]
-summary = "Base txpool validation and ordering, builder wire extensions, and default-off EIP-712 sender authorization for validity predicates; wallet signing contract and rollout/security limits."
-digest = "02ff60ad71"
+summary = "Base txpool validation/ordering, builder wire extensions, staged EIP-712 predicate authorization, wallet signing contract, rejection metrics, and rollout/security limits."
+digest = "a2167ac338"
 
 ["crates/infra/audit/README.md"]
 summary = "audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers the migrations and schema snapshot regeneration."
@@ -439,8 +439,8 @@ summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches 
 digest = "a085a1e104"
 
 ["crates/infra/load-tests/README.md"]
-summary = "Load-testing framework (base-load-tests lib, base-load-tester bin): just/cargo commands, YAML config, tx mixes (precompile, B-20, swap, validity). Use to run or configure devnet/sepolia load tests."
-digest = "bdd5c4caec"
+summary = "Load testing: devnet/sepolia profiles, YAML workloads, calibration, adaptive or proactive validity signing, resource pacing, benchmark/report tools, and rollout limitations."
+digest = "57cfd3c183"
 
 ["crates/infra/roxy/README.md"]
 summary = "Scaffold-only Rust JSON-RPC reverse proxy meant to replace the ProxyD fork; currently just a listen-address flag plus /healthz and /readyz probes, no proxying yet."

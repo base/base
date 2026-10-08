@@ -21,7 +21,9 @@ Downstream node builds substitute their own payload by implementing
 
 ```rust,ignore
 use base_execution_txpool::{
-    BuilderApiImpl, BuilderApiServer, ExtensionError, ValidatedTransactionExtensions,
+    BuilderApiImpl, BuilderApiServer, DEFAULT_MAX_VALIDITY_PREDICATES, ExtensionError,
+    ValidatedTransactionExtensions,
+    ValiditySignatureMode,
 };
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -32,11 +34,11 @@ struct MyExtensions {
 
 impl ValidatedTransactionExtensions<MyPooledTx> for MyExtensions {
     fn extract(tx: &ValidPoolTransaction<MyPooledTx>) -> Self { /* ... */ }
-    fn apply(self, tx: MyPooledTx) -> Result<MyPooledTx, ExtensionError> { /* ... */ }
+    fn apply(self, tx: MyPooledTx, mode: ValiditySignatureMode) -> Result<MyPooledTx, ExtensionError> { /* ... */ }
 }
 
 // Builder (ingress) side, in place of the stock `BuilderApiExtension`:
-let api = BuilderApiImpl::<_, MyExtensions>::with_extensions(pool);
+let api = BuilderApiImpl::<_, MyExtensions>::with_extensions(pool, true, DEFAULT_MAX_VALIDITY_PREDICATES);
 modules.merge_configured(api.into_rpc())?;
 
 // Mempool (egress) forwarding is provided by `base-tx-forwarding`.
@@ -53,16 +55,22 @@ Anyone holding the raw transaction can otherwise add a state predicate that dela
 inclusion until their front-run has changed a pool's reserves. This can aid a sandwich
 within the user's on-chain slippage limit; it does not change their signed calldata.
 
-Signature enforcement is a default-off runtime feature. Enable
-`--validity-require-signature` on forwarding ingress nodes and **every** builder.
-On builders, the same flag covers both `base_sendRawTransactionValidity` and
-`base_insertValidatedTransaction`. Each process must enable enforcement locally.
-With enforcement on, non-empty predicates require `validity_signature` by the
-transaction sender. With it off, unsigned behavior is unchanged and signed sidecars
-are rejected, so clients cannot mistake acceptance for signature enforcement.
-Mixed deployments do not provide this protection; unsigned builders still accept
-unauthorized predicates. Query RPC nodes proxy the sidecar unchanged, leaving
-enforcement to the upstream sequencer. Ordinary transactions need no extra signature.
+Use the shared `--validity-signature-mode off|verify-if-present|required` option
+on forwarding ingress nodes and builders. It defaults to `off`: unsigned legacy
+predicates remain accepted and signed sidecars are rejected. On builders the mode
+covers both `base_sendRawTransactionValidity` and `base_insertValidatedTransaction`.
+
+Roll out `verify-if-present` to **every** ingress and builder first. It accepts
+unsigned predicates while verifying every supplied signature. Migrate wallets
+and load clients to signing, observe signed/unsigned admission counters, then
+switch the fleet to `required`. Required mode rejects any non-empty predicate
+batch without valid user authorization. Plain transactions need no extra signature.
+Query nodes proxy sidecars unchanged and leave policy to the upstream sequencer.
+
+**Optional verification is a compatibility stage, not sandwich protection.**
+As long as unsigned predicates are accepted, an intermediary can remove a
+signature and submit different unsigned predicates. Do not claim protection
+until required mode is enforced on every relevant admission path.
 
 #### Wallet signing contract
 
@@ -74,30 +82,45 @@ The domain is `{ name: "Base Transaction Validity", version: "1", chainId }`;
 `chainId` is the transaction's chain ID. There is no verifying contract.
 
 ```text
-ValidityPredicateData(uint8 kind,uint8 operator,address account,uint256 slot,uint256 mask,uint256 value)
-ValidityAuthorizationData(bytes32 transactionHash,ValidityPredicateData[] validity)
+ValidityPredicate(uint8 kind,uint8 operator,address account,uint256 slot,uint256 mask,uint256 value)
+ValidityAuthorization(bytes32 transactionHash,ValidityPredicate[] validity)
 ```
 
 `transactionHash` hashes the complete signed EIP-2718 transaction envelope.
-`kind` is balance = 0, storage = 1, block number = 2, flashblock index = 3.
+`kind` is balance = 0, storage = 1, block number = 2, flashblock index = 3, nonce = 4.
 `operator` is `<` = 0, `<=` = 1, `=` = 2, `!=` = 3, `>` = 4, `>=` = 5.
-Balance predicates use `account`, storage uses `account`, `slot`, and `mask`.
+Balance and nonce predicates use `account`; storage uses `account`, `slot`, and `mask`.
+Nonce predicates read the account's protocol nonce, not an EIP-8130 channel nonce.
 Unused fields are zero; omitted storage masks become `U256::MAX`.
-All variants include `value`. Stable-sort predicates with
-`ValidityPredicate::sort_batch` before signing: block number first, flashblock
-index second, then state predicates in their submitted relative order.
-The signature binds every predicate field, array length, canonical order, chain,
-and transaction, preventing predicate mutation and cross-transaction replay.
+`ValidityPredicateKind` and `ValidityOperator` define these explicit wire IDs.
+All fields participate in each predicate's EIP-712 struct hash. Sort the typed
+predicates by their struct hashes in ascending byte order before signing;
+`ValidityAuthorization::canonical_predicates` builds this wallet-facing array.
+Retain duplicates. Conjunction permutations produce the same digest; adding,
+removing, or changing a predicate changes it. Evaluation uses its independent
+cheap-first ordering and does not affect the signing contract.
 
 Verification recovers the actual envelope sender rather than trusting the builder
 payload's `sender`, and rejects high-s signatures. Only sender-address secp256k1
 authorization is supported; contract wallets or EIP-8130 actors without that
 key cannot use signed sidecars. Deposits and unprotected legacy transactions
-have no chain-bound signing domain and are rejected when carrying predicates.
+have no chain-bound signing domain and cannot authorize signed predicates.
 Shadow-only predicate injection is incompatible with signature enforcement.
 Predicates remain builder-side metadata, not on-chain consensus rules: a holder
 can still strip the entire sidecar and submit the underlying plain transaction.
 This feature prevents unauthorized predicate attachment, not all sandwich attacks.
+
+`ValidityAuthorization::validate_recovered` reuses the sender recovered by raw
+ingress. Builder-wire admission uses `validate` to check the envelope sender.
+Both return an opaque `ValidatedValidity`, bound to the transaction hash, which
+`with_validity` requires before attachment. This witness is not deserializable.
+Builders retain verification for incoming wire data as well as local mode checks.
+
+`txpool.validity_signature.rejected{site,reason}` records bounded rejection reasons
+at `ingress` and `builder`, independently of generic extension errors.
+`txpool.validity_signature.accepted{site,signature}` separates signed and unsigned
+sidecars to help operators assess migration readiness. RPC signature errors carry
+the same stable rejection reason in their `data` field.
 
 ## Usage
 

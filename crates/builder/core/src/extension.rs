@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use base_execution_txpool::BuilderApiServer;
-pub use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
+pub use base_execution_txpool::{DEFAULT_MAX_VALIDITY_PREDICATES, ValiditySignatureMode};
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 
 use crate::{
@@ -15,8 +15,8 @@ use crate::{
 pub struct BuilderApiExtensionConfig {
     /// Maximum number of validity predicates accepted per transaction.
     pub max_validity_predicates: usize,
-    /// Require sender-signed validity predicates at both builder ingress endpoints.
-    pub require_validity_signature: bool,
+    /// Signature rollout policy at both builder ingress endpoints.
+    pub validity_signature_mode: ValiditySignatureMode,
     /// Shadow-only validity injection configuration.
     pub shadow_validity: ShadowValidityConfig,
 }
@@ -26,14 +26,14 @@ impl BuilderApiExtensionConfig {
     pub const fn new(max_validity_predicates: usize) -> Self {
         Self {
             max_validity_predicates,
-            require_validity_signature: false,
+            validity_signature_mode: ValiditySignatureMode::Off,
             shadow_validity: ShadowValidityConfig::disabled(),
         }
     }
 
-    /// Enables default-off sender-signature enforcement.
-    pub const fn with_required_validity_signature(mut self, required: bool) -> Self {
-        self.require_validity_signature = required;
+    /// Sets the default-off staged validity-signature rollout policy.
+    pub const fn with_validity_signature_mode(mut self, mode: ValiditySignatureMode) -> Self {
+        self.validity_signature_mode = mode;
         self
     }
 

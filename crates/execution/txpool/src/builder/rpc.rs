@@ -23,8 +23,8 @@ use tracing::debug;
 
 use super::metrics::Metrics as BuilderApiMetrics;
 use crate::{
-    BasePooledTransaction, NoExtensions, PoolRejectionLabel, ValidatedTransaction,
-    ValidatedTransactionExtensions, ValidityAuthorization,
+    BasePooledTransaction, ExtensionError, NoExtensions, PoolRejectionLabel, ValidatedTransaction,
+    ValidatedTransactionExtensions, ValiditySignatureMetrics, ValiditySignatureMode,
 };
 
 /// Host name of this builder, part of the validated-insert event ID.
@@ -68,7 +68,7 @@ pub struct BuilderApiImpl<P, E = NoExtensions> {
     pool: P,
     accept_extensions: bool,
     max_extension_items: usize,
-    require_validity_signature: bool,
+    validity_signature_mode: ValiditySignatureMode,
     metering_cache: Option<Arc<dyn InsertMetering>>,
     _extensions: PhantomData<E>,
 }
@@ -86,7 +86,7 @@ impl<P> BuilderApiImpl<P, NoExtensions> {
             pool,
             accept_extensions: false,
             max_extension_items: 0,
-            require_validity_signature: false,
+            validity_signature_mode: ValiditySignatureMode::Off,
             metering_cache: None,
             _extensions: PhantomData,
         }
@@ -108,17 +108,16 @@ impl<P, E> BuilderApiImpl<P, E> {
             pool,
             accept_extensions,
             max_extension_items,
-            require_validity_signature: false,
+            validity_signature_mode: ValiditySignatureMode::Off,
             metering_cache: None,
             _extensions: PhantomData,
         }
     }
 
-    /// Requires sender authorization for every non-empty validity sidecar.
-    /// Disabled by default; signed sidecars are rejected until explicitly enabled.
+    /// Sets the shared staged validity-signature rollout policy (default: off).
     #[must_use]
-    pub const fn with_required_validity_signature(mut self, required: bool) -> Self {
-        self.require_validity_signature = required;
+    pub const fn with_validity_signature_mode(mut self, mode: ValiditySignatureMode) -> Self {
+        self.validity_signature_mode = mode;
         self
     }
 
@@ -179,22 +178,41 @@ where
         }
         // Attach any extension data carried on the wire. This is a no-op for
         // `NoExtensions`, the default payload.
-        let pool_tx = tx.extensions.apply(pool_tx).map_err(|e| {
-            BuilderApiMetrics::extension_errors().increment(1);
-            ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), e.to_string(), None::<()>)
-        })?;
-        // Re-check authorization at the builder boundary, including the actual envelope
-        // sender: forwarding metadata alone must never authorize predicates.
-        ValidityAuthorization::validate(
-            &pool_tx,
-            pool_tx.validity_predicates(),
-            pool_tx.validity_signature().as_ref(),
-            self.require_validity_signature,
-        )
-        .map_err(|e| {
-            BuilderApiMetrics::extension_errors().increment(1);
-            ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), e.to_string(), None::<()>)
-        })?;
+        // Applying validity extensions validates authorization before producing a
+        // transaction-bound sidecar. Wire senders are checked against the envelope.
+        let pool_tx =
+            tx.extensions.apply(pool_tx, self.validity_signature_mode).map_err(|error| {
+                let reason = match &error {
+                    ExtensionError::Authorization(error) => {
+                        ValiditySignatureMetrics::rejected("builder", error.as_label())
+                            .increment(1);
+                        Some(error.as_label())
+                    }
+                    ExtensionError::Invalid(_) => {
+                        BuilderApiMetrics::extension_errors().increment(1);
+                        None
+                    }
+                };
+                ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), error.to_string(), reason)
+            })?;
+        // Every extension implementation must obey this builder's local rollout policy.
+        self.validity_signature_mode
+            .check(pool_tx.validity_predicates(), pool_tx.validity_signature().as_ref())
+            .map_err(|error| {
+                ValiditySignatureMetrics::rejected("builder", error.as_label()).increment(1);
+                ErrorObjectOwned::owned(
+                    ErrorCode::InvalidParams.code(),
+                    error.to_string(),
+                    Some(error.as_label()),
+                )
+            })?;
+        if !pool_tx.validity_predicates().is_empty() {
+            ValiditySignatureMetrics::accepted(
+                "builder",
+                if pool_tx.validity_signature().is_some() { "signed" } else { "unsigned" },
+            )
+            .increment(1);
+        }
 
         // Extension-bearing transactions remain private so normal P2P gossip
         // cannot propagate the raw transaction without its extension metadata.
@@ -283,7 +301,7 @@ mod tests {
     use super::*;
     use crate::{
         BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, NoExtensions, TransactionValidity,
-        ValidatedTransaction, ValidityOperator, ValidityPredicate,
+        ValidatedTransaction, ValidityAuthorization, ValidityOperator, ValidityPredicate,
     };
 
     fn signed_validity_transaction() -> ValidatedTransaction<TransactionValidity> {
@@ -314,7 +332,7 @@ mod tests {
             true,
             DEFAULT_MAX_VALIDITY_PREDICATES,
         )
-        .with_required_validity_signature(true);
+        .with_validity_signature_mode(ValiditySignatureMode::Required);
         let tx = signed_validity_transaction();
         let error = handler.insert_validated_transaction(tx.clone()).await.unwrap_err();
         assert!(
@@ -339,7 +357,7 @@ mod tests {
             true,
             DEFAULT_MAX_VALIDITY_PREDICATES,
         )
-        .with_required_validity_signature(true);
+        .with_validity_signature_mode(ValiditySignatureMode::Required);
         let tx = signed_validity_transaction();
         let mut changed = tx.clone();
         changed.extensions.validity.push(ValidityPredicate::Balance {
@@ -371,6 +389,52 @@ mod tests {
         tx.extensions.validity_signature = None;
         let error = handler.insert_validated_transaction(tx).await.unwrap_err();
         assert!(error.message().starts_with("pool rejected transaction:"));
+    }
+
+    #[rstest::rstest]
+    #[case::missing(ValiditySignatureMode::Required, "missing")]
+    #[case::invalid(ValiditySignatureMode::Required, "invalid")]
+    #[case::sender_mismatch(ValiditySignatureMode::Required, "sender_mismatch")]
+    #[case::disabled(ValiditySignatureMode::Off, "disabled")]
+    #[tokio::test]
+    async fn signature_rejections_have_dedicated_builder_metrics(
+        #[case] mode: ValiditySignatureMode,
+        #[case] reason: &str,
+    ) {
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        let handler = BuilderApiImpl::<_, TransactionValidity>::with_extensions(
+            NoopTransactionPool::<BasePooledTransaction>::new(),
+            true,
+            DEFAULT_MAX_VALIDITY_PREDICATES,
+        )
+        .with_validity_signature_mode(mode);
+        let mut tx = signed_validity_transaction();
+        match reason {
+            "missing" => tx.extensions.validity_signature = None,
+            "invalid" => tx.extensions.validity.push(ValidityPredicate::Balance {
+                address: Address::ZERO,
+                op: ValidityOperator::Equal,
+                value: U256::ZERO,
+            }),
+            "sender_mismatch" => tx.sender = Address::ZERO,
+            "disabled" => {}
+            _ => unreachable!(),
+        }
+        let error = handler.insert_validated_transaction(tx).await.unwrap_err();
+        assert_eq!(serde_json::from_str::<String>(error.data().unwrap().get()).unwrap(), reason);
+        let snapshot = snapshotter.snapshot().into_vec();
+        assert!(snapshot.iter().any(|(key, _, _, value)| {
+            key.key().name() == "txpool.validity_signature.rejected"
+                && key.key().labels().any(|l| l.key() == "site" && l.value() == "builder")
+                && key.key().labels().any(|l| l.key() == "reason" && l.value() == reason)
+                && matches!(value, metrics_util::debugging::DebugValue::Counter(1))
+        }));
+        assert!(!snapshot.iter().any(|(key, _, _, value)| {
+            key.key().name() == "txpool.builder_rpc.extension_errors"
+                && matches!(value, metrics_util::debugging::DebugValue::Counter(n) if *n > 0)
+        }));
     }
 
     // ==========================================================================
@@ -453,9 +517,12 @@ mod tests {
         fn apply(
             self,
             tx: BasePooledTransaction,
+            _mode: ValiditySignatureMode,
         ) -> Result<BasePooledTransaction, crate::ExtensionError> {
             if self.reject == Some(true) {
-                return Err(crate::ExtensionError("rejected by test extension".to_string()));
+                return Err(crate::ExtensionError::Invalid(
+                    "rejected by test extension".to_string(),
+                ));
             }
             Ok(tx)
         }

@@ -1,13 +1,20 @@
-use std::{fmt::Display, time::Duration};
+use std::{
+    fmt::Display,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use alloy_network::{Ethereum, EthereumWallet};
-use alloy_primitives::{Address, Bytes, TxHash};
+use alloy_primitives::{Address, Bytes, Signature, TxHash};
 use alloy_provider::{
     Identity, Provider, ProviderBuilder, RootProvider,
     fillers::{ChainIdFiller, FillProvider, JoinFill, WalletFiller},
 };
 use base_common_network::Base;
-use base_execution_txpool::ValidityPredicate;
+use base_execution_txpool::{ValidityAuthorizationError, ValidityPredicate};
 use futures::future::join_all;
 use tokio::sync::Semaphore;
 use tracing::{instrument, warn};
@@ -199,17 +206,19 @@ pub struct SubmitItem {
     /// State predicates transported alongside the transaction. Empty for a
     /// plain `eth_sendRawTransaction` submission.
     pub validity: Vec<ValidityPredicate>,
+    /// Optional sender authorization for the validity sidecar.
+    pub validity_signature: Option<Signature>,
 }
 
 impl SubmitItem {
     /// Creates a plain submission item with no validity predicates.
     pub const fn plain(raw: Bytes) -> Self {
-        Self { raw, validity: Vec::new() }
+        Self { raw, validity: Vec::new(), validity_signature: None }
     }
 
     /// Creates a submission item carrying validity predicates.
     pub const fn with_validity(raw: Bytes, validity: Vec<ValidityPredicate>) -> Self {
-        Self { raw, validity }
+        Self { raw, validity, validity_signature: None }
     }
 
     /// Returns true when this item submits via `base_sendRawTransactionValidity`.
@@ -228,6 +237,7 @@ pub struct BatchRpcClient {
     client: reqwest::Client,
     url: Url,
     batch_size: usize,
+    validity_signatures_required: Arc<AtomicBool>,
 }
 
 /// Result of a single request within a JSON-RPC batch response.
@@ -251,17 +261,27 @@ pub struct BatchSendError {
     pub code: Option<i64>,
     /// Human-readable error message.
     pub message: String,
+    /// Stable rejection reason supplied by signature-aware RPC nodes.
+    pub reason: Option<String>,
 }
 
 impl BatchSendError {
     /// Creates an error carrying a JSON-RPC error code.
     pub fn with_code(code: i64, message: impl Into<String>) -> Self {
-        Self { code: Some(code), message: message.into() }
+        Self { code: Some(code), message: message.into(), reason: None }
     }
 
     /// Creates a client-side error with no JSON-RPC code.
     pub fn client(message: impl Into<String>) -> Self {
-        Self { code: None, message: message.into() }
+        Self { code: None, message: message.into(), reason: None }
+    }
+
+    /// Returns true only for an explicit signature-required ingress rejection.
+    pub fn is_signature_required(&self) -> bool {
+        self.code == Some(-32602)
+            && (self.reason.as_deref()
+                == Some(ValidityAuthorizationError::MissingSignature.as_label())
+                || self.message == ValidityAuthorizationError::MissingSignature.to_string())
     }
 
     /// Returns true when this is a JSON-RPC method-not-found error.
@@ -291,7 +311,23 @@ impl BatchRpcClient {
             .map_err(|e| {
                 BaselineError::Rpc(format!("failed to build batch RPC HTTP client: {e}"))
             })?;
-        Ok(Self { client, url, batch_size: MAX_BATCH_RPC_SIZE })
+        Ok(Self {
+            client,
+            url,
+            batch_size: MAX_BATCH_RPC_SIZE,
+            validity_signatures_required: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
+    /// Remembers that this endpoint explicitly requires signed validity sidecars.
+    /// Clones share this one-way state; a signed request is never downgraded.
+    pub fn require_validity_signatures(&self) {
+        self.validity_signatures_required.store(true, Ordering::Relaxed);
+    }
+
+    /// Returns whether an explicit rejection has required signing for this endpoint.
+    pub fn validity_signatures_required(&self) -> bool {
+        self.validity_signatures_required.load(Ordering::Relaxed)
     }
 
     /// Sets the maximum number of JSON-RPC calls in each HTTP request.
@@ -355,11 +391,15 @@ impl BatchRpcClient {
             .enumerate()
             .map(|(i, item)| {
                 if item.is_validity() {
+                    let mut options = serde_json::json!({ "validity": item.validity });
+                    if let Some(signature) = item.validity_signature {
+                        options["validity_signature"] = serde_json::json!(signature);
+                    }
                     serde_json::json!({
                         "jsonrpc": "2.0",
                         "id": i,
                         "method": BASE_SEND_RAW_TRANSACTION_VALIDITY,
-                        "params": [item.raw, { "validity": item.validity }]
+                        "params": [item.raw, options]
                     })
                 } else {
                     serde_json::json!({
@@ -399,10 +439,12 @@ impl BatchRpcClient {
                 }
             } else if let Some(error) = item.get("error") {
                 let msg = error.get("message").and_then(|m| m.as_str()).unwrap_or("unknown error");
-                let err = error.get("code").and_then(|c| c.as_i64()).map_or_else(
+                let mut err = error.get("code").and_then(|c| c.as_i64()).map_or_else(
                     || BatchSendError::client(msg),
                     |code| BatchSendError::with_code(code, msg),
                 );
+                err.reason =
+                    error.get("data").and_then(serde_json::Value::as_str).map(str::to_owned);
                 results[id] = BatchSendResult::Error(err);
             }
         }

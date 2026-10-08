@@ -6,7 +6,7 @@ use alloy_primitives::{TxHash, U256};
 use base_bundles::MeterBundleResponse;
 use base_execution_txpool::{
     BasePooledTransaction, BuilderApiImpl, BuilderApiServer, InsertMetering, TransactionValidity,
-    ValidatedTransaction, ValidityOperator, ValidityPredicate,
+    ValidatedTransaction, ValidityOperator, ValidityPredicate, ValiditySignatureMode,
 };
 use jsonrpsee::core::RpcResult;
 use reth_transaction_pool::TransactionPool;
@@ -133,11 +133,11 @@ impl<P> ShadowValidityBuilderApi<P> {
     ) -> Self {
         Self {
             inner: BuilderApiImpl::with_extensions(pool, true, config.max_validity_predicates)
-                .with_required_validity_signature(config.require_validity_signature)
+                .with_validity_signature_mode(config.validity_signature_mode)
                 .with_metering_cache(Arc::new(InsertMeteringAdapter(metering_provider))),
             // Shadow injection cannot create a user's signature. Never inject while
             // enforcing authorization, even for callers constructing config directly.
-            config: if config.require_validity_signature {
+            config: if config.validity_signature_mode == ValiditySignatureMode::Required {
                 ShadowValidityConfig::disabled()
             } else {
                 config.shadow_validity
@@ -264,7 +264,7 @@ mod tests {
                 .with_shadow_validity(
                     ShadowValidityConfig::enabled(MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS).unwrap(),
                 )
-                .with_required_validity_signature(true),
+                .with_validity_signature_mode(ValiditySignatureMode::Required),
             Arc::new(crate::NoopMeteringProvider),
         );
         let signed = BaseTransactionSigned::new_unhashed(
