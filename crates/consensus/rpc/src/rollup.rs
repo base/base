@@ -188,9 +188,9 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
 
         debug!(target: "rpc", request_id, rpc_method = RPC_METHOD, "Started rollup RPC request");
 
-        // Read the L1 state first: as derivation progresses, local or delegated, it publishes
-        // `current_l1` only once the engine safe head covers every L2 block derived before it, so
-        // safe heads read afterwards never lag `current_l1`.
+        // Read the L1 state first: derivation publishes `current_l1` only once the engine safe head
+        // covers every L2 block derived before it, so safe heads read afterwards never lag
+        // `current_l1`.
         let sync_statuses = async {
             let l1_sync_status = self.l1_state().await?;
             let l2_sync_status = self.engine_client.get_state().await?;
