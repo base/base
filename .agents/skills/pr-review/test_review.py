@@ -710,12 +710,22 @@ class AgentRunTests(unittest.TestCase):
         _, run = self.call(self.agent(), [self.envelope()])
         self.assertNotIn("--settings", run.call_args.args[0])
 
-    def test_every_agent_is_told_to_work_fast(self) -> None:
+    def test_agents_that_explore_are_told_to_work_fast_and_the_ones_that_judge_are_not(self) -> None:
         for stage in review.STAGES:
             with self.subTest(stage=stage):
                 _, run = self.call(self.agent(stage=stage), [self.envelope()])
                 cmd = run.call_args.args[0]
-                self.assertIn("## Working fast", cmd[cmd.index("--append-system-prompt") + 1])
+                prompt = cmd[cmd.index("--append-system-prompt") + 1]
+                self.assertEqual("## Working fast" in prompt, stage in review.EXPLORING_STAGES)
+
+    def test_the_decider_and_chair_are_never_capped_on_tool_calls(self) -> None:
+        # They must check every open thread and every claim, however many reads that takes.
+        self.assertFalse({"chair", "decide"} & review.EXPLORING_STAGES)
+
+    def test_the_working_guide_has_no_stale_time_claims_and_covers_truncated_diffs(self) -> None:
+        text = review.WORKING_GUIDE.read_text()
+        self.assertNotIn("hard time limit", text)
+        self.assertIn("truncated", text)
 
     def test_pr_settings_are_never_loaded(self) -> None:
         _, run = self.call(self.agent(), [self.envelope()])
@@ -972,6 +982,35 @@ class ApplyPlanTests(unittest.TestCase):
         self.apply(gh)
         self.assertEqual(self.plan.resolves, [])
         self.assertEqual([c for c in gh.calls if "PATCH" in c and "comments/22" in " ".join(c)], [])
+
+    def test_a_reopen_dropped_because_the_comment_changed_stays_in_the_summary(self) -> None:
+        self.live = [{**t, "first_body": t["first_body"] + "\n\nEdited."} if t["thread_id"] == "marked" else t
+                     for t in self.threads]
+        gh = FakeGh()
+        self.apply(gh)
+        self.assertEqual((self.plan.reopens, self.plan.back), ([], ["marked"]))
+        self.assertIn("Problem is back, but the comment could not be restored", self.summary_of(gh))
+
+    def test_a_follow_up_is_not_posted_on_a_thread_a_person_resolved_or_deleted(self) -> None:
+        for label, live in (("resolved", lambda t: {**t, "resolved": True}), ("deleted", None)):
+            with self.subTest(label):
+                self.live = [(live(t) if live else None) if t["thread_id"] == "open" else t for t in self.threads]
+                self.live = [t for t in self.live if t is not None]
+                gh = FakeGh()
+                self.apply(gh)
+                follow_ups = [c for c in gh.matching("addPullRequestReviewThreadReply") if "Follow-up" in " ".join(c)]
+                self.assertEqual(follow_ups, [])
+
+    def test_a_follow_up_is_posted_when_the_thread_is_still_open(self) -> None:
+        gh = FakeGh()
+        self.apply(gh)
+        self.assertTrue([c for c in gh.matching("addPullRequestReviewThreadReply") if "Follow-up" in " ".join(c)])
+
+    def test_no_follow_up_is_posted_without_a_current_view_of_the_threads(self) -> None:
+        self.live = None
+        gh = FakeGh()
+        self.apply(gh)
+        self.assertEqual(gh.matching("addPullRequestReviewThreadReply"), [])
 
     def test_a_thread_deleted_during_the_run_is_left_alone(self) -> None:
         self.live = [t for t in self.threads if t["thread_id"] != "fixed"]
