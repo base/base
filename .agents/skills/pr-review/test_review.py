@@ -1202,7 +1202,7 @@ class RoundTests(unittest.TestCase):
         self.round_decisions: dict[str, dict] = {}
         self.final_decision: dict = {"actions": [], "overview": "Done.", "dropped": []}
         self.slow = "council-invariants"
-        self.fail: set[str] = set()
+        self.broken: set[str] = set()
         self.finding = {"title": "f", "severity": "major", "category": "safety", "confidence": "high",
                         "path": "src/a.rs", "line": 1, "explanation": "e"}
 
@@ -1210,7 +1210,7 @@ class RoundTests(unittest.TestCase):
         label = label or agent.name
         if agent.stage == "decide" and label == "decide.review-general":
             self.release.set()  # the slow reviewer may finish once the first round has been attempted
-        if label in self.fail:
+        if label in self.broken:
             raise review.ReviewError(f"{label} broke")
         review.MODELS_RAN[agent.name] = agent.model
         if agent.stage == "triage":
@@ -1257,18 +1257,17 @@ class RoundTests(unittest.TestCase):
         self.assertEqual((len(outcome.plan.new), outcome.plan.resolves, outcome.plan.reopens), (1, [], []))
         self.assertEqual(len([r for r in outcome.plan.rejected if "not allowed in this round" in r]), 2)
 
-    def test_the_final_round_may_not_post_new_findings_unless_a_round_failed(self) -> None:
+    def test_the_final_round_may_comment_for_a_problem_no_thread_can_carry(self) -> None:
+        # A thread that cannot be reopened, or that a person closed, needs a new comment from the final round.
         self.final_decision = {"actions": [comment_on_line_one("late")], "overview": "x", "dropped": []}
         outcome = self.run_pipeline()
-        self.assertEqual(outcome.plan.new, [])
-        self.assertTrue([r for r in outcome.plan.rejected if "comment: not allowed" in r])
+        self.assertEqual([f.title for f in outcome.plan.new], ["late"])
 
     def test_the_final_round_takes_findings_from_a_round_that_failed(self) -> None:
-        self.fail = {"decide.review-general"}
+        self.broken = {"decide.review-general"}
         self.final_decision = {"actions": [comment_on_line_one("recovered")], "overview": "x", "dropped": []}
         outcome = self.run_pipeline()
         self.assertEqual([f.title for f in outcome.plan.new], ["recovered"])
-        self.assertIn("decide/review-general", outcome.failed)
 
     def test_the_final_round_resolves_threads(self) -> None:
         self.final_decision = {"actions": [{"type": "resolve", "thread_id": "open", "body": "fixed"}],
@@ -1314,7 +1313,7 @@ class RoundTests(unittest.TestCase):
         def stale_after_first(round_plan, ctx, summarize=None):
             posted.append(len(round_plan.new))
             if len(posted) > 1:
-                raise review.ReviewError("the pull request has a newer commit than the one reviewed")
+                raise review.StaleError("the pull request has a newer commit than the one reviewed")
             return []
 
         agents = [a for a in self.agents if a.stage in ("triage", "decide")]
@@ -1354,6 +1353,127 @@ class RoundTests(unittest.TestCase):
         seen: list[str] = []
         _, failures = review.run_parallel({"a": boom, "b": lambda: 1}, on_done=lambda n, r, run: seen.append(n))
         self.assertEqual((seen, list(failures)), (["b"], ["a"]))
+
+    def test_a_follow_up_on_a_thread_is_posted_once_across_rounds(self) -> None:
+        reply = {"type": "reply", "thread_id": "open", "body": "again"}
+        for name in ("review-general", self.slow):
+            self.round_decisions[f"decide.{name}"] = {"actions": [dict(reply)], "overview": None, "dropped": []}
+        self.final_decision = {"actions": [dict(reply)], "overview": "x", "dropped": []}
+        outcome = self.run_pipeline()
+        self.assertEqual([r["thread_id"] for r in outcome.plan.replies], ["open"])
+        self.assertEqual(len([r for r in outcome.plan.rejected if "already got a follow-up" in r]), 2)
+
+    def test_the_final_round_can_comment_when_a_thread_cannot_be_reopened(self) -> None:
+        self.final_decision = {"actions": [comment_on_line_one("back again")], "overview": "x", "dropped": []}
+        outcome = self.run_pipeline()
+        self.assertEqual([f.title for f in outcome.plan.new], ["back again"])
+
+    def test_a_problem_a_findings_round_posted_is_not_posted_again_by_the_final_round(self) -> None:
+        self.round_decisions["decide.review-general"] = {"actions": [comment_on_line_one("Same")],
+                                                         "overview": None, "dropped": []}
+        self.final_decision = {"actions": [comment_on_line_one("same")], "overview": "x", "dropped": []}
+        self.assertEqual(len(self.run_pipeline().plan.new), 1)
+
+    def test_a_head_check_that_errors_is_a_problem_not_a_moved_pull_request(self) -> None:
+        ctx = review.Context(description="d", title="t", files=[], diff=DIFF, pr_number=7, head_sha="abc")
+        gh = FakeGh(fail=("pr view",))
+        with mock.patch.object(review, "gh", gh), mock.patch.object(review, "fetch_threads", return_value=[]):
+            problems = review.apply_plan(review.Plan(), ctx)
+        self.assertTrue([p for p in problems if "check the pull request head" in p])
+
+    def test_a_head_that_differs_raises_the_stale_error(self) -> None:
+        ctx = review.Context(description="d", title="t", files=[], diff=DIFF, pr_number=7, head_sha="abc")
+        gh = FakeGh(responses={"pr view": json.dumps({"headRefOid": "newer"})})
+        with mock.patch.object(review, "gh", gh), self.assertRaises(review.StaleError):
+            review.apply_plan(review.Plan(), ctx)
+
+    def test_an_error_from_a_round_other_than_a_moved_head_does_not_stop_posting(self) -> None:
+        self.round_decisions["decide.review-general"] = {"actions": [comment_on_line_one("a")],
+                                                         "overview": None, "dropped": []}
+        calls: list[int] = []
+
+        def flaky(round_plan, ctx, summarize=None):
+            calls.append(1)
+            return ["check the pull request head: boom"] if len(calls) == 1 else []
+
+        agents = [a for a in self.agents if a.stage in ("triage", "decide")]
+        general = next(a for a in self.agents if a.name == "review-general")
+        agents += [general, dataclasses_replace(general, name=self.slow)]
+        with mock.patch.object(review, "run_agent", self.fake_run_agent), mock.patch.object(
+                review, "apply_plan", flaky):
+            outcome = review.run_pipeline(self.ctx, agents, Path("."), Path("."), None, post=True)
+        self.assertFalse(outcome.stale)
+        self.assertGreaterEqual(len(calls), 2)  # later rounds were still posted
+
+    def test_the_incomplete_banner_clears_when_the_final_round_recovers_the_findings(self) -> None:
+        self.broken = {"decide.review-general"}
+        self.final_decision = {"actions": [comment_on_line_one("recovered")], "overview": "x", "dropped": []}
+        outcome = self.run_pipeline()
+        self.assertNotIn("decide/review-general", outcome.failed)
+
+    def test_the_banner_stays_if_the_final_round_failed_too(self) -> None:
+        self.broken = {"decide.review-general", "decide"}
+        outcome = self.run_pipeline()
+        self.assertIn("decide/review-general", outcome.failed)
+
+    def test_this_runs_own_comments_are_not_counted_as_earlier_threads(self) -> None:
+        # Live threads after a round include the one this run just posted; they must not become "open".
+        own = thread("own", body=f"{render.MARKER}\n🟠 **Major · Safety** — Posted by this run")
+        ctx = review.Context(description="d", title="t", files=[], diff=DIFF, pr_number=7, head_sha="abc",
+                             threads=[thread("old", comment_id=1)], earlier_thread_ids=frozenset({"old"}))
+        gh = FakeGh(responses={"pr view": json.dumps({"headRefOid": "abc"})})
+        with mock.patch.object(review, "gh", gh), mock.patch.object(
+                review, "fetch_threads", return_value=[thread("old", comment_id=1), own]):
+            review.apply_plan(review.Plan(), ctx)
+        self.assertEqual([t["thread_id"] for t in ctx.threads], ["old"])
+
+    def test_this_runs_own_comments_are_left_out_even_when_there_were_no_earlier_threads(self) -> None:
+        own = thread("own")
+        ctx = review.Context(description="d", title="t", files=[], diff=DIFF, pr_number=7, head_sha="abc",
+                             threads=[], earlier_thread_ids=frozenset())
+        gh = FakeGh(responses={"pr view": json.dumps({"headRefOid": "abc"})})
+        with mock.patch.object(review, "gh", gh), mock.patch.object(review, "fetch_threads", return_value=[own]):
+            review.apply_plan(review.Plan(), ctx)
+        self.assertEqual(ctx.threads, [])
+
+    def test_without_a_record_of_earlier_threads_all_live_threads_are_used(self) -> None:
+        ctx = review.Context(description="d", title="t", files=[], diff=DIFF, pr_number=7, head_sha="abc")
+        gh = FakeGh(responses={"pr view": json.dumps({"headRefOid": "abc"})})
+        with mock.patch.object(review, "gh", gh), mock.patch.object(
+                review, "fetch_threads", return_value=[thread("a"), thread("b")]):
+            review.apply_plan(review.Plan(), ctx)
+        self.assertEqual(len(ctx.threads), 2)
+
+    def test_the_pipeline_records_the_threads_it_started_with(self) -> None:
+        self.run_pipeline(post=False)
+        self.assertEqual(self.ctx.earlier_thread_ids, frozenset({"open"}))
+
+    def test_a_comment_posted_by_an_earlier_round_is_not_shown_as_open_from_earlier(self) -> None:
+        """End to end through the real apply_plan: the live threads include the comment a round just posted."""
+        self.round_decisions["decide.review-general"] = {"actions": [comment_on_line_one("Brand new")],
+                                                         "overview": None, "dropped": []}
+        own = thread("own", comment_id=99, body=f"{render.MARKER}\n🟠 **Major · Safety** — Brand new")
+        prompts: list[str] = []
+        orig = self.fake_run_agent
+
+        def spy(agent, prompt, *args, **kwargs):
+            if (kwargs.get("label") or agent.name) == "decide":
+                prompts.append(prompt)
+            return orig(agent, prompt, *args, **kwargs)
+
+        agents = [a for a in self.agents if a.stage in ("triage", "decide")]
+        general = next(a for a in self.agents if a.name == "review-general")
+        agents += [general, dataclasses_replace(general, name=self.slow)]
+        gh = FakeGh(responses={"pr view": json.dumps({"headRefOid": "abc"})})
+        live = [thread("open", comment_id=11), own]  # what GitHub returns once the first round has posted
+        with mock.patch.object(review, "run_agent", spy), mock.patch.object(review, "gh", gh), mock.patch.object(
+                review, "fetch_threads", return_value=live):
+            outcome = review.run_pipeline(self.ctx, agents, Path("."), Path("."), None, post=True)
+        self.assertEqual([t["thread_id"] for t in self.ctx.threads], ["open"])
+        summary = review.build_summary(outcome, outcome.plan, self.ctx)
+        self.assertIn("Brand new", summary)  # listed once, under "New in this review"
+        self.assertEqual(summary.count("Brand new"), 1)
+        self.assertNotIn('"thread_id": "own"', prompts[-1])  # and the final decider is not asked about it
 
     def test_the_decider_uses_a_fast_model_and_the_judging_agents_do_not(self) -> None:
         models = {a.name: a.model for a in self.agents}
