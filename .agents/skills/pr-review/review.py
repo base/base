@@ -75,6 +75,9 @@ SCHEMA_FOR_STAGE = {"triage": "triage", "review": "review", "council": "review",
                     "chair": "chair", "decide": "decide"}
 # Stages that report or post findings get the shared vocabulary and writing guide appended.
 GUIDE_STAGES = frozenset({"review", "council", "chair", "decide"})
+# Stages that explore the code to find problems. The "Working fast" guide caps their tool calls; the
+# chair and decider check other agents' claims and every open thread, so they get no such cap.
+EXPLORING_STAGES = frozenset({"review", "council"})
 
 
 class ReviewError(Exception):
@@ -279,7 +282,8 @@ def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path, model_
     system_prompt = agent.prompt
     if agent.stage in GUIDE_STAGES:
         system_prompt += "\n\n" + FINDING_GUIDE.read_text().strip()
-    system_prompt += "\n\n" + WORKING_GUIDE.read_text().strip()
+    if agent.stage in EXPLORING_STAGES:
+        system_prompt += "\n\n" + WORKING_GUIDE.read_text().strip()
     (artifacts / f"{label}.prompt.md").write_text(
         f"model: {model}\neffort: {agent.effort}\ntools: {agent.tools}\n\n"
         f"# System prompt\n\n{system_prompt}\n\n# User prompt\n\n{user_prompt}\n")
@@ -781,12 +785,19 @@ def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None]
     if live_threads is None:
         # Without a current view nothing is safe to change; the next push decides again.
         plan.back += [i["thread_id"] for i in plan.reopens]
-        plan.resolves, plan.reopens = [], []
+        plan.resolves, plan.reopens, plan.replies = [], [], []
     else:
         # The summary is written from the threads as they are now, not as they were an hour ago.
         ctx.threads = live_threads
         plan.resolves = [i for i in plan.resolves if unchanged(i, expect_marked=False)]
-        plan.reopens = [i for i in plan.reopens if unchanged(i, expect_marked=True)]
+        kept = [i for i in plan.reopens if unchanged(i, expect_marked=True)]
+        # A reopen that was dropped because the comment changed still means the problem is back, so
+        # keep the thread in the summary as long as it is still open and marked on GitHub.
+        plan.back += [i["thread_id"] for i in plan.reopens if i not in kept
+                      and (t := live.get(i["thread_id"])) and t["owned_by_bot"] and not t["resolved"]
+                      and t["bot_resolved"]]
+        plan.reopens = kept
+        plan.replies = [i for i in plan.replies if (t := live.get(i["thread_id"])) and not t["resolved"]]
 
     def edit_comment(item: dict[str, Any], body: str) -> bool:
         return attempt(f"edit comment {item['comment_id']}",
