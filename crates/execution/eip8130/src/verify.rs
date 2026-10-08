@@ -70,6 +70,9 @@ impl ActorTxVerifier {
 
         let payer = match tx.payer {
             None => {
+                if !signed.payer_auth().is_empty() {
+                    return Err(TxAuthError::UnexpectedPayerAuth);
+                }
                 // Implicit self-pay: the sender covers its own gas, so its actor
                 // must be granted SELF_PAYER (or be admin).
                 if !Operation::SelfPayer.is_granted(&sender.resolved) {
@@ -282,6 +285,21 @@ mod tests {
             assert_eq!(actors.sender.account, account);
             assert!(actors.sender.resolved.is_admin());
             assert!(actors.payer.is_none());
+        });
+    }
+
+    #[test]
+    fn self_pay_with_payer_auth_is_rejected() {
+        let k = key(0x11);
+        let tx = base_tx(None, None);
+        let hash = tx.sender_signature_hash();
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from(sig(&k, hash)), Bytes::from_static(&[0xab; 32]));
+        with_storage(|acc| {
+            assert_eq!(
+                ActorTxVerifier::verify(&signed, acc, NOW),
+                Err(TxAuthError::UnexpectedPayerAuth)
+            );
         });
     }
 
