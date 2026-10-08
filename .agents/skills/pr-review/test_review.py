@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Unit tests for review.py and render.py. Run with `python3 .agents/skills/pr-review/test_review.py`."""
 
+import dataclasses
 import json
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -44,6 +46,10 @@ def thread(thread_id: str, *, resolved: bool = False, bot: bool = True, body: st
 def resolved_by_bot(thread_id: str, original: str = "**Major:** One.") -> dict:
     """A thread the bot has already marked as resolved by editing its comment."""
     return thread(thread_id, body=render.mark_resolved(f"{render.MARKER}\n{original}", "fixed in `run`"))
+
+
+def dataclasses_replace(agent, **changes):
+    return dataclasses.replace(agent, **changes)
 
 
 def comment(**overrides) -> dict:
@@ -626,60 +632,33 @@ class PrContextTests(unittest.TestCase):
         self.assertEqual(self.context(gh_fn, checked_out="b" * 40, post=False).head_sha, self.HEAD)
 
 
-class BudgetTests(unittest.TestCase):
-    def agent(self, timeout: int = 1000) -> review.Agent:
-        return review.Agent("a", "review", ("always",), "m", "high", "Read", timeout, None, None, "p",
-                            Path("a.md"))
-
-    def test_timeout_shrinks_to_leave_time_for_later_stages(self) -> None:
-        budget = review.Budget(2000)
-        self.assertEqual(budget.timeout_for(1000, "a"), 1000)
-        self.assertLessEqual(budget.timeout_for(1000, "a", reserve=1500), 500)
-
-    def test_stage_is_skipped_when_the_budget_is_spent(self) -> None:
-        with self.assertRaises(review.ReviewError):
-            review.Budget(100).timeout_for(1000, "a", reserve=90)
-
-    def test_the_decider_always_gets_its_full_time_even_if_every_stage_uses_all_of_its_own(self) -> None:
-        agents = {a.name: a for a in review.load_agents()}
-        members = [a for a in agents.values() if a.stage == "council"]
-        decide, chair = agents["decide"], agents["council-chair"]
-        now = [0.0]
-        with mock.patch.object(review.time, "monotonic", lambda: now[0]):
-            budget = review.Budget(review.DEFAULT_BUDGET_SECONDS)
-
-            def spend(wanted: int, reserve: float) -> None:
-                now[0] += budget.timeout_for(wanted, "stage", reserve)
-
-            spend(agents["triage"].timeout_seconds, decide.timeout_seconds)
-            spend(max(m.timeout_seconds for m in members),
-                  decide.timeout_seconds + review.VOTE_TIMEOUT_SECONDS + chair.timeout_seconds)
-            spend(review.VOTE_TIMEOUT_SECONDS, decide.timeout_seconds + chair.timeout_seconds)
-            spend(chair.timeout_seconds, decide.timeout_seconds)
-            # Every stage ran as long as it was allowed to; the decider must still fit in full.
-            self.assertEqual(budget.timeout_for(decide.timeout_seconds, "decide"), decide.timeout_seconds)
-            now[0] += decide.timeout_seconds
-            # And the whole run ends with time to spare in the CI job.
-            self.assertLessEqual(now[0], JOB_LIMIT_SECONDS - 300)
-
-    def test_the_default_budget_leaves_the_ci_job_time_to_post(self) -> None:
-        self.assertLessEqual(review.DEFAULT_BUDGET_SECONDS, JOB_LIMIT_SECONDS - 300)
-        if WORKFLOW is not None:
-            self.assertIn(f"timeout-minutes: {JOB_LIMIT_SECONDS // 60}\n", WORKFLOW.read_text())
-
-    def test_a_deep_review_is_meant_to_take_about_five_minutes(self) -> None:
-        # The whole pipeline stops at the budget, and no single agent may be allowed more than 3 minutes.
-        self.assertLessEqual(review.DEFAULT_BUDGET_SECONDS, 8 * 60)
+class LimitTests(unittest.TestCase):
+    def test_agents_have_no_time_limit_unless_their_file_sets_one(self) -> None:
         for agent in review.load_agents():
             with self.subTest(agent=agent.name):
-                self.assertLessEqual(agent.timeout_seconds, 180)
+                self.assertIsNone(agent.timeout_seconds)
 
-    def test_a_stage_that_ate_the_reserve_is_skipped_not_run_over(self) -> None:
-        with mock.patch.object(review.time, "monotonic", lambda: 0.0):
-            budget = review.Budget(1000)
-            self.assertLessEqual(budget.timeout_for(5000, "a", reserve=900), 100)
-            with self.assertRaises(review.ReviewError):
-                budget.timeout_for(5000, "a", reserve=990)
+    def test_a_limit_in_an_agent_file_is_still_honoured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "x.md"
+            path.write_text("---\nstage: review\nmodel: m\ntimeout_seconds: 90\n---\nx")
+            self.assertEqual(review.parse_agent(path).timeout_seconds, 90)
+
+    def test_the_cli_is_run_without_a_timeout_when_the_agent_has_none(self) -> None:
+        agent = review.Agent("a", "review", ("always",), "m", "high", "Read", None, None, None, "p", Path("a.md"))
+        envelope = json.dumps({"is_error": False, "structured_output": {"findings": []}, "total_cost_usd": 0,
+                               "modelUsage": {"m": {}}})
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(review, "run", return_value=envelope) as run:
+            review.run_agent(agent, "p", Path(tmp), Path(tmp), None)
+        self.assertIsNone(run.call_args.kwargs["timeout"])
+
+    def test_the_review_has_no_whole_run_budget(self) -> None:
+        self.assertFalse(hasattr(review, "Budget"))
+        self.assertFalse(hasattr(review, "DEFAULT_BUDGET_SECONDS"))
+
+    def test_the_job_limit_in_the_workflow_is_the_backstop(self) -> None:
+        if WORKFLOW is not None:
+            self.assertIn(f"timeout-minutes: {JOB_LIMIT_SECONDS // 60}\n", WORKFLOW.read_text())
 
     def test_gh_calls_are_bounded(self) -> None:
         with mock.patch.object(review, "run", return_value="") as run:
@@ -788,40 +767,6 @@ class AgentRunTests(unittest.TestCase):
         review.MODELS_RAN.clear()
         self.call(self.agent(name="alias-agent", model="opus"), [self.envelope()])
         self.assertEqual(review.MODELS_RAN["alias-agent"], "resolved-model")
-
-    def test_a_retry_gets_only_the_time_that_is_left(self) -> None:
-        empty = json.dumps({"is_error": False, "structured_output": None})
-        now = [0.0]
-        timeouts: list[int] = []
-
-        def slow_first(cmd, **kwargs):
-            timeouts.append(kwargs["timeout"])
-            now[0] += 800  # the first attempt uses almost all of its time and returns nothing
-            return empty if len(timeouts) == 1 else self.envelope()
-
-        with mock.patch.object(review.time, "monotonic", lambda: now[0]):
-            budget = review.Budget(1000)
-            with tempfile.TemporaryDirectory() as tmp, mock.patch.object(review, "run", side_effect=slow_first):
-                review.run_agent(self.agent(timeout_seconds=900), "p", Path(tmp), Path(tmp), None,
-                                 budget=budget, reserve=0)
-        self.assertEqual(timeouts[0], 900)
-        self.assertLessEqual(timeouts[1], 200)
-
-    def test_no_retry_when_the_budget_is_spent(self) -> None:
-        empty = json.dumps({"is_error": False, "structured_output": None})
-        now = [0.0]
-
-        def use_it_all(cmd, **kwargs):
-            now[0] += 990
-            return empty
-
-        with mock.patch.object(review.time, "monotonic", lambda: now[0]):
-            budget = review.Budget(1000)
-            with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
-                    review, "run", side_effect=use_it_all) as run, self.assertRaises(review.ReviewError):
-                review.run_agent(self.agent(timeout_seconds=900), "p", Path(tmp), Path(tmp), None,
-                                 budget=budget, reserve=0)
-        self.assertEqual(run.call_count, 1)
 
     def test_an_empty_answer_is_retried_once(self) -> None:
         empty = json.dumps({"is_error": False, "structured_output": None, "subtype": "success", "result": ""})
@@ -1159,6 +1104,7 @@ class PipelineFailureTests(unittest.TestCase):
         self.agents = review.load_agents()
         self.calls: list[str] = []
         self.failing: set[str] = set()
+        self.decisions: dict[str, dict] = {}
         self.triage = {"depth": "deep", "block_production_sensitive": False, "reasoning": "r", "focus_areas": []}
         self.finding = {"title": "t", "severity": "major", "category": "safety", "confidence": "high",
                         "path": "src/a.rs", "line": 1, "explanation": "e"}
@@ -1177,12 +1123,12 @@ class PipelineFailureTests(unittest.TestCase):
         if agent.stage == "chair":
             return {"findings": []}
         if agent.stage == "decide":
-            return {"actions": [], "overview": None, "dropped": []}
+            return self.decisions.get(label, {"actions": [], "overview": None, "dropped": []})
         return {"findings": [self.finding] if agent.name == "council-adversary" else []}
 
-    def run_pipeline(self) -> review.Outcome:
+    def run_pipeline(self, post: bool = False) -> review.Outcome:
         with mock.patch.object(review, "run_agent", self.fake_run_agent):
-            return review.run_pipeline(self.ctx, self.agents, Path("."), Path("."), None, review.Budget(10_000))
+            return review.run_pipeline(self.ctx, self.agents, Path("."), Path("."), None, post=post)
 
     def test_deep_change_runs_council_votes_chair_and_decide(self) -> None:
         outcome = self.run_pipeline()
@@ -1227,18 +1173,192 @@ class PipelineFailureTests(unittest.TestCase):
         self.assertIn("council/council-design", outcome.failed)
         self.assertIn("council-chair", self.calls)
 
-    def test_a_failed_decider_still_yields_a_summary_that_says_so(self) -> None:
+    def test_a_failed_final_round_still_yields_a_summary_that_says_so(self) -> None:
         self.failing = {"decide"}
         outcome = self.run_pipeline()
         self.assertIn("decide", outcome.failed)
-        plan = review.build_plan(outcome.decision, [], review.diff_new_lines(DIFF))
-        self.assertEqual(plan.new, [])
         self.assertIn("final step failed", outcome.decision["overview"])
 
     def test_every_reviewer_failing_is_an_error(self) -> None:
         self.failing = {"review-general", "council-invariants", "council-adversary", "council-design"}
         with self.assertRaises(review.ReviewError):
             self.run_pipeline()
+
+
+def comment_on_line_one(title: str, **extra) -> dict:
+    return {"type": "comment", "path": "src/a.rs", "line": 1, "title": title, "body": f"{title} happens.",
+            "severity": "major", "category": "safety", **extra}
+
+
+class RoundTests(unittest.TestCase):
+    """Findings are decided and posted as each reviewer finishes; a final round does the threads."""
+
+    def setUp(self) -> None:
+        self.ctx = review.Context(description="d", title="t", files=["src/a.rs"], diff=DIFF, pr_number=7,
+                                  head_sha="abc", threads=[thread("open", comment_id=11)])
+        self.agents = review.load_agents()
+        self.events: list[str] = []
+        self.release = threading.Event()
+        self.round_decisions: dict[str, dict] = {}
+        self.final_decision: dict = {"actions": [], "overview": "Done.", "dropped": []}
+        self.slow = "council-invariants"
+        self.fail: set[str] = set()
+        self.finding = {"title": "f", "severity": "major", "category": "safety", "confidence": "high",
+                        "path": "src/a.rs", "line": 1, "explanation": "e"}
+
+    def fake_run_agent(self, agent, prompt, cwd, artifacts, model_override, *, schema=None, label=None, **_):
+        label = label or agent.name
+        if agent.stage == "decide" and label == "decide.review-general":
+            self.release.set()  # the slow reviewer may finish once the first round has been attempted
+        if label in self.fail:
+            raise review.ReviewError(f"{label} broke")
+        review.MODELS_RAN[agent.name] = agent.model
+        if agent.stage == "triage":
+            return {"depth": "standard", "block_production_sensitive": False, "reasoning": "r", "focus_areas": []}
+        if agent.stage == "decide":
+            if label == "decide":
+                self.events.append("final-round")
+                return self.final_decision
+            self.events.append(f"round:{label.removeprefix('decide.')}")
+            return self.round_decisions.get(label, {"actions": [], "overview": None, "dropped": []})
+        if agent.name == self.slow and self.finding is not None:
+            assert self.release.wait(10), "the first findings were not decided while this reviewer was running"
+        return {"findings": [self.finding] if self.finding is not None else []}
+
+    def apply(self, round_plan: review.Plan, ctx, summarize=None) -> list[str]:
+        self.events.append(f"post:{len(round_plan.new)}c/{len(round_plan.replies)}r")
+        return []
+
+    def run_pipeline(self, post: bool = True, reviewers: str = "review-general") -> review.Outcome:
+        # A standard change with the general reviewer, plus a second reviewer that is slow.
+        agents = [a for a in self.agents if a.stage in ("triage", "decide")]
+        general = next(a for a in self.agents if a.name == "review-general")
+        slow = dataclasses_replace(general, name=self.slow)
+        agents += [general, slow]
+        with mock.patch.object(review, "run_agent", self.fake_run_agent), mock.patch.object(
+                review, "apply_plan", self.apply):
+            return review.run_pipeline(self.ctx, agents, Path("."), Path("."), None, post=post)
+
+    def test_the_first_reviewers_findings_are_posted_while_the_slow_one_is_still_running(self) -> None:
+        self.round_decisions["decide.review-general"] = {"actions": [comment_on_line_one("fast")],
+                                                         "overview": None, "dropped": []}
+        self.run_pipeline()
+        # The slow reviewer only returns after the first round was decided (see fake_run_agent), and the
+        # first round was posted before the slow reviewer's own round.
+        self.assertLess(self.events.index("round:review-general"), self.events.index(f"round:{self.slow}"))
+        self.assertLess(self.events.index("post:1c/0r"), self.events.index(f"round:{self.slow}"))
+        self.assertEqual(self.events[-2:], ["final-round", "post:0c/0r"])
+
+    def test_a_findings_round_may_only_comment_or_reply(self) -> None:
+        self.round_decisions["decide.review-general"] = {"actions": [
+            comment_on_line_one("ok"), {"type": "resolve", "thread_id": "open", "body": "x"},
+            {"type": "reopen", "thread_id": "open", "body": "x"}], "overview": "ignored", "dropped": []}
+        outcome = self.run_pipeline()
+        self.assertEqual((len(outcome.plan.new), outcome.plan.resolves, outcome.plan.reopens), (1, [], []))
+        self.assertEqual(len([r for r in outcome.plan.rejected if "not allowed in this round" in r]), 2)
+
+    def test_the_final_round_may_not_post_new_findings_unless_a_round_failed(self) -> None:
+        self.final_decision = {"actions": [comment_on_line_one("late")], "overview": "x", "dropped": []}
+        outcome = self.run_pipeline()
+        self.assertEqual(outcome.plan.new, [])
+        self.assertTrue([r for r in outcome.plan.rejected if "comment: not allowed" in r])
+
+    def test_the_final_round_takes_findings_from_a_round_that_failed(self) -> None:
+        self.fail = {"decide.review-general"}
+        self.final_decision = {"actions": [comment_on_line_one("recovered")], "overview": "x", "dropped": []}
+        outcome = self.run_pipeline()
+        self.assertEqual([f.title for f in outcome.plan.new], ["recovered"])
+        self.assertIn("decide/review-general", outcome.failed)
+
+    def test_the_final_round_resolves_threads(self) -> None:
+        self.final_decision = {"actions": [{"type": "resolve", "thread_id": "open", "body": "fixed"}],
+                               "overview": "x", "dropped": []}
+        outcome = self.run_pipeline()
+        self.assertEqual([r["thread_id"] for r in outcome.plan.resolves], ["open"])
+
+    def test_the_same_problem_is_not_posted_by_two_rounds(self) -> None:
+        for name in ("review-general", self.slow):
+            self.round_decisions[f"decide.{name}"] = {"actions": [comment_on_line_one("Same problem")],
+                                                       "overview": None, "dropped": []}
+        outcome = self.run_pipeline()
+        self.assertEqual(len(outcome.plan.new), 1)
+
+    def test_inline_comments_across_rounds_stay_under_the_cap(self) -> None:
+        for name in ("review-general", self.slow):
+            self.round_decisions[f"decide.{name}"] = {"actions": [
+                comment_on_line_one(f"{name} {i}", line=1 + (i % 4)) for i in range(review.MAX_INLINE_COMMENTS)],
+                "overview": None, "dropped": []}
+        outcome = self.run_pipeline()
+        self.assertLessEqual(len(outcome.plan.new), review.MAX_INLINE_COMMENTS)
+        self.assertGreaterEqual(len(outcome.plan.new) + len(outcome.plan.outside), review.MAX_INLINE_COMMENTS)
+
+    def test_nothing_is_posted_without_post(self) -> None:
+        self.round_decisions["decide.review-general"] = {"actions": [comment_on_line_one("x")],
+                                                         "overview": None, "dropped": []}
+        outcome = self.run_pipeline(post=False)
+        self.assertFalse([e for e in self.events if e.startswith("post:")])
+        self.assertEqual(len(outcome.plan.new), 1)
+
+    def test_a_reviewer_with_no_findings_needs_no_round(self) -> None:
+        self.finding = None
+        self.run_pipeline()
+        self.assertFalse([e for e in self.events if e.startswith("round:")])
+        self.assertIn("final-round", self.events)
+
+    def test_a_pull_request_that_moved_on_stops_further_posting(self) -> None:
+        for name in ("review-general", self.slow):
+            self.round_decisions[f"decide.{name}"] = {"actions": [comment_on_line_one(f"{name} problem")],
+                                                       "overview": None, "dropped": []}
+        posted: list[int] = []
+
+        def stale_after_first(round_plan, ctx, summarize=None):
+            posted.append(len(round_plan.new))
+            if len(posted) > 1:
+                raise review.ReviewError("the pull request has a newer commit than the one reviewed")
+            return []
+
+        agents = [a for a in self.agents if a.stage in ("triage", "decide")]
+        general = next(a for a in self.agents if a.name == "review-general")
+        agents += [general, dataclasses_replace(general, name=self.slow)]
+        with mock.patch.object(review, "run_agent", self.fake_run_agent), mock.patch.object(
+                review, "apply_plan", stale_after_first):
+            outcome = review.run_pipeline(self.ctx, agents, Path("."), Path("."), None, post=True)
+        self.assertTrue(outcome.stale)
+        self.assertEqual(len(posted), 2)  # the third round (the final one) was not even tried
+        self.assertTrue([p for p in outcome.problems if "newer commit" in p])
+
+    def test_run_parallel_calls_the_hook_as_each_job_finishes(self) -> None:
+        order: list[tuple[str, set[str]]] = []
+        gate = threading.Event()
+
+        def fast():
+            return "fast"
+
+        def slow():
+            assert gate.wait(10)
+            return "slow"
+
+        def on_done(name, result, running):
+            order.append((name, running))
+            if name == "fast":
+                gate.set()
+
+        results, failures = review.run_parallel({"fast": fast, "slow": slow}, on_done=on_done)
+        self.assertEqual((results, failures), ({"fast": "fast", "slow": "slow"}, {}))
+        self.assertEqual(order, [("fast", {"slow"}), ("slow", set())])
+
+    def test_a_failed_job_is_not_passed_to_the_hook(self) -> None:
+        def boom():
+            raise review.ReviewError("no")
+
+        seen: list[str] = []
+        _, failures = review.run_parallel({"a": boom, "b": lambda: 1}, on_done=lambda n, r, run: seen.append(n))
+        self.assertEqual((seen, list(failures)), (["b"], ["a"]))
+
+    def test_the_decider_uses_a_fast_model_and_the_judging_agents_do_not(self) -> None:
+        models = {a.name: a.model for a in self.agents}
+        self.assertEqual(models["decide"], "sonnet")
+        self.assertEqual(models["council-chair"], "opus")  # it checks other models' claims against the code
 
 
 if __name__ == "__main__":
