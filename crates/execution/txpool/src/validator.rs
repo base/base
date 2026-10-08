@@ -95,6 +95,7 @@ struct Eip8130ValidationState {
     sender_locked: bool,
     payer_locked: bool,
     payer_trusted: bool,
+    payer_allowlisted: bool,
     payer_max_cost: U256,
     /// Authorization reads and predicates used for build-time revalidation.
     manifest: WatchManifest,
@@ -108,12 +109,19 @@ pub struct LimitClassCache {
     entries: LruCache<Address, (Option<AccountState>, Option<bool>)>,
     // A slot mapping exists exactly while its account's cached lock state is present.
     slots: HashMap<B256, Address>,
+    // Allowlisted payers validated since their last balance change. Bounded by
+    // the operator allowlist, so it needs no eviction.
+    allowlisted_validations: AddressSet,
 }
 
 impl LimitClassCache {
     /// Creates an empty cache with the supplied non-zero account capacity.
     pub fn new(capacity: NonZeroUsize) -> Self {
-        Self { entries: LruCache::new(capacity), slots: HashMap::new() }
+        Self {
+            entries: LruCache::new(capacity),
+            slots: HashMap::new(),
+            allowlisted_validations: AddressSet::default(),
+        }
     }
 
     /// Returns and marks as recently used the cached account state, if present.
@@ -195,6 +203,19 @@ impl LimitClassCache {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.slots.clear();
+        self.allowlisted_validations.clear();
+    }
+
+    /// Records that an allowlisted payer was just validated, so its next
+    /// balance change advances the classification generation.
+    pub fn mark_allowlisted_validation(&mut self, payer: Address) {
+        self.allowlisted_validations.insert(payer);
+    }
+
+    /// Whether an allowlisted payer was validated since its last balance
+    /// change, clearing the record.
+    pub fn take_allowlisted_validation(&mut self, payer: Address) -> bool {
+        self.allowlisted_validations.remove(&payer)
     }
 }
 
@@ -682,6 +703,9 @@ pub struct BaseTransactionValidator<Client, Tx, Evm> {
     /// implementations. Precomputed so classification is an O(1) code-hash lookup
     /// with no code fetch or bytecode parsing.
     trusted_proxy_code_hashes: Arc<HashSet<B256>>,
+    /// Operator-allowlisted payers: count-limited at their own cap and
+    /// balance-bounded through a payer book.
+    allowlisted_payers: Arc<AddressSet>,
     limit_class_cache: Arc<RwLock<LimitClassCache>>,
     limit_class_cache_generation: Arc<AtomicU64>,
 }
@@ -750,6 +774,16 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
         }
     }
 
+    /// Sets the operator-allowlisted payers. An allowlisted payer that is not
+    /// trusted is limited to [`crate::GuardLimits::allowlisted_payment_limit`]
+    /// inflight payments and also balance-bounded through a payer book: its
+    /// balance can still move, so the count caps the exposure while the book
+    /// tracks it against canonical balance updates.
+    #[must_use]
+    pub fn with_allowlisted_payers(self, payers: impl IntoIterator<Item = Address>) -> Self {
+        Self { allowlisted_payers: Arc::new(payers.into_iter().collect()), ..self }
+    }
+
     /// Returns the cache generation used to close validation/invalidation races.
     pub fn limit_class_cache_generation(&self) -> u64 {
         self.limit_class_cache_generation.load(Ordering::Acquire)
@@ -775,19 +809,24 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
                 }
             }
             // A balance change is not part of the cached classification, but it
-            // seeds a trusted payer's `PayerBook` on first admission.
-            // `on_balance_changed` only corrects payers that already have a book;
-            // a trusted payer with no book yet would otherwise seed it from the
-            // (now stale) validation snapshot. Advance the generation so an
-            // admission whose validation predates this diff re-validates against
-            // the fresh balance.
+            // seeds a booked (trusted or allowlisted) payer's `PayerBook` on
+            // first admission. `on_balance_changed` only corrects payers that
+            // already have a book; a booked payer with no book yet would
+            // otherwise seed it from the (now stale) validation snapshot.
+            // Advance the generation so an admission whose validation predates
+            // this diff re-validates against the fresh balance.
             //
-            // Restricted to *known-trusted* payers: only they use the balance
-            // book, and a trusted payer with a pending transaction was just
-            // classified into the cache during that validation. Ordinary balance
-            // churn — the vast majority, and unrelated to any book — must not
-            // advance the generation and bounce unrelated admissions.
-            if diff.balance.is_some() && cache.is_trusted_cached(diff.address) {
+            // Restricted to payers that use a book and could have a validation
+            // in flight: known-trusted payers (a trusted payer with a pending
+            // transaction was just classified into the cache during that
+            // validation) and allowlisted payers validated since their last
+            // balance change. Ordinary balance churn — the vast majority, and
+            // unrelated to any book — must not advance the generation and
+            // bounce unrelated admissions, which fail as stale.
+            if diff.balance.is_some()
+                && (cache.is_trusted_cached(diff.address)
+                    || cache.take_allowlisted_validation(diff.address))
+            {
                 changed = true;
             }
         }
@@ -841,6 +880,7 @@ where
             require_l1_data_gas_fee: true,
             trusted_delegation_targets: Arc::new(trusted_delegation_targets),
             trusted_proxy_code_hashes: Arc::new(trusted_proxy_code_hashes),
+            allowlisted_payers: Arc::default(),
             limit_class_cache: Arc::default(),
             limit_class_cache_generation: Arc::default(),
         }
@@ -936,6 +976,7 @@ where
                 sender_locked: state.sender_locked,
                 payer_locked: state.payer_locked,
                 payer_trusted: state.payer_trusted,
+                payer_allowlisted: state.payer_allowlisted,
                 payer_balance: state.payer_balance,
                 max_cost: state.payer_max_cost,
             });
@@ -1051,6 +1092,13 @@ where
             .record(auth_start.elapsed().as_secs_f64());
         let (sender, payer, sender_actor, is_create, payer_actor) =
             auth_result.map_err(Self::map_tx_auth_error)?;
+        // Record the validation as soon as the payer is known, so a balance
+        // change that lands before admission invalidates it (see
+        // `invalidate_limit_class_cache`).
+        let payer_allowlisted = self.allowlisted_payers.contains(&payer);
+        if payer_allowlisted {
+            self.limit_class_cache.write().mark_allowlisted_validation(payer);
+        }
         let authorization_code_reads = storage.code_reads.clone();
         let config_reads = storage.take_reads();
 
@@ -1306,9 +1354,13 @@ where
             sender_bytecode_hash: sender_account.bytecode_hash,
             payer_auth: intrinsic.payer_auth,
             watch_set,
-            sender_locked,
-            payer_locked,
+            // Without the Keystore an account's only key is its own secp256k1
+            // key, which can never change: its authorization is as stable as a
+            // locked account's, so it is exempt from the signature limit.
+            sender_locked: sender_locked || !keystore,
+            payer_locked: payer_locked || !keystore,
             payer_trusted,
+            payer_allowlisted,
             payer_max_cost,
             manifest,
         })
@@ -2080,6 +2132,59 @@ mod tests {
             code_changed: false,
             changed_slots: Vec::new(),
         }
+    }
+
+    /// An allowlisted payer also seeds a balance book on first admission, so a
+    /// balance change after its validation advances the generation, as for a
+    /// trusted payer: an admission validated against the old balance
+    /// re-validates instead of seeding a stale book. An allowlisted payer with
+    /// no validation since its last balance change must not advance it, so its
+    /// balance churn does not bounce unrelated admissions.
+    #[test]
+    fn allowlisted_payer_balance_diff_advances_generation_only_after_validation() {
+        let allowlisted = Address::repeat_byte(7);
+        let validator = build_test_validator().with_allowlisted_payers([allowlisted]);
+        let before = validator.limit_class_cache_generation();
+        validator.invalidate_limit_class_cache(&[balance_diff(allowlisted, 1)]);
+        assert_eq!(validator.limit_class_cache_generation(), before, "idle payer");
+
+        validator.limit_class_cache.write().mark_allowlisted_validation(allowlisted);
+        validator.invalidate_limit_class_cache(&[balance_diff(allowlisted, 2)]);
+        let after = validator.limit_class_cache_generation();
+        assert!(after > before, "a validated payer's balance change advances the generation");
+
+        validator.invalidate_limit_class_cache(&[balance_diff(allowlisted, 3)]);
+        assert_eq!(
+            validator.limit_class_cache_generation(),
+            after,
+            "the record is consumed; churn without a new validation does not advance it"
+        );
+    }
+
+    /// Validation classifies an allowlisted payer so admission can count and
+    /// book it.
+    #[test]
+    fn validation_classifies_allowlisted_payers() {
+        let signer = PrivateKeySigner::random();
+        let sender = signer.address();
+        let tx = TxEip8130 { gas_limit: 100_000, ..minimal_valid_eoa_tx() };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let funded = ExtendedAccount::new(0, U256::from(1_000_000_000_000u64));
+
+        let ordinary = build_test_validator_with_account(sender, funded.clone())
+            .validate_eip8130_full(&signed)
+            .unwrap();
+        assert!(!ordinary.payer_allowlisted);
+        let validator =
+            build_test_validator_with_account(sender, funded).with_allowlisted_payers([sender]);
+        let allowlisted = validator.validate_eip8130_full(&signed).unwrap();
+        assert!(allowlisted.payer_allowlisted, "the self-paying sender is its own payer");
+        assert!(
+            validator.limit_class_cache.write().take_allowlisted_validation(sender),
+            "validation records the allowlisted payer for balance-diff invalidation"
+        );
     }
 
     #[test]
@@ -3414,8 +3519,9 @@ mod tests {
     }
 
     /// Before Zenith, admitting an EOA transaction reads no Keystore state, so
-    /// no `AccountConfiguration` slot is captured or watched; at Zenith the
-    /// same transaction depends on the account's Keystore state.
+    /// no `AccountConfiguration` slot is captured or watched and the signer is
+    /// exempt from the signature limit; at Zenith the same transaction depends
+    /// on the account's Keystore state.
     #[test]
     fn eip8130_admission_reads_keystore_only_at_zenith() {
         let signer = PrivateKeySigner::random();
@@ -3437,6 +3543,10 @@ mod tests {
             .expect("EOA transaction is admitted before Zenith");
         assert!(everest.manifest.has_no_config_slots());
         assert!(!watches_keystore(&everest));
+        assert!(
+            everest.sender_locked && everest.payer_locked,
+            "without the Keystore a signer's key cannot change, so it is exempt from the signature limit"
+        );
 
         let zenith =
             build_test_validator_with_account_and_spec(sender, funded(), zenith_chain_spec())
@@ -3444,6 +3554,7 @@ mod tests {
                 .expect("EOA transaction is admitted at Zenith");
         assert!(!zenith.manifest.has_no_config_slots());
         assert!(watches_keystore(&zenith));
+        assert!(!zenith.sender_locked, "an unlocked Keystore account is signature-limited");
     }
 
     /// Admission reserves only the transaction's fees: call value is not

@@ -51,8 +51,8 @@ use base_common_consensus::{AccountChange, Delegation, Eip8130Constants, Predepl
 use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_execution_eip8130::{
     AccountChangeApplier, AccountConfigurationStorage, ApplyError, DelegationEffect,
-    Eip8130GasSchedule, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator,
-    TransactionAuthorizer,
+    Eip8130GasSchedule, FeeCheck, FeeError, IntrinsicGas, IntrinsicGasInput, NonceMode,
+    NonceValidator, TransactionAuthorizer,
 };
 use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 use revm::{
@@ -61,7 +61,7 @@ use revm::{
     context_interface::{
         Block, Cfg, ContextTr, JournalTr,
         context::take_error,
-        result::{EVMError, ExecutionResult, Output, ResultGas, SuccessReason},
+        result::{EVMError, ExecutionResult, InvalidTransaction, Output, ResultGas, SuccessReason},
     },
     handler::{EthFrame, EvmTr, FrameResult, Handler, PrecompileProvider},
     inspector::{InspectorEvmTr, InspectorHandler, JournalExt},
@@ -1144,7 +1144,12 @@ impl Eip8130Executor {
                 .with_account_info(payer, |info| Ok(info.balance))
                 .map_err(BaseTransactionError::eip8130)?;
             FeeCheck::validate_balance(payer_balance, gas_limit, intrinsic.payer_auth, max_fee)
-                .map_err(BaseTransactionError::eip8130)?;
+                .map_err(|error| match error {
+                    FeeError::InsufficientBalance { balance, required } => {
+                        Self::payer_cannot_pay(balance, required)
+                    }
+                    error => BaseTransactionError::eip8130(error),
+                })?;
 
             // 6. Publish the transaction context (sender / payer / actor id) so it
             //    is readable by the `TxContext` precompile during `calls`.
@@ -1211,11 +1216,10 @@ impl Eip8130Executor {
 
         let mut payer_acc =
             ctx.journal_mut().load_account_mut(outcome.payer).map_err(EVMError::Database)?;
-        let debited = payer_acc.balance().checked_sub(prepay).ok_or_else(|| {
-            EVMError::Transaction(BaseTransactionError::eip8130(
-                "payer balance is below the worst-case fee",
-            ))
-        })?;
+        let balance = *payer_acc.balance();
+        let debited = balance
+            .checked_sub(prepay)
+            .ok_or_else(|| EVMError::Transaction(Self::payer_cannot_pay(balance, prepay)))?;
         payer_acc.set_balance(debited);
 
         Ok(prepay)
@@ -1878,6 +1882,19 @@ impl Eip8130Executor {
         Ok((intrinsic, execution_gas_available))
     }
 
+    /// The rejection for a payer whose balance cannot cover the worst-case fee.
+    ///
+    /// Reported as revm's `LackOfFundForMaxFee` (not an EIP-8130-specific
+    /// error) so the builder skips the transaction like any other one that
+    /// cannot pay, rather than aborting the payload: a payer's balance can
+    /// change after admission, including earlier in the same block.
+    fn payer_cannot_pay(balance: U256, required: U256) -> BaseTransactionError {
+        BaseTransactionError::Base(InvalidTransaction::LackOfFundForMaxFee {
+            fee: Box::new(required),
+            balance: Box::new(balance),
+        })
+    }
+
     /// The rejection for an EIP-8130 transaction under a spec before Everest.
     fn not_active_error() -> BaseTransactionError {
         BaseTransactionError::eip8130("EIP-8130 transactions are not active before Everest")
@@ -1901,7 +1918,7 @@ impl Eip8130Executor {
 
 #[cfg(test)]
 mod tests {
-    use alloy_evm::{Evm, FromTxWithEncoded, precompiles::PrecompilesMap};
+    use alloy_evm::{Evm, EvmError, FromTxWithEncoded, precompiles::PrecompilesMap};
     use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, keccak256};
     use alloy_sol_types::{SolEvent, SolValue, sol};
     use base_common_consensus::{
@@ -2962,7 +2979,18 @@ mod tests {
         // Far below the worst-case charge (gas_limit · max_fee_per_gas).
         let mut evm = evm_with(U256::from(1_000u64), sender);
         let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
-        assert!(matches!(err, EVMError::Transaction(BaseTransactionError::Eip8130(_))));
+        assert!(
+            matches!(
+                err,
+                EVMError::Transaction(BaseTransactionError::Base(
+                    InvalidTransaction::LackOfFundForMaxFee { .. }
+                ))
+            ),
+            "got {err:?}"
+        );
+        // An invalid-transaction error, so the builder skips the transaction
+        // instead of aborting the payload.
+        assert!(err.as_invalid_tx_err().is_some());
     }
 
     #[test]
