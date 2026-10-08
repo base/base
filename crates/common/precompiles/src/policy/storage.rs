@@ -94,10 +94,6 @@ impl PolicyRegistryStorage<'_> {
 }
 
 impl PolicyAccounting for PolicyRegistryStorage<'_> {
-    fn registry_address(&self) -> Address {
-        Self::ADDRESS
-    }
-
     fn caller(&self) -> Address {
         self.storage.caller()
     }
