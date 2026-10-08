@@ -8,7 +8,7 @@ digest = "e66bc30bc0"
 
 ["CLAUDE.md"]
 summary = "Repo coding conventions for agents: crate naming, lib.rs and module layout, Cargo manifest rules, doc and lint policy, tracing style, testing and mocking rules, review expectations."
-digest = "daa45d4733"
+digest = "f6c4fb2c76"
 
 ["CONTRIBUTING.md"]
 summary = "Contribution policy: open an issue first, work only on assigned issues, no typo or refactor PRs, dev setup (Rust, just, Foundry), run just ci, PR and bug report expectations."
@@ -24,7 +24,7 @@ digest = "b7e65417fb"
 
 ["acceptance/README.md"]
 summary = "Acceptance runner that provisions the real Docker Compose devnet and checks RPC behavior from TOML scenarios. Covers CLI workflows, JSON results, reports, and safety limits."
-digest = "05ab0ffcdd"
+digest = "518a48381e"
 
 ["actions/README.md"]
 summary = "Action test framework: simulated rollup actors (L1 miner, batcher, sequencer, verifier) driven step by step against real derivation logic. Use when writing or understanding action tests."
@@ -47,8 +47,8 @@ summary = "base-acceptance CLI entry point for the acceptance system: lists subc
 digest = "de5b6325d7"
 
 ["bin/audit-archiver/README.md"]
-summary = "audit-archiver service: NDJSON ingest into Postgres, JSON-RPC queries, retention classes, v2 tree cutover and event_seq extraction split, env vars, S3 removal rollout, BRIN index step."
-digest = "e59950dfbe"
+summary = "audit-archiver service: NDJSON ingest into Postgres, JSON-RPC queries, retention classes and partition maintenance, BRIN summary worker, event_seq extraction split, env vars, S3 removal rollout."
+digest = "72abeb6d55"
 
 ["bin/base-telemetry/README.md"]
 summary = "base-telemetry backend: CLI and env config, per-IP rate limiting, and on-demand P2P reachability probes for execution-layer (enode) and consensus-layer (ENR or multiaddr) nodes."
@@ -56,7 +56,7 @@ digest = "6d0de36199"
 
 ["bin/base/README.md"]
 summary = "Unified base node binary: OTLP tracing options plus the batcher, rpc, sequencer and update subcommands, their flags and env vars, and chain selection."
-digest = "5c627602a3"
+digest = "b67d590f7d"
 
 ["bin/basectl/README.md"]
 summary = "basectl operator console reference: global options, TUI and scriptable commands (block, sync-status, p2p, txpool, conductor, sequencer, batcher, doctor, proofs), JSON output and examples."
@@ -144,23 +144,23 @@ digest = "0cd289e19a"
 
 ["crates/batcher/admin/README.md"]
 summary = "Batcher admin JSON-RPC API: start, stop, flush, status, and DA throttle controller methods (admin_*), their behavior and error codes. Use when operating the batcher."
-digest = "5c08642d89"
+digest = "2f94854034"
 
 ["crates/batcher/blobs/README.md"]
 summary = "base-blobs: EIP-4844 blob encoder and decoder for the batcher wire format (130,044 payload bytes per blob); excludes KZG commitments and submission."
 digest = "d1525977c0"
 
 ["crates/batcher/cli/README.md"]
-summary = "base-batcher-cli: arguments and startup for base batcher, including channel and DA config flags and shadow mode, where the batcher posts to a non-canonical inbox checked by a parity validator."
-digest = "55e674df9f"
+summary = "base-batcher-cli: base batcher flags and startup, with sequencer endpoints and leader search, channel and DA config, and shadow mode posting to the inbox a parity validator derives its chain from."
+digest = "876305aea7"
 
 ["crates/batcher/comp/README.md"]
 summary = "base-comp: incremental Brotli channel compression (CompressionStream, BrotliLevel) producing protocol-compatible channels; batch encoding and framing live in batcher-encoder."
 digest = "ce9421e523"
 
 ["crates/batcher/core/README.md"]
-summary = "base-batcher-core: async BatchDriver, SubmissionQueue for L1 transactions, and the DA throttle subsystem (Off, Step, Linear) that limits sequencer DA via miner_setMaxDASize."
-digest = "e5165c05ef"
+summary = "base-batcher-core: async BatchDriver, SubmissionQueue for L1 transactions, and the DA throttle (Off, Step, Linear, Quadratic strategies) that publishes the DA limits the block builders apply."
+digest = "0f339286c4"
 
 ["crates/batcher/encoder/README.md"]
 summary = "base-batcher-encoder: synchronous, no-I/O encoder from L2 blocks to L1 submissions. Covers channel closing rules, blob framing, metric labels, and BatchEncoder usage."
@@ -200,7 +200,7 @@ digest = "279c9afeab"
 
 ["crates/common/chains/README.md"]
 summary = "Single source of truth for Base chain config (BaseChainConfig consts: chain IDs, upgrade timestamps, genesis) and the BaseUpgrade enum/traits. Use when you need upgrade timestamps or chain params."
-digest = "e46d5a6b1b"
+digest = "5ffbd5d04c"
 
 ["crates/common/consensus/README.md"]
 summary = "Base EL consensus types that differ from alloy-consensus, notably BaseTxEnvelope with deposit txs and receipts with deposit_nonce. Use when handling Base transactions and receipts."
@@ -240,7 +240,7 @@ digest = "66133b4e24"
 
 ["crates/common/observability-events/README.md"]
 summary = "Producer-side transaction-event/v1 JSONL envelope and non-blocking writer for transaction audit journals, with field and privacy rules. Use when emitting transaction lifecycle events."
-digest = "3e17333f7d"
+digest = "7dba405286"
 
 ["crates/common/precompile-macros/README.md"]
 summary = "Proc macros for native precompile storage: #[contract], #[namespace], #[derive(Storable)], and primitive/array impl generators. Use when defining precompile storage layouts (adapted from Tempo)."
@@ -339,8 +339,8 @@ summary = "Node extension wiring the standalone EIP-8130 eth_getTransactionCount
 digest = "2d0cf30e0d"
 
 ["crates/execution/eip8130-rpc/README.md"]
-summary = "EIP-8130 RPC helpers: ChannelNonceReader for 2D nonce reads by nonce_key and Eip8130GasEstimator doing one simulation for eth_estimateGas. Use when debugging AA nonce or gas estimation RPCs."
-digest = "565c03ca22"
+summary = "EIP-8130 RPC helpers: ChannelNonceReader for 2D nonce reads by nonce_key and Eip8130GasEstimator, one simulation for eth_estimateGas and eth_call. Use when debugging AA nonce, call or gas RPCs."
+digest = "9c987d9934"
 
 ["crates/execution/eip8130/README.md"]
 summary = "Native EIP-8130 account abstraction validation: enshrined authenticators (not precompiles) needing parity with contracts, validation layers, intrinsic gas formula, EIP-7623 floor, fee checks."
@@ -411,8 +411,8 @@ summary = "base-tx-forwarding: forwards mempool txs to builder RPCs via per-dest
 digest = "b72a1536e1"
 
 ["crates/execution/txpool-rpc/README.md"]
-summary = "Txpool RPC APIs: admin pool management, transaction status queries, and base_sendRawTransactionValidity (validity predicates, Cobalt-gated, proxied to sequencer). Use for tx submission RPC behavior."
-digest = "203cea1f64"
+summary = "Txpool RPC APIs: admin pool management, transaction status queries, and base_sendRawTransactionValidity (validity predicates, proxied to sequencer). Use for tx submission RPC behavior."
+digest = "d5082966c5"
 
 ["crates/execution/txpool-tracing/README.md"]
 summary = "Txpool tracing extension: tracks mempool lifecycle events, txpool_transactionStatus RPC, enabling CLI flags, and reth_transaction_tracing_tx_event histogram. Use to debug tx latency or drops."
@@ -427,20 +427,20 @@ summary = "Base txpool: BaseTransactionValidator (L1 data fee), BaseOrdering/Tim
 digest = "906eadac6b"
 
 ["crates/infra/audit/README.md"]
-summary = "audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers schema snapshot regeneration and legacy migrations."
-digest = "62742be11c"
+summary = "audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers the migrations and schema snapshot regeneration."
+digest = "1e33baabb5"
 
 ["crates/infra/basectl/README.md"]
 summary = "basectl-cli: the basectl clap parser and commands (blocks, sync, txpool, peers, proofs, conductor), interactive monitor, flashblocks JSON-lines stream, Denim readiness checks, and pods view config."
 digest = "1e4810a82c"
 
 ["crates/infra/challenger-e2e/README.md"]
-summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games, asserts valid games are left alone and Path 4 (plus Path 3 and Path 2 in separate scenarios) is disputed."
-digest = "118deb12bf"
+summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games; the default `all` scenario covers Paths 1-4 on one fork by reviving nullified verifiers. Lists scenarios and env vars."
+digest = "a085a1e104"
 
 ["crates/infra/load-tests/README.md"]
 summary = "Load-testing framework (base-load-tests lib, base-load-tester bin): just/cargo commands, YAML config, tx mixes (precompile, B-20, swap, validity). Use to run or configure devnet/sepolia load tests."
-digest = "74e01ef24a"
+digest = "bdd5c4caec"
 
 ["crates/infra/roxy/README.md"]
 summary = "Scaffold-only Rust JSON-RPC reverse proxy meant to replace the ProxyD fork; currently just a listen-address flag plus /healthz and /readyz probes, no proxying yet."
@@ -459,8 +459,8 @@ summary = "base-snapshotter sidecar: at-tip check, stops EL/CL Docker containers
 digest = "5c2c2991ba"
 
 ["crates/infra/snark-e2e/README.md"]
-summary = "base-snark-e2e library: submits a one-block SNARK PLONK prove request to prover-service, polls, and verifies the receipt. Lists required env vars and the ignored integration test command."
-digest = "a669367578"
+summary = "base-snark-e2e library: submits a one-block SNARK PLONK prove request, verifies the receipt, and checks its vkeys match the on-chain verifier. Lists env vars and the integration test command."
+digest = "992ae59820"
 
 ["crates/infra/telemetry/README.md"]
 summary = "base-telemetry-service Axum API with EL (devp2p) and CL (libp2p) P2P reachability probe endpoints: request/response shapes, limits, rate limiting, trusted proxies, IPv4 target rules."
@@ -680,7 +680,7 @@ digest = "e87f3373b8"
 
 ["docs/transaction-events/README.md"]
 summary = "Spec for transaction-event/v1, the JSONL business event journal for transaction observability: config fields, envelope, event vocabulary, Vector to audit-archiver ingest, Postgres retention, examples."
-digest = "69a21d026f"
+digest = "24f8b4422b"
 
 ["docs/transaction-events/tips-parity-checklist.md"]
 summary = "Checklist for verifying TIPS UI audit-archiver/Postgres responses match the S3-backed routes (block, txn, bundle, rejected) before switching TIPS_UI_QUERY_BACKEND=audit."
@@ -688,7 +688,7 @@ digest = "49f6748dde"
 
 ["etc/docker/README.md"]
 summary = "Dockerfiles, Bake targets, published images (ghcr.io/base/node and single-binary images), and Compose setup for the local devnet and Rust services, including batcher topology and build profiles."
-digest = "83a7d99bb5"
+digest = "12c930d703"
 
 ["etc/systems/README.md"]
 summary = "Docs for base-system-tests: running the snapshot-backed mainnet devnet (builder and follow client), snapshot and transfer benchmarks, workload suite, 2s vs 200ms comparison, cleanup."

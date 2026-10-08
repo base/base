@@ -35,6 +35,15 @@ pub enum NonceError {
     #[error("nonce-free replay hash already recorded")]
     Replay,
 
+    /// A nonce-free (`NONCE_KEY_MAX`) transaction carries a non-zero
+    /// `nonce_sequence`. Nonce-free transactions have no sequence channel, so
+    /// the field must be zero.
+    #[error("nonce-free transaction has nonce sequence {got}, expected 0")]
+    NonceFreeSequence {
+        /// The sequence carried by the transaction.
+        got: u64,
+    },
+
     /// A read against the nonce manager precompile storage failed.
     #[error("nonce-manager read failed: {0}")]
     Storage(#[from] BasePrecompileError),

@@ -4,7 +4,7 @@ mod aggregate;
 pub use aggregate::{Aggregate, ExpectedManifest, ExpectedScenario};
 
 mod check;
-pub use check::{ObservationState, ObservedBlock, RpcObserver};
+pub use check::{ConvergenceBounds, ObservationState, ObservedBlock, RpcObserver};
 
 mod cli;
 pub use cli::{AcceptanceCli, AcceptanceCommand, CliRun, ExitCode};

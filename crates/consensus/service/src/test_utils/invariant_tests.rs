@@ -7,7 +7,7 @@ use base_consensus_engine::ConsolidateInput;
 use base_consensus_safedb::SafeHeadResponse;
 use base_protocol::{BlockInfo, L2BlockInfo};
 
-use super::{Driver, EngineClientCall, HarnessBuilder, NodeConfig, ScriptedForkchoiceResponse};
+use super::{Driver, EngineClientCall, HarnessBuilder, ScriptedForkchoiceResponse};
 use crate::{EngineActorRequest, NodeMode};
 
 fn valid_fcu() -> ScriptedForkchoiceResponse {
@@ -57,21 +57,19 @@ async fn v2_bootstrap_consistency() {
     let node_id = driver
         .spawn_node(
             NodeMode::Validator,
-            NodeConfig {
-                builder: HarnessBuilder::new()
-                    .with_initial_safedb([SafeHeadResponse {
-                        l1_block: initial_safe.id(),
-                        safe_head: initial_safe.id(),
-                    }])
-                    .with_scripted_el_responses([
-                        syncing_fcu(),
-                        syncing_fcu(),
-                        valid_fcu(),
-                        valid_fcu(),
-                        valid_fcu(),
-                        valid_fcu(),
-                    ]),
-            },
+            HarnessBuilder::new()
+                .with_initial_safedb([SafeHeadResponse {
+                    l1_block: initial_safe.id(),
+                    safe_head: initial_safe.id(),
+                }])
+                .with_scripted_el_responses([
+                    syncing_fcu(),
+                    syncing_fcu(),
+                    valid_fcu(),
+                    valid_fcu(),
+                    valid_fcu(),
+                    valid_fcu(),
+                ]),
         )
         .await;
 
@@ -134,10 +132,7 @@ async fn l4_confirmations_observed_by_derivation() {
     let node_id = driver
         .spawn_node(
             NodeMode::Validator,
-            NodeConfig {
-                builder: HarnessBuilder::new()
-                    .with_scripted_el_responses((0..32).map(|_| valid_fcu())),
-            },
+            HarnessBuilder::new().with_scripted_el_responses((0..32).map(|_| valid_fcu())),
         )
         .await;
 
@@ -182,19 +177,15 @@ async fn l5_no_cross_actor_deadlock() {
     let node_id = driver
         .spawn_node(
             NodeMode::Validator,
-            NodeConfig {
-                builder: HarnessBuilder::new()
-                    .with_reset_recovery_support()
-                    .with_scripted_el_responses([
-                        syncing_fcu(),
-                        valid_fcu(),
-                        valid_fcu(),
-                        valid_fcu(),
-                        valid_fcu(),
-                        valid_fcu(),
-                        valid_fcu(),
-                    ]),
-            },
+            HarnessBuilder::new().with_reset_recovery_support().with_scripted_el_responses([
+                syncing_fcu(),
+                valid_fcu(),
+                valid_fcu(),
+                valid_fcu(),
+                valid_fcu(),
+                valid_fcu(),
+                valid_fcu(),
+            ]),
         )
         .await;
 
@@ -232,15 +223,13 @@ async fn sequencer_recovers_when_el_becomes_ready_after_bootstrap_probe() {
     let node_id = driver
         .spawn_node(
             NodeMode::Sequencer,
-            NodeConfig {
-                builder: HarnessBuilder::new()
-                    .with_reset_recovery_support()
-                    .with_sequencer_stopped(true)
-                    .with_initial_l2_head(initial_head)
-                    .with_scripted_el_responses(
-                        std::iter::once(syncing_fcu()).chain((0..16).map(|_| valid_fcu())),
-                    ),
-            },
+            HarnessBuilder::new()
+                .with_reset_recovery_support()
+                .with_sequencer_stopped(true)
+                .with_initial_l2_head(initial_head)
+                .with_scripted_el_responses(
+                    std::iter::once(syncing_fcu()).chain((0..16).map(|_| valid_fcu())),
+                ),
         )
         .await;
 
@@ -306,11 +295,9 @@ async fn e2e_invalid_fcu_reset_and_recovery() {
     let node_id = driver
         .spawn_node(
             NodeMode::Validator,
-            NodeConfig {
-                builder: HarnessBuilder::new()
-                    .with_reset_recovery_support()
-                    .with_scripted_el_responses([invalid_fcu(), valid_fcu()]),
-            },
+            HarnessBuilder::new()
+                .with_reset_recovery_support()
+                .with_scripted_el_responses([invalid_fcu(), valid_fcu()]),
         )
         .await;
 

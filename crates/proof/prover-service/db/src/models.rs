@@ -223,6 +223,9 @@ pub enum CreateProofRequestOutcome {
     RetryNotAllowed(Uuid),
     /// An existing failed row is at the retry cap; no requeue.
     RetryExhausted(Uuid),
+    /// An existing row was cancelled by a requester and is never requeued by a
+    /// replay; it must be deleted before the session id can be proved again.
+    Cancelled(Uuid),
 }
 
 impl CreateProofRequestOutcome {
@@ -233,9 +236,25 @@ impl CreateProofRequestOutcome {
             | Self::Requeued(id)
             | Self::Replayed(id)
             | Self::RetryNotAllowed(id)
-            | Self::RetryExhausted(id) => *id,
+            | Self::RetryExhausted(id)
+            | Self::Cancelled(id) => *id,
         }
     }
+}
+
+/// Outcome of cancelling a proof request by session id.
+#[derive(Debug, Clone)]
+pub enum CancelProofRequestOutcome {
+    /// A queued or running proof request was terminally failed.
+    Cancelled(Box<ProofJob>),
+    /// The request was already cancelled.
+    AlreadyCancelled,
+    /// No proof request exists for the session id.
+    NotFound,
+    /// The proof backend does not support cancellation.
+    UnsupportedBackend,
+    /// The request had already reached another terminal state.
+    AlreadyTerminal(ProofStatus),
 }
 
 /// Outcome of deleting a completed proof request by session id.
@@ -941,47 +960,6 @@ pub fn canonical_session_id(session_id: &str) -> Result<String, CreateProofReque
         .unwrap_or_else(|_| session_id.to_owned()))
 }
 
-/// Parameters for creating a new proof session
-#[derive(Debug, Clone)]
-pub struct CreateProofSession {
-    /// Parent proof request identifier.
-    pub proof_request_id: Uuid,
-    /// Whether this is a STARK or SNARK session.
-    pub session_type: SessionType,
-    /// Backend-assigned session identifier.
-    pub backend_session_id: String,
-    /// Backend-specific metadata (JSON).
-    pub metadata: Option<serde_json::Value>,
-}
-
-/// Parameters for updating a proof session status
-#[derive(Debug, Clone)]
-pub struct UpdateProofSession {
-    /// Backend-assigned session identifier to look up.
-    pub backend_session_id: String,
-    /// New session status.
-    pub status: SessionStatus,
-    /// Error message, if the session failed.
-    pub error_message: Option<String>,
-    /// Updated backend metadata (JSON).
-    pub metadata: Option<serde_json::Value>,
-}
-
-/// Parameters for updating a proof request with receipt
-#[derive(Debug, Clone)]
-pub struct UpdateReceipt {
-    /// Proof request identifier.
-    pub id: Uuid,
-    /// Raw STARK receipt bytes.
-    pub stark_receipt: Option<Vec<u8>>,
-    /// Raw SNARK receipt bytes.
-    pub snark_receipt: Option<Vec<u8>>,
-    /// New proof status.
-    pub status: ProofStatus,
-    /// Error message, if the proof failed.
-    pub error_message: Option<String>,
-}
-
 /// Parameters for claiming the next available worker proof job.
 #[derive(Debug, Clone)]
 pub struct ClaimProofJob {
@@ -1169,6 +1147,8 @@ pub enum RecordSessionOutcome {
     Expired,
     /// The job is already terminal.
     Terminal,
+    /// The job was cancelled by a requester.
+    Cancelled,
     /// The requested session status is terminal and must be coordinated with job completion.
     TerminalSessionStatus,
 }

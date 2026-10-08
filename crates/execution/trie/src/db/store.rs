@@ -1345,6 +1345,7 @@ mod tests {
         BranchNodeCompact, HashedPostStateSorted, HashedStorage, Nibbles, StoredNibbles,
         updates::{StorageTrieUpdates, TrieUpdatesSorted},
     };
+    use rstest::rstest;
     use tempfile::TempDir;
 
     use super::*;
@@ -2073,29 +2074,43 @@ mod tests {
         assert!(got.sorted_post_state.storages.is_empty());
     }
 
-    #[test]
-    fn fetch_trie_updates_missing_account_history_entry_returns_error() {
+    #[rstest]
+    #[case::account_trie(
+        ChangeSet { account_trie_keys: vec![StoredNibbles::default()], ..Default::default() },
+        |e: &BaseProofsStorageError| matches!(e, BaseProofsStorageError::MissingAccountTrieHistory(..)),
+    )]
+    #[case::storage_trie(
+        ChangeSet {
+            storage_trie_keys: vec![StorageTrieKey::new(B256::ZERO, StoredNibbles::default())],
+            ..Default::default()
+        },
+        |e: &BaseProofsStorageError| matches!(e, BaseProofsStorageError::MissingStorageTrieHistory(..)),
+    )]
+    #[case::hashed_account(
+        ChangeSet { hashed_account_keys: vec![B256::ZERO], ..Default::default() },
+        |e: &BaseProofsStorageError| matches!(e, BaseProofsStorageError::MissingHashedAccountHistory(..)),
+    )]
+    #[case::hashed_storage(
+        ChangeSet {
+            hashed_storage_keys: vec![HashedStorageKey::new(B256::ZERO, B256::ZERO)],
+            ..Default::default()
+        },
+        |e: &BaseProofsStorageError| matches!(e, BaseProofsStorageError::MissingHashedStorageHistory { .. }),
+    )]
+    fn fetch_trie_updates_missing_history_entry_returns_error(
+        #[case] changeset: ChangeSet,
+        #[case] is_expected: fn(&BaseProofsStorageError) -> bool,
+    ) {
         let dir = TempDir::new().unwrap();
         let store = MdbxProofsStorage::new(dir.path()).expect("env");
 
-        // prepare ChangeSet that references StoredNibbles for account key
-        // (insert ChangeSet into BlockChangeSet directly using tx)
-        {
-            let tx = store.env.tx_mut().unwrap();
-            let mut cur = tx.cursor_write::<BlockChangeSet>().unwrap();
-            cur.insert(
-                1,
-                &ChangeSet {
-                    account_trie_keys: vec![StoredNibbles::default()],
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-            tx.commit().unwrap();
-        }
+        let tx = store.env.tx_mut().unwrap();
+        let mut cur = tx.cursor_write::<BlockChangeSet>().unwrap();
+        cur.insert(1, &changeset).unwrap();
+        tx.commit().unwrap();
 
         let res = store.fetch_trie_updates(1);
-        assert!(matches!(res, Err(BaseProofsStorageError::MissingAccountTrieHistory(..))));
+        assert!(matches!(&res, Err(e) if is_expected(e)));
     }
 
     #[test]
@@ -2132,34 +2147,6 @@ mod tests {
         // MissingAccountTrieHistory
         let res = store.fetch_trie_updates(1);
         assert!(matches!(res, Err(BaseProofsStorageError::MissingAccountTrieHistory(..))));
-    }
-
-    #[test]
-    fn fetch_trie_updates_missing_storage_history_entry_returns_error() {
-        let dir = TempDir::new().unwrap();
-        let store = MdbxProofsStorage::new(dir.path()).expect("env");
-
-        // prepare ChangeSet that references StorageTrieKey for storage trie
-        // (insert ChangeSet into BlockChangeSet directly using tx)
-        {
-            let tx = store.env.tx_mut().unwrap();
-            let mut cur = tx.cursor_write::<BlockChangeSet>().unwrap();
-            cur.insert(
-                1,
-                &ChangeSet {
-                    storage_trie_keys: vec![StorageTrieKey::new(
-                        B256::from([0u8; 32]),
-                        StoredNibbles::default(),
-                    )],
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-            tx.commit().unwrap();
-        }
-
-        let res = store.fetch_trie_updates(1);
-        assert!(matches!(res, Err(BaseProofsStorageError::MissingStorageTrieHistory(..))));
     }
 
     #[test]
@@ -2203,31 +2190,6 @@ mod tests {
     }
 
     #[test]
-    fn fetch_trie_updates_missing_hashed_account_entry_returns_error() {
-        let dir = TempDir::new().unwrap();
-        let store = MdbxProofsStorage::new(dir.path()).expect("env");
-
-        // prepare ChangeSet that references hashed account address
-        // (insert ChangeSet into BlockChangeSet directly using tx)
-        {
-            let tx = store.env.tx_mut().unwrap();
-            let mut cur = tx.cursor_write::<BlockChangeSet>().unwrap();
-            cur.insert(
-                1,
-                &ChangeSet {
-                    hashed_account_keys: vec![B256::from([0u8; 32])],
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-            tx.commit().unwrap();
-        }
-
-        let res = store.fetch_trie_updates(1);
-        assert!(matches!(res, Err(BaseProofsStorageError::MissingHashedAccountHistory(..))));
-    }
-
-    #[test]
     fn fetch_trie_updates_hashed_account_seek_returns_later_block_treated_as_missing() {
         let dir = TempDir::new().unwrap();
         let store = MdbxProofsStorage::new(dir.path()).expect("env");
@@ -2259,34 +2221,6 @@ mod tests {
         // MissingHashedAccountHistory
         let res = store.fetch_trie_updates(1);
         assert!(matches!(res, Err(BaseProofsStorageError::MissingHashedAccountHistory(..))));
-    }
-
-    #[test]
-    fn fetch_trie_updates_missing_hashed_storage_entry_returns_error() {
-        let dir = TempDir::new().unwrap();
-        let store = MdbxProofsStorage::new(dir.path()).expect("env");
-
-        // prepare ChangeSet that references hashed storage key
-        // (insert ChangeSet into BlockChangeSet directly using tx)
-        {
-            let tx = store.env.tx_mut().unwrap();
-            let mut cur = tx.cursor_write::<BlockChangeSet>().unwrap();
-            cur.insert(
-                1,
-                &ChangeSet {
-                    hashed_storage_keys: vec![HashedStorageKey::new(
-                        B256::from([0u8; 32]),
-                        B256::from([0u8; 32]),
-                    )],
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-            tx.commit().unwrap();
-        }
-
-        let res = store.fetch_trie_updates(1);
-        assert!(matches!(res, Err(BaseProofsStorageError::MissingHashedStorageHistory { .. })));
     }
 
     #[test]

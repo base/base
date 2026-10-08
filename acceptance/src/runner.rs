@@ -245,8 +245,15 @@ impl AcceptanceRunner {
                 result.checks[index].message = message;
                 continue;
             }
-            result.checks[index] =
-                observer.run(check, &endpoints, &mut result.samples, origin, deadline).await;
+            // After a fork, a convergence is only meaningful at a post-fork block.
+            let minimum_timestamp = check
+                .start()
+                .and_then(|window| window.after_fork.as_ref())
+                .and_then(|name| result.forks.iter().find(|fork| &fork.name == name))
+                .map_or(0, |fork| fork.activation_timestamp);
+            result.checks[index] = observer
+                .run(check, minimum_timestamp, &endpoints, &mut result.samples, origin, deadline)
+                .await;
             if result.checks[index].status == Status::Passed
                 && let Some(name) = check.start().and_then(|window| window.before_fork.as_ref())
                 && let Some(message) = Self::confirm_pre_fork(

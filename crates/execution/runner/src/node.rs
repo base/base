@@ -9,9 +9,9 @@ use base_execution_payload_builder::{
 use base_execution_rpc::eth::BaseEthApiBuilder;
 use base_execution_txpool::GuardLimits;
 use base_node_core::{
-    BaseConsensusBuilder, BaseEngineApiBuilder, BaseEngineTypes, BaseExecutorBuilder,
-    BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes, BasePayloadValidatorBuilder,
-    BaseStorage,
+    BaseAddOns, BaseAddOnsBuilder, BaseConsensusBuilder, BaseEngineApiBuilder, BaseEngineTypes,
+    BaseExecutorBuilder, BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes,
+    BasePayloadValidatorBuilder, BaseStorage,
     args::RollupArgs,
     node::{BasePayloadBuilder, BasePayloadServiceBuilder, BasePoolBuilder},
 };
@@ -23,8 +23,6 @@ use reth_node_builder::{
 };
 use reth_provider::providers::ProviderFactoryBuilder;
 use reth_rpc_api::eth::RpcTypes;
-
-use crate::{BaseAddOns, BaseAddOnsBuilder};
 
 /// Type configuration for a regular Base node.
 #[derive(Debug, Clone)]
@@ -111,6 +109,7 @@ impl BaseNode {
             max_inflight_delegated_slots,
             mempool_sender_limit,
             mempool_payer_limit,
+            mempool_allowlisted_payer_limit,
             ..
         } = self.args;
         ComponentsBuilder::default()
@@ -121,10 +120,12 @@ impl BaseNode {
                     .with_guard_limits(GuardLimits {
                         signature_limit: mempool_sender_limit,
                         payment_limit: mempool_payer_limit,
+                        allowlisted_payment_limit: mempool_allowlisted_payer_limit,
                     })
                     .with_additional_trusted_delegation_targets(
                         self.args.mempool_trusted_delegation_targets.iter().copied(),
-                    ),
+                    )
+                    .with_allowlisted_payers(self.args.mempool_allowlisted_payers.iter().copied()),
             )
             .executor(BaseExecutorBuilder::default())
             .payload(BasePayloadServiceBuilder::new(

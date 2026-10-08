@@ -78,7 +78,7 @@ let bal = wallet.account.balance();
   - A trait method returns a non-constructible builder type like Alloy's `ProviderCall` or `EthGetBlock`.
   - The double needs one call log ordered across multiple trait methods.
   - Tests must mutate scripted responses while calls are in flight.
-- Document the specific reason for a hand-rolled fake in its module doc comment. Examples live in `crates/consensus/service/src/test_utils/fake_engine_client.rs`, `fake_l1.rs`, and `fake_gossip.rs`.
+- Document the specific reason for a hand-rolled fake in its module doc comment. Examples live in `crates/consensus/service/src/test_utils/fake_engine_client.rs` and `fake_l1.rs`.
 
 ## Recurring Review Expectations
 
