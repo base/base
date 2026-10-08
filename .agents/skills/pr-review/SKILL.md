@@ -25,7 +25,7 @@ Each reviewer's findings are decided and posted as soon as that reviewer finishe
    - **A findings round** per reviewer (and one for the council), as soon as it finishes. It turns that reviewer's findings into comments, drops the ones that are wrong or already covered, and replies where an open thread already covers a problem. It posts them straight away.
    - **The final round**, when everything has finished. It goes through every open bot thread: it marks a thread whose problem the push fixed as resolved, replies where the author answered or there is something new to say, and reopens a thread it marked resolved when the problem is back. It writes the overview.
 
-   The script allows each round only its own actions (a findings round cannot resolve a thread, and the final round cannot post a finding unless a findings round failed), skips a problem an earlier round already posted, and keeps the inline comments of all rounds under the cap of 20.
+   The script allows each round only its own actions (a findings round cannot resolve or reopen a thread; the final round can also comment, for a problem no existing thread can carry, such as a thread that cannot be reopened). It skips a problem an earlier round already posted, gives a thread at most one follow-up per run, treats the comments a run posts itself as new rather than as threads "open from earlier", and keeps the inline comments of all rounds under the cap of 20. If a round fails, the final round takes that reviewer's findings and the incomplete-review banner is cleared when it posts them.
 
 `review.py` validates the decider's actions against the diff and the thread list, then `render.py` formats and posts them. Agents never write to GitHub; they have only `Read`, `Grep`, and `Glob`.
 
