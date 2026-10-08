@@ -211,7 +211,7 @@ jobs:
             echo "Base: \`$BASE_SHA\`, head: \`$HEAD_SHA\`"
             echo
             cat "$RUNNER_TEMP/comment.md"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Post results comment
         if: steps.affected.outputs.run == 'true' && env.COMMENT == 'true'
