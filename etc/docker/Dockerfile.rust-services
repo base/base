@@ -49,6 +49,7 @@ RUN set -eux; \
 FROM rust-builder-base AS workspace-source
 # Keep these inputs aligned with workspace members; runtime scripts are copied later.
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY .cargo ./.cargo
 COPY actions ./actions
 COPY acceptance ./acceptance
 COPY bin ./bin
