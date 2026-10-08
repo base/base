@@ -1,0 +1,10 @@
+# Minimal OpenVM config for the Base range guest.
+# Hash/bigint chips are enabled. kzg-rs still needs `sp1-bls12-shim` because
+# it depends on `sp1_bls12_381` (SP1 syscalls on `target_os = "zkvm"`).
+# ECC guest-lib patches for k256/p256/bn254 can be added later.
+[app_vm_config.rv32i]
+[app_vm_config.rv32m]
+[app_vm_config.io]
+[app_vm_config.keccak]
+[app_vm_config.sha2]
+[app_vm_config.bigint]

@@ -25,3 +25,5 @@ invalid ranges before enqueueing; the provider rejects them before any RPC call.
 
 SP1 stdin, ELF/key setup, cluster clients, L2OO bindings, and stdin caches
 live under `src/succinct`. Guest programs live in `crates/proof/zk/programs/succinct`.
+The `OpenVM` range guest (local, not yet a proving backend) lives in
+`crates/proof/zk/programs/openvm`.
