@@ -241,17 +241,21 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
         let tx_count = batch.len() as u64;
         let overall_start = Instant::now();
         for attempt in 0..=self.config.max_retries {
-            for (tx_hash, method) in tx_hashes.iter().zip(&methods) {
-                self.emit_forward_event(
-                    TransactionEventType::TxpoolBuilderForwardAttempt,
-                    *tx_hash,
-                    method,
-                    Some(attempt),
-                    Map::from_iter([
-                        ("attempt".to_string(), json!(attempt)),
-                        ("batch_size".to_string(), json!(tx_count)),
-                    ]),
-                );
+            // The first attempt is not journaled: every send ends in a failure or drop event here
+            // or a builder-side insert event. Only retries add information.
+            if attempt > 0 {
+                for (tx_hash, method) in tx_hashes.iter().zip(&methods) {
+                    self.emit_forward_event(
+                        TransactionEventType::TxpoolBuilderForwardAttempt,
+                        *tx_hash,
+                        method,
+                        Some(attempt),
+                        Map::from_iter([
+                            ("attempt".to_string(), json!(attempt)),
+                            ("batch_size".to_string(), json!(tx_count)),
+                        ]),
+                    );
+                }
             }
             let result = self.send_batch(&batch).await;
 
@@ -267,19 +271,10 @@ impl<R: ForwardRequest> DestinationForwarder<R> {
                         let tx_hash = tx_hashes.get(idx).copied().flatten();
                         let method = methods.get(idx).copied().unwrap_or_default();
                         match res {
-                            Ok(()) => {
-                                ok_count += 1;
-                                self.emit_forward_event(
-                                    TransactionEventType::TxpoolBuilderForwardSuccess,
-                                    tx_hash,
-                                    method,
-                                    Some(attempt),
-                                    Map::from_iter([
-                                        ("attempt".to_string(), json!(attempt)),
-                                        ("batch_size".to_string(), json!(tx_count)),
-                                    ]),
-                                );
-                            }
+                            // Delivery is journaled by the destination as
+                            // `TXPOOL_VALIDATED_INSERT_ACCEPTED`; a node-side success event per
+                            // destination would duplicate it.
+                            Ok(()) => ok_count += 1,
                             Err(e) => {
                                 debug!(
                                     builder_url = %self.builder_url,

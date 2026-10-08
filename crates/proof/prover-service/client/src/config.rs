@@ -26,15 +26,6 @@ pub enum ProverServiceClientConfigError {
     /// The configured request timeout is zero.
     #[error("request timeout must be greater than zero")]
     ZeroRequestTimeout,
-    /// The configured poll interval is zero.
-    #[error("poll interval must be greater than zero")]
-    ZeroPollInterval,
-    /// The configured maximum wait duration is zero.
-    #[error("max wait must be greater than zero")]
-    ZeroMaxWait,
-    /// The configured poll interval is greater than the maximum wait duration.
-    #[error("poll interval must be less than or equal to max wait")]
-    PollIntervalExceedsMaxWait,
     /// The configured retry initial delay is greater than the retry max delay.
     #[error("retry initial delay must be less than or equal to retry max delay")]
     RetryInitialDelayExceedsMaxDelay,
@@ -59,8 +50,6 @@ pub enum ProverServiceClientBuildError {
 pub struct ProverServiceClientConfig {
     endpoint: String,
     request_timeout: Duration,
-    poll_interval: Duration,
-    max_wait: Duration,
     retry: RetryConfig,
 }
 
@@ -72,8 +61,6 @@ impl fmt::Debug for ProverServiceClientConfig {
         f.debug_struct("ProverServiceClientConfig")
             .field("endpoint", &endpoint)
             .field("request_timeout", &self.request_timeout)
-            .field("poll_interval", &self.poll_interval)
-            .field("max_wait", &self.max_wait)
             .field("retry", &self.retry)
             .finish()
     }
@@ -83,19 +70,11 @@ impl ProverServiceClientConfig {
     /// Default per-request timeout for prover-service JSON-RPC calls.
     pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
-    /// Default interval used by polling helpers when waiting for proof completion.
-    pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
-
-    /// Default maximum time to wait for proof completion.
-    pub const DEFAULT_MAX_WAIT: Duration = Duration::from_secs(30 * 60);
-
     /// Create a client configuration for the given HTTP endpoint.
     pub fn new(endpoint: impl Into<String>) -> Self {
         Self {
             endpoint: endpoint.into(),
             request_timeout: Self::DEFAULT_REQUEST_TIMEOUT,
-            poll_interval: Self::DEFAULT_POLL_INTERVAL,
-            max_wait: Self::DEFAULT_MAX_WAIT,
             retry: RetryConfig::default(),
         }
     }
@@ -110,16 +89,6 @@ impl ProverServiceClientConfig {
         self.request_timeout
     }
 
-    /// Return the interval used by polling helpers.
-    pub const fn poll_interval(&self) -> Duration {
-        self.poll_interval
-    }
-
-    /// Return the maximum time to wait for proof completion.
-    pub const fn max_wait(&self) -> Duration {
-        self.max_wait
-    }
-
     /// Return the retry configuration applied by [`crate::ProofRequesterClient`] and
     /// idempotent [`crate::ProverWorkerClient`] JSON-RPC methods.
     pub const fn retry_config(&self) -> RetryConfig {
@@ -129,18 +98,6 @@ impl ProverServiceClientConfig {
     /// Set the per-request timeout used by the JSON-RPC HTTP client.
     pub const fn with_request_timeout(mut self, request_timeout: Duration) -> Self {
         self.request_timeout = request_timeout;
-        self
-    }
-
-    /// Set the interval used by polling helpers.
-    pub const fn with_poll_interval(mut self, poll_interval: Duration) -> Self {
-        self.poll_interval = poll_interval;
-        self
-    }
-
-    /// Set the maximum time to wait for proof completion.
-    pub const fn with_max_wait(mut self, max_wait: Duration) -> Self {
-        self.max_wait = max_wait;
         self
     }
 
@@ -166,18 +123,6 @@ impl ProverServiceClientConfig {
 
         if self.request_timeout.is_zero() {
             return Err(ProverServiceClientConfigError::ZeroRequestTimeout);
-        }
-
-        if self.poll_interval.is_zero() {
-            return Err(ProverServiceClientConfigError::ZeroPollInterval);
-        }
-
-        if self.max_wait.is_zero() {
-            return Err(ProverServiceClientConfigError::ZeroMaxWait);
-        }
-
-        if self.poll_interval > self.max_wait {
-            return Err(ProverServiceClientConfigError::PollIntervalExceedsMaxWait);
         }
 
         // `max_attempts == 0` disables retries; `None` is not allowed for this RPC client.
@@ -214,9 +159,7 @@ mod tests {
     #[test]
     fn config_validation_accepts_valid_config() {
         let config = ProverServiceClientConfig::new("http://localhost:8545")
-            .with_request_timeout(Duration::from_secs(1))
-            .with_poll_interval(Duration::from_millis(100))
-            .with_max_wait(Duration::from_secs(10));
+            .with_request_timeout(Duration::from_secs(1));
 
         config.validate().expect("valid config should pass validation");
     }
@@ -235,59 +178,19 @@ mod tests {
     }
 
     #[rstest]
-    #[case::url_without_host(
-        "http://",
-        Duration::from_secs(1),
-        Duration::from_millis(100),
-        Duration::from_secs(10),
-        "host"
-    )]
+    #[case::url_without_host("http://", Duration::from_secs(1), "host")]
     #[case::non_http_url_scheme(
         "file:///tmp/prover-service.sock",
         Duration::from_secs(1),
-        Duration::from_millis(100),
-        Duration::from_secs(10),
         "scheme"
     )]
-    #[case::zero_request_timeout(
-        "http://localhost:8545",
-        Duration::ZERO,
-        Duration::from_millis(100),
-        Duration::from_secs(10),
-        "request timeout"
-    )]
-    #[case::zero_poll_interval(
-        "http://localhost:8545",
-        Duration::from_secs(1),
-        Duration::ZERO,
-        Duration::from_secs(10),
-        "poll interval"
-    )]
-    #[case::zero_max_wait(
-        "http://localhost:8545",
-        Duration::from_secs(1),
-        Duration::from_millis(100),
-        Duration::ZERO,
-        "max wait"
-    )]
-    #[case::poll_interval_greater_than_max_wait(
-        "http://localhost:8545",
-        Duration::from_secs(1),
-        Duration::from_secs(11),
-        Duration::from_secs(10),
-        "poll interval"
-    )]
+    #[case::zero_request_timeout("http://localhost:8545", Duration::ZERO, "request timeout")]
     fn config_validation_rejects_invalid_config(
         #[case] endpoint: &str,
         #[case] request_timeout: Duration,
-        #[case] poll_interval: Duration,
-        #[case] max_wait: Duration,
         #[case] expected_message: &str,
     ) {
-        let config = ProverServiceClientConfig::new(endpoint)
-            .with_request_timeout(request_timeout)
-            .with_poll_interval(poll_interval)
-            .with_max_wait(max_wait);
+        let config = ProverServiceClientConfig::new(endpoint).with_request_timeout(request_timeout);
 
         let err = config.validate().expect_err("invalid config should fail validation");
 

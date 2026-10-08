@@ -22,6 +22,9 @@ pub use execution::{
 mod execution_metering_mode;
 pub use execution_metering_mode::ExecutionMeteringMode;
 
+mod resting_predicate_mode;
+pub use resting_predicate_mode::RestingPredicateMode;
+
 mod traits;
 pub use base_execution_payload_builder::{
     MeteringProvider, NoopMeteringProvider, RejectionCache, ResourceMeteringConfig,
@@ -36,13 +39,14 @@ mod transaction_events;
 
 mod flashblocks;
 pub use flashblocks::{
-    BasePayloadBuilderCtx, BestFlashblocksTxs, BlockPayloadJob, BlockPayloadJobGenerator,
-    BuildArguments, FLOW_STANDARD, FLOW_VALIDITY, FlashblockDiagnostics,
+    BasePayloadBuilderCtx, BestFlashblocksTxs, BlockDeferrals, BlockPayloadJob,
+    BlockPayloadJobGenerator, BuildArguments, FLOW_STANDARD, FLOW_VALIDITY, FlashblockDiagnostics,
     FlashblockSelectionOutcome, FlashblocksExtraCtx, FlashblocksServiceBuilder, InclusionFlow,
     InclusionTracker, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
     ParkedPredicateIndex, PayloadBuilder, PayloadHandler, PayloadJobDeadline,
     PayloadTransactionInvalidated, PredicateLoadTracker, PredicateReadRecorder, ResolvePayload,
-    StateChangeEffects, ValidityPredicateEvaluation, ValidityPredicateKey,
+    RestingPayloadTransactions, RestingStats, StateChangeEffects, ValidityPredicateEvaluation,
+    ValidityPredicateKey,
 };
 
 mod extension;

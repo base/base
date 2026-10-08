@@ -1,4 +1,8 @@
-use std::{marker::PhantomData, sync::Arc, time::Instant};
+use std::{
+    marker::PhantomData,
+    sync::{Arc, LazyLock},
+    time::Instant,
+};
 
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::Decodable2718;
@@ -22,6 +26,15 @@ use crate::{
     BasePooledTransaction, NoExtensions, PoolRejectionLabel, ValidatedTransaction,
     ValidatedTransactionExtensions,
 };
+
+/// Host name of this builder, part of the validated-insert event ID.
+///
+/// Every mempool node forwards each transaction to all builders, so without it the events from
+/// different builders share an ID and the archive keeps only one of them. Empty if the host name
+/// cannot be read.
+static BUILDER_HOST: LazyLock<String> = LazyLock::new(|| {
+    hostname::get().ok().and_then(|name| name.into_string().ok()).unwrap_or_default()
+});
 
 /// Writes inbound `insertValidatedTransaction` metering into the builder cache.
 pub trait InsertMetering: core::fmt::Debug + Send + Sync + 'static {
@@ -223,6 +236,7 @@ impl<P, E> BuilderApiImpl<P, E> {
             event_type: event_type,
             tx_hash: tx_hash,
             id: {
+                "builder_host" => BUILDER_HOST.as_str(),
                 "tx_hash" => format!("{tx_hash:#x}"),
             },
             data: data,

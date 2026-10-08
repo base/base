@@ -5,13 +5,10 @@ use std::{
 };
 
 use alloy_eips::Encodable2718;
-use alloy_primitives::{Bytes, TxHash};
+use alloy_primitives::Bytes;
 use base_execution_txpool::{
     BasePooledTx, BestTransactionLane, NoExtensions, UnifiedTipOrdering, UnifiedTipPriority,
     ValidatedTransaction, ValidatedTransactionExtensions,
-};
-use base_observability_events::{
-    TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use reth_transaction_pool::{
     PoolTransaction, Priority, TransactionOrdering, TransactionPool, ValidPoolTransaction,
@@ -26,13 +23,10 @@ use super::{
 };
 use crate::forwarder::InsertValidatedTransaction;
 
-/// Pool transactions from one snapshot, tagged with their position in the pool iterator for
-/// transaction events, ranked by the builder's tip ordering and sequenced by nonce lane.
-type Snapshot<T> = LaneScheduler<
-    (Arc<ValidPoolTransaction<T>>, u64),
-    Priority<UnifiedTipPriority>,
-    BestTransactionLane,
->;
+/// Pool transactions from one snapshot, ranked by the builder's tip ordering and sequenced by
+/// nonce lane.
+type Snapshot<T> =
+    LaneScheduler<Arc<ValidPoolTransaction<T>>, Priority<UnifiedTipPriority>, BestTransactionLane>;
 
 /// Background reader that drains the pool for one destination.
 ///
@@ -141,7 +135,6 @@ where
                 return None;
             }
 
-            let iterator_index = txs_read;
             txs_read += 1;
             if self.recently_sent.was_recently_sent(tx.hash()) {
                 txs_ignored += 1;
@@ -151,7 +144,7 @@ where
             let sequence = BestTransactionLane::for_transaction(&tx);
             let arrived = tx.timestamp;
             let priority = ordering.priority(&tx.transaction, base_fee);
-            lanes.push((tx, iterator_index), sequence, arrived, priority);
+            lanes.push(tx, sequence, arrived, priority);
         }
 
         if txs_read > 0 {
@@ -176,13 +169,12 @@ where
     fn fill_queue(&mut self, lanes: &mut Snapshot<P::Transaction>) -> Option<u64> {
         let mut txs_sent: u64 = 0;
         while self.sender.capacity() > 0 {
-            let Some((tx, iterator_index)) = lanes.pop(self.lane_mix.next_lane()) else { break };
+            let Some(tx) = lanes.pop(self.lane_mix.next_lane()) else { break };
             let hash = *tx.hash();
             match self.try_enqueue(&tx) {
                 Ok(()) => {
                     self.recently_sent.mark_sent(hash);
                     txs_sent += 1;
-                    self.emit_builder_consumed_event(hash, iterator_index);
                 }
                 // Only this reader produces into the queue, so capacity cannot shrink between the
                 // check above and the send.
@@ -237,25 +229,6 @@ where
             },
             tx_hash: *transaction.transaction.hash(),
         }
-    }
-
-    fn emit_builder_consumed_event(&self, tx_hash: TxHash, iterator_index: u64) {
-        let _ = transaction_event!(
-            producer: TransactionEventProducer::BaseRethNode,
-            event_type: TransactionEventType::TxpoolBuilderConsumed,
-            tx_hash: tx_hash,
-            id: {
-                "tx_hash" => format!("{tx_hash:#x}"),
-                "iterator_index" => iterator_index,
-            },
-            data: {
-                "source" => "best_transactions",
-                "target" => "builder_forwarder",
-                "builder_url" => self.builder_url.as_str(),
-                "iterator_index" => iterator_index,
-                "resend_after_ms" => self.config.resend_after.as_millis() as u64,
-            },
-        );
     }
 }
 
@@ -316,6 +289,14 @@ mod tests {
         sender: mpsc::Sender<InsertValidatedTransaction>,
         cancel: CancellationToken,
     ) -> TestReader {
+        reader_for("http://builder.test", sender, cancel)
+    }
+
+    fn reader_for(
+        url: &str,
+        sender: mpsc::Sender<InsertValidatedTransaction>,
+        cancel: CancellationToken,
+    ) -> TestReader {
         DestinationReader::new(
             NoopTransactionPool::new(),
             ReaderConfig {
@@ -326,7 +307,7 @@ mod tests {
             },
             sender,
             cancel,
-            "http://builder.test".parse().unwrap(),
+            url.parse().unwrap(),
         )
     }
 

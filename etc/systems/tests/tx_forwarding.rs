@@ -74,7 +74,6 @@ async fn start_validity_system() -> Result<SystemTestStack> {
         .with_tx_forwarding(
             TxForwardingConfig::new(vec![]).with_resend_after_ms(2000).with_max_batch_size(100),
         )
-        .with_experimental_validity_transactions()
         .with_payload_builder_cutover()
         .build()
         .await?;
@@ -339,7 +338,7 @@ async fn test_tx_forwarding_pipeline_system() -> Result<()> {
     Ok(())
 }
 
-/// Exercises every predicate kind accepted at mempool ingress through forwarding and builder
+/// Exercises every native-builder predicate kind through mempool ingress, forwarding, and builder
 /// inclusion.
 #[tokio::test]
 async fn test_matching_validity_predicates_are_forwarded_and_included() -> Result<()> {
@@ -359,6 +358,16 @@ async fn test_matching_validity_predicates_are_forwarded_and_included() -> Resul
         create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
     let current_block = builder_provider.get_block_number().await?;
     let validity = vec![
+        ValidityPredicate::Balance {
+            address: sender,
+            op: ValidityOperator::GreaterThan,
+            value: U256::ZERO,
+        },
+        ValidityPredicate::Nonce {
+            address: sender,
+            op: ValidityOperator::Equal,
+            value: U256::from(nonce),
+        },
         ValidityPredicate::Storage {
             address: recipient,
             slot: U256::from(1),
@@ -424,9 +433,10 @@ async fn test_validity_transaction_submitted_directly_to_builder_is_included() -
                 raw_tx,
                 SendRawTransactionValidityOptions {
                     validity: vec![
-                        ValidityPredicate::BlockNumber {
+                        ValidityPredicate::Balance {
+                            address: sender,
                             op: ValidityOperator::GreaterThan,
-                            value: U256::from(current_block),
+                            value: U256::ZERO,
                         },
                         block_expiry_bound(current_block),
                     ],
@@ -476,9 +486,10 @@ async fn test_eip8130_validity_transaction_is_included_by_native_builder() -> Re
                 raw_tx,
                 SendRawTransactionValidityOptions {
                     validity: vec![
-                        ValidityPredicate::BlockNumber {
+                        ValidityPredicate::Balance {
+                            address: sender,
                             op: ValidityOperator::GreaterThan,
-                            value: U256::from(current_block),
+                            value: U256::ZERO,
                         },
                         block_expiry_bound(current_block),
                     ],
@@ -494,6 +505,145 @@ async fn test_eip8130_validity_transaction_is_included_by_native_builder() -> Re
 
     system.shutdown().await?;
 
+    Ok(())
+}
+
+/// Verifies a false state predicate parks a forwarded transaction until another transaction
+/// changes the watched state and makes it eligible.
+#[tokio::test]
+async fn test_validity_transaction_lands_after_balance_predicate_becomes_true() -> Result<()> {
+    let system = start_validity_system().await?;
+    let builder_provider = system.l2_builder_provider()?;
+    let client_provider = system.l2_client_provider()?;
+
+    let validity_signer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)?;
+    let trigger_signer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_2.private_key)?;
+    client_provider.wait_for_balance(validity_signer.address(), Duration::from_secs(15)).await?;
+    client_provider.wait_for_balance(trigger_signer.address(), Duration::from_secs(15)).await?;
+
+    let watched: Address = "0x1000000000000000000000000000000000000042".parse()?;
+    assert_eq!(builder_provider.get_balance(watched).await?, U256::ZERO);
+
+    let validity_nonce = client_provider.get_transaction_count(validity_signer.address()).await?;
+    let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;
+    let (_, raw_validity_tx, validity_tx_hash) =
+        create_signed_eip1559_tx(&validity_signer, L2_CHAIN_ID, validity_nonce, recipient)?;
+    let current_block = client_provider.get_block_number().await?;
+    let rpc_client = RpcClient::builder().http(system.l2_client_rpc_url()?);
+    let submitted_hash: B256 = rpc_client
+        .request(
+            "base_sendRawTransactionValidity",
+            (
+                raw_validity_tx,
+                SendRawTransactionValidityOptions {
+                    validity: vec![
+                        ValidityPredicate::Balance {
+                            address: watched,
+                            op: ValidityOperator::GreaterThanOrEqual,
+                            value: U256::from(1),
+                        },
+                        block_expiry_bound(current_block),
+                    ],
+                },
+            ),
+        )
+        .await?;
+    assert_eq!(submitted_hash, validity_tx_hash);
+
+    // Seeing the transaction pending on the builder proves forwarding completed; advancing two
+    // blocks without a receipt then proves the false predicate, rather than forwarding latency,
+    // is what prevents inclusion.
+    wait_for_pending_transaction(&builder_provider, validity_tx_hash).await?;
+    let pending_at = builder_provider.get_block_number().await?;
+    builder_provider.wait_for_block(pending_at + 2, Duration::from_secs(15)).await?;
+    assert!(
+        builder_provider.get_transaction_receipt(validity_tx_hash).await?.is_none(),
+        "transaction landed while its balance predicate was false"
+    );
+
+    let trigger_nonce = client_provider.get_transaction_count(trigger_signer.address()).await?;
+    let (_, raw_trigger_tx, trigger_tx_hash) =
+        create_signed_eip1559_tx(&trigger_signer, L2_CHAIN_ID, trigger_nonce, watched)?;
+    let pending_trigger = client_provider.send_raw_transaction(&raw_trigger_tx).await?;
+    assert_eq!(*pending_trigger.tx_hash(), trigger_tx_hash);
+
+    let trigger_receipt =
+        builder_provider.wait_for_receipt(trigger_tx_hash, TX_RECEIPT_TIMEOUT).await?;
+    let validity_receipt =
+        builder_provider.wait_for_receipt(validity_tx_hash, TX_RECEIPT_TIMEOUT).await?;
+    assert!(
+        trigger_receipt.inner.block_number <= validity_receipt.inner.block_number,
+        "validity transaction landed before the state change that satisfied it"
+    );
+    assert!(builder_provider.get_balance(watched).await? >= U256::from(1));
+
+    system.shutdown().await?;
+
+    Ok(())
+}
+
+/// Verifies a forwarded transaction remains parked until another account's nonce advances.
+#[tokio::test]
+async fn test_validity_transaction_lands_after_nonce_predicate_becomes_true() -> Result<()> {
+    let system = start_validity_system().await?;
+    let builder_provider = system.l2_builder_provider()?;
+    let client_provider = system.l2_client_provider()?;
+    let validity_signer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)?;
+    let trigger_signer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_2.private_key)?;
+    client_provider.wait_for_balance(validity_signer.address(), Duration::from_secs(15)).await?;
+    client_provider.wait_for_balance(trigger_signer.address(), Duration::from_secs(15)).await?;
+
+    let watched = trigger_signer.address();
+    let trigger_nonce = client_provider.get_transaction_count(watched).await?;
+    let validity_nonce = client_provider.get_transaction_count(validity_signer.address()).await?;
+    let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;
+    let (_, raw_validity_tx, validity_tx_hash) =
+        create_signed_eip1559_tx(&validity_signer, L2_CHAIN_ID, validity_nonce, recipient)?;
+    let current_block = client_provider.get_block_number().await?;
+    let rpc_client = RpcClient::builder().http(system.l2_client_rpc_url()?);
+    let submitted_hash: B256 = rpc_client
+        .request(
+            "base_sendRawTransactionValidity",
+            (
+                raw_validity_tx,
+                SendRawTransactionValidityOptions {
+                    validity: vec![
+                        ValidityPredicate::Nonce {
+                            address: watched,
+                            op: ValidityOperator::Equal,
+                            value: U256::from(trigger_nonce + 1),
+                        },
+                        block_expiry_bound(current_block),
+                    ],
+                },
+            ),
+        )
+        .await?;
+    assert_eq!(submitted_hash, validity_tx_hash);
+
+    wait_for_pending_transaction(&builder_provider, validity_tx_hash).await?;
+    let pending_at = builder_provider.get_block_number().await?;
+    builder_provider.wait_for_block(pending_at + 2, Duration::from_secs(15)).await?;
+    assert!(
+        builder_provider.get_transaction_receipt(validity_tx_hash).await?.is_none(),
+        "transaction landed while its nonce predicate was false"
+    );
+
+    let (_, raw_trigger_tx, trigger_tx_hash) =
+        create_signed_eip1559_tx(&trigger_signer, L2_CHAIN_ID, trigger_nonce, recipient)?;
+    let pending_trigger = client_provider.send_raw_transaction(&raw_trigger_tx).await?;
+    assert_eq!(*pending_trigger.tx_hash(), trigger_tx_hash);
+    let trigger_receipt =
+        builder_provider.wait_for_receipt(trigger_tx_hash, TX_RECEIPT_TIMEOUT).await?;
+    let validity_receipt =
+        builder_provider.wait_for_receipt(validity_tx_hash, TX_RECEIPT_TIMEOUT).await?;
+    assert!(
+        trigger_receipt.inner.block_number <= validity_receipt.inner.block_number,
+        "validity transaction landed before the nonce advanced"
+    );
+    assert_eq!(builder_provider.get_transaction_count(watched).await?, trigger_nonce + 1);
+
+    system.shutdown().await?;
     Ok(())
 }
 
@@ -643,23 +793,16 @@ async fn test_invalid_validity_batches_are_rejected_at_mempool_ingress() -> Resu
     let nonce = client_provider.get_transaction_count(signer.address()).await?;
     let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;
     let (_, raw_tx, tx_hash) = create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
-    let current_block = client_provider.get_block_number().await?;
+    let repeated_predicate = ValidityPredicate::Balance {
+        address: signer.address(),
+        op: ValidityOperator::GreaterThan,
+        value: U256::ZERO,
+    };
     let invalid_batches = vec![
         (Vec::new(), "validity predicates must not be empty"),
         (
-            vec![block_expiry_bound(current_block); DEFAULT_MAX_VALIDITY_PREDICATES + 1],
+            vec![repeated_predicate; DEFAULT_MAX_VALIDITY_PREDICATES + 1],
             "too many validity predicates",
-        ),
-        (
-            vec![
-                ValidityPredicate::Balance {
-                    address: signer.address(),
-                    op: ValidityOperator::GreaterThan,
-                    value: U256::ZERO,
-                },
-                block_expiry_bound(current_block),
-            ],
-            "balance predicate at index 0 is not supported",
         ),
         (
             vec![ValidityPredicate::Storage {

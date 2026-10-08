@@ -134,6 +134,7 @@ impl InProcessFollowConsensus {
             dev_enabled: false,
             http_timeout: Duration::from_secs(60),
             max_concurrent_requests: NonZeroUsize::new(1024).expect("nonzero"),
+            execution_forwarding_endpoint: None,
         };
 
         let node = FollowNode::new(FollowNodeConfig {

@@ -17,7 +17,7 @@ use reth_errors::RethError;
 use reth_evm::{ConfigureEvm, EvmFactoryFor, TxEnvFor};
 use reth_rpc_eth_api::{FromEthApiError, helpers::FullEthApi};
 use reth_rpc_eth_types::error::api::{FromEvmHalt, FromRevert};
-use revm::context::{Block, BlockEnv, TxEnv, result::ExecutionResult};
+use revm::context::{Block, BlockEnv, Cfg, TxEnv, result::ExecutionResult};
 
 /// Estimates gas for an EIP-8130 `eth_estimateGas` request by running a single
 /// read-only [`base_common_evm::Eip8130Executor::simulate`] at the block state.
@@ -86,8 +86,11 @@ impl Eip8130GasEstimator {
     {
         let (evm_env, at, forecast) = BasePendingForecast::evm_env_at(eth_api, block_id).await?;
         let chain_id = evm_env.cfg_env.chain_id;
-        // Bound execution by the block gas limit when the request omits `gas`.
-        let gas_cap = Block::gas_limit(&evm_env.block_env);
+        // Bound execution like standard `eth_estimateGas`: the request's `gas`,
+        // or the default when omitted, never exceeds the block gas limit or the
+        // EIP-7825 per-transaction cap. An unbounded `gas` would let one request
+        // run its calls (twice, if they fail) at any gas the caller picks.
+        let gas_cap = Block::gas_limit(&evm_env.block_env).min(evm_env.cfg_env.tx_gas_limit_cap());
 
         let sim_tx = request.to_eip8130_simulation_tx(chain_id, gas_cap).map_err(|error| {
             ErrorObjectOwned::owned(

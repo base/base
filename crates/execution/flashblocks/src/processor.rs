@@ -575,8 +575,8 @@ where
         let latest_block_l1_block_info = prev_pending_blocks.latest_block_l1_block_info().clone();
         let latest_flashblock_tx_start = prev_pending_blocks.pending_transaction_count();
 
-        let mut live_state = self.lock_live_state();
-        let Some(LivePendingState { mut db, state_overrides }) = live_state.take() else {
+        let live_state = self.lock_live_state().take();
+        let Some(LivePendingState { mut db, state_overrides }) = live_state else {
             warn!(
                 message = "live pending state unavailable, falling back to full rebuild",
                 block_number = flashblock.metadata.block_number,
@@ -587,7 +587,6 @@ where
             flashblocks.push(flashblock.clone());
             return self.build_pending_state(Some(Arc::clone(prev_pending_blocks)), &flashblocks);
         };
-        drop(live_state);
 
         let latest_header = prev_pending_blocks.latest_header();
         let mut latest_block_flashblocks = prev_pending_blocks.latest_block_flashblocks();
@@ -717,8 +716,8 @@ where
             return Err(StateProcessorError::MissingFirstFlashblock);
         };
 
-        let mut live_state = self.lock_live_state();
-        let Some(LivePendingState { mut db, state_overrides }) = live_state.take() else {
+        let live_state = self.lock_live_state().take();
+        let Some(LivePendingState { mut db, state_overrides }) = live_state else {
             warn!(
                 message = "live pending state unavailable, falling back to full rebuild",
                 block_number = flashblock.metadata.block_number,
@@ -729,7 +728,6 @@ where
             flashblocks.push(flashblock.clone());
             return self.build_pending_state(Some(Arc::clone(prev_pending_blocks)), &flashblocks);
         };
-        drop(live_state);
 
         let previous_header = prev_pending_blocks.latest_header();
         let current_block = BlockAssembler::assemble(std::slice::from_ref(flashblock))?;
@@ -1000,10 +998,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::{sync::mpsc as std_mpsc, thread, time::Duration};
+
     use alloy_consensus::{Header, Sealed};
-    use alloy_primitives::B256;
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{B256, Bytes, TxKind, U256, hex};
     use alloy_rpc_types_engine::PayloadId;
-    use base_common_consensus::BasePrimitives;
+    use base_common_consensus::{BasePrimitives, TxDeposit};
     use base_common_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Metadata,
     };
@@ -1013,6 +1014,95 @@ mod tests {
     use tokio::sync::{broadcast, mpsc};
 
     use super::*;
+
+    #[rstest]
+    #[case::same_block(1, 1)]
+    #[case::next_block(2, 0)]
+    fn flashblock_rebuilds_unavailable_live_state(#[case] block_number: u64, #[case] index: u64) {
+        let client =
+            MockEthProvider::<BasePrimitives>::new().with_chain_spec(BaseChainSpec::mainnet());
+        client.add_header(
+            B256::ZERO,
+            Header { gas_limit: 30_000_000, base_fee_per_gas: Some(1), ..Default::default() },
+        );
+        let mut l1_attributes = hex!("015d8eb9").to_vec();
+        l1_attributes.resize(4 + 32 * 8, 0);
+        let deposit = TxDeposit {
+            to: TxKind::Call(Address::ZERO),
+            gas_limit: 100_000,
+            input: Bytes::from(l1_attributes),
+            ..Default::default()
+        };
+        let first = Flashblock {
+            payload_id: PayloadId::default(),
+            index: 0,
+            base: Some(ExecutionPayloadBaseV1 {
+                block_number: 1,
+                gas_limit: 30_000_000,
+                base_fee_per_gas: U256::from(1),
+                ..Default::default()
+            }),
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                transactions: vec![BaseTxEnvelope::from(deposit.clone()).encoded_2718().into()],
+                ..Default::default()
+            },
+            metadata: Metadata::new(1),
+        };
+        let incoming = Flashblock {
+            index,
+            base: (index == 0).then(|| ExecutionPayloadBaseV1 {
+                block_number,
+                timestamp: 2,
+                ..first.base.clone().unwrap()
+            }),
+            diff: if index == 0 {
+                ExecutionPayloadFlashblockDeltaV1 {
+                    transactions: vec![
+                        BaseTxEnvelope::from(TxDeposit {
+                            source_hash: B256::repeat_byte(1),
+                            ..deposit
+                        })
+                        .encoded_2718()
+                        .into(),
+                    ],
+                    ..Default::default()
+                }
+            } else {
+                ExecutionPayloadFlashblockDeltaV1::default()
+            },
+            metadata: Metadata::new(block_number),
+            payload_id: first.payload_id,
+        };
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_header(BlockAssembler::assemble(std::slice::from_ref(&first)).unwrap().header);
+        builder.with_flashblocks([first.clone()]);
+        let pending = Arc::new(ArcSwapOption::from(Some(Arc::new(builder.build().unwrap()))));
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (sender, _) = broadcast::channel(1);
+        let processor =
+            StateProcessor::new(client, Arc::clone(&pending), 3, Arc::new(Mutex::new(rx)), sender);
+        tx.send(StateUpdate::Flashblock(incoming.clone())).unwrap();
+        drop(tx);
+
+        let (completed_tx, completed_rx) = std_mpsc::channel();
+        let worker = thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(processor.start());
+            completed_tx.send(()).unwrap();
+        });
+        completed_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("flashblock rebuild must finish without deadlocking");
+        worker.join().unwrap();
+
+        let rebuilt = pending.load_full().expect("rebuilt pending state must be published");
+        assert_eq!(rebuilt.latest_block_number(), block_number);
+        assert_eq!(rebuilt.latest_flashblock_index(), index);
+        assert_eq!(rebuilt.get_flashblocks(), vec![first, incoming]);
+        assert_eq!(rebuilt.pending_transaction_count(), block_number as usize);
+    }
 
     #[rstest]
     #[case::caught_up(1)]

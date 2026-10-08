@@ -304,7 +304,6 @@ services:
       - --rollup.chain-block-time=2000
       - --metrics=0.0.0.0:${L2_BUILDER_METRICS_PORT}
       - --builder.enable-resource-metering
-      - --builder.enable-experimental-validity-transactions
       - --builder.payload-builder-cutover
       - --txpool.nolocals
       - --rollup.txpool-max-inflight-delegated-slots=32768
@@ -331,6 +330,8 @@ services:
       - --rpc.port
       - "${L2_BUILDER_CL_RPC_PORT}"
       - --rpc.enable-admin
+      - --rpc.execution-forwarding-endpoint
+      - http://localhost:${L2_BUILDER_HTTP_PORT}
       - --p2p.listen.tcp
       - "${L2_BUILDER_CL_P2P_PORT}"
       - --p2p.listen.udp
@@ -393,11 +394,13 @@ services:
       - "${BATCHER_METRICS_PORT}:${BATCHER_METRICS_PORT}"   # Metrics
     restart: unless-stopped
 
-  # Shadow DA: the Rust base batcher runs in --shadow-mode alongside the
+  # Shadow DA: the Rust base batcher runs in shadow mode alongside the
   # op-batcher, posting to SHADOW_BATCH_INBOX_ADDRESS from SHADOW_BATCHER_ADDR
   # (a distinct L1 sender, so its nonces never collide with the op-batcher's).
-  # It follows the derivation of base-shadow-validator, whose rollup node derives the
-  # shadow inbox, and compares its blocks with the builder's.
+  # It reads the blocks to submit from the consensus RPC of base-builder, which forwards
+  # the block reads to its execution client. It follows the derivation of
+  # base-shadow-validator, whose rollup node derives its chain from the shadow inbox,
+  # and compares the validator's blocks with the builder's.
   base-batcher:
     image: base:local
     build:
@@ -413,15 +416,16 @@ services:
       base-shadow-validator:
         condition: service_healthy
     environment:
-      - BASE_BATCHER_ROLLUP_RPC_URL=http://base-shadow-validator:${L2_SHADOW_CL_RPC_PORT}
+      - BASE_BATCHER_SEQUENCER_URLS=http://base-builder:${L2_BUILDER_CL_RPC_PORT}
     command:
       - batcher
       - --l1-rpc-url=http://l1-el:${L1_HTTP_PORT}
-      - --l2-rpc-url=http://base-builder:${L2_BUILDER_HTTP_PORT}
       - --private-key=${SHADOW_BATCHER_KEY}
-      - --shadow-mode
-      - --dangerously-override-batch-inbox-address=${SHADOW_BATCH_INBOX_ADDRESS}
-      - --parity-validator-l2-rpc-url=http://base-shadow-validator:${L2_SHADOW_HTTP_PORT}
+      - --shadow.enabled
+      - --shadow.inbox=${SHADOW_BATCH_INBOX_ADDRESS}
+      - --shadow.validator-rollup-rpc=http://base-shadow-validator:${L2_SHADOW_CL_RPC_PORT}
+      - --shadow.validator-l2-rpc=http://base-shadow-validator:${L2_SHADOW_HTTP_PORT}
+      - --no-throttle
       - --max-channel-duration=2
       - --poll-interval=1
       - --sub-safety-margin=0
@@ -517,7 +521,6 @@ services:
       - --rpc.forwarding-endpoint=http://base-builder:${L2_BUILDER_HTTP_PORT}
       - --enable-tx-forwarding
       - --builder-rpc-urls=${VALIDITY_BUILDER_RPC_URLS}
-      - --enable-experimental-validity-transactions
       - --enable-transaction-event-journal
       - --enable-metering
       - --l1-eth-rpc
@@ -622,7 +625,6 @@ services:
       - --rollup.discovery.v4
       - --enable-tx-forwarding
       - --builder-rpc-urls=${VALIDITY_BUILDER_RPC_URLS}
-      - --enable-experimental-validity-transactions
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
       - --l1-beacon
@@ -724,7 +726,6 @@ services:
       - --rpc.eth-proof-window=1209600
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
       - --rollup.discovery.v4
-      - --enable-experimental-validity-transactions
       # Derive the safe chain from the shadow DA instead of the canonical inbox.
       - --l1.dangerously-override-da-batch-inbox
       - "${SHADOW_BATCH_INBOX_ADDRESS}"

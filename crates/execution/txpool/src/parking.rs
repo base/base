@@ -10,11 +10,12 @@ use alloy_primitives::{
     map::{HashMap, hash_map::Entry},
 };
 use reth_transaction_pool::{
-    BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionOrdering,
-    TransactionPool, ValidPoolTransaction, error::InvalidPoolTransactionError,
+    BestTransactions, BestTransactionsAttributes, EthPoolTransaction, PoolTransaction,
+    TransactionOrdering, TransactionPool, ValidPoolTransaction, error::InvalidPoolTransactionError,
+    noop::NoopTransactionPool,
 };
 
-use crate::{BasePooledTx, BestTransactionPriority};
+use crate::{BasePooledTx, BestTransactionPriority, UnifiedTipOrdering};
 
 /// A sequential transaction lane whose members must execute in nonce order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -353,6 +354,23 @@ where
         if let Some(lane) = BestTransactionLane::for_transaction(transaction) {
             self.release_lane(lane);
         }
+    }
+}
+
+/// A noop pool holds no transactions, so parking over its empty best iterator is vacuous.
+impl<T> ParkableTransactionPool for NoopTransactionPool<T>
+where
+    T: BasePooledTx + EthPoolTransaction,
+{
+    fn best_transactions_with_attributes_and_parking(
+        &self,
+        attributes: BestTransactionsAttributes,
+    ) -> Box<dyn ParkableBestTransactions<Self::Transaction>> {
+        Box::new(ParkedBestTransactions::new(
+            std::iter::empty(),
+            UnifiedTipOrdering::default(),
+            attributes.basefee,
+        ))
     }
 }
 

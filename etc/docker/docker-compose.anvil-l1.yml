@@ -89,7 +89,6 @@ services:
           --rollup.sequencer-http=http://base-builder:${L2_BUILDER_HTTP_PORT} \
           --proofs-history \
           --proofs-history.storage-path=/data/proofs \
-          --enable-experimental-validity-transactions \
           -vvv
     healthcheck:
       test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"debug_proofsSyncStatus\",\"params\":[],\"id\":1}' http://localhost:${L2_PROOFS_HTTP_PORT}/ | grep -q '\"result\"'"]

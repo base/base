@@ -7,13 +7,6 @@ use thiserror::Error;
 use super::{Harness, HarnessBuilder};
 use crate::NodeMode;
 
-/// Node spawn configuration accepted by [`Driver::spawn_node`].
-#[derive(Debug, Default)]
-pub struct NodeConfig {
-    /// Harness builder used to wire fake dependencies.
-    pub builder: HarnessBuilder,
-}
-
 /// Snapshot of one spawned node.
 #[derive(Clone, Debug, Default)]
 pub struct NodeSnapshot {
@@ -28,13 +21,6 @@ pub struct NodeSnapshot {
 pub struct DriverProgressSnapshot {
     /// Per-node snapshots in spawn order.
     pub nodes: Vec<NodeSnapshot>,
-}
-
-impl DriverProgressSnapshot {
-    /// Returns the first validator snapshot if available.
-    pub fn validator(&self) -> Option<&NodeSnapshot> {
-        self.nodes.first()
-    }
 }
 
 /// Timeout returned by [`Driver::await_progress`].
@@ -66,8 +52,8 @@ impl Driver {
     }
 
     /// Spawns one node harness in the provided role.
-    pub async fn spawn_node(&mut self, mode: NodeMode, config: NodeConfig) -> usize {
-        let harness = config.builder.with_role(mode).build().await;
+    pub async fn spawn_node(&mut self, mode: NodeMode, builder: HarnessBuilder) -> usize {
+        let harness = builder.with_role(mode).build().await;
         self.harnesses.push(harness);
         self.harnesses.len() - 1
     }
