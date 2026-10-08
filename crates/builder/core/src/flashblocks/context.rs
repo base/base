@@ -944,14 +944,15 @@ impl BasePayloadBuilderCtx {
                             predicate_index.park(tx_hash, tx, predicate);
                         }
                         // Unreachable: this scan is only entered with a blocker present and not
-                        // expired. Close the candidate defensively rather than panicking.
+                        // expired. Reject defensively — with events and diagnostics — rather
+                        // than panicking, mirroring the read-failure branch.
                         None => {
                             warn!(
                                 target: "payload_builder",
                                 tx_hash = ?tx_hash,
                                 "unsatisfied non-expired validity predicate without a blocking key"
                             );
-                            Self::skip_pooled_current(best_txs, &tx);
+                            self.reject_current(best_txs, &mut diag, &cx, &tx, ordering_position);
                         }
                     }
                 }
