@@ -4,8 +4,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use alloy_primitives::B256;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
-use base_consensus_engine::ConsolidateInput;
-use base_protocol::L2BlockInfo;
+use base_protocol::{AttributesWithParent, L2BlockInfo};
 use tracing::debug;
 
 use crate::{EngineClientError, NodeOperatingMode, SequencerConfig};
@@ -161,7 +160,7 @@ pub struct CanonicalReconciliationInputs {
     /// Contiguous authoritative payloads replacing the private branch.
     pub payloads: Vec<BaseExecutionPayloadEnvelope>,
     /// Safe-head signals deferred while the private branch was active.
-    pub safe_signals: VecDeque<ConsolidateInput>,
+    pub safe_signals: VecDeque<Box<AttributesWithParent>>,
     /// Latest finalized block number deferred during the cycle.
     pub finalized_block_number: Option<u64>,
 }
@@ -173,7 +172,7 @@ pub struct ShadowReconciliationGate {
     local_payloads: BTreeMap<u64, BaseExecutionPayloadEnvelope>,
     faulted: bool,
     anchor: L2BlockInfo,
-    safe_signals: VecDeque<ConsolidateInput>,
+    safe_signals: VecDeque<Box<AttributesWithParent>>,
     latest_finalized: Option<u64>,
 }
 
@@ -229,7 +228,7 @@ impl ShadowReconciliationGate {
     }
 
     /// Buffers a deferred safe signal.
-    pub fn buffer_safe_signal(&mut self, signal: ConsolidateInput) {
+    pub fn buffer_safe_signal(&mut self, signal: Box<AttributesWithParent>) {
         if self.safe_signals.len() >= Self::MAX_SAFE_SIGNALS {
             self.faulted = true;
         } else {
@@ -238,12 +237,8 @@ impl ShadowReconciliationGate {
     }
 
     /// Returns whether a safe signal must wait for canonical reconciliation.
-    pub const fn should_defer_safe_signal(&self, signal: &ConsolidateInput) -> bool {
-        let block_number = match signal {
-            ConsolidateInput::Attributes(attributes) => attributes.block_number(),
-            ConsolidateInput::BlockInfo(block_info) => block_info.block_info.number,
-        };
-        block_number > self.anchor.block_info.number
+    pub const fn should_defer_safe_signal(&self, signal: &AttributesWithParent) -> bool {
+        signal.block_number() > self.anchor.block_info.number
     }
 
     /// Records the latest finalized block.
@@ -366,7 +361,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Bloom, U256};
     use alloy_rpc_types_engine::ExecutionPayloadV1;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
-    use base_consensus_engine::{ConsolidateInput, test_utils::TestAttributesBuilder};
+    use base_consensus_engine::test_utils::TestAttributesBuilder;
     use base_protocol::{BlockInfo, L2BlockInfo};
 
     use super::{CanonicalUnsafeCatchup, ShadowReconciliationGate};
@@ -587,16 +582,12 @@ mod tests {
     fn only_defers_safe_signals_above_canonical_anchor() {
         let gate = ShadowReconciliationGate::new(head(10, B256::ZERO));
 
-        assert!(
-            !gate.should_defer_safe_signal(&ConsolidateInput::BlockInfo(head(10, B256::ZERO,)))
-        );
-        assert!(gate.should_defer_safe_signal(&ConsolidateInput::BlockInfo(head(11, B256::ZERO,))));
-        assert!(!gate.should_defer_safe_signal(&ConsolidateInput::Attributes(Box::new(
-            TestAttributesBuilder::new().with_parent(head(9, B256::ZERO)).build(),
-        ))));
-        assert!(gate.should_defer_safe_signal(&ConsolidateInput::Attributes(Box::new(
-            TestAttributesBuilder::new().with_parent(head(10, B256::ZERO)).build(),
-        ))));
+        assert!(!gate.should_defer_safe_signal(
+            &TestAttributesBuilder::new().with_parent(head(9, B256::ZERO)).build()
+        ));
+        assert!(gate.should_defer_safe_signal(
+            &TestAttributesBuilder::new().with_parent(head(10, B256::ZERO)).build()
+        ));
     }
 
     #[test]
@@ -613,7 +604,9 @@ mod tests {
     fn safe_signal_capacity_is_independent_of_payload_capacity() {
         let mut gate = ShadowReconciliationGate::new(L2BlockInfo::default());
         for number in 1..=ShadowReconciliationGate::MAX_PAYLOADS as u64 + 1 {
-            gate.buffer_safe_signal(ConsolidateInput::BlockInfo(head(number, B256::ZERO)));
+            gate.buffer_safe_signal(Box::new(
+                TestAttributesBuilder::new().with_parent(head(number - 1, B256::ZERO)).build(),
+            ));
         }
 
         assert!(!gate.faulted);

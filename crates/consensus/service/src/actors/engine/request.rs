@@ -1,9 +1,7 @@
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
-use base_consensus_engine::{
-    BuildTaskError, ConsolidateInput, EngineQueries, InsertTaskError, SealTaskError,
-};
+use base_consensus_engine::{BuildTaskError, EngineQueries, InsertTaskError, SealTaskError};
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use opentelemetry::Context;
 use thiserror::Error;
@@ -75,9 +73,8 @@ pub enum EngineActorRequest {
     BuildRequest(Box<BuildRequest>),
     /// Request to get the sealed payload without inserting it.
     GetPayloadRequest(Box<GetPayloadRequest>),
-    /// Request to consolidate using a safe L2 signal from attributes or delegated safe-block
-    /// derivation
-    ProcessSafeL2SignalRequest(ConsolidateInput),
+    /// Request to consolidate the safe head with derived attributes.
+    ProcessSafeL2SignalRequest(Box<AttributesWithParent>),
     /// Request to finalize the L2 block at the provided block number.
     ProcessFinalizedL2BlockNumberRequest(Box<u64>),
     /// Request to process an unsafe block authenticated by the P2P gossip layer.

@@ -654,7 +654,7 @@ where
                         let task = EngineTask::Consolidate(Box::new(ConsolidateTask::new(
                             Arc::clone(self.processor.client()),
                             Arc::clone(self.processor.rollup()),
-                            safe_signal,
+                            *safe_signal,
                         )));
                         self.processor.enqueue(task);
                     }

@@ -137,7 +137,7 @@ where
                             ConsolidateTask::new(
                                 Arc::clone(self.processor.client()),
                                 Arc::clone(self.processor.rollup()),
-                                safe_signal,
+                                *safe_signal,
                             ),
                         )));
                     }

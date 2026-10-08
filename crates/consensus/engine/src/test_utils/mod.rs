@@ -3,6 +3,11 @@
 mod attributes;
 pub use attributes::TestAttributesBuilder;
 
+mod derived_block;
+pub use derived_block::{
+    encoded_l1_info_deposit_tx, l1_info_deposit_tx, matching_rpc_block, rpc_transaction,
+};
+
 mod engine_client;
 pub use engine_client::{
     MockEngineClient, MockEngineClientBuilder, MockEngineStorage, MockL2BlockError,

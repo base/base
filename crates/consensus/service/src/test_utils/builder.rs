@@ -302,9 +302,10 @@ impl HarnessBuilder {
         });
 
         let fake_l1 = FakeL1::new(
+            Arc::clone(&config),
             engine_actor_request_tx.clone(),
             Some(derivation_actor_request_tx.clone()),
-            Some(fake_engine_handle.clone()),
+            fake_engine_handle.clone(),
         );
 
         for block in self.l1_chain {

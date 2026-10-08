@@ -3,7 +3,6 @@
 use alloy_consensus::Header as ConsensusHeader;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
-use base_consensus_engine::ConsolidateInput;
 use base_consensus_safedb::SafeHeadResponse;
 use base_protocol::{BlockInfo, L2BlockInfo};
 
@@ -141,10 +140,10 @@ async fn l4_confirmations_observed_by_derivation() {
         (harness.fake_l1().clone(), harness.fake_engine_handle().clone())
     };
 
-    // dispatch_safe_l2_for injects one synthetic FCU log entry per extend() call; real
+    // extend() injects one synthetic FCU log entry per call; real
     // engine-originated FCUs appear after that, so skip pre_extend_count+1 entries.
     let pre_extend_count = fake_engine_handle.call_count();
-    fake_l1.extend(block(1, B256::ZERO, hash_for(1), 1)).await;
+    let safe_1 = fake_l1.extend(block(1, B256::ZERO, hash_for(1), 1)).await;
 
     driver
         .await_progress(
@@ -161,7 +160,7 @@ async fn l4_confirmations_observed_by_derivation() {
         matches!(
             call,
             EngineClientCall::ForkChoiceUpdatedV3 { fcs, .. }
-                if fcs.safe_block_hash == hash_for(1)
+                if fcs.safe_block_hash == safe_1.block_info.hash
         )
     });
     assert!(
@@ -288,7 +287,7 @@ async fn e2e_invalid_fcu_reset_and_recovery() {
     //
     // Observable difference (on the head hash of the FCU that follows the INVALID one):
     //   pre-fix  (Temporary): the engine retries the SAME poisoned head in place — every FCU
-    //                         carries hash_for(1), never resetting.
+    //                         carries derived block 1, never resetting.
     //   post-fix (Reset):     INVALID escalates to Reset, the forkchoice is re-derived from
     //                         genesis, so a subsequent FCU carries the genesis head instead.
     let mut driver = Driver::new();
@@ -301,18 +300,21 @@ async fn e2e_invalid_fcu_reset_and_recovery() {
         )
         .await;
 
-    let (engine_tx, fake_engine_handle) = {
+    let (engine_tx, fake_engine_handle, fake_l1) = {
         let harness = driver.harness(node_id);
-        (harness.engine_request_sender(), harness.fake_engine_handle().clone())
+        (
+            harness.engine_request_sender(),
+            harness.fake_engine_handle().clone(),
+            harness.fake_l1().clone(),
+        )
     };
 
     // Send ProcessSafeL2SignalRequest directly instead of via fake_l1.extend().
     // fake_l1.extend() calls inject_fcu_v3_call() which pops the first scripted response before
     // the engine actor ever calls fork_choice_updated_v3(), defeating the test.
+    let (attributes, poisoned) = fake_l1.derive(block(1, B256::ZERO, hash_for(1), 1));
     engine_tx
-        .send(EngineActorRequest::ProcessSafeL2SignalRequest(ConsolidateInput::BlockInfo(
-            L2BlockInfo { block_info: block(1, B256::ZERO, hash_for(1), 1), ..Default::default() },
-        )))
+        .send(EngineActorRequest::ProcessSafeL2SignalRequest(Box::new(attributes)))
         .await
         .expect("engine actor must accept the signal");
 
@@ -329,9 +331,9 @@ async fn e2e_invalid_fcu_reset_and_recovery() {
 
     assert_eq!(
         fcu_heads.first().copied(),
-        Some(hash_for(1)),
+        Some(poisoned.block_info.hash),
         "expected the first FCU to carry the poisoned head {:?}, got {:?}",
-        hash_for(1),
+        poisoned.block_info.hash,
         fcu_heads.first()
     );
 
@@ -343,6 +345,6 @@ async fn e2e_invalid_fcu_reset_and_recovery() {
          (reset re-derived the forkchoice); got {:?}. pre-fix (Temporary) retries the poisoned \
          head {:?} in place instead of resetting. full heads: {fcu_heads:?}",
         fcu_heads.get(1),
-        hash_for(1)
+        poisoned.block_info.hash
     );
 }
