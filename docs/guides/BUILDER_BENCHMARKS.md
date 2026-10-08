@@ -6,7 +6,7 @@ The build path's cost depends on pool shape as much as on code. A backlog of val
 
 ## What it runs
 
-Every scenario runs once per builder. Results are keyed `<builder>/<scenario>`, for example `flashblocks/resting_backlog` and `native/resting_backlog`.
+Every scenario in the main matrix runs once per builder, and the `_enforce` scenarios run on the flashblocks builder only. Results are keyed `<builder>/<scenario>`, for example `flashblocks/resting_backlog` and `native/resting_backlog`.
 
 ### Flashblocks builder
 
@@ -44,6 +44,9 @@ The workloads live in `crates/builder/core/src/test_utils/flashblock_workload.rs
 | `backlog_growth` | 1,500 resting at start, 300 more arrive before each flashblock | Pool churn and backlog growth within a block (native: 4,500 at start) |
 | `congested` | 300 transfers arrive per flashblock, 100 fit | Gas-limit rejections of a growing overflow (native: 3,000 transfers, 1,000 fit) |
 | `satisfied_validity` | Baseline plus 50 validity transactions per flashblock whose 4 predicates hold | Predicate evaluation on the inclusion path |
+| `resting_backlog_enforce`, `wake_rescan_enforce`, `backlog_growth_enforce` (flashblocks only) | The same traffic as the scenario without the suffix | The resting-predicate holdback (`--builder.resting-predicates enforce`): the resting index, the iterator's resting check that skips a resting transaction until a commit changes the state its predicate reads, and the wakeups from committed state |
+
+Scenarios without the `_enforce` suffix run with resting predicates off, the `--builder.resting-predicates` default. `shadow` mode is not measured: it runs the same resting-index bookkeeping as `enforce` without skipping resting transactions.
 
 The event-type mix is fixed per scenario rather than derived from production volume, so results stay comparable when production traffic changes.
 

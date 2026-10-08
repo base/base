@@ -58,6 +58,9 @@ fn native_fixture(scenario: &str) -> FlashblockWorkloadFixture {
 #[bench::backlog_growth(args = ("backlog_growth"), setup = fixture)]
 #[bench::congested(args = ("congested"), setup = fixture)]
 #[bench::satisfied_validity(args = ("satisfied_validity"), setup = fixture)]
+#[bench::resting_backlog_enforce(args = ("resting_backlog_enforce"), setup = fixture)]
+#[bench::wake_rescan_enforce(args = ("wake_rescan_enforce"), setup = fixture)]
+#[bench::backlog_growth_enforce(args = ("backlog_growth_enforce"), setup = fixture)]
 fn build_block(
     mut fixture: FlashblockWorkloadFixture,
 ) -> (FlashblockBlockOutcome, FlashblockWorkloadFixture) {

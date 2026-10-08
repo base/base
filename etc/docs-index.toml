@@ -656,7 +656,7 @@ digest = "393c4961d6"
 
 ["docs/guides/BUILDER_BENCHMARKS.md"]
 summary = "Advisory per-PR base-vs-head benchmarks for the flashblocks and native (Denim) builders: workload matrix, Callgrind instruction counts, per-deferral cost, event-count diffs, CI cost, exclusions."
-digest = "5abad2df3b"
+digest = "2c4bc0733f"
 
 ["docs/guides/P2P.md"]
 summary = "Explains the Base P2P stack for newcomers: consensus-layer discv5 and libp2p gossipsub versus execution-layer reth networking, how they interact via Engine API, key files, flags, and glossary."

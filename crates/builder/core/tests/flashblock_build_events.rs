@@ -1,8 +1,9 @@
 //! Transaction-event volume of the builder benchmark workloads.
 //!
 //! Runs every [`FlashblockWorkload`] in the benchmark matrix through both production builders
-//! (the flashblocks build loop and the native payload builder that serves Denim blocks) with
-//! transaction events captured. Each case checks that the block includes the workload's expected
+//! (the flashblocks build loop and the native payload builder that serves Denim blocks), and
+//! the flashblocks-only scenarios through the flashblocks loop, with transaction events
+//! captured. Each case checks that the block includes the workload's expected
 //! transactions, then prints one `BUILDER_BENCH` line with the per-type event counts and the
 //! number of deferrals. `.depot/workflows/bench-builder.yml` runs this on the base and head
 //! commits of a PR and reports the differences next to the instruction counts from
@@ -32,6 +33,20 @@ fn block_build_reports_event_volume(
     #[case] scenario: &str,
     #[values("flashblocks", "native")] builder: &str,
 ) {
+    report_event_volume(scenario, builder);
+}
+
+/// Scenarios that set a flashblocks iterator mode the native builder does not have.
+#[rstest]
+#[case::resting_backlog_enforce("resting_backlog_enforce")]
+#[case::wake_rescan_enforce("wake_rescan_enforce")]
+#[case::backlog_growth_enforce("backlog_growth_enforce")]
+fn flashblocks_only_build_reports_event_volume(#[case] scenario: &str) {
+    report_event_volume(scenario, "flashblocks");
+}
+
+/// Builds one block of `scenario` on `builder`, checks inclusion, and prints its event counts.
+fn report_event_volume(scenario: &str, builder: &str) {
     let workload = FlashblockWorkload::by_name(scenario).expect("scenario is in the matrix");
     let key = format!("{builder}/{scenario}");
     let native = builder == "native";
