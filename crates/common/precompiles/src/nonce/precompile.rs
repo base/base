@@ -1,6 +1,6 @@
 //! Precompile entry point for the EIP-8130 2D nonce manager.
 
-use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
+use alloy_evm::precompiles::PrecompilesMap;
 use base_common_genesis::BaseUpgrade;
 
 use crate::{NonceManagerStorage, UpgradeGatedStorageFeatures, macros::base_precompile};
@@ -19,21 +19,14 @@ impl NonceManager {
     /// Installs the `NonceManager` precompile, gated to the storage features
     /// active at `upgrade`.
     pub fn install(precompiles: &mut PrecompilesMap, upgrade: BaseUpgrade) {
-        precompiles.extend_precompiles(core::iter::once((
-            NonceManagerStorage::ADDRESS,
-            Self::precompile(upgrade),
-        )));
-    }
-
-    /// Creates the EVM precompile wrapper for `NonceManager`, gated to the storage
-    /// features active at `upgrade`.
-    pub fn precompile(upgrade: BaseUpgrade) -> DynPrecompile {
         let storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade);
-        base_precompile!(
+        let precompile = base_precompile!(
             "NonceManager",
             storage_features: storage_features,
             |ctx, calldata| NonceManagerStorage::new(ctx).dispatch(ctx, &calldata),
-        )
+        );
+        precompiles
+            .extend_precompiles(core::iter::once((NonceManagerStorage::ADDRESS, precompile)));
     }
 }
 

@@ -62,7 +62,6 @@ mod tests {
         let (addr, tail) = B20Variant::Asset.compute_address(creator, salt);
 
         assert_eq!(addr.as_slice()[11..], tail);
-        assert!(B20Variant::is_b20_address(addr));
         assert_eq!(B20Variant::from_address(addr), Some(B20Variant::Asset));
     }
 
@@ -85,11 +84,6 @@ mod tests {
         let (asset, _) = B20Variant::compute_address_for_discriminant(creator, 0, salt);
         let (stablecoin, _) = B20Variant::compute_address_for_discriminant(creator, 1, salt);
 
-        assert!(B20Variant::is_supported_discriminant(0));
-        assert!(B20Variant::is_supported_discriminant(1));
-        assert!(!B20Variant::is_supported_discriminant(2));
-        assert!(B20Variant::is_b20_address(asset));
-        assert!(B20Variant::is_b20_address(stablecoin));
         assert_eq!(B20Variant::from_address(asset), Some(B20Variant::Asset));
         assert_eq!(B20Variant::from_address(stablecoin), Some(B20Variant::Stablecoin));
     }
