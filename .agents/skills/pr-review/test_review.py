@@ -718,6 +718,35 @@ class AgentRunTests(unittest.TestCase):
                 prompt = cmd[cmd.index("--append-system-prompt") + 1]
                 self.assertEqual("## Working fast" in prompt, stage in review.EXPLORING_STAGES)
 
+    def test_a_ballot_is_not_capped_even_though_a_council_member_casts_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(review, "run", return_value=self.envelope()) as run:
+            review.run_agent(self.agent(stage="council"), "p", Path(tmp), Path(tmp), None,
+                             schema="votes", label="m.vote")
+        cmd = run.call_args.args[0]
+        self.assertNotIn("## Working fast", cmd[cmd.index("--append-system-prompt") + 1])
+
+    def test_a_cut_off_diff_names_the_files_it_lost(self) -> None:
+        def file_diff(name: str) -> str:
+            return f"diff --git a/{name} b/{name}\n--- a/{name}\n+++ b/{name}\n@@ -1 +1 @@\n-x\n+y\n"
+
+        full = "".join(file_diff(n) for n in ("a.rs", "b.rs", "c.rs", "d.rs"))
+        cut = full[: full.index("diff --git a/c.rs") + 20]  # the cut lands inside c.rs
+        self.assertEqual(review.omitted_files(full, cut), ["c.rs", "d.rs"])
+        self.assertEqual(review.omitted_files(full, full), ["d.rs"])  # the last file of a whole diff is rechecked
+        self.assertEqual(review.omitted_files(full, ""), ["a.rs", "b.rs", "c.rs", "d.rs"])
+
+    def test_the_change_block_lists_the_cut_off_files(self) -> None:
+        names = [f"f{i}.rs" for i in range(5)]
+        diff = "".join(f"diff --git a/{n} b/{n}\n--- a/{n}\n+++ b/{n}\n@@ -1 +1 @@\n-x\n+y\n" for n in names)
+        ctx = review.Context(description="d", title="t", files=names, diff=diff)
+        with mock.patch.object(review, "MAX_DIFF_CHARS", len(diff) // 2):
+            text = review.change_block(ctx)
+        self.assertIn("The diff was cut off here", text)
+        self.assertIn("f4.rs", text)
+        self.assertNotIn("f0.rs\n", text.split("cut off here")[1])
+        with mock.patch.object(review, "MAX_DIFF_CHARS", len(diff) + 1):
+            self.assertNotIn("cut off", review.change_block(ctx))
+
     def test_the_decider_and_chair_are_never_capped_on_tool_calls(self) -> None:
         # They must check every open thread and every claim, however many reads that takes.
         self.assertFalse({"chair", "decide"} & review.EXPLORING_STAGES)
@@ -725,7 +754,8 @@ class AgentRunTests(unittest.TestCase):
     def test_the_working_guide_has_no_stale_time_claims_and_covers_truncated_diffs(self) -> None:
         text = review.WORKING_GUIDE.read_text()
         self.assertNotIn("hard time limit", text)
-        self.assertIn("truncated", text)
+        # The guide must use the same words as the note that change_block adds to a cut-off diff.
+        self.assertIn("cut off", text)
 
     def test_pr_settings_are_never_loaded(self) -> None:
         _, run = self.call(self.agent(), [self.envelope()])
