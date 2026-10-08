@@ -15,6 +15,8 @@ pub enum ViewId {
     Conductor,
     /// Proof system monitor (dispute games, anchor state).
     Proofs,
+    /// Live `OpenVM` range prove of one L2 block.
+    OpenVm,
     /// Kubernetes pods monitor.
     Pods,
     /// Network upgrade activation countdown and history.

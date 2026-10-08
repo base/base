@@ -568,11 +568,19 @@ digest = "549f1664c5"
 
 ["crates/proof/zk/backend/README.md"]
 summary = "base-proof-zk-backend: ZkProver implementations (DryRun, SP1 Cluster, SP1 Network) for prover-service workers, with SP1 setup under src/succinct and guest programs in zk/programs/succinct."
-digest = "ebbc5b092d"
+digest = "4da2709796"
 
 ["crates/proof/zk/host/README.md"]
 summary = "Host-side ZK proving worker: ZkHost and ProofGenerator claim ZK jobs, run the backend named by zk_backend on the request, and submit proofs. Use when working on the prover service's ZK worker path."
 digest = "cc1964a5b1"
+
+["crates/proof/zk/programs/openvm/README.md"]
+summary = "OpenVM range guest workspace (local, no aggregation): cargo-openvm prerequisites, just openvm build-elf, the basectl live-prove TUI, and the 0x01-framed rkyv --input format."
+digest = "9297de4d05"
+
+["crates/proof/zk/programs/openvm/range/README.md"]
+summary = "OpenVM range program: same rkyv witness and base-proof-zk-utils STF as the Succinct guest, revealing keccak256(abi.encode(BootInfoStruct)) as its single bytes32 public value."
+digest = "b303a384d3"
 
 ["crates/proof/zk/programs/succinct/range/README.md"]
 summary = "Client program (binary) that executes the Base rollup state transition over a block range for an on-chain validity proof, in native mode (RPC data) or zkVM mode (host-supplied data)."
@@ -693,6 +701,10 @@ digest = "12c930d703"
 ["etc/systems/README.md"]
 summary = "Docs for base-system-tests: running the snapshot-backed mainnet devnet (builder and follow client), snapshot and transfer benchmarks, workload suite, 2s vs 200ms comparison, cleanup."
 digest = "261a5e39c4"
+
+["etc/tools/openvm-dump/README.md"]
+summary = "openvm-dump CLI: fetches a 1-block range witness from live L1/L2/beacon/op-node RPCs and writes the OpenVM input.json for the range guest, then just openvm prove-zeronet."
+digest = "5ff010ff3a"
 
 ["etc/tools/witness-diff/README.md"]
 summary = "witness-diff tool that compares two execution witnesses (from debug_executionWitness) to find differing trie nodes, bytecodes, or preimages. Use when debugging state root mismatches between nodes."
