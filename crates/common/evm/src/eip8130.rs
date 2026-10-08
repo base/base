@@ -1920,13 +1920,12 @@ impl Eip8130Executor {
 mod tests {
     use alloy_evm::{Evm, EvmError, FromTxWithEncoded, precompiles::PrecompilesMap};
     use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, keccak256};
-    use alloy_sol_types::{SolEvent, SolValue, sol};
+    use alloy_sol_types::{SolValue, sol};
     use base_common_consensus::{
         AccountChange, AccountChangeChannel, BaseTxEnvelope, Call, ChangeType, CreateEntry,
         Eip8130Contracts, Eip8130Signed, InitialActor, Predeploys, SignedAccountChanges,
         SignedChange, TxEip8130,
     };
-    use base_common_precompiles::INonceManager;
     use base_execution_eip8130::AccountChangeApplier;
     use base_precompile_storage::StorageCtx;
     use k256::ecdsa::SigningKey;
@@ -2375,17 +2374,10 @@ mod tests {
         let stored_nonce =
             nonce_account.storage.get(&nonce_slot).expect("nonce slot updated").present_value;
         assert_eq!(stored_nonce, U256::from(current_nonce + 1));
-
-        let log = outcome
-            .result
-            .logs()
-            .iter()
-            .find(|log| log.address == NonceManagerStorage::ADDRESS)
-            .expect("nonce increment event");
-        let event = INonceManager::NonceIncremented::decode_log_data(&log.data).unwrap();
-        assert_eq!(event.account, sender);
-        assert_eq!(event.nonceKey, nonce_key);
-        assert_eq!(event.newNonce, current_nonce + 1);
+        assert!(
+            outcome.result.logs().iter().all(|log| log.address != NonceManagerStorage::ADDRESS),
+            "the protocol nonce increment must not add a receipt log"
+        );
     }
 
     #[test]
