@@ -590,8 +590,16 @@ class WorkflowTests(unittest.TestCase):
     def test_a_review_comment_must_be_on_an_open_pull_request_and_not_from_a_bot(self) -> None:
         condition = self.job_if(self.review_job)
         for needle in ("github.event.issue.pull_request", "github.event.issue.state == 'open'",
-                       "github.event.comment.user.type != 'Bot'", "startsWith(github.event.comment.body, '/review')"):
+                       "github.event.comment.user.type != 'Bot'"):
             self.assertIn(needle, condition)
+
+    def test_only_an_exact_review_command_gets_as_far_as_the_concurrency_group(self) -> None:
+        # GitHub keeps one waiting run per group, so `/reviewed` must not be able to replace a waiting `/review`.
+        condition = self.job_if(self.review_job)
+        self.assertIn("github.event.comment.body == '/review'", condition)
+        self.assertIn("startsWith(github.event.comment.body, '/review ')", condition)
+        self.assertIn("fromJSON('\"\\n\"')", condition)
+        self.assertNotIn("startsWith(github.event.comment.body, '/review')", condition)
 
     def test_the_comment_text_never_reaches_a_shell_script_directly(self) -> None:
         # Interpolating it into `run:` would let a comment inject commands into a job that holds secrets.
@@ -912,6 +920,33 @@ class CommitCountTests(unittest.TestCase):
             review.refresh_status(7, "base/base")
         self.assertEqual(len(sent), 1)
         self.assertIn("issues/comments/20", sent[0])
+
+    def test_the_summary_and_the_refresh_agree_for_a_short_and_a_full_sha(self) -> None:
+        # They used to differ: one matched the reviewed commit by prefix, the other only exactly.
+        gh, _ = self.fake_gh(self.SHAS, head=self.SHAS[3])
+        sent: list[str] = []
+
+        def capture(args, input_text=None):
+            if "PATCH" in args:
+                sent.append(json.loads(input_text)["body"])
+                return ""
+            return gh(args, input_text)
+
+        for reviewed in (self.SHAS[1], self.SHAS[1][:7]):
+            with self.subTest(reviewed=len(reviewed)):
+                ctx = review.Context(description="d", title="t", files=[], diff=DIFF, pr_number=7, head_sha=reviewed)
+                with mock.patch.object(review, "gh", capture):
+                    from_summary = review.status_for(ctx)
+                    from_refresh = review.status_line(7, "base/base", reviewed)
+                self.assertEqual(from_summary, from_refresh)
+                self.assertIn("2 commits pushed after `2222222`", from_summary)
+
+    def test_a_short_sha_equal_to_the_head_counts_as_the_latest_commit_in_both_places(self) -> None:
+        gh, _ = self.fake_gh(self.SHAS, head=self.SHAS[1])
+        ctx = review.Context(description="d", title="t", files=[], diff=DIFF, pr_number=7, head_sha=self.SHAS[1][:7])
+        with mock.patch.object(review, "gh", gh):
+            self.assertIn("the latest commit", review.status_for(ctx))
+            self.assertIn("the latest commit", review.status_line(7, "base/base", self.SHAS[1][:7]))
 
     def test_status_for_counts_against_the_live_head(self) -> None:
         gh, _ = self.fake_gh(self.SHAS, head=self.SHAS[3])
@@ -1414,12 +1449,44 @@ class ApplyPlanTests(unittest.TestCase):
                     else:
                         review.pr_context(7, "base/base", post=post)
 
-    def test_posting_does_not_ask_for_the_head_or_stop_when_the_pull_request_gains_commits(self) -> None:
-        # The review is of the commit it read. A push during the run is reported in the summary instead.
+    def test_a_push_during_the_run_does_not_stop_the_findings_but_stops_claims_that_something_is_fixed(self) -> None:
+        # Findings are about the commit that was read and are anchored to it. "Fixed" is a claim about the
+        # head: a later commit may have brought the problem back.
         gh = FakeGh(responses={"pr view": json.dumps({"headRefOid": "newer"})})
         self.apply(gh)
-        self.assertEqual(gh.matching("pr view"), [])
         self.assertEqual(len(gh.matching("pulls/7/reviews")), 1)
+        self.assertEqual([c for c in gh.calls if "PATCH" in c and "comments/22" in " ".join(c)], [])
+        self.assertEqual(self.plan.resolves, [])
+        self.assertIn("pr view", " ".join(" ".join(c) for c in gh.calls))
+
+    def test_a_resolve_is_kept_while_the_head_is_still_the_reviewed_commit(self) -> None:
+        gh = FakeGh(responses={"pr view": json.dumps({"headRefOid": "abc"})})
+        self.apply(gh)
+        self.assertEqual(len(self.plan.resolves), 1)
+
+    def test_when_the_head_cannot_be_read_nothing_is_marked_fixed_and_the_rest_still_posts(self) -> None:
+        gh = FakeGh(fail=("pr view",))
+        problems = self.apply(gh)
+        self.assertEqual(self.plan.resolves, [])
+        self.assertTrue([p for p in problems if "check the pull request head" in p])
+        self.assertEqual(len(gh.matching("pulls/7/reviews")), 1)
+
+    def test_a_run_with_no_resolves_does_not_need_to_ask_for_the_head(self) -> None:
+        self.plan.resolves = []
+        gh = FakeGh(fail=("pr view",))
+        problems = self.apply(gh)
+        self.assertFalse([p for p in problems if "check the pull request head" in p])
+
+    def test_a_malformed_thread_response_does_not_end_the_run(self) -> None:
+        for error in (ValueError("bad json"), KeyError("data"), TypeError("not a list")):
+            with self.subTest(error=type(error).__name__):
+                ctx = review.Context(description="d", title="t", files=[], diff=DIFF, pr_number=7, head_sha="abc")
+                gh = FakeGh(responses={"pr view": json.dumps({"headRefOid": "abc"})})
+                plan = review.Plan(new=[render.Finding.from_action(comment(title="kept"))])
+                with mock.patch.object(review, "gh", gh), mock.patch.object(review, "fetch_threads", side_effect=error):
+                    problems = review.apply_plan(plan, ctx)
+                self.assertTrue([p for p in problems if "re-read threads" in p])
+                self.assertEqual(len(gh.matching("pulls/7/reviews")), 1)
 
     def test_summary_query_only_matches_the_bot(self) -> None:
         gh = FakeGh()
