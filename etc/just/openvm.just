@@ -1,6 +1,5 @@
 _openvm_dir := justfile_directory() / "crates/proof/zk/programs/openvm"
 _openvm_elf := _openvm_dir / "elf"
-_openvm_tag := "v2.0.2"
 
 # Show available openvm commands
 default:
@@ -10,10 +9,7 @@ default:
 require-cargo-openvm:
     #!/usr/bin/env bash
     if ! cargo openvm --version >/dev/null 2>&1; then
-        echo "cargo-openvm is not installed. Run:" >&2
-        echo "  rustup install nightly-2026-01-18" >&2
-        echo "  rustup component add rust-src --toolchain nightly-2026-01-18" >&2
-        echo "  cargo +1.91 install --locked --git https://github.com/openvm-org/openvm.git --tag {{ _openvm_tag }} cargo-openvm" >&2
+        echo "cargo-openvm v2.0.2 is not installed; see the Prerequisites section of crates/proof/zk/programs/openvm/README.md" >&2
         exit 1
     fi
 
@@ -51,7 +47,7 @@ dump-zeronet:
 
 # Execute the range guest against an OpenVM --input file and print the revealed boot digest
 run input=(_openvm_elf / "input.json"): require-vmexe
-    cd "{{ _openvm_dir }}/range/ethereum" && cargo openvm run --ignore-rust-version \
+    cd "{{ _openvm_dir }}/range/ethereum" && cargo openvm run \
         --exe "{{ _openvm_elf }}/range.vmexe" --config openvm.toml --input {{ quote(input) }}
 
 # Dump a zeronet witness, then produce an OpenVM app proof for it
@@ -59,12 +55,8 @@ prove-zeronet: require-vmexe dump-zeronet
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{ _openvm_dir }}/range/ethereum"
-    common=(--ignore-rust-version --exe "{{ _openvm_elf }}/range.vmexe" --config openvm.toml)
-    if [ ! -s "{{ _openvm_elf }}/app.pk" ]; then
-        cargo openvm keygen "${common[@]}" --app-only \
-            --app-pk "{{ _openvm_elf }}/app.pk" --app-vk "{{ _openvm_elf }}/app.vk"
-    fi
-    cargo openvm prove app "${common[@]}" \
+    cargo openvm keygen --config openvm.toml --app-only --output-dir "{{ _openvm_elf }}"
+    cargo openvm prove app --config openvm.toml --exe "{{ _openvm_elf }}/range.vmexe" \
         --input "{{ _openvm_elf }}/input.json" \
         --app-pk "{{ _openvm_elf }}/app.pk" \
         --proof "{{ _openvm_elf }}/range.app.proof"
@@ -76,4 +68,3 @@ demo:
 # Remove built OpenVM artifacts
 clean-elfs:
     rm -rf "{{ _openvm_elf }}"
-    rm -f "{{ _openvm_dir }}/range/ethereum/openvm_init.rs"

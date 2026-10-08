@@ -84,8 +84,8 @@ const MENU_ITEMS: &[MenuItem] = &[
     MenuItem {
         key: 'z',
         label: "OpenVM",
-        description: "Prove a zeronet block with OpenVM",
-        badge: Some("demo"),
+        description: "Prove one L2 block with the OpenVM range guest",
+        badge: Some("config-required"),
         view_id: Some(ViewId::OpenVm),
     },
     MenuItem {
