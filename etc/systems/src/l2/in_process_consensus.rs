@@ -15,7 +15,6 @@ use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer_local::PrivateKeySigner;
-use base_builder_core::test_utils::get_available_port;
 use base_common_genesis::RollupConfig;
 use base_consensus_disc::LocalNode;
 use base_consensus_node::{
@@ -36,14 +35,16 @@ use tokio::{
     task::JoinHandle,
     time::{sleep, timeout},
 };
-use tracing::{info, warn};
+use tracing::info;
 use url::Url;
+
+use crate::PortPool;
 
 const SEQUENCER_UNSAFE_HEAD_TIMEOUT: Duration = Duration::from_secs(60);
 const SEQUENCER_UNSAFE_HEAD_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 /// Configuration for starting an in-process consensus node.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct InProcessConsensusConfig {
     /// Parsed rollup configuration.
     pub rollup_config: RollupConfig,
@@ -116,56 +117,8 @@ impl std::fmt::Debug for InProcessConsensus {
 }
 
 impl InProcessConsensus {
-    /// Number of times to start a node whose freshly chosen ports were taken before it bound them.
-    const PORT_BIND_ATTEMPTS: usize = 5;
-    /// Text in the startup error chain when a listener cannot bind its address: the libp2p gossip
-    /// swarm, or the RPC server, which reports the raw `EADDRINUSE` error.
-    const BIND_FAILURES: [&str; 2] = ["error starting libp2p Swarm", "AddrInUse"];
-
     /// Starts an in-process consensus node with the given configuration.
-    ///
-    /// Ports that the caller leaves unset are chosen by binding port 0 and releasing it, so another
-    /// test process can claim one before the node binds it. Several tests run at once, each in its
-    /// own process, so when a listener fails to bind, the node is started again with newly
-    /// chosen ports. Ports the caller fixed are never retried.
     pub async fn start(config: InProcessConsensusConfig) -> Result<Self> {
-        let ports_chosen_here = config.rpc_port.is_none()
-            || config.p2p_tcp_port.is_none()
-            || config.p2p_udp_port.is_none();
-        let mut attempt = 1;
-        loop {
-            match Self::start_once(config.clone()).await {
-                Err(error)
-                    if ports_chosen_here
-                        && attempt < Self::PORT_BIND_ATTEMPTS
-                        && Self::is_bind_failure(&error) =>
-                {
-                    warn!(attempt, error = %error, "consensus node could not bind its ports, retrying");
-                    attempt += 1;
-                }
-                result => return result,
-            }
-        }
-    }
-
-    fn is_bind_failure(error: &eyre::Report) -> bool {
-        let chain = format!("{error:#}");
-        Self::BIND_FAILURES.iter().any(|text| chain.contains(text))
-    }
-
-    /// Returns a UDP port that is free right now.
-    ///
-    /// `get_available_port` probes TCP only, and a port that is free for TCP can still be held by
-    /// another test process's UDP socket. Discovery binds this port over UDP and fails after
-    /// startup if it is taken, which a retry of [`Self::start`] cannot observe.
-    fn available_udp_port() -> u16 {
-        std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
-            .and_then(|socket| socket.local_addr())
-            .expect("failed to find a free UDP port")
-            .port()
-    }
-
-    async fn start_once(config: InProcessConsensusConfig) -> Result<Self> {
         let mut rollup_config = config.rollup_config;
         let l1_chain_config = config.l1_chain_config;
 
@@ -197,9 +150,9 @@ impl InProcessConsensus {
             }
         }
 
-        let rpc_port = config.rpc_port.unwrap_or_else(get_available_port);
-        let p2p_tcp_port = config.p2p_tcp_port.unwrap_or_else(get_available_port);
-        let p2p_udp_port = config.p2p_udp_port.unwrap_or_else(Self::available_udp_port);
+        let rpc_port = config.rpc_port.unwrap_or_else(PortPool::claim);
+        let p2p_tcp_port = config.p2p_tcp_port.unwrap_or_else(PortPool::claim);
+        let p2p_udp_port = config.p2p_udp_port.unwrap_or_else(PortPool::claim);
         let listen_ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
         // Build keypair from P2P key or generate a random one.

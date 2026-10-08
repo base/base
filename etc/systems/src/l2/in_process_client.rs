@@ -6,7 +6,6 @@ use std::{any::Any, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
-use base_builder_core::test_utils::get_available_port;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
@@ -36,6 +35,7 @@ use tracing::warn;
 use url::Url;
 
 use super::InProcessNodeRuntime;
+use crate::PortPool;
 
 type BuiltExtensions = (Vec<Box<dyn BaseNodeExtension>>, Option<FlashblocksConfig>);
 
@@ -226,7 +226,7 @@ impl InProcessClient {
         node_config.txpool.transactions_backup_path = None;
         let metrics_addr = SocketAddr::new(
             std::net::Ipv4Addr::LOCALHOST.into(),
-            config.metrics_port.unwrap_or_else(get_available_port),
+            config.metrics_port.unwrap_or_else(PortPool::claim),
         );
         node_config.metrics = MetricArgs { prometheus: Some(metrics_addr), ..Default::default() };
         if config.http_port.is_none()

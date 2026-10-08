@@ -210,6 +210,7 @@
 - [baseup/README.md](baseup/README.md): baseup installer for Base release binaries: install commands and flags, binaries installed, checksum, GPG and SLSA verification, verify-release, and supported targets.
 - [etc/docker/README.md](etc/docker/README.md): Dockerfiles, Bake targets, published images (ghcr.io/base/node and single-binary images), and Compose setup for the local devnet and Rust services, including batcher topology and build profiles.
 - [etc/systems/README.md](etc/systems/README.md): Docs for base-system-tests: running the snapshot-backed mainnet devnet (builder and follow client), snapshot and transfer benchmarks, workload suite, 2s vs 200ms comparison, cleanup.
+- [etc/systems/TIMINGS.md](etc/systems/TIMINGS.md): Per-test wall-clock durations (median, min, max) of the CI System Tests job, slowest first, with how to regenerate them from job logs and why they overstate a test's cost alone.
 - [etc/tools/witness-diff/README.md](etc/tools/witness-diff/README.md): witness-diff tool that compares two execution witnesses (from debug_executionWitness) to find differing trie nodes, bytecodes, or preimages. Use when debugging state root mismatches between nodes.
 - [etc/upstream-pins/README.md](etc/upstream-pins/README.md): Reth workspace pin: reth.toml is the source of truth for reth-* git deps. Covers pin-reth, check-reth-pin, pin-reth-test, reth-prepare-release, patch PR handling, and backport tag protection.
 
