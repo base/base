@@ -298,6 +298,13 @@ class PlanTests(unittest.TestCase):
         plan = self.plan({"type": "reopen", "thread_id": "closed", "body": "it is back"})
         self.assertEqual((plan.reopens, len(plan.rejected)), ([], 1))
 
+    def test_a_marked_comment_without_its_original_cannot_be_reopened(self) -> None:
+        damaged = thread("damaged", body=f"{render.MARKER}\n{render.RESOLVED_PREFIX} — fixed\n\nno details")
+        self.threads.append(damaged)
+        plan = self.plan({"type": "reopen", "thread_id": "damaged", "body": "back"})
+        self.assertEqual((plan.reopens, len(plan.rejected)), ([], 1))
+        self.assertIn("no original", plan.rejected[0])
+
     def test_a_thread_gets_one_change_per_run(self) -> None:
         plan = self.plan({"type": "resolve", "thread_id": "open", "body": "a"},
                          {"type": "resolve", "thread_id": "open", "body": "b"})
@@ -586,7 +593,16 @@ class PrContextTests(unittest.TestCase):
 
     def test_a_failed_previous_summary_lookup_does_not_stop_the_review(self) -> None:
         gh_fn, _ = self.scripted(fail=("startswith",))
-        self.assertIsNone(self.context(gh_fn).previous_summary)
+        self.assertIsNotNone(self.context(gh_fn).previous_summary)
+
+    def test_a_failed_lookup_still_replaces_the_old_summary_when_everything_is_fixed(self) -> None:
+        # With nothing left to report, no summary is posted unless an old one has to be replaced.
+        gh_fn, _ = self.scripted(fail=("startswith",))
+        ctx = self.context(gh_fn)
+        outcome = review.Outcome(triage={"depth": "standard", "reasoning": "r"}, reviews={}, failed={},
+                                 decision={"actions": [], "overview": None, "dropped": []}, rows=[])
+        text = review.build_summary(outcome, review.Plan(), ctx)
+        self.assertIn("No open findings", text)
 
     def test_posting_from_the_wrong_commit_is_refused(self) -> None:
         gh_fn, _ = self.scripted()
@@ -821,6 +837,7 @@ class ApplyPlanTests(unittest.TestCase):
             {"type": "resolve", "thread_id": "fixed", "body": "fixed in `run`"},
             {"type": "reopen", "thread_id": "marked", "body": "still broken"}]}
         self.plan = review.build_plan(decision, self.ctx.threads, review.diff_new_lines(DIFF))
+        self.live = list(self.threads)  # what GitHub has when apply_plan looks again
 
     def apply(self, gh: FakeGh) -> list[str]:
         def summarize(plan: review.Plan) -> str | None:
@@ -830,7 +847,8 @@ class ApplyPlanTests(unittest.TestCase):
                 failed=[], details="d", repo="base/base", head_sha="abc", replace_existing=True)
 
         gh.responses.setdefault("pr view", json.dumps({"headRefOid": "abc"}))
-        with mock.patch.object(review, "gh", gh):
+        with mock.patch.object(review, "gh", gh), mock.patch.object(
+                review, "fetch_threads", side_effect=lambda *_: self.live):
             return review.apply_plan(self.plan, self.ctx, summarize)
 
     def test_everything_is_posted_and_the_old_summary_is_replaced_after_the_new_one(self) -> None:
@@ -870,6 +888,40 @@ class ApplyPlanTests(unittest.TestCase):
         self.assertNotIn("### Reopened", summary)
         # No reply claims the thread was reopened when the comment was not put back.
         self.assertFalse([c for c in gh.matching("addPullRequestReviewThreadReply") if "Reopened" in " ".join(c)])
+
+    def test_a_reopen_whose_reply_fails_still_counts_because_the_comment_is_restored(self) -> None:
+        gh = FakeGh(fail=("addPullRequestReviewThreadReply",))
+        problems = self.apply(gh)
+        self.assertEqual(len(self.plan.reopens), 1)
+        self.assertTrue([p for p in problems if "reply on" in p])
+        [summary] = [i for c, i in zip(gh.calls, gh.inputs, strict=True) if c[:2] == ["pr", "comment"]]
+        self.assertIn("### Reopened", summary)
+
+    def test_a_thread_a_person_resolved_during_the_run_is_left_alone(self) -> None:
+        self.live = [{**t, "resolved": True} if t["thread_id"] == "marked" else t for t in self.threads]
+        gh = FakeGh()
+        self.apply(gh)
+        self.assertEqual(self.plan.reopens, [])
+        self.assertEqual([c for c in gh.calls if "PATCH" in c and "comments/100" in " ".join(c)], [])
+        self.assertFalse([c for c in gh.matching("addPullRequestReviewThreadReply") if "Reopened" in " ".join(c)])
+
+    def test_a_comment_edited_during_the_run_is_left_alone(self) -> None:
+        self.live = [{**t, "first_body": t["first_body"] + "\n\nA person added this."}
+                     if t["thread_id"] == "fixed" else t for t in self.threads]
+        gh = FakeGh()
+        self.apply(gh)
+        self.assertEqual(self.plan.resolves, [])
+        self.assertEqual([c for c in gh.calls if "PATCH" in c and "comments/22" in " ".join(c)], [])
+
+    def test_a_thread_deleted_during_the_run_is_left_alone(self) -> None:
+        self.live = [t for t in self.threads if t["thread_id"] != "fixed"]
+        self.apply(FakeGh())
+        self.assertEqual(self.plan.resolves, [])
+
+    def test_a_thread_the_bot_marked_during_the_run_is_not_marked_again(self) -> None:
+        self.live = [resolved_by_bot("fixed") if t["thread_id"] == "fixed" else t for t in self.threads]
+        self.apply(FakeGh())
+        self.assertEqual(self.plan.resolves, [])
 
     def test_a_dirty_tree_is_refused_when_posting_but_not_locally(self) -> None:
         def fake_git(args):
@@ -923,9 +975,10 @@ class ApplyPlanTests(unittest.TestCase):
     def test_a_failed_reply_does_not_stop_the_summary(self) -> None:
         gh = FakeGh(fail=("addPullRequestReviewThreadReply",))
         problems = self.apply(gh)
-        # The follow-up on one thread and the reply that goes with reopening another.
+        # The follow-up on one thread and the reply that goes with reopening another. The reopened
+        # thread still counts: its comment was put back, only the explanation failed to post.
         self.assertEqual(len(problems), 2)
-        self.assertEqual(self.plan.reopens, [])
+        self.assertEqual(len(self.plan.reopens), 1)
         self.assertEqual(len(gh.matching("pulls/7/reviews")), 1)
         self.assertEqual(len([c for c in gh.calls if c[:2] == ["pr", "comment"]]), 1)
 
@@ -934,7 +987,7 @@ class ApplyPlanTests(unittest.TestCase):
         problems = self.apply(gh)
         self.assertEqual(len(problems), 1)
         self.assertEqual(gh.matching("DELETE"), [])
-        # Everything else was still posted, so the caller can go on to write the handoff file.
+        # Everything else was still posted, so one failed write does not lose the rest.
         self.assertEqual(len(gh.matching("pulls/7/reviews")), 1)
 
     def test_the_review_payload_is_what_github_requires(self) -> None:
