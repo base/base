@@ -94,9 +94,11 @@ impl<T: BasePooledTx> LaneUpdate<T> {
 pub(crate) struct InsertOutcome<T: BasePooledTx> {
     pub outcome: AddedTransactionOutcome,
     pub replaced: Option<Arc<ValidPoolTransaction<T>>>,
-    /// Lane changes caused by anchoring the lane to the validation state and
-    /// by the insertion itself.
-    pub lane: LaneUpdate<T>,
+    /// Lane changes from anchoring the cursor to the validation state. These
+    /// stand even if the insertion is rolled back.
+    pub anchor: LaneUpdate<T>,
+    /// Queued successors the inserted transaction made pending.
+    pub promoted: Vec<Arc<ValidPoolTransaction<T>>>,
 }
 
 /// Outcome returned after pruning mined transactions from the 2D nonce sidecar.
@@ -300,7 +302,8 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             return Ok(InsertOutcome {
                 outcome: AddedTransactionOutcome { hash, state: AddedTransactionState::Pending },
                 replaced,
-                lane: LaneUpdate::default(),
+                anchor: LaneUpdate::default(),
+                promoted: Vec::new(),
             });
         }
 
@@ -339,7 +342,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         // move backward after a reorg lowers the on-chain channel nonce, allowing
         // now-valid transactions to be accepted instead of treating them as
         // already executed under the pre-reorg lane cursor.
-        let mut lane_update = self.set_lane_nonce(lane_id, state_nonce);
+        let anchor = self.set_lane_nonce(lane_id, state_nonce);
         let lane = self.lanes.entry(lane_id).or_insert_with(|| NonceLane {
             next_nonce: state_nonce,
             transactions: BTreeMap::new(),
@@ -365,19 +368,21 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             AddedTransactionState::Queued(QueuedReason::NonceGap)
         };
 
-        if matches!(state, AddedTransactionState::Pending) {
-            lane_update.promoted.extend(
-                lane.consecutive_pending_transactions()
-                    .skip(pending_len_before)
-                    .filter(|candidate| *candidate.hash() != hash)
-                    .cloned(),
-            );
-        }
+        let promoted = if matches!(state, AddedTransactionState::Pending) {
+            lane.consecutive_pending_transactions()
+                .skip(pending_len_before)
+                .filter(|candidate| *candidate.hash() != hash)
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         Ok(InsertOutcome {
             outcome: AddedTransactionOutcome { hash, state },
             replaced,
-            lane: lane_update,
+            anchor,
+            promoted,
         })
     }
 
@@ -1168,7 +1173,7 @@ mod tests {
         let next = valid_pool_transaction(signed_channel_tx(&signer, key, 2, 1_000));
         let outcome = pool.insert_validated(next, 2).unwrap();
 
-        assert_eq!(hashes(&outcome.lane.discarded), stale_hashes);
+        assert_eq!(hashes(&outcome.anchor.discarded), stale_hashes);
         assert!(stale_hashes.iter().all(|hash| !pool.contains(hash)));
         assert_eq!(pool.all_hashes(), vec![outcome.outcome.hash]);
     }
@@ -1245,8 +1250,8 @@ mod tests {
         let later = valid_pool_transaction(signed_channel_tx(&signer, key, 5, 1_000));
         let outcome = pool.insert_validated(later, 1).unwrap();
 
-        assert_eq!(hashes(&outcome.lane.queued), pending_hashes);
-        assert!(outcome.lane.discarded.is_empty());
+        assert_eq!(hashes(&outcome.anchor.queued), pending_hashes);
+        assert!(outcome.anchor.discarded.is_empty());
         assert!(pool.pending_transactions().is_empty());
     }
 
@@ -1464,7 +1469,7 @@ mod tests {
         let outcome = pool.insert_validated(middle, 0).unwrap();
 
         assert_eq!(
-            outcome.lane.promoted.iter().map(|transaction| *transaction.hash()).collect::<Vec<_>>(),
+            outcome.promoted.iter().map(|transaction| *transaction.hash()).collect::<Vec<_>>(),
             vec![gap_hash]
         );
     }

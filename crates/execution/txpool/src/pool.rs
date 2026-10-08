@@ -833,10 +833,10 @@ where
                 let mut guard = self.guard.write();
                 // Transactions below the anchored lane cursor are gone whether or
                 // not this insertion is kept.
-                for transaction in &outcome.lane.discarded {
+                for transaction in &outcome.anchor.discarded {
                     guard.release(transaction.hash());
                 }
-                listeners.on_discarded(&outcome.lane.discarded);
+                listeners.on_discarded(&outcome.anchor.discarded);
                 let current = generation.is_none_or(|generation| {
                     generation == self.validator().validator().limit_class_cache_generation()
                 });
@@ -844,6 +844,7 @@ where
                     let hash = outcome.outcome.hash;
                     let removed = nonce_pool.remove_transactions(&[hash]);
                     listeners.on_discarded(&removed);
+                    listeners.on_lane_moved(&outcome.anchor);
                     if let Some(replaced) = &outcome.replaced {
                         let restored = ValidPoolTransaction {
                             transaction_id: replaced.transaction_id,
@@ -873,6 +874,7 @@ where
                             let hash = outcome.outcome.hash;
                             let removed = nonce_pool.remove_transactions(&[hash]);
                             listeners.on_discarded(&removed);
+                            listeners.on_lane_moved(&outcome.anchor);
                             return Err(Self::limit_rejection_error(hash, rejection));
                         }
                     }
@@ -1896,7 +1898,10 @@ impl<T: BasePooledTx> SidecarListeners<T> {
             }
         }
 
-        self.on_lane_moved(&outcome.lane);
+        self.on_lane_moved(&outcome.anchor);
+        for promoted in &outcome.promoted {
+            self.broadcast_pending_transaction(promoted);
+        }
     }
 
     /// Publishes a lane cursor move: removed transactions are discarded, and
@@ -2035,7 +2040,7 @@ mod tests {
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use base_test_utils::build_test_genesis_everest;
-    use futures::{StreamExt, future::join_all};
+    use futures::{FutureExt, StreamExt, future::join_all};
     use reth_primitives_traits::SealedBlock;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_tasks::Runtime;
@@ -2608,6 +2613,53 @@ mod tests {
         assert!(pool.guard.read().contains(&original_hash));
         assert!(!pool.guard.read().contains(&replacement_hash));
         assert!(matches!(replacement_events.next().await, Some(TransactionEvent::Discarded)));
+    }
+
+    #[tokio::test]
+    async fn rolled_back_insert_still_announces_the_anchored_lane() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+
+        let queued = self_paid_eoa_8130(&signer, U256::from(1), 1, 0, 1_000);
+        let queued_hash = *queued.hash();
+        pool.add_transaction(TransactionOrigin::Local, queued).await.unwrap();
+        let mut queued_events = pool.listeners.write().subscribe_hash(queued_hash).0;
+
+        let successor = self_paid_eoa_8130(&signer, U256::from(1), 2, 0, 1_000);
+        let validated = match pool
+            .validator()
+            .validate_transaction(TransactionOrigin::Local, successor)
+            .await
+        {
+            TransactionValidationOutcome::Valid {
+                balance,
+                bytecode_hash,
+                transaction,
+                propagate,
+                authorities,
+                ..
+            } => TransactionValidationOutcome::Valid {
+                balance,
+                state_nonce: 1,
+                bytecode_hash,
+                transaction,
+                propagate,
+                authorities,
+            },
+            other => panic!("successor must validate: {other:?}"),
+        };
+        pool.validator().validator().clear_limit_class_cache();
+
+        pool.add_validated_sidecar_transaction(validated, TransactionOrigin::Local)
+            .expect_err("stale classification must roll back the insert");
+
+        let pending = pool.nonce_pool.read().pending_transactions();
+        assert!(pending.iter().any(|transaction| *transaction.hash() == queued_hash));
+        assert!(matches!(
+            queued_events.next().now_or_never(),
+            Some(Some(TransactionEvent::Pending))
+        ));
     }
 
     #[tokio::test]
