@@ -48,10 +48,12 @@ fn deploy_against_shared_l1(
     runtime: &SharedL1Runtime,
     output_dir: &std::path::Path,
     l2_chain_id: u64,
-) -> Result<(L1GenesisOutput, L2DeploymentOutput, std::fs::File)> {
-    // All consumers share the fixture's funded deployer account. Keep the lock after deployment:
-    // an L2 stack's first batcher setup reads its consensus safe head, so the caller must retain
-    // the lock until the stack has completed its shared-L1 bootstrap.
+) -> Result<(L1GenesisOutput, L2DeploymentOutput)> {
+    // All consumers share the fixture's funded deployer account. Serialize live deployments
+    // across nextest processes so independently constructed op-deployer instances do not race
+    // the account nonce. The lock is released when this function returns: holding it through L2
+    // startup made every other test queue behind this stack's node startup, and the batcher's
+    // bounded wait for the initial safe head covers the startup race instead.
     let deployment_lock_path = std::env::temp_dir()
         .join(format!("base-system-tests-{}.deployment.lock", runtime.network_name));
     let deployment_lock = OpenOptions::new()
@@ -79,7 +81,6 @@ fn deploy_against_shared_l1(
     Ok((
         L1GenesisOutput::from_output_dir(output_dir),
         L2DeploymentOutput::from_output_dir(output_dir),
-        deployment_lock,
     ))
 }
 
@@ -767,25 +768,22 @@ impl SystemTestStackBuilder {
         }
 
         let shared_l1 = self.shared_l1.clone();
-        let (l1_genesis, l2_deployment, shared_l1_bootstrap_lock) =
-            if let Some(shared_l1) = &shared_l1 {
-                let output_dir = output_dir.clone();
-                let shared_l1 = shared_l1.clone();
-                let (l1_genesis, l2_deployment, deployment_lock) =
-                    tokio::task::spawn_blocking(move || {
-                        deploy_against_shared_l1(&shared_l1, &output_dir, l2_chain_id)
-                    })
+        let (l1_genesis, l2_deployment) = if let Some(shared_l1) = &shared_l1 {
+            let output_dir = output_dir.clone();
+            let shared_l1 = shared_l1.clone();
+            tokio::task::spawn_blocking(move || {
+                deploy_against_shared_l1(&shared_l1, &output_dir, l2_chain_id)
+            })
+            .await
+            .wrap_err("shared L1 deployment task panicked")??
+        } else {
+            let (l1_genesis, l2_deployment) =
+                tokio::task::spawn_blocking(move || setup.generate_genesis())
                     .await
-                    .wrap_err("shared L1 deployment task panicked")??;
-                (l1_genesis, l2_deployment, Some(deployment_lock))
-            } else {
-                let (l1_genesis, l2_deployment) =
-                    tokio::task::spawn_blocking(move || setup.generate_genesis())
-                        .await
-                        .wrap_err("Genesis setup task panicked")?
-                        .wrap_err("Failed to generate L1/L2 genesis")?;
-                (l1_genesis, l2_deployment, None)
-            };
+                    .wrap_err("Genesis setup task panicked")?
+                    .wrap_err("Failed to generate L1/L2 genesis")?;
+            (l1_genesis, l2_deployment)
+        };
 
         let (l1_container_config, l2_container_config) = if self.devnet_config.use_stable_ports {
             let config = &self.devnet_config.stable;
@@ -942,12 +940,7 @@ impl SystemTestStackBuilder {
             extra_client_extensions: self.extra_client_extensions,
         };
 
-        // When this stack attached to the shared L1, retain its deployment lock until the L2
-        // bootstrap (including the batcher's initial safe-head wait) is complete. This makes the
-        // lock cover every shared-L1 readiness condition required before batch submission starts.
-        let l2_stack_result = L2Stack::start(l2_config).await;
-        drop(shared_l1_bootstrap_lock);
-        let l2_stack = l2_stack_result.wrap_err("Failed to start L2 stack")?;
+        let l2_stack = L2Stack::start(l2_config).await.wrap_err("Failed to start L2 stack")?;
 
         Ok(SystemTestStack {
             _temp_dir: temp_dir,

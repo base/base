@@ -236,6 +236,7 @@ impl InProcessClient {
         {
             node_config = node_config.with_unused_ports();
         }
+        config.runtime.bound_engine_memory(&mut node_config);
         if let Some(persistence_threshold) = config.persistence_threshold {
             node_config.engine.persistence_threshold = persistence_threshold;
         }
