@@ -8,10 +8,12 @@ description: "Runs Base's multi-model pull request review. Use before pushing to
 One pipeline reviews every pull request in CI and your local branch before you push. Each stage is a prompt file you can edit.
 
 ```
-triage ─► review ─────────────────────────────┐
-          council (deep changes only):         ├─► decide ─► comments
-            members review ─► vote ─► chair ───┘
+triage ─► review ──────────────────────► decide (findings) ─► comments ─┐
+          council (deep changes only):                                  ├─► decide (final) ─► threads, summary
+            members review ─► vote ─► chair ─► decide (findings) ─► comments ┘
 ```
+
+Each reviewer's findings are decided and posted as soon as that reviewer finishes, while the others are still working. A last round then goes through the open threads and writes the summary.
 
 1. **triage** (`agents/triage.md`) reads the change and decides the depth, `standard` or `deep`, and whether the change is block-production-sensitive. Depth depends on how hard the change is to get right, not how many lines it touches.
 2. **review** runs every reviewer whose `when` matches the triage result (`review-general` always, `review-block-production` for block-production-sensitive changes).
@@ -19,7 +21,11 @@ triage ─► review ───────────────────�
    1. Every `council-*` member reviews the whole change through its own lens (invariants, adversarial scenarios, design and conventions). The members run on models from different vendors on purpose.
    2. Each member then votes `confirm`, `reject`, or `unsure` on every finding the others reported, after checking it against the code.
    3. The `council-chair` merges the findings. Votes inform it, but it verifies a rejected finding itself rather than counting heads.
-4. **decide** (`agents/decide.md`) reads every finding and the PR's existing review threads. It drops findings that are wrong or already covered, and it goes through every open bot thread: it marks a thread whose problem the push fixed as resolved, replies where the author answered or there is something new to say, and reopens a thread it marked resolved when the problem is back.
+4. **decide** (`agents/decide.md`) runs more than once per review, on a fast model:
+   - **A findings round** per reviewer (and one for the council), as soon as it finishes. It turns that reviewer's findings into comments, drops the ones that are wrong or already covered, and replies where an open thread already covers a problem. It posts them straight away.
+   - **The final round**, when everything has finished. It goes through every open bot thread: it marks a thread whose problem the push fixed as resolved, replies where the author answered or there is something new to say, and reopens a thread it marked resolved when the problem is back. It writes the overview.
+
+   The script allows each round only its own actions (a findings round cannot resolve a thread, and the final round cannot post a finding unless a findings round failed), skips a problem an earlier round already posted, and keeps the inline comments of all rounds under the cap of 20.
 
 `review.py` validates the decider's actions against the diff and the thread list, then `render.py` formats and posts them. Agents never write to GitHub; they have only `Read`, `Grep`, and `Glob`.
 
@@ -47,6 +53,22 @@ The summary comment is rendered from the same structured data, so its layout doe
 
 To change how comments look, edit `render.py`. To change what they say, edit `shared/finding-guide.md` or the agent prompts. If you add a severity or category, change `render.py`, the `enum`s in `schemas/`, and the guide together; `test_review.py` checks that they agree.
 
+### Choosing the decider's model
+
+The decider's work is mostly mechanical (turn findings into comments, compare open threads with the current code), and it runs several times per review, so it is the stage where a fast model pays off. It is also the stage that marks threads as fixed, so a weak model costs more here than anywhere: a wrong "resolved" hides a live problem.
+
+I replayed the decider prompt from a real CI run (25 threads, 4 of them open and unfixed) on several models. Opus resolved the one thread that was fixed. Results:
+
+| Model | Time | Result |
+| --- | --- | --- |
+| `opus` | 42 s | resolved the one fixed thread |
+| `sonnet` | 19-28 s (three runs) | the same decision every time |
+| `gpt-lts-luna` | 31 s | the same decision |
+| `gemini-3.5-flash` | 48 s | resolved nothing |
+| `claude-haiku-4-5-20251001` | 119 s | resolved 4 threads, 3 of which were not fixed |
+
+That is one prompt, so it shows that Haiku is unsafe for this job and that Sonnet is a reasonable choice, not that Sonnet is equal to Opus in general. Triage and the chair showed the same speed on Sonnet as on Opus (11-13 s), so they stay on Opus. To change the decider's model, edit `agents/decide.md` and replay a real prompt first (`/tmp`-style replays work from the `*.prompt.md` files kept in the artifacts).
+
 ## Run it locally
 
 ```bash
@@ -71,7 +93,7 @@ Every agent is `agents/<name>.md`: front matter, then the system prompt.
 | `model` | Model ID passed to `claude --model`. |
 | `effort` | `low`, `medium`, `high`, `xhigh`, or `max`. Default `high`. |
 | `tools` | Tools the agent may use. Default `Read,Grep,Glob`. Keep it read-only. |
-| `timeout_seconds` | Wall-clock limit for one attempt. Default 150. Set it to a few times what the agent normally needs, so a hung agent is cut off quickly. |
+| `timeout_seconds` | Optional wall-clock limit for one attempt. Default: none. |
 | `max_budget_usd` | Optional spend cap for the agent. |
 | `max_output_tokens` | Optional. The CLI asks for 128k output tokens, which the gateway rejects for Gemini models (their limit is about 65k). Set this to 32000 for them. |
 
@@ -88,7 +110,7 @@ Current agents (the front matter is the source of truth):
 | `council-adversary` | council | triage says `deep` | `gpt-6.1-sol` |
 | `council-design` | council | triage says `deep` | `gemini-3.1-pro-preview` |
 | `council-chair` | chair | triage says `deep` | `opus` |
-| `decide` | decide | always | `opus` |
+| `decide` | decide | each reviewer that has findings, then once at the end | `sonnet` |
 
 ### Choosing model IDs
 
@@ -97,7 +119,7 @@ Current agents (the front matter is the source of truth):
 - **The gateway decides what exists.** List it with `curl -s "$ANTHROPIC_BASE_URL/v1/models" -H "x-api-key: $ANTHROPIC_API_KEY"`, and see what an alias maps to and its output limit at `$ANTHROPIC_BASE_URL/model/info`. Some IDs are restricted (`claude-fable-5-1` returns a 403), and the CLI prints an `unrecognized_model` warning for non-Claude IDs that is harmless. There is no Muse model on this gateway today.
 - **Check a model before you rely on it:** `just review --model <id>`. A model that cannot call tools or return the JSON schema fails its stage; one retry is attempted, and the full output of the failure is saved as `<agent>.failed.txt` in the artifacts.
 
-The council spans Anthropic, OpenAI, and Google models. The chair and decider stay on Opus because they check other models' claims against the code.
+The council spans Anthropic, OpenAI, and Google models. The chair stays on Opus because it checks other models' claims against the code. The decider runs on `sonnet`; see "Choosing the decider's model" below.
 
 A Grok member was dropped: the gateway answers `403 Access denied to restricted model 'grok-4.7'` for the key used in CI, although it works with a developer key. To add one back, ask the platform team to allow that key to use the model, then add an agent file with `model: grok-lts`; a member that fails shows up as an "Incomplete review" banner, not a failed job.
 
@@ -108,14 +130,13 @@ A Grok member was dropped: the gateway answers `403 Access denied to restricted 
 
 `review-block-production` reads `docs/guides/BLOCK_PRODUCTION_REVIEW.md`. Edit that guide for what counts as a halt or stall trigger, and the agent file only for how the review is carried out.
 
-## Time budget
+## How long it takes
 
-A deep review is meant to finish in about 5 minutes, and the pipeline enforces that.
+There is no time limit on an agent, and no budget for the whole run. A slow answer is still an answer, and findings are posted as each reviewer finishes, so a slow reviewer delays only its own findings and the summary. The workflow job stops at 15 minutes as a backstop. To limit one agent, set `timeout_seconds` in its file; an agent that hits its limit is reported as "(did not finish)" and the review goes on without it.
 
-- **Normal run:** the reviewers and council members run in parallel, so the slowest one sets the time. With medium effort (low for Gemini) they take 30-120 seconds, then votes, the chair and the decider take about 15-30 seconds each. A local run measured 2-3.5 minutes; a CI run adds about 15 seconds of setup.
-- **Per-agent limits:** `timeout_seconds` is 150 for reviewers and council members, 120 for the decider, and 60 for triage and the chair; votes are capped at 90. A hung or slow agent is cut off at its limit and reported as "did not finish" in the summary, and the review goes on without it.
-- **Whole-run budget:** `--budget-seconds` (default 450) caps the whole run. Each stage's limit is cut down so the stages after it still fit, and a stage with less than a minute left is skipped. The workflow job itself stops at 15 minutes.
-- **Why not higher effort:** `max` effort took 5-19 minutes per agent (up to 18 tool calls). Effort and the "Working fast" guide in `shared/working-fast.md` are the levers. If you raise either, raise the limits above with them, or the agent will be cut off.
+- **Typical run:** with medium effort (low for Gemini) and the "Working fast" guide in `shared/working-fast.md`, reviewers and council members take 30-120 seconds, and the votes, the chair and each decide round 10-40 seconds. Reviewers run in parallel, so the slowest sets when the summary appears; the first findings appear earlier.
+- **Slow calls happen:** about 1 in 9 Opus calls was slow in the saved runs (5-13 minutes for under 10k output tokens, at roughly 8-11 tokens/s, against the usual 70-90). Because findings are posted as each reviewer finishes, a slow one no longer holds back the others.
+- **Effort:** `max` took 5-19 minutes per agent (up to 18 tool calls). Effort and the working-fast guide are the levers; there are no time limits to raise.
 
 ## In CI
 

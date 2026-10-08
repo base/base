@@ -53,16 +53,13 @@ BOT_COMMENT_JQ = 'select(.user.login == "github-actions[bot]" and .user.type == 
 # Credentials that agents, which only read files, have no use for.
 SECRET_ENV = ("GH_TOKEN", "GITHUB_TOKEN")
 
-# The whole run must finish well inside the CI job's timeout (15 minutes) with time left to post. A deep
-# review normally takes about 5 minutes; this is the hard stop for the whole pipeline.
-DEFAULT_BUDGET_SECONDS = 450
-MIN_STAGE_SECONDS = 60
-# A hung gh or git call must not eat the time reserved for posting results.
+# Agents have no time limit unless their file sets `timeout_seconds`: a slow answer is still an answer, and
+# findings are posted as each reviewer finishes. The CI job's own limit is the backstop.
+# A hung gh or git call must not stall posting forever, so those are bounded.
 GH_TIMEOUT_SECONDS = 90
-VOTE_TIMEOUT_SECONDS = 90
 AGENT_ATTEMPTS = 2
 # Failures that a second try cannot fix.
-NO_RETRY = ("timed out", "Access denied", "Invalid model name", "skipped, not enough")
+NO_RETRY = ("timed out", "Access denied", "Invalid model name")
 
 MAX_DIFF_CHARS = 400_000
 MAX_COMMENT_CHARS = 2_000
@@ -140,7 +137,7 @@ class Agent:
     model: str
     effort: str
     tools: str
-    timeout_seconds: int
+    timeout_seconds: int | None
     max_budget_usd: float | None
     max_output_tokens: int | None
     prompt: str
@@ -175,7 +172,7 @@ def parse_agent(path: Path) -> Agent:
             model=fields["model"],
             effort=fields.get("effort", "high"),
             tools=fields.get("tools", "Read,Grep,Glob"),
-            timeout_seconds=int(fields.get("timeout_seconds", "150")),
+            timeout_seconds=int(fields["timeout_seconds"]) if "timeout_seconds" in fields else None,
             max_budget_usd=float(fields["max_budget_usd"]) if "max_budget_usd" in fields else None,
             max_output_tokens=int(fields["max_output_tokens"]) if "max_output_tokens" in fields else None,
             prompt=match.group(2).strip(),
@@ -224,29 +221,12 @@ def select_reviewers(agents: list[Agent], triage: dict[str, Any]) -> list[Agent]
 MODELS_RAN: dict[str, str] = {}
 
 
-class Budget:
-    """Wall-clock allowance for a whole run, so stage timeouts cannot add up past the CI job limit."""
-
-    def __init__(self, seconds: float) -> None:
-        self.deadline = time.monotonic() + seconds
-
-    def remaining(self) -> float:
-        return self.deadline - time.monotonic()
-
-    def timeout_for(self, wanted: int, label: str, reserve: float = 0.0) -> int:
-        """`wanted` seconds, cut down so `reserve` seconds are left for the stages after it."""
-        allowed = min(wanted, self.remaining() - reserve)
-        if allowed < MIN_STAGE_SECONDS:
-            raise ReviewError(f"{label}: skipped, not enough of the time budget is left")
-        return int(allowed)
-
-
 def agent_env() -> dict[str, str]:
     """The environment for agents: ours, minus GitHub credentials."""
     return {k: v for k, v in os.environ.items() if k not in SECRET_ENV}
 
 
-def run_claude_once(cmd: list[str], user_prompt: str, cwd: Path, timeout: int, artifacts: Path,
+def run_claude_once(cmd: list[str], user_prompt: str, cwd: Path, timeout: int | None, artifacts: Path,
                     label: str) -> tuple[dict[str, Any], dict[str, Any]]:
     """One `claude` invocation: the JSON envelope and its structured output, or a ReviewError."""
     raw = run(cmd, input_text=user_prompt, cwd=cwd, timeout=timeout, env=agent_env(),
@@ -264,20 +244,9 @@ def run_claude_once(cmd: list[str], user_prompt: str, cwd: Path, timeout: int, a
 
 
 def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path, model_override: str | None,
-              *, schema: str | None = None, label: str | None = None, budget: Budget | None = None,
-              reserve: float = 0.0, cap: int | None = None) -> dict[str, Any]:
-    """Run one agent through the `claude` CLI and return its schema-validated output.
-
-    `reserve` is the time to leave in `budget` for the stages that run after this one, and `cap`
-    lowers the agent's own timeout for a short task such as casting votes.
-    """
+              *, schema: str | None = None, label: str | None = None) -> dict[str, Any]:
+    """Run one agent through the `claude` CLI and return its schema-validated output."""
     label = label or agent.name
-    wanted = min(agent.timeout_seconds, cap or agent.timeout_seconds)
-
-    def timeout_now() -> int:
-        """The time this attempt may use: its own limit, cut to what the budget has left."""
-        return budget.timeout_for(wanted, label, reserve) if budget else wanted
-
     schema_text = (SCHEMAS_DIR / f"{schema or SCHEMA_FOR_STAGE[agent.stage]}.json").read_text()
     model = model_override or agent.model
     system_prompt = agent.prompt
@@ -306,19 +275,14 @@ def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path, model_
     # try is cheap next to losing a council member; failures that a retry cannot fix are not retried.
     for _ in range(AGENT_ATTEMPTS - 1):
         try:
-            envelope, output = run_claude_once(cmd, user_prompt, cwd, timeout_now(), artifacts, label)
+            envelope, output = run_claude_once(cmd, user_prompt, cwd, agent.timeout_seconds, artifacts, label)
             break
         except ReviewError as exc:
             if any(marker in str(exc) for marker in NO_RETRY):
                 raise
-            try:
-                timeout_now()
-            except ReviewError:
-                # No time left for a second try; report the first failure.
-                raise exc from None
             log(f"  {label}: {exc}; trying once more")
     else:
-        envelope, output = run_claude_once(cmd, user_prompt, cwd, timeout_now(), artifacts, label)
+        envelope, output = run_claude_once(cmd, user_prompt, cwd, agent.timeout_seconds, artifacts, label)
     # An alias such as `opus` is resolved by the CLI; record what actually ran.
     ran = next(iter(envelope.get("modelUsage") or {}), model)
     MODELS_RAN[agent.name] = ran
@@ -326,19 +290,30 @@ def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path, model_
     return output
 
 
-def run_parallel(jobs: dict[str, Callable[[], Any]]) -> tuple[dict[str, Any], dict[str, str]]:
-    """Run jobs concurrently; return results and error messages, each in the jobs' order."""
+def run_parallel(jobs: dict[str, Callable[[], Any]],
+                 on_done: Callable[[str, Any, set[str]], None] | None = None
+                 ) -> tuple[dict[str, Any], dict[str, str]]:
+    """Run jobs concurrently; return results and error messages, each in the jobs' order.
+
+    `on_done(name, result, still_running)` is called, in the calling thread and one at a time, as each job
+    finishes successfully, while the others keep running.
+    """
     results: dict[str, Any] = {}
     failures: dict[str, str] = {}
+    running = set(jobs)
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(len(jobs), 1)) as pool:
         futures = {pool.submit(job): name for name, job in jobs.items()}
         for future in concurrent.futures.as_completed(futures):
             name = futures[future]
+            running.discard(name)
             try:
                 results[name] = future.result()
             except ReviewError as exc:
                 failures[name] = str(exc)
                 log(f"  {name} failed: {exc}")
+                continue
+            if on_done is not None:
+                on_done(name, results[name], set(running))
     return ({n: results[n] for n in jobs if n in results},
             {n: failures[n] for n in jobs if n in failures})
 
@@ -643,29 +618,55 @@ def chair_prompt(ctx: Context, triage: dict[str, Any], candidates: list[dict[str
         "Produce the council's final findings.")
 
 
-def decide_prompt(ctx: Context, triage: dict[str, Any], reviews: dict[str, dict[str, Any]],
-                  failed: dict[str, str]) -> str:
-    def status(t: dict[str, Any]) -> str:
-        if t["resolved"]:
-            return "resolved on GitHub"
-        if t["bot_resolved"]:
-            if render.unmark_resolved(t["first_body"]) is None:
-                return "marked resolved by the bot, original text missing, cannot be reopened"
-            return "marked resolved by the bot"
-        return "open"
+# What a decide round may do. Findings are posted as each reviewer finishes; the last round goes through
+# the threads. The script enforces this, so a model that ignores its instructions changes nothing else.
+FINDINGS_ROUND_ACTIONS = frozenset({"comment", "reply"})
+FINAL_ROUND_ACTIONS = frozenset({"resolve", "reopen", "reply"})
 
-    threads = [{"thread_id": t["thread_id"], "status": status(t), "owned_by_bot": t["owned_by_bot"],
+
+def thread_status(t: dict[str, Any]) -> str:
+    if t["resolved"]:
+        return "resolved on GitHub"
+    if t["bot_resolved"]:
+        if render.unmark_resolved(t["first_body"]) is None:
+            return "marked resolved by the bot, original text missing, cannot be reopened"
+        return "marked resolved by the bot"
+    return "open"
+
+
+def decide_prompt(ctx: Context, triage: dict[str, Any], reviews: dict[str, dict[str, Any]],
+                  failed: dict[str, str], *, final: bool = True, posted: list[str] | None = None) -> str:
+    """The prompt for one decide round.
+
+    A round with `final=False` handles only the findings of the reviewers in `reviews`; the final round
+    goes through every open thread and writes the overview, and handles findings only if an earlier round
+    could not post them.
+    """
+    threads = [{"thread_id": t["thread_id"], "status": thread_status(t), "owned_by_bot": t["owned_by_bot"],
                 "outdated": t["outdated"], "path": t["path"], "line": t["line"],
                 "comments": [{**c, "body": clip(c["body"], MAX_COMMENT_CHARS)} for c in t["comments"]]}
                for t in ctx.threads]
     failures = "".join(f"- {name}: {why}\n" for name, why in failed.items()) or "none\n"
+    already = "".join(f"- {title}\n" for title in posted or []) or "none\n"
+    if final:
+        task = ("This is the FINAL round. New findings were posted as each reviewer finished; they are listed "
+                "under <posted_this_run> and must not be posted again. Go through every open bot thread and use "
+                "`resolve`, `reopen` or `reply` as the instructions say. Write the overview for the whole review. "
+                "Findings under <reviewer_findings>, if any, are ones an earlier round could not post: handle them "
+                "as new findings.")
+    else:
+        task = ("This is ONE ROUND of several. Handle only the findings under <reviewer_findings>, which come from "
+                f"{', '.join(reviews)}. Use `comment` for a new problem and `reply` where an open thread already "
+                "covers it. Do not use `resolve` or `reopen` and set `overview` to null: the final round does those. "
+                "Do not post a problem listed under <posted_this_run> again.")
     return (
         change_block(ctx)
         + f"\n<triage>\n{dumps(triage)}\n</triage>\n\n"
         + f"<reviewer_findings>\n{dumps(reviews)}\n</reviewer_findings>\n\n"
         + f"<reviewers_that_failed>\n{failures}</reviewers_that_failed>\n\n"
+        + f"<posted_this_run>\n{already}</posted_this_run>\n\n"
         + f"<existing_threads>\n{dumps(threads)}\n</existing_threads>\n\n"
-        + "Decide what to do on the pull request.")
+        + task)
 
 
 # --------------------------------------------------------------------------- planning
@@ -687,13 +688,28 @@ class Plan:
     rejected: list[str] = dataclasses.field(default_factory=list)
     summary: str | None = None
 
+    def merge(self, other: Plan) -> None:
+        """Add what a later round of the review decided."""
+        self.new = sorted(self.new + other.new, key=finding_order)
+        self.outside = sorted(self.outside + other.outside, key=finding_order)
+        self.replies += other.replies
+        self.resolves += other.resolves
+        self.reopens += other.reopens
+        self.back += other.back
+        self.rejected += other.rejected
+
     def inline_comments(self) -> list[dict[str, Any]]:
         return [{"path": f.path, "line": f.line, "body": f"{render.MARKER}\n{f.markdown()}"}
                 for f in self.new]
 
 
+def finding_order(f: render.Finding) -> tuple[int, str, int]:
+    return render.severity_rank(f.severity), f.path or "", f.line or 0
+
+
 def build_plan(decision: dict[str, Any], threads: list[dict[str, Any]],
-               valid_lines: set[tuple[str, int]]) -> Plan:
+               valid_lines: set[tuple[str, int]], inline_room: int = MAX_INLINE_COMMENTS,
+               allowed: frozenset[str] | set[str] | None = None) -> Plan:
     """Check the decider's actions against the diff and threads; demote what cannot be applied."""
     by_id = {t["thread_id"]: t for t in threads}
     plan = Plan()
@@ -701,6 +717,9 @@ def build_plan(decision: dict[str, Any], threads: list[dict[str, Any]],
     touched: set[str] = set()
     for action in decision.get("actions", []):
         kind = action["type"]
+        if allowed is not None and kind not in allowed:
+            plan.rejected.append(f"{kind}: not allowed in this round")
+            continue
         if kind == "comment":
             finding = render.Finding.from_action(action)
             (anchored if (finding.path, finding.line) in valid_lines else plan.outside).append(finding)
@@ -736,12 +755,10 @@ def build_plan(decision: dict[str, Any], threads: list[dict[str, Any]],
                                  "seen_body": thread["first_body"], "edit": original,
                                  "body": f"{render.MARKER}\n🔄 **Reopened:** {body}"})
 
-    def order(f: render.Finding) -> tuple[int, str, int]:
-        return render.severity_rank(f.severity), f.path or "", f.line or 0
-
-    anchored.sort(key=order)
-    plan.new = anchored[:MAX_INLINE_COMMENTS]
-    plan.outside = sorted(plan.outside + anchored[MAX_INLINE_COMMENTS:], key=order)
+    anchored.sort(key=finding_order)
+    room = max(inline_room, 0)
+    plan.new = anchored[:room]
+    plan.outside = sorted(plan.outside + anchored[room:], key=finding_order)
     return plan
 
 
@@ -756,7 +773,7 @@ def graphql(query: str, **fields: str) -> list[str]:
 REPLY_MUTATION = ("mutation($id: ID!, $body: String!) { addPullRequestReviewThreadReply("
                   "input: {pullRequestReviewThreadId: $id, body: $body}) { comment { id } } }")
 
-def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None]) -> list[str]:
+def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None] | None = None) -> list[str]:
     """Post a validated plan to the pull request and return what could not be posted.
 
     Each GitHub write fails on its own: a rejected inline comment moves into the summary and
@@ -850,22 +867,39 @@ def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None]
                                                                           f.path or "", f.line or 0))
             plan.new = []
 
-    plan.summary = summarize(plan)
-    if plan.summary is not None:
+    if summarize is not None:
+        plan.summary = summarize(plan)
+        if plan.summary is not None:
+            problems += post_summary(plan.summary, ctx)
+    return problems
+
+
+def post_summary(summary: str, ctx: Context) -> list[str]:
+    """Post the summary comment, then delete the bot's older ones. Returns what could not be done."""
+    assert ctx.pr_number is not None
+    repo, number = ctx.repo, ctx.pr_number
+    problems: list[str] = []
+    try:
+        old_ids = gh(["api", f"repos/{repo}/issues/{number}/comments", "--paginate", "--jq",
+                      f'.[] | {BOT_COMMENT_JQ} | select(.body | startswith("{render.SUMMARY_MARKER}")) | .id']).split()
+    except ReviewError as exc:
+        # Not finding the old summaries must not stop the new one from being posted.
+        problems.append(f"find old summaries: {exc}")
+        log(f"  could not list old summaries: {exc}")
+        old_ids = []
+    # Post first so a failed post leaves the previous summary in place.
+    try:
+        gh(["pr", "comment", str(number), "--repo", repo, "--body-file", "-"], input_text=summary)
+    except ReviewError as exc:
+        problems.append(f"post summary: {exc}")
+        log(f"  could not post: post summary: {exc}")
+        return problems
+    for comment_id in old_ids:
         try:
-            old_ids = gh(["api", f"repos/{repo}/issues/{number}/comments", "--paginate", "--jq",
-                          f'.[] | {BOT_COMMENT_JQ} | select(.body | startswith("{render.SUMMARY_MARKER}")) | .id']).split()
+            gh(["api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment_id}"])
         except ReviewError as exc:
-            # Not finding the old summaries must not stop the new one from being posted.
-            problems.append(f"find old summaries: {exc}")
-            log(f"  could not list old summaries: {exc}")
-            old_ids = []
-        # Post first so a failed post leaves the previous summary in place.
-        if attempt("post summary", ["pr", "comment", str(number), "--repo", repo, "--body-file", "-"],
-                   plan.summary):
-            for comment_id in old_ids:
-                attempt(f"delete old summary {comment_id}",
-                        ["api", "-X", "DELETE", f"repos/{repo}/issues/comments/{comment_id}"])
+            problems.append(f"delete old summary {comment_id}: {exc}")
+            log(f"  could not post: delete old summary {comment_id}: {exc}")
     return problems
 
 
@@ -881,23 +915,23 @@ class Outcome:
     failed: dict[str, str]
     decision: dict[str, Any]
     rows: list[tuple[str, str, str]]
+    # Everything decided across the findings rounds and the final round, already posted when posting.
+    plan: Plan = dataclasses.field(default_factory=Plan)
+    dropped: list[dict[str, str]] = dataclasses.field(default_factory=list)
+    problems: list[str] = dataclasses.field(default_factory=list)
+    # True when the pull request moved on during the run; nothing more is posted after that.
+    stale: bool = False
 
 
 def run_council(ctx: Context, triage: dict[str, Any], members: list[Agent], chair: Agent, cwd: Path,
-                artifacts: Path, model_override: str | None, budget: Budget,
-                reserve: float) -> tuple[dict[str, Any], dict[str, str], bool]:
+                artifacts: Path, model_override: str | None) -> tuple[dict[str, Any], dict[str, str], bool]:
     """Members review, vote on each other's findings, and the chair merges.
-
-    `reserve` is the time to leave for the decider. Each stage also leaves time for the stages
-    after it, so a slow review cannot starve the votes and the chair.
 
     Returns the council's findings, the names of failures, and whether the chair ran.
     """
     prompt = review_prompt(ctx, triage)
     drafts, failed = run_parallel({
-        m.name: functools.partial(run_agent, m, prompt, cwd, artifacts, model_override, budget=budget,
-                                  reserve=reserve + VOTE_TIMEOUT_SECONDS + chair.timeout_seconds)
-        for m in members})
+        m.name: functools.partial(run_agent, m, prompt, cwd, artifacts, model_override) for m in members})
     if not drafts:
         raise ReviewError("every council member failed")
     candidates = merge_candidates(drafts)
@@ -908,9 +942,7 @@ def run_council(ctx: Context, triage: dict[str, Any], members: list[Agent], chai
               and any(c["reported_by"] != m.name for c in candidates)]
     ballots, vote_failed = run_parallel({
         m.name: functools.partial(run_agent, m, ballot_prompt(ctx, triage, m.name, candidates), cwd,
-                                  artifacts, model_override, schema="votes", label=f"{m.name}.vote",
-                                  budget=budget, reserve=reserve + chair.timeout_seconds,
-                                  cap=VOTE_TIMEOUT_SECONDS)
+                                  artifacts, model_override, schema="votes", label=f"{m.name}.vote")
         for m in voters})
     failed.update({f"{name}.vote": why for name, why in vote_failed.items()})
     votes: dict[str, list[dict[str, Any]]] = {}
@@ -922,7 +954,7 @@ def run_council(ctx: Context, triage: dict[str, Any], members: list[Agent], chai
 
     try:
         merged = run_agent(chair, chair_prompt(ctx, triage, candidates, votes, list(failed)), cwd,
-                           artifacts, model_override, budget=budget, reserve=reserve)
+                           artifacts, model_override)
     except ReviewError as exc:
         # Better to pass the unmerged findings on, flagged, than to lose the council's work.
         failed[chair.name] = str(exc)
@@ -934,9 +966,21 @@ def run_council(ctx: Context, triage: dict[str, Any], members: list[Agent], chai
     return merged, failed, True
 
 
+def drop_repeats(plan: Plan, seen: set[tuple[str | None, str]]) -> None:
+    """Remove findings that an earlier round already posted (same file and title) and remember the rest."""
+    plan.new = [f for f in plan.new if (f.path, f.title.lower()) not in seen]
+    plan.outside = [f for f in plan.outside if (f.path, f.title.lower()) not in seen]
+    seen.update((f.path, f.title.lower()) for f in plan.new + plan.outside)
+
+
 def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
-                 model_override: str | None, budget: Budget) -> Outcome:
-    """Run triage, the reviewers (and the council, on deep changes), then the decider."""
+                 model_override: str | None, post: bool = False) -> Outcome:
+    """Run triage and the reviewers, deciding and posting each reviewer's findings as it finishes.
+
+    The reviewers and the council run in parallel. When one finishes, a decide round turns its findings
+    into comments straight away while the others are still working. A final round then goes through the
+    open threads and writes the overview. With `post`, each round is posted as it is decided.
+    """
     triage_agent = next(a for a in agents if a.stage == "triage")
     decide_agent = next(a for a in agents if a.stage == "decide")
     members = [a for a in agents if a.stage == "council"]
@@ -945,13 +989,12 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
     MODELS_RAN.clear()
 
     def row(agent: Agent) -> tuple[str, str, str]:
-        # An agent that failed or timed out never recorded a model, so it is shown as not finished.
+        # An agent that failed never recorded a model, so it is shown as not finished.
         return agent.stage, agent.name, MODELS_RAN.get(agent.name, "(did not finish)")
 
     log("Triage")
     try:
-        triage = run_agent(triage_agent, triage_prompt(ctx), cwd, artifacts, model_override, budget=budget,
-                           reserve=decide_agent.timeout_seconds)
+        triage = run_agent(triage_agent, triage_prompt(ctx), cwd, artifacts, model_override)
     except ReviewError as exc:
         log(f"  triage failed ({exc}); running every reviewer")
         triage = {"depth": "deep", "block_production_sensitive": True, "focus_areas": [],
@@ -963,48 +1006,100 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
     council_chair = chair if use_council else None
     log(f"Review: {', '.join(a.name for a in reviewers)}" + (" + council" if use_council else ""))
     prompt = review_prompt(ctx, triage)
-    reserve = decide_agent.timeout_seconds
     jobs: dict[str, Callable[[], Any]] = {
-        a.name: functools.partial(run_agent, a, prompt, cwd, artifacts, model_override, budget=budget,
-                                  reserve=reserve) for a in reviewers}
+        a.name: functools.partial(run_agent, a, prompt, cwd, artifacts, model_override) for a in reviewers}
     if council_chair:
         jobs["council"] = functools.partial(run_council, ctx, triage, members, council_chair, cwd, artifacts,
-                                            model_override, budget, reserve)
-    results, failed = run_parallel(jobs)
-    rows += [row(a) for a in reviewers]
+                                            model_override)
 
+    valid_lines = diff_new_lines(ctx.diff)
+    plan = Plan()
+    problems: list[str] = []
+    dropped: list[dict[str, str]] = []
     reviews: dict[str, dict[str, Any]] = {}
-    for name, result in results.items():
+    failed: dict[str, str] = {}
+    unposted: dict[str, dict[str, Any]] = {}
+    seen: set[tuple[str | None, str]] = set()
+    state = {"stale": False, "chair_ran": False}
+
+    def publish(round_plan: Plan) -> None:
+        """Post one round, unless the pull request moved on; fold what happened into the whole plan."""
+        if post and not state["stale"]:
+            try:
+                problems.extend(apply_plan(round_plan, ctx))
+            except ReviewError as exc:
+                state["stale"] = True
+                problems.append(str(exc))
+                log(f"  {exc}")
+        plan.merge(round_plan)
+
+    def findings_round(name: str, output: dict[str, Any]) -> None:
+        """Decide and post the findings of one reviewer while the others are still running."""
+        log(f"Decide ({name})")
+        try:
+            decision = run_agent(decide_agent, decide_prompt(ctx, triage, {name: output}, {}, final=False,
+                                                             posted=[t for _, t in sorted(seen, key=str)]),
+                                 cwd, artifacts, model_override, label=f"decide.{name}")
+        except ReviewError as exc:
+            # The final round gets another chance at these.
+            unposted[name] = output
+            failed[f"decide/{name}"] = str(exc)
+            log(f"  decide ({name}) failed ({exc}); the final round will take its findings")
+            return
+        dropped.extend(decision.get("dropped", []))
+        round_plan = build_plan(decision, ctx.threads, valid_lines,
+                                inline_room=MAX_INLINE_COMMENTS - len(plan.new), allowed=FINDINGS_ROUND_ACTIONS)
+        drop_repeats(round_plan, seen)
+        publish(round_plan)
+
+    def on_done(name: str, result: Any, still_running: set[str]) -> None:
         if name == "council":
-            reviews[name], council_failed, chair_ran = result
+            output, council_failed, state["chair_ran"] = result
             failed.update({f"council/{n}": why for n, why in council_failed.items()})
-            rows += [row(m) for m in members] + ([row(council_chair)] if council_chair and chair_ran else [])
         else:
-            reviews[name] = result
+            output = result
+        reviews[name] = output
+        if output.get("findings"):
+            if still_running:
+                log(f"  {name} is done; still running: {', '.join(sorted(still_running))}")
+            findings_round(name, output)
+
+    _, job_failed = run_parallel(jobs, on_done=on_done)
+    failed.update(job_failed)
+    rows += [row(a) for a in reviewers]
+    if council_chair and ("council" in reviews or "council" in job_failed):
+        rows += [row(m) for m in members] + ([row(council_chair)] if state["chair_ran"] else [])
     if not reviews:
         raise ReviewError("every reviewer failed")
 
     log("Decide")
     try:
-        decision = run_agent(decide_agent, decide_prompt(ctx, triage, reviews, failed), cwd, artifacts,
-                             model_override, budget=budget)
+        decision = run_agent(decide_agent, decide_prompt(ctx, triage, unposted, failed, final=True,
+                                                         posted=[t for _, t in sorted(seen, key=str)]),
+                             cwd, artifacts, model_override)
     except ReviewError as exc:
-        # Without the decider there is nothing safe to post as comments (nothing checks the findings
-        # against the open threads), but the summary can still say that the review did not finish.
+        # The findings already went out in their own rounds. What is lost is the pass over the threads
+        # and the overview, and the findings of any round that failed (they are in the artifacts).
         failed[decide_agent.name] = str(exc)
-        log(f"  decide failed ({exc}); posting a summary without findings")
+        log(f"  decide failed ({exc}); posting a summary without the thread pass")
         decision = {"actions": [], "dropped": [],
-                    "overview": "The final step failed, so no findings were posted. "
+                    "overview": "The final step failed, so existing threads were not updated. "
                                 "The reviewers' output is in the job artifacts."}
     rows.append(row(decide_agent))
-    return Outcome(triage, reviews, failed, decision, rows)
+    dropped.extend(decision.get("dropped", []))
+    final_plan = build_plan(decision, ctx.threads, valid_lines, inline_room=MAX_INLINE_COMMENTS - len(plan.new),
+                            allowed=FINAL_ROUND_ACTIONS | ({"comment"} if unposted else set()))
+    drop_repeats(final_plan, seen)
+    publish(final_plan)
+    return Outcome(triage, reviews, failed, decision, rows, plan=plan, dropped=dropped, problems=problems,
+                   stale=state["stale"])
 
 
 def build_summary(outcome: Outcome, plan: Plan, ctx: Context) -> str | None:
     details = render.render_details(
         triage=outcome.triage, rows=outcome.rows,
         reported={name: len(r.get("findings", [])) for name, r in outcome.reviews.items()},
-        dropped=outcome.decision.get("dropped", []))
+        dropped=outcome.dropped or outcome.decision.get("dropped", []))
     return render.render_summary(
         overview=outcome.decision.get("overview"), new=plan.new, outside=plan.outside,
         threads=ctx.threads, reopened={u["thread_id"] for u in plan.reopens},
@@ -1042,8 +1137,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--agents-dir", type=Path, default=AGENTS_DIR)
     parser.add_argument("--artifacts-dir", type=Path, help="where to keep prompts and raw results")
     parser.add_argument("--json", action="store_true", help="print the decider's raw output as JSON")
-    parser.add_argument("--budget-seconds", type=int, default=DEFAULT_BUDGET_SECONDS,
-                        help="total wall-clock allowance; stage timeouts shrink to fit (default: %(default)s)")
     args = parser.parse_args(argv)
     if args.post and args.pr is None:
         parser.error("--post requires --pr")
@@ -1058,13 +1151,17 @@ def main(argv: list[str] | None = None) -> int:
         artifacts = args.artifacts_dir or Path(tempfile.mkdtemp(prefix="pr-review-"))
         artifacts.mkdir(parents=True, exist_ok=True)
         cwd = Path(git(["rev-parse", "--show-toplevel"]).strip())
-        outcome = run_pipeline(ctx, agents, cwd, artifacts, args.model, Budget(args.budget_seconds))
-        plan = build_plan(outcome.decision, ctx.threads, diff_new_lines(ctx.diff))
+        outcome = run_pipeline(ctx, agents, cwd, artifacts, args.model, post=args.post)
+        plan = outcome.plan
         plan.summary = build_summary(outcome, plan, ctx)
         (artifacts / "plan.json").write_text(dumps(dataclasses.asdict(plan)))
+        problems = list(outcome.problems)
         if args.post:
-            problems = apply_plan(plan, ctx, lambda p: build_summary(outcome, p, ctx))
-            (artifacts / "posted.json").write_text(dumps(dataclasses.asdict(plan)))
+            if outcome.stale:
+                log("the pull request moved on during the run; no summary was posted")
+                return 1
+            if plan.summary is not None:
+                problems += post_summary(plan.summary, ctx)
             log(f"Posted {len(plan.new)} comment(s) and {len(plan.replies)} reply(ies); "
                 f"{len(plan.resolves)} thread(s) marked resolved and {len(plan.reopens)} reopened")
             if problems:
