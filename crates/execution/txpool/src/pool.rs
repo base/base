@@ -747,7 +747,7 @@ where
                     .map(|class| class.classification_generation);
                 let admission = Self::admission_for(&validated.transaction);
                 let is_validity = !validated.transaction.validity_predicates().is_empty();
-                let outcome = nonce_pool.insert_validated(validated, state_nonce)?;
+                let mut outcome = nonce_pool.insert_validated(validated, state_nonce)?;
                 // nonce_pool serializes sidecar replacement. Never acquire it while holding guard.
                 let mut guard = self.guard.write();
                 let current = generation.is_none_or(|generation| {
@@ -816,6 +816,9 @@ where
                         reth_transaction_pool::error::PoolErrorKind::DiscardedOnInsert,
                     ));
                 }
+                outcome.promoted.retain(|promoted| {
+                    !evicted.iter().any(|transaction| transaction.hash() == promoted.hash())
+                });
                 listeners.on_discarded(&evicted);
                 listeners.on_inserted(&nonce_pool, &outcome);
                 if is_validity {
@@ -2638,6 +2641,35 @@ mod tests {
         assert!(pool.get(&incumbent_hash).is_none());
         assert!(!pool.guard.read().contains(&incumbent_hash));
         assert!(matches!(incumbent_events.next().await, Some(TransactionEvent::Discarded)));
+    }
+
+    #[tokio::test]
+    async fn promoted_transaction_evicted_on_insert_is_not_announced_pending() {
+        let config =
+            PoolConfig { pending_limit: SubPoolLimit::new(2, usize::MAX), ..PoolConfig::default() };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let lane_signer = signer();
+        let other_signer = signer();
+        fund(&client, lane_signer.address());
+        fund(&client, other_signer.address());
+
+        let cheap_queued = self_paid_eoa_8130(&lane_signer, U256::from(1), 1, 0, 1_000);
+        let cheap_queued_hash = *cheap_queued.hash();
+        pool.add_transaction(TransactionOrigin::External, cheap_queued).await.unwrap();
+        let other = self_paid_eoa_8130(&other_signer, U256::from(1), 0, 0, 5_000);
+        pool.add_transaction(TransactionOrigin::External, other).await.unwrap();
+        let mut pending = pool.listeners.write().subscribe_pending(TransactionListenerKind::All);
+
+        let gap_filler = self_paid_eoa_8130(&lane_signer, U256::from(1), 0, 0, 5_000);
+        let gap_filler_hash = *gap_filler.hash();
+        pool.add_transaction(TransactionOrigin::External, gap_filler).await.unwrap();
+
+        assert!(pool.get(&cheap_queued_hash).is_none());
+        let mut announced = Vec::new();
+        while let Ok(hash) = pending.try_recv() {
+            announced.push(hash);
+        }
+        assert_eq!(announced, vec![gap_filler_hash]);
     }
 
     #[tokio::test]

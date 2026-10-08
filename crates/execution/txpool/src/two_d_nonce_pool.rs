@@ -179,13 +179,18 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Rejects a new transaction the protocol pool would refuse: a fee cap below
-    /// the protocol floor, or a non-head transaction from a non-local sender
-    /// that already fills its slots. Replacements never add a slot.
+    /// the protocol floor, or a transaction from a non-local sender that already
+    /// fills its slots. Replacements never add a slot.
+    ///
+    /// Reth exempts an account's next nonce from the slot cap. A sender can open
+    /// any number of lanes, each with its own head, so only the head of a lane
+    /// already holding queued transactions is exempt; a head on a fresh lane
+    /// counts against the cap.
     fn ensure_admissible(
         &self,
         transaction: &ValidPoolTransaction<T>,
         is_replacement: bool,
-        is_lane_head: bool,
+        fills_existing_lane_head: bool,
     ) -> PoolResult<()> {
         let hash = *transaction.hash();
         let fee_cap = transaction.max_fee_per_gas();
@@ -197,7 +202,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         }
         let sender = transaction.sender();
         if !is_replacement
-            && !is_lane_head
+            && !fills_existing_lane_head
             && !self.limits.local_transactions.is_local(transaction.origin, &sender)
             && self.usage.sender_count(&sender) >= self.limits.max_account_slots
         {
@@ -423,9 +428,11 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
 
         let lane_id = (sender, nonce_key);
         let nonce = transaction.nonce();
+        let existing_lane = self.lanes.get(&lane_id).filter(|lane| !lane.transactions.is_empty());
         let is_replacement =
-            self.lanes.get(&lane_id).is_some_and(|lane| lane.transactions.contains_key(&nonce));
-        self.ensure_admissible(&transaction, is_replacement, nonce == state_nonce)?;
+            existing_lane.is_some_and(|lane| lane.transactions.contains_key(&nonce));
+        let fills_existing_lane_head = existing_lane.is_some() && nonce == state_nonce;
+        self.ensure_admissible(&transaction, is_replacement, fills_existing_lane_head)?;
         let sender_id = self.senders.sender_id_or_create(sender);
         transaction.transaction_id = TransactionId::new(sender_id, nonce);
         let transaction = Arc::new(transaction);
@@ -1539,7 +1546,7 @@ mod tests {
     }
 
     #[test]
-    fn sender_slot_cap_rejects_new_queued_transactions_only() {
+    fn sender_slot_cap_counts_fresh_lane_heads() {
         let mut pool = TwoDNoncePool::new(PriceBumpConfig::default())
             .with_limits(SidecarLimits { max_account_slots: 2, ..SidecarLimits::unlimited() });
         let signer = signer();
@@ -1551,9 +1558,12 @@ mod tests {
         let over_cap = signed_channel_tx(&signer, U256::from(3), 1, 1_000);
         let error = pool.insert_validated(valid_pool_transaction(over_cap), 0).unwrap_err();
         assert!(matches!(error.kind, PoolErrorKind::SpammerExceededCapacity(_)));
+        let fresh_lane_head = signed_channel_tx(&signer, U256::from(3), 0, 1_000);
+        let error = pool.insert_validated(valid_pool_transaction(fresh_lane_head), 0).unwrap_err();
+        assert!(matches!(error.kind, PoolErrorKind::SpammerExceededCapacity(_)));
 
-        let head = signed_channel_tx(&signer, U256::from(3), 0, 1_000);
-        pool.insert_validated(valid_pool_transaction(head), 0).unwrap();
+        let gap_filling_head = signed_channel_tx(&signer, U256::from(1), 0, 1_000);
+        pool.insert_validated(valid_pool_transaction(gap_filling_head), 0).unwrap();
         let replacement = signed_channel_tx(&signer, U256::from(1), 1, 2_000);
         let outcome = pool.insert_validated(valid_pool_transaction(replacement), 0).unwrap();
         assert!(outcome.replaced.is_some());
