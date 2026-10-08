@@ -5,7 +5,7 @@ description: "Runs Base's multi-model pull request review. Use before pushing to
 
 # PR review
 
-One pipeline reviews every pull request in CI and your local branch before you push. Each stage is a prompt file you can edit.
+One pipeline reviews a pull request in CI, once, and your local branch before you push. Each stage is a prompt file you can edit.
 
 ```
 triage ─► review ──────────────────────► decide (findings) ─► comments ─┐
@@ -140,7 +140,21 @@ There is no time limit on an agent, and no budget for the whole run. A slow answ
 
 ## In CI
 
-`.github/workflows/claude-review.yml` has one job, `review`, on the BaseRunnerGroup runner (the one that can reach the LLM gateway). It runs `review.py --pr <number> --post`, which posts new inline comments (one review, most severe first), replies on existing bot threads, edits the bot's own comments to mark fixed threads or undo that, and one summary comment that replaces the previous one (marked `<!-- CLAUDE_REVIEW_SUMMARY -->`).
+A review is expensive (about $2.50 for a standard change and $6-7 for a deep one, against about $0.60 for the reviewer this replaced), so it does not run on every push. `.github/workflows/claude-review.yml` runs it:
+
+- **Once, when a pull request is opened or marked ready for review.** A draft is not reviewed. Marking a draft ready again does not buy a second review if the pull request already has one.
+- **On request, when someone comments `/review`** on the pull request. The comment must start with `/review` (anything after it is ignored) and come from the pull request's author or from a repository owner, member or collaborator. Comments from bots and from other people are ignored. The review that follows replaces the previous summary comment.
+- **Never on a push.** A push starts the `status` job instead, which runs no model: it rewrites one line of the review summary, so a reader can see that the review is out of date:
+
+  > ⚠️ **3 commits pushed after `a1b2c3d` have not been reviewed.** [View the diff](https://github.com/base/base/compare/a1b2c3d...f4e5d6c) · comment `/review` to review them.
+
+  The count is of the pull request's own commits after the reviewed one, so merging the base branch in does not add to it. If the branch was force-pushed so that the reviewed commit is gone, the line says the branch was rewritten and links to the whole pull request instead of a count.
+
+Every review summary ends with how to ask for another one, and records the commit it reviewed (in an HTML comment, `pr-review:reviewed=<sha>`) so that the line above can be kept up to date. A summary from before that marker existed is left as it is.
+
+`/review` is handled by the workflow file on the default branch, not the pull request's copy, so a pull request cannot change who may run it. It starts working once this file is merged. A review that finds the pull request has moved to a newer commit while it was starting follows it to the new head once, instead of being lost.
+
+The review job runs on the BaseRunnerGroup runner (the one that can reach the LLM gateway). It runs `review.py --pr <number> --post`, which posts new inline comments (one review, most severe first), replies on existing bot threads, edits the bot's own comments to mark fixed threads or undo that, and one summary comment that replaces the previous one (marked `<!-- CLAUDE_REVIEW_SUMMARY -->`).
 
 The job's token cannot resolve review threads (GitHub answers "Resource not accessible by integration"), and no other token is available to this workflow. So the bot never calls the resolve mutation. It edits its own comment instead, which the token is allowed to do, and the thread stays open for a person to close. If a token that can resolve threads is ever provided, the place to use it is `apply_plan` in `review.py`.
 
@@ -148,7 +162,7 @@ The script runs from a clean checkout of the base branch, so a PR cannot add fil
 
 Safeguards in the script:
 
-- It acts only on threads and summaries whose author is the Actions bot, not on any comment that contains the marker, and edits only the first comment of a bot thread. Before it posts anything it checks that the pull request is still at the commit it reviewed.
+- It acts only on threads and summaries whose author is the Actions bot, not on any comment that contains the marker, and edits only the first comment of a bot thread. The review is of the commit it read: a push during the run does not stop it, and the summary says how many commits came after.
 - It moves any comment whose line is not in the diff into the summary, and posts at most 20 inline comments (the rest go to the summary).
 - Every GitHub write fails on its own. If GitHub rejects the inline review, the findings move into the summary; a failed reply or edit is reported, left out of the summary, and does not stop it. The summary is posted before the old one is deleted.
 - It reads the PR's metadata and diff at one head commit, pages through all threads, and rebuilds the diff from the files API when `gh pr diff` refuses a large PR.

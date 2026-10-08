@@ -82,8 +82,13 @@ class ReviewError(Exception):
     """Raised when the pipeline cannot continue."""
 
 
-class StaleError(ReviewError):
-    """Raised when the pull request has a newer commit than the one reviewed."""
+class HeadMovedError(ReviewError):
+    """The pull request's head is not the commit that was checked out for the agents to read."""
+
+
+# Exit status for HeadMovedError. The workflow follows the pull request to its new head and tries once more,
+# because a review that runs once per pull request must not be lost to a push that landed a moment earlier.
+EXIT_HEAD_MOVED = 3
 
 
 def log(message: str) -> None:
@@ -337,7 +342,6 @@ class Context:
     repo: str = DEFAULT_REPO
     head_sha: str | None = None
     threads: list[dict[str, Any]] = dataclasses.field(default_factory=list)
-    previous_summary: str | None = None
     # The threads that were there when the run started. Comments the run posts itself are new, not "open
     # from earlier", and the final decider should not be asked about them.
     earlier_thread_ids: frozenset[str] | None = None
@@ -488,7 +492,7 @@ def pr_context(number: int, repo: str, post: bool = False) -> Context:
         message = (f"the working tree is at {checked_out and checked_out[:12]}, not the PR head "
                    f"{info['headRefOid'][:12]}")
         if post:
-            raise ReviewError(f"{message}; a newer push has started its own review, so this one stops")
+            raise HeadMovedError(message)
         log(f"warning: {message}; check out the PR head for line numbers to match")
     if post and git(["status", "--porcelain", "--untracked-files=no"]).strip():
         # The agents read the working tree, so edits that GitHub does not have would be reviewed
@@ -496,14 +500,6 @@ def pr_context(number: int, repo: str, post: bool = False) -> Context:
         raise ReviewError("the working tree has uncommitted changes to tracked files; "
                           "commit or stash them before posting")
     threads = fetch_threads(number, repo)
-    try:
-        summaries = gh(["api", f"repos/{repo}/issues/{number}/comments", "--paginate", "--jq",
-                        f'.[] | {BOT_COMMENT_JQ} | select(.body | startswith("{render.SUMMARY_MARKER}")) | .body'])
-    except ReviewError as exc:
-        # The review can go on without it. Assume there is an old summary, so a fresh one is posted even
-        # when there is nothing new to say, and apply_plan removes whatever old ones it can find.
-        log(f"warning: could not read the previous summary ({exc}); assuming there is one")
-        summaries = "(unknown)"
     return Context(
         description=info["body"] or "(no description)",
         title=info["title"],
@@ -513,7 +509,6 @@ def pr_context(number: int, repo: str, post: bool = False) -> Context:
         repo=repo,
         head_sha=info["headRefOid"],
         threads=threads,
-        previous_summary=summaries.strip() or None,
     )
 
 
@@ -800,17 +795,6 @@ def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None]
     assert ctx.pr_number is not None
     repo, number = ctx.repo, ctx.pr_number
     problems: list[str] = []
-    try:
-        newer = bool(ctx.head_sha) and fetch_head(number, repo) != ctx.head_sha
-    except ReviewError as exc:
-        # Not being able to ask is not the same as the pull request having moved. Go on, and let
-        # the next round check again.
-        problems.append(f"check the pull request head: {exc}")
-        log(f"  could not check the pull request head: {exc}")
-        newer = False
-    if newer:
-        raise StaleError("the pull request has a newer commit than the one reviewed; nothing was posted")
-
     def attempt(what: str, args: list[str], input_text: str | None = None) -> bool:
         try:
             gh(args, input_text=input_text)
@@ -898,15 +882,21 @@ def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None]
     return problems
 
 
+def bot_summaries(number: int, repo: str) -> list[dict[str, Any]]:
+    """The review summaries the Actions bot has posted on the pull request, oldest first."""
+    out = gh(["api", f"repos/{repo}/issues/{number}/comments", "--paginate", "--jq",
+              f'.[] | {BOT_COMMENT_JQ} | select(.body | startswith("{render.SUMMARY_MARKER}")) | {{id, body}} | @json'])
+    return sorted((json.loads(line) for line in out.splitlines() if line.strip()), key=lambda c: c["id"])
+
+
 def post_summary(summary: str, ctx: Context) -> list[str]:
     """Post the summary comment, then delete the bot's older ones. Returns what could not be done."""
     assert ctx.pr_number is not None
     repo, number = ctx.repo, ctx.pr_number
     problems: list[str] = []
     try:
-        old_ids = gh(["api", f"repos/{repo}/issues/{number}/comments", "--paginate", "--jq",
-                      f'.[] | {BOT_COMMENT_JQ} | select(.body | startswith("{render.SUMMARY_MARKER}")) | .id']).split()
-    except ReviewError as exc:
+        old_ids = [str(c["id"]) for c in bot_summaries(number, repo)]
+    except (ReviewError, ValueError, KeyError) as exc:
         # Not finding the old summaries must not stop the new one from being posted.
         problems.append(f"find old summaries: {exc}")
         log(f"  could not list old summaries: {exc}")
@@ -927,6 +917,52 @@ def post_summary(summary: str, ctx: Context) -> list[str]:
     return problems
 
 
+def commits_after(number: int, repo: str, reviewed: str) -> int | None:
+    """How many commits of the pull request were pushed after `reviewed`, or None if it is no longer in it.
+
+    The pull request's own commit list is used, so commits that arrived by merging the base branch in do not
+    count. A force push or rebase removes the reviewed commit from the list, which is the None case.
+    """
+    pages = json.loads(gh(["api", f"repos/{repo}/pulls/{number}/commits", "--paginate", "--slurp"]))
+    shas = [c["sha"] for page in pages for c in page]
+    for index, sha in enumerate(shas):
+        if sha == reviewed or sha.startswith(reviewed):
+            return len(shas) - 1 - index
+    return None
+
+
+def refresh_status(number: int, repo: str) -> int:
+    """Rewrite the status line of the latest review summary for the pull request's current head.
+
+    No model runs. Used when commits are pushed after a review, to say how many have not been reviewed.
+    """
+    summaries = bot_summaries(number, repo)
+    if not summaries:
+        log("no review summary on this pull request yet; nothing to update")
+        return 0
+    latest = summaries[-1]
+    reviewed = render.reviewed_sha(latest["body"])
+    if reviewed is None:
+        log("the latest summary does not record the commit it reviewed; leaving it as it is")
+        return 0
+    head = fetch_head(number, repo)
+    unreviewed = 0 if head.startswith(reviewed) or reviewed.startswith(head) else commits_after(number, repo, reviewed)
+    block = render.status_block(
+        reviewed, unreviewed=unreviewed, compare_url=f"https://github.com/{repo}/compare/{reviewed}...{head}",
+        files_url=f"https://github.com/{repo}/pull/{number}/files")
+    body = render.replace_status(latest["body"], block)
+    if body is None:
+        log("the latest summary has no status line (it is from an older version); leaving it as it is")
+        return 0
+    if body == latest["body"]:
+        log("the status line is already up to date")
+        return 0
+    gh(["api", "-X", "PATCH", f"repos/{repo}/issues/comments/{latest['id']}", "--input", "-"],
+       input_text=json.dumps({"body": body}))
+    log(f"updated the status line: {'rewritten branch' if unreviewed is None else f'{unreviewed} unreviewed commit(s)'}")
+    return 0
+
+
 # --------------------------------------------------------------------------- pipeline
 
 
@@ -943,8 +979,6 @@ class Outcome:
     plan: Plan = dataclasses.field(default_factory=Plan)
     dropped: list[dict[str, str]] = dataclasses.field(default_factory=list)
     problems: list[str] = dataclasses.field(default_factory=list)
-    # True when the pull request moved on during the run; nothing more is posted after that.
-    stale: bool = False
 
 
 def run_council(ctx: Context, triage: dict[str, Any], members: list[Agent], chair: Agent, cwd: Path,
@@ -1045,18 +1079,13 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
     unposted: dict[str, dict[str, Any]] = {}
     seen: set[tuple[str | None, str]] = set()
     replied: set[str] = set()
-    state = {"stale": False, "chair_ran": False}
+    state = {"chair_ran": False}
     ctx.earlier_thread_ids = frozenset(t["thread_id"] for t in ctx.threads)
 
     def publish(round_plan: Plan) -> None:
         """Post one round, unless the pull request moved on; fold what happened into the whole plan."""
-        if post and not state["stale"]:
-            try:
-                problems.extend(apply_plan(round_plan, ctx))
-            except StaleError as exc:
-                state["stale"] = True
-                problems.append(str(exc))
-                log(f"  {exc}")
+        if post:
+            problems.extend(apply_plan(round_plan, ctx))
         plan.merge(round_plan)
 
     def findings_round(name: str, output: dict[str, Any]) -> None:
@@ -1121,11 +1150,28 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
         # The final round took these findings, so the review is not missing them.
         if "decide" not in failed:
             failed.pop(f"decide/{name}", None)
-    return Outcome(triage, reviews, failed, decision, rows, plan=plan, dropped=dropped, problems=problems,
-                   stale=state["stale"])
+    return Outcome(triage, reviews, failed, decision, rows, plan=plan, dropped=dropped, problems=problems)
 
 
-def build_summary(outcome: Outcome, plan: Plan, ctx: Context) -> str | None:
+def status_for(ctx: Context) -> str | None:
+    """The status line for a summary of `ctx.head_sha`, counted against the pull request's head right now.
+
+    Returns None (the summary then says "latest commit") when there is no pull request or it cannot be read.
+    """
+    if not (ctx.head_sha and ctx.pr_number):
+        return None
+    try:
+        head = fetch_head(ctx.pr_number, ctx.repo)
+        unreviewed = 0 if head == ctx.head_sha else commits_after(ctx.pr_number, ctx.repo, ctx.head_sha)
+    except (ReviewError, ValueError, KeyError) as exc:
+        log(f"warning: could not count the commits after the review ({exc})")
+        return None
+    return render.status_block(
+        ctx.head_sha, unreviewed=unreviewed, compare_url=f"https://github.com/{ctx.repo}/compare/{ctx.head_sha}...{head}",
+        files_url=f"https://github.com/{ctx.repo}/pull/{ctx.pr_number}/files")
+
+
+def build_summary(outcome: Outcome, plan: Plan, ctx: Context) -> str:
     details = render.render_details(
         triage=outcome.triage, rows=outcome.rows,
         reported={name: len(r.get("findings", [])) for name, r in outcome.reviews.items()},
@@ -1134,8 +1180,7 @@ def build_summary(outcome: Outcome, plan: Plan, ctx: Context) -> str | None:
         overview=outcome.decision.get("overview"), new=plan.new, outside=plan.outside,
         threads=ctx.threads, reopened={u["thread_id"] for u in plan.reopens},
         fixed={r["thread_id"] for r in plan.resolves}, back=set(plan.back),
-        failed=list(outcome.failed), details=details, repo=ctx.repo, head_sha=ctx.head_sha,
-        replace_existing=ctx.previous_summary is not None)
+        failed=list(outcome.failed), details=details, repo=ctx.repo, head_sha=ctx.head_sha, status=status_for(ctx))
 
 
 def render_report(plan: Plan) -> str:
@@ -1167,15 +1212,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--agents-dir", type=Path, default=AGENTS_DIR)
     parser.add_argument("--artifacts-dir", type=Path, help="where to keep prompts and raw results")
     parser.add_argument("--json", action="store_true", help="print the decider's raw output as JSON")
+    parser.add_argument("--refresh-status", action="store_true",
+                        help="with --pr: update the latest summary's count of unreviewed commits; runs no model")
     args = parser.parse_args(argv)
-    if args.post and args.pr is None:
-        parser.error("--post requires --pr")
+    if (args.post or args.refresh_status) and args.pr is None:
+        parser.error("--post and --refresh-status require --pr")
+    if args.refresh_status and args.post:
+        parser.error("--refresh-status runs no review, so it cannot be combined with --post")
     return args
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
+        if args.refresh_status:
+            return refresh_status(args.pr, args.repo)
         agents = load_agents(args.agents_dir)
         ctx = pr_context(args.pr, args.repo, post=args.post) if args.pr else local_context(args.base)
         artifacts = args.artifacts_dir or Path(tempfile.mkdtemp(prefix="pr-review-"))
@@ -1187,11 +1238,14 @@ def main(argv: list[str] | None = None) -> int:
         (artifacts / "plan.json").write_text(dumps(dataclasses.asdict(plan)))
         problems = list(outcome.problems)
         if args.post:
-            if outcome.stale:
-                log("the pull request moved on during the run; no summary was posted")
-                return 1
             if plan.summary is not None:
-                problems += post_summary(plan.summary, ctx)
+                summary_problems = post_summary(plan.summary, ctx)
+                problems += summary_problems
+                if not summary_problems:
+                    try:
+                        refresh_status(args.pr, args.repo)
+                    except ReviewError as exc:
+                        log(f"warning: could not refresh the status line ({exc})")
             log(f"Posted {len(plan.new)} comment(s) and {len(plan.replies)} reply(ies); "
                 f"{len(plan.resolves)} thread(s) marked resolved and {len(plan.reopens)} reopened")
             if problems:
@@ -1201,6 +1255,9 @@ def main(argv: list[str] | None = None) -> int:
         log(f"Artifacts: {artifacts}")
         if "decide" in outcome.failed:
             return 1
+    except HeadMovedError as exc:
+        log(f"error: {exc}")
+        return EXIT_HEAD_MOVED
     except ReviewError as exc:
         log(f"error: {exc}")
         return 1
