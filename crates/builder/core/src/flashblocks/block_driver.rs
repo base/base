@@ -10,8 +10,8 @@
 //! and finally a finalizing `build_block` with the state root plus the final inclusion events.
 //!
 //! The driver deliberately omits the async payload-job plumbing around that loop: websocket
-//! publication, pool maintenance (`update_accounts`, `prune_transactions`, invalidation and
-//! expiry sweeps), metering-provider bookkeeping, and the flashblock lifecycle events emitted
+//! publication, pool maintenance other than pruning (`update_accounts`, invalidation and expiry
+//! sweeps), metering-provider bookkeeping, and the flashblock lifecycle events emitted
 //! by the payload builder itself. Those paths need a live node and do not scale with the
 //! transaction backlog the benchmarks model.
 
@@ -63,14 +63,16 @@ impl FlashblockBlockDriver {
     /// flashblock index minus one) and returns a fresh
     /// best-transactions iterator over the pool, exactly as the payload builder refreshes
     /// [`BestFlashblocksTxs`] from the pool before every flashblock. Use it to add arrivals to the
-    /// pool between flashblocks. `on_committed` receives the hashes each flashblock included.
+    /// pool between flashblocks. After each pool flashblock, `on_flashblock` receives the hashes it
+    /// included and the hashes it rejected permanently, which the payload builder prunes from and
+    /// removes from the pool.
     pub fn run_block<DB, P>(
         &self,
         ctx: &mut BasePayloadBuilderCtx,
         state: &mut State<DB>,
         rejection_cache: RejectionCache,
         mut next_iterator: impl FnMut(u64) -> ParkableBestPayloadTransactions<BasePooledTransaction>,
-        mut on_committed: impl FnMut(&[TxHash]),
+        mut on_flashblock: impl FnMut(&[TxHash], &[TxHash]),
     ) -> Result<FlashblockBlockOutcome, PayloadBuilderError>
     where
         DB: alloy_evm::Database<Error = ProviderError>
@@ -133,10 +135,10 @@ impl FlashblockBlockDriver {
                 .map(|tx| tx.tx_hash())
                 .collect::<Vec<_>>();
             best.mark_committed(&committed);
-            on_committed(&committed);
             if !diag.permanently_rejected_txs.is_empty() {
                 best.mark_rejected(&diag.permanently_rejected_txs);
             }
+            on_flashblock(&committed, &diag.permanently_rejected_txs);
 
             outcome.considered += diag.txs_considered;
             outcome.deferred += diag.txs_deferred;
