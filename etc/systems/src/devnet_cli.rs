@@ -159,6 +159,7 @@ impl SnapshotArgs {
         snapshot.prefund = self
             .prefund_address
             .map(|address| DevnetPrefund { address, amount: self.prefund_amount });
+        snapshot.enable_impersonation = true;
         config.validate()?;
 
         let stack =

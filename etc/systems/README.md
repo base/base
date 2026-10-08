@@ -18,8 +18,9 @@ snapshot builder EL <-> standalone L1-free sequencer CL
 
 Both ELs start from separate writable copies of the same Base mainnet Reth datadir. The builder
 mines real descendants of the captured snapshot head and the follow client canonicalizes those
-blocks. Transactions submitted to the builder use its real transaction pool and normal
-`eth_sendRawTransaction` path.
+blocks. Signed transactions submitted to the builder use its real transaction pool and normal
+`eth_sendRawTransaction` path; interactive runs can also
+[submit keyless deposits](#submit-transactions-without-a-key).
 
 Interactive `base-devnet` runs the sequencer and validator concurrently.
 
@@ -37,7 +38,7 @@ Run commands from the `base/base` repository root. You need:
 - an immutable Base Reth snapshot;
 - two fresh, writable datadirs restored from that snapshot for each run;
 - enough free space for both datadirs to change during the run; and
-- Foundry's `cast` only when manually interacting with `base-devnet`.
+- `curl`, `jq`, and Foundry's `cast` for the manual RPC examples below.
 
 Each supplied datadir must already exist and contain `db/mdbx.dat`. Builder and client paths must
 be distinct. The launcher never creates, copies, deletes, or takes ownership of these datadirs.
@@ -112,13 +113,72 @@ cast balance "$FUNDER_ADDRESS" --rpc-url "$BUILDER_RPC"
 
 The runtime JSON contains `status`, `chain_id`, `boundary_number`, `boundary_hash`,
 `block_interval_ms`, `block_gas_limit`, `builder_rpc_url`, `builder_flashblocks_url`, and
-`client_rpc_url`. Dynamic ports are the default and are safest for automation. `--stable-ports`
-binds the builder and client RPCs to ports 7545 and 8545, respectively, but fails if those ports are
-occupied.
+`client_rpc_url`. Dynamic ports are the default and are safest for automation. `--stable-ports` binds
+the builder and client RPCs to ports 7545 and 8545, respectively, but fails if those ports are occupied.
 
 To pin a run to a known snapshot boundary, pass all three of `--expected-head-number`,
 `--expected-head-hash`, and `--expected-head-timestamp`. Startup fails before load generation if
 the captured boundary differs.
+
+## Submit transactions without a key
+
+Interactive `base-devnet snapshot` enables `dev_impersonateTransaction` by default on the builder's
+HTTP and WebSocket RPCs. The client RPC does not serve it. The method takes one object:
+
+| Field   | Required | Encoding        | Default |
+| ------- | -------- | --------------- | ------- |
+| `from`  | yes      | address         |         |
+| `to`    | yes      | address         |         |
+| `gas`   | yes      | hex quantity    |         |
+| `value` | no       | hex quantity    | `0x0`   |
+| `data`  | no       | hex bytes       | `0x`    |
+
+It returns the transaction hash after bounded admission, without waiting for inclusion; poll the
+standard `eth_getTransactionReceipt` for the result. The builder injects the request as an unsigned
+synthetic L2 deposit from `from` into the first eligible payload that is not yet fixed. Nothing goes
+through L1.
+
+The deposit spends `from`'s existing balance. Nothing is minted automatically and there is no
+`dev_fundAccount`. To fund a sender, either impersonate an account that already holds ETH in the
+snapshot and transfer to it, or start the network with `--prefund-address <address>` (and optionally
+`--prefund-amount <wei>`, default 1000 ETH) and impersonate that address. Impersonation needs no
+private key, so any address works as the prefund target.
+
+```bash
+BUILDER_RPC=$(jq -r .builder_rpc_url /tmp/base-snapshot-runtime.json)
+FROM=0x... # funded address to impersonate
+TO=0x...
+rpc() {
+  curl -s "$BUILDER_RPC" -H 'content-type: application/json' \
+    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$1\",\"params\":$2}"
+}
+
+# Balance in wei.
+rpc eth_getBalance "[\"$FROM\",\"latest\"]"
+
+# Transfer 1 ETH, then poll for the receipt (null until included).
+HASH=$(rpc dev_impersonateTransaction \
+  "[{\"from\":\"$FROM\",\"to\":\"$TO\",\"gas\":\"0x5208\",\"value\":\"0xde0b6b3a7640000\"}]" \
+  | jq -r .result)
+rpc eth_getTransactionReceipt "[\"$HASH\"]" | jq .result.status
+
+# Contract call: wrap 1 ETH with WETH's deposit() (selector 0xd0e30db0).
+HASH=$(rpc dev_impersonateTransaction \
+  "[{\"from\":\"$FROM\",\"to\":\"0x4200000000000000000000000000000000000006\",\"gas\":\"0x186a0\",\"value\":\"0xde0b6b3a7640000\",\"data\":\"0xd0e30db0\"}]" \
+  | jq -r .result)
+rpc eth_getTransactionReceipt "[\"$HASH\"]" | jq .result.status
+```
+
+Deposit semantics differ from signed pool transactions. There is no signature, and fees and nonces
+follow normal deposit-transaction rules rather than signed-transaction rules. A call that reverts is
+still included; check the receipt `status`. Signed transactions submitted with
+`eth_sendRawTransaction` keep working unchanged.
+
+This method is for local development only. Its pending submissions live in memory and are lost when
+the launcher exits. Each run is its own L1-free stack on destructive writable snapshot copies, with no
+L1, derivation, or safe/finalized-head advancement; do not rely on submissions surviving a restart or
+on exactly-once inclusion across reorgs. Both the default 2s and the 200ms `--block-interval` modes
+support it.
 
 ## Run a snapshot benchmark
 

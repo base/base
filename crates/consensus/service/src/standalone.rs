@@ -229,13 +229,13 @@ impl UnsafePayloadGossipClient for StandaloneUnsafePayloadGossipClient {
 /// L1 watching, P2P, batching, and safe/finalized head advancement. It is intended only for local
 /// development and execution benchmarking.
 #[derive(Debug)]
-pub struct StandaloneSequencerNode<E: EngineClient> {
+pub struct StandaloneSequencerNode<E: EngineClient, A = StandaloneAttributesBuilder> {
     /// The snapshot-bound rollup configuration.
     pub rollup_config: Arc<RollupConfig>,
     /// The execution engine client connected to the snapshot-backed builder EL.
     pub engine_client: Arc<E>,
     /// The attributes builder seeded from the snapshot boundary.
-    pub attributes_builder: StandaloneAttributesBuilder,
+    pub attributes_builder: A,
     /// The fixed-origin selector seeded from the snapshot boundary.
     pub origin_selector: StandaloneOriginSelector,
 }
@@ -249,13 +249,31 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
         system_config: SystemConfig,
         prefund: Option<StandalonePrefund>,
     ) -> Self {
+        let attributes_builder = StandaloneAttributesBuilder::new(
+            Arc::clone(&rollup_config),
+            l1_info,
+            system_config,
+            prefund,
+        );
+        Self::with_attributes_builder(rollup_config, engine_client, l1_info, attributes_builder)
+    }
+}
+
+impl<E, A> StandaloneSequencerNode<E, A>
+where
+    E: EngineClient + 'static,
+    A: AttributesBuilder + Clone + Sync + 'static,
+{
+    /// Creates an L1-free sequencer whose attributes builder wraps or replaces the default
+    /// [`StandaloneAttributesBuilder`] for the same snapshot boundary.
+    pub fn with_attributes_builder(
+        rollup_config: Arc<RollupConfig>,
+        engine_client: Arc<E>,
+        l1_info: L1BlockInfoTx,
+        attributes_builder: A,
+    ) -> Self {
         Self {
-            attributes_builder: StandaloneAttributesBuilder::new(
-                Arc::clone(&rollup_config),
-                l1_info,
-                system_config,
-                prefund,
-            ),
+            attributes_builder,
             origin_selector: StandaloneOriginSelector::new(l1_info),
             rollup_config,
             engine_client,

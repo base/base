@@ -44,6 +44,7 @@ base-builder-core = { workspace = true, features = ["test-utils"] }
 base-consensus-disc.workspace = true
 base-consensus-node.workspace = true
 base-consensus-peers.workspace = true
+base-consensus-derive.workspace = true
 base-consensus-gossip.workspace = true
 base-consensus-sources.workspace = true
 base-consensus-providers.workspace = true
@@ -78,8 +79,10 @@ alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 
 # base-alloy
 base-common-network.workspace = true
+base-common-consensus.workspace = true
 base-common-rpc-types.workspace = true
 base-common-precompiles.workspace = true
+base-common-rpc-types-engine.workspace = true
 
 # proof
 base-proof-zk-host.workspace = true
@@ -135,16 +138,13 @@ upgrade-signal = [ "base-test-utils/contracts", "dep:base-test-utils" ]
 
 [dev-dependencies]
 # consensus
-base-consensus-derive.workspace = true
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
 
 # alloy
 alloy-json-rpc.workspace = true
 
 # base-alloy
-base-common-consensus.workspace = true
 base-common-flashblocks.workspace = true
-base-common-rpc-types-engine.workspace = true
 
 # proof
 base-optimism-rpc.workspace = true

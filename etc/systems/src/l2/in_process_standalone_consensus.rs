@@ -2,16 +2,20 @@
 
 use std::sync::Arc;
 
+use alloy_provider::RootProvider;
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_consensus_node::{
-    EngineConfig, NodeOperatingMode, StandalonePrefund, StandaloneSequencerNode,
+    EngineConfig, NodeOperatingMode, StandaloneAttributesBuilder, StandalonePrefund,
+    StandaloneSequencerNode,
 };
 use base_protocol::L1BlockInfoTx;
 use eyre::{Result, WrapErr};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use url::Url;
+
+use super::{SnapshotImpersonation, SnapshotImpersonationAttributesBuilder};
 
 /// Configuration for an L1-free snapshot sequencer.
 #[derive(Debug)]
@@ -22,12 +26,16 @@ pub struct InProcessStandaloneSequencerConfig {
     pub jwt_secret: JwtSecret,
     /// Builder Engine API URL.
     pub l2_engine_url: Url,
+    /// Builder HTTP RPC URL, read only to reconcile impersonated deposits.
+    pub l2_rpc_url: Url,
     /// L1-info transaction decoded from the snapshot head.
     pub l1_info: L1BlockInfoTx,
     /// Effective system configuration at the snapshot head.
     pub system_config: SystemConfig,
     /// Optional one-time funding for a benchmark account.
     pub prefund: Option<StandalonePrefund>,
+    /// Queue of impersonated deposits to append after the mandatory deposits.
+    pub impersonation: Option<SnapshotImpersonation>,
 }
 
 /// A running L1-free snapshot sequencer.
@@ -64,18 +72,42 @@ impl InProcessStandaloneSequencer {
                 .map_err(eyre::Report::from)
                 .wrap_err("failed to build standalone engine client")?,
         );
-        let node = StandaloneSequencerNode::new(
-            rollup_config,
-            engine_client,
-            config.l1_info,
-            config.system_config,
-            config.prefund,
-        );
         let cancellation = CancellationToken::new();
         let node_cancellation = cancellation.clone();
         let (error_tx, error_rx) = mpsc::channel(1);
         let handle = tokio::spawn(async move {
-            if let Err(error) = node.start_with_cancellation(node_cancellation).await {
+            let result = match config.impersonation {
+                Some(queue) => {
+                    let attributes_builder = StandaloneAttributesBuilder::new(
+                        Arc::clone(&rollup_config),
+                        config.l1_info,
+                        config.system_config,
+                        config.prefund,
+                    );
+                    let node = StandaloneSequencerNode::with_attributes_builder(
+                        rollup_config,
+                        engine_client,
+                        config.l1_info,
+                        SnapshotImpersonationAttributesBuilder::new(
+                            attributes_builder,
+                            queue,
+                            RootProvider::new_http(config.l2_rpc_url),
+                        ),
+                    );
+                    node.start_with_cancellation(node_cancellation).await
+                }
+                None => {
+                    let node = StandaloneSequencerNode::new(
+                        rollup_config,
+                        engine_client,
+                        config.l1_info,
+                        config.system_config,
+                        config.prefund,
+                    );
+                    node.start_with_cancellation(node_cancellation).await
+                }
+            };
+            if let Err(error) = result {
                 tracing::error!(error = %error, "standalone consensus node failed");
                 let _ = error_tx.send(error).await;
             }
