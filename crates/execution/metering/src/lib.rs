@@ -27,5 +27,10 @@ pub use traits::MeteringApiServer;
 mod types;
 pub use types::{MeterBlockResponse, MeterBlockTransactions};
 
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+pub use test_support::TestSupport;
+
 mod transaction;
 pub use transaction::{TxValidationError, validate_tx};

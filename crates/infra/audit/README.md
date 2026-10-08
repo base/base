@@ -15,7 +15,8 @@ S3 removal and rollout prerequisites.
 `migrations/` holds the transaction event schema. `003` creates
 `transaction_events_v2`, which the service reads and writes. `001` and `002`
 created the legacy `transaction_events` tree and `004` drops it; they stay
-because sqlx verifies the checksums of applied migrations. `schema.sql` is a committed
+because sqlx verifies the checksums of applied migrations. `005` adds the
+function that summarizes v2's BRIN indexes. `schema.sql` is a committed
 `pg_dump` of the schema those migrations produce, without dated day partitions.
 The Postgres integration tests fail if a fresh or upgraded database differs
 from it. After changing a migration, regenerate the snapshot and review the

@@ -142,6 +142,8 @@ pub enum TransactionEventType {
     #[serde(rename = "TXPOOL_BUILDER_FORWARD_DROPPED")]
     TxpoolBuilderForwardDropped,
     /// Txpool consumed a transaction from the best-txs iterator for builder forwarding.
+    ///
+    /// No longer emitted. Retained so historical events remain readable.
     #[serde(rename = "TXPOOL_BUILDER_CONSUMED")]
     TxpoolBuilderConsumed,
     /// A validated txpool insert accepted a transaction.

@@ -34,7 +34,7 @@ const fn lower_limits(config: &ThrottleConfig) -> DaLimits {
     }
 }
 
-/// A backlog at twice the threshold publishes the lower limits and forces blob submissions. Once
+/// A backlog at the full threshold publishes the lower limits and forces blob submissions. Once
 /// the backlog is gone, the upper limits are published again and blobs are no longer forced.
 #[test]
 fn test_throttle_transitions_from_active_to_inactive() {
@@ -42,7 +42,7 @@ fn test_throttle_transitions_from_active_to_inactive() {
         let (source, source_tx) = ChannelBlockSource::new();
 
         let config = ThrottleConfig::default();
-        let pipeline = TrackingPipeline::new().with_da_backlog(2 * config.threshold_bytes);
+        let pipeline = TrackingPipeline::new().with_da_backlog(config.full_threshold_bytes);
         let backlog = Arc::clone(&pipeline.da_backlog_bytes);
         let blob_override = Arc::clone(&pipeline.blob_override);
 
@@ -59,11 +59,7 @@ fn test_throttle_transitions_from_active_to_inactive() {
 
         // The first iteration runs at startup, so give it time to complete.
         ctx.sleep(Duration::from_millis(30)).await;
-        assert_eq!(
-            *limits.borrow(),
-            lower_limits(&config),
-            "twice the threshold is full intensity"
-        );
+        assert_eq!(*limits.borrow(), lower_limits(&config), "the full threshold is full intensity");
         assert!(blob_override.load(Ordering::SeqCst), "throttling forces blobs");
 
         // Drop the backlog to zero, then wake the driver by delivering a dummy
@@ -85,7 +81,7 @@ fn test_throttle_transitions_from_active_to_inactive() {
 fn test_admin_set_throttle_publishes_the_new_limits() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let config = ThrottleConfig::default();
-        let pipeline = TrackingPipeline::new().with_da_backlog(2 * config.threshold_bytes);
+        let pipeline = TrackingPipeline::new().with_da_backlog(config.full_threshold_bytes);
         let throttle = DaThrottle::new(ThrottleController::disabled());
         let mut limits = throttle.subscribe();
 
@@ -110,7 +106,7 @@ fn test_admin_set_throttle_publishes_the_new_limits() {
 fn test_throttling_without_blob_forcing_keeps_the_da_type() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let config = ThrottleConfig::default();
-        let pipeline = TrackingPipeline::new().with_da_backlog(2 * config.threshold_bytes);
+        let pipeline = TrackingPipeline::new().with_da_backlog(config.full_threshold_bytes);
         let blob_override = Arc::clone(&pipeline.blob_override);
         let throttle =
             DaThrottle::new(ThrottleController::new(config.clone(), ThrottleStrategy::Linear));

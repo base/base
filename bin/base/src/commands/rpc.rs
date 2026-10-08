@@ -564,7 +564,6 @@ mod tests {
             "--enable-tx-forwarding",
             "--builder-rpc-urls",
             "http://localhost:8545",
-            "--enable-experimental-validity-transactions",
             "--validity-max-predicates",
             "8",
         ]));
@@ -576,7 +575,6 @@ mod tests {
         let launch_config = rpc.execution.into_launch_config(BaseChainSpec::devnet().into());
 
         assert!(launch_config.standard.rpc.enable_tx_forwarding);
-        assert!(launch_config.standard.rpc.enable_experimental_validity_transactions);
         assert_eq!(launch_config.standard.rpc.validity_max_predicates, 8);
         assert_eq!(launch_config.standard.rpc.builder_rpc_urls.len(), 1);
     }

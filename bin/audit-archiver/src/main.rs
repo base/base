@@ -5,12 +5,14 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use anyhow::Result;
 use audit_archiver_lib::{
     AuditArchiverApiServer, AuditArchiverRpc, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
+    DEFAULT_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS,
     DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS, DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS,
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
     DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
     DEFAULT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS,
     DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS,
-    DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, Metrics, PgTransactionEventSink,
+    DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS,
+    MAX_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS, Metrics, PgTransactionEventSink,
     TransactionEventIngestConfig, TransactionEventRetentionConfig,
 };
 use axum::{
@@ -29,7 +31,7 @@ use tokio::{
     time::{MissedTickBehavior, interval},
 };
 use tower::ServiceBuilder;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 base_cli_utils::define_log_args!("TIPS_AUDIT");
 base_cli_utils::define_metrics_args!("TIPS_AUDIT", 9002);
@@ -131,6 +133,17 @@ struct Args {
     )]
     transaction_event_partition_lock_timeout_ms: u64,
 
+    /// Seconds between BRIN summary passes over the day partitions that take
+    /// inserts. Zero disables the passes. Each pass leaves at most this many
+    /// seconds of new rows outside the BRIN summaries used by warehouse
+    /// extraction.
+    #[arg(
+        long,
+        env = "TIPS_AUDIT_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS",
+        default_value_t = DEFAULT_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS
+    )]
+    transaction_event_brin_summary_interval_secs: u64,
+
     /// HTTP path for Vector transaction-event batch ingest.
     #[arg(
         long,
@@ -225,6 +238,8 @@ async fn run_server(args: Args) -> Result<()> {
     }
     .validate()?;
     let retention_interval = Duration::from_secs(retention_config.interval_secs);
+    let brin_summary_interval =
+        brin_summary_interval(args.transaction_event_brin_summary_interval_secs)?;
 
     info!(
         metrics_addr = %args.metrics.addr,
@@ -236,6 +251,8 @@ async fn run_server(args: Args) -> Result<()> {
         transaction_event_cold_retention_days = retention_config.cold_days,
         transaction_event_partition_lock_timeout_ms = retention_config.partition_lock_timeout_ms,
         transaction_event_retention_interval_secs = retention_interval.as_secs(),
+        transaction_event_brin_summary_interval_secs =
+            brin_summary_interval.map_or(0, |interval| interval.as_secs()),
         "Starting audit archiver"
     );
 
@@ -263,6 +280,7 @@ async fn run_server(args: Args) -> Result<()> {
         .service(rpc_service);
 
     let retention_sink = transaction_event_sink.clone();
+    let brin_summary_sink = transaction_event_sink.clone();
     let health_router = health_router(transaction_event_sink.clone());
     let config = TransactionEventIngestConfig {
         path: args.transaction_event_http_path.clone(),
@@ -283,12 +301,52 @@ async fn run_server(args: Args) -> Result<()> {
     info!(rpc_addr = %rpc_addr, "Audit archiver HTTP server started");
 
     let retention_worker = run_retention_worker(retention_sink, retention_interval);
+    let brin_summary_worker = run_brin_summary_worker(brin_summary_sink, brin_summary_interval);
 
     tokio::select! {
         result = http_server => {
             result.map_err(|e| anyhow::anyhow!("audit archiver HTTP server stopped unexpectedly: {e}"))
         }
         result = retention_worker => result,
+        result = brin_summary_worker => result,
+    }
+}
+
+/// Validates the BRIN summary interval. `None` disables the passes.
+fn brin_summary_interval(secs: u64) -> Result<Option<Duration>> {
+    if secs > MAX_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS {
+        anyhow::bail!(
+            "TIPS_AUDIT_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS must be at most {MAX_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS}, got {secs}"
+        );
+    }
+    Ok((secs > 0).then(|| Duration::from_secs(secs)))
+}
+
+async fn run_brin_summary_worker(
+    transaction_event_sink: PgTransactionEventSink,
+    summary_interval: Option<Duration>,
+) -> Result<()> {
+    let Some(summary_interval) = summary_interval else {
+        info!("transaction event BRIN summary passes disabled");
+        return std::future::pending().await;
+    };
+    let mut ticker = interval(summary_interval);
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+    loop {
+        ticker.tick().await;
+        match transaction_event_sink.summarize_brin_indexes().await {
+            Ok(outcome) if outcome.migration_pending => {
+                warn!(
+                    "transaction event BRIN summary function is missing; run migrate up to apply migration 005"
+                );
+            }
+            Ok(_) => {}
+            Err(err) => {
+                Metrics::transaction_event_brin_summary_failures().increment(1);
+                error!(error = %err, "transaction event BRIN summary failed");
+            }
+        }
     }
 }
 
@@ -358,5 +416,17 @@ mod tests {
 
         let error = run_server(args).await.expect_err("serve must require durable event storage");
         assert!(error.to_string().contains("TIPS_AUDIT_POSTGRES_URL must be set for serve"));
+    }
+
+    #[test]
+    fn brin_summary_interval_zero_disables_and_rejects_above_max() {
+        assert_eq!(brin_summary_interval(0).unwrap(), None);
+        assert_eq!(
+            brin_summary_interval(MAX_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS).unwrap(),
+            Some(Duration::from_secs(MAX_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS))
+        );
+        assert!(
+            brin_summary_interval(MAX_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS + 1).is_err()
+        );
     }
 }

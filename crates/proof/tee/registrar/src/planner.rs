@@ -176,17 +176,6 @@ impl CertManagerKeys {
         Ok((cache_key, keccak256(material)))
     }
 
-    /// Returns the verifier cache key for `cert`.
-    pub fn cache_key(cert: &[u8]) -> PlannerResult<B256> {
-        Ok(Self::keys(cert)?.0)
-    }
-
-    /// Returns `CertManager.computeCertId`: `keccak256(issuerHash || serialHash)` where each
-    /// component hashes the ASN.1 content octets (excluding tag and length).
-    pub fn revocation_id(cert: &[u8]) -> PlannerResult<B256> {
-        Ok(Self::keys(cert)?.1)
-    }
-
     /// Requires explicit context-tagged version present with value 2 (X.509 v3).
     ///
     /// The INTEGER child must consume the entire `[0] EXPLICIT` wrapper, matching

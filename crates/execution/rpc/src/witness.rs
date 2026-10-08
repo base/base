@@ -49,7 +49,7 @@ impl<Pool, Provider, EvmConfig, Attrs> BaseDebugWitnessApi<Pool, Provider, EvmCo
     pub fn new(
         provider: Provider,
         task_spawner: Runtime,
-        builder: BasePayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
+        builder: BasePayloadBuilder<Pool, Provider, EvmConfig, Attrs>,
     ) -> Self {
         let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_PAYLOAD_EXECUTIONS));
         let inner = BaseDebugWitnessApiInner { provider, builder, task_spawner, semaphore };
@@ -139,7 +139,7 @@ impl<Pool, Provider, EvmConfig, Attrs> Debug
 
 struct BaseDebugWitnessApiInner<Pool, Provider, EvmConfig, Attrs> {
     provider: Provider,
-    builder: BasePayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
+    builder: BasePayloadBuilder<Pool, Provider, EvmConfig, Attrs>,
     task_spawner: Runtime,
     semaphore: Arc<Semaphore>,
 }
