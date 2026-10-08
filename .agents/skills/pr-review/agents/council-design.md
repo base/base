@@ -3,7 +3,7 @@ name: council-design
 description: Council member from a third model family that checks design, scope, and the repository's own conventions.
 stage: council
 model: gemini-3.1-pro-preview
-effort: medium
+effort: low
 tools: Read,Grep,Glob
 timeout_seconds: 1500
 max_output_tokens: 32000
