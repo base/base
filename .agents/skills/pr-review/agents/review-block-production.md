@@ -4,7 +4,7 @@ description: Looks for changes that can halt or stall block production, using do
 stage: review
 when: block-production
 model: opus
-effort: high
+effort: medium
 tools: Read,Grep,Glob
 timeout_seconds: 1500
 ---

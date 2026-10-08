@@ -710,6 +710,13 @@ class AgentRunTests(unittest.TestCase):
         _, run = self.call(self.agent(), [self.envelope()])
         self.assertNotIn("--settings", run.call_args.args[0])
 
+    def test_every_agent_is_told_to_work_fast(self) -> None:
+        for stage in review.STAGES:
+            with self.subTest(stage=stage):
+                _, run = self.call(self.agent(stage=stage), [self.envelope()])
+                cmd = run.call_args.args[0]
+                self.assertIn("## Working fast", cmd[cmd.index("--append-system-prompt") + 1])
+
     def test_pr_settings_are_never_loaded(self) -> None:
         _, run = self.call(self.agent(), [self.envelope()])
         cmd = run.call_args.args[0]

@@ -3,7 +3,7 @@ name: council-invariants
 description: Council member that checks whether each changed behavior still upholds the invariants the old code relied on.
 stage: council
 model: opus
-effort: max
+effort: medium
 tools: Read,Grep,Glob
 timeout_seconds: 1500
 ---
