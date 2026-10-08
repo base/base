@@ -629,6 +629,44 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('[ "$code" -eq 3 ]', self.review_job)
         self.assertIn(f"EXIT_HEAD_MOVED = {review.EXIT_HEAD_MOVED}", (review.SKILL_DIR / "review.py").read_text())
 
+    def step_order(self, job: str) -> list[str]:
+        return [line.strip()[len("- name: "):] if "- name:" in line else line.strip()[len("- uses: "):].split("@")[0]
+                for line in job.splitlines() if line.startswith("      - ")]
+
+    def test_nothing_from_the_pull_request_is_on_disk_when_the_cli_is_installed(self) -> None:
+        # npm reads .npmrc and package.json from the working directory, so installing from inside a checkout of
+        # the pull request would let it influence what is installed in a job that holds secrets.
+        steps = self.step_order(self.review_job)
+        self.assertLess(steps.index("Install Claude Code"), steps.index("actions/checkout"))
+        install = self.review_job.split("- name: Install Claude Code\n", 1)[1].split("\n      - ", 1)[0]
+        self.assertIn("working-directory: ${{ runner.temp }}", install)
+
+    def test_the_review_script_comes_from_the_default_branch_not_the_pull_requests_base(self) -> None:
+        self.assertIn("DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}", self.review_job)
+        self.assertIn('git fetch --depth 1 origin "$DEFAULT_BRANCH"', self.review_job)
+        self.assertNotIn("base_ref", self.review_job)
+        self.assertNotIn("pull_request.base.ref", self.text)
+
+    def test_a_comment_never_runs_the_pull_requests_copy_of_the_script(self) -> None:
+        pipeline = self.review_job.split("- name: Check out the review pipeline from the default branch\n", 1)[1]
+        pipeline = pipeline.split("\n      - ", 1)[0]
+        self.assertIn('elif [ "$EVENT" != pull_request ]; then', pipeline)
+        self.assertIn("exit 1", pipeline.split('elif [ "$EVENT" != pull_request ]', 1)[1].split("fi", 1)[0])
+
+    def test_the_status_job_never_checks_out_the_pull_request(self) -> None:
+        self.assertIn("ref: ${{ github.event.repository.default_branch }}", self.status_job)
+        self.assertNotIn("pull_request.head.sha", self.status_job.split("    steps:", 1)[1])
+        self.assertNotIn("pull_request.head.ref", self.status_job)
+        self.assertNotIn("git worktree", self.status_job)
+
+    def test_the_status_job_says_so_when_there_is_no_pipeline_on_the_default_branch_yet(self) -> None:
+        self.assertIn("if [ ! -f .agents/skills/pr-review/review.py ]; then", self.status_job)
+
+    def test_the_status_command_reads_no_files_from_the_pull_request(self) -> None:
+        refresh = (review.SKILL_DIR / "review.py").read_text().split("def refresh_status", 1)[1].split("\ndef ", 1)[0]
+        for forbidden in ("git(", "Path(", "open(", "read_text", "cwd"):
+            self.assertNotIn(forbidden, refresh)
+
     def test_the_review_job_is_still_bounded(self) -> None:
         self.assertIn(f"timeout-minutes: {JOB_LIMIT_SECONDS // 60}\n", self.review_job)
 
