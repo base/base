@@ -60,9 +60,6 @@ pub struct InProcessBuilderConfig {
     pub flashblocks_port: Option<u16>,
     /// Optional fixed Prometheus metrics port (uses random if None).
     pub metrics_port: Option<u16>,
-    /// Whether to accept experimental validity-bearing transactions and expose
-    /// `base_sendRawTransactionValidity`.
-    pub enable_experimental_validity_transactions: bool,
     /// Whether to run both payload builders and cut over to basic at Denim.
     pub payload_builder_cutover: bool,
     /// Additional node extensions installed after the builder's built-in RPC wiring.
@@ -169,7 +166,7 @@ impl InProcessBuilder {
         let rollup_args = RollupArgs::default();
         let base_node = BaseNode::new(rollup_args.clone());
 
-        let addons: base_node_runner::BaseAddOns<
+        let addons: base_node_core::BaseAddOns<
             _,
             base_execution_rpc::BaseEthApiBuilder,
             base_node_core::BasePayloadValidatorBuilder,
@@ -196,18 +193,11 @@ impl InProcessBuilder {
         };
         let p2p_port = node_config.network.port;
 
-        let accept_validity_transactions = config.enable_experimental_validity_transactions;
         let extra_extensions = config.extra_extensions;
-        let mut hooks = NodeHooks::new();
-        if accept_validity_transactions {
-            hooks = Box::new(SendRawTransactionValidityExtension::from_config(
-                SendRawTransactionValidityConfig {
-                    experimental_override: true,
-                    ..Default::default()
-                },
-            ))
-            .apply(hooks);
-        }
+        let hooks = Box::new(SendRawTransactionValidityExtension::from_config(
+            SendRawTransactionValidityConfig::default(),
+        ))
+        .apply(NodeHooks::new());
         // Reth's `extend_rpc_modules` is a single-slot hook that silently replaces whatever was
         // registered before it, and `NodeHooks::apply_to` claims that slot for every extension
         // RPC module. Registering the builder API here instead keeps both in one closure.
@@ -215,7 +205,7 @@ impl InProcessBuilder {
             let api =
                 BuilderApiImpl::<_, base_execution_txpool::TransactionValidity>::with_extensions(
                     ctx.pool().clone(),
-                    accept_validity_transactions,
+                    true,
                     DEFAULT_MAX_VALIDITY_PREDICATES,
                 );
             ctx.modules.merge_configured(api.into_rpc())?;

@@ -39,6 +39,7 @@ thiserror.workspace = true
 base-execution-chainspec.workspace = true
 
 [dev-dependencies]
+rstest.workspace = true
 reth-trie.workspace = true
 reth-revm.workspace = true
 reth-chainspec.workspace = true

@@ -411,6 +411,7 @@ mod tests {
         primitives::{Address, B256, Bytes, TxKind, bytes, hardfork::SpecId},
         state::AccountInfo,
     };
+    use rstest::rstest;
 
     use super::*;
     use crate::{BaseContext, BaseSpecId, BaseTransaction, Builder, DefaultBase, L1BlockInfo};
@@ -734,72 +735,31 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_azul_tx_gas_limit_cap_rejected() {
+    #[rstest]
+    #[case::azul_above_cap_rejected(BaseUpgrade::Azul, 16_777_217, false, false)]
+    #[case::azul_at_cap_accepted(BaseUpgrade::Azul, 16_777_216, false, true)]
+    #[case::jovian_above_cap_accepted(BaseUpgrade::Jovian, 16_777_217, false, true)]
+    #[case::azul_deposit_above_cap_accepted(BaseUpgrade::Azul, 16_777_217, true, true)]
+    fn test_validate_env_tx_gas_limit_cap(
+        #[case] upgrade: BaseUpgrade,
+        #[case] gas_limit: u64,
+        #[case] is_deposit: bool,
+        #[case] accepted: bool,
+    ) {
+        let builder = BaseTransaction::builder().base(TxEnv::builder().gas_limit(gas_limit));
+        let tx = if is_deposit {
+            builder.source_hash(B256::from([1u8; 32]))
+        } else {
+            builder.enveloped_tx(Some(bytes!("FACADE")))
+        };
         let ctx = Context::base()
-            .with_tx(
-                BaseTransaction::builder()
-                    .base(TxEnv::builder().gas_limit(16_777_217))
-                    .enveloped_tx(Some(bytes!("FACADE")))
-                    .build_fill(),
-            )
-            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Azul)));
+            .with_tx(tx.build_fill())
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(upgrade)));
         let mut evm = ctx.build_base();
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
-        let result = handler.validate_env(&mut evm);
-        assert!(result.is_err(), "gas_limit above cap should be rejected");
-    }
 
-    #[test]
-    fn test_azul_tx_gas_limit_at_cap_ok() {
-        let ctx = Context::base()
-            .with_tx(
-                BaseTransaction::builder()
-                    .base(TxEnv::builder().gas_limit(16_777_216))
-                    .enveloped_tx(Some(bytes!("FACADE")))
-                    .build_fill(),
-            )
-            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Azul)));
-        let mut evm = ctx.build_base();
-        let handler =
-            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
-        let result = handler.validate_env(&mut evm);
-        assert!(result.is_ok(), "gas_limit at cap should be accepted");
-    }
-
-    #[test]
-    fn test_jovian_no_tx_gas_limit_cap() {
-        let ctx = Context::base()
-            .with_tx(
-                BaseTransaction::builder()
-                    .base(TxEnv::builder().gas_limit(16_777_217))
-                    .enveloped_tx(Some(bytes!("FACADE")))
-                    .build_fill(),
-            )
-            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Jovian)));
-        let mut evm = ctx.build_base();
-        let handler =
-            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
-        let result = handler.validate_env(&mut evm);
-        assert!(result.is_ok(), "Jovian should not enforce gas limit cap");
-    }
-
-    #[test]
-    fn test_azul_deposit_skips_gas_limit_cap() {
-        let ctx = Context::base()
-            .with_tx(
-                BaseTransaction::builder()
-                    .base(TxEnv::builder().gas_limit(16_777_217))
-                    .source_hash(B256::from([1u8; 32]))
-                    .build_fill(),
-            )
-            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Azul)));
-        let mut evm = ctx.build_base();
-        let handler =
-            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
-        let result = handler.validate_env(&mut evm);
-        assert!(result.is_ok(), "deposit txs should skip gas limit cap");
+        assert_eq!(handler.validate_env(&mut evm).is_ok(), accepted);
     }
 
     #[test]

@@ -127,41 +127,20 @@ where
 mod tests {
     use alloy_consensus::TxEip1559;
     use alloy_primitives::{Address, Signature};
-    use base_common_consensus::{BaseBlockBody, BaseTransactionSigned};
+    use base_common_consensus::BaseTransactionSigned;
     use base_node_runner::test_utils::TestHarness;
     use base_test_utils::Account;
     use reth_primitives_traits::Block as _;
     use reth_transaction_pool::test_utils::TransactionBuilder;
 
     use super::*;
-
-    fn create_block_with_transactions(
-        harness: &TestHarness,
-        transactions: Vec<BaseTransactionSigned>,
-    ) -> BaseBlock {
-        let latest = harness.latest_block();
-        let header = Header {
-            parent_hash: latest.hash(),
-            number: latest.number() + 1,
-            timestamp: latest.timestamp() + 2,
-            gas_limit: 30_000_000,
-            beneficiary: Address::random(),
-            base_fee_per_gas: Some(1),
-            // Required for post-Cancun blocks (EIP-4788)
-            parent_beacon_block_root: Some(B256::ZERO),
-            ..Default::default()
-        };
-
-        let body = BaseBlockBody { transactions, ommers: vec![], withdrawals: None };
-
-        BaseBlock::new(header, body)
-    }
+    use crate::TestSupport;
 
     #[tokio::test]
     async fn meter_block_empty_transactions() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
 
-        let block = create_block_with_transactions(&harness, vec![]);
+        let block = TestSupport::child_block(&harness, vec![]);
 
         let response = meter_block(harness.blockchain_provider(), harness.chain_spec(), &block)?;
 
@@ -187,23 +166,20 @@ mod tests {
         let harness = TestHarness::new().await?;
 
         let to = Address::random();
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(to)
-            .value(1_000)
-            .gas_limit(21_000)
-            .max_fee_per_gas(10)
-            .max_priority_fee_per_gas(1)
-            .into_eip1559();
-
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        let tx = TestSupport::sign(
+            TransactionBuilder::default()
+                .signer(Account::Alice.signer_b256())
+                .chain_id(harness.chain_id())
+                .nonce(0)
+                .to(to)
+                .value(1_000)
+                .gas_limit(21_000)
+                .max_fee_per_gas(10)
+                .max_priority_fee_per_gas(1),
         );
         let tx_hash = tx.tx_hash();
 
-        let block = create_block_with_transactions(&harness, vec![tx]);
+        let block = TestSupport::child_block(&harness, vec![tx]);
 
         let response = meter_block(harness.blockchain_provider(), harness.chain_spec(), &block)?;
 
@@ -234,40 +210,34 @@ mod tests {
         let to_2 = Address::random();
 
         // Create first transaction from Alice
-        let signed_tx_1 = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(to_1)
-            .value(1_000)
-            .gas_limit(21_000)
-            .max_fee_per_gas(10)
-            .max_priority_fee_per_gas(1)
-            .into_eip1559();
-
-        let tx_1 = BaseTransactionSigned::Eip1559(
-            signed_tx_1.as_eip1559().expect("eip1559 transaction").clone(),
+        let tx_1 = TestSupport::sign(
+            TransactionBuilder::default()
+                .signer(Account::Alice.signer_b256())
+                .chain_id(harness.chain_id())
+                .nonce(0)
+                .to(to_1)
+                .value(1_000)
+                .gas_limit(21_000)
+                .max_fee_per_gas(10)
+                .max_priority_fee_per_gas(1),
         );
         let tx_hash_1 = tx_1.tx_hash();
 
         // Create second transaction from Bob
-        let signed_tx_2 = TransactionBuilder::default()
-            .signer(Account::Bob.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(to_2)
-            .value(2_000)
-            .gas_limit(21_000)
-            .max_fee_per_gas(15)
-            .max_priority_fee_per_gas(2)
-            .into_eip1559();
-
-        let tx_2 = BaseTransactionSigned::Eip1559(
-            signed_tx_2.as_eip1559().expect("eip1559 transaction").clone(),
+        let tx_2 = TestSupport::sign(
+            TransactionBuilder::default()
+                .signer(Account::Bob.signer_b256())
+                .chain_id(harness.chain_id())
+                .nonce(0)
+                .to(to_2)
+                .value(2_000)
+                .gas_limit(21_000)
+                .max_fee_per_gas(15)
+                .max_priority_fee_per_gas(2),
         );
         let tx_hash_2 = tx_2.tx_hash();
 
-        let block = create_block_with_transactions(&harness, vec![tx_1, tx_2]);
+        let block = TestSupport::child_block(&harness, vec![tx_1, tx_2]);
 
         let response = meter_block(harness.blockchain_provider(), harness.chain_spec(), &block)?;
 
@@ -311,22 +281,19 @@ mod tests {
         let harness = TestHarness::new().await?;
 
         // Create a block with one transaction
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(Address::random())
-            .value(1_000)
-            .gas_limit(21_000)
-            .max_fee_per_gas(10)
-            .max_priority_fee_per_gas(1)
-            .into_eip1559();
-
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        let tx = TestSupport::sign(
+            TransactionBuilder::default()
+                .signer(Account::Alice.signer_b256())
+                .chain_id(harness.chain_id())
+                .nonce(0)
+                .to(Address::random())
+                .value(1_000)
+                .gas_limit(21_000)
+                .max_fee_per_gas(10)
+                .max_priority_fee_per_gas(1),
         );
 
-        let block = create_block_with_transactions(&harness, vec![tx]);
+        let block = TestSupport::child_block(&harness, vec![tx]);
 
         let response = meter_block(harness.blockchain_provider(), harness.chain_spec(), &block)?;
 
@@ -349,23 +316,9 @@ mod tests {
     #[tokio::test]
     async fn meter_block_parent_header_not_found() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
-        let latest = harness.latest_block();
-
         // Create a block that references a non-existent parent
-        let fake_parent_hash = B256::random();
-        let header = Header {
-            parent_hash: fake_parent_hash, // This parent doesn't exist
-            number: 999,
-            timestamp: latest.timestamp() + 2,
-            gas_limit: 30_000_000,
-            beneficiary: Address::random(),
-            base_fee_per_gas: Some(1),
-            parent_beacon_block_root: Some(B256::ZERO),
-            ..Default::default()
-        };
-
-        let body = BaseBlockBody { transactions: vec![], ommers: vec![], withdrawals: None };
-        let block = BaseBlock::new(header, body);
+        let mut block = TestSupport::child_block(&harness, vec![]);
+        block.header.parent_hash = B256::random();
 
         let result = meter_block(harness.blockchain_provider(), harness.chain_spec(), &block);
 
@@ -405,7 +358,7 @@ mod tests {
             alloy_consensus::Signed::new_unchecked(tx, invalid_signature, B256::random());
         let base_tx = BaseTransactionSigned::Eip1559(signed_tx);
 
-        let block = create_block_with_transactions(&harness, vec![base_tx]);
+        let block = TestSupport::child_block(&harness, vec![base_tx]);
 
         let result = meter_block(harness.blockchain_provider(), harness.chain_spec(), &block);
 

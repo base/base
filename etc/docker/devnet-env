@@ -120,7 +120,7 @@ BATCHER_METRICS_PORT=6060
 SHADOW_BATCHER_METRICS_PORT=6061
 
 # Shadow batcher / validator configuration.
-# The Rust base-batcher runs alongside the canonical op-batcher in --shadow-mode,
+# The Rust base-batcher runs alongside the canonical op-batcher in shadow mode,
 # posting to SHADOW_BATCH_INBOX_ADDRESS from a distinct L1 sender
 # (SHADOW_BATCHER_ADDR, an otherwise-unused funded dev account) so it never
 # collides with the op-batcher's L1 nonces. base-shadow-validator derives L2 from

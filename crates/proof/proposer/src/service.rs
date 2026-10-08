@@ -64,7 +64,6 @@ impl ProposerService {
             anchor_state_registry = %config.anchor_state_registry_addr,
             dispute_game_factory = %config.dispute_game_factory_addr,
             game_type = config.game_type,
-            prover_timeout = ?config.prover_timeout,
             poll_interval = ?config.poll_interval,
             rpc_timeout = ?config.rpc_timeout,
             health_addr = %config.health_addr,
@@ -98,8 +97,7 @@ impl ProposerService {
         let rollup_client = Arc::new(RollupClient::new(rollup_config)?);
         info!(endpoint = %config.rollup_rpc, "Rollup client initialized");
 
-        let prover_service_config = ProverServiceClientConfig::new(config.prover_rpc.to_string())
-            .with_max_wait(config.prover_timeout);
+        let prover_service_config = ProverServiceClientConfig::new(config.prover_rpc.to_string());
         let proof_requester = ProofRequesterClient::connect(&prover_service_config)
             .wrap_err("failed to create prover-service requester client")?;
         let proof_requester: Arc<dyn ProofRequesterProvider> = Arc::new(proof_requester);

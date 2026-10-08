@@ -6,14 +6,14 @@ use alloy_primitives::U64;
 use base_batcher_core::DaLimits;
 use base_runtime::Runtime;
 use jsonrpsee::{
-    core::ClientError,
-    http_client::{HttpClient, HttpClientBuilder},
-    proc_macros::rpc,
+    core::ClientError, http_client::HttpClient, proc_macros::rpc,
     types::error::METHOD_NOT_FOUND_CODE,
 };
 use tokio::sync::watch;
 use tracing::{debug, warn};
 use url::Url;
+
+use crate::RpcClientBuilder;
 
 /// Client-side jsonrpsee trait for the miner API extension.
 #[rpc(client, namespace = "miner")]
@@ -29,7 +29,8 @@ trait MinerApiExt {
 /// The limits live in the block builder's memory, so a block builder that restarts loses them.
 /// The pusher pushes them on every publication and every
 /// [`REFRESH_INTERVAL`](Self::REFRESH_INTERVAL), which also retries a failed push and restores
-/// the limits of a restarted block builder.
+/// the limits of a restarted block builder. A push outlasts neither the network timeout nor,
+/// therefore, newer limits and shutdown by more than that.
 ///
 /// A block builder that answers method not found does not serve the `miner` API. Retrying cannot
 /// fix that and the batcher cannot throttle it, so [`run`](Self::run) returns the error and the
@@ -46,20 +47,21 @@ impl ThrottlePusher {
     /// How often the current limits are pushed while no new limits are published.
     pub const REFRESH_INTERVAL: Duration = Duration::from_secs(10);
 
-    /// How long one push may take, which bounds how long a stalled block builder holds back
-    /// newer limits and shutdown.
-    pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-
     /// Creates a pusher of the limits published on `limits` to the block builder at `url`.
-    pub fn new(url: &Url, limits: watch::Receiver<DaLimits>) -> eyre::Result<Self> {
-        let origin = url.origin().ascii_serialization();
-        let client = HttpClientBuilder::default()
-            .request_timeout(Self::REQUEST_TIMEOUT)
-            .build(url.as_str())
-            .map_err(|e| {
-                eyre::eyre!("failed to build the block builder client for {origin}: {e}")
-            })?;
-        Ok(Self { client, origin, limits })
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `url` is not an HTTP URL.
+    pub fn new(
+        url: &Url,
+        limits: watch::Receiver<DaLimits>,
+        client_builder: RpcClientBuilder,
+    ) -> eyre::Result<Self> {
+        Ok(Self {
+            client: client_builder.client(url)?,
+            origin: url.origin().ascii_serialization(),
+            limits,
+        })
     }
 
     /// Pushes the limits until `runtime` is cancelled or the limits stop being published.
@@ -104,8 +106,8 @@ impl ThrottlePusher {
             Ok(false) => warn!(block_builder = %self.origin, "block builder refused the DA limits"),
             Err(ClientError::Call(error)) if error.code() == METHOD_NOT_FOUND_CODE => {
                 eyre::bail!(
-                    "block builder {} does not serve miner_setMaxDASize, enable the miner API or \
-                     disable throttling: {error}",
+                    "block builder {} does not serve miner_setMaxDASize, required by the DA \
+                     throttle unless --no-throttle is set: {error}",
                     self.origin
                 );
             }
@@ -123,6 +125,7 @@ mod tests {
     use httpmock::{Mock, prelude::*};
 
     use super::*;
+    use crate::test_utils::rpc_client_builder;
 
     const LIMITS: DaLimits = DaLimits { max_tx_size: 150, max_block_size: 20_000 };
 
@@ -155,7 +158,9 @@ mod tests {
     /// A pusher to `server` that starts from [`LIMITS`], and the sender of its limits.
     fn pusher(server: &MockServer) -> (ThrottlePusher, watch::Sender<DaLimits>) {
         let (limits_tx, limits_rx) = watch::channel(LIMITS);
-        let pusher = ThrottlePusher::new(&server.url("/").parse().unwrap(), limits_rx).unwrap();
+        let pusher =
+            ThrottlePusher::new(&server.url("/").parse().unwrap(), limits_rx, rpc_client_builder())
+                .unwrap();
         (pusher, limits_tx)
     }
 
@@ -194,8 +199,12 @@ mod tests {
         let (to_refusing, _refusing_tx) = pusher(&refusing);
         let (to_failing, _failing_tx) = pusher(&failing);
         let (_unreachable_tx, unreachable_rx) = watch::channel(LIMITS);
-        let to_unreachable =
-            ThrottlePusher::new(&"http://127.0.0.1:1".parse().unwrap(), unreachable_rx).unwrap();
+        let to_unreachable = ThrottlePusher::new(
+            &"http://127.0.0.1:1".parse().unwrap(),
+            unreachable_rx,
+            rpc_client_builder(),
+        )
+        .unwrap();
 
         to_refusing.push(LIMITS).await.unwrap();
         to_failing.push(LIMITS).await.unwrap();
