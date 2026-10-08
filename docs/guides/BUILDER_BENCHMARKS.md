@@ -30,7 +30,7 @@ State comes from reth's MDBX test provider, seeded through genesis with every se
 
 Both builders run with a per-transaction and per-block DA limit and, for flashblocks, an uncompressed block size limit, set far above the workload (`FlashblockWorkload::MAX_DA_TX_SIZE` and its siblings). The limit checks therefore run on every candidate, as on a builder with DA throttling enabled, without rejecting any. The flashblocks driver splits the DA target evenly across flashblocks, as `build_next_flashblock` does. The DA footprint limit stays off because the synthetic chain has no Jovian L1 block info.
 
-The pool is a bare `PendingPool` read through `ParkedBestTransactions::new(pool.best(), ...)` with `no_updates()`. Production wraps the protocol pool and the nonce-lane pool in `MergeBestTransactions` with the real base fee and accepts arrivals during a build; the benchmarks have one lane, a zero base fee, and no arrivals mid-build. The rejection cache uses the production defaults (`REJECTION_CACHE_MAX_CAPACITY`, `REJECTION_CACHE_TTL`); no scenario produces permanent rejections today.
+The pool is the one a production node runs: `BaseTransactionPool` over reth's protocol pool, read through `best_transactions_with_attributes_and_parking` with the build context's fee attributes, as both builders do. Workload transactions are inserted as already validated, because validation runs off the builder thread in production; the validator is constructed but never run. After each flashblock the driver prunes the committed transactions from the pool and removes permanently rejected ones, as `build_next_flashblock` does, so later flashblocks do not see earlier inclusions. Arrivals are inserted before the flashblock that reads them, and none arrive during a flashblock. Every workload transaction is a plain EIP-1559 transfer, so the nonce-lane pool stays empty. The rejection cache uses the production defaults (`REJECTION_CACHE_MAX_CAPACITY`, `REJECTION_CACHE_TTL`); no scenario produces permanent rejections today.
 
 The workloads live in `crates/builder/core/src/test_utils/flashblock_workload.rs`. All transactions are 21,000-gas transfers from unique senders. Validity transactions out-tip transfers, so every flashblock, and the native pass, reaches the whole backlog before the transfers.
 
@@ -92,7 +92,7 @@ Cost per affected PR is one `depot-ubuntu-24.04-16` runner for two bench-profile
 
 ## Not covered
 
-- The async payload job around the loop: websocket publication, `update_accounts`, `prune_transactions`, invalidation and expiry sweeps, metering-provider bookkeeping, and the per-flashblock `BUILDER_FLASHBLOCK_*` lifecycle events. These need a live node and do not scale with the backlog.
+- The async payload job around the loop: websocket publication, `update_accounts`, invalidation and expiry sweeps, metering-provider bookkeeping, and the per-flashblock `BUILDER_FLASHBLOCK_*` lifecycle events. These need a live node and do not scale with the backlog.
 - The predicate evaluation cutoff (`predicate_eval_hard_cutoff`) and per-transaction execution-time limits, because they are wall-clock based.
 - Lock contention, allocator behavior under concurrency, and I/O latency. Callgrind counts instructions, not time. Changes that only move work to another thread, such as a writer-thread deferral, show up as a builder-thread decrease, which is the latency-relevant direction.
 - Isthmus-and-later header work (withdrawals root) and blob fields; the synthetic chain activates only L1 forks through Cancun.

@@ -4,7 +4,7 @@
 //! every flashblock, a backlog of validity transactions whose predicates stay unsatisfied (so the
 //! build loop re-considers, re-evaluates and re-parks them on every flashblock), arrivals between
 //! flashblocks, and optional satisfied validity transactions. [`FlashblockWorkloadFixture`]
-//! materializes a workload into a pool, an MDBX database whose genesis funds every sender, and a
+//! materializes a workload into a production `BaseTransactionPool`, an MDBX database whose genesis funds every sender, and a
 //! builder context, then runs it through one of two builders:
 //!
 //! - [`FlashblockWorkloadFixture::run_block`] drives the flashblocks builder through
@@ -36,8 +36,8 @@ use base_execution_payload_builder::{
     payload::{BasePayloadBuilderAttributes, EthPayloadBuilderAttributes},
 };
 use base_execution_txpool::{
-    BaseOrdering, BasePooledTransaction, ParkedBestTransactions, ValidityOperator,
-    ValidityPredicate,
+    BaseOrdering, BasePooledTransaction, BaseTransactionPool, BaseTransactionValidator,
+    ParkableTransactionPool, ValidityOperator, ValidityPredicate,
 };
 use base_node_core::BaseNode;
 use base_observability_events::{
@@ -49,11 +49,16 @@ use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_db_common::init::init_genesis;
 use reth_node_api::NodeTypesWithDBAdapter;
 use reth_primitives_traits::Recovered;
-use reth_provider::{ProviderFactory, test_utils::create_test_provider_factory_with_node_types};
+use reth_provider::{
+    ProviderFactory,
+    test_utils::{MockEthProvider, create_test_provider_factory_with_node_types},
+};
 use reth_revm::{State, database::StateProviderDatabase};
 use reth_transaction_pool::{
-    BestTransactions, PoolTransaction, TransactionOrigin, ValidPoolTransaction,
-    identifier::TransactionId, pool::PendingPool,
+    BestTransactionsAttributes, Pool, PoolConfig, PoolTransaction, SubPoolLimit, TransactionOrigin,
+    TransactionPool, TransactionValidationOutcome, TransactionValidationTaskExecutor,
+    blobstore::InMemoryBlobStore,
+    validate::{EthTransactionValidatorBuilder, ValidTransaction},
 };
 
 use crate::{
@@ -62,8 +67,21 @@ use crate::{
 };
 
 type Ordering = BaseOrdering<BasePooledTransaction>;
-type Pool = PendingPool<Ordering>;
-type PooledTransaction = Arc<ValidPoolTransaction<BasePooledTransaction>>;
+type PoolClient = MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>;
+type ProtocolPool = Pool<
+    TransactionValidationTaskExecutor<
+        BaseTransactionValidator<PoolClient, BasePooledTransaction, BaseEvmConfig>,
+    >,
+    Ordering,
+    InMemoryBlobStore,
+>;
+type FixturePool = BaseTransactionPool<
+    PoolClient,
+    InMemoryBlobStore,
+    BaseEvmConfig,
+    BasePooledTransaction,
+    Ordering,
+>;
 type GateProviderFactory =
     ProviderFactory<NodeTypesWithDBAdapter<BaseNode, Arc<TempDatabase<DatabaseEnv>>>>;
 
@@ -325,8 +343,10 @@ pub struct NativeBlockOutcome {
 pub struct FlashblockWorkloadFixture {
     /// The workload this fixture materializes.
     pub workload: FlashblockWorkload,
-    pool: Pool,
-    arrivals: Vec<Vec<PooledTransaction>>,
+    pool: FixturePool,
+    /// The reth pool inside `pool`, used to insert pre-validated transactions.
+    protocol_pool: ProtocolPool,
+    arrivals: Vec<Vec<BasePooledTransaction>>,
     chain_spec: Arc<BaseChainSpec>,
     provider_factory: GateProviderFactory,
 }
@@ -350,18 +370,14 @@ impl FlashblockWorkloadFixture {
             "the native builder has no resting-predicate mode"
         );
         let mut fixture = Self::with_denim(workload, true);
-        for transaction in fixture.arrivals.drain(..).flatten() {
-            fixture.pool.add_transaction(transaction, 0);
-        }
+        let arrivals = fixture.arrivals.drain(..).flatten().collect::<Vec<_>>();
+        Self::insert(&fixture.protocol_pool, arrivals);
         fixture
     }
 
     fn with_denim(workload: FlashblockWorkload, denim: bool) -> Self {
         let mut builder = FlashblockWorkloadBuilder::new(workload);
-        let mut pool = PendingPool::new(Ordering::coinbase_tip());
-        for _ in 0..workload.resting_at_start {
-            pool.add_transaction(builder.resting(), 0);
-        }
+        let resting = (0..workload.resting_at_start).map(|_| builder.resting()).collect::<Vec<_>>();
         let arrivals = (0..FlashblockWorkload::FLASHBLOCKS)
             .map(|_| {
                 let mut arrivals = Vec::new();
@@ -383,7 +399,53 @@ impl FlashblockWorkloadFixture {
         let provider_factory =
             create_test_provider_factory_with_node_types::<BaseNode>(Arc::clone(&chain_spec));
         init_genesis(&provider_factory).expect("genesis initializes");
-        Self { workload, pool, arrivals, chain_spec, provider_factory }
+        let (pool, protocol_pool) = Self::pool(&chain_spec);
+        Self::insert(&protocol_pool, resting);
+        Self { workload, pool, protocol_pool, arrivals, chain_spec, provider_factory }
+    }
+
+    /// The pool a production node runs: [`BaseTransactionPool`] over reth's protocol pool, with
+    /// limits raised to hold the largest workload. Transactions are inserted pre-validated (see
+    /// [`Self::insert`]), so the validator is constructed but never run.
+    fn pool(chain_spec: &Arc<BaseChainSpec>) -> (FixturePool, ProtocolPool) {
+        let client = MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::clone(chain_spec))
+            .with_genesis_block();
+        let evm_config = BaseEvmConfig::base(Arc::clone(chain_spec));
+        let validator = BaseTransactionValidator::new(
+            EthTransactionValidatorBuilder::new(client, evm_config)
+                .build(InMemoryBlobStore::default()),
+        );
+        let (validator, _validation_task) = TransactionValidationTaskExecutor::new(validator);
+        let limit = SubPoolLimit { max_txs: 100_000, max_size: 1 << 30 };
+        let config = PoolConfig {
+            pending_limit: limit,
+            basefee_limit: limit,
+            queued_limit: limit,
+            ..PoolConfig::default()
+        };
+        let protocol_pool =
+            Pool::new(validator, Ordering::default(), InMemoryBlobStore::default(), config);
+        (BaseTransactionPool::new(protocol_pool.clone(), Ordering::default()), protocol_pool)
+    }
+
+    /// Inserts `transactions` into the protocol pool as already validated against the genesis
+    /// state: every sender is funded and at nonce zero. Validation runs off the builder thread in
+    /// production, so skipping it keeps that work out of the measured build.
+    fn insert(protocol_pool: &ProtocolPool, transactions: Vec<BasePooledTransaction>) {
+        let outcomes =
+            transactions.into_iter().map(|transaction| TransactionValidationOutcome::Valid {
+                balance: U256::from(FlashblockWorkload::SENDER_BALANCE),
+                state_nonce: 0,
+                bytecode_hash: None,
+                transaction: ValidTransaction::Valid(transaction),
+                propagate: true,
+                authorities: None,
+            });
+        for result in protocol_pool.inner().add_transactions(TransactionOrigin::External, outcomes)
+        {
+            result.expect("workload transaction enters the pool");
+        }
     }
 
     /// Builds one block of [`FlashblockWorkload::FLASHBLOCKS`] flashblocks through
@@ -403,25 +465,27 @@ impl FlashblockWorkloadFixture {
             gas_per_flashblock: self.workload.gas_per_flashblock(),
             resting_predicate_mode: self.workload.resting_predicate_mode,
         };
-        let pool = &mut self.pool;
+        let attributes = ctx.best_transaction_attributes();
+        let pool = &self.pool;
+        let protocol_pool = &self.protocol_pool;
         let arrivals = &mut self.arrivals;
         let outcome = driver.run_block(
             &mut ctx,
             &mut state,
             RejectionCache::new(REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL),
-            |flashblock_index| {
-                for transaction in arrivals[flashblock_index as usize].drain(..) {
-                    pool.add_transaction(transaction, 0);
-                }
-                let mut best = pool.best();
-                best.no_updates();
-                ParkableBestPayloadTransactions::new(Box::new(ParkedBestTransactions::new(
-                    best,
-                    Ordering::coinbase_tip(),
-                    0,
-                )))
+            |position| {
+                Self::insert(protocol_pool, std::mem::take(&mut arrivals[position as usize]));
+                ParkableBestPayloadTransactions::new(
+                    pool.best_transactions_with_attributes_and_parking(attributes),
+                )
             },
-            |_: &[TxHash]| {},
+            // As `build_next_flashblock` does after each flashblock.
+            |committed: &[TxHash], rejected: &[TxHash]| {
+                pool.prune_transactions(committed.to_vec());
+                if !rejected.is_empty() {
+                    pool.remove_transactions(rejected.to_vec());
+                }
+            },
         )?;
         Ok(outcome)
     }
@@ -436,14 +500,10 @@ impl FlashblockWorkloadFixture {
         let ctx = self.native_builder_context();
         let provider = self.provider_factory.latest()?;
         let pool = &self.pool;
-        let outcome = NativeBuilder::new(|_| {
-            let mut best = pool.best();
-            best.no_updates();
-            ParkableBestPayloadTransactions::new(Box::new(ParkedBestTransactions::new(
-                best,
-                Ordering::coinbase_tip(),
-                0,
-            )))
+        let outcome = NativeBuilder::new(|attributes: BestTransactionsAttributes| {
+            ParkableBestPayloadTransactions::new(
+                pool.best_transactions_with_attributes_and_parking(attributes),
+            )
         })
         .build(StateProviderDatabase::new(&provider), &provider, None, ctx)?;
         let BuildOutcomeKind::Freeze(payload) = outcome else {
@@ -550,7 +610,7 @@ impl FlashblockWorkloadBuilder {
     }
 
     /// A validity transaction whose last predicate can never be satisfied.
-    fn resting(&mut self) -> PooledTransaction {
+    fn resting(&mut self) -> BasePooledTransaction {
         let resting_index = self.next_resting;
         self.next_resting += 1;
         let count = self.workload.predicates_per_resting_tx;
@@ -575,7 +635,7 @@ impl FlashblockWorkloadBuilder {
     }
 
     /// A validity transaction whose predicates all hold (unfunded accounts with zero balance).
-    fn satisfied(&mut self) -> PooledTransaction {
+    fn satisfied(&mut self) -> BasePooledTransaction {
         let predicates = (0..FlashblockWorkload::SATISFIED_PREDICATES)
             .map(|_| ValidityPredicate::Balance {
                 address: self.watched(),
@@ -587,7 +647,7 @@ impl FlashblockWorkloadBuilder {
     }
 
     /// A plain transfer, paying a shared watched account when the workload wakes the backlog.
-    fn transfer(&mut self) -> PooledTransaction {
+    fn transfer(&mut self) -> BasePooledTransaction {
         let transfer_index = self.next_transfer;
         self.next_transfer += 1;
         let to = match (self.workload.transfers_touch_watched_state, self.workload.predicate_state)
@@ -603,7 +663,7 @@ impl FlashblockWorkloadBuilder {
         priority_fee: u128,
         to: Address,
         predicates: Vec<ValidityPredicate>,
-    ) -> PooledTransaction {
+    ) -> BasePooledTransaction {
         let sender_index = Self::SENDER_OFFSET + self.next_sender;
         self.next_sender += 1;
         let sender = Self::address(sender_index);
@@ -629,15 +689,7 @@ impl FlashblockWorkloadBuilder {
         )
         .with_validity_predicates(predicates);
         debug_assert_eq!(transaction.sender(), sender);
-
-        Arc::new(ValidPoolTransaction {
-            transaction_id: TransactionId::new((sender_index as u64).into(), 0),
-            transaction,
-            propagate: true,
-            timestamp: std::time::Instant::now(),
-            origin: TransactionOrigin::External,
-            authority_ids: None,
-        })
+        transaction
     }
 
     /// A Cancun chain whose genesis funds every sender and whose gas limit never binds before
