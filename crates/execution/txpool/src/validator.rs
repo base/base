@@ -96,6 +96,8 @@ struct Eip8130ValidationState {
     payer_locked: bool,
     payer_trusted: bool,
     payer_max_cost: U256,
+    /// The sender's policy gate target, when the sender actor is policy-gated.
+    sender_policy_target: Option<Address>,
     /// Authorization reads and predicates used for build-time revalidation.
     manifest: WatchManifest,
 }
@@ -929,6 +931,9 @@ where
                 matches!(origin, TransactionOrigin::External | TransactionOrigin::Local);
             transaction.set_watch_set(state.watch_set.clone());
             transaction.set_watch_manifest(state.manifest.clone());
+            if let Some(target) = state.sender_policy_target {
+                transaction.set_sender_policy_target(target);
+            }
             transaction.set_limit_class(LimitClass {
                 sender: state.sender,
                 payer: state.payer,
@@ -1310,6 +1315,9 @@ where
             payer_locked,
             payer_trusted,
             payer_max_cost,
+            sender_policy_target: sender_actor
+                .is_policy_gated()
+                .then_some(sender_actor.policy_target),
             manifest,
         })
     }

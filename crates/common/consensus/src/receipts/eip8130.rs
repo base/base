@@ -40,6 +40,15 @@ pub struct Eip8130Receipt<T = Log> {
     pub phase_statuses: Vec<u8>,
 }
 impl<T> Eip8130Receipt<T> {
+    /// Status byte recorded for a phase that committed.
+    pub const PHASE_COMMITTED: u8 = 0x01;
+
+    /// Returns whether the phase at `index` committed. Phases past the end of
+    /// `phase_statuses` did not run and report `false`.
+    pub fn phase_committed(&self, index: usize) -> bool {
+        self.phase_statuses.get(index) == Some(&Self::PHASE_COMMITTED)
+    }
+
     /// Creates a new [`Eip8130Receipt`] from an inner receipt and its per-phase
     /// statuses.
     pub const fn new(inner: Receipt<T>, phase_statuses: Vec<u8>) -> Self {

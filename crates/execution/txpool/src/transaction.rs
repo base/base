@@ -70,6 +70,8 @@ pub struct BasePooledTransaction<
     /// consumed by the pool's admission guard. Unset until classified; see
     /// [`crate::LimitClass`].
     limit_class: OnceLock<crate::LimitClass>,
+    /// Sender policy gate target resolved during validation, when gated.
+    sender_policy_target: OnceLock<Address>,
     /// The authorization read-set and build-time predicates captured during
     /// EIP-8130 validation. Unset for other transaction types; see
     /// [`crate::WatchManifest`].
@@ -106,6 +108,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             validity_predicates: Vec::new(),
             watch_set: OnceLock::new(),
             limit_class: OnceLock::new(),
+            sender_policy_target: OnceLock::new(),
             watch_manifest: OnceLock::new(),
             metering: None,
         }
@@ -444,6 +447,16 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     /// Defaults to a no-op.
     fn set_limit_class(&self, _limit_class: crate::LimitClass) {}
 
+    /// Returns the sender's policy gate target resolved during validation, when
+    /// the sender actor is policy-gated. Defaults to `None` (ungated).
+    fn sender_policy_target(&self) -> Option<Address> {
+        None
+    }
+
+    /// Records the sender's policy gate target resolved during validation.
+    /// Defaults to a no-op.
+    fn set_sender_policy_target(&self, _target: Address) {}
+
     /// Returns build-time predicates captured during EIP-8130 authorization.
     ///
     /// Defaults to `None` for transaction types that do not carry a manifest.
@@ -527,6 +540,14 @@ where
 
     fn set_limit_class(&self, limit_class: crate::LimitClass) {
         let _ = self.limit_class.set(limit_class);
+    }
+
+    fn sender_policy_target(&self) -> Option<Address> {
+        self.sender_policy_target.get().copied()
+    }
+
+    fn set_sender_policy_target(&self, target: Address) {
+        let _ = self.sender_policy_target.set(target);
     }
 
     fn metering(&self) -> Option<&MeterBundleResponse> {

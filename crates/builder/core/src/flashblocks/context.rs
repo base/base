@@ -1395,6 +1395,11 @@ impl BasePayloadBuilderCtx {
                 cumulative_gas_used: info.cumulative_gas_used,
             };
             info.receipts.push(self.build_receipt(ctx, None));
+            // The tip is a phase-0 transfer, so it is revenue only if that phase
+            // committed; a reverted or policy-blocked phase pays nothing.
+            let coinbase_tip = coinbase_tip.filter(|_| {
+                matches!(info.receipts.last(), Some(BaseReceipt::Eip8130(receipt)) if receipt.phase_committed(0))
+            });
 
             let state_change_effects = if predicate_index.is_empty() {
                 StateChangeEffects::default()
