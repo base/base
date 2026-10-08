@@ -660,13 +660,12 @@ class BudgetTests(unittest.TestCase):
             self.assertEqual(budget.timeout_for(decide.timeout_seconds, "decide"), decide.timeout_seconds)
             now[0] += decide.timeout_seconds
             # And the whole run ends with time to spare in the CI job.
-            self.assertLessEqual(now[0], 90 * 60 - 600)
+            self.assertLessEqual(now[0], JOB_LIMIT_SECONDS - 300)
 
     def test_the_default_budget_leaves_the_ci_job_time_to_post(self) -> None:
-        job_limit = 15 * 60  # timeout-minutes in claude-review.yml
-        self.assertLessEqual(review.DEFAULT_BUDGET_SECONDS, job_limit - 300)
+        self.assertLessEqual(review.DEFAULT_BUDGET_SECONDS, JOB_LIMIT_SECONDS - 300)
         if WORKFLOW is not None:
-            self.assertIn(f"timeout-minutes: {job_limit // 60}\n", WORKFLOW.read_text())
+            self.assertIn(f"timeout-minutes: {JOB_LIMIT_SECONDS // 60}\n", WORKFLOW.read_text())
 
     def test_a_deep_review_is_meant_to_take_about_five_minutes(self) -> None:
         # The whole pipeline stops at the budget, and no single agent may be allowed more than 3 minutes.
@@ -706,6 +705,7 @@ def find_workflow() -> Path | None:
 
 
 WORKFLOW = find_workflow()
+JOB_LIMIT_SECONDS = 15 * 60  # timeout-minutes in claude-review.yml; a test checks that the two agree
 
 
 class AgentRunTests(unittest.TestCase):
