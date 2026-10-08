@@ -1200,7 +1200,8 @@ def status_line(number: int, repo: str, reviewed: str) -> str:
 def status_for(ctx: Context) -> str | None:
     """The status line for a summary of `ctx.head_sha`, counted against the pull request's head right now.
 
-    Returns None (the summary then says "latest commit") when there is no pull request or it cannot be read.
+    Returns None for a local run, which has no pull request. If the pull request cannot be read, the block
+    says so rather than claiming the review is current.
     """
     if not (ctx.head_sha and ctx.pr_number):
         return None
@@ -1208,7 +1209,8 @@ def status_for(ctx: Context) -> str | None:
         return status_line(ctx.pr_number, ctx.repo, ctx.head_sha)
     except (ReviewError, ValueError, KeyError) as exc:
         log(f"warning: could not count the commits after the review ({exc})")
-        return None
+        return render.status_block(ctx.head_sha, unreviewed=None, compare_url="", unknown=True,
+                                   files_url=f"https://github.com/{ctx.repo}/pull/{ctx.pr_number}/files")
 
 
 def build_summary(outcome: Outcome, plan: Plan, ctx: Context) -> str:

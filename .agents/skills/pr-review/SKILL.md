@@ -132,7 +132,7 @@ A Grok member was dropped: the gateway answers `403 Access denied to restricted 
 
 ## How long it takes
 
-There is no time limit on an agent, and no budget for the whole run. A slow answer is still an answer, and findings are posted as each reviewer finishes, so a slow reviewer delays only its own findings and the summary. The workflow job stops at 15 minutes as a backstop. To limit one agent, set `timeout_seconds` in its file; an agent that hits its limit is reported as "(did not finish)" and the review goes on without it.
+There is no time limit on an agent, and no budget for the whole run. A slow answer is still an answer, and findings are posted as each reviewer finishes, so a slow reviewer delays only its own findings and the summary. The workflow job stops at 30 minutes as a backstop. A killed job loses the final round and the summary, not the findings already posted, and the summary's status line keeps pointing at the previous review until someone comments `/review`. To limit one agent, set `timeout_seconds` in its file; an agent that hits its limit is reported as "(did not finish)" and the review goes on without it.
 
 - **Typical run:** with medium effort (low for Gemini) and the "Working fast" guide in `shared/working-fast.md`, reviewers and council members take 30-120 seconds, and the votes, the chair and each decide round 10-40 seconds. Reviewers run in parallel, so the slowest sets when the summary appears; the first findings appear earlier.
 - **Slow calls happen:** about 1 in 9 Opus calls was slow in the saved runs (5-13 minutes for under 10k output tokens, at roughly 8-11 tokens/s, against the usual 70-90). Because findings are posted as each reviewer finishes, a slow one no longer holds back the others.
@@ -144,6 +144,8 @@ A review is expensive (about $2.50 for a standard change and $6-7 for a deep one
 
 - **Once, when a pull request is opened or marked ready for review.** A draft is not reviewed. Marking a draft ready again does not buy a second review if the pull request already has one.
 - **On request, when someone comments `/review`** on the pull request. The comment must be `/review`, alone or followed by a space or a line break and any text (so `/reviewed` and `/reviewer` do nothing) and come from a member of the Base organization who has write access to this repository. Comments from bots and from anyone else, including the pull request's author if they are not an org member, are ignored. The review that follows replaces the previous summary comment.
+
+  A small `authorize` job decides this before the review job starts. It has no concurrency group, on purpose: GitHub keeps only one run waiting per group, so a request that will be refused (a member without write access, or a comment such as `/reviewed`) must be refused before it can take the place of an authorized `/review` that is waiting behind a review in progress.
 - **Never on a push.** A push starts the `status` job instead, which runs no model: it rewrites one line of the review summary, so a reader can see that the review is out of date:
 
   > ⚠️ **3 commits pushed after `a1b2c3d` have not been reviewed.** [View the diff](https://github.com/base/base/compare/a1b2c3d...f4e5d6c) · comment `/review` to review them.
