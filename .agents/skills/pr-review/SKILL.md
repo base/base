@@ -143,7 +143,7 @@ There is no time limit on an agent, and no budget for the whole run. A slow answ
 A review is expensive (about $2.50 for a standard change and $6-7 for a deep one, against about $0.60 for the reviewer this replaced), so it does not run on every push. `.github/workflows/claude-review.yml` runs it:
 
 - **Once, when a pull request is opened or marked ready for review.** A draft is not reviewed. Marking a draft ready again does not buy a second review if the pull request already has one.
-- **On request, when someone comments `/review`** on the pull request. The comment must start with `/review` (anything after it is ignored) and come from the pull request's author or from a repository owner, member or collaborator. Comments from bots and from other people are ignored. The review that follows replaces the previous summary comment.
+- **On request, when someone comments `/review`** on the pull request. The comment must be `/review`, alone or followed by a space or a line break and any text (so `/reviewed` and `/reviewer` do nothing) and come from the pull request's author or from a repository owner, member or collaborator. Comments from bots and from other people are ignored. The review that follows replaces the previous summary comment.
 - **Never on a push.** A push starts the `status` job instead, which runs no model: it rewrites one line of the review summary, so a reader can see that the review is out of date:
 
   > ⚠️ **3 commits pushed after `a1b2c3d` have not been reviewed.** [View the diff](https://github.com/base/base/compare/a1b2c3d...f4e5d6c) · comment `/review` to review them.
