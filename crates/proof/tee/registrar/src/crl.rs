@@ -5,7 +5,6 @@
 //! periodic re-checks bound the remaining exposure window.
 
 use alloy_primitives::B256;
-use base_proof_tee_nitro_verifier::compute_path_digests;
 use tracing::{debug, warn};
 use x509_parser::{
     certificate::X509Certificate,
@@ -14,7 +13,7 @@ use x509_parser::{
     revocation_list::CertificateRevocationList,
 };
 
-use crate::{CertKind, CertManagerKeys, CertPlan};
+use crate::{CertKind, CertPlan};
 
 const MAX_CRL_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 const ALLOWED_CRL_HOST_SUFFIX: &str = ".amazonaws.com";
@@ -29,55 +28,11 @@ pub struct CertCrlInfo {
     pub serial_number: Vec<u8>,
     /// CRL distribution point URL, if present in the certificate.
     pub crl_url: Option<String>,
-    /// Accumulated path digest for this certificate position (for onchain
-    /// `revokeCert` calls).
-    pub path_digest: B256,
     /// Issuer/serial identity used by the hinted `CertManager`.
     pub revocation_id: B256,
 }
 
 impl CertCrlInfo {
-    /// Extracts CRL-relevant information from a DER-encoded chain's intermediate certificates.
-    ///
-    /// The certificates must be in chain order: root → intermediates → leaf.
-    /// Path digests are computed identically to the onchain
-    /// `NitroEnclaveVerifier` accumulation.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any intermediate certificate cannot be parsed from DER.
-    pub fn from_chain(certs_der: &[&[u8]]) -> Result<Vec<Self>, CrlError> {
-        let mut infos = Vec::with_capacity(certs_der.len().saturating_sub(2));
-        let path_digests = compute_path_digests(certs_der);
-
-        for (index, (der, path_digest)) in certs_der
-            .iter()
-            .zip(path_digests)
-            .enumerate()
-            .skip(1)
-            .take(certs_der.len().saturating_sub(2))
-        {
-            let (remaining, cert) = X509Certificate::from_der(der).map_err(|e| {
-                CrlError(format!("certificate parse error: certificate {index}: {e}"))
-            })?;
-            if !remaining.is_empty() {
-                return Err(CrlError(format!(
-                    "certificate parse error: certificate {index}: trailing DER data ({} bytes)",
-                    remaining.len()
-                )));
-            }
-
-            let serial_number = cert.tbs_certificate.serial.to_bytes_be();
-            let crl_url = extract_crl_distribution_point(&cert);
-
-            let revocation_id = CertManagerKeys::revocation_id(der)
-                .map_err(|e| CrlError(format!("certificate identity error: {e}")))?;
-            infos.push(Self { index, serial_number, crl_url, path_digest, revocation_id });
-        }
-
-        Ok(infos)
-    }
-
     /// Extracts CRL information from the non-root CA steps in a hinted registration plan.
     pub fn from_cert_plans(certs: &[CertPlan]) -> Result<Vec<Self>, CrlError> {
         certs
@@ -100,7 +55,6 @@ impl CertCrlInfo {
                     index: index + 1,
                     serial_number: cert.tbs_certificate.serial.to_bytes_be(),
                     crl_url: extract_crl_distribution_point(&cert),
-                    path_digest: B256::ZERO,
                     revocation_id: cert_plan.revocation_id,
                 })
             })
@@ -144,9 +98,8 @@ fn is_allowed_crl_host(url: &str) -> bool {
 ///
 /// # Arguments
 ///
-/// * `cert_infos` - Pre-parsed cert chain info, typically produced once per
-///   cycle by [`CertCrlInfo::from_chain`] and shared with the onchain
-///   revocation pre-check so the DER parse only happens once.
+/// * `cert_infos` - Pre-parsed cert chain info, typically produced by
+///   [`CertCrlInfo::from_cert_plans`].
 /// * `http_client` - HTTP client for fetching CRLs.
 pub async fn check_chain_against_crls<'a>(
     cert_infos: &'a [CertCrlInfo],
@@ -318,40 +271,18 @@ mod tests {
     }
 
     #[test]
-    fn extracts_intermediate_cert_info_from_chain() {
-        let full_chain = full_chain();
-        let refs: Vec<&[u8]> = full_chain.iter().map(Vec::as_slice).collect();
-        let infos = CertCrlInfo::from_chain(&refs).unwrap();
-
-        assert_eq!(infos.iter().map(|info| info.index).collect::<Vec<_>>(), vec![1, 2, 3]);
-        assert_eq!(
-            infos.iter().map(|info| hex::encode(&info.serial_number)).collect::<Vec<_>>(),
-            vec![
-                "56bfc987fd05ac99c475061b1a65eedc",
-                "cb286a4a4a09207f8b0c14950dcd6861",
-                "c8925d382506d820d93d2c704a7523c4ba2ddfaa",
-            ]
-        );
-    }
-
-    #[test]
-    fn invalid_intermediate_der_returns_cert_parse_error() {
-        let root = hex::decode(ROOT_HEX).expect("static hex fixture decodes");
-        let leaf = hex::decode(LEAF_HEX).expect("static hex fixture decodes");
-        let result = CertCrlInfo::from_chain(&[&root, &[0xDE, 0xAD, 0xBE, 0xEF][..], &leaf]);
-        let err = result.unwrap_err();
-        assert!(
-            err.to_string().contains("certificate parse error"),
-            "expected certificate parse error, got: {err}"
-        );
-    }
-
-    #[test]
     fn trailing_der_certificate_alias_returns_cert_parse_error() {
-        let mut aliased = full_chain();
-        aliased[1].extend_from_slice(b"chain-4256-trailing-der");
-        let refs: Vec<&[u8]> = aliased.iter().map(Vec::as_slice).collect();
-        let err = CertCrlInfo::from_chain(&refs).unwrap_err();
+        let mut cert = full_chain().swap_remove(1);
+        cert.extend_from_slice(b"chain-4256-trailing-der");
+        let plan = CertPlan {
+            kind: CertKind::Ca,
+            label: "regional CA".into(),
+            cert,
+            cert_hash: B256::ZERO,
+            parent_cert_hash: B256::ZERO,
+            revocation_id: B256::ZERO,
+        };
+        let err = CertCrlInfo::from_cert_plans(&[plan]).unwrap_err();
         let msg = err.to_string();
 
         assert!(msg.contains("trailing DER data"), "expected trailing DER error, got: {msg}");

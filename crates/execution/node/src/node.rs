@@ -19,7 +19,6 @@ use base_execution_evm::{BaseEvmConfig, BaseRethReceiptBuilder};
 use base_execution_payload_builder::{
     Attributes, BaseBuiltPayload, BasePayloadBuilderAttributes,
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, PayloadPrimitives, RejectionCache,
-    builder::BasePayloadTransactions,
     config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
 use base_execution_rpc::{
@@ -30,7 +29,7 @@ use base_execution_rpc::{
 };
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
-    BaseTransactionValidator, GuardLimits, TimestampedTransaction,
+    BaseTransactionValidator, GuardLimits, ParkableTransactionPool, TimestampedTransaction,
     maintain_state_diff_invalidation,
 };
 use reth_chain_state::CanonStateSubscriptions;
@@ -1052,10 +1051,7 @@ where
 
 /// A basic Base payload service builder
 #[derive(Debug, Clone)]
-pub struct BasePayloadBuilder<Txs = ()> {
-    /// The type responsible for yielding the best transactions for the payload if mempool
-    /// transactions are allowed.
-    pub best_transactions: Txs,
+pub struct BasePayloadBuilder {
     /// This data availability configuration specifies constraints for the payload builder
     /// when assembling payloads
     pub da_config: BaseDAConfig,
@@ -1075,10 +1071,9 @@ pub struct BasePayloadBuilder<Txs = ()> {
     pub rejection_cache: RejectionCache,
 }
 
-impl<Txs: Default> Default for BasePayloadBuilder<Txs> {
+impl Default for BasePayloadBuilder {
     fn default() -> Self {
         Self {
-            best_transactions: Txs::default(),
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
@@ -1093,16 +1088,7 @@ impl<Txs: Default> Default for BasePayloadBuilder<Txs> {
 impl BasePayloadBuilder {
     /// Create a new instance with the default configuration.
     pub fn new() -> Self {
-        Self {
-            best_transactions: (),
-            da_config: BaseDAConfig::default(),
-            gas_limit_config: GasLimitConfig::default(),
-            manifest_precheck_enabled: true,
-            predicate_eval_hard_cutoff: Duration::from_millis(10),
-            predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
-            resource_metering: ResourceMeteringConfig::default(),
-            rejection_cache: RejectionCache::default(),
-        }
+        Self::default()
     }
 
     /// Configure the data availability configuration for the payload builder.
@@ -1148,24 +1134,7 @@ impl BasePayloadBuilder {
     }
 }
 
-impl<Txs> BasePayloadBuilder<Txs> {
-    /// Configures the type responsible for yielding the transactions that should be included in the
-    /// payload.
-    pub fn with_transactions<T>(self, best_transactions: T) -> BasePayloadBuilder<T> {
-        BasePayloadBuilder {
-            best_transactions,
-            da_config: self.da_config,
-            gas_limit_config: self.gas_limit_config,
-            manifest_precheck_enabled: self.manifest_precheck_enabled,
-            predicate_eval_hard_cutoff: self.predicate_eval_hard_cutoff,
-            predicate_bucket_ordered_threshold: self.predicate_bucket_ordered_threshold,
-            resource_metering: self.resource_metering,
-            rejection_cache: self.rejection_cache,
-        }
-    }
-}
-
-impl<Node, Pool, Txs, Evm, Attrs> PayloadBuilderBuilder<Node, Pool, Evm> for BasePayloadBuilder<Txs>
+impl<Node, Pool, Evm, Attrs> PayloadBuilderBuilder<Node, Pool, Evm> for BasePayloadBuilder
 where
     Node: FullNodeTypes<
             Provider: ChainSpecProvider<ChainSpec: Upgrades>,
@@ -1185,13 +1154,13 @@ where
                 <Node::Types as NodeTypes>::ChainSpec,
             >,
         > + 'static,
-    Pool:
-        TransactionPool<Transaction: BasePooledTx<Consensus = TxTy<Node::Types>>> + Unpin + 'static,
-    Txs: BasePayloadTransactions<Pool>,
+    Pool: ParkableTransactionPool<Transaction: BasePooledTx<Consensus = TxTy<Node::Types>>>
+        + Unpin
+        + 'static,
     Attrs: Attributes<Transaction = TxTy<Node::Types>> + Unpin,
 {
     type PayloadBuilder =
-        base_execution_payload_builder::BasePayloadBuilder<Pool, Node::Provider, Evm, Txs, Attrs>;
+        base_execution_payload_builder::BasePayloadBuilder<Pool, Node::Provider, Evm, Attrs>;
 
     async fn build_payload_builder(
         self,
@@ -1214,8 +1183,7 @@ where
                     rejection_cache: self.rejection_cache,
                     state_provider_metrics: ctx.config().engine.state_provider_metrics,
                 },
-            )
-            .with_transactions(self.best_transactions);
+            );
         Ok(payload_builder)
     }
 }
@@ -1505,11 +1473,10 @@ mod tests {
 
     #[test]
     fn payload_builder_preserves_manifest_precheck_setting() {
-        let builder =
-            BasePayloadBuilder::new().with_manifest_precheck_enabled(false).with_transactions(());
+        let builder = BasePayloadBuilder::new().with_manifest_precheck_enabled(false);
 
         assert!(!builder.manifest_precheck_enabled);
-        assert!(BasePayloadBuilder::<()>::default().manifest_precheck_enabled);
+        assert!(BasePayloadBuilder::default().manifest_precheck_enabled);
     }
 
     #[rstest]

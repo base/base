@@ -356,47 +356,6 @@ where
     }
 }
 
-impl<'a, T> VecHandler<'a, T>
-where
-    T: Storable,
-{
-    /// Returns a handler for the element at `index`, bounds-checked against a caller-supplied
-    /// `len` (no `sload` — pure integer comparison).
-    ///
-    /// Callers must supply a `len` freshly read from `self.len()` and not invalidated by a
-    /// subsequent `push`/`pop`. Returns `Err(Fatal)` if `index >= len`.
-    #[inline]
-    pub(crate) fn at_with_len(&self, index: usize, len: usize) -> Result<&T::Handler<'a>> {
-        if index >= len {
-            return Err(BasePrecompileError::Fatal(
-                "vec index out of bounds: position invariant violated".into(),
-            ));
-        }
-        let (data_start, address, storage) = (self.data_slot(), self.address, self.storage);
-        self.cache.get_or_try_insert(&index, || {
-            Self::try_compute_handler(data_start, address, storage, index)
-        })
-    }
-
-    /// Mutable variant of [`at_with_len`].
-    #[inline]
-    pub(crate) fn at_mut_with_len(
-        &mut self,
-        index: usize,
-        len: usize,
-    ) -> Result<&mut T::Handler<'a>> {
-        if index >= len {
-            return Err(BasePrecompileError::Fatal(
-                "vec index out of bounds: position invariant violated".into(),
-            ));
-        }
-        let (data_start, address, storage) = (self.data_slot(), self.address, self.storage);
-        self.cache.get_or_try_insert_mut(&index, || {
-            Self::try_compute_handler(data_start, address, storage, index)
-        })
-    }
-}
-
 #[inline]
 fn load_checked_len<S: StorageOps>(storage: &S, slot: U256) -> Result<usize> {
     let raw = storage.load(slot)?;
@@ -648,18 +607,6 @@ mod tests {
             let len_slot = U256::from(900u64);
             let handler = VecHandler::<U256>::new(len_slot, address, ctx);
             assert!(handler.at(0).unwrap().is_none());
-        });
-    }
-
-    #[test]
-    fn test_vec_at_with_len_oob_returns_err() {
-        let (mut storage, address) = setup_storage();
-        StorageCtx::enter(&mut storage, |ctx| {
-            let len_slot = U256::from(901u64);
-            let handler = VecHandler::<U256>::new(len_slot, address, ctx);
-            assert!(handler.at_with_len(0, 0).is_err());
-            assert!(handler.at_with_len(5, 5).is_err());
-            assert!(handler.at_with_len(0, 1).is_ok());
         });
     }
 

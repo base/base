@@ -3,7 +3,7 @@
 use std::sync::{Mutex, OnceLock};
 
 use alloy_primitives::{B256, TxHash};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 use tracing::debug;
 
@@ -92,6 +92,7 @@ pub struct TransactionEventBuilder {
     block_number: Option<u64>,
     payload_id: Option<String>,
     request_id: Option<String>,
+    event_time: Option<DateTime<Utc>>,
     data: Map<String, Value>,
 }
 
@@ -109,6 +110,7 @@ impl TransactionEventBuilder {
             block_number: None,
             payload_id: None,
             request_id: None,
+            event_time: None,
             data: Map::new(),
         }
     }
@@ -180,6 +182,12 @@ impl TransactionEventBuilder {
         self
     }
 
+    /// Sets when the source observed the event. Defaults to the time the event is built.
+    pub const fn event_time(mut self, event_time: DateTime<Utc>) -> Self {
+        self.event_time = Some(event_time);
+        self
+    }
+
     /// Replaces producer-specific event data.
     pub fn data(mut self, data: Map<String, Value>) -> Self {
         self.data = data;
@@ -196,7 +204,7 @@ impl TransactionEventBuilder {
     pub fn build_with_network(self, network: &str) -> TransactionEvent {
         let mut event = TransactionEvent::new(
             self.event_id.finish(),
-            Utc::now(),
+            self.event_time.unwrap_or_else(Utc::now),
             self.producer,
             self.event_type,
         )
@@ -217,14 +225,19 @@ impl TransactionEventBuilder {
     }
 
     /// Emits the event through an explicit writer.
+    ///
+    /// The event time defaults to now unless already set; the event ID, validation, and
+    /// serialization are deferred to the writer (see [`TransactionEventWriter::try_write_with`]).
     pub fn emit_to(
-        self,
+        mut self,
         writer: &TransactionEventWriter,
     ) -> Result<TransactionEventEmitOutcome, WriteEventError> {
-        let event = self.build(writer);
-        let result = writer.try_write(&event);
+        let event_type = self.event_type;
+        self.event_time.get_or_insert_with(Utc::now);
+        let builder = self;
+        let result = writer.try_write_with(move |network| builder.build_with_network(network));
         if let Err(err) = &result {
-            debug!(error = %err, event_type = %event.event_type, "transaction event not written");
+            debug!(error = %err, event_type = %event_type, "transaction event not written");
         }
         result.map(|()| TransactionEventEmitOutcome::Emitted)
     }
@@ -368,12 +381,13 @@ mod tests {
     use std::path::PathBuf;
 
     use alloy_primitives::{B256, TxHash};
+    use chrono::{TimeZone, Utc};
     use serde_json::{Map, json};
 
     use crate::{
         DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventBuilder,
-        TransactionEventEmitOutcome, TransactionEventProducer, TransactionEventType,
-        TransactionEventWriter, TransactionEventWriterConfig,
+        TransactionEventEmitOutcome, TransactionEventProducer, TransactionEventRecorder,
+        TransactionEventType, TransactionEventWriter, TransactionEventWriterConfig,
     };
 
     fn disabled_writer() -> TransactionEventWriter {
@@ -418,6 +432,27 @@ mod tests {
         assert_eq!(event.request_id.as_deref(), Some("request-1"));
         assert_eq!(event.data["event_index"], json!(7));
         assert!(event.event_id.starts_with("0x"));
+    }
+
+    #[test]
+    fn emit_to_preserves_explicit_event_time() {
+        let recorder = TransactionEventRecorder::new();
+        let writer = TransactionEventWriter::in_memory("base-devnet", recorder.clone());
+        let event_time = Utc.with_ymd_and_hms(2024, 1, 2, 3, 4, 5).unwrap();
+
+        let outcome = TransactionEventBuilder::new(
+            TransactionEventProducer::BaseRethNode,
+            TransactionEventType::Pending,
+        )
+        .tx_hash(TxHash::repeat_byte(0x11))
+        .event_time(event_time)
+        .emit_to(&writer)
+        .unwrap();
+
+        assert_eq!(outcome, TransactionEventEmitOutcome::Emitted);
+        let events = recorder.events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_time, event_time);
     }
 
     #[test]

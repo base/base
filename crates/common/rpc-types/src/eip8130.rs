@@ -99,6 +99,9 @@ impl Eip8130Nonce {
 impl BaseTransactionRequest {
     /// Builds an unsigned EIP-8130 simulation transaction.
     ///
+    /// The simulation runs with the request's `gas`, clamped to `gas_limit_cap`, or with
+    /// `gas_limit_cap` when `gas` is omitted.
+    ///
     /// Returns an [`Eip8130SimulationRequestError`] naming why the request cannot be simulated.
     /// The returned transaction uses [`Eip8130ExecutionMode::Simulate`] so callers can run
     /// `eth_call` and `eth_estimateGas` without signature verification or committed state.
@@ -184,7 +187,7 @@ impl BaseTransactionRequest {
             valid_before: aa.valid_before.unwrap_or_default(),
             max_priority_fee_per_gas: req.max_priority_fee_per_gas.unwrap_or_default(),
             max_fee_per_gas: req.max_fee_per_gas.unwrap_or_default(),
-            gas_limit: req.gas.unwrap_or(gas_limit_cap),
+            gas_limit: req.gas.map_or(gas_limit_cap, |gas| gas.min(gas_limit_cap)),
             account_changes: aa.account_changes.clone().unwrap_or_default(),
             calls: self.eip8130_calls(aa.calls.as_ref())?,
             metadata: aa.metadata.clone().unwrap_or_default(),
@@ -382,6 +385,16 @@ mod tests {
             create.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
             Some(Eip8130SimulationRequestError::ContractCreation)
         );
+    }
+
+    /// A request's `gas` above the cap is clamped to it, so a caller cannot
+    /// pick an unbounded simulation budget.
+    #[test]
+    fn request_gas_is_clamped_to_the_cap() {
+        let tx = simulation(json!({ "sender": SENDER, "calls": [], "gas": "0xffffffffffffffff" }));
+        assert_eq!(signed(&tx).tx().gas_limit, GAS_CAP);
+        let tx = simulation(json!({ "sender": SENDER, "calls": [], "gas": "0x5208" }));
+        assert_eq!(signed(&tx).tx().gas_limit, 21_000);
     }
 
     #[test]

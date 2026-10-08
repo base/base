@@ -417,14 +417,10 @@ impl fmt::Debug for SignerContext {
 pub struct SenderContext {
     /// Transaction submission RPC clients.
     pub submission_batch_rpcs: Arc<Vec<BatchRpcClient>>,
-    /// Nonce managers by sender address.
-    pub nonce_managers: Arc<HashMap<Address, NonceManager<RootProvider<Ethereum>>>>,
     /// Results tracker updated after RPC acceptance.
     pub results_tracker: ResultsTracker,
     /// Events emitted to the runner.
     pub submit_event_tx: mpsc::Sender<SubmitEvent>,
-    /// Whether nonce return is enabled for rejected signed transactions.
-    pub return_reserved_nonces: bool,
     /// Optional cap on concurrent outbound submission RPC requests, shared across
     /// all sender workers. Bounds request *rate* to the endpoint independently of
     /// how many transactions are in flight (unconfirmed) or how many sender
@@ -437,8 +433,6 @@ impl fmt::Debug for SenderContext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SenderContext")
             .field("submission_batch_rpcs", &self.submission_batch_rpcs.len())
-            .field("nonce_managers", &self.nonce_managers.len())
-            .field("return_reserved_nonces", &self.return_reserved_nonces)
             .finish_non_exhaustive()
     }
 }
@@ -534,10 +528,8 @@ impl SubmissionPipeline {
         for _ in 0..sender_worker_count {
             let ctx = SenderContext {
                 submission_batch_rpcs: Arc::clone(&submission_batch_rpcs),
-                nonce_managers: Arc::clone(&nonce_managers),
                 results_tracker: results_tracker.clone(),
                 submit_event_tx: submit_event_tx.clone(),
-                return_reserved_nonces: false,
                 submit_request_limiter: submit_request_limiter.clone(),
             };
             let queue = Arc::clone(&signed_queue);
@@ -690,18 +682,6 @@ impl SubmissionPipeline {
                     worker.abort();
                 }
             }
-        }
-    }
-
-    /// Fails prepared transactions.
-    pub async fn fail_prepared_batch(
-        submit_event_tx: &mpsc::Sender<SubmitEvent>,
-        prepared_txs: Vec<PreparedTransaction>,
-        reason: &'static str,
-    ) {
-        for prepared in prepared_txs {
-            Self::release_prepared(submit_event_tx, &prepared).await;
-            let _ = submit_event_tx.send(SubmitEvent::Failed(reason.into())).await;
         }
     }
 
@@ -1043,7 +1023,6 @@ impl SubmissionPipeline {
                                 terminal_rejection_error = Some(message.clone());
                             }
                             ctx.results_tracker.discard_transaction(signed.tx_hash);
-                            Self::return_signed_nonce(&ctx, &signed).await;
                             Self::release_signed(&ctx.submit_event_tx, &signed, false).await;
                             let _ = ctx.submit_event_tx.send(SubmitEvent::Failed(message)).await;
                         }
@@ -1182,22 +1161,9 @@ impl SubmissionPipeline {
     ) {
         for signed in signed_txs {
             ctx.results_tracker.discard_transaction(signed.tx_hash);
-            Self::return_signed_nonce(ctx, &signed).await;
             Self::release_signed(submit_event_tx, &signed, false).await;
             let _ = submit_event_tx.send(SubmitEvent::Failed(reason.into())).await;
         }
-    }
-
-    async fn return_signed_nonce(ctx: &SenderContext, signed: &SignedTransaction) {
-        if !ctx.return_reserved_nonces {
-            return;
-        }
-
-        let Some(nonce_manager) = ctx.nonce_managers.get(&signed.from) else {
-            warn!(from = %signed.from, nonce = signed.nonce, "no nonce manager for nonce return");
-            return;
-        };
-        nonce_manager.return_reserved_nonce(signed.nonce).await;
     }
 
     async fn release_prepared(

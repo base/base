@@ -249,9 +249,8 @@ mod tests {
         assert!(!payload.contains("excluded_span"), "OTLP filter was ignored: {payload}");
     }
 
-    /// The L2 and rollup RPC flags a batcher command requires.
-    const BATCHER_L2_AND_ROLLUP_RPC: [&str; 4] =
-        ["--l2-rpc-url", "http://localhost:9545", "--rollup-rpc-url", "http://localhost:7545"];
+    /// The sequencer URLs flag a batcher command requires.
+    const BATCHER_SEQUENCER_URLS: [&str; 2] = ["--sequencer-urls", "http://localhost:7545"];
 
     #[test]
     fn parses_batcher_configuration() {
@@ -260,9 +259,7 @@ mod tests {
             "batcher",
             "--l1-rpc-url",
             "http://localhost:8545",
-            "--l2-rpc-url",
-            "http://localhost:9545",
-            "--rollup-rpc-url",
+            "--sequencer-urls",
             "http://localhost:7545",
             "--signer-endpoint",
             "http://localhost:9000",
@@ -289,8 +286,7 @@ mod tests {
     #[test]
     fn batcher_uses_shared_observability_settings() {
         let args = ["base", "batcher", "--l1-rpc-url", "http://localhost:8545"];
-        let cli =
-            BaseCli::try_parse_from(args.into_iter().chain(BATCHER_L2_AND_ROLLUP_RPC)).unwrap();
+        let cli = BaseCli::try_parse_from(args.into_iter().chain(BATCHER_SEQUENCER_URLS)).unwrap();
         assert_eq!(cli.metrics.port, 9090);
         let command = BaseCli::command();
         for (flag, env) in [
@@ -307,7 +303,7 @@ mod tests {
         for flag in ["--l1-eth-rpc", "--l1-rpc-url", "--l1"] {
             let args = ["base", "batcher", flag, "http://localhost:8545"];
             let cli =
-                BaseCli::try_parse_from(args.into_iter().chain(BATCHER_L2_AND_ROLLUP_RPC)).unwrap();
+                BaseCli::try_parse_from(args.into_iter().chain(BATCHER_SEQUENCER_URLS)).unwrap();
             let BaseCommand::Batcher(batcher) = cli.command else {
                 panic!("expected batcher");
             };
@@ -318,7 +314,7 @@ mod tests {
         for (flag, env) in [
             ("l1-rpc-url", "BASE_NODE_L1_ETH_RPC"),
             ("private-key", "BASE_BATCHER_PRIVATE_KEY"),
-            ("rollup-rpc-url", "BASE_BATCHER_ROLLUP_RPC_URL"),
+            ("sequencer-urls", "BASE_BATCHER_SEQUENCER_URLS"),
         ] {
             let arg = batcher.get_arguments().find(|arg| arg.get_long() == Some(flag)).unwrap();
             assert_eq!(arg.get_env(), Some(OsStr::new(env)));
@@ -329,8 +325,7 @@ mod tests {
     fn batcher_rejects_top_level_chain_selection() {
         let args =
             ["base", "--chain", "sepolia", "batcher", "--l1-rpc-url", "http://localhost:8545"];
-        let cli =
-            BaseCli::try_parse_from(args.into_iter().chain(BATCHER_L2_AND_ROLLUP_RPC)).unwrap();
+        let cli = BaseCli::try_parse_from(args.into_iter().chain(BATCHER_SEQUENCER_URLS)).unwrap();
         let error = cli.command.run(ChainResolver::new(cli.chain), false).unwrap_err();
         assert!(error.to_string().contains("`base batcher` manages its own chain configuration"));
     }

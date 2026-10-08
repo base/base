@@ -9,9 +9,9 @@ use base_execution_payload_builder::{
 use base_execution_rpc::eth::BaseEthApiBuilder;
 use base_execution_txpool::GuardLimits;
 use base_node_core::{
-    BaseConsensusBuilder, BaseEngineApiBuilder, BaseEngineTypes, BaseExecutorBuilder,
-    BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes, BasePayloadValidatorBuilder,
-    BaseStorage,
+    BaseAddOns, BaseAddOnsBuilder, BaseConsensusBuilder, BaseEngineApiBuilder, BaseEngineTypes,
+    BaseExecutorBuilder, BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes,
+    BasePayloadValidatorBuilder, BaseStorage,
     args::RollupArgs,
     node::{BasePayloadBuilder, BasePayloadServiceBuilder, BasePoolBuilder},
 };
@@ -23,8 +23,6 @@ use reth_node_builder::{
 };
 use reth_provider::providers::ProviderFactoryBuilder;
 use reth_rpc_api::eth::RpcTypes;
-
-use crate::{BaseAddOns, BaseAddOnsBuilder};
 
 /// Type configuration for a regular Base node.
 #[derive(Debug, Clone)]

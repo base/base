@@ -91,6 +91,15 @@ pub enum ValidityPredicateTemplate {
         /// Right-hand comparison value.
         value: U256,
     },
+    /// Protocol-nonce comparison template.
+    Nonce {
+        /// Account whose protocol nonce is read.
+        address: PredicateAddress,
+        /// Comparison operator.
+        op: ValidityOperator,
+        /// Right-hand comparison value.
+        value: U256,
+    },
     /// Storage comparison template.
     Storage {
         /// Contract whose storage is read.
