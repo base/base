@@ -132,12 +132,12 @@ where
                                 .await?;
                         }
                     }
-                    EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal) => {
+                    EngineActorRequest::ProcessDerivedAttributesRequest(attributes) => {
                         self.processor.enqueue(EngineTask::Consolidate(Box::new(
                             ConsolidateTask::new(
                                 Arc::clone(self.processor.client()),
                                 Arc::clone(self.processor.rollup()),
-                                *safe_signal,
+                                *attributes,
                             ),
                         )));
                     }

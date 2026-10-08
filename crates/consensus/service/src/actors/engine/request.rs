@@ -74,7 +74,7 @@ pub enum EngineActorRequest {
     /// Request to get the sealed payload without inserting it.
     GetPayloadRequest(Box<GetPayloadRequest>),
     /// Request to consolidate the safe head with derived attributes.
-    ProcessSafeL2SignalRequest(Box<AttributesWithParent>),
+    ProcessDerivedAttributesRequest(Box<AttributesWithParent>),
     /// Request to finalize the L2 block at the provided block number.
     ProcessFinalizedL2BlockNumberRequest(Box<u64>),
     /// Request to process an unsafe block authenticated by the P2P gossip layer.

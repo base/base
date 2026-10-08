@@ -24,8 +24,10 @@ pub trait DerivationEngineClient: Debug + Send + Sync {
     /// Sends derived attributes to the engine, which consolidates its safe head with them.
     ///
     /// Note: This does not wait for the engine to process it.
-    async fn send_safe_l2_signal(&self, attributes: AttributesWithParent)
-    -> EngineClientResult<()>;
+    async fn send_derived_attributes(
+        &self,
+        attributes: AttributesWithParent,
+    ) -> EngineClientResult<()>;
 }
 
 /// Client to use to send messages to the Engine Actor's inbound channel.
@@ -70,13 +72,13 @@ impl DerivationEngineClient for QueuedDerivationEngineClient {
         Ok(())
     }
 
-    async fn send_safe_l2_signal(
+    async fn send_derived_attributes(
         &self,
         attributes: AttributesWithParent,
     ) -> EngineClientResult<()> {
-        trace!(target: "derivation", ?attributes, "Sending safe L2 signal info to engine.");
+        trace!(target: "derivation", ?attributes, "Sending derived attributes to engine.");
         self.engine_actor_request_tx
-            .send(EngineActorRequest::ProcessSafeL2SignalRequest(Box::new(attributes)))
+            .send(EngineActorRequest::ProcessDerivedAttributesRequest(Box::new(attributes)))
             .await
             .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
 

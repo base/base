@@ -67,7 +67,7 @@ The engine actor is the hub of the service. All other actors that need to affect
 
 `ProcessUnsafeL2BlockRequest` is fire-and-forget. It takes a `BaseExecutionPayloadEnvelope` received from the P2P network or from the sequencer's insert step, calls `engine_api::new_payload`, then calls `engine_api::forkchoice_updated` to make the block the new unsafe head.
 
-`ProcessSafeL2SignalRequest` takes the `AttributesWithParent` the derivation actor derived and enqueues a `ConsolidateTask`, which makes the matching unsafe block safe or builds the block from the attributes, and the resulting safe head is sent back to the derivation actor via the `QueuedEngineDerivationClient`.
+`ProcessDerivedAttributesRequest` takes the `AttributesWithParent` the derivation actor derived and enqueues a `ConsolidateTask`, which makes the matching unsafe block safe or builds the block from the attributes, and the resulting safe head is sent back to the derivation actor via the `QueuedEngineDerivationClient`.
 
 `ResetRequest` triggers a full engine reset: the processing task calls the reset procedure on the `Engine`, clears in-flight state, and sends a `ResetSignal` to the derivation actor so the pipeline rewinds to the last safe head.
 
@@ -83,7 +83,7 @@ The derivation actor drives the `OnlinePipeline` from `base-consensus-derive` an
 
 The initial state is `AwaitingELSyncCompletion`. The actor waits in this state until the engine sends a `ProcessEngineSyncCompletionRequest` via `QueuedEngineDerivationClient::notify_sync_completed()`, at which point the state transitions to `Deriving`.
 
-In `Deriving` the actor calls `pipeline.step()` in a loop. Each call either returns `PreparedAttributes` — a set of `AttributesWithParent` ready to send to the engine — or returns an error. On `PreparedAttributes` the actor transitions to `AwaitingSafeHeadConfirmation`, enqueues the attributes in the `L2Finalizer`, records the L1 inclusion block as `pending_derived_from`, and sends a `ProcessSafeL2SignalRequest` to the engine. On `NotEnoughData` it yields and transitions to `AwaitingL1Data`. On a reset error (reorg detected or Holocene activation) it sends a `ProcessEngineSignalRequest` and transitions to `AwaitingSignal`.
+In `Deriving` the actor calls `pipeline.step()` in a loop. Each call either returns `PreparedAttributes` — a set of `AttributesWithParent` ready to send to the engine — or returns an error. On `PreparedAttributes` the actor transitions to `AwaitingSafeHeadConfirmation`, enqueues the attributes in the `L2Finalizer`, records the L1 inclusion block as `pending_derived_from`, and sends a `ProcessDerivedAttributesRequest` to the engine. On `NotEnoughData` it yields and transitions to `AwaitingL1Data`. On a reset error (reorg detected or Holocene activation) it sends a `ProcessEngineSignalRequest` and transitions to `AwaitingSignal`.
 
 The `AwaitingSafeHeadConfirmation` state persists until the engine actor confirms the attributes by calling back through `QueuedEngineDerivationClient::send_new_engine_safe_head()`. That call generates a `ProcessEngineSafeHeadUpdateRequest`, which records the new safe head in the `SafeDB` (paired with the L1 block from `pending_derived_from`) and transitions back to `Deriving` to produce the next batch of attributes.
 

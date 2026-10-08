@@ -390,7 +390,7 @@ where
         let CanonicalReconciliationInputs {
             shadow_head,
             payloads,
-            safe_signals,
+            derived_attributes,
             finalized_block_number,
         } = inputs;
         if self.engine.state().sync_state.unsafe_head() != shadow_head {
@@ -423,11 +423,11 @@ where
                 "engine returned an unexpected authoritative head".to_string(),
             ));
         }
-        for safe_signal in safe_signals {
+        for attributes in derived_attributes {
             self.engine.enqueue(EngineTask::Consolidate(Box::new(ConsolidateTask::new(
                 Arc::clone(&self.client),
                 Arc::clone(&self.rollup),
-                *safe_signal,
+                *attributes,
             ))));
         }
         if let Some(finalized_block_number) = finalized_block_number {
@@ -1655,7 +1655,7 @@ mod tests {
         let mut handle = coordinator.start(request_rx);
 
         request_tx
-            .send(EngineActorRequest::ProcessSafeL2SignalRequest(Box::new(attributes_96)))
+            .send(EngineActorRequest::ProcessDerivedAttributesRequest(Box::new(attributes_96)))
             .await
             .expect("failed to send safe block 96");
         let mut safe_96_state = state_rx.clone();
@@ -1682,7 +1682,7 @@ mod tests {
             .expect("finalized block 96 was not applied during the shadow cycle");
 
         request_tx
-            .send(EngineActorRequest::ProcessSafeL2SignalRequest(Box::new(attributes_97)))
+            .send(EngineActorRequest::ProcessDerivedAttributesRequest(Box::new(attributes_97)))
             .await
             .expect("failed to send safe block 97");
         state_rx
@@ -1692,7 +1692,7 @@ mod tests {
             .expect("safe block 97 was not applied during the same shadow cycle");
 
         request_tx
-            .send(EngineActorRequest::ProcessSafeL2SignalRequest(Box::new(derived(anchor))))
+            .send(EngineActorRequest::ProcessDerivedAttributesRequest(Box::new(derived(anchor))))
             .await
             .expect("failed to send safe block above the anchor");
         request_tx

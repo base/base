@@ -159,8 +159,8 @@ pub struct CanonicalReconciliationInputs {
     pub shadow_head: L2BlockInfo,
     /// Contiguous authoritative payloads replacing the private branch.
     pub payloads: Vec<BaseExecutionPayloadEnvelope>,
-    /// Safe-head signals deferred while the private branch was active.
-    pub safe_signals: VecDeque<Box<AttributesWithParent>>,
+    /// Derived attributes deferred while the private branch was active.
+    pub derived_attributes: VecDeque<Box<AttributesWithParent>>,
     /// Latest finalized block number deferred during the cycle.
     pub finalized_block_number: Option<u64>,
 }
@@ -172,16 +172,16 @@ pub struct ShadowReconciliationGate {
     local_payloads: BTreeMap<u64, BaseExecutionPayloadEnvelope>,
     faulted: bool,
     anchor: L2BlockInfo,
-    safe_signals: VecDeque<Box<AttributesWithParent>>,
+    derived_attributes: VecDeque<Box<AttributesWithParent>>,
     latest_finalized: Option<u64>,
 }
 
 impl ShadowReconciliationGate {
     /// Maximum number of inputs retained for one reconciliation cycle.
     pub const MAX_PAYLOADS: usize = SequencerConfig::MAX_SHADOW_BLOCKS_PER_CYCLE as usize;
-    /// Maximum deferred safe signals, independent of the payload-cycle limit because derivation
-    /// catch-up can produce safe signals faster than canonical payload gossip arrives.
-    pub const MAX_SAFE_SIGNALS: usize = 1024;
+    /// Maximum deferred derived attributes, independent of the payload-cycle limit because
+    /// derivation catch-up can produce them faster than canonical payload gossip arrives.
+    pub const MAX_DERIVED_ATTRIBUTES: usize = 1024;
 
     /// Creates an empty gate anchored at the canonical unsafe head.
     pub const fn new(anchor: L2BlockInfo) -> Self {
@@ -190,7 +190,7 @@ impl ShadowReconciliationGate {
             local_payloads: BTreeMap::new(),
             faulted: false,
             anchor,
-            safe_signals: VecDeque::new(),
+            derived_attributes: VecDeque::new(),
             latest_finalized: None,
         }
     }
@@ -227,18 +227,18 @@ impl ShadowReconciliationGate {
         self.local_payloads.entry(number).or_insert_with(|| envelope.clone());
     }
 
-    /// Buffers a deferred safe signal.
-    pub fn buffer_safe_signal(&mut self, signal: Box<AttributesWithParent>) {
-        if self.safe_signals.len() >= Self::MAX_SAFE_SIGNALS {
+    /// Buffers deferred derived attributes.
+    pub fn buffer_derived_attributes(&mut self, attributes: Box<AttributesWithParent>) {
+        if self.derived_attributes.len() >= Self::MAX_DERIVED_ATTRIBUTES {
             self.faulted = true;
         } else {
-            self.safe_signals.push_back(signal);
+            self.derived_attributes.push_back(attributes);
         }
     }
 
-    /// Returns whether a safe signal must wait for canonical reconciliation.
-    pub const fn should_defer_safe_signal(&self, signal: &AttributesWithParent) -> bool {
-        signal.block_number() > self.anchor.block_info.number
+    /// Returns whether derived attributes must wait for canonical reconciliation.
+    pub const fn should_defer_derived_attributes(&self, attributes: &AttributesWithParent) -> bool {
+        attributes.block_number() > self.anchor.block_info.number
     }
 
     /// Records the latest finalized block.
@@ -326,7 +326,7 @@ impl ShadowReconciliationGate {
         Ok(Some(CanonicalReconciliationInputs {
             shadow_head,
             payloads,
-            safe_signals: std::mem::take(&mut self.safe_signals),
+            derived_attributes: std::mem::take(&mut self.derived_attributes),
             finalized_block_number: self.latest_finalized,
         }))
     }
@@ -336,7 +336,7 @@ impl ShadowReconciliationGate {
         self.payloads.retain(|number, _| *number > head.block_info.number);
         self.local_payloads.retain(|number, _| *number > head.block_info.number);
         self.anchor = head;
-        self.safe_signals.clear();
+        self.derived_attributes.clear();
         self.latest_finalized = None;
     }
 
@@ -344,7 +344,7 @@ impl ShadowReconciliationGate {
     pub fn clear(&mut self) {
         self.payloads.clear();
         self.local_payloads.clear();
-        self.safe_signals.clear();
+        self.derived_attributes.clear();
         self.latest_finalized = None;
         self.faulted = false;
     }
@@ -579,13 +579,13 @@ mod tests {
     }
 
     #[test]
-    fn only_defers_safe_signals_above_canonical_anchor() {
+    fn only_defers_derived_attributes_above_canonical_anchor() {
         let gate = ShadowReconciliationGate::new(head(10, B256::ZERO));
 
-        assert!(!gate.should_defer_safe_signal(
+        assert!(!gate.should_defer_derived_attributes(
             &TestAttributesBuilder::new().with_parent(head(9, B256::ZERO)).build()
         ));
-        assert!(gate.should_defer_safe_signal(
+        assert!(gate.should_defer_derived_attributes(
             &TestAttributesBuilder::new().with_parent(head(10, B256::ZERO)).build()
         ));
     }
@@ -601,16 +601,16 @@ mod tests {
     }
 
     #[test]
-    fn safe_signal_capacity_is_independent_of_payload_capacity() {
+    fn derived_attributes_capacity_is_independent_of_payload_capacity() {
         let mut gate = ShadowReconciliationGate::new(L2BlockInfo::default());
         for number in 1..=ShadowReconciliationGate::MAX_PAYLOADS as u64 + 1 {
-            gate.buffer_safe_signal(Box::new(
+            gate.buffer_derived_attributes(Box::new(
                 TestAttributesBuilder::new().with_parent(head(number - 1, B256::ZERO)).build(),
             ));
         }
 
         assert!(!gate.faulted);
-        assert_eq!(gate.safe_signals.len(), ShadowReconciliationGate::MAX_PAYLOADS + 1);
+        assert_eq!(gate.derived_attributes.len(), ShadowReconciliationGate::MAX_PAYLOADS + 1);
     }
 
     #[test]

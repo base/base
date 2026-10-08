@@ -42,19 +42,19 @@ impl FakeL1 {
     ///
     /// Each call consumes **two** scripted FCU responses: one synthetic (via
     /// `inject_fcu_v3_call`) and one real (from the engine actor processing
-    /// `ProcessSafeL2SignalRequest`). Script the response queue with this in mind.
+    /// `ProcessDerivedAttributesRequest`). Script the response queue with this in mind.
     ///
     /// The injected FCU call-log entry sets head==safe==finalized to the same hash, which is a
     /// deliberate simplification: the real protocol advances these three heads independently.
-    /// Tests must therefore drive progress via the `ProcessSafeL2SignalRequest` channel and must
-    /// NOT derive unsafe/finalized-head ordering from the call log.
+    /// Tests must therefore drive progress via the `ProcessDerivedAttributesRequest` channel and
+    /// must NOT derive unsafe/finalized-head ordering from the call log.
     pub async fn extend(&self, block: BlockInfo) -> L2BlockInfo {
         let (attributes, safe_l2) = self.derive(block);
 
         self.engine_request_tx
-            .send(EngineActorRequest::ProcessSafeL2SignalRequest(Box::new(attributes)))
+            .send(EngineActorRequest::ProcessDerivedAttributesRequest(Box::new(attributes)))
             .await
-            .expect("engine actor request channel closed while dispatching safe l2 signal");
+            .expect("engine actor request channel closed while dispatching derived attributes");
 
         self.engine_handle.inject_fcu_v3_call(alloy_rpc_types_engine::ForkchoiceState {
             head_block_hash: safe_l2.block_info.hash,

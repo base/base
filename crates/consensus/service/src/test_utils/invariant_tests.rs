@@ -309,14 +309,14 @@ async fn e2e_invalid_fcu_reset_and_recovery() {
         )
     };
 
-    // Send ProcessSafeL2SignalRequest directly instead of via fake_l1.extend().
+    // Send ProcessDerivedAttributesRequest directly instead of via fake_l1.extend().
     // fake_l1.extend() calls inject_fcu_v3_call() which pops the first scripted response before
     // the engine actor ever calls fork_choice_updated_v3(), defeating the test.
     let (attributes, poisoned) = fake_l1.derive(block(1, B256::ZERO, hash_for(1), 1));
     engine_tx
-        .send(EngineActorRequest::ProcessSafeL2SignalRequest(Box::new(attributes)))
+        .send(EngineActorRequest::ProcessDerivedAttributesRequest(Box::new(attributes)))
         .await
-        .expect("engine actor must accept the signal");
+        .expect("engine actor must accept the derived attributes");
 
     driver.tick(50).await;
 
