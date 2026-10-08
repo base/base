@@ -292,7 +292,7 @@ digest = "f10fb0af43"
 
 ["crates/consensus/protocol/README.md"]
 summary = "Shared protocol types (batches, frames, channels, BlockInfo, L1 info per upgrade, output roots) and the Denim L1 origin rule for 200ms blocks. Use when touching batch or origin logic."
-digest = "f7e56f8c44"
+digest = "b6430af020"
 
 ["crates/consensus/providers/README.md"]
 summary = "Alloy-backed data providers for derivation (AlloyChainProvider, AlloyL2ChainProvider, beacon client, blob provider) and OnlinePipeline. Use when wiring derivation to live L1/L2 nodes."
