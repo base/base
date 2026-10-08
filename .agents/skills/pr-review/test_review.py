@@ -193,7 +193,7 @@ class FindingTests(unittest.TestCase):
                 text = render.render_summary(
                     overview=None, new=[], outside=[finding], threads=[], reopened=set(), fixed=set(),
                     failed=[], details="d", repo="base/base", head_sha="abc",
-                    replace_existing=False)
+                    )
                 self.assertIn("### Outside the diff", text)
 
     def test_long_title_is_clipped(self) -> None:
@@ -218,7 +218,7 @@ class FindingTests(unittest.TestCase):
                 text = render.render_summary(
                     overview=None, new=[], outside=[], threads=[thread("t", body=body)], reopened=set(),
                     fixed=set(), failed=[], details="d", repo="base/base", head_sha="abc",
-                    replace_existing=False)
+                    )
                 self.assertIn("(empty comment)", text)
 
     def test_oversized_bodies_are_clipped_below_the_github_limit(self) -> None:
@@ -389,12 +389,12 @@ class MarkResolvedTests(unittest.TestCase):
 
 class SummaryTests(unittest.TestCase):
     def summary(self, plan: review.Plan, threads: list[dict] | None = None, *, failed: list[str] | None = None,
-                replace_existing: bool = False) -> str | None:
+                status: str | None = None) -> str:
         return render.render_summary(
             overview="One panic path.", new=plan.new, outside=plan.outside, threads=threads or [],
             reopened={u["thread_id"] for u in plan.reopens}, fixed={r["thread_id"] for r in plan.resolves},
             failed=failed or [], details="Details.",
-            repo="base/base", head_sha="abc123", replace_existing=replace_existing)
+            repo="base/base", head_sha="abc123", status=status)
 
     def test_summary_lists_findings_with_links(self) -> None:
         plan = review.build_plan({"actions": [comment(severity="critical"), comment(line=1)]}, [],
@@ -440,7 +440,7 @@ class SummaryTests(unittest.TestCase):
         self.assertIn("## 💬 1 open", text)
 
     def test_a_thread_the_bot_marked_resolved_earlier_is_done(self) -> None:
-        text = self.summary(review.Plan(), [resolved_by_bot("marked")], replace_existing=True)
+        text = self.summary(review.Plan(), [resolved_by_bot("marked")])
         self.assertIn("## ✅ No open findings", text)
         self.assertNotIn("Open from earlier reviews", text)
 
@@ -458,10 +458,10 @@ class SummaryTests(unittest.TestCase):
     def test_failed_agents_are_called_out(self) -> None:
         self.assertIn("Incomplete review:** `council/x`", self.summary(review.Plan(), failed=["council/x"]))
 
-    def test_nothing_to_say(self) -> None:
-        self.assertIsNone(self.summary(review.Plan()))
-        replacing = self.summary(review.Plan(), replace_existing=True)
-        self.assertIn("## ✅ No open findings", replacing)
+    def test_a_review_with_nothing_to_report_still_posts_a_summary(self) -> None:
+        text = self.summary(review.Plan())
+        self.assertIn("## ✅ No open findings", text)
+        self.assertIn("<!-- pr-review:reviewed=abc123 -->", text)
 
     def test_outside_diff_findings_are_listed(self) -> None:
         plan = review.build_plan({"actions": [comment(line=99)]}, [], review.diff_new_lines(DIFF))
@@ -554,6 +554,263 @@ class ThreadTests(unittest.TestCase):
         self.assertIn("diff --git a/old.rs b/new.rs", diff)
 
 
+class WorkflowTests(unittest.TestCase):
+    """Properties of claude-review.yml that decide who can start a paid review and when. Text checks, since the
+    standard library has no YAML parser; actionlint covers the syntax."""
+
+    def setUp(self) -> None:
+        if WORKFLOW is None:
+            self.skipTest("the workflow is not next to this skill")
+        self.text = WORKFLOW.read_text()
+        self.review_job = self.text.split("\n  status:\n")[0]
+        self.status_job = "\n  status:\n" + self.text.split("\n  status:\n")[1]
+
+    def job_if(self, job: str) -> str:
+        return job.split("    if: >-\n", 1)[1].split("    runs-on:", 1)[0]
+
+    def test_a_push_does_not_start_a_review(self) -> None:
+        condition = self.job_if(self.review_job)
+        self.assertIn("github.event.action != 'synchronize'", condition)
+        self.assertNotIn("reopened", self.text.split("on:\n", 1)[1].split("\n\n", 1)[0])
+
+    def test_only_a_pull_request_that_is_ready_and_from_this_repository_is_reviewed_on_open(self) -> None:
+        condition = self.job_if(self.review_job)
+        self.assertIn("github.event.pull_request.draft == false", condition)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", condition)
+
+    def test_a_review_comment_needs_the_author_or_someone_with_write_access(self) -> None:
+        condition = self.job_if(self.review_job)
+        self.assertIn("github.event.comment.user.login == github.event.issue.user.login", condition)
+        self.assertIn('fromJSON(\'["OWNER","MEMBER","COLLABORATOR"]\')', condition)
+        self.assertIn("github.event.comment.author_association", condition)
+        self.assertNotIn("CONTRIBUTOR", condition)
+        self.assertNotIn("NONE", condition)
+
+    def test_a_review_comment_must_be_on_an_open_pull_request_and_not_from_a_bot(self) -> None:
+        condition = self.job_if(self.review_job)
+        for needle in ("github.event.issue.pull_request", "github.event.issue.state == 'open'",
+                       "github.event.comment.user.type != 'Bot'", "startsWith(github.event.comment.body, '/review')"):
+            self.assertIn(needle, condition)
+
+    def test_the_comment_text_never_reaches_a_shell_script_directly(self) -> None:
+        # Interpolating it into `run:` would let a comment inject commands into a job that holds secrets.
+        self.assertIn("COMMENT_BODY: ${{ github.event.comment.body }}", self.review_job)
+        for block in self.text.split("run: |")[1:]:
+            script = block.split("\n      - ", 1)[0]
+            self.assertNotIn("${{ github.event.comment", script)
+            self.assertNotIn("${{ github.event.issue.title", script)
+            self.assertNotIn("${{ github.event.pull_request.title", script)
+
+    def test_the_pull_request_is_read_from_the_api_and_a_draft_or_fork_is_refused_there_too(self) -> None:
+        self.assertIn('gh api "repos/$REPO/pulls/$NUMBER"', self.review_job)
+        self.assertIn('[ "$draft" = true ]', self.review_job)
+        self.assertIn('"$head_repo" != "$REPO"', self.review_job)
+        self.assertIn("ref: ${{ steps.pr.outputs.head_sha }}", self.review_job)
+
+    def test_marking_a_draft_ready_again_does_not_buy_a_second_review(self) -> None:
+        self.assertIn("this pull request already has a review", self.review_job)
+        self.assertIn('"$EVENT" = pull_request', self.review_job)
+
+    def test_a_second_request_waits_instead_of_cancelling_a_review_in_progress(self) -> None:
+        self.assertIn("cancel-in-progress: false", self.review_job)
+        self.assertNotIn("cancel-in-progress: true", self.review_job)
+        # A comment that is not a review request must not share a group with the review.
+        self.assertNotIn("\nconcurrency:", self.text.split("jobs:", 1)[0])
+
+    def test_the_status_job_runs_no_model_and_needs_no_gateway_secret(self) -> None:
+        self.assertIn("--refresh-status", self.status_job)
+        self.assertNotIn("LLM_GATEWAY", self.status_job)
+        self.assertNotIn("ANTHROPIC", self.status_job)
+        self.assertNotIn("npm install", self.status_job)
+        self.assertIn("github.event.action == 'synchronize'", self.job_if(self.status_job))
+
+    def test_a_review_that_loses_a_race_with_a_push_follows_the_pull_request(self) -> None:
+        self.assertIn('[ "$code" -eq 3 ]', self.review_job)
+        self.assertIn(f"EXIT_HEAD_MOVED = {review.EXIT_HEAD_MOVED}", (review.SKILL_DIR / "review.py").read_text())
+
+    def test_the_review_job_is_still_bounded(self) -> None:
+        self.assertIn(f"timeout-minutes: {JOB_LIMIT_SECONDS // 60}\n", self.review_job)
+
+
+class StatusTests(unittest.TestCase):
+    """The reviewed commit, the count of commits after it, and the line that says so."""
+
+    REVIEWED = "a" * 40
+
+    def summary_body(self, **extra) -> str:
+        return render.render_summary(overview=None, new=[], outside=[], threads=[], reopened=set(), fixed=set(),
+                                     failed=[], details="d", repo="base/base", head_sha=self.REVIEWED, **extra)
+
+    def test_a_summary_records_the_commit_it_reviewed(self) -> None:
+        self.assertEqual(render.reviewed_sha(self.summary_body()), self.REVIEWED)
+        self.assertIsNone(render.reviewed_sha("<!-- CLAUDE_REVIEW_SUMMARY -->\n## old summary"))
+
+    def test_a_summary_says_how_to_ask_for_another_review(self) -> None:
+        text = self.summary_body()
+        self.assertIn("comment `/review`", text)
+        self.assertTrue(text.rstrip().endswith("can do this."))
+
+    def test_a_local_report_has_no_rerun_instructions_or_reviewed_marker(self) -> None:
+        text = render.render_summary(overview=None, new=[], outside=[], threads=[], reopened=set(), fixed=set(),
+                                     failed=[], details="d", repo="base/base", head_sha=None)
+        self.assertNotIn("/review", text)
+        self.assertNotIn("pr-review:reviewed", text)
+
+    def test_the_rerun_instructions_survive_a_very_long_summary(self) -> None:
+        findings = [render.Finding.from_action(comment(line=99, body="z" * 5000, title=f"t{i}")) for i in range(40)]
+        text = render.render_summary(overview=None, new=[], outside=findings, threads=[], reopened=set(),
+                                     fixed=set(), failed=[], details="d", repo="base/base", head_sha=self.REVIEWED)
+        self.assertLessEqual(len(text), render.MAX_BODY_CHARS + 1)
+        self.assertIn("comment `/review`", text)
+        self.assertEqual(render.reviewed_sha(text), self.REVIEWED)
+
+    def test_the_status_line_for_each_case(self) -> None:
+        def block(unreviewed):
+            return render.status_block(self.REVIEWED, unreviewed=unreviewed, compare_url="https://x/compare",
+                                       files_url="https://x/files")
+
+        self.assertIn("the latest commit", block(0))
+        one = block(1)
+        self.assertIn("**1 commit pushed after `aaaaaaa` has not been reviewed.**", one)
+        self.assertIn("[View the diff](https://x/compare)", one)
+        self.assertIn("to review it", one)
+        many = block(3)
+        self.assertIn("**3 commits pushed after `aaaaaaa` have not been reviewed.**", many)
+        self.assertIn("to review them", many)
+        rewritten = block(None)
+        self.assertIn("rewritten", rewritten)
+        self.assertIn("[View all changes](https://x/files)", rewritten)
+
+    def test_replacing_the_status_block_changes_only_that_block(self) -> None:
+        body = self.summary_body()
+        new = render.status_block(self.REVIEWED, unreviewed=2, compare_url="https://x/c", files_url="https://x/f")
+        replaced = render.replace_status(body, new)
+        self.assertIn("2 commits pushed", replaced)
+        self.assertEqual(render.reviewed_sha(replaced), self.REVIEWED)
+        self.assertEqual(replaced.count(render.STATUS_START), 1)
+        before, after = body.split(render.STATUS_START)[0], body.split(render.STATUS_END)[1]
+        self.assertTrue(replaced.startswith(before) and replaced.endswith(after))
+        self.assertIsNone(render.replace_status("an older summary with no status block", new))
+
+    def test_the_summary_embeds_a_given_status_line(self) -> None:
+        block = render.status_block(self.REVIEWED, unreviewed=4, compare_url="https://x/c", files_url="https://x/f")
+        self.assertIn("4 commits pushed", self.summary_body(status=block))
+
+
+class CommitCountTests(unittest.TestCase):
+    SHAS = ["1" * 40, "2" * 40, "3" * 40, "4" * 40]
+
+    def fake_gh(self, shas, head=None, body=None):
+        calls: list[list[str]] = []
+
+        def gh(args, input_text=None):
+            calls.append(args)
+            joined = " ".join(args)
+            if "pulls/7/commits" in joined:
+                half = len(shas) // 2
+                return json.dumps([[{"sha": s} for s in shas[:half]], [{"sha": s} for s in shas[half:]]])
+            if args[:2] == ["pr", "view"]:
+                return json.dumps({"headRefOid": head or shas[-1]})
+            if "startswith" in joined:
+                return "" if body is None else json.dumps({"id": 55, "body": body}) + "\n"
+            return ""
+
+        return gh, calls
+
+    def test_commits_after_counts_across_pages(self) -> None:
+        gh, _ = self.fake_gh(self.SHAS)
+        with mock.patch.object(review, "gh", gh):
+            self.assertEqual([review.commits_after(7, "base/base", s) for s in self.SHAS], [3, 2, 1, 0])
+            self.assertEqual(review.commits_after(7, "base/base", self.SHAS[1][:7]), 2)
+
+    def test_a_commit_no_longer_in_the_pull_request_means_the_branch_was_rewritten(self) -> None:
+        gh, _ = self.fake_gh(self.SHAS)
+        with mock.patch.object(review, "gh", gh):
+            self.assertIsNone(review.commits_after(7, "base/base", "9" * 40))
+
+    def body(self, sha: str) -> str:
+        return render.render_summary(overview=None, new=[], outside=[], threads=[], reopened=set(), fixed=set(),
+                                     failed=[], details="d", repo="base/base", head_sha=sha)
+
+    def test_refresh_status_edits_the_latest_summary_with_the_count_and_a_compare_link(self) -> None:
+        gh, calls = self.fake_gh(self.SHAS, body=self.body(self.SHAS[1]))
+        sent: list[str] = []
+        real = gh
+
+        def capture(args, input_text=None):
+            if "PATCH" in args:
+                sent.append(input_text)
+                return ""
+            return real(args, input_text)
+
+        with mock.patch.object(review, "gh", capture):
+            self.assertEqual(review.refresh_status(7, "base/base"), 0)
+        [payload] = sent
+        body = json.loads(payload)["body"]
+        self.assertIn("2 commits pushed after `2222222` have not been reviewed", body)
+        self.assertIn(f"https://github.com/base/base/compare/{self.SHAS[1]}...{self.SHAS[3]}", body)
+
+    def test_refresh_status_does_nothing_when_up_to_date_or_without_a_summary(self) -> None:
+        for body in (None, self.body(self.SHAS[3])):
+            with self.subTest(has_summary=body is not None):
+                gh, calls = self.fake_gh(self.SHAS, body=body)
+                with mock.patch.object(review, "gh", gh):
+                    self.assertEqual(review.refresh_status(7, "base/base"), 0)
+                self.assertFalse([c for c in calls if "PATCH" in c])
+
+    def test_refresh_status_leaves_a_summary_from_before_the_marker_existed_alone(self) -> None:
+        gh, calls = self.fake_gh(self.SHAS, body="<!-- CLAUDE_REVIEW_SUMMARY -->\n## old")
+        with mock.patch.object(review, "gh", gh):
+            self.assertEqual(review.refresh_status(7, "base/base"), 0)
+        self.assertFalse([c for c in calls if "PATCH" in c])
+
+    def test_refresh_status_uses_the_latest_of_several_summaries(self) -> None:
+        old, new = self.body(self.SHAS[0]), self.body(self.SHAS[2])
+        sent: list[str] = []
+
+        def gh(args, input_text=None):
+            joined = " ".join(args)
+            if "startswith" in joined:
+                return json.dumps({"id": 10, "body": old}) + "\n" + json.dumps({"id": 20, "body": new}) + "\n"
+            if "pulls/7/commits" in joined:
+                return json.dumps([[{"sha": s} for s in self.SHAS]])
+            if args[:2] == ["pr", "view"]:
+                return json.dumps({"headRefOid": self.SHAS[3]})
+            if "PATCH" in args:
+                sent.append(joined)
+            return ""
+
+        with mock.patch.object(review, "gh", gh):
+            review.refresh_status(7, "base/base")
+        self.assertEqual(len(sent), 1)
+        self.assertIn("issues/comments/20", sent[0])
+
+    def test_status_for_counts_against_the_live_head(self) -> None:
+        gh, _ = self.fake_gh(self.SHAS, head=self.SHAS[3])
+        ctx = review.Context(description="d", title="t", files=[], diff=DIFF, pr_number=7, head_sha=self.SHAS[1])
+        with mock.patch.object(review, "gh", gh):
+            block = review.status_for(ctx)
+        self.assertIn("2 commits pushed after `2222222`", block)
+
+    def test_status_for_says_latest_when_the_head_has_not_moved_and_nothing_when_it_cannot_ask(self) -> None:
+        gh, _ = self.fake_gh(self.SHAS, head=self.SHAS[1])
+        ctx = review.Context(description="d", title="t", files=[], diff=DIFF, pr_number=7, head_sha=self.SHAS[1])
+        with mock.patch.object(review, "gh", gh):
+            self.assertIn("the latest commit", review.status_for(ctx))
+        with mock.patch.object(review, "gh", FakeGh(fail=("pr view",))):
+            self.assertIsNone(review.status_for(ctx))
+        self.assertIsNone(review.status_for(review.Context(description="d", title="t", files=[], diff=DIFF)))
+
+    def test_a_local_run_makes_no_status_calls(self) -> None:
+        self.assertIsNone(review.status_for(review.Context(description="d", title="t", files=[], diff=DIFF)))
+
+    def test_the_cli_requires_a_pull_request_for_refresh_status_and_rejects_mixing_it_with_post(self) -> None:
+        for argv in (["--refresh-status"], ["--pr", "7", "--post", "--refresh-status"]):
+            with self.subTest(argv=argv), self.assertRaises(SystemExit):
+                review.parse_args(argv)
+        self.assertTrue(review.parse_args(["--pr", "7", "--refresh-status"]).refresh_status)
+
+
 class PrContextTests(unittest.TestCase):
     """pr_context against a scripted gh."""
 
@@ -609,23 +866,18 @@ class PrContextTests(unittest.TestCase):
         self.assertIn("--paginate", call)
         self.assertIn("--slurp", call)
 
-    def test_a_failed_previous_summary_lookup_does_not_stop_the_review(self) -> None:
-        gh_fn, _ = self.scripted(fail=("startswith",))
-        self.assertIsNotNone(self.context(gh_fn).previous_summary)
-
-    def test_a_failed_lookup_still_replaces_the_old_summary_when_everything_is_fixed(self) -> None:
-        # With nothing left to report, no summary is posted unless an old one has to be replaced.
-        gh_fn, _ = self.scripted(fail=("startswith",))
-        ctx = self.context(gh_fn)
-        outcome = review.Outcome(triage={"depth": "standard", "reasoning": "r"}, reviews={}, failed={},
-                                 decision={"actions": [], "overview": None, "dropped": []}, rows=[])
-        text = review.build_summary(outcome, review.Plan(), ctx)
-        self.assertIn("No open findings", text)
-
-    def test_posting_from_the_wrong_commit_is_refused(self) -> None:
+    def test_posting_from_the_wrong_commit_is_refused_with_its_own_error(self) -> None:
         gh_fn, _ = self.scripted()
-        with self.assertRaises(review.ReviewError):
+        with self.assertRaises(review.HeadMovedError):
             self.context(gh_fn, checked_out="b" * 40, post=True)
+
+    def test_that_error_makes_the_script_exit_with_a_status_the_workflow_can_act_on(self) -> None:
+        with mock.patch.object(review, "load_agents", return_value=[]), mock.patch.object(
+                review, "pr_context", side_effect=review.HeadMovedError("moved")):
+            self.assertEqual(review.main(["--pr", "7", "--post"]), review.EXIT_HEAD_MOVED)
+        with mock.patch.object(review, "load_agents", return_value=[]), mock.patch.object(
+                review, "pr_context", side_effect=review.ReviewError("other")):
+            self.assertEqual(review.main(["--pr", "7", "--post"]), 1)
 
     def test_a_local_run_on_another_commit_only_warns(self) -> None:
         gh_fn, _ = self.scripted()
@@ -871,7 +1123,7 @@ class ApplyPlanTests(unittest.TestCase):
                 overview=None, new=plan.new, outside=plan.outside, threads=self.ctx.threads,
                 reopened={u["thread_id"] for u in plan.reopens}, fixed={r["thread_id"] for r in plan.resolves},
                 back=set(plan.back), failed=[], details="d", repo="base/base", head_sha="abc",
-                replace_existing=True)
+                )
 
         gh.responses.setdefault("pr view", json.dumps({"headRefOid": "abc"}))
         def live_threads(*_):
@@ -884,7 +1136,8 @@ class ApplyPlanTests(unittest.TestCase):
             return review.apply_plan(self.plan, self.ctx, summarize)
 
     def test_everything_is_posted_and_the_old_summary_is_replaced_after_the_new_one(self) -> None:
-        gh = FakeGh(responses={"issues/7/comments": "11\n12\n"})
+        summaries = "".join(json.dumps({"id": i, "body": "<!-- CLAUDE_REVIEW_SUMMARY -->\nold"}) + "\n" for i in (11, 12))
+        gh = FakeGh(responses={"issues/7/comments": summaries})
         self.assertEqual(self.apply(gh), [])
         self.assertEqual(len(gh.matching("pulls/7/reviews")), 1)
         comment_calls = [i for i, c in enumerate(gh.calls) if c[:2] == ["pr", "comment"]]
@@ -1033,11 +1286,12 @@ class ApplyPlanTests(unittest.TestCase):
                     else:
                         review.pr_context(7, "base/base", post=post)
 
-    def test_nothing_is_posted_if_the_pull_request_moved_on(self) -> None:
+    def test_posting_does_not_ask_for_the_head_or_stop_when_the_pull_request_gains_commits(self) -> None:
+        # The review is of the commit it read. A push during the run is reported in the summary instead.
         gh = FakeGh(responses={"pr view": json.dumps({"headRefOid": "newer"})})
-        with self.assertRaises(review.ReviewError):
-            self.apply(gh)
-        self.assertEqual([c for c in gh.calls if c[0] != "pr"], [])
+        self.apply(gh)
+        self.assertEqual(gh.matching("pr view"), [])
+        self.assertEqual(len(gh.matching("pulls/7/reviews")), 1)
 
     def test_summary_query_only_matches_the_bot(self) -> None:
         gh = FakeGh()
@@ -1079,7 +1333,8 @@ class ApplyPlanTests(unittest.TestCase):
         self.assertEqual(len([c for c in gh.calls if c[:2] == ["pr", "comment"]]), 1)
 
     def test_a_failed_summary_post_keeps_the_old_summary_and_is_reported(self) -> None:
-        gh = FakeGh(fail=("pr comment",), responses={"issues/7/comments": "11\n"})
+        old = json.dumps({"id": 11, "body": "<!-- CLAUDE_REVIEW_SUMMARY -->\nold"}) + "\n"
+        gh = FakeGh(fail=("pr comment",), responses={"issues/7/comments": old})
         problems = self.apply(gh)
         self.assertEqual(len(problems), 1)
         self.assertEqual(gh.matching("DELETE"), [])
@@ -1304,28 +1559,6 @@ class RoundTests(unittest.TestCase):
         self.assertFalse([e for e in self.events if e.startswith("round:")])
         self.assertIn("final-round", self.events)
 
-    def test_a_pull_request_that_moved_on_stops_further_posting(self) -> None:
-        for name in ("review-general", self.slow):
-            self.round_decisions[f"decide.{name}"] = {"actions": [comment_on_line_one(f"{name} problem")],
-                                                       "overview": None, "dropped": []}
-        posted: list[int] = []
-
-        def stale_after_first(round_plan, ctx, summarize=None):
-            posted.append(len(round_plan.new))
-            if len(posted) > 1:
-                raise review.StaleError("the pull request has a newer commit than the one reviewed")
-            return []
-
-        agents = [a for a in self.agents if a.stage in ("triage", "decide")]
-        general = next(a for a in self.agents if a.name == "review-general")
-        agents += [general, dataclasses_replace(general, name=self.slow)]
-        with mock.patch.object(review, "run_agent", self.fake_run_agent), mock.patch.object(
-                review, "apply_plan", stale_after_first):
-            outcome = review.run_pipeline(self.ctx, agents, Path("."), Path("."), None, post=True)
-        self.assertTrue(outcome.stale)
-        self.assertEqual(len(posted), 2)  # the third round (the final one) was not even tried
-        self.assertTrue([p for p in outcome.problems if "newer commit" in p])
-
     def test_run_parallel_calls_the_hook_as_each_job_finishes(self) -> None:
         order: list[tuple[str, set[str]]] = []
         gate = threading.Event()
@@ -1373,37 +1606,6 @@ class RoundTests(unittest.TestCase):
                                                          "overview": None, "dropped": []}
         self.final_decision = {"actions": [comment_on_line_one("same")], "overview": "x", "dropped": []}
         self.assertEqual(len(self.run_pipeline().plan.new), 1)
-
-    def test_a_head_check_that_errors_is_a_problem_not_a_moved_pull_request(self) -> None:
-        ctx = review.Context(description="d", title="t", files=[], diff=DIFF, pr_number=7, head_sha="abc")
-        gh = FakeGh(fail=("pr view",))
-        with mock.patch.object(review, "gh", gh), mock.patch.object(review, "fetch_threads", return_value=[]):
-            problems = review.apply_plan(review.Plan(), ctx)
-        self.assertTrue([p for p in problems if "check the pull request head" in p])
-
-    def test_a_head_that_differs_raises_the_stale_error(self) -> None:
-        ctx = review.Context(description="d", title="t", files=[], diff=DIFF, pr_number=7, head_sha="abc")
-        gh = FakeGh(responses={"pr view": json.dumps({"headRefOid": "newer"})})
-        with mock.patch.object(review, "gh", gh), self.assertRaises(review.StaleError):
-            review.apply_plan(review.Plan(), ctx)
-
-    def test_an_error_from_a_round_other_than_a_moved_head_does_not_stop_posting(self) -> None:
-        self.round_decisions["decide.review-general"] = {"actions": [comment_on_line_one("a")],
-                                                         "overview": None, "dropped": []}
-        calls: list[int] = []
-
-        def flaky(round_plan, ctx, summarize=None):
-            calls.append(1)
-            return ["check the pull request head: boom"] if len(calls) == 1 else []
-
-        agents = [a for a in self.agents if a.stage in ("triage", "decide")]
-        general = next(a for a in self.agents if a.name == "review-general")
-        agents += [general, dataclasses_replace(general, name=self.slow)]
-        with mock.patch.object(review, "run_agent", self.fake_run_agent), mock.patch.object(
-                review, "apply_plan", flaky):
-            outcome = review.run_pipeline(self.ctx, agents, Path("."), Path("."), None, post=True)
-        self.assertFalse(outcome.stale)
-        self.assertGreaterEqual(len(calls), 2)  # later rounds were still posted
 
     def test_the_incomplete_banner_clears_when_the_final_round_recovers_the_findings(self) -> None:
         self.broken = {"decide.review-general"}
