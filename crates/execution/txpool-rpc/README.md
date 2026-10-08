@@ -17,9 +17,14 @@ while forwarding to builders. The endpoint is registered at startup. Use one sha
 `--validity-signature-mode off|verify-if-present|required` option on ingress and builders.
 It defaults to `off`, accepting unsigned or signed submissions without signature verification
 and preserving supplied signatures for forwarding. Deploy `verify-if-present` fleet-wide
-to accept unsigned submissions while checking all supplied signatures, migrate clients,
+to accept unsigned submissions while checking all supplied signatures at raw ingress, migrate clients,
 then enable `required` to reject unsigned predicates. Neither `off` nor optional verification
 protects against signature stripping and unsigned resubmission.
+The trusted `base_insertValidatedTransaction` endpoint checks signature presence only;
+it does not re-verify signatures. Protection requires every forwarding ingress node
+and each builder's raw ingress to run `required`, builders to require signatures on
+insert, and the insert endpoint to be restricted to trusted forwarders. A `required`
+builder receiving from an `off` forwarder still accepts invalid supplied signatures.
 Predicates are enforced during block construction; an unsatisfied transaction is deferred
 and an expired one is evicted. Regular RPC nodes with a configured sequencer URL proxy
 the complete sidecar and upstream error response instead of admitting it locally.

@@ -118,7 +118,7 @@ base_metrics::define_metrics! {
     struct = ValiditySignatureMetrics,
     #[describe("Validity sidecars rejected by signature policy or authorization at an admission boundary")]
     #[label(name = "site", default = ["ingress", "builder"])]
-    #[label(name = "reason", default = ["missing", "unexpected", "missing_chain_id", "invalid", "transaction_mismatch"])]
+    #[label(name = "reason", default = ["missing", "unexpected", "missing_chain_id", "invalid"])]
     rejected: counter,
     #[describe("Policy-validated validity sidecars by signature presence, for staged rollout readiness")]
     #[label(name = "site", default = ["ingress", "builder"])]

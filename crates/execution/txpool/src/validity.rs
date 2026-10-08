@@ -7,9 +7,7 @@ use reth_transaction_pool::ValidPoolTransaction;
 use revm::Database;
 use serde::{Deserializer, de};
 
-use crate::{
-    BasePooledTransaction, ExtensionError, ValidatedTransactionExtensions, ValidityAuthorization,
-};
+use crate::{BasePooledTransaction, ExtensionError, ValidatedTransactionExtensions};
 
 /// Default maximum number of experimental validity predicates carried by one transaction.
 pub const DEFAULT_MAX_VALIDITY_PREDICATES: usize = 64;
@@ -680,8 +678,7 @@ impl ValidatedTransactionExtensions<BasePooledTransaction> for TransactionValidi
         for (index, predicate) in self.validity.iter().enumerate() {
             predicate.validate_params(index).map_err(|e| ExtensionError(e.to_string()))?;
         }
-        let validity = ValidityAuthorization::trust_forwarded(&tx, self);
-        Ok(tx.with_validity(validity).expect("forwarded sidecar is bound to this same transaction"))
+        Ok(tx.with_validity(self))
     }
 }
 

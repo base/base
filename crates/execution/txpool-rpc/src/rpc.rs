@@ -380,14 +380,12 @@ where
             tx_hash: tx_hash,
             data: {
                 "rpc_method" => "base_sendRawTransactionValidity",
-                "validity_predicates" => validity.predicates(),
+                "validity_predicates" => &validity.validity,
             },
         );
 
         // Retain predicates and their authorization for canonical forwarding to builders.
-        let transaction = transaction
-            .with_validity(validity)
-            .expect("validity was validated against this same recovered transaction");
+        let transaction = transaction.with_validity(validity);
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         self.transaction_sender
             .send(BatchTxRequest::new(TransactionOrigin::Private, transaction, response_tx))
