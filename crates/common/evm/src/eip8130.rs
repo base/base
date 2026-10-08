@@ -167,7 +167,9 @@ struct CallsResult {
     /// phases are then skipped.
     reverted: bool,
     /// The return data of the call that reverted the transaction (or the
-    /// `ActorPolicyViolation` payload for a policy-gate block); empty on success.
+    /// `ActorPolicyViolation` payload for a policy-gate block), or on success
+    /// the return data of the last call (empty when `calls` was empty), which
+    /// is what an EIP-8130 `eth_call` returns.
     output: Bytes,
     /// Per-phase execution status, one entry per phase in `calls` and in phase
     /// order: `0x01` if the phase committed, `0x00` if it reverted or was skipped
@@ -1256,6 +1258,7 @@ impl Eip8130Executor {
         // One status byte per phase; phases not reached after a revert are filled
         // with `0x00` below.
         let mut phase_statuses: Vec<u8> = Vec::with_capacity(total_phases);
+        let mut last_output = Bytes::new();
 
         for phase in &signed.tx().calls {
             let checkpoint = evm.ctx_mut().journal_mut().checkpoint();
@@ -1313,6 +1316,7 @@ impl Eip8130Executor {
                     // matching standard transaction-level refund accounting. The
                     // sum is clamped and EIP-3529-capped once in `settle_fees`.
                     phase_refund = phase_refund.saturating_add(gas.refunded());
+                    last_output = frame.interpreter_result().output.clone();
                 } else {
                     phase_reverted = true;
                     phase_output = frame.interpreter_result().output.clone();
@@ -1350,7 +1354,7 @@ impl Eip8130Executor {
             call_gas_spent: pool.saturating_sub(remaining),
             refund,
             reverted: false,
-            output: Bytes::new(),
+            output: last_output,
             phase_statuses,
         })
     }
