@@ -346,8 +346,9 @@ impl MempoolGuard {
     }
 
     /// Registers a transaction unconditionally, bypassing the count caps. Used
-    /// for replacements: the replaced transaction is released first, so the swap
-    /// is net-neutral on the count dimensions and must never be rejected (you can
+    /// for replacements that passed [`Self::check_replacement`]: the replaced
+    /// transaction is released first, so a swap that keeps the payer is
+    /// net-neutral on the count dimensions and must never be rejected (you can
     /// always fee-bump your own pooled transaction).
     ///
     /// A balance-bounded (trusted or allowlisted) payer still goes through the
@@ -438,6 +439,42 @@ impl MempoolGuard {
             },
         );
         self.index.insert(admission.hash, admission.watch_set);
+    }
+
+    /// Checks, without mutating, whether replacing the tracked `replaced` with
+    /// `admission` fits the caps. Keeping the payer is net-neutral and always
+    /// fits. Naming a different payer charges that payer's dimensions as a
+    /// fresh admission would, so the new payer must have room for them;
+    /// otherwise a fee bump could rotate a sponsor past its caps through
+    /// [`Self::insert_forced`].
+    ///
+    /// The sender dimension is unchanged by a replacement and is not checked.
+    pub fn check_replacement(
+        &self,
+        replaced: &TxHash,
+        admission: &Admission,
+    ) -> Result<(), LimitRejection> {
+        if self.records.get(replaced).is_none_or(|record| record.payer == admission.payer) {
+            return Ok(());
+        }
+        if admission.payer != admission.sender
+            && !admission.payer_locked
+            && self.signature_counts.get(&admission.payer) >= self.limits.signature_limit
+        {
+            return Err(LimitRejection::PayerLimit);
+        }
+        let (wants_book, count_limit) = self.payment_bounds(admission);
+        if count_limit.is_some_and(|limit| self.payment_counts.get(&admission.payer) >= limit) {
+            return Err(LimitRejection::PaymentLimit);
+        }
+        let available = self
+            .payer_books
+            .get(&admission.payer)
+            .map_or(admission.payer_balance, PayerBook::available);
+        if wants_book && admission.max_cost > available {
+            return Err(LimitRejection::PayerBalance);
+        }
+        Ok(())
     }
 
     /// Releases all bookkeeping for `hash` (limits and index). Returns `true` if
@@ -877,14 +914,79 @@ mod tests {
         let new = Admission { payer: addr(200), ..self_pay(50, sender, 10) };
         assert_eq!(guard.try_admit(new), Err(LimitRejection::SenderLimit));
 
-        // A replacement (pool releases the old hash first, then force-inserts the
-        // new one) stays at the cap and is never rejected.
+        // A replacement that keeps its payer (pool releases the old hash first,
+        // then force-inserts the new one) stays at the cap and is never rejected.
+        let replacement = Admission { payer: addr(100), ..self_pay(60, sender, 10) };
+        assert_eq!(guard.check_replacement(&hash(0), &replacement), Ok(()));
         assert!(guard.release(&hash(0)));
-        let replacement = Admission { payer: addr(250), ..self_pay(60, sender, 10) };
         guard.insert_forced(replacement);
         assert_eq!(guard.len(), DEFAULT_SIGNATURE_LIMIT as usize);
         assert!(guard.contains(&hash(60)));
         assert!(!guard.contains(&hash(0)));
+    }
+
+    #[test]
+    fn replacement_naming_a_new_payer_is_held_to_its_payment_cap() {
+        let limits = GuardLimits { payment_limit: 2, ..GuardLimits::default() };
+        let mut guard = MempoolGuard::new(limits);
+        let sponsored = |h: u8, sender: Address, payer: Address| Admission {
+            payer,
+            payer_locked: true,
+            ..self_pay(h, sender, 10)
+        };
+        let (full, open) = (addr(50), addr(51));
+        for i in 0..2 {
+            assert!(guard.try_admit(sponsored(i, addr(10 + i), full)).is_ok());
+        }
+        assert!(guard.try_admit(sponsored(5, addr(20), addr(52))).is_ok());
+
+        // Rotating the fee bump to a payer at its cap is rejected; to one with
+        // room it is accepted.
+        assert_eq!(
+            guard.check_replacement(&hash(5), &sponsored(6, addr(20), full)),
+            Err(LimitRejection::PaymentLimit)
+        );
+        assert_eq!(guard.check_replacement(&hash(5), &sponsored(6, addr(20), open)), Ok(()));
+        // Switching to self-pay charges the sender's own payment count.
+        assert_eq!(guard.check_replacement(&hash(5), &self_pay(6, addr(20), 10)), Ok(()));
+        // An untracked replaced hash is admitted through `try_admit` instead.
+        assert_eq!(guard.check_replacement(&hash(9), &sponsored(6, addr(20), full)), Ok(()));
+    }
+
+    #[test]
+    fn replacement_naming_a_new_unlocked_sponsor_is_held_to_its_signature_cap() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let sponsor = addr(60);
+        for i in 0..DEFAULT_SIGNATURE_LIMIT as u8 {
+            let adm = Admission { payer: sponsor, ..self_pay(i, addr(10 + i), 10) };
+            assert!(guard.try_admit(adm).is_ok());
+        }
+        assert!(guard.try_admit(self_pay(20, addr(30), 10)).is_ok());
+
+        let rotated = Admission { payer: sponsor, ..self_pay(21, addr(30), 10) };
+        assert_eq!(guard.check_replacement(&hash(20), &rotated), Err(LimitRejection::PayerLimit));
+    }
+
+    #[test]
+    fn replacement_naming_a_new_booked_payer_must_fit_its_balance() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let payer = addr(70);
+        let booked = |h: u8, sender: Address, cost: u64| Admission {
+            payer,
+            payer_locked: true,
+            payer_trusted: true,
+            payer_balance: U256::from(100u64),
+            max_cost: U256::from(cost),
+            ..self_pay(h, sender, cost)
+        };
+        assert!(guard.try_admit(booked(1, addr(10), 80)).is_ok());
+        assert!(guard.try_admit(self_pay(2, addr(11), 10)).is_ok());
+
+        assert_eq!(
+            guard.check_replacement(&hash(2), &booked(3, addr(11), 30)),
+            Err(LimitRejection::PayerBalance)
+        );
+        assert_eq!(guard.check_replacement(&hash(2), &booked(3, addr(11), 20)), Ok(()));
     }
 
     #[test]
