@@ -1616,6 +1616,7 @@ where
             }
             TxAuthError::SenderRecovery => "EOA sender recovery failed",
             TxAuthError::PayerRecovery => "open payer recovery failed",
+            TxAuthError::UnexpectedPayerAuth => "self-paid transaction carries a payer_auth",
             TxAuthError::Scope { .. } => "actor scope insufficient",
             TxAuthError::AccountIsLocked => "account is locked",
             TxAuthError::DelegationUnauthorized => "delegation requires admin actor",
