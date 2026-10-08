@@ -4,13 +4,21 @@ use alloy_evm::precompiles::{DynPrecompile, PrecompileLookup, PrecompilesMap};
 use alloy_primitives::Address;
 use base_common_genesis::BaseUpgrade;
 
-use crate::{B20AssetPrecompile, B20StablecoinPrecompile, B20Variant, PrecompileCallObserver};
+use crate::{
+    B20AssetPrecompile, B20StablecoinPrecompile, B20Variant, NoopPrecompileCallObserver,
+    PrecompileCallObserver,
+};
 
 /// Dynamic precompile lookup installed for Beryl and later forks.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct BerylLookup;
 
 impl BerylLookup {
+    /// Installs the Beryl dynamic precompile lookup into `precompiles` for `upgrade`.
+    pub fn install(precompiles: &mut PrecompilesMap, upgrade: BaseUpgrade) {
+        Self::install_with_observer(precompiles, upgrade, NoopPrecompileCallObserver);
+    }
+
     /// Installs the Beryl dynamic precompile lookup with an observer into `precompiles` for
     /// `upgrade`.
     pub fn install_with_observer<O>(

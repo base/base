@@ -4,8 +4,8 @@ use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use base_common_genesis::BaseUpgrade;
 
 use crate::{
-    ActivationAdminConfig, ActivationRegistryStorage, PrecompileCallObserver,
-    UpgradeGatedStorageFeatures, macros::base_precompile,
+    ActivationAdminConfig, ActivationRegistryStorage, NoopPrecompileCallObserver,
+    PrecompileCallObserver, UpgradeGatedStorageFeatures, macros::base_precompile,
 };
 
 /// Entry point for the activation registry precompile.
@@ -13,6 +13,15 @@ use crate::{
 pub struct ActivationRegistry;
 
 impl ActivationRegistry {
+    /// Installs the activation registry precompile with an explicit admin configuration.
+    pub fn install_with_config(
+        precompiles: &mut PrecompilesMap,
+        admin_config: ActivationAdminConfig,
+        upgrade: BaseUpgrade,
+    ) {
+        Self::install_with_observer(precompiles, admin_config, upgrade, NoopPrecompileCallObserver);
+    }
+
     /// Installs the activation registry precompile with an observer.
     pub fn install_with_observer<O>(
         precompiles: &mut PrecompilesMap,
