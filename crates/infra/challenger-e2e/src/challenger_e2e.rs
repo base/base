@@ -88,6 +88,29 @@ enum Path1Outcome {
     ZkChallenge,
 }
 
+/// The challenger's classification counters Path 3 is judged on, read from
+/// one scrape. Both are cumulative over the run, so they are only ever
+/// compared with an earlier reading.
+#[derive(Debug, Clone, Copy)]
+struct Classifications {
+    /// `invalid_dual_proposal_detected_total`. Path 3 staging exposes that
+    /// shape for one Anvil write plus one transaction, and this is what makes
+    /// the window observable.
+    dual: f64,
+    /// `invalid_zk_proposal_detected_total`: the path Path 3 must take.
+    zk_only: f64,
+}
+
+impl Classifications {
+    async fn fetch(config: &Config) -> Result<Self> {
+        let scrape = Scrape::fetch(&config.challenger_metrics_url).await?;
+        Ok(Self {
+            dual: scrape.sum("base_challenger_invalid_dual_proposal_detected_total"),
+            zk_only: scrape.sum("base_challenger_invalid_zk_proposal_detected_total"),
+        })
+    }
+}
+
 /// Which of a dual-proof game's two proofs the challenger dropped first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Path4Branch {
@@ -531,7 +554,7 @@ impl ChallengerE2e {
         // Sampled before staging; every earlier phase has finished by now.
         let submitted = Self::disputes_submitted(config).await?;
 
-        let (nonce, dual_before, checkpoint) =
+        let (nonce, classified_before, checkpoint) =
             Self::stage_path3(config, fork_url, verifier, provider, driver, challenger, game)
                 .await?;
 
@@ -547,7 +570,7 @@ impl ChallengerE2e {
             game,
             nonce,
             submitted,
-            dual_before,
+            classified_before,
         )
         .await?;
         Self::assert_disputes_prove_canonical(
@@ -930,9 +953,9 @@ impl ChallengerE2e {
     /// it proves [`PATH3_STAGING_ROOT`] at index 0 of the still-valid game.
     ///
     /// Returns the challenger's nonce, sampled before the fork is touched, the
-    /// `invalid_dual_proposal_detected_total` reading from before staging
-    /// began, which [`Self::await_path3`] requires to be unchanged, and the
-    /// checkpoint that was corrupted.
+    /// classification counters from before staging began, which
+    /// [`Self::await_path3`] judges against, and the checkpoint that was
+    /// corrupted.
     async fn stage_path3(
         config: &Config,
         fork_url: &Url,
@@ -941,11 +964,13 @@ impl ChallengerE2e {
         driver: &PrivateKeySigner,
         challenger: &PrivateKeySigner,
         game: Candidate,
-    ) -> Result<(u64, f64, Checkpoint)> {
+    ) -> Result<(u64, Classifications, Checkpoint)> {
         let fork_config = Self::fork_config(config, fork_url, driver, game);
         // Sampled before anything is staged, for the reason given in `run_path1`.
         let nonce = provider.get_transaction_count(challenger.address()).await?;
-        let dual_detected = Self::dual_proposals_detected(config).await?;
+        // Baselines, not absolutes: in `all`, Path 4 has already moved both
+        // counters on another game before this one is staged.
+        let classified = Classifications::fetch(config).await?;
 
         let tee_verifier = verifier
             .tee_verifier_address(game.address)
@@ -1044,7 +1069,7 @@ impl ChallengerE2e {
             invalid_index = checkpoint.index,
             "staged Path 3: an invalid ZK-only proposal"
         );
-        Ok((nonce, dual_detected, checkpoint))
+        Ok((nonce, classified, checkpoint))
     }
 
     /// Runs `operation` with `verifier`'s code replaced by the mock verifier,
@@ -1250,9 +1275,9 @@ impl ChallengerE2e {
     ///
     /// The route is then asserted, not inferred from the end state.
     /// [`Self::stage_path3`] never lets a scan see an invalid game with both
-    /// proofs, so any `InvalidDualProposal` classification since
-    /// `dual_before` fails the run;
-    /// the challenger must have reached the game through `InvalidZkProposal`.
+    /// proofs, so any `InvalidDualProposal` classification since `before`
+    /// fails the run, and at least one new `InvalidZkProposal` classification
+    /// is required.
     /// The counter is judged here rather than at staging time because the
     /// driver increments it only after awaiting `validate_game`, so by the end
     /// of the dispute cycle any scan of the game has long since counted.
@@ -1270,7 +1295,7 @@ impl ChallengerE2e {
         game: Candidate,
         nonce: u64,
         submitted_before: f64,
-        dual_before: f64,
+        before: Classifications,
     ) -> Result<()> {
         let state = Self::poll_until(
             config,
@@ -1283,13 +1308,13 @@ impl ChallengerE2e {
         )
         .await?;
 
-        let dual_after = Self::dual_proposals_detected(config).await?;
+        let after = Classifications::fetch(config).await?;
         ensure!(
-            dual_after <= dual_before,
+            after.dual <= before.dual,
             "the challenger classified {} game(s) as InvalidDualProposal during Path 3, but \
              staging waits out every scan that saw both proofs before it patches the root; game \
              {} may have been cleared as Path 4 rather than as an invalid ZK proposal",
-            dual_after - dual_before,
+            after.dual - before.dual,
             game.address
         );
 
@@ -1317,13 +1342,13 @@ impl ChallengerE2e {
         // assertion above is satisfied by *any* route to a cleared ZK proof; this
         // is the one that says the challenger got there through
         // `InvalidZkProposal`.
-        let scrape = Scrape::fetch(&config.challenger_metrics_url).await?;
-        let classified = scrape.sum("base_challenger_invalid_zk_proposal_detected_total");
         ensure!(
-            classified >= 1.0,
-            "game {} was nullified but the challenger never classified an InvalidZkProposal; \
-             Path 3 was cleared through some other path",
-            game.address
+            after.zk_only >= before.zk_only + 1.0,
+            "game {} was nullified but the challenger classified no new InvalidZkProposal \
+             (counter {} before staging, {} after); Path 3 was cleared through some other path",
+            game.address,
+            before.zk_only,
+            after.zk_only
         );
 
         let submitted = Self::disputes_submitted(config).await? - submitted_before;
@@ -1391,15 +1416,6 @@ impl ChallengerE2e {
     async fn games_scanned(config: &Config) -> Result<f64> {
         let scrape = Scrape::fetch(&config.challenger_metrics_url).await?;
         Ok(scrape.sum("base_challenger_games_scanned_total"))
-    }
-
-    /// Times the challenger has classified a game as `InvalidDualProposal`.
-    ///
-    /// Path 3 staging exposes that shape for one Anvil write plus one
-    /// transaction, and this is what makes the window observable.
-    async fn dual_proposals_detected(config: &Config) -> Result<f64> {
-        let scrape = Scrape::fetch(&config.challenger_metrics_url).await?;
-        Ok(scrape.sum("base_challenger_invalid_dual_proposal_detected_total"))
     }
 
     /// Total dispute transactions the challenger has submitted, reverted or not.

@@ -265,7 +265,9 @@ the game is invalid, and an E2E that reports success over an undisputed invalid
 game is worse than none.
 
 The end state is ambiguous about how it was reached, so the path is confirmed
-positively too: `invalid_zk_proposal_detected_total` must have advanced.
+positively too: `invalid_zk_proposal_detected_total` must have advanced since
+staging began. It is a baseline, not an absolute, because in `all` a TEE-first
+Path 4 has already moved it on game B.
 
 Going through `nullify` rather than a storage write means the game reaches the
 exact state a real TEE nullification produces — `proofCount` and `expectedResolution` included —
