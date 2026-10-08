@@ -46,7 +46,7 @@ pub struct OpenVmRangeDump {
 impl OpenVmRangeDump {
     /// Resolves the range from op-node (if unset) and writes `<out_dir>/input.json`.
     ///
-    /// Prints `OPENVM_DEMO start=.. end=.. bytes=..` to stdout once the range is
+    /// Prints `OPENVM_WITNESS start=.. end=.. bytes=..` to stdout once the range is
     /// chosen (`bytes=0`) and again after the witness is written. The basectl
     /// `OpenVM` view parses these lines.
     pub async fn dump(&self) -> Result<()> {
@@ -111,7 +111,7 @@ impl OpenVmRangeDump {
     }
 
     fn announce(start_block: u64, end_block: u64, bytes: usize) {
-        println!("OPENVM_DEMO start={start_block} end={end_block} bytes={bytes}");
+        println!("OPENVM_WITNESS start={start_block} end={end_block} bytes={bytes}");
         let _ = io::stdout().flush();
     }
 }

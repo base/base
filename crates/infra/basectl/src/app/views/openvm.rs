@@ -39,8 +39,6 @@ const LOG_CAP: usize = 200;
 const HEARTBEAT: Duration = Duration::from_secs(10);
 /// Derivation logs one WARN per historical batch; a live block emits millions.
 const DUMP_RUST_LOG: &str = "info,batch_validator=off,batch_queue=off";
-const LOG_NOISE: &[&str] =
-    &["Dropping old batch", "Dropping same-timestamp batch", "Advancing internal L1 epoch"];
 const BAR_BLOCKS: [char; 8] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -114,7 +112,7 @@ enum LiveEvent {
 impl LiveEvent {
     /// Recognizes the lines `openvm-dump` and `cargo-openvm` print to stdout.
     fn parse(line: &str) -> Option<Self> {
-        if let Some(rest) = line.strip_prefix("OPENVM_DEMO ") {
+        if let Some(rest) = line.strip_prefix("OPENVM_WITNESS ") {
             let field = |key: &str| {
                 rest.split_whitespace().find_map(|kv| kv.strip_prefix(key)?.parse().ok())
             };
@@ -436,18 +434,26 @@ async fn run_pipeline_steps(rpcs: LiveRpcs, tx: &mpsc::Sender<LiveEvent>) -> Res
     run_logged(dump, tx, Stage::Witness).await?;
 
     let _ = tx.send(LiveEvent::Stage(Stage::Execute)).await;
-    let mut run = cargo_openvm(&guest, &["run"], &exe);
-    run.arg("--input").arg(&input);
+    let mut run = cargo_openvm(&guest, &["run"]);
+    run.arg("--exe").arg(&exe).arg("--input").arg(&input);
     run_logged(run, tx, Stage::Execute).await?;
 
     let _ = tx.send(LiveEvent::Stage(Stage::Prove)).await;
-    if !pk.is_file() {
-        let mut keygen = cargo_openvm(&guest, &["keygen"], &exe);
-        keygen.arg("--app-only").arg("--app-pk").arg(&pk).arg("--app-vk").arg(elf.join("app.vk"));
-        run_logged(keygen, tx, Stage::Prove).await?;
-    }
-    let mut prove = cargo_openvm(&guest, &["prove", "app"], &exe);
-    prove.arg("--input").arg(&input).arg("--app-pk").arg(&pk).arg("--proof").arg(&proof);
+    // App keys depend only on openvm.toml and take well under a second, so
+    // regenerate them rather than risk a key from an older VM config.
+    let mut keygen = cargo_openvm(&guest, &["keygen", "--app-only"]);
+    keygen.arg("--output-dir").arg(&elf);
+    run_logged(keygen, tx, Stage::Prove).await?;
+    let mut prove = cargo_openvm(&guest, &["prove", "app"]);
+    prove
+        .arg("--exe")
+        .arg(&exe)
+        .arg("--input")
+        .arg(&input)
+        .arg("--app-pk")
+        .arg(&pk)
+        .arg("--proof")
+        .arg(&proof);
     run_logged(prove, tx, Stage::Prove).await?;
 
     let proof_bytes = std::fs::metadata(&proof).ok().map(|meta| meta.len());
@@ -455,14 +461,9 @@ async fn run_pipeline_steps(rpcs: LiveRpcs, tx: &mpsc::Sender<LiveEvent>) -> Res
     Ok(())
 }
 
-fn cargo_openvm(guest: &Path, subcommand: &[&str], exe: &Path) -> Command {
+fn cargo_openvm(guest: &Path, subcommand: &[&str]) -> Command {
     let mut command = Command::new("cargo");
-    command
-        .arg("openvm")
-        .args(subcommand)
-        .args(["--ignore-rust-version", "--config", "openvm.toml", "--exe"])
-        .arg(exe)
-        .current_dir(guest);
+    command.arg("openvm").args(subcommand).args(["--config", "openvm.toml"]).current_dir(guest);
     command
 }
 
@@ -506,7 +507,7 @@ async fn pump_lines<R: AsyncRead + Unpin>(reader: R, tx: mpsc::Sender<LiveEvent>
     let mut lines = BufReader::new(reader).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let line = strip_ansi(line.trim());
-        if line.is_empty() || LOG_NOISE.iter().any(|noise| line.contains(noise)) {
+        if line.is_empty() {
             continue;
         }
         if let Some(event) = LiveEvent::parse(&line) {
@@ -769,7 +770,7 @@ mod tests {
 
     #[test]
     fn parses_dump_and_cargo_openvm_lines() {
-        match LiveEvent::parse("OPENVM_DEMO start=10 end=11 bytes=43000") {
+        match LiveEvent::parse("OPENVM_WITNESS start=10 end=11 bytes=43000") {
             Some(LiveEvent::Witness { start: 10, end: 11, bytes: 43000 }) => {}
             other => panic!("unexpected {other:?}"),
         }
