@@ -2191,6 +2191,11 @@ mod tests {
         }
     }
 
+    /// Flashblock gas budget for the repeated-rejection fixture: below the 21,000-gas candidate so
+    /// the transaction still overflows it, but at or above the 15,000-gas floor a scan early exit
+    /// would use before giving up, so the candidate is still considered.
+    const REPEATED_REJECTION_GAS_BUDGET: u64 = 20_000;
+
     /// A transaction that overflows a flashblock's gas budget is re-yielded and re-rejected on
     /// every later flashblock. The rejection decision and the pool skip must happen each time, but
     /// `BUILDER_REJECTED` is emitted only once per (transaction, reason) per block. The next block
@@ -2202,7 +2207,8 @@ mod tests {
         let db = StateProviderDatabase::new(NoopProvider::default());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
-        let limits = ResourceLimits { block_gas_limit: 0, ..Default::default() };
+        let limits =
+            ResourceLimits { block_gas_limit: REPEATED_REJECTION_GAS_BUDGET, ..Default::default() };
         let over_limit = pooled_test_transaction();
         let over_limit_hash = *over_limit.hash();
         let mut rejections = BlockRejections::default();
@@ -2272,5 +2278,88 @@ mod tests {
                 Some("transaction_gas_limit_exceeded")
             );
         }
+    }
+
+    /// A transaction can be rejected for one reason, then another, then the first again, as the
+    /// flashblock limits it overflows change. Each (transaction, reason) pair is reported once.
+    #[test]
+    fn alternating_rejection_reasons_emit_once_each_per_block() {
+        let capture = TransactionEventCapture::install();
+        let ctx = test_builder_context();
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let mut info = ExecutionInfo::default();
+        let over_limit = pooled_test_transaction();
+        let over_limit_hash = *over_limit.hash();
+        let mut rejections = BlockRejections::default();
+
+        let gas_limits =
+            ResourceLimits { block_gas_limit: REPEATED_REJECTION_GAS_BUDGET, ..Default::default() };
+        // The block DA limit is checked before the gas limit, so a transaction that fits the gas
+        // budget is rejected for DA here instead.
+        let da_limits = ResourceLimits {
+            block_gas_limit: ctx.block_gas_limit(),
+            block_data_limit: Some(0),
+            ..Default::default()
+        };
+
+        let mut gas_flashblock = RepeatingRejectionTransactions::new(over_limit.clone(), 1);
+        let gas_first = ctx
+            .execute_best_transactions(
+                &mut info,
+                &mut BlockDeferrals::default(),
+                &mut rejections,
+                &mut state,
+                &mut gas_flashblock,
+                &gas_limits,
+            )
+            .expect("flashblock N selection should succeed");
+
+        let mut da_flashblock = RepeatingRejectionTransactions::new(over_limit.clone(), 1);
+        let da_second = ctx
+            .execute_best_transactions(
+                &mut info,
+                &mut BlockDeferrals::default(),
+                &mut rejections,
+                &mut state,
+                &mut da_flashblock,
+                &da_limits,
+            )
+            .expect("flashblock N + 1 selection should succeed");
+
+        let mut gas_again_flashblock = RepeatingRejectionTransactions::new(over_limit, 1);
+        let gas_third = ctx
+            .execute_best_transactions(
+                &mut info,
+                &mut BlockDeferrals::default(),
+                &mut rejections,
+                &mut state,
+                &mut gas_again_flashblock,
+                &gas_limits,
+            )
+            .expect("flashblock N + 2 selection should succeed");
+
+        assert_eq!(gas_first.txs_rejected_gas, 1, "the transaction is rejected for gas first");
+        assert_eq!(da_second.txs_rejected_da, 1, "then for block DA");
+        assert_eq!(gas_third.txs_rejected_gas, 1, "and rejected for gas again");
+
+        let mut reasons: Vec<_> = capture
+            .events()
+            .into_iter()
+            .filter(|event| {
+                event.tx_hash == Some(over_limit_hash)
+                    && event.event_type == TransactionEventType::BuilderRejected
+            })
+            .map(|event| {
+                event
+                    .data
+                    .get("rejection_reason")
+                    .and_then(|value| value.as_str())
+                    .expect("rejection_reason is set")
+                    .to_owned()
+            })
+            .collect();
+        reasons.sort();
+        assert_eq!(reasons, ["block_da_size_exceeded", "transaction_gas_limit_exceeded"]);
     }
 }
