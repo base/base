@@ -579,13 +579,33 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("github.event.pull_request.draft == false", condition)
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", condition)
 
-    def test_a_review_comment_needs_the_author_or_someone_with_write_access(self) -> None:
+    def test_a_review_comment_needs_an_organization_member(self) -> None:
         condition = self.job_if(self.review_job)
-        self.assertIn("github.event.comment.user.login == github.event.issue.user.login", condition)
-        self.assertIn('fromJSON(\'["OWNER","MEMBER","COLLABORATOR"]\')', condition)
-        self.assertIn("github.event.comment.author_association", condition)
-        self.assertNotIn("CONTRIBUTOR", condition)
-        self.assertNotIn("NONE", condition)
+        self.assertIn('contains(fromJSON(\'["OWNER","MEMBER"]\'), github.event.comment.author_association)', condition)
+        for association in ("COLLABORATOR", "CONTRIBUTOR", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "NONE"):
+            self.assertNotIn(association, condition)
+
+    def test_the_author_of_a_pull_request_gets_no_special_right_to_ask(self) -> None:
+        # Someone outside the organization who opens a pull request from a branch must not be able to spend
+        # the review budget by commenting on it.
+        self.assertNotIn("github.event.issue.user.login", self.text)
+        self.assertNotIn("github.event.comment.user.login ==", self.text)
+
+    def test_the_first_step_also_checks_write_access_through_the_api(self) -> None:
+        step = self.review_job.split("- name: Find the pull request\n", 1)[1].split("\n      - ", 1)[0]
+        self.assertIn('gh api "repos/$REPO/collaborators/$COMMENTER/permission" --jq \'.user.permissions.push\'', step)
+        self.assertIn('if [ "$can_push" != true ]; then', step)
+        self.assertIn('if [ "$ASSOCIATION" != OWNER ] && [ "$ASSOCIATION" != MEMBER ]; then', step)
+        # An error from the API must count as "no": the fallback is `false`, not an empty string or success.
+        self.assertIn("|| echo false)", step)
+        # The commenter's name and association come through the environment, never into the script text.
+        self.assertIn("COMMENTER: ${{ github.event.comment.user.login }}", step)
+        self.assertIn("ASSOCIATION: ${{ github.event.comment.author_association }}", step)
+        self.assertNotIn("${{ github.event.comment", step.split("run: |", 1)[1])
+
+    def test_the_summary_tells_people_who_may_ask_for_a_review(self) -> None:
+        self.assertIn("Members of the Base organization with write access", render.RERUN_HELP)
+        self.assertNotIn("author", render.RERUN_HELP)
 
     def test_a_review_comment_must_be_on_an_open_pull_request_and_not_from_a_bot(self) -> None:
         condition = self.job_if(self.review_job)
