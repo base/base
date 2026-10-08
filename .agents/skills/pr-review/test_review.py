@@ -563,7 +563,8 @@ class WorkflowTests(unittest.TestCase):
         if WORKFLOW is None:
             self.skipTest("the workflow is not next to this skill")
         self.text = WORKFLOW.read_text()
-        self.review_job = self.text.split("\n  status:\n")[0]
+        self.authorize_job = "\n  authorize:\n" + self.text.split("\n  authorize:\n")[1].split("\n  review:\n")[0]
+        self.review_job = "\n  review:\n" + self.text.split("\n  review:\n")[1].split("\n  status:\n")[0]
         self.status_job = "\n  status:\n" + self.text.split("\n  status:\n")[1]
 
     def job_if(self, job: str) -> str:
@@ -572,7 +573,9 @@ class WorkflowTests(unittest.TestCase):
     def test_a_push_does_not_start_a_review(self) -> None:
         condition = self.job_if(self.review_job)
         self.assertIn("github.event.action != 'synchronize'", condition)
-        self.assertNotIn("reopened", self.text.split("on:\n", 1)[1].split("\n\n", 1)[0])
+        triggers = self.text.split("on:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertNotIn("reopened", triggers)  # a reopened pull request does not start a review
+        self.assertIn("types: [opened, ready_for_review, synchronize]", triggers)
 
     def test_only_a_pull_request_that_is_ready_and_from_this_repository_is_reviewed_on_open(self) -> None:
         condition = self.job_if(self.review_job)
@@ -580,7 +583,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", condition)
 
     def test_a_review_comment_needs_an_organization_member(self) -> None:
-        condition = self.job_if(self.review_job)
+        condition = self.job_if(self.authorize_job)
         self.assertIn('contains(fromJSON(\'["OWNER","MEMBER"]\'), github.event.comment.author_association)', condition)
         for association in ("COLLABORATOR", "CONTRIBUTOR", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "NONE"):
             self.assertNotIn(association, condition)
@@ -591,39 +594,49 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("github.event.issue.user.login", self.text)
         self.assertNotIn("github.event.comment.user.login ==", self.text)
 
-    def test_the_first_step_also_checks_write_access_through_the_api(self) -> None:
-        step = self.review_job.split("- name: Find the pull request\n", 1)[1].split("\n      - ", 1)[0]
+    def test_write_access_is_checked_in_a_gate_with_no_concurrency_group(self) -> None:
+        # GitHub keeps one waiting run per group. A request that is going to be refused must be refused
+        # before it joins the review job's group, or it could take the place of an authorized one that waits.
+        self.assertNotIn("concurrency:", self.authorize_job)
+        self.assertIn("needs: authorize", self.review_job)
+        step = self.authorize_job.split("- name: Check that the commenter has write access\n", 1)[1]
         self.assertIn('gh api "repos/$REPO/collaborators/$COMMENTER/permission" --jq \'.user.permissions.push\'', step)
-        self.assertIn('if [ "$can_push" != true ]; then', step)
-        self.assertIn('if [ "$ASSOCIATION" != OWNER ] && [ "$ASSOCIATION" != MEMBER ]; then', step)
+        self.assertIn('if [ "$can_push" = true ]; then', step)
         # An error from the API must count as "no": the fallback is `false`, not an empty string or success.
         self.assertIn("|| echo false)", step)
-        # The commenter's name and association come through the environment, never into the script text.
+        # The commenter's name comes through the environment, never into the script text.
         self.assertIn("COMMENTER: ${{ github.event.comment.user.login }}", step)
-        self.assertIn("ASSOCIATION: ${{ github.event.comment.author_association }}", step)
         self.assertNotIn("${{ github.event.comment", step.split("run: |", 1)[1])
+        self.assertIn("allowed: ${{ steps.check.outputs.allowed }}", self.authorize_job)
+
+    def test_the_gate_needs_no_secret_but_the_token_and_no_self_hosted_runner(self) -> None:
+        self.assertNotIn("LLM_GATEWAY", self.authorize_job)
+        self.assertNotIn("BaseRunnerGroup", self.authorize_job)
+        self.assertIn("runs-on: ubuntu-latest", self.authorize_job)
 
     def test_the_summary_tells_people_who_may_ask_for_a_review(self) -> None:
         self.assertIn("Members of the Base organization with write access", render.RERUN_HELP)
         self.assertNotIn("author", render.RERUN_HELP)
 
-    def test_a_review_comment_must_be_on_an_open_pull_request_and_not_from_a_bot(self) -> None:
+    def test_the_review_job_only_runs_for_a_comment_the_gate_allowed(self) -> None:
         condition = self.job_if(self.review_job)
-        for needle in ("github.event.issue.pull_request", "github.event.issue.state == 'open'",
-                       "github.event.comment.user.type != 'Bot'"):
-            self.assertIn(needle, condition)
+        self.assertIn("needs.authorize.result == 'success'", condition)
+        self.assertIn("needs.authorize.outputs.allowed == 'true'", condition)
+        # `authorize` is skipped for a pull request event, which must still be reviewed.
+        self.assertIn("!cancelled()", condition)
 
     def test_only_an_exact_review_command_gets_as_far_as_the_concurrency_group(self) -> None:
-        # GitHub keeps one waiting run per group, so `/reviewed` must not be able to replace a waiting `/review`.
-        condition = self.job_if(self.review_job)
-        self.assertIn("github.event.comment.body == '/review'", condition)
-        self.assertIn("startsWith(github.event.comment.body, '/review ')", condition)
-        self.assertIn("fromJSON('\"\\n\"')", condition)
+        condition = self.job_if(self.authorize_job)
+        for needle in ("github.event.comment.body == '/review'", "startsWith(github.event.comment.body, '/review ')",
+                       "github.event.issue.pull_request", "github.event.issue.state == 'open'",
+                       "github.event.comment.user.type != 'Bot'", "fromJSON('\"\\n\"')"):
+            self.assertIn(needle, condition)
         self.assertNotIn("startsWith(github.event.comment.body, '/review')", condition)
 
     def test_the_comment_text_never_reaches_a_shell_script_directly(self) -> None:
         # Interpolating it into `run:` would let a comment inject commands into a job that holds secrets.
         self.assertIn("COMMENT_BODY: ${{ github.event.comment.body }}", self.review_job)
+        self.assertNotIn("github.event.comment.body", self.authorize_job.split("steps:", 1)[1])
         for block in self.text.split("run: |")[1:]:
             script = block.split("\n      - ", 1)[0]
             self.assertNotIn("${{ github.event.comment", script)
@@ -697,6 +710,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_the_review_job_is_still_bounded(self) -> None:
         self.assertIn(f"timeout-minutes: {JOB_LIMIT_SECONDS // 60}\n", self.review_job)
+        self.assertIn("timeout-minutes: 2\n", self.authorize_job)
 
 
 class RepeatTests(unittest.TestCase):
@@ -884,9 +898,11 @@ class CommitCountTests(unittest.TestCase):
         with mock.patch.object(review, "gh", gh):
             self.assertIsNone(review.commits_after(7, "base/base", "9" * 40))
 
-    def body(self, sha: str) -> str:
+    def body(self, sha: str, *, current: bool = True) -> str:
+        """A summary of `sha`; by default one whose status line already says it is the latest commit."""
+        status = render.status_block(sha, unreviewed=0, compare_url="", files_url="") if current else None
         return render.render_summary(overview=None, new=[], outside=[], threads=[], reopened=set(), fixed=set(),
-                                     failed=[], details="d", repo="base/base", head_sha=sha)
+                                     failed=[], details="d", repo="base/base", head_sha=sha, status=status)
 
     def test_refresh_status_edits_the_latest_summary_with_the_count_and_a_compare_link(self) -> None:
         gh, calls = self.fake_gh(self.SHAS, body=self.body(self.SHAS[1]))
@@ -913,6 +929,22 @@ class CommitCountTests(unittest.TestCase):
                 with mock.patch.object(review, "gh", gh):
                     self.assertEqual(review.refresh_status(7, "base/base"), 0)
                 self.assertFalse([c for c in calls if "PATCH" in c])
+
+    def test_a_summary_that_could_not_check_for_newer_commits_is_corrected_by_the_next_refresh(self) -> None:
+        sent: list[str] = []
+        gh, _ = self.fake_gh(self.SHAS, body=self.body(self.SHAS[3], current=False))
+
+        def capture(args, input_text=None):
+            if "PATCH" in args:
+                sent.append(json.loads(input_text)["body"])
+                return ""
+            return gh(args, input_text)
+
+        with mock.patch.object(review, "gh", capture):
+            review.refresh_status(7, "base/base")
+        self.assertEqual(len(sent), 1)
+        self.assertIn("the latest commit", sent[0])
+        self.assertNotIn("could not be checked", sent[0])
 
     def test_refresh_status_leaves_a_summary_from_before_the_marker_existed_alone(self) -> None:
         gh, calls = self.fake_gh(self.SHAS, body="<!-- CLAUDE_REVIEW_SUMMARY -->\n## old")
@@ -980,9 +1012,22 @@ class CommitCountTests(unittest.TestCase):
         ctx = review.Context(description="d", title="t", files=[], diff=DIFF, pr_number=7, head_sha=self.SHAS[1])
         with mock.patch.object(review, "gh", gh):
             self.assertIn("the latest commit", review.status_for(ctx))
-        with mock.patch.object(review, "gh", FakeGh(fail=("pr view",))):
-            self.assertIsNone(review.status_for(ctx))
         self.assertIsNone(review.status_for(review.Context(description="d", title="t", files=[], diff=DIFF)))
+
+    def test_when_the_pull_request_cannot_be_read_the_summary_does_not_claim_to_be_current(self) -> None:
+        ctx = review.Context(description="d", title="t", files=[], diff=DIFF, pr_number=7, head_sha=self.SHAS[1])
+        for failure in ("pr view", "pulls/7/commits"):
+            with self.subTest(failure=failure), mock.patch.object(review, "gh", FakeGh(fail=(failure,))):
+                block = review.status_for(ctx)
+            self.assertIn("could not be checked", block)
+            self.assertNotIn("✅", block)  # "✅ Reviewed ..., the latest commit." is the claim of being current
+            self.assertIn("comment `/review`", block)
+
+    def test_a_summary_built_without_any_status_does_not_claim_to_be_current_either(self) -> None:
+        text = render.render_summary(overview=None, new=[], outside=[], threads=[], reopened=set(), fixed=set(),
+                                     failed=[], details="d", repo="base/base", head_sha="b" * 40)
+        self.assertIn("could not be checked", text)
+        self.assertNotIn("✅ Reviewed", text)
 
     def test_a_local_run_makes_no_status_calls(self) -> None:
         self.assertIsNone(review.status_for(review.Context(description="d", title="t", files=[], diff=DIFF)))
@@ -1119,7 +1164,7 @@ def find_workflow() -> Path | None:
 
 
 WORKFLOW = find_workflow()
-JOB_LIMIT_SECONDS = 15 * 60  # timeout-minutes in claude-review.yml; a test checks that the two agree
+JOB_LIMIT_SECONDS = 30 * 60  # timeout-minutes in claude-review.yml; a test checks that the two agree
 
 
 class AgentRunTests(unittest.TestCase):
