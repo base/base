@@ -71,7 +71,7 @@ The `docker-compose.yml` orchestrates a complete local devnet environment with b
 - Unified Base sequencer and validator/RPC nodes on L2
 - The canonical Go `op-batcher` (`op-batcher` service) submitting L2 data to L1
 - The Rust `base batcher` (`base-batcher` service) running in **shadow mode**
-- A shadow validator (`base-shadow-validator` service) deriving the shadow DA
+- A shadow validator (`base-shadow-validator` service) deriving its chain from the shadow DA
 
 All services read configuration from `devnet-env` in this directory. The devnet stores chain data in `.devnet/` which is created on first run.
 
@@ -88,11 +88,18 @@ infrastructure:
   mainnet's runtime config. `--txmgr.cell-proof-time=0` enables Fusaka cell
   proofs from genesis for the local L1 (chain ID 1337), which this version does
   not auto-detect.
-- **Shadow DA — `base-batcher`.** The Rust `base batcher` runs in `--shadow-mode`,
-  posting to `SHADOW_BATCH_INBOX_ADDRESS` from `SHADOW_BATCHER_ADDR` — a distinct,
-  funded dev account, so its L1 nonces never collide with the op-batcher's. It
-  follows the shadow validator's derivation through `--rollup-rpc-url` and compares
-  blocks with it through `--parity-validator-l2-rpc-url`.
+- **Shadow DA — `base-batcher`.** The Rust `base batcher` runs in shadow mode
+  (`--shadow.enabled`), posting to `SHADOW_BATCH_INBOX_ADDRESS` from
+  `SHADOW_BATCHER_ADDR` — a distinct, funded dev account, so its L1 nonces never
+  collide with the op-batcher's. It reads the blocks to submit through
+  `--sequencer-urls`: the consensus RPC of `base-builder`, which forwards the
+  block reads to its execution client, or the three conductors in the HA
+  devnet, among which it finds the leader. It follows the shadow validator's
+  derivation through `--shadow.validator-rollup-rpc`, checks through
+  `--shadow.inbox` that the batch inbox of the validator's rollup config is
+  `SHADOW_BATCH_INBOX_ADDRESS`, and compares the validator's blocks with the
+  leader sequencer's through `--shadow.validator-l2-rpc`. It runs with
+  `--no-throttle`, which shadow mode requires.
 - **Shadow validator — `base-shadow-validator`.** A validator-mode `rpc` node
   that overrides the batch inbox and batcher sender
   (`--l1.dangerously-override-da-batch-inbox`,
@@ -176,14 +183,13 @@ just anvil-nitro-local up
 Set `L2_BASE_DENIM_BLOCK` to another block to move activation, or set it to an
 empty value to leave Denim unscheduled.
 
-To exercise validity transactions on the native payload builder, the deployment
-must schedule Denim and configure both sides of the forwarding path:
+To exercise validity transactions on the native payload builder, the deployment must schedule Denim and configure both sides
+of the forwarding path:
 
-- builder: `--builder.enable-experimental-validity-transactions` and
-  `--builder.payload-builder-cutover`. The builder flag also registers
+- builder: `--builder.payload-builder-cutover`. The builder always registers
   `base_sendRawTransactionValidity` for direct submission.
-- mempool/client: `--enable-experimental-validity-transactions` and a
-  `--builder-rpc-urls` endpoint targeting the builder
+- mempool/client: `--enable-tx-forwarding` and a `--builder-rpc-urls` endpoint
+  targeting the builder
 
 The default devnet compose files include these flags and schedule Cobalt at
 block 22 and Denim at block 25. Builder selection and block cadence change at

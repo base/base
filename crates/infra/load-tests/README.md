@@ -160,7 +160,7 @@ delay is measured for logging but is no longer included in the JSON output.
 | Config | Target | Notes |
 |--------|--------|-------|
 | `devnet.yaml` | Local devnet | Uses Anvil Account #1 |
-| `validity-devnet.yaml` | Local devnet | Validity (conditional) workload; routes half the senders through `base_sendRawTransactionValidity`. Run with `FUNDER_KEY=... just load-test run validity-devnet`. Before Cobalt, enable the experimental validity override on both ingress and builder |
+| `validity-devnet.yaml` | Local devnet | Validity (conditional) workload; routes half the senders through `base_sendRawTransactionValidity`. Run with `FUNDER_KEY=... just load-test run validity-devnet` |
 | `real-token-devnet.yaml.template` | Local devnet | Rendered by `just load-test real-token` after deploying the devnet WETH/USDC harness |
 | `validity-stress.yaml.template` | Local devnet | Rendered by `just load-test validity-stress` with a freshly deployed `DoubleCounter` |
 | `sepolia.yaml` | Base Sepolia | Requires `FUNDER_KEY` |
@@ -349,12 +349,12 @@ continuously for 60 seconds.
 The stress profile submits directly to the builder RPC on port 7545 so ingress forwarding cannot
 become the bottleneck or leave an asynchronous forwarding backlog between runs. To exercise the
 end-to-end forwarding path instead, override `transaction_submission_rpcs` in a rendered copy to
-port 8545. Both nodes still require the experimental validity flags described below.
+port 8545. Ingress must have forwarding configured as described below.
 
 A configurable fraction of *senders* can route their entire traffic through the
 `base_sendRawTransactionValidity` endpoint, attaching validity predicates to
-every transaction they submit. Every predicate type accepted at ingress is
-supported: the state-based `storage` condition, and the build-position
+every transaction they submit. All five server predicate types are supported:
+the state-based `balance`, `nonce`, and `storage` conditions, and the build-position
 `block_number` and `flashblock_index` conditions (compared against the block and
 flashblock currently being built). This exercises the sequencer and builder
 under congestion when validity predicates are in play. Set `validity.ratio` to
@@ -375,6 +375,14 @@ validity:
   priority_lead_multiplier: 2 # multiply the priority-lead cohort's tip
   priority_fee_divisor: 2     # lower the remaining validity senders' tips
   predicates:
+    - type: balance
+      address: sender          # sender | recipient | 0x-literal
+      op: ">="
+      value: "0"
+    - type: nonce
+      address: sender
+      op: ">="
+      value: "0"
     - type: storage
       address: "0x1234567890123456789012345678901234567890"
       slot:
@@ -398,12 +406,18 @@ validity:
       value: "0x0"                # absolute block number
     # ...or a runtime-resolved offset (current_block + offset at prepare time):
     - type: block_number
-      op: ">="
+      op: "<="                  # required block-number expiry bound
       offset: "10"
     - type: flashblock_index
       op: ">="
       value: "1"
 ```
+
+The `nonce` predicate compares the watched account's protocol nonce immediately
+before transaction execution, using the same operators and `address`, `op`, and
+`value` fields as `balance`. Absent accounts have nonce zero. It does not read
+EIP-8130 channel nonces; use a storage predicate for those. Like every validity
+submission, nonce predicates must be paired with a `block_number` upper bound.
 
 Predicate addresses resolve per transaction: `sender` → the tx `from`,
 `recipient` → the tx `to` (falling back to `from` for contract creation), or a
@@ -468,12 +482,7 @@ confirm the spike landed via the `by_cohort` / `fullest_block` breakdown in the
 summary. Exactly one of `value` or `offset` may be set on a `block_number`
 predicate; setting both or neither is a configuration error.
 
-**Required setup for end-to-end evaluation.** The ingress and builder must run a
-version that pre-registers the validity RPC. The endpoint and builder extension
-acceptance become active at Cobalt, without a restart at activation. Before Cobalt,
-opt in on ingress with `--enable-experimental-validity-transactions` and on the
-builder with `--builder.enable-experimental-validity-transactions`. If forwarding
-is used, configure `--enable-tx-forwarding` and `--builder-rpc-urls=<url>` on ingress.
+**Required setup for end-to-end evaluation.** If forwarding is used, configure `--enable-tx-forwarding` and `--builder-rpc-urls=<url>` on ingress.
 The submission proxy must also route `base_sendRawTransactionValidity` to that ingress.
 Rejected requests must not be retried as plain `eth_sendRawTransaction`.
 Both build paths evaluate state and block predicates. `flashblock_index` requires the

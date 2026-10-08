@@ -11,12 +11,8 @@ use base_prover_service_client::ProofRequesterProvider;
 use tracing::{debug, info, instrument, warn};
 
 use crate::{
-    Metrics,
-    driver::RecoveredState,
-    error::ProposerError,
-    proof_adapter::ProposerProofAdapter,
-    proof_target::ProofTarget,
-    proposal_intervals::{IntervalResolver, Intervals},
+    Metrics, driver::RecoveredState, error::ProposerError, proof_adapter::ProposerProofAdapter,
+    proof_target::ProofTarget, proposal_intervals::IntervalResolver,
 };
 
 /// Builds and dispatches proposer TEE proof requests.
@@ -56,7 +52,6 @@ impl ProofDispatcher {
         target_block: u64,
         recovered: &RecoveredState,
         claimed_l2_output_root: B256,
-        intervals: Intervals,
     ) -> Result<ProofRequest, ProposerError> {
         let (sync_status, agreed_l2_head) = tokio::try_join!(
             self.rollup_client.sync_status(),
@@ -91,7 +86,6 @@ impl ProofDispatcher {
             claimed_l2_output_root,
             claimed_l2_block_number: target_block,
             proposer: self.proposer_address,
-            intermediate_block_interval: intervals.intermediate_block_interval,
             l1_head_number: l1_header.number,
             schedule_l2_block_number: None,
         })
@@ -182,22 +176,20 @@ impl ProofDispatcher {
                 break;
             };
 
-            let request = match self
-                .build_request(target_block, current, claimed_l2_output_root, intervals)
-                .await
-            {
-                Ok(request) => request,
-                Err(error) => {
-                    Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED)
-                        .increment(1);
-                    warn!(
-                        target_block,
-                        error = %error,
-                        "Failed to build proof request, will retry next iteration"
-                    );
-                    break;
-                }
-            };
+            let request =
+                match self.build_request(target_block, current, claimed_l2_output_root).await {
+                    Ok(request) => request,
+                    Err(error) => {
+                        Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED)
+                            .increment(1);
+                        warn!(
+                            target_block,
+                            error = %error,
+                            "Failed to build proof request, will retry next iteration"
+                        );
+                        break;
+                    }
+                };
 
             match self.dispatch_request(request).await {
                 Ok(session_id) => {
@@ -318,12 +310,7 @@ mod tests {
         };
 
         let err = dispatcher
-            .build_request(
-                200,
-                &recovered,
-                B256::repeat_byte(0xaa),
-                Intervals { block_interval: 100, intermediate_block_interval: 100 },
-            )
+            .build_request(200, &recovered, B256::repeat_byte(0xaa))
             .await
             .expect_err("L1 RPC header must match rollup-selected L1 head");
 

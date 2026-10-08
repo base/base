@@ -281,15 +281,17 @@ impl Display for BatchSendError {
 
 impl BatchRpcClient {
     /// Creates a new batch RPC client targeting the given endpoint.
-    pub fn new(url: Url) -> Self {
+    pub fn new(url: Url) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(RPC_TIMEOUT)
             .connect_timeout(Duration::from_secs(3))
             .pool_max_idle_per_host(256)
             .tcp_nodelay(true)
             .build()
-            .expect("failed to build reqwest client");
-        Self { client, url, batch_size: MAX_BATCH_RPC_SIZE }
+            .map_err(|e| {
+                BaselineError::Rpc(format!("failed to build batch RPC HTTP client: {e}"))
+            })?;
+        Ok(Self { client, url, batch_size: MAX_BATCH_RPC_SIZE })
     }
 
     /// Sets the maximum number of JSON-RPC calls in each HTTP request.
@@ -328,7 +330,9 @@ impl BatchRpcClient {
 
         let chunk_requests = items.chunks(self.batch_size).map(|chunk| async move {
             let _permit = match request_limiter {
-                Some(limiter) => Some(limiter.acquire().await.expect("semaphore never closed")),
+                Some(limiter) => Some(limiter.acquire().await.map_err(|e| {
+                    BaselineError::Rpc(format!("request limiter semaphore closed: {e}"))
+                })?),
                 None => None,
             };
             self.send_raw_chunk(chunk).await
@@ -461,11 +465,9 @@ mod tests {
 
     use super::*;
 
-    fn storage_predicate() -> ValidityPredicate {
-        ValidityPredicate::Storage {
+    fn balance_predicate() -> ValidityPredicate {
+        ValidityPredicate::Balance {
             address: address!("00000000000000000000000000000000000000aa"),
-            slot: U256::ZERO,
-            mask: U256::MAX,
             op: ValidityOperator::GreaterThanOrEqual,
             value: U256::from(1u64),
         }
@@ -478,7 +480,7 @@ mod tests {
         drop(listener);
         let url =
             Url::parse(&format!("http://user:secret@{address}")).expect("valid credentialed URL");
-        let client = BatchRpcClient::new(url);
+        let client = BatchRpcClient::new(url).expect("build batch client");
 
         let error = client
             .send_raw_transactions(&[SubmitItem::plain(Bytes::from(vec![1]))], None)
@@ -496,7 +498,7 @@ mod tests {
     fn batch_size_is_configurable() {
         let url = Url::parse("http://localhost:8545").unwrap();
 
-        assert_eq!(BatchRpcClient::new(url).with_batch_size(25).batch_size, 25);
+        assert_eq!(BatchRpcClient::new(url).unwrap().with_batch_size(25).batch_size, 25);
     }
 
     #[test]
@@ -505,7 +507,7 @@ mod tests {
         assert!(!plain.is_validity());
 
         let validity =
-            SubmitItem::with_validity(Bytes::from_static(&[0x02]), vec![storage_predicate()]);
+            SubmitItem::with_validity(Bytes::from_static(&[0x02]), vec![balance_predicate()]);
         assert!(validity.is_validity());
     }
 
@@ -513,7 +515,7 @@ mod tests {
     fn build_batch_body_mixes_methods_and_ids() {
         let items = vec![
             SubmitItem::plain(Bytes::from_static(&[0xaa])),
-            SubmitItem::with_validity(Bytes::from_static(&[0xbb]), vec![storage_predicate()]),
+            SubmitItem::with_validity(Bytes::from_static(&[0xbb]), vec![balance_predicate()]),
         ];
 
         let body = BatchRpcClient::build_batch_body(&items);
@@ -529,15 +531,15 @@ mod tests {
         assert_eq!(body[1]["id"], 1);
         assert_eq!(body[1]["method"], BASE_SEND_RAW_TRANSACTION_VALIDITY);
         assert_eq!(body[1]["params"][0], "0xbb");
-        assert_eq!(body[1]["params"][1]["validity"][0]["type"], "storage");
+        assert_eq!(body[1]["params"][1]["validity"][0]["type"], "balance");
         assert_eq!(body[1]["params"][1]["validity"][0]["params"]["op"], ">=");
     }
 
     #[test]
     fn validity_predicate_serializes_to_server_wire_shape() {
         // Guards against drift from the canonical base-execution-txpool type.
-        let json = serde_json::to_value(storage_predicate()).unwrap();
-        assert_eq!(json["type"], "storage");
+        let json = serde_json::to_value(balance_predicate()).unwrap();
+        assert_eq!(json["type"], "balance");
         assert_eq!(json["params"]["op"], ">=");
         assert_eq!(json["params"]["address"], "0x00000000000000000000000000000000000000aa");
     }

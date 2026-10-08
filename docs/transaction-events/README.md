@@ -18,10 +18,10 @@ they age out: high-volume proxy and builder-decision events default to 3 days,
 ingress and forwarding events default to 7 days, and failures, drops,
 inclusion, and flashblock events default to 30 days. Ingest rejects events
 whose `event_time` is already outside its window or more than an hour in the
-future. `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` uses the same warm window as
+future. A retried `event_id` dedupes only within the same UTC hour of its
+`event_time`. `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` uses the same warm window as
 `TXPOOL_SEND_RAW_TRANSACTION`. `BUILDER_DEFERRED` and `BUILDER_EXPIRED` use the
-same hot window as the other per-attempt builder decisions; deferral can fire
-once per flashblock for a parked validity transaction.
+same hot window as the other per-attempt builder decisions.
 
 ## Configuration Fields
 
@@ -213,7 +213,7 @@ incoming one. `base_insertValidatedTransaction` uses
 
 Forwarding:
 
-- `TXPOOL_BUILDER_CONSUMED`
+- `TXPOOL_BUILDER_CONSUMED` (retired)
 - `TXPOOL_BUILDER_FORWARD_ATTEMPT`
 - `TXPOOL_BUILDER_FORWARD_SUCCESS` (retired)
 - `TXPOOL_BUILDER_FORWARD_FAILURE`
@@ -223,13 +223,18 @@ Forwarding:
 
 A mempool node forwards each pending transaction to every configured builder,
 and forwards it again every `--tx-forwarding-resend-after-ms` while it stays
-pending. `TXPOOL_BUILDER_CONSUMED` is emitted per destination each time a
-transaction is queued for forwarding, and its event ID includes the builder
-URL. `TXPOOL_BUILDER_FORWARD_ATTEMPT` is emitted only for RPC retries
-(`data.attempt` >= 1); the first attempt is implied by `CONSUMED`. Successful
+pending. Each destination has its own pool reader and queue, so the mempool
+node does not journal the hand-off: it no longer emits
+`TXPOOL_BUILDER_CONSUMED` or `TXPOOL_BUILDER_FORWARD_SUCCESS`. Successful
 delivery is recorded by the receiving builder as
-`TXPOOL_VALIDATED_INSERT_ACCEPTED`, whose event ID includes the builder host, so
-the mempool node no longer emits `TXPOOL_BUILDER_FORWARD_SUCCESS`.
+`TXPOOL_VALIDATED_INSERT_ACCEPTED` or `TXPOOL_VALIDATED_INSERT_REJECTED`,
+whose event ID includes the builder host. A send that fails is recorded by the
+mempool node as `TXPOOL_BUILDER_FORWARD_FAILURE` or
+`TXPOOL_BUILDER_FORWARD_DROPPED`. `TXPOOL_BUILDER_FORWARD_ATTEMPT` is emitted
+only for RPC retries (`data.attempt` >= 1). The time a transaction was queued
+for each destination, its position in the pool iterator, and how many times it
+was resent are not journaled; the reader and forwarder metrics cover them in
+aggregate.
 
 `TXPOOL_BUILDER_FORWARD_DROPPED` is emitted only for transaction-scoped drops
 where the forwarding task still knows the `tx_hash`, such as final RPC failure
@@ -238,7 +243,6 @@ journal and remains visible through logs and metrics.
 
 Builder:
 
-- `BUILDER_CONSIDERED`
 - `BUILDER_ACCEPTED`
 - `BUILDER_REJECTED`
 - `BUILDER_DEFERRED`
@@ -249,14 +253,22 @@ Builder:
 - `BUILDER_FLASHBLOCK_PUBLISHED`
 - `BUILDER_FLASHBLOCK_BUILD_STOPPED`
 
-Builder caveat: `BUILDER_CONSIDERED`, `BUILDER_ACCEPTED`,
-`BUILDER_REJECTED`, `BUILDER_DEFERRED`, and `BUILDER_EXPIRED` are emitted per
-payload-building attempt and include `payload_id`, `block_number`, and
-`flashblock_index` when applicable. The same transaction can therefore produce
-multiple decision events across flashblocks. `BUILDER_DEFERRED` is emitted each
-time the builder moves a transaction from the selection queue into the parking
-lot, including after a promote-and-repark in the same flashblock. Reindexing an
-already-parked transaction when its blocker changes does not emit another
+Builder caveat: `BUILDER_ACCEPTED`, `BUILDER_REJECTED`, `BUILDER_DEFERRED`,
+and `BUILDER_EXPIRED` are emitted per payload-building attempt and include
+`payload_id`, `block_number`, and `flashblock_index` when applicable. The same
+transaction can therefore produce multiple decision events across flashblocks.
+Neither builder emits `BUILDER_CONSIDERED`: every candidate gets one of the
+decision events above, which carries the same budget and position fields. The
+native builder journals only validity-gated candidates; a candidate whose
+predicates pass but which is then skipped (block limits, resource metering,
+coinbase tip, nonce or EVM validation) gets `BUILDER_REJECTED`. A parked
+transaction is parked again on every later flashblock and after every
+promote-and-repark, but both builders emit `BUILDER_DEFERRED` only the first
+time they defer a transaction in a block build and again when the
+`defer_reason` changes; its `flashblock_index` and `ordering_position` are
+those of that deferral. The native builder tracks this per build attempt, so
+pre-Denim rebuilds of the same payload report a deferral again. Reindexing an already-parked
+transaction when its blocker changes does not emit another
 `BUILDER_DEFERRED`. `BUILDER_EXPIRED` is the terminal discard for builder-side
 windows that can never become valid again, such as an expired bundle validity
 window or an expired position predicate. `BUILDER_ACCEPTED` and
@@ -410,8 +422,9 @@ Join later park, expiry, accept, and include events by `tx_hash`:
 }
 ```
 
-Parked (recoverable predicate, held for a later position or flashblock). Does
-not repeat the predicate list:
+Parked (recoverable predicate, held for a later position or flashblock).
+Emitted once per block per defer reason, and does not repeat the predicate
+list:
 
 ```json
 {

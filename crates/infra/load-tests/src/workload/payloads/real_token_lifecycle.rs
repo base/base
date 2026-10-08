@@ -27,10 +27,7 @@ use crate::{
     },
 };
 
-fn progress_bar(hide_progress: bool, total: u64, prefix: &str) -> ProgressBar {
-    if hide_progress {
-        return ProgressBar::hidden();
-    }
+fn progress_bar(total: u64, prefix: &str) -> ProgressBar {
     let pb = ProgressBar::new(total);
     pb.set_style(
         ProgressStyle::with_template("{prefix} [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
@@ -374,7 +371,6 @@ pub async fn recover_real_tokens(
     chain_id: u64,
     max_gas_price: u128,
     primary_submission_rpc: Url,
-    hide_progress: bool,
     setup: &RealTokenSetup,
 ) -> Result<RealTokenRecoverySummary> {
     let client = client.clone();
@@ -386,7 +382,7 @@ pub async fn recover_real_tokens(
     let account_data: Vec<_> =
         accounts.accounts().iter().map(|a| (a.address, a.signer.clone())).collect();
     let total_accounts = account_data.len();
-    let pb_recover = progress_bar(hide_progress, total_accounts as u64, "Recovering real tokens");
+    let pb_recover = progress_bar(total_accounts as u64, "Recovering real tokens");
 
     let recover_futs: Vec<_> = account_data
         .into_iter()

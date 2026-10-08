@@ -82,6 +82,24 @@ pub enum BlockNumberBound {
 /// `ValidityPredicate` values against each transaction at prepare time.
 #[derive(Debug, Clone)]
 pub enum ValidityPredicateTemplate {
+    /// Balance comparison template.
+    Balance {
+        /// Account whose balance is read.
+        address: PredicateAddress,
+        /// Comparison operator.
+        op: ValidityOperator,
+        /// Right-hand comparison value.
+        value: U256,
+    },
+    /// Protocol-nonce comparison template.
+    Nonce {
+        /// Account whose protocol nonce is read.
+        address: PredicateAddress,
+        /// Comparison operator.
+        op: ValidityOperator,
+        /// Right-hand comparison value.
+        value: U256,
+    },
     /// Storage comparison template.
     Storage {
         /// Contract whose storage is read.

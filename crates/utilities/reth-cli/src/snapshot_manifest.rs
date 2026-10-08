@@ -523,6 +523,7 @@ impl SnapshotGenerator {
                 reth_node_core::version::version_metadata().short_version.to_string(),
             ),
             components,
+            extensions: BTreeMap::new(),
         };
 
         info!(block, components = manifest.components.len(), "snapshot manifest generated");
@@ -1078,6 +1079,7 @@ mod tests {
                     chunk_files: vec![],
                 }),
             )]),
+            extensions: BTreeMap::new(),
         }
     }
 
@@ -1146,6 +1148,7 @@ mod tests {
             base_url: None,
             reth_version: None,
             components,
+            extensions: BTreeMap::new(),
         };
 
         assert!(

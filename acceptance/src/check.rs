@@ -24,6 +24,15 @@ pub struct ObservedBlock {
     pub hash: String,
 }
 
+/// What the sampled heads must satisfy before `heads_converge` compares their common block.
+#[derive(Debug, Clone, Copy)]
+pub struct ConvergenceBounds {
+    /// Maximum height difference between the sampled heads.
+    pub max_lag_blocks: u64,
+    /// Lowest timestamp the common block may have.
+    pub minimum_timestamp: u64,
+}
+
 /// Mutable evidence and counters shared by one acceptance check.
 ///
 /// Samples use the scenario-wide `origin`; once the report limit is reached,
@@ -137,9 +146,13 @@ impl RpcObserver {
     }
 
     /// Executes one check within both its own and the scenario deadline.
+    ///
+    /// `minimum_timestamp` is the lowest timestamp of the block `heads_converge` may compare. It
+    /// is the activation of the fork for a check with an `after_fork` start, and zero otherwise.
     pub async fn run(
         &self,
         check: &AcceptanceCheck,
+        minimum_timestamp: u64,
         endpoints: &BTreeMap<String, String>,
         samples: &mut Vec<HeadSample>,
         origin: Instant,
@@ -148,7 +161,8 @@ impl RpcObserver {
         let started = Instant::now();
         let deadline = (started + check.timeout()).min(scenario_deadline);
         let mut state = ObservationState::new(json!({ "check": check.kind() }), samples, origin);
-        let evaluation = self.evaluate(check, endpoints, deadline, &mut state).await;
+        let evaluation =
+            self.evaluate(check, minimum_timestamp, endpoints, deadline, &mut state).await;
         let (status, message) = match evaluation {
             Ok(message) => (Status::Passed, message),
             Err(error) if state.infrastructure_error => (Status::Error, error.to_string()),
@@ -181,6 +195,7 @@ impl RpcObserver {
     pub async fn evaluate(
         &self,
         check: &AcceptanceCheck,
+        minimum_timestamp: u64,
         endpoints: &BTreeMap<String, String>,
         deadline: Instant,
         state: &mut ObservationState<'_>,
@@ -228,7 +243,9 @@ impl RpcObserver {
                     "max_lag_blocks": max_lag_blocks,
                     "common_height_hash": true,
                 });
-                self.converge(endpoints, roles, head, *max_lag_blocks, deadline, state).await
+                let bounds =
+                    ConvergenceBounds { max_lag_blocks: *max_lag_blocks, minimum_timestamp };
+                self.converge(endpoints, roles, head, bounds, deadline, state).await
             }
             AcceptanceCheck::HeadFresh { endpoint, maximum_age, duration, .. } => {
                 state.expected = json!({
@@ -534,12 +551,14 @@ impl RpcObserver {
     ///
     /// A common height of zero is not comparable: `safe` and `finalized` heads remain at genesis
     /// until derivation progresses, so the check keeps polling until a non-genesis block matches.
+    /// It also keeps polling while the block at the common height is older than
+    /// `bounds.minimum_timestamp`.
     pub async fn converge(
         &self,
         map: &BTreeMap<String, String>,
         roles: &[String],
         tag: &str,
-        max_lag: u64,
+        bounds: ConvergenceBounds,
         deadline: Instant,
         state: &mut ObservationState<'_>,
     ) -> Result<String> {
@@ -563,13 +582,22 @@ impl RpcObserver {
             if heads.len() == roles.len() {
                 let low = heads.iter().map(|(_, block)| block.number).min().unwrap_or_default();
                 let high = heads.iter().map(|(_, block)| block.number).max().unwrap_or_default();
+                let low_timestamp = heads
+                    .iter()
+                    .find(|(_, block)| block.number == low)
+                    .map_or(0, |(_, block)| block.timestamp);
                 state.observed = json!({
                     "low": low,
+                    "low_timestamp": low_timestamp,
                     "high": high,
                     "lag": high.saturating_sub(low),
-                    "maximum_lag": max_lag,
+                    "maximum_lag": bounds.max_lag_blocks,
+                    "minimum_timestamp": bounds.minimum_timestamp,
                 });
-                if low > 0 && high.saturating_sub(low) <= max_lag {
+                if low > 0
+                    && low_timestamp >= bounds.minimum_timestamp
+                    && high.saturating_sub(low) <= bounds.max_lag_blocks
+                {
                     let mut common: Option<String> = None;
                     let mut compared = Vec::new();
                     for (role, sampled) in &heads {
@@ -805,11 +833,14 @@ mod tests {
         time::Instant,
     };
 
-    use super::{ObservationState, RpcObserver};
+    use super::{ConvergenceBounds, ObservationState, RpcObserver};
     use crate::{AcceptanceCheck, Span, Status};
 
     // Socket scheduling is real time; ordinary assertions must not benchmark the CI host.
     const RPC_BUDGET: Duration = Duration::from_secs(5);
+    /// Deadline for cases whose expected outcome is reached only when the deadline elapses.
+    /// Long enough for a few local requests on a loaded runner, short enough to keep tests fast.
+    const DEADLINE_OUTCOME: Duration = Duration::from_millis(300);
 
     #[derive(Clone)]
     struct Reply {
@@ -902,7 +933,7 @@ mod tests {
         }
     }
 
-    fn healthy(duration: Duration, maximum_age: Duration) -> AcceptanceCheck {
+    fn healthy(duration: Duration, maximum_age: Duration, timeout: Duration) -> AcceptanceCheck {
         AcceptanceCheck::HeadsHealthy {
             id: "health".into(),
             endpoints: vec!["builder".into(), "validator".into()],
@@ -911,16 +942,27 @@ mod tests {
             minimum_blocks: 1,
             maximum_age: Span(maximum_age),
             max_lag_blocks: 1,
-            timeout: Span(Duration::from_millis(60)),
+            timeout: Span(timeout),
             start: None,
         }
     }
 
+    /// Runs a health check with a deadline far beyond any loaded CI runner's RPC latency.
     async fn run_health(
         left: Vec<Reply>,
         right: Vec<Reply>,
         duration: Duration,
         maximum_age: Duration,
+    ) -> crate::CheckResult {
+        run_health_within(left, right, duration, maximum_age, RPC_BUDGET).await
+    }
+
+    async fn run_health_within(
+        left: Vec<Reply>,
+        right: Vec<Reply>,
+        duration: Duration,
+        maximum_age: Duration,
+        timeout: Duration,
     ) -> crate::CheckResult {
         let map = BTreeMap::from([
             ("builder".into(), server(left).await),
@@ -929,11 +971,12 @@ mod tests {
         let mut samples = Vec::new();
         observer()
             .run(
-                &healthy(duration, maximum_age),
+                &healthy(duration, maximum_age, timeout),
+                0,
                 &map,
                 &mut samples,
                 Instant::now(),
-                Instant::now() + Duration::from_millis(80),
+                Instant::now() + timeout,
             )
             .await
     }
@@ -943,10 +986,11 @@ mod tests {
         let url = server(replies(&[block(1_000_000, 'a'), block(1_000_001, 'b')])).await;
         let map = BTreeMap::from([("rpc".into(), url)]);
         let mut samples = Vec::new();
-        let result = RpcObserver::new(RPC_BUDGET, Duration::from_millis(200))
+        let result = RpcObserver::new(RPC_BUDGET, Duration::from_millis(50))
             .unwrap()
             .run(
-                &progress(Duration::from_secs(1), 2),
+                &progress(DEADLINE_OUTCOME, 2),
+                0,
                 &map,
                 &mut samples,
                 Instant::now(),
@@ -962,6 +1006,7 @@ mod tests {
         let result = observer()
             .run(
                 &progress(RPC_BUDGET, 2),
+                0,
                 &BTreeMap::from([("rpc".into(), url)]),
                 &mut samples,
                 Instant::now(),
@@ -974,34 +1019,37 @@ mod tests {
 
     #[tokio::test]
     async fn progress_distinguishes_outage_from_recovered_violation() {
-        let result = run_progress(replies(&[block(10, 'a'), Value::Null])).await;
+        let result = run_progress(replies(&[block(10, 'a'), Value::Null]), DEADLINE_OUTCOME).await;
         assert_eq!(result.status, Status::Error);
         assert_eq!(result.samples, 1);
 
         // A single request consuming the remaining deadline is also infrastructure failure.
         let mut delayed = replies(&[block(10, 'a'), block(11, 'b')]);
         delayed[1].delay = RPC_BUDGET;
-        let result = run_progress(delayed).await;
+        let result = run_progress(delayed, DEADLINE_OUTCOME).await;
         assert_eq!(result.status, Status::Error);
         assert_eq!(result.samples, 1);
         assert_eq!(result.rpc_errors, 1);
 
-        let result = run_progress(replies(&[block(10, 'a'), Value::Null, block(9, 'b')])).await;
+        let result =
+            run_progress(replies(&[block(10, 'a'), Value::Null, block(9, 'b')]), RPC_BUDGET).await;
         assert_eq!(result.status, Status::Failed);
         assert!(result.message.contains("reorged"));
         assert!(result.rpc_errors > 0);
 
-        let result = run_progress(replies(&[block(10, 'a'), Value::Null, block(11, 'b')])).await;
+        let result =
+            run_progress(replies(&[block(10, 'a'), Value::Null, block(11, 'b')]), RPC_BUDGET).await;
         assert_eq!(result.status, Status::Passed);
         assert!(result.rpc_errors > 0);
     }
 
-    async fn run_progress(script: Vec<Reply>) -> crate::CheckResult {
+    async fn run_progress(script: Vec<Reply>, timeout: Duration) -> crate::CheckResult {
         let url = server(script).await;
         let mut samples = Vec::new();
         observer()
             .run(
-                &progress(Duration::from_secs(1), 1),
+                &progress(timeout, 1),
+                0,
                 &BTreeMap::from([("rpc".into(), url)]),
                 &mut samples,
                 Instant::now(),
@@ -1022,7 +1070,7 @@ mod tests {
                 &BTreeMap::from([("a".into(), left), ("b".into(), right)]),
                 &roles,
                 "latest",
-                0,
+                ConvergenceBounds { max_lag_blocks: 0, minimum_timestamp: 0 },
                 Instant::now() + RPC_BUDGET,
                 &mut state,
             )
@@ -1039,7 +1087,7 @@ mod tests {
                     &BTreeMap::from([("a".into(), left), ("b".into(), right)]),
                     &roles,
                     "latest",
-                    2,
+                    ConvergenceBounds { max_lag_blocks: 2, minimum_timestamp: 0 },
                     Instant::now() + RPC_BUDGET,
                     &mut state
                 )
@@ -1064,7 +1112,7 @@ mod tests {
                 &BTreeMap::from([("a".into(), left), ("b".into(), right)]),
                 &roles,
                 "safe",
-                0,
+                ConvergenceBounds { max_lag_blocks: 0, minimum_timestamp: 0 },
                 Instant::now() + RPC_BUDGET,
                 &mut state,
             )
@@ -1081,7 +1129,48 @@ mod tests {
                 &BTreeMap::from([("a".into(), left), ("b".into(), right)]),
                 &roles,
                 "safe",
-                0,
+                ConvergenceBounds { max_lag_blocks: 0, minimum_timestamp: 0 },
+                Instant::now() + Duration::from_millis(100),
+                &mut state,
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(state.observed.get("common_height").is_none());
+    }
+
+    /// A common block older than `minimum_timestamp` is not compared. The check keeps polling
+    /// until both heads reach a block at or after it, and fails at the deadline when they never do.
+    #[tokio::test]
+    async fn convergence_waits_for_a_common_block_at_or_after_the_minimum_timestamp() {
+        let roles = vec!["a".into(), "b".into()];
+        let script = [block_at(5, 'a', 90), block_at(10, 'c', 100), block_at(10, 'c', 100)];
+        let left = server(replies(&script)).await;
+        let right = server(replies(&script)).await;
+        let mut samples = Vec::new();
+        let mut state = ObservationState::new(json!({}), &mut samples, Instant::now());
+        observer()
+            .converge(
+                &BTreeMap::from([("a".into(), left), ("b".into(), right)]),
+                &roles,
+                "safe",
+                ConvergenceBounds { max_lag_blocks: 0, minimum_timestamp: 100 },
+                Instant::now() + RPC_BUDGET,
+                &mut state,
+            )
+            .await
+            .unwrap();
+        assert_eq!(state.observed["common_height"], json!(10));
+
+        let left = server(replies(&[block_at(5, 'a', 90)])).await;
+        let right = server(replies(&[block_at(5, 'a', 90)])).await;
+        let mut samples = Vec::new();
+        let mut state = ObservationState::new(json!({}), &mut samples, Instant::now());
+        let result = observer()
+            .converge(
+                &BTreeMap::from([("a".into(), left), ("b".into(), right)]),
+                &roles,
+                "safe",
+                ConvergenceBounds { max_lag_blocks: 0, minimum_timestamp: 100 },
                 Instant::now() + Duration::from_millis(100),
                 &mut state,
             )
@@ -1101,13 +1190,14 @@ mod tests {
                 endpoints: vec!["a".into(), "b".into()],
                 head: "latest".into(),
                 max_lag_blocks: 0,
-                timeout: Span(Duration::from_secs(1)),
+                timeout: Span(DEADLINE_OUTCOME),
                 start: None,
             };
             let result = RpcObserver::new(RPC_BUDGET, Duration::from_secs(2))
                 .unwrap()
                 .run(
                     &check,
+                    0,
                     &BTreeMap::from([("a".into(), left), ("b".into(), right)]),
                     &mut Vec::new(),
                     Instant::now(),
@@ -1131,6 +1221,7 @@ mod tests {
         let result = observer()
             .run(
                 &check,
+                0,
                 &BTreeMap::from([("rpc".into(), url)]),
                 &mut Vec::new(),
                 Instant::now(),
@@ -1234,6 +1325,7 @@ mod tests {
         let result = observer()
             .run(
                 &progress(Duration::from_millis(10), 1),
+                0,
                 &BTreeMap::from([("rpc".into(), "http://127.0.0.1:1".into())]),
                 &mut samples,
                 Instant::now(),
@@ -1334,9 +1426,14 @@ mod tests {
         assert!(result.message.contains("freshness limit"));
 
         let delayed = vec![Reply { delay: Duration::from_millis(70), body: rpc(block(10, 'a')) }];
-        let result =
-            run_health(delayed.clone(), delayed, Duration::from_millis(4), Duration::from_secs(2))
-                .await;
+        let result = run_health_within(
+            delayed.clone(),
+            delayed,
+            Duration::from_millis(4),
+            Duration::from_secs(2),
+            Duration::from_millis(60),
+        )
+        .await;
         assert_eq!(result.status, Status::Error);
         assert!(result.rpc_errors > 0);
     }

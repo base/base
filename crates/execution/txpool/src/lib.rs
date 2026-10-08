@@ -9,8 +9,8 @@
 
 mod guard;
 pub use guard::{
-    Admission, AdmissionRecord, DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT, GuardLimits,
-    LimitClass, LimitRejection, MempoolGuard,
+    Admission, AdmissionRecord, DEFAULT_ALLOWLISTED_PAYMENT_LIMIT, DEFAULT_PAYMENT_LIMIT,
+    DEFAULT_SIGNATURE_LIMIT, GuardLimits, LimitClass, LimitRejection, MempoolGuard,
 };
 
 mod invalidation;
@@ -35,7 +35,7 @@ pub use validity::{
 };
 
 mod block_expiry;
-pub use block_expiry::BlockExpiryIndex;
+pub use block_expiry::{BlockExpiryIndex, ExpiryPosition, FlashblockExpiry};
 
 mod transaction;
 pub use transaction::{

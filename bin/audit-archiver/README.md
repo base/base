@@ -3,7 +3,9 @@
 Accepts transaction observability events over HTTP, stores them in Postgres,
 and serves Postgres-backed transaction event queries over JSON-RPC.
 `TIPS_AUDIT_POSTGRES_URL` is required to serve; startup fails if the Postgres
-schema is not ready. This S3 removal needs no new database migration.
+schema is not ready, which includes migration `003_transaction_events_v2.sql`;
+run `migrate up` before rolling out this release. This S3 removal needs no new
+database migration.
 If still on the pre-partition schema, `migrate up` resets the table and deletes
 its old rows: export them or agree on retention before running that migration.
 
@@ -59,10 +61,57 @@ just devnet tx-observability-smoke
 
 ## Transaction event retention
 
-`transaction_events` is partitioned by retention class (`hot`, `warm`,
-`cold`), then by UTC day of `event_time`. Retention drops whole day partitions
-instead of deleting rows, so expiry creates no dead tuples, index bloat, or
-vacuum work, and each day's indexes stay small enough to cache.
+Ingest writes `transaction_events_v2`, which is partitioned by retention class
+(`hot`, `warm`, `cold`), then by UTC day of `event_time`. Retention drops whole
+day partitions instead of deleting rows, so expiry creates no dead tuples,
+index bloat, or vacuum work.
+
+The primary key is `(event_hour, retention_class, event_id)`, where
+`event_hour` is the UTC hour of `event_time`. Leading with the hour keeps
+inserts in the current hour's key range instead of spreading them across the
+whole day's index. A retried or re-emitted `event_id` dedupes only within the
+same UTC hour of `event_time`; a re-emission in another hour stores a second
+row. `event_id`, `tx_hash`, and `block_hash` use `COLLATE "C"`. Hashes are
+stored only as `0x` followed by 64 lowercase hex digits, which a `CHECK`
+enforces.
+
+### Legacy tree
+
+Migrations 001 and 002 created an earlier `transaction_events` tree.
+Migration 003 created `transaction_events_v2` beside it without copying rows,
+and migration 004 drops the earlier tree and its partition functions. Apply
+004 only after every pod runs a release that reads and writes only v2;
+earlier releases fail readiness without the old tree.
+
+### Direct reads and warehouse extraction
+
+Ad hoc queries should filter hashes by their lowercase `0x` form, since no
+other form is stored. Migration 003 grants `SELECT` on the
+`transaction_events_v2` parent to the `datapilot` extraction role when that
+role exists. Leaf partitions get no grants because reads through the parent
+need none. Migration 003 builds BRIN indexes on `ingested_at` and `event_seq`,
+and each day partition gets both when it attaches; see
+[BRIN summaries](#brin-summaries) for how they stay usable.
+
+`event_seq` is a `BIGINT` identity column that numbers v2 rows in insertion
+order. Inserts through the parent take it from one sequence shared by every
+partition, and the runtime role needs no grant on that sequence. Values are
+unique, but each connection reserves 100 at a time, so they can be out of
+order across connections and have gaps. It exists for parallel extraction:
+DataPilot splits each incremental window into `event_seq` ranges, and because
+`event_seq` grows with physical row order, the `event_seq` BRIN index lets
+each range read only its own blocks. A hash such as `event_id` would make
+every range read the whole window. The DataPilot table entry for v2 uses:
+
+```json
+{
+  "incremental_load_column": "ingested_at",
+  "split_by_int_column": "event_seq",
+  "overwrite_by_columns": ["event_id", "event_hour", "retention_class"]
+}
+```
+
+with a small `NUM_SLICES` (DataPilot recommends 2-16 for incremental loads).
 
 Classes: hot (high-volume proxy and builder-decision events), warm (ingress,
 simulation success, txpool-forward), and cold (failures, drops, inclusion,
@@ -82,19 +131,60 @@ Each pass, for each class:
 - creates missing day partitions from the start of the retention window
   through three days after today, so ingest keeps working for three days if
   maintenance stops
-- drops day partitions that are entirely older than the retention window plus
-  a one-hour grace period
+- drops day partitions that are entirely older than the
+  retention window plus a one-hour grace period
 
-The runtime role does not own the table, so partition DDL goes through
-`SECURITY DEFINER` functions created by the baseline migration
-(`001_transaction_events_partitioned.sql`) and executable only by
-`audit_archiver`. Create uses `CREATE TABLE` + `ATTACH PARTITION`, which only
+The runtime role does not own the tables, so partition DDL goes through
+`SECURITY DEFINER` functions created by `003_transaction_events_v2.sql`,
+executable only by `audit_archiver`. Create uses `CREATE TABLE` + `ATTACH PARTITION`, which only
 takes a `SHARE UPDATE EXCLUSIVE` lock on the class partition. Drop detaches
 first (a brief `ACCESS EXCLUSIVE` lock on the class partition, which queues
 inserts for that class) and then drops the detached table in a separate
 transaction. Each statement runs under
 `TIPS_AUDIT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS`; a statement that
 times out is skipped and retried on the next pass.
+
+### BRIN summaries
+
+A BRIN index covers a block range only once the range is summarized. Without
+`autosummarize`, only VACUUM summarizes, and autovacuum reaches insert-only day
+partitions rarely: on a busy day partition most blocks can stay unsummarized
+for hours. A bitmap scan reads every unsummarized block, so each `event_seq`
+slice of a DataPilot extract reads that whole unsummarized tail. Once a range
+is summarized, inserts keep its summary current.
+
+When `TIPS_AUDIT_POSTGRES_URL` is set, a second background worker summarizes
+new blocks in the BRIN indexes of yesterday's and today's day partition of
+every class, every `TIPS_AUDIT_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS`.
+Like partition maintenance it uses its own one-connection pool and advisory
+lock, so one replica summarizes at a time and a long pass does not delay
+maintenance. `autosummarize` is not used: it queues each filled range into a
+fixed-size autovacuum work list, which drops requests at production insert
+rates.
+
+The runtime role does not own the indexes, so it calls
+`transaction_events_v2_summarize_brin`, a `SECURITY DEFINER` function created
+by `005_transaction_events_v2_summarize_brin.sql` and executable only by
+`audit_archiver`. Summarizing takes a `SHARE UPDATE EXCLUSIVE` lock on the
+partition, which conflicts with VACUUM but not with inserts or reads. Each
+partition runs under a 200 ms `lock_timeout`, below the default 1 s
+`deadlock_timeout` after which a waiting lock request cancels an autovacuum.
+A partition held by a vacuum is skipped until the next pass; the vacuum
+summarizes it when it finishes.
+
+The API can roll out before migration 005: until the function exists, each
+pass logs a warning and summarizes nothing.
+
+Watch `transaction_event_brin_ranges_summarized`,
+`transaction_event_brin_summary_lock_timeouts`, and
+`transaction_event_brin_summary_failures`.
+
+Migration 006 sets `effective_io_concurrency = 32` on the audit database so
+bitmap heap scans prefetch heap pages instead of reading one page per storage
+round trip. It applies to sessions that connect afterwards, and is skipped with
+a notice where the migration role does not own the database. Check it with
+`SELECT setconfig FROM pg_db_role_setting WHERE setdatabase = (SELECT oid FROM
+pg_database WHERE datname = current_database())`.
 
 ### Ingest admission
 
@@ -117,59 +207,4 @@ well before it reaches zero), `transaction_event_partitions_created`,
 - `TIPS_AUDIT_TRANSACTION_EVENT_WARM_RETENTION_DAYS` (default `7`)
 - `TIPS_AUDIT_TRANSACTION_EVENT_COLD_RETENTION_DAYS` (default `30`, at most `90`)
 - `TIPS_AUDIT_TRANSACTION_EVENT_PARTITION_LOCK_TIMEOUT_MS` (default `5000`): Postgres `lock_timeout` per partition create, detach, or drop
-
-## Incremental warehouse extraction index
-
-Migration `002_transaction_events_ingested_at_index.sql` registers a BRIN index
-on the partitioned `transaction_events` table and its hot/warm/cold parents.
-It uses `ON ONLY`: `migrate up` creates metadata quickly but does **not** build
-indexes on existing day partitions. The root index remains invalid until the
-day indexes are built and attached. Future day partitions automatically get
-their index on attach, even while the parent index is being completed.
-
-After deploying the migrator, arrange a separate, monitored one-off run using
-the `audit_archiver_migration` database credential:
-
-```bash
-# TIPS_AUDIT_POSTGRES_URL must point at the target network database.
-audit-archiver index
-```
-
-The `index` command builds one BRIN index at a time with `CREATE INDEX
-CONCURRENTLY` and attaches it to the class index. It is intentionally separate
-from the chart's `migrate up` init container: production has many populated
-day partitions, and building them can take hours. Re-running the command is
-safe; it skips attached indexes and drops/rebuilds invalid indexes left by a
-canceled concurrent build.
-
-Attaching a day index needs an `ACCESS EXCLUSIVE` lock on it. Inserts only lock
-the day they write to, but queries that do not filter by `event_date` (the
-transaction, block, bundle, and rejection lookups) lock every day's indexes
-for as long as they run. Each attach waits up to 30 seconds for its lock; new
-queries that touch that day queue behind it meanwhile. If the wait times out,
-the command moves on to the remaining days, then retries the deferred
-attaches with exponential backoff (5s doubling to 60s between attempts) for
-up to an hour before failing. It never cancels other sessions' queries.
-
-Monitor Postgres storage, read I/O, and ingest
-latency during the build. Do not run two index jobs against the same database;
-the command also holds the migration lock to serialize them.
-
-Check completion in each network database:
-
-```sql
-SELECT c.relname, i.indisvalid
-FROM pg_index i
-JOIN pg_class c ON c.oid = i.indexrelid
-WHERE c.relname IN (
-    'transaction_events_ingested_at_idx',
-    'transaction_events_hot_ingested_at_idx',
-    'transaction_events_warm_ingested_at_idx',
-    'transaction_events_cold_ingested_at_idx'
-);
-```
-
-All four should report `indisvalid = true`. The `ingested_at` BRIN index
-serves DataPilot's timestamp cutoff; it does not by itself index an epoch
-expression used for parallel slicing. Evaluate that expression's query plan
-separately before enabling `NUM_SLICES` on the production primary.
+- `TIPS_AUDIT_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS` (default `60`, at most `3600`, `0` disables): seconds between BRIN summary passes

@@ -14,8 +14,8 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
 use base_common_chains::{BaseUpgrade, Upgrades};
 use base_common_consensus::{
-    AccountChange, ChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
-    Eip8130TimestampError, InitialActor, SignedChange,
+    Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StructuralError, Eip8130Structure,
+    Eip8130TimestampError,
 };
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
@@ -33,7 +33,7 @@ use parking_lot::RwLock;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
 use reth_primitives_traits::{
-    Block, BlockBody, BlockTy, GotExpected, SealedBlock,
+    Block, BlockBody, BlockTy, GotExpected, SealedBlock, constants::MAX_TX_GAS_LIMIT_OSAKA,
     transaction::error::InvalidTransactionError,
 };
 use reth_storage_api::{
@@ -95,6 +95,7 @@ struct Eip8130ValidationState {
     sender_locked: bool,
     payer_locked: bool,
     payer_trusted: bool,
+    payer_allowlisted: bool,
     payer_max_cost: U256,
     /// Authorization reads and predicates used for build-time revalidation.
     manifest: WatchManifest,
@@ -108,12 +109,19 @@ pub struct LimitClassCache {
     entries: LruCache<Address, (Option<AccountState>, Option<bool>)>,
     // A slot mapping exists exactly while its account's cached lock state is present.
     slots: HashMap<B256, Address>,
+    // Allowlisted payers validated since their last balance change. Bounded by
+    // the operator allowlist, so it needs no eviction.
+    allowlisted_validations: AddressSet,
 }
 
 impl LimitClassCache {
     /// Creates an empty cache with the supplied non-zero account capacity.
     pub fn new(capacity: NonZeroUsize) -> Self {
-        Self { entries: LruCache::new(capacity), slots: HashMap::new() }
+        Self {
+            entries: LruCache::new(capacity),
+            slots: HashMap::new(),
+            allowlisted_validations: AddressSet::default(),
+        }
     }
 
     /// Returns and marks as recently used the cached account state, if present.
@@ -195,6 +203,19 @@ impl LimitClassCache {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.slots.clear();
+        self.allowlisted_validations.clear();
+    }
+
+    /// Records that an allowlisted payer was just validated, so its next
+    /// balance change advances the classification generation.
+    pub fn mark_allowlisted_validation(&mut self, payer: Address) {
+        self.allowlisted_validations.insert(payer);
+    }
+
+    /// Whether an allowlisted payer was validated since its last balance
+    /// change, clearing the record.
+    pub fn take_allowlisted_validation(&mut self, payer: Address) -> bool {
+        self.allowlisted_validations.remove(&payer)
     }
 }
 
@@ -682,6 +703,9 @@ pub struct BaseTransactionValidator<Client, Tx, Evm> {
     /// implementations. Precomputed so classification is an O(1) code-hash lookup
     /// with no code fetch or bytecode parsing.
     trusted_proxy_code_hashes: Arc<HashSet<B256>>,
+    /// Operator-allowlisted payers: count-limited at their own cap and
+    /// balance-bounded through a payer book.
+    allowlisted_payers: Arc<AddressSet>,
     limit_class_cache: Arc<RwLock<LimitClassCache>>,
     limit_class_cache_generation: Arc<AtomicU64>,
 }
@@ -750,6 +774,16 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
         }
     }
 
+    /// Sets the operator-allowlisted payers. An allowlisted payer that is not
+    /// trusted is limited to [`crate::GuardLimits::allowlisted_payment_limit`]
+    /// inflight payments and also balance-bounded through a payer book: its
+    /// balance can still move, so the count caps the exposure while the book
+    /// tracks it against canonical balance updates.
+    #[must_use]
+    pub fn with_allowlisted_payers(self, payers: impl IntoIterator<Item = Address>) -> Self {
+        Self { allowlisted_payers: Arc::new(payers.into_iter().collect()), ..self }
+    }
+
     /// Returns the cache generation used to close validation/invalidation races.
     pub fn limit_class_cache_generation(&self) -> u64 {
         self.limit_class_cache_generation.load(Ordering::Acquire)
@@ -775,19 +809,24 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
                 }
             }
             // A balance change is not part of the cached classification, but it
-            // seeds a trusted payer's `PayerBook` on first admission.
-            // `on_balance_changed` only corrects payers that already have a book;
-            // a trusted payer with no book yet would otherwise seed it from the
-            // (now stale) validation snapshot. Advance the generation so an
-            // admission whose validation predates this diff re-validates against
-            // the fresh balance.
+            // seeds a booked (trusted or allowlisted) payer's `PayerBook` on
+            // first admission. `on_balance_changed` only corrects payers that
+            // already have a book; a booked payer with no book yet would
+            // otherwise seed it from the (now stale) validation snapshot.
+            // Advance the generation so an admission whose validation predates
+            // this diff re-validates against the fresh balance.
             //
-            // Restricted to *known-trusted* payers: only they use the balance
-            // book, and a trusted payer with a pending transaction was just
-            // classified into the cache during that validation. Ordinary balance
-            // churn — the vast majority, and unrelated to any book — must not
-            // advance the generation and bounce unrelated admissions.
-            if diff.balance.is_some() && cache.is_trusted_cached(diff.address) {
+            // Restricted to payers that use a book and could have a validation
+            // in flight: known-trusted payers (a trusted payer with a pending
+            // transaction was just classified into the cache during that
+            // validation) and allowlisted payers validated since their last
+            // balance change. Ordinary balance churn — the vast majority, and
+            // unrelated to any book — must not advance the generation and
+            // bounce unrelated admissions, which fail as stale.
+            if diff.balance.is_some()
+                && (cache.is_trusted_cached(diff.address)
+                    || cache.take_allowlisted_validation(diff.address))
+            {
                 changed = true;
             }
         }
@@ -841,6 +880,7 @@ where
             require_l1_data_gas_fee: true,
             trusted_delegation_targets: Arc::new(trusted_delegation_targets),
             trusted_proxy_code_hashes: Arc::new(trusted_proxy_code_hashes),
+            allowlisted_payers: Arc::default(),
             limit_class_cache: Arc::default(),
             limit_class_cache_generation: Arc::default(),
         }
@@ -936,6 +976,7 @@ where
                 sender_locked: state.sender_locked,
                 payer_locked: state.payer_locked,
                 payer_trusted: state.payer_trusted,
+                payer_allowlisted: state.payer_allowlisted,
                 payer_balance: state.payer_balance,
                 max_cost: state.payer_max_cost,
             });
@@ -1051,6 +1092,13 @@ where
             .record(auth_start.elapsed().as_secs_f64());
         let (sender, payer, sender_actor, is_create, payer_actor) =
             auth_result.map_err(Self::map_tx_auth_error)?;
+        // Record the validation as soon as the payer is known, so a balance
+        // change that lands before admission invalidates it (see
+        // `invalidate_limit_class_cache`).
+        let payer_allowlisted = self.allowlisted_payers.contains(&payer);
+        if payer_allowlisted {
+            self.limit_class_cache.write().mark_allowlisted_validation(payer);
+        }
         let authorization_code_reads = storage.code_reads.clone();
         let config_reads = storage.take_reads();
 
@@ -1121,6 +1169,15 @@ where
             || intrinsic.execution_gas_available(signed.tx().gas_limit).is_none()
         {
             return Err(InvalidTransactionError::GasTooLow.into());
+        }
+        // EIP-7825 (from Azul): `gas_limit` plus the payer authentication
+        // metered on top of it is bounded by the per-transaction gas cap,
+        // matching execution.
+        if self.chain_spec().is_azul_active_at_timestamp(now)
+            && FeeCheck::max_chargeable_gas(signed.tx().gas_limit, intrinsic.payer_auth)
+                > MAX_TX_GAS_LIMIT_OSAKA
+        {
+            return Err(InvalidTransactionError::GasLimitTooHigh.into());
         }
 
         let payer_account = state
@@ -1297,9 +1354,13 @@ where
             sender_bytecode_hash: sender_account.bytecode_hash,
             payer_auth: intrinsic.payer_auth,
             watch_set,
-            sender_locked,
-            payer_locked,
+            // Without the Keystore an account's only key is its own secp256k1
+            // key, which can never change: its authorization is as stable as a
+            // locked account's, so it is exempt from the signature limit.
+            sender_locked: sender_locked || !keystore,
+            payer_locked: payer_locked || !keystore,
             payer_trusted,
+            payer_allowlisted,
             payer_max_cost,
             manifest,
         })
@@ -1555,6 +1616,7 @@ where
             }
             TxAuthError::SenderRecovery => "EOA sender recovery failed",
             TxAuthError::PayerRecovery => "open payer recovery failed",
+            TxAuthError::UnexpectedPayerAuth => "self-paid transaction carries a payer_auth",
             TxAuthError::Scope { .. } => "actor scope insufficient",
             TxAuthError::AccountIsLocked => "account is locked",
             TxAuthError::DelegationUnauthorized => "delegation requires admin actor",
@@ -1605,6 +1667,8 @@ where
             ApplyError::CreateAndDelegation => "create and delegation may not coexist",
             ApplyError::NonDelegatableCode { .. } => "delegation sender has non-delegation code",
             ApplyError::SequenceSaturated => "config change sequence is saturated",
+            ApplyError::BadSequence { .. } => "config change sequence mismatch",
+            ApplyError::StaleEpoch { .. } => "config change local epoch is stale",
             ApplyError::EmptyChangeSet => "signed account-change batch is empty",
         }
     }
@@ -1615,6 +1679,9 @@ where
                 InvalidTransactionError::NonceNotConsistent { tx: got, state: channel }.into()
             }
             NonceError::Replay => Self::eip8130_error("nonce-free replay detected"),
+            NonceError::NonceFreeSequence { .. } => {
+                Self::eip8130_error("nonce-free transaction has a non-zero nonce sequence")
+            }
             NonceError::Storage(_) => Self::eip8130_error("nonce state read failed"),
         }
     }
@@ -1719,9 +1786,8 @@ where
         if size > limit {
             return Err(InvalidPoolTransactionError::OversizedData { size, limit });
         }
-        if signed.tx().calls.len() > Eip8130Constants::MAX_CALL_PHASES_PER_TX {
-            return Err(Self::eip8130_error("call phase count exceeds maximum"));
-        }
+        // Cheap shape checks run before the fork gate and signature recovery.
+        Eip8130Structure::validate(signed).map_err(Self::map_structural_error)?;
 
         // Single read of the head-block timestamp so the fork gate and the
         // expiry check see the same value even when `on_new_head_block` updates
@@ -1747,11 +1813,7 @@ where
         signed
             .validate_timestamp(now_ms)
             .map_err(|error| Self::map_timestamp_error(error, signed, now_ms))?;
-        Self::validate_eoa_sender_signature(signed)?;
-        Self::validate_sender_auth(signed)?;
-        Self::validate_payer_auth(signed)?;
-        Self::validate_account_changes(signed, local_chain_id)?;
-        Ok(())
+        Self::validate_eoa_sender_signature(signed)
     }
 
     /// Checks the implicit EOA-path signature is recoverable before admitting it
@@ -1770,319 +1832,21 @@ where
         Ok(())
     }
 
-    /// Checks the `sender_auth` field carries enough bytes for either the EOA
-    /// recovery path (65-byte signature) or the configured-actor auth path
-    /// (`authenticator_address || authenticator_payload`) and that the authenticator address
-    /// is not the sentinel revoked marker.
-    fn validate_sender_auth(signed: &Eip8130Signed) -> Result<(), InvalidPoolTransactionError> {
-        let auth = signed.sender_auth();
-        if auth.is_empty() {
-            return Err(InvalidTransactionError::TxTypeNotSupported.into());
-        }
-        if signed.explicit_sender().is_none() {
-            // EOA path: must carry exactly the secp256k1 signature.
-            if auth.len() != 65 {
-                return Err(InvalidTransactionError::TxTypeNotSupported.into());
+    /// Maps a structural rule failure to the pool's rejection: a named reason for
+    /// the call phase cap, and an unsupported transaction type for every
+    /// malformed shape (the pool's long-standing response to those).
+    fn map_structural_error(error: Eip8130StructuralError) -> InvalidPoolTransactionError {
+        match error {
+            Eip8130StructuralError::TooManyCallPhases => {
+                Self::eip8130_error("call phase count exceeds maximum")
             }
-        } else {
-            // Configured-actor path: leading 20 bytes are the authenticator address.
-            if auth.len() < 20 {
-                return Err(InvalidTransactionError::TxTypeNotSupported.into());
-            }
-            let authenticator = Address::from_slice(&auth[..20]);
-            if !Self::authenticator_allowed_for_tx_path(&authenticator)
-                || !Self::authenticator_payload_well_formed(&authenticator, &auth[20..])
-            {
-                return Err(InvalidTransactionError::TxTypeNotSupported.into());
+            Eip8130StructuralError::MalformedSenderAuth
+            | Eip8130StructuralError::MalformedPayerAuth
+            | Eip8130StructuralError::TooManyAccountChanges
+            | Eip8130StructuralError::MalformedAccountChange => {
+                InvalidTransactionError::TxTypeNotSupported.into()
             }
         }
-        Ok(())
-    }
-
-    /// Ensures `payer_auth` is present iff a `payer` is set. Open payer mode
-    /// carries a raw 65-byte signature; a named payer carries an allowed
-    /// `authenticator || data` blob.
-    fn validate_payer_auth(signed: &Eip8130Signed) -> Result<(), InvalidPoolTransactionError> {
-        let payer_present = signed.tx().payer.is_some();
-        let auth = signed.payer_auth();
-        // XOR: presence must match.
-        if payer_present == auth.is_empty() {
-            return Err(InvalidTransactionError::TxTypeNotSupported.into());
-        }
-        if signed.tx().is_open_payer() {
-            if auth.len() != 65 {
-                return Err(InvalidTransactionError::TxTypeNotSupported.into());
-            }
-        } else if payer_present {
-            if auth.len() < 20 {
-                return Err(InvalidTransactionError::TxTypeNotSupported.into());
-            }
-            let authenticator = Address::from_slice(&auth[..20]);
-            if !Self::authenticator_allowed_for_tx_path(&authenticator)
-                || !Self::authenticator_payload_well_formed(&authenticator, &auth[20..])
-            {
-                return Err(InvalidTransactionError::TxTypeNotSupported.into());
-            }
-        }
-        Ok(())
-    }
-
-    /// Returns `true` when `authenticator` falls outside the live mempool policy
-    /// range. Mirrors the check in [`Self::validate_initial_actors`] and
-    /// [`Self::validate_actor_changes`] so all auth surfaces (`sender_auth`,
-    /// `payer_auth`, `cfg.auth`, and per-actor authenticators) reject the reserved
-    /// `< K1_AUTHENTICATOR` window identically. `address(0)` (the only address in
-    /// that window) is the empty / "no actor configured" sentinel and is never a
-    /// valid authenticator selector.
-    fn authenticator_out_of_range(authenticator: &Address) -> bool {
-        *authenticator < Eip8130Constants::K1_AUTHENTICATOR
-    }
-
-    /// Returns `true` when an authenticator selector may be used directly on the
-    /// EIP-8130 transaction validation path: native k1 or a canonical Keystore
-    /// authenticator. Non-k1 selectors only reach this after the Zenith gate in
-    /// [`Self::validate_eip8130_structural`].
-    fn authenticator_allowed_for_tx_path(authenticator: &Address) -> bool {
-        *authenticator == Eip8130Constants::K1_AUTHENTICATOR
-            || Eip8130Contracts::is_canonical_authenticator(authenticator)
-    }
-
-    /// Performs cheap selector-specific wire checks that do not require running
-    /// an authenticator. Native k1 must carry exactly `r || s || v`; delegated
-    /// auth must be depth-1 and name a canonical nested authenticator.
-    fn authenticator_payload_well_formed(authenticator: &Address, data: &[u8]) -> bool {
-        if *authenticator == Eip8130Constants::K1_AUTHENTICATOR {
-            return data.len() == 65;
-        }
-        if *authenticator == Eip8130Contracts::DELEGATE_AUTHENTICATOR {
-            if data.len() < 40 {
-                return false;
-            }
-            let nested = Address::from_slice(&data[20..40]);
-            return nested != Eip8130Contracts::DELEGATE_AUTHENTICATOR
-                && Self::authenticator_allowed_for_tx_path(&nested);
-        }
-        true
-    }
-
-    /// Enforces the interim total-account-changes admission cap
-    /// ([`Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX`]) and then the per-entry
-    /// structural invariants via [`Self::validate_account_change_entries`].
-    ///
-    /// The total cap is an interim pool-only throttle that currently sits below
-    /// the per-type [`Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX`] cap, so the
-    /// per-type cap is exercised directly against
-    /// [`Self::validate_account_change_entries`] in tests rather than through
-    /// this gate.
-    fn validate_account_changes(
-        signed: &Eip8130Signed,
-        _local_chain_id: u64,
-    ) -> Result<(), InvalidPoolTransactionError> {
-        // `_local_chain_id` is retained for call-site symmetry with the other
-        // validation entrypoints (and their tests); it is no longer consulted
-        // here because chain binding is enforced implicitly by the signed digest
-        // (`AccountChangeChannel` selects `block.chainid` vs `0`), not by a
-        // structural per-entry chain check.
-        //
-        // Conservative admission cap on the number of account changes a single
-        // transaction may carry while the interleaved authorize-and-apply flow
-        // beds in. Keeps the per-transaction admission work (and the overlay it
-        // applies against) small and bounded.
-        if signed.tx().account_changes.len() > Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX {
-            return Err(InvalidTransactionError::TxTypeNotSupported.into());
-        }
-        Self::validate_account_change_entries(signed)
-    }
-
-    /// Walks `account_changes` and enforces the per-entry structural invariants:
-    /// at most one `Create` (and only as the first entry), at most one
-    /// `Delegation`, `ConfigChange` count capped at
-    /// [`Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX`], and per-entry
-    /// well-formedness. Chain binding is not checked here — it is enforced
-    /// implicitly by the signed digest (`AccountChangeChannel` selects
-    /// `block.chainid` vs `0`). Authenticator-address bounds are enforced on both
-    /// `Create.initial_actors` and `ConfigChange.changes` via
-    /// [`Self::validate_initial_actors`] and [`Self::validate_actor_changes`]
-    /// respectively; actor-id *uniqueness* is required only for
-    /// `Create.initial_actors` (strictly ascending), not for a signed change
-    /// batch, whose ops the contract applies sequentially.
-    ///
-    /// This is the structural walk independent of the interim total cap applied
-    /// by [`Self::validate_account_changes`], so the per-type caps it enforces
-    /// remain meaningful (and testable) if that interim cap is later raised.
-    fn validate_account_change_entries(
-        signed: &Eip8130Signed,
-    ) -> Result<(), InvalidPoolTransactionError> {
-        let mut create_count = 0usize;
-        let mut delegation_count = 0usize;
-        let mut config_count = 0usize;
-        for (idx, change) in signed.tx().account_changes.iter().enumerate() {
-            match change {
-                AccountChange::Create(create) => {
-                    create_count += 1;
-                    if create_count > 1 || idx != 0 {
-                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
-                    }
-                    // Reject at admission the runtime code shapes the enshrined
-                    // deploy (`AccountChangeApplier::apply_create`) refuses:
-                    // EIP-170 oversize and the EIP-3541 reserved leading `0xEF`
-                    // byte (which `CREATE2` would reject with `address(0)`).
-                    if create.code.is_empty()
-                        || create.code.len() > Eip8130Constants::MAX_CODE_SIZE
-                        || create.code.first() == Some(&0xEF)
-                        || create.initial_actors.is_empty()
-                    {
-                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
-                    }
-                    Self::validate_initial_actors(&create.initial_actors)?;
-                }
-                AccountChange::ConfigChange(cfg) => {
-                    config_count += 1;
-                    if config_count > Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX {
-                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
-                    }
-                    // A signed batch must carry at least one op (mirrors the
-                    // contract's `EmptyChangeSet` rejection).
-                    if cfg.changes.is_empty() {
-                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
-                    }
-                    if cfg.signature.len() < 20 {
-                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
-                    }
-                    let cfg_authenticator = Address::from_slice(&cfg.signature[..20]);
-                    if !Self::authenticator_allowed_for_tx_path(&cfg_authenticator)
-                        || !Self::authenticator_payload_well_formed(
-                            &cfg_authenticator,
-                            &cfg.signature[20..],
-                        )
-                    {
-                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
-                    }
-                    Self::validate_actor_changes(&cfg.changes)?;
-                }
-                AccountChange::Delegation(_) => {
-                    delegation_count += 1;
-                    if delegation_count > 1 {
-                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
-                    }
-                    if create_count > 0 {
-                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Validates `Create.initial_actors`: the slice length is bounded by
-    /// [`Eip8130Constants::MAX_ACTORS_PER_ENTRY`] (anti-DoS cap on memory + work
-    /// spent on duplicate detection), every `authenticator` is at or above the
-    /// `K1_AUTHENTICATOR` floor (i.e. not the `address(0)` empty sentinel), no
-    /// two entries share the same `actor_id`, and each entry's `policy_data` is
-    /// a valid attachment length: empty, or exactly `manager (20) ||
-    /// commitment (32)` (52 bytes). Length decides what gets stored; POLICY
-    /// decides whether the sender is gated; OPERATOR overrides POLICY. The same
-    /// length check is enforced downstream in `authorize_actor`/`slice_policy`;
-    /// checking it here rejects malformed creates before the expensive overlay
-    /// path runs.
-    fn validate_initial_actors(actors: &[InitialActor]) -> Result<(), InvalidPoolTransactionError> {
-        if actors.len() > Eip8130Constants::MAX_ACTORS_PER_ENTRY {
-            return Err(InvalidTransactionError::TxTypeNotSupported.into());
-        }
-        let mut previous = None;
-        for actor in actors {
-            if Self::authenticator_out_of_range(&actor.authenticator) {
-                return Err(InvalidTransactionError::TxTypeNotSupported.into());
-            }
-            if previous.is_some_and(|previous| actor.actor_id <= previous) {
-                return Err(InvalidTransactionError::TxTypeNotSupported.into());
-            }
-            let len = actor.policy_data.len();
-            if len != 0 && len != Eip8130Constants::POLICY_DATA_LEN {
-                return Err(InvalidTransactionError::TxTypeNotSupported.into());
-            }
-            previous = Some(actor.actor_id);
-        }
-        Ok(())
-    }
-
-    /// Validates a signed batch's `changes`: the slice is bounded by
-    /// [`Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG`], plus the
-    /// reserved-window authenticator bound for the *new* actor of each
-    /// `AuthorizeActor` op. Repeated `actorId` targets are *not* rejected here:
-    /// unlike `Create.initial_actors`, the contract and the enshrined apply path
-    /// process a batch's ops sequentially (authorize upserts, revoke clears), so
-    /// a duplicate is protocol-valid (last write wins) and admitting it keeps the
-    /// pool in step with consensus.
-    ///
-    /// - `AuthorizeActor`: `payload = abi.encode(bytes32 actorId, ActorConfig,
-    ///   bytes)`; `ActorConfig.authenticator` is the right-aligned address in the
-    ///   *second* word, so it is read from `payload[44..64]` (the leading 12
-    ///   bytes of that word must be zero padding). Per EIP-8130 a config change
-    ///   MAY authorize a non-canonical authenticator (for in-EVM use such as
-    ///   recovery keys); only the reserved window (`< K1_AUTHENTICATOR`, i.e. the
-    ///   `address(0)` empty sentinel) is rejected here.
-    /// - `RevokeActor`: `payload = abi.encode(bytes32 actorId)` — exactly the
-    ///   32-byte target and nothing more.
-    /// - `IncrementLocalEpoch`: empty payload (mirrors the contract's
-    ///   `payload.length == 0` requirement); it names no actor.
-    /// - `Lock` / `Unlock`: their apply handlers are not yet enshrined, so a batch
-    ///   carrying one is rejected here rather than admitted and failed later.
-    fn validate_actor_changes(changes: &[SignedChange]) -> Result<(), InvalidPoolTransactionError> {
-        if changes.len() > Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG {
-            return Err(InvalidTransactionError::TxTypeNotSupported.into());
-        }
-        for change in changes {
-            // Per-op structural well-formedness only. Repeated `actorId` targets
-            // are intentionally NOT rejected: Keystore and the enshrined apply
-            // path process a batch's ops in order (`AuthorizeActor` is an upsert,
-            // `RevokeActor` clears), so a repeated target is valid on-chain (the
-            // last write wins). Rejecting it here would drop a protocol-valid
-            // batch, so the pool matches consensus and admits it.
-            match change.change_type {
-                ChangeType::AuthorizeActor => {
-                    // `payload` = `abi.encode(bytes32 actorId, ActorConfig, bytes)`;
-                    // the new actor's authenticator is the right-aligned address
-                    // in the second word.
-                    if change.payload.len() < 64 {
-                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
-                    }
-                    // The target `actorId` is `payload[0..32]`. `bytes32(0)` is the
-                    // reserved "no actor" sentinel and can never be authorized;
-                    // reject it up front to match `_authorizeActor`'s
-                    // `InvalidActorId` (the enshrined apply path rejects it too).
-                    if change.payload[..32].iter().all(|&b| b == 0) {
-                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
-                    }
-                    // The authenticator word is an ABI-encoded `address`: its
-                    // leading 12 bytes are zero padding. Reject dirty upper bits so
-                    // the gate and a strict ABI decoder downstream agree.
-                    if change.payload[32..44].iter().any(|&b| b != 0) {
-                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
-                    }
-                    let authenticator = Address::from_slice(&change.payload[44..64]);
-                    if Self::authenticator_out_of_range(&authenticator) {
-                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
-                    }
-                }
-                ChangeType::RevokeActor => {
-                    if change.payload.len() != 32 {
-                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
-                    }
-                }
-                ChangeType::IncrementLocalEpoch => {
-                    if !change.payload.is_empty() {
-                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
-                    }
-                    // Names no actor; skip the target-dedup.
-                    continue;
-                }
-                ChangeType::Lock | ChangeType::Unlock => {
-                    return Err(InvalidTransactionError::TxTypeNotSupported.into());
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Performs the necessary Base-specific checks based on top of the regular eth outcome.
@@ -2371,6 +2135,59 @@ mod tests {
         }
     }
 
+    /// An allowlisted payer also seeds a balance book on first admission, so a
+    /// balance change after its validation advances the generation, as for a
+    /// trusted payer: an admission validated against the old balance
+    /// re-validates instead of seeding a stale book. An allowlisted payer with
+    /// no validation since its last balance change must not advance it, so its
+    /// balance churn does not bounce unrelated admissions.
+    #[test]
+    fn allowlisted_payer_balance_diff_advances_generation_only_after_validation() {
+        let allowlisted = Address::repeat_byte(7);
+        let validator = build_test_validator().with_allowlisted_payers([allowlisted]);
+        let before = validator.limit_class_cache_generation();
+        validator.invalidate_limit_class_cache(&[balance_diff(allowlisted, 1)]);
+        assert_eq!(validator.limit_class_cache_generation(), before, "idle payer");
+
+        validator.limit_class_cache.write().mark_allowlisted_validation(allowlisted);
+        validator.invalidate_limit_class_cache(&[balance_diff(allowlisted, 2)]);
+        let after = validator.limit_class_cache_generation();
+        assert!(after > before, "a validated payer's balance change advances the generation");
+
+        validator.invalidate_limit_class_cache(&[balance_diff(allowlisted, 3)]);
+        assert_eq!(
+            validator.limit_class_cache_generation(),
+            after,
+            "the record is consumed; churn without a new validation does not advance it"
+        );
+    }
+
+    /// Validation classifies an allowlisted payer so admission can count and
+    /// book it.
+    #[test]
+    fn validation_classifies_allowlisted_payers() {
+        let signer = PrivateKeySigner::random();
+        let sender = signer.address();
+        let tx = TxEip8130 { gas_limit: 100_000, ..minimal_valid_eoa_tx() };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let funded = ExtendedAccount::new(0, U256::from(1_000_000_000_000u64));
+
+        let ordinary = build_test_validator_with_account(sender, funded.clone())
+            .validate_eip8130_full(&signed)
+            .unwrap();
+        assert!(!ordinary.payer_allowlisted);
+        let validator =
+            build_test_validator_with_account(sender, funded).with_allowlisted_payers([sender]);
+        let allowlisted = validator.validate_eip8130_full(&signed).unwrap();
+        assert!(allowlisted.payer_allowlisted, "the self-paying sender is its own payer");
+        assert!(
+            validator.limit_class_cache.write().take_allowlisted_validation(sender),
+            "validation records the allowlisted payer for balance-diff invalidation"
+        );
+    }
+
     #[test]
     fn only_trusted_payer_balance_diff_advances_classification_generation() {
         let validator = build_test_validator();
@@ -2539,6 +2356,13 @@ mod tests {
         }
     }
 
+    /// Maps a shared structural check to the pool's rejection, as admission does.
+    fn structural(
+        result: Result<(), Eip8130StructuralError>,
+    ) -> Result<(), InvalidPoolTransactionError> {
+        result.map_err(TestValidator::map_structural_error)
+    }
+
     /// Helper: assert structural validation returns `Invalid` with `TxTypeNotSupported`.
     #[track_caller]
     fn assert_unsupported(result: Result<(), InvalidPoolTransactionError>) {
@@ -2654,6 +2478,27 @@ mod tests {
             validator.validate_eip8130_structural(&signed),
             "call phase count exceeds maximum",
         );
+    }
+
+    /// The call phase cap is a cheap shape check, so it rejects before the fork
+    /// gate and before any signature recovery is attempted.
+    #[test]
+    fn call_phase_cap_rejects_before_fork_gate_and_signature_recovery() {
+        let pre_everest = BaseChainSpecBuilder::base_mainnet().cobalt_activated().build();
+        let tx = TxEip8130 {
+            calls: vec![Vec::new(); Eip8130Constants::MAX_CALL_PHASES_PER_TX + 1],
+            ..minimal_valid_eoa_tx()
+        };
+        let unrecoverable = Eip8130Signed::new(tx, Bytes::from(vec![0xff; 65]), Bytes::new());
+
+        for validator in
+            [build_test_validator(), build_test_validator_with_spec(Arc::new(pre_everest))]
+        {
+            assert_structural_reason(
+                validator.validate_eip8130_structural(&unrecoverable),
+                "call phase count exceeds maximum",
+            );
+        }
     }
 
     #[test]
@@ -2873,14 +2718,14 @@ mod tests {
         // EOA path requires exactly 65 bytes; anything else is rejected.
         let tx = minimal_valid_eoa_tx();
         let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 32]), Bytes::new());
-        assert_unsupported(TestValidator::validate_sender_auth(&signed));
+        assert_unsupported(structural(Eip8130Structure::validate_sender_auth(&signed)));
     }
 
     #[test]
     fn rejects_eip8130_with_empty_sender_auth() {
         let tx = minimal_valid_eoa_tx();
         let signed = Eip8130Signed::new(tx, Bytes::new(), Bytes::new());
-        assert_unsupported(TestValidator::validate_sender_auth(&signed));
+        assert_unsupported(structural(Eip8130Structure::validate_sender_auth(&signed)));
     }
 
     // Regression: configured-actor path must reject the reserved authenticator
@@ -2891,21 +2736,21 @@ mod tests {
         let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
         let auth = Bytes::from(Address::ZERO.to_vec());
         let signed = Eip8130Signed::new(tx, auth, Bytes::new());
-        assert_unsupported(TestValidator::validate_sender_auth(&signed));
+        assert_unsupported(structural(Eip8130Structure::validate_sender_auth(&signed)));
     }
 
     #[test]
     fn rejects_eip8130_configured_actor_with_short_auth() {
         let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
         let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 5]), Bytes::new());
-        assert_unsupported(TestValidator::validate_sender_auth(&signed));
+        assert_unsupported(structural(Eip8130Structure::validate_sender_auth(&signed)));
     }
 
     #[test]
     fn rejects_eip8130_payer_present_without_auth() {
         let tx = TxEip8130 { payer: Some(Address::repeat_byte(0x11)), ..minimal_valid_eoa_tx() };
         let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 65]), Bytes::new());
-        assert_unsupported(TestValidator::validate_payer_auth(&signed));
+        assert_unsupported(structural(Eip8130Structure::validate_payer_auth(&signed)));
     }
 
     #[test]
@@ -2913,7 +2758,7 @@ mod tests {
         let tx = minimal_valid_eoa_tx();
         let signed =
             Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 65]), Bytes::from_static(&[0u8; 20]));
-        assert_unsupported(TestValidator::validate_payer_auth(&signed));
+        assert_unsupported(structural(Eip8130Structure::validate_payer_auth(&signed)));
     }
 
     #[test]
@@ -2924,7 +2769,7 @@ mod tests {
             Bytes::from_static(&[0u8; 65]),
             Bytes::from(Address::ZERO.to_vec()),
         );
-        assert_unsupported(TestValidator::validate_payer_auth(&signed));
+        assert_unsupported(structural(Eip8130Structure::validate_payer_auth(&signed)));
     }
 
     /// A configured sender naming a canonical non-k1 authenticator is an
@@ -2944,7 +2789,7 @@ mod tests {
                 InvalidTransactionError::TxTypeNotSupported
             ))
         ));
-        assert!(TestValidator::validate_sender_auth(&signed).is_ok());
+        assert!(structural(Eip8130Structure::validate_sender_auth(&signed)).is_ok());
     }
 
     /// Returns an authenticator address comfortably above the `K1_AUTHENTICATOR`
@@ -2998,10 +2843,9 @@ mod tests {
             ],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
             &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        )));
     }
 
     #[test]
@@ -3013,10 +2857,9 @@ mod tests {
             ],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
             &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        )));
     }
 
     #[test]
@@ -3027,10 +2870,9 @@ mod tests {
             account_changes: vec![AccountChange::Create(entry)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
             &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        )));
     }
 
     #[test]
@@ -3041,10 +2883,9 @@ mod tests {
             account_changes: vec![AccountChange::Create(entry)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
             &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        )));
     }
 
     #[test]
@@ -3055,10 +2896,9 @@ mod tests {
             account_changes: vec![AccountChange::Create(entry)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
             &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        )));
     }
 
     #[test]
@@ -3069,10 +2909,9 @@ mod tests {
             account_changes: vec![AccountChange::Create(entry)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
             &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        )));
     }
 
     #[test]
@@ -3086,8 +2925,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id(),)
-                .is_ok()
+            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
         );
     }
 
@@ -3101,10 +2939,9 @@ mod tests {
             account_changes: vec![AccountChange::Create(entry)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
             &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        )));
     }
 
     #[test]
@@ -3117,8 +2954,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id(),)
-                .is_ok()
+            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
         );
     }
 
@@ -3133,10 +2969,9 @@ mod tests {
             account_changes: vec![AccountChange::Create(entry)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
             &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        )));
     }
 
     #[test]
@@ -3151,7 +2986,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id()).is_ok()
+            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
         );
     }
 
@@ -3175,10 +3010,9 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
             &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        )));
     }
 
     #[test]
@@ -3197,7 +3031,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id()).is_ok()
+            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
         );
     }
 
@@ -3215,10 +3049,9 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
             &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        )));
     }
 
     #[test]
@@ -3233,10 +3066,9 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
             &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        )));
     }
 
     #[test]
@@ -3249,10 +3081,9 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
             &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        )));
     }
 
     // Repeated `actor_id` targets within one batch are admitted: Keystore and the
@@ -3274,7 +3105,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id()).is_ok()
+            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
         );
     }
 
@@ -3291,10 +3122,9 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
             &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        )));
     }
 
     #[test]
@@ -3309,7 +3139,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id()).is_ok()
+            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
         );
     }
 
@@ -3323,10 +3153,9 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
             &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        )));
     }
 
     // A `RevokeActor` op carries only its 32-byte target and names no
@@ -3343,7 +3172,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id()).is_ok()
+            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
         );
     }
 
@@ -3364,10 +3193,9 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
             &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        )));
     }
 
     // The authenticator word (`payload[32..64]`) is an ABI-encoded `address`;
@@ -3384,10 +3212,9 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
             &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        )));
     }
 
     // A batch may target the same `actor_id` across mixed `Authorize`/`Revoke`
@@ -3408,7 +3235,7 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         assert!(
-            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id()).is_ok()
+            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
         );
     }
 
@@ -3422,7 +3249,9 @@ mod tests {
         let account_changes =
             (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert_unsupported(TestValidator::validate_account_change_entries(&sign_eoa_eip8130(tx)));
+        assert_unsupported(structural(Eip8130Structure::validate_account_change_entries(
+            &sign_eoa_eip8130(tx),
+        )));
     }
 
     #[test]
@@ -3434,7 +3263,10 @@ mod tests {
         let account_changes =
             (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert!(TestValidator::validate_account_change_entries(&sign_eoa_eip8130(tx)).is_ok());
+        assert!(
+            structural(Eip8130Structure::validate_account_change_entries(&sign_eoa_eip8130(tx)))
+                .is_ok()
+        );
     }
 
     #[test]
@@ -3444,8 +3276,7 @@ mod tests {
             (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
         assert!(
-            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id(),)
-                .is_ok()
+            structural(Eip8130Structure::validate_account_changes(&sign_eoa_eip8130(tx))).is_ok()
         );
     }
 
@@ -3455,10 +3286,9 @@ mod tests {
         let account_changes =
             (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
             &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        )));
     }
 
     #[test]
@@ -3470,10 +3300,9 @@ mod tests {
             ],
             ..minimal_valid_eoa_tx()
         };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
             &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        )));
     }
 
     #[test]
@@ -3487,10 +3316,9 @@ mod tests {
             AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x55) }),
         ];
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
             &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        )));
     }
 
     #[test]
@@ -3503,10 +3331,9 @@ mod tests {
             AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x55) }),
         ];
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(structural(Eip8130Structure::validate_account_changes(
             &sign_eoa_eip8130(tx),
-            test_chain_id(),
-        ));
+        )));
     }
 
     /// L1 attribute deposit calldata that activates Isthmus and seeds a non-zero
@@ -3693,8 +3520,9 @@ mod tests {
     }
 
     /// Before Zenith, admitting an EOA transaction reads no Keystore state, so
-    /// no `AccountConfiguration` slot is captured or watched; at Zenith the
-    /// same transaction depends on the account's Keystore state.
+    /// no `AccountConfiguration` slot is captured or watched and the signer is
+    /// exempt from the signature limit; at Zenith the same transaction depends
+    /// on the account's Keystore state.
     #[test]
     fn eip8130_admission_reads_keystore_only_at_zenith() {
         let signer = PrivateKeySigner::random();
@@ -3716,6 +3544,10 @@ mod tests {
             .expect("EOA transaction is admitted before Zenith");
         assert!(everest.manifest.has_no_config_slots());
         assert!(!watches_keystore(&everest));
+        assert!(
+            everest.sender_locked && everest.payer_locked,
+            "without the Keystore a signer's key cannot change, so it is exempt from the signature limit"
+        );
 
         let zenith =
             build_test_validator_with_account_and_spec(sender, funded(), zenith_chain_spec())
@@ -3723,6 +3555,7 @@ mod tests {
                 .expect("EOA transaction is admitted at Zenith");
         assert!(!zenith.manifest.has_no_config_slots());
         assert!(watches_keystore(&zenith));
+        assert!(!zenith.sender_locked, "an unlocked Keystore account is signature-limited");
     }
 
     /// Admission reserves only the transaction's fees: call value is not
@@ -3754,6 +3587,37 @@ mod tests {
             .expect("call value beyond the balance does not block admission");
         assert_eq!(with_value.payer_max_cost, without_value.payer_max_cost);
         assert_eq!(with_value.manifest.payer_max_cost(), with_value.payer_max_cost);
+    }
+
+    /// EIP-7825 bounds `gas_limit` plus payer authentication at admission, as
+    /// at execution.
+    #[test]
+    fn eip8130_gas_above_the_per_transaction_cap_is_rejected() {
+        let signer = PrivateKeySigner::random();
+        let sender = signer.address();
+        let signed_with_gas = |gas_limit: u64| {
+            let tx = TxEip8130 { gas_limit, ..minimal_valid_eoa_tx() };
+            let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new())
+        };
+        let validator = build_test_validator_with_account(
+            sender,
+            ExtendedAccount::new(0, U256::from(u64::MAX) * U256::from(u64::MAX)),
+        );
+
+        validator
+            .validate_eip8130_full(&signed_with_gas(MAX_TX_GAS_LIMIT_OSAKA))
+            .expect("gas at the cap is admitted");
+        let err = validator
+            .validate_eip8130_full(&signed_with_gas(MAX_TX_GAS_LIMIT_OSAKA + 1))
+            .expect_err("gas above the cap is rejected");
+        assert!(
+            matches!(
+                err,
+                InvalidPoolTransactionError::Consensus(InvalidTransactionError::GasLimitTooHigh)
+            ),
+            "expected GasLimitTooHigh, got {err:?}"
+        );
     }
 
     #[test]

@@ -8,8 +8,9 @@ use base_prover_service_db::{
 use base_prover_service_protocol::{
     AbandonProofRequest, AbandonProofResponse, GetNextProofRequest, GetNextProofResponse,
     GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest, HeartbeatResponse,
-    ProofJob as ProtocolProofJob, ProverWorkerApiServer, RecordProofSessionRequest,
-    RecordProofSessionResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
+    PROOF_REQUEST_CANCELLED_MESSAGE, ProofJob as ProtocolProofJob, ProverWorkerApiServer,
+    RecordProofSessionRequest, RecordProofSessionResponse, WorkerSubmitProofRequest,
+    WorkerSubmitProofResponse,
 };
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -22,7 +23,8 @@ use crate::{
     metrics,
     server::{
         ProverServiceServer, WorkerApiConfig, failed_precondition, internal, invalid_argument,
-        not_found, record_rpc_result, record_worker_rpc_result, rpc_status_code_str,
+        not_found, proof_cancelled, record_rpc_result, record_worker_rpc_result,
+        rpc_status_code_str,
     },
 };
 
@@ -193,6 +195,11 @@ impl ProverServiceServer {
             )),
             HeartbeatOutcome::Expired(_) => {
                 Err(reject_ownership("heartbeat", &session_id, "lock has expired"))
+            }
+            HeartbeatOutcome::Terminal(job)
+                if job.error_message.as_deref() == Some(PROOF_REQUEST_CANCELLED_MESSAGE) =>
+            {
+                Err(proof_cancelled(PROOF_REQUEST_CANCELLED_MESSAGE))
             }
             HeartbeatOutcome::Terminal(_) => Err(reject_ownership(
                 "heartbeat",
@@ -503,6 +510,9 @@ impl ProverServiceServer {
                 &request.session_id,
                 "job has already reached a terminal state",
             )),
+            RecordSessionOutcome::Cancelled => {
+                Err(proof_cancelled(PROOF_REQUEST_CANCELLED_MESSAGE))
+            }
             RecordSessionOutcome::TerminalSessionStatus => Err(reject_ownership(
                 "record_proof_session",
                 &request.session_id,

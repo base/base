@@ -3,7 +3,6 @@
 use std::{future::Future, time::Duration};
 
 use base_batcher_core::DerivationStatus;
-use base_consensus_rpc::RollupNodeApiClient;
 use base_protocol::BlockInfo;
 use base_runtime::Runtime;
 use tokio::sync::mpsc;
@@ -17,19 +16,6 @@ pub trait DerivationStatusProvider: Send + Sync + 'static {
     ) -> impl Future<Output = Result<DerivationStatus, Box<dyn std::error::Error + Send + Sync>>>
     + Send
     + '_;
-}
-
-/// Reads the derivation status from a rollup node's `optimism_syncStatus`.
-impl DerivationStatusProvider for jsonrpsee::http_client::HttpClient {
-    async fn derivation_status(
-        &self,
-    ) -> Result<DerivationStatus, Box<dyn std::error::Error + Send + Sync>> {
-        let status = self.sync_status().await?;
-        Ok(DerivationStatus {
-            safe_l2: status.local_safe_l2.block_info,
-            current_l1: status.current_l1,
-        })
-    }
 }
 
 /// Polls a provider and sends every derivation-status change in observation order.

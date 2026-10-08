@@ -1,5 +1,4 @@
 //! Integration tests for the Builder RPC extension.
-use std::sync::Arc;
 
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_eips::eip2718::Encodable2718;
@@ -10,25 +9,20 @@ use alloy_signer::SignerSync;
 use base_builder_core::{BuilderApiExtension, BuilderApiExtensionConfig};
 use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
 use base_common_rpc_types::BaseTransactionRequest;
-use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{
     DEFAULT_MAX_VALIDITY_PREDICATES, NoExtensions, TransactionValidity, ValidatedTransaction,
     ValidityOperator, ValidityPredicate,
 };
 use base_node_runner::test_utils::TestHarness;
-use base_test_utils::{Account, build_test_genesis_cobalt};
+use base_test_utils::Account;
 use base_txpool_rpc::{
     SendRawTransactionValidityConfig, SendRawTransactionValidityExtension,
     SendRawTransactionValidityOptions,
 };
 
 /// Sets up a test harness with the `BuilderApiExtension` installed.
-async fn setup(
-    accept_validity: bool,
-    max_validity_predicates: usize,
-) -> eyre::Result<(TestHarness, RpcClient)> {
-    let config = BuilderApiExtensionConfig::new(accept_validity, max_validity_predicates)
-        .with_noop_metering();
+async fn setup(max_validity_predicates: usize) -> eyre::Result<(TestHarness, RpcClient)> {
+    let config = BuilderApiExtensionConfig::new(max_validity_predicates).with_noop_metering();
     let harness = TestHarness::builder().with_ext::<BuilderApiExtension>(config).build().await?;
     let client = harness.rpc_client()?;
     Ok((harness, client))
@@ -54,19 +48,17 @@ fn create_deposit_tx() -> (Address, Bytes) {
 
 /// Sets up a test harness with builder insertion and public validity ingress.
 async fn setup_with_validity_ingress(
-    accept_validity: bool,
     max_validity_predicates: usize,
 ) -> eyre::Result<(TestHarness, RpcClient)> {
-    let config = BuilderApiExtensionConfig::new(accept_validity, max_validity_predicates)
-        .with_noop_metering();
-    let mut builder = TestHarness::builder().with_ext::<BuilderApiExtension>(config);
-    builder =
-        builder.with_ext::<SendRawTransactionValidityExtension>(SendRawTransactionValidityConfig {
+    let config = BuilderApiExtensionConfig::new(max_validity_predicates).with_noop_metering();
+    let harness = TestHarness::builder()
+        .with_ext::<BuilderApiExtension>(config)
+        .with_ext::<SendRawTransactionValidityExtension>(SendRawTransactionValidityConfig {
             max_validity_predicates,
-            experimental_override: accept_validity,
             ..Default::default()
-        });
-    let harness = builder.build().await?;
+        })
+        .build()
+        .await?;
     let client = harness.rpc_client()?;
     Ok((harness, client))
 }
@@ -116,7 +108,7 @@ fn create_eip1559_tx(chain_id: u64) -> (Address, Bytes) {
 /// The pool doesn't accept deposit transactions, but the RPC should decode it successfully.
 #[tokio::test]
 async fn test_insert_validated_deposit_tx() -> eyre::Result<()> {
-    let (_harness, client) = setup(false, DEFAULT_MAX_VALIDITY_PREDICATES).await?;
+    let (_harness, client) = setup(DEFAULT_MAX_VALIDITY_PREDICATES).await?;
 
     let (sender, raw) = create_deposit_tx();
     let validated_tx =
@@ -139,7 +131,7 @@ async fn test_insert_validated_deposit_tx() -> eyre::Result<()> {
 /// The pool should accept this transaction type.
 #[tokio::test]
 async fn test_insert_validated_eip1559_tx() -> eyre::Result<()> {
-    let (harness, client) = setup(false, DEFAULT_MAX_VALIDITY_PREDICATES).await?;
+    let (harness, client) = setup(DEFAULT_MAX_VALIDITY_PREDICATES).await?;
 
     let (sender, raw) = create_eip1559_tx(harness.chain_id());
     let validated_tx =
@@ -155,7 +147,7 @@ async fn test_insert_validated_eip1559_tx() -> eyre::Result<()> {
 /// Verifies the RPC endpoint rejects an invalid transaction at the pool insertion stage.
 #[tokio::test]
 async fn test_insert_invalid_tx_fails() -> eyre::Result<()> {
-    let (_harness, client) = setup(false, DEFAULT_MAX_VALIDITY_PREDICATES).await?;
+    let (_harness, client) = setup(DEFAULT_MAX_VALIDITY_PREDICATES).await?;
 
     // Invalid raw bytes that can't be decoded (0xFF is not a valid tx type)
     let validated_tx = ValidatedTransaction {
@@ -177,55 +169,14 @@ async fn test_insert_invalid_tx_fails() -> eyre::Result<()> {
     Ok(())
 }
 
-/// Verifies validity-bearing requests require explicit builder opt-in.
+/// Verifies the builder accepts validity-bearing inserts.
 #[tokio::test]
-async fn test_validity_transactions_require_explicit_opt_in() -> eyre::Result<()> {
-    let validity = TransactionValidity {
-        validity: vec![ValidityPredicate::Balance {
-            address: Account::Alice.address(),
-            op: ValidityOperator::Equal,
-            value: U256::ZERO,
-        }],
-    };
-
-    let (disabled_harness, disabled_client) = setup(false, DEFAULT_MAX_VALIDITY_PREDICATES).await?;
-    let (sender, raw) = create_eip1559_tx(disabled_harness.chain_id());
-    let disabled_tx =
-        ValidatedTransaction { sender, raw, metering: None, extensions: validity.clone() };
-    let disabled: Result<(), _> =
-        disabled_client.request("base_insertValidatedTransaction", (disabled_tx,)).await;
-    assert!(
-        disabled
-            .expect_err("disabled builder should reject validity")
-            .to_string()
-            .contains("transaction extensions are disabled")
-    );
-
-    let (enabled_harness, enabled_client) = setup(true, DEFAULT_MAX_VALIDITY_PREDICATES).await?;
-    let (sender, raw) = create_eip1559_tx(enabled_harness.chain_id());
-    let enabled_tx = ValidatedTransaction { sender, raw, metering: None, extensions: validity };
-    let enabled: Result<(), _> =
-        enabled_client.request("base_insertValidatedTransaction", (enabled_tx,)).await;
-    assert!(enabled.is_ok(), "enabled builder should accept validity: {enabled:?}");
-
-    Ok(())
-}
-
-/// A builder deployed before Cobalt accepts extensions once the fork is active.
-#[tokio::test]
-async fn test_validity_extensions_open_at_cobalt() -> eyre::Result<()> {
-    let spec = BaseChainSpec::from_genesis(build_test_genesis_cobalt());
-    let config =
-        BuilderApiExtensionConfig::new(false, DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering();
-    let harness = TestHarness::builder()
-        .with_chain_spec(Arc::new(spec))
-        .with_ext::<BuilderApiExtension>(config)
-        .build()
-        .await?;
-    let client = harness.rpc_client()?;
+async fn test_validity_transactions_accepted() -> eyre::Result<()> {
+    let (harness, client) = setup(DEFAULT_MAX_VALIDITY_PREDICATES).await?;
+    let (sender, raw) = create_eip1559_tx(harness.chain_id());
     let tx = ValidatedTransaction {
-        sender: Account::Alice.address(),
-        raw: Bytes::from_static(&[0xff]),
+        sender,
+        raw,
         metering: None,
         extensions: TransactionValidity {
             validity: vec![ValidityPredicate::Balance {
@@ -236,14 +187,14 @@ async fn test_validity_extensions_open_at_cobalt() -> eyre::Result<()> {
         },
     };
     let result: Result<(), _> = client.request("base_insertValidatedTransaction", (tx,)).await;
-    assert!(result.unwrap_err().to_string().contains("failed to decode transaction"));
+    assert!(result.is_ok(), "builder should accept validity: {result:?}");
     Ok(())
 }
 
 /// Verifies the builder enforces its configured validity predicate limit.
 #[tokio::test]
 async fn test_validity_transactions_enforce_configured_limit() -> eyre::Result<()> {
-    let (harness, client) = setup(true, 1).await?;
+    let (harness, client) = setup(1).await?;
     let (sender, raw) = create_eip1559_tx(harness.chain_id());
     let predicate = ValidityPredicate::Balance {
         address: Account::Alice.address(),
@@ -266,29 +217,11 @@ async fn test_validity_transactions_enforce_configured_limit() -> eyre::Result<(
     Ok(())
 }
 
-/// The public method is wired before Cobalt but fails closed until activation.
+/// Verifies public validity ingress accepts a well-formed validity transaction.
 #[tokio::test]
-async fn test_send_raw_transaction_validity_pre_cobalt_gate() -> eyre::Result<()> {
-    let (disabled_harness, disabled_client) =
-        setup_with_validity_ingress(false, DEFAULT_MAX_VALIDITY_PREDICATES).await?;
-    let disabled: Result<TxHash, _> = disabled_client
-        .request(
-            "base_sendRawTransactionValidity",
-            (
-                signed_eip1559_tx(disabled_harness.chain_id()),
-                SendRawTransactionValidityOptions { validity: Vec::new() },
-            ),
-        )
-        .await;
-    let disabled_error =
-        disabled.expect_err("pre-Cobalt builder should reject validity").to_string();
-    assert!(
-        disabled_error.contains("gated behind the Cobalt hard fork"),
-        "expected pre-Cobalt rejection, got: {disabled_error}"
-    );
-
+async fn test_send_raw_transaction_validity_accepted() -> eyre::Result<()> {
     let (enabled_harness, enabled_client) =
-        setup_with_validity_ingress(true, DEFAULT_MAX_VALIDITY_PREDICATES).await?;
+        setup_with_validity_ingress(DEFAULT_MAX_VALIDITY_PREDICATES).await?;
     let enabled: Result<TxHash, _> = enabled_client
         .request(
             "base_sendRawTransactionValidity",
@@ -296,10 +229,13 @@ async fn test_send_raw_transaction_validity_pre_cobalt_gate() -> eyre::Result<()
                 signed_eip1559_tx(enabled_harness.chain_id()),
                 SendRawTransactionValidityOptions {
                     validity: vec![
-                        ValidityPredicate::Storage {
+                        ValidityPredicate::Balance {
                             address: Account::Alice.address(),
-                            slot: U256::ZERO,
-                            mask: U256::MAX,
+                            op: ValidityOperator::Equal,
+                            value: U256::ZERO,
+                        },
+                        ValidityPredicate::Nonce {
+                            address: Account::Alice.address(),
                             op: ValidityOperator::Equal,
                             value: U256::ZERO,
                         },
@@ -320,10 +256,11 @@ async fn test_send_raw_transaction_validity_pre_cobalt_gate() -> eyre::Result<()
 /// Verifies public validity ingress enforces the builder's configured predicate limit.
 #[tokio::test]
 async fn test_send_raw_transaction_validity_enforces_configured_limit() -> eyre::Result<()> {
-    let (harness, client) = setup_with_validity_ingress(true, 1).await?;
-    let predicate = ValidityPredicate::BlockNumber {
-        op: ValidityOperator::LessThanOrEqual,
-        value: U256::from(31),
+    let (harness, client) = setup_with_validity_ingress(1).await?;
+    let predicate = ValidityPredicate::Balance {
+        address: Account::Alice.address(),
+        op: ValidityOperator::Equal,
+        value: U256::ZERO,
     };
     let result: Result<TxHash, _> = client
         .request(

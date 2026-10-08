@@ -1,0 +1,6 @@
+[env]
+# sp1-recursion-gnark-ffi runs `go build` and pins github.com/consensys/gnark-ignition-verifier,
+# which was deleted from GitHub and is no longer served by proxy.golang.org. Fall back to a
+# mirror that still has it. Go still verifies every module against go.sum and sum.golang.org,
+# and an explicitly set GOPROXY takes precedence. Remove once SP1 drops the dependency.
+GOPROXY = "https://proxy.golang.org,https://goproxy.cn,direct"

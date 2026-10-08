@@ -239,6 +239,7 @@ mod tests {
             sender_locked: false,
             payer_locked: false,
             payer_trusted: false,
+            payer_allowlisted: false,
             payer_balance: U256::from(42_000u64),
             max_cost: U256::from(42_000u64),
         });
