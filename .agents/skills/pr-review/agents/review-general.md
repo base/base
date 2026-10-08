@@ -4,7 +4,7 @@ description: Primary correctness review of every change, as a senior Rust engine
 stage: review
 when: always
 model: opus
-effort: high
+effort: medium
 tools: Read,Grep,Glob
 timeout_seconds: 1500
 ---

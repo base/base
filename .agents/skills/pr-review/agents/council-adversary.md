@@ -3,7 +3,7 @@ name: council-adversary
 description: Council member that tries to break the change with hostile inputs, bad timing, and mixed versions.
 stage: council
 model: gpt-6.1-sol
-effort: max
+effort: medium
 tools: Read,Grep,Glob
 timeout_seconds: 1500
 ---
