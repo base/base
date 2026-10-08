@@ -27,12 +27,12 @@ use serde::{
 };
 use serde_json::Value;
 use sqlx::{
-    Connection, PgConnection, PgPool, QueryBuilder, Row,
-    migrate::{Migrate, Migration, Migrator},
+    Connection, PgPool, QueryBuilder, Row,
+    migrate::{Migration, Migrator},
     postgres::PgPoolOptions,
 };
 use tower_http::limit::RequestBodyLimitLayer;
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 
 use crate::Metrics;
 
@@ -109,8 +109,29 @@ pub const MAX_TRANSACTION_EVENT_FUTURE_SKEW_SECS: i64 = 3_600;
 const TRANSACTION_EVENT_PARTITION_DROP_GRACE_SECS: i64 = 3_600;
 const TRANSACTION_EVENT_RETENTION_ACQUIRE_TIMEOUT: StdDuration = StdDuration::from_secs(1);
 const TRANSACTION_EVENT_RETENTION_LOCK_ID: i64 = 744_697_762_131_337_711;
+const TRANSACTION_EVENT_BRIN_SUMMARY_LOCK_ID: i64 = 744_697_762_131_337_712;
 
-/// Session advisory lock held on one pooled connection for a retention pass.
+/// Default seconds between BRIN summary passes.
+///
+/// Each pass leaves at most this many seconds of inserted blocks outside the
+/// BRIN summaries that warehouse extraction scans with.
+pub const DEFAULT_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS: u64 = 60;
+/// Maximum seconds between BRIN summary passes. Zero disables the passes.
+pub const MAX_TRANSACTION_EVENT_BRIN_SUMMARY_INTERVAL_SECS: u64 = 3_600;
+
+/// Session `lock_timeout` for one partition's BRIN summary.
+///
+/// Summarizing takes a SHARE UPDATE EXCLUSIVE lock, which conflicts with
+/// VACUUM. When a lock request waits on an autovacuum for `deadlock_timeout`
+/// (1s by default), Postgres cancels that autovacuum. Giving up well before
+/// then leaves a running autovacuum alone, and the vacuum summarizes the
+/// partition itself when it finishes.
+const TRANSACTION_EVENT_BRIN_SUMMARY_LOCK_TIMEOUT_SQL: &str = "SET LOCAL lock_timeout = '200ms'";
+
+/// Postgres SQLSTATE for a missing function.
+const UNDEFINED_FUNCTION_SQLSTATE: &str = "42883";
+
+/// Session advisory lock held on one pooled connection for a background pass.
 ///
 /// Unlock is always attempted. If unlock fails, or this guard is dropped
 /// without unlocking, the connection is detached from the pool so Postgres
@@ -118,17 +139,18 @@ const TRANSACTION_EVENT_RETENTION_LOCK_ID: i64 = 744_697_762_131_337_711;
 /// it onto a reused pool connection.
 struct RetentionAdvisoryLock {
     conn: Option<sqlx::pool::PoolConnection<sqlx::Postgres>>,
+    lock_id: i64,
 }
 
 impl RetentionAdvisoryLock {
-    async fn try_acquire(pool: &PgPool) -> Result<Option<Self>> {
+    async fn try_acquire(pool: &PgPool, lock_id: i64) -> Result<Option<Self>> {
         let mut conn = match pool.acquire().await {
             Ok(conn) => conn,
             Err(sqlx::Error::PoolTimedOut) => return Ok(None),
             Err(err) => return Err(err.into()),
         };
         let locked = match sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
-            .bind(TRANSACTION_EVENT_RETENTION_LOCK_ID)
+            .bind(lock_id)
             .fetch_one(&mut *conn)
             .await
         {
@@ -141,7 +163,7 @@ impl RetentionAdvisoryLock {
                 return Err(err.into());
             }
         };
-        if locked { Ok(Some(Self { conn: Some(conn) })) } else { Ok(None) }
+        if locked { Ok(Some(Self { conn: Some(conn), lock_id })) } else { Ok(None) }
     }
 
     fn conn(&mut self) -> &mut sqlx::PgConnection {
@@ -153,11 +175,11 @@ impl RetentionAdvisoryLock {
             return;
         };
         if let Err(err) = sqlx::query("SELECT pg_advisory_unlock($1)")
-            .bind(TRANSACTION_EVENT_RETENTION_LOCK_ID)
+            .bind(self.lock_id)
             .execute(&mut *conn)
             .await
         {
-            error!(error = %err, "failed to release transaction event retention lock");
+            error!(error = %err, lock_id = self.lock_id, "failed to release transaction event advisory lock");
             let _detached = conn.detach();
         }
     }
@@ -395,6 +417,20 @@ pub struct TransactionEventRetentionOutcome {
     pub lock_timeouts: u64,
 }
 
+/// Result of one locked BRIN summary pass.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TransactionEventBrinSummaryOutcome {
+    /// Whether this replica held the summary lock and ran the pass.
+    pub lock_acquired: bool,
+    /// BRIN block ranges newly summarized, across every index summarized.
+    pub ranges_summarized: u64,
+    /// Partitions skipped because their lock was busy, usually by a vacuum.
+    pub lock_timeouts: u64,
+    /// Whether the summary function is missing because migration 005 has not
+    /// run yet. The pass stops without summarizing anything.
+    pub migration_pending: bool,
+}
+
 /// Configuration for transaction event HTTP ingest.
 #[derive(Debug, Clone)]
 pub struct TransactionEventIngestConfig {
@@ -477,12 +513,6 @@ pub const MAX_TRANSACTION_EVENT_QUERY_LIMIT: i64 = 2_000;
 const REQUIRED_TRANSACTION_EVENT_MIGRATION_DESCRIPTION: &str = "transaction events v2";
 static TRANSACTION_EVENT_MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
-/// Pre-partition migrations 001-004, which the partitioned baseline replaced.
-///
-/// They are embedded only so their recorded `_sqlx_migrations` rows can be
-/// recognized by version and checksum and reset. They are never applied.
-static LEGACY_TRANSACTION_EVENT_MIGRATOR: Migrator = sqlx::migrate!("./legacy_migrations");
-
 /// Migration that creates the transaction event storage schema.
 fn required_transaction_event_migration() -> Result<&'static Migration, &'static str> {
     let mut matching_migrations = TRANSACTION_EVENT_MIGRATOR.iter().filter(|migration| {
@@ -556,12 +586,12 @@ pub enum TransactionEventSchemaReadinessError {
     },
     /// An expected table is missing or not visible to the runtime role.
     #[error(
-        "transaction-event Postgres schema is not ready: public.transaction_events_v2 or public.transaction_events is missing or not visible to the runtime role; run `audit-archiver migrate up` or the audit migration WorkflowTemplate before enabling TIPS_AUDIT_POSTGRES_URL"
+        "transaction-event Postgres schema is not ready: public.transaction_events_v2 is missing or not visible to the runtime role; run `audit-archiver migrate up` or the audit migration WorkflowTemplate before enabling TIPS_AUDIT_POSTGRES_URL"
     )]
     TransactionEventsRelationMissing,
     /// An expected table exists but cannot be queried by the runtime role.
     #[error(
-        "transaction-event Postgres schema is not ready: runtime role cannot query public.transaction_events_v2 and public.transaction_events; verify audit_archiver privileges from 001_transaction_events_partitioned.sql and 003_transaction_events_v2.sql"
+        "transaction-event Postgres schema is not ready: runtime role cannot query public.transaction_events_v2; verify audit_archiver privileges from 003_transaction_events_v2.sql"
     )]
     TransactionEventsRelationUnavailable {
         /// Underlying database error.
@@ -613,6 +643,7 @@ pub trait TransactionEventSink: Send + Sync {
 pub struct PgTransactionEventSink {
     pool: PgPool,
     retention_pool: PgPool,
+    brin_summary_pool: PgPool,
     retention: TransactionEventRetentionConfig,
 }
 
@@ -625,81 +656,52 @@ impl PgTransactionEventSink {
     /// Connects to Postgres without running migrations.
     ///
     /// The ingest pool is used for persist, RPC reads, and `/readyz`.
-    /// Partition maintenance uses a dedicated one-connection pool with a short
-    /// acquire timeout so lock losers do not occupy ingest connections. The
-    /// sink starts with the default retention config; see
-    /// [`Self::with_retention_config`].
+    /// Partition maintenance and BRIN summaries each use a dedicated
+    /// one-connection pool with a short acquire timeout, so lock losers do
+    /// not occupy ingest connections and a long summary does not hold up a
+    /// maintenance pass. The sink starts with the default retention config;
+    /// see [`Self::with_retention_config`].
     pub async fn connect(database_url: &str, max_connections: u32) -> Result<Self> {
         let max_connections = max_connections.max(1);
         let pool =
             PgPoolOptions::new().max_connections(max_connections).connect(database_url).await?;
-        let retention_pool = PgPoolOptions::new()
-            .max_connections(1)
-            .acquire_timeout(TRANSACTION_EVENT_RETENTION_ACQUIRE_TIMEOUT)
-            .connect(database_url)
-            .await?;
-        Ok(Self::new_with_retention_pool(pool, retention_pool))
+        let background_pool = || {
+            PgPoolOptions::new()
+                .max_connections(1)
+                .acquire_timeout(TRANSACTION_EVENT_RETENTION_ACQUIRE_TIMEOUT)
+                .connect(database_url)
+        };
+        let retention_pool = background_pool().await?;
+        let brin_summary_pool = background_pool().await?;
+        Ok(Self {
+            pool,
+            retention_pool,
+            brin_summary_pool,
+            retention: TransactionEventRetentionConfig::default(),
+        })
     }
 
-    /// Runs pending Postgres migrations.
-    ///
-    /// A database that recorded the pre-partition migrations 001-004 is reset
-    /// first. Its old table and their `_sqlx_migrations` rows are dropped in the
-    /// transaction that applies the partitioned baseline, so the reset commits
-    /// only if the baseline does. Every other database gets sqlx's standard
-    /// checks.
+    /// Runs pending Postgres migrations under sqlx's migration lock.
     pub async fn migrate(database_url: &str) -> Result<()> {
         let pool = PgPoolOptions::new().max_connections(1).connect(database_url).await?;
-        let mut conn = pool.acquire().await?;
-        // Hold sqlx's migration lock across the legacy-history check and the
-        // run, so a concurrent migrator cannot change the history between
-        // them. The lock is session-level and reentrant; run_direct takes it
-        // again and releases its own hold.
-        conn.lock().await?;
-        let result = async {
-            let legacy_versions = legacy_transaction_event_migration_versions(&mut conn).await?;
-            if legacy_versions.is_empty() {
-                TRANSACTION_EVENT_MIGRATOR.run_direct(&mut *conn).await?;
-                return anyhow::Ok(());
-            }
-
-            let mut tx = conn.begin().await?;
-            // Bound the DROP's lock wait so a long-running vacuum or query on
-            // the old table fails the migration quickly instead of queueing
-            // ingest behind it. The migrator can simply be retried.
-            sqlx::query("SET LOCAL lock_timeout = '60s'").execute(&mut *tx).await?;
-            sqlx::query("DROP TABLE IF EXISTS transaction_events").execute(&mut *tx).await?;
-            sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ANY($1)")
-                .bind(&legacy_versions)
-                .execute(&mut *tx)
-                .await?;
-            // sqlx applies each migration in a savepoint of this transaction.
-            TRANSACTION_EVENT_MIGRATOR.run_direct(&mut *tx).await?;
-            tx.commit().await?;
-            info!(
-                legacy_versions = ?legacy_versions,
-                "reset legacy transaction event migration history"
-            );
-            anyhow::Ok(())
-        }
-        .await;
-        // Keep the migration's own error. A failed unlock is harmless: this
-        // pool closes when migrate returns, which ends the session and releases
-        // the lock.
-        if let Err(err) = conn.unlock().await {
-            warn!(error = %err, "failed to release transaction event migration lock");
-        }
-        result
+        TRANSACTION_EVENT_MIGRATOR.run(&pool).await?;
+        Ok(())
     }
 
-    /// Creates a sink from an existing ingest pool. Retention uses the same pool.
+    /// Creates a sink from an existing ingest pool. Retention and BRIN
+    /// summaries use the same pool.
     pub fn new(pool: PgPool) -> Self {
         Self::new_with_retention_pool(pool.clone(), pool)
     }
 
-    /// Creates a sink with a dedicated retention pool.
+    /// Creates a sink with a dedicated pool for retention and BRIN summaries.
     pub fn new_with_retention_pool(pool: PgPool, retention_pool: PgPool) -> Self {
-        Self { pool, retention_pool, retention: TransactionEventRetentionConfig::default() }
+        Self {
+            pool,
+            brin_summary_pool: retention_pool.clone(),
+            retention_pool,
+            retention: TransactionEventRetentionConfig::default(),
+        }
     }
 
     /// Sets the retention windows used for ingest admission and partition
@@ -721,15 +723,10 @@ impl PgTransactionEventSink {
     pub async fn check_schema_ready(
         &self,
     ) -> std::result::Result<(), TransactionEventSchemaReadinessError> {
-        let (migration_table_exists, v2_relation_exists, legacy_relation_exists): (
-            bool,
-            bool,
-            bool,
-        ) = sqlx::query_as(
+        let (migration_table_exists, relation_exists): (bool, bool) = sqlx::query_as(
             "SELECT \
                     to_regclass('_sqlx_migrations') IS NOT NULL AS migration_table_exists, \
-                    to_regclass('public.transaction_events_v2') IS NOT NULL AS v2_relation_exists, \
-                    to_regclass('public.transaction_events') IS NOT NULL AS legacy_relation_exists",
+                    to_regclass('public.transaction_events_v2') IS NOT NULL AS relation_exists",
         )
         .fetch_one(&self.pool)
         .await
@@ -748,8 +745,6 @@ impl PgTransactionEventSink {
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|source| TransactionEventSchemaReadinessError::QueryFailed { source })?;
-        // The checksum distinguishes this migration from the legacy migration
-        // that recorded the same version.
         let applied = applied.is_some_and(|(success, checksum)| {
             success && checksum == required_migration.checksum.as_ref()
         });
@@ -759,21 +754,18 @@ impl PgTransactionEventSink {
             });
         }
 
-        // Writes go to the v2 tree; reads also cover the draining legacy tree.
-        if !(v2_relation_exists && legacy_relation_exists) {
+        if !relation_exists {
             return Err(TransactionEventSchemaReadinessError::TransactionEventsRelationMissing);
         }
 
-        for probe in [
-            "SELECT 1 FROM transaction_events_v2 LIMIT 0",
-            "SELECT 1 FROM transaction_events LIMIT 0",
-        ] {
-            sqlx::query(probe).execute(&self.pool).await.map_err(|source| {
+        sqlx::query("SELECT 1 FROM transaction_events_v2 LIMIT 0")
+            .execute(&self.pool)
+            .await
+            .map_err(|source| {
                 TransactionEventSchemaReadinessError::TransactionEventsRelationUnavailable {
                     source,
                 }
             })?;
-        }
 
         Ok(())
     }
@@ -840,7 +832,12 @@ impl PgTransactionEventSink {
         now: DateTime<Utc>,
     ) -> Result<TransactionEventRetentionOutcome> {
         let config = self.retention;
-        let Some(mut lock) = RetentionAdvisoryLock::try_acquire(&self.retention_pool).await? else {
+        let Some(mut lock) = RetentionAdvisoryLock::try_acquire(
+            &self.retention_pool,
+            TRANSACTION_EVENT_RETENTION_LOCK_ID,
+        )
+        .await?
+        else {
             return Ok(TransactionEventRetentionOutcome::default());
         };
 
@@ -911,6 +908,70 @@ impl PgTransactionEventSink {
                 }
             }
 
+            Ok(outcome)
+        }
+        .await;
+
+        lock.unlock().await;
+        outcome
+    }
+
+    /// Summarizes new blocks in the BRIN indexes of the day partitions that
+    /// take inserts.
+    ///
+    /// Covers today's and yesterday's UTC day partition of every class:
+    /// ingest writes by `event_time`, so late events still land in
+    /// yesterday's partition after midnight. Uses its own session advisory
+    /// lock, so one replica summarizes at a time. Each partition runs in its
+    /// own transaction under a short `lock_timeout`; a partition whose lock is
+    /// busy, usually by a vacuum, is skipped until the next pass.
+    ///
+    /// Returns an outcome with `migration_pending = true` and does nothing when
+    /// migration 005 has not created the summary function yet, so the API can
+    /// roll out before the migrator.
+    pub async fn summarize_brin_indexes(&self) -> Result<TransactionEventBrinSummaryOutcome> {
+        self.summarize_brin_indexes_at(Utc::now()).await
+    }
+
+    /// Runs [`Self::summarize_brin_indexes`] as if the current time were
+    /// `now`.
+    #[doc(hidden)]
+    pub async fn summarize_brin_indexes_at(
+        &self,
+        now: DateTime<Utc>,
+    ) -> Result<TransactionEventBrinSummaryOutcome> {
+        let Some(mut lock) = RetentionAdvisoryLock::try_acquire(
+            &self.brin_summary_pool,
+            TRANSACTION_EVENT_BRIN_SUMMARY_LOCK_ID,
+        )
+        .await?
+        else {
+            return Ok(TransactionEventBrinSummaryOutcome::default());
+        };
+
+        let outcome = async {
+            let mut outcome =
+                TransactionEventBrinSummaryOutcome { lock_acquired: true, ..Default::default() };
+            for partition in brin_summary_partitions(now) {
+                match summarize_partition_brin(lock.conn(), partition).await? {
+                    BrinSummary::Summarized(ranges) => {
+                        outcome.ranges_summarized += ranges;
+                        Metrics::transaction_event_brin_ranges_summarized(partition.class.as_str())
+                            .increment(ranges);
+                    }
+                    BrinSummary::LockTimeout => {
+                        outcome.lock_timeouts += 1;
+                        Metrics::transaction_event_brin_summary_lock_timeouts(
+                            partition.class.as_str(),
+                        )
+                        .increment(1);
+                    }
+                    BrinSummary::MigrationPending => {
+                        outcome.migration_pending = true;
+                        break;
+                    }
+                }
+            }
             Ok(outcome)
         }
         .await;
@@ -1024,9 +1085,8 @@ impl PgTransactionEventSink {
         limit: i64,
     ) -> Result<Vec<TransactionEventRecord>> {
         let limit = normalize_limit(limit);
-        let rows = sqlx::query(&oldest_first_union_sql("tx_hash = $1", "tx_hash = ANY($2)", "$3"))
+        let rows = sqlx::query(&oldest_first_sql("tx_hash = $1"))
             .bind(canonical_hash_key(tx_hash))
-            .bind(hex_lookup_keys(tx_hash))
             .bind(limit)
             .fetch_all(&self.pool)
             .await?;
@@ -1041,12 +1101,11 @@ impl PgTransactionEventSink {
     ) -> Result<Vec<TransactionEventRecord>> {
         let block_number = i64::try_from(block_number)?;
         let limit = normalize_limit(limit);
-        let rows =
-            sqlx::query(&oldest_first_union_sql("block_number = $1", "block_number = $1", "$2"))
-                .bind(block_number)
-                .bind(limit)
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = sqlx::query(&oldest_first_sql("block_number = $1"))
+            .bind(block_number)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
         rows.into_iter().map(record_from_row).collect()
     }
 
@@ -1057,13 +1116,11 @@ impl PgTransactionEventSink {
         limit: i64,
     ) -> Result<Vec<TransactionEventRecord>> {
         let limit = normalize_limit(limit);
-        let rows =
-            sqlx::query(&oldest_first_union_sql("block_hash = $1", "block_hash = ANY($2)", "$3"))
-                .bind(canonical_hash_key(block_hash))
-                .bind(hex_lookup_keys(block_hash))
-                .bind(limit)
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = sqlx::query(&oldest_first_sql("block_hash = $1"))
+            .bind(canonical_hash_key(block_hash))
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
         rows.into_iter().map(record_from_row).collect()
     }
 
@@ -1076,16 +1133,10 @@ impl PgTransactionEventSink {
         let limit = normalize_limit(limit);
         let rows = sqlx::query(&format!(
             "WITH bundle_events AS ( \
-                SELECT {V2_READ_COLUMNS} FROM transaction_events_v2 \
+                SELECT {READ_COLUMNS} FROM transaction_events_v2 \
                 WHERE data ? 'bundle_hash' AND data->>'bundle_hash' = $1 \
                 UNION ALL \
-                SELECT {V2_READ_COLUMNS} FROM transaction_events_v2 \
-                WHERE data ? 'bundle_id' AND data->>'bundle_id' = $1 \
-                UNION ALL \
-                SELECT {LEGACY_READ_COLUMNS} FROM transaction_events \
-                WHERE data ? 'bundle_hash' AND data->>'bundle_hash' = $1 \
-                UNION ALL \
-                SELECT {LEGACY_READ_COLUMNS} FROM transaction_events \
+                SELECT {READ_COLUMNS} FROM transaction_events_v2 \
                 WHERE data ? 'bundle_id' AND data->>'bundle_id' = $1 \
              ), deduped AS ( \
                 SELECT DISTINCT ON (event_id) * FROM bundle_events \
@@ -1105,7 +1156,7 @@ impl PgTransactionEventSink {
     /// Returns rejected transaction events sorted newest first for list views.
     ///
     /// Optional filters are omitted from SQL when unset so Postgres can use
-    /// each tree's `*_rejected_event_time_idx` for a bounded `LIMIT`
+    /// `transaction_events_v2_rejected_event_time_idx` for a bounded `LIMIT`
     /// list. The previous `($1 IS NULL OR ...)` shape forced a heap scan on
     /// large journals and missed the Internal Explorer 3s timeout. `event_id`
     /// is a tie-break only; `ingested_at` is not in `ORDER BY` so the planner
@@ -1119,74 +1170,44 @@ impl PgTransactionEventSink {
         let to_block = query.to_block.map(i64::try_from).transpose()?;
 
         let mut query_builder = QueryBuilder::new(format!(
-            "(SELECT {V2_READ_COLUMNS} FROM transaction_events_v2 WHERE {REJECTED_EVENT_TYPES_SQL}"
+            "SELECT {READ_COLUMNS} FROM transaction_events_v2 WHERE {REJECTED_EVENT_TYPES_SQL}"
         ));
-        push_rejected_filters(&mut query_builder, from_block, to_block, &query);
+        if let Some(from_block) = from_block {
+            query_builder.push(" AND block_number >= ").push_bind(from_block);
+        }
+        if let Some(to_block) = to_block {
+            query_builder.push(" AND block_number <= ").push_bind(to_block);
+        }
+        if let Some(from_time) = query.from_time {
+            query_builder.push(" AND event_time >= ").push_bind(from_time);
+        }
+        if let Some(to_time) = query.to_time {
+            query_builder.push(" AND event_time < ").push_bind(to_time);
+        }
         // event_id is a tie-break only. The partial index is (event_type, event_time DESC);
         // LIMIT lists still use that leading column. ingested_at is omitted so the
         // planner does not drop the index for a three-column sort.
         query_builder.push(" ORDER BY event_time DESC, event_id DESC LIMIT ").push_bind(limit);
-        query_builder.push(format!(
-            ") UNION ALL (SELECT {LEGACY_READ_COLUMNS} FROM transaction_events \
-             WHERE {REJECTED_EVENT_TYPES_SQL}"
-        ));
-        push_rejected_filters(&mut query_builder, from_block, to_block, &query);
-        query_builder.push(" ORDER BY event_time DESC, event_id DESC LIMIT ").push_bind(limit);
-        query_builder.push(") ORDER BY event_time DESC, event_id DESC LIMIT ").push_bind(limit);
 
         let rows = query_builder.build().fetch_all(&self.pool).await?;
         rows.into_iter().map(record_from_row).collect()
     }
 }
 
-/// Read columns from `transaction_events_v2`.
-const V2_READ_COLUMNS: &str = "event_id, schema_version, event_time, ingested_at, producer, \
+/// Columns read back into a [`TransactionEventRecord`].
+const READ_COLUMNS: &str = "event_id, schema_version, event_time, ingested_at, producer, \
      event_type, network, tx_hash, block_hash, block_number, payload_id, request_id, data";
-
-/// Read columns from the legacy tree. `event_id` takes the v2 tree's `C`
-/// collation so a union of both trees can sort by it.
-const LEGACY_READ_COLUMNS: &str = "event_id COLLATE \"C\" AS event_id, schema_version, \
-     event_time, ingested_at, producer, event_type, network, tx_hash, block_hash, block_number, \
-     payload_id, request_id, data";
 
 /// Event types served by the rejected-events list.
 const REJECTED_EVENT_TYPES_SQL: &str =
     "event_type IN ('SIMULATION_FAILED', 'BUILDER_REJECTED', 'BUILDER_EXPIRED')";
 
-/// Oldest-first rows from both trees, at most `limit` (a bind placeholder).
-///
-/// Each branch is limited separately so it can stop at the limit on its
-/// own index before the union is sorted.
-fn oldest_first_union_sql(v2_filter: &str, legacy_filter: &str, limit: &str) -> String {
-    const ORDER: &str = "ORDER BY event_time ASC, ingested_at ASC, event_id ASC";
+/// Oldest-first rows matching `filter`, limited by the `$2` bind.
+fn oldest_first_sql(filter: &str) -> String {
     format!(
-        "(SELECT {V2_READ_COLUMNS} FROM transaction_events_v2 WHERE {v2_filter} {ORDER} LIMIT {limit}) \
-         UNION ALL \
-         (SELECT {LEGACY_READ_COLUMNS} FROM transaction_events WHERE {legacy_filter} {ORDER} \
-          LIMIT {limit}) \
-         {ORDER} LIMIT {limit}"
+        "SELECT {READ_COLUMNS} FROM transaction_events_v2 WHERE {filter} \
+         ORDER BY event_time ASC, ingested_at ASC, event_id ASC LIMIT $2"
     )
-}
-
-/// Appends the optional rejected-event filters to one union branch.
-fn push_rejected_filters(
-    query_builder: &mut QueryBuilder<'_, sqlx::Postgres>,
-    from_block: Option<i64>,
-    to_block: Option<i64>,
-    query: &RejectedTransactionEventQuery,
-) {
-    if let Some(from_block) = from_block {
-        query_builder.push(" AND block_number >= ").push_bind(from_block);
-    }
-    if let Some(to_block) = to_block {
-        query_builder.push(" AND block_number <= ").push_bind(to_block);
-    }
-    if let Some(from_time) = query.from_time {
-        query_builder.push(" AND event_time >= ").push_bind(from_time);
-    }
-    if let Some(to_time) = query.to_time {
-        query_builder.push(" AND event_time < ").push_bind(to_time);
-    }
 }
 
 fn normalize_limit(limit: i64) -> i64 {
@@ -1202,42 +1223,6 @@ fn canonical_hash_key(value: &str) -> Option<String> {
         return None;
     }
     Some(format!("0x{}", hex.to_ascii_lowercase()))
-}
-
-/// Lookup keys for legacy hex join columns stored as text.
-///
-/// Ingest wrote `0x` + lowercase via `{hash:#x}`. Readers may send mixed
-/// case, missing `0x`, or the original string; exact `ANY()` matches keep
-/// the btree index while covering those variants.
-fn hex_lookup_keys(value: &str) -> Vec<String> {
-    let trimmed = value.trim();
-    let mut keys = Vec::with_capacity(5);
-    if !trimmed.is_empty() {
-        keys.push(trimmed.to_string());
-    }
-
-    let hex = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")).unwrap_or(trimmed);
-    if hex.is_empty() || !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        return keys;
-    }
-
-    let prefixed = format!("0x{}", hex.to_ascii_lowercase());
-    if !keys.iter().any(|key| key == &prefixed) {
-        keys.push(prefixed);
-    }
-    let prefixed_upper = format!("0x{}", hex.to_ascii_uppercase());
-    if !keys.iter().any(|key| key == &prefixed_upper) {
-        keys.push(prefixed_upper);
-    }
-    let bare = hex.to_ascii_lowercase();
-    if !keys.iter().any(|key| key == &bare) {
-        keys.push(bare);
-    }
-    let bare_upper = hex.to_ascii_uppercase();
-    if !keys.iter().any(|key| key == &bare_upper) {
-        keys.push(bare_upper);
-    }
-    keys
 }
 
 fn record_from_row(row: sqlx::postgres::PgRow) -> Result<TransactionEventRecord> {
@@ -1305,40 +1290,16 @@ fn persist_retry_sqlstate(code: &str) -> Option<&'static str> {
     }
 }
 
-/// Versions of the recorded pre-partition migrations 001-004.
-///
-/// A row counts only if both its version and checksum match a legacy
-/// migration. A database that records legacy migrations alongside anything
-/// else fails, so the reset never deletes history it does not recognize.
-async fn legacy_transaction_event_migration_versions(conn: &mut PgConnection) -> Result<Vec<i64>> {
-    let migrations_table_exists: bool =
-        sqlx::query_scalar("SELECT to_regclass('_sqlx_migrations') IS NOT NULL")
-            .fetch_one(&mut *conn)
-            .await?;
-    if !migrations_table_exists {
-        return Ok(Vec::new());
-    }
-
-    let applied: Vec<(i64, Vec<u8>)> =
-        sqlx::query_as("SELECT version, checksum FROM _sqlx_migrations ORDER BY version")
-            .fetch_all(&mut *conn)
-            .await?;
-    let (legacy, other): (Vec<_>, Vec<_>) = applied.into_iter().partition(|(version, checksum)| {
-        LEGACY_TRANSACTION_EVENT_MIGRATOR.iter().any(|migration| {
-            migration.version == *version && migration.checksum.as_ref() == checksum.as_slice()
-        })
-    });
-    let legacy: Vec<i64> = legacy.into_iter().map(|(version, _)| version).collect();
-    let other: Vec<i64> = other.into_iter().map(|(version, _)| version).collect();
-    anyhow::ensure!(
-        legacy.is_empty() || other.is_empty(),
-        "database records legacy transaction event migrations {legacy:?} alongside unrecognized migrations {other:?}; refusing to reset migration history"
-    );
-    Ok(legacy)
-}
-
 fn is_lock_timeout(err: &sqlx::Error) -> bool {
     matches!(err, sqlx::Error::Database(database) if database.code().as_deref() == Some("55P03"))
+}
+
+fn is_undefined_function(err: &sqlx::Error) -> bool {
+    matches!(
+        err,
+        sqlx::Error::Database(database)
+            if database.code().as_deref() == Some(UNDEFINED_FUNCTION_SQLSTATE)
+    )
 }
 
 /// Midnight UTC at the start of `day`.
@@ -1346,52 +1307,29 @@ const fn utc_midnight(day: NaiveDate) -> DateTime<Utc> {
     day.and_time(chrono::NaiveTime::MIN).and_utc()
 }
 
-/// Partitioned table that holds a day partition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-enum PartitionTree {
-    /// `transaction_events`, which gets no new days and drains by retention.
-    Legacy,
-    /// `transaction_events_v2`, which ingest writes.
-    V2,
-}
+/// Prefix of the v2 class and day partition table names.
+const PARTITION_TABLE_PREFIX: &str = "transaction_events_v2_";
 
-impl PartitionTree {
-    /// Prefix of the tree's class and day partition table names.
-    const fn table_prefix(self) -> &'static str {
-        match self {
-            Self::Legacy => "transaction_events_",
-            Self::V2 => "transaction_events_v2_",
-        }
-    }
-}
-
-/// One UTC day partition of one retention class in one tree.
+/// One UTC day partition of one retention class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct DayPartition {
-    tree: PartitionTree,
     class: TransactionEventRetentionClass,
     day: NaiveDate,
 }
 
 impl DayPartition {
-    /// Table name used by the tree's partition functions.
+    /// Table name used by the partition functions.
     fn table_name(self) -> String {
-        format!("{}{}_{}", self.tree.table_prefix(), self.class.as_str(), self.day.format("%Y%m%d"))
+        format!("{PARTITION_TABLE_PREFIX}{}_{}", self.class.as_str(), self.day.format("%Y%m%d"))
     }
 
     fn from_table_name(name: &str) -> Option<Self> {
-        let (tree, rest) = match name.strip_prefix(PartitionTree::V2.table_prefix()) {
-            Some(rest) => (PartitionTree::V2, rest),
-            None => {
-                (PartitionTree::Legacy, name.strip_prefix(PartitionTree::Legacy.table_prefix())?)
-            }
-        };
+        let rest = name.strip_prefix(PARTITION_TABLE_PREFIX)?;
         let (class, day) = rest.split_once('_')?;
         if day.len() != 8 {
             return None;
         }
         Some(Self {
-            tree,
             class: TransactionEventRetentionClass::from_label(class)?,
             day: NaiveDate::parse_from_str(day, "%Y%m%d").ok()?,
         })
@@ -1415,17 +1353,13 @@ struct ExistingPartition {
 struct PartitionPlan {
     /// Tables left detached by an earlier pass that failed before dropping.
     drop_detached: Vec<DayPartition>,
-    /// Missing v2 days in each class's retention window and look-ahead.
+    /// Missing days in each class's retention window and look-ahead.
     create: Vec<DayPartition>,
-    /// Attached days, in either tree, entirely older than the retention window
-    /// plus grace.
+    /// Attached days entirely older than the retention window plus grace.
     detach: Vec<DayPartition>,
 }
 
 /// Plans which day partitions to create and drop at `now`.
-///
-/// Only the v2 tree gets new days. Legacy days are dropped on the same
-/// schedule, so the legacy tree empties once its last day ages out.
 fn plan_partition_maintenance(
     now: DateTime<Utc>,
     config: TransactionEventRetentionConfig,
@@ -1451,7 +1385,7 @@ fn plan_partition_maintenance(
         let window = config.retention_window(class);
         let mut day = (now - window).date_naive();
         while day <= last_day {
-            let partition = DayPartition { tree: PartitionTree::V2, class, day };
+            let partition = DayPartition { class, day };
             if !attached.contains(&partition) {
                 plan.create.push(partition);
             }
@@ -1470,7 +1404,7 @@ fn plan_partition_maintenance(
     plan
 }
 
-/// Seconds until ingest for `class` could admit an event with no v2 partition.
+/// Seconds until ingest for `class` could admit an event with no partition.
 ///
 /// Counts contiguous attached days starting with today, less the future
 /// skew ingest admits. Zero when that coverage has already run out.
@@ -1479,12 +1413,11 @@ fn partition_horizon_secs(
     class: TransactionEventRetentionClass,
     attached: &BTreeSet<DayPartition>,
 ) -> f64 {
-    let tree = PartitionTree::V2;
     let mut day = now.date_naive();
-    if !attached.contains(&DayPartition { tree, class, day }) {
+    if !attached.contains(&DayPartition { class, day }) {
         return 0.0;
     }
-    while attached.contains(&DayPartition { tree, class, day: day + Duration::days(1) }) {
+    while attached.contains(&DayPartition { class, day: day + Duration::days(1) }) {
         day += Duration::days(1);
     }
     let coverage_end = utc_midnight(day + Duration::days(1));
@@ -1499,7 +1432,7 @@ async fn list_day_partitions(conn: &mut sqlx::PgConnection) -> Result<Vec<Existi
          JOIN pg_namespace n ON n.oid = c.relnamespace \
          WHERE n.nspname = 'public' \
            AND c.relkind = 'r' \
-           AND c.relname ~ '^transaction_events_(v2_)?(hot|warm|cold)_[0-9]{8}$'",
+           AND c.relname ~ '^transaction_events_v2_(hot|warm|cold)_[0-9]{8}$'",
     )
     .fetch_all(conn)
     .await?;
@@ -1528,24 +1461,11 @@ impl PartitionDdl {
         }
     }
 
-    const fn sql(self, tree: PartitionTree) -> &'static str {
-        match (tree, self) {
-            (PartitionTree::Legacy, Self::Create) => {
-                "SELECT public.transaction_events_create_partition($1, $2)"
-            }
-            (PartitionTree::Legacy, Self::Detach) => {
-                "SELECT public.transaction_events_detach_partition($1, $2)"
-            }
-            (PartitionTree::Legacy, Self::DropDetached) => {
-                "SELECT public.transaction_events_drop_detached_partition($1, $2)"
-            }
-            (PartitionTree::V2, Self::Create) => {
-                "SELECT public.transaction_events_v2_create_partition($1, $2)"
-            }
-            (PartitionTree::V2, Self::Detach) => {
-                "SELECT public.transaction_events_v2_detach_partition($1, $2)"
-            }
-            (PartitionTree::V2, Self::DropDetached) => {
+    const fn sql(self) -> &'static str {
+        match self {
+            Self::Create => "SELECT public.transaction_events_v2_create_partition($1, $2)",
+            Self::Detach => "SELECT public.transaction_events_v2_detach_partition($1, $2)",
+            Self::DropDetached => {
                 "SELECT public.transaction_events_v2_drop_detached_partition($1, $2)"
             }
         }
@@ -1565,12 +1485,11 @@ async fn run_partition_ddl(
 ) -> Result<bool> {
     let mut tx = conn.begin().await?;
     sqlx::query(lock_timeout_sql).execute(&mut *tx).await?;
-    let result: std::result::Result<bool, sqlx::Error> =
-        sqlx::query_scalar(ddl.sql(partition.tree))
-            .bind(partition.class.as_str())
-            .bind(partition.day)
-            .fetch_one(&mut *tx)
-            .await;
+    let result: std::result::Result<bool, sqlx::Error> = sqlx::query_scalar(ddl.sql())
+        .bind(partition.class.as_str())
+        .bind(partition.day)
+        .fetch_one(&mut *tx)
+        .await;
     match result {
         Ok(changed) => {
             tx.commit().await?;
@@ -1592,6 +1511,66 @@ async fn run_partition_ddl(
             Err(anyhow::Error::new(err).context(format!(
                 "failed to {} transaction event partition {}",
                 ddl.as_str(),
+                partition.table_name()
+            )))
+        }
+    }
+}
+
+/// Day partitions whose BRIN indexes a summary pass covers at `now`:
+/// yesterday's and today's UTC day of every class.
+fn brin_summary_partitions(now: DateTime<Utc>) -> Vec<DayPartition> {
+    let today = now.date_naive();
+    TransactionEventRetentionClass::ALL
+        .into_iter()
+        .flat_map(|class| [today - Duration::days(1), today].map(|day| DayPartition { class, day }))
+        .collect()
+}
+
+/// Result of summarizing one partition's BRIN indexes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BrinSummary {
+    /// Block ranges newly summarized.
+    Summarized(u64),
+    /// The partition's lock was busy; retried next pass.
+    LockTimeout,
+    /// Migration 005 has not created the summary function yet.
+    MigrationPending,
+}
+
+/// Summarizes one partition's BRIN indexes in its own transaction.
+async fn summarize_partition_brin(
+    conn: &mut sqlx::PgConnection,
+    partition: DayPartition,
+) -> Result<BrinSummary> {
+    let mut tx = conn.begin().await?;
+    sqlx::query(TRANSACTION_EVENT_BRIN_SUMMARY_LOCK_TIMEOUT_SQL).execute(&mut *tx).await?;
+    let result: std::result::Result<i64, sqlx::Error> =
+        sqlx::query_scalar("SELECT public.transaction_events_v2_summarize_brin($1, $2)")
+            .bind(partition.class.as_str())
+            .bind(partition.day)
+            .fetch_one(&mut *tx)
+            .await;
+    match result {
+        Ok(ranges) => {
+            tx.commit().await?;
+            Ok(BrinSummary::Summarized(u64::try_from(ranges).unwrap_or_default()))
+        }
+        Err(err) => {
+            let _ = tx.rollback().await;
+            if is_lock_timeout(&err) {
+                warn!(
+                    error = %err,
+                    partition = %partition.table_name(),
+                    "transaction event BRIN summary hit lock timeout; retrying next pass"
+                );
+                return Ok(BrinSummary::LockTimeout);
+            }
+            if is_undefined_function(&err) {
+                return Ok(BrinSummary::MigrationPending);
+            }
+            Err(anyhow::Error::new(err).context(format!(
+                "failed to summarize BRIN indexes of transaction event partition {}",
                 partition.table_name()
             )))
         }
@@ -2028,11 +2007,7 @@ mod tests {
     }
 
     fn partition(class: TransactionEventRetentionClass, value: &str) -> DayPartition {
-        DayPartition { tree: PartitionTree::V2, class, day: day(value) }
-    }
-
-    fn legacy_partition(class: TransactionEventRetentionClass, value: &str) -> DayPartition {
-        DayPartition { tree: PartitionTree::Legacy, class, day: day(value) }
+        DayPartition { class, day: day(value) }
     }
 
     #[derive(Debug, Default)]
@@ -2271,12 +2246,9 @@ mod tests {
         assert_eq!(DayPartition::from_table_name(&hot.table_name()), Some(hot));
         assert_eq!(hot.end(), at("2026-09-24T00:00:00Z"));
 
-        let legacy = legacy_partition(TransactionEventRetentionClass::Cold, "2026-09-23");
-        assert_eq!(legacy.table_name(), "transaction_events_cold_20260923");
-        assert_eq!(DayPartition::from_table_name(&legacy.table_name()), Some(legacy));
-
         for name in [
             "transaction_events",
+            "transaction_events_cold_20260923",
             "transaction_events_hot",
             "transaction_events_v2_hot",
             "transaction_events_tepid_20260923",
@@ -2315,7 +2287,6 @@ mod tests {
         );
         assert!(plan.detach.is_empty());
         assert!(plan.drop_detached.is_empty());
-        assert!(plan.create.iter().all(|p| p.tree == PartitionTree::V2));
     }
 
     #[test]
@@ -2350,26 +2321,6 @@ mod tests {
     }
 
     #[test]
-    fn plans_legacy_drops_without_legacy_creates() {
-        let config = TransactionEventRetentionConfig::default();
-        let hot = TransactionEventRetentionClass::Hot;
-        let existing = [
-            ExistingPartition { partition: legacy_partition(hot, "2026-09-19"), attached: true },
-            ExistingPartition { partition: legacy_partition(hot, "2026-09-23"), attached: true },
-            ExistingPartition { partition: legacy_partition(hot, "2026-09-18"), attached: false },
-        ];
-
-        let plan = plan_partition_maintenance(at("2026-09-23T12:00:00Z"), config, &existing);
-        assert_eq!(plan.detach, vec![legacy_partition(hot, "2026-09-19")]);
-        assert_eq!(plan.drop_detached, vec![legacy_partition(hot, "2026-09-18")]);
-        assert!(
-            plan.create.contains(&partition(hot, "2026-09-23")),
-            "an attached legacy day does not stand in for the v2 day"
-        );
-        assert!(plan.create.iter().all(|p| p.tree == PartitionTree::V2));
-    }
-
-    #[test]
     fn measures_contiguous_partition_horizon_from_today() {
         let hot = TransactionEventRetentionClass::Hot;
         let now = at("2026-09-23T12:00:00Z");
@@ -2389,12 +2340,6 @@ mod tests {
         assert_eq!(
             partition_horizon_secs(now, TransactionEventRetentionClass::Warm, &attached),
             0.0
-        );
-        let legacy_only: BTreeSet<_> = [legacy_partition(hot, "2026-09-23")].into_iter().collect();
-        assert_eq!(
-            partition_horizon_secs(now, hot, &legacy_only),
-            0.0,
-            "legacy days do not count toward the v2 write horizon"
         );
     }
 
@@ -2599,27 +2544,6 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(response.status, TransactionEventBatchStatus::Rejected);
         assert!(response.results[0].reason.as_deref().unwrap().contains("batch size"));
-    }
-
-    #[test]
-    fn hex_lookup_keys_cover_prefixed_mixed_case_and_bare() {
-        let keys = hex_lookup_keys("0xAa");
-        assert_eq!(
-            keys,
-            vec![
-                "0xAa".to_string(),
-                "0xaa".to_string(),
-                "0xAA".to_string(),
-                "aa".to_string(),
-                "AA".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn hex_lookup_keys_keep_non_hex_input_as_exact_match() {
-        assert_eq!(hex_lookup_keys("not-a-hash"), vec!["not-a-hash".to_string()]);
-        assert!(hex_lookup_keys("   ").is_empty());
     }
 
     #[test]

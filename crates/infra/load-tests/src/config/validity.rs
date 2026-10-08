@@ -71,6 +71,16 @@ pub enum ValidityPredicateConfig {
         /// Right-hand comparison value.
         value: U256,
     },
+    /// Compares an account's protocol nonce with a value.
+    Nonce {
+        /// Account whose protocol nonce is read, resolved per transaction.
+        #[serde(default)]
+        address: PredicateAddressConfig,
+        /// Comparison operator (`<`, `<=`, `=`, `!=`, `>`, `>=`).
+        op: String,
+        /// Right-hand comparison value.
+        value: U256,
+    },
     /// Compares a masked storage value with a value.
     Storage {
         /// Contract whose storage is read, resolved per transaction.
@@ -252,6 +262,11 @@ impl ValidityPredicateConfig {
                 op: parse_operator(op)?,
                 value: *value,
             }),
+            Self::Nonce { address, op, value } => Ok(ValidityPredicateTemplate::Nonce {
+                address: address.to_template()?,
+                op: parse_operator(op)?,
+                value: *value,
+            }),
             Self::Storage { address, slot, mask, op, value } => {
                 Ok(ValidityPredicateTemplate::Storage {
                     address: address.to_template()?,
@@ -339,6 +354,21 @@ mod tests {
     #[test]
     fn parse_operator_rejects_unknown() {
         assert!(parse_operator("==").is_err());
+    }
+
+    #[test]
+    fn nonce_predicate_deserializes_to_template() {
+        let config: ValidityPredicateConfig =
+            serde_yaml::from_str("type: nonce\naddress: recipient\nop: '>='\nvalue: '0x2'")
+                .unwrap();
+        match config.to_template().unwrap() {
+            ValidityPredicateTemplate::Nonce { address, op, value } => {
+                assert!(matches!(address, PredicateAddress::Recipient));
+                assert_eq!(op, ValidityOperator::GreaterThanOrEqual);
+                assert_eq!(value, U256::from(2));
+            }
+            other => panic!("expected nonce template, got {other:?}"),
+        }
     }
 
     #[test]

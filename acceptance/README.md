@@ -9,7 +9,8 @@ The checked-in scenarios are:
 - `smoke`: chain identity, block production, and validator convergence.
 - `health`: sustained sampled health across all four L2 node roles.
 - `derivation`: unsafe production, safe-head derivation, and head freshness.
-- `denim-transition`: progress and convergence immediately before and after Denim.
+- `denim-transition`: progress and convergence around Denim, including the shadow validator's
+  safe chain derived from the base batcher's batches.
 
 ## Requirements
 
@@ -107,7 +108,9 @@ Every check may have one L2 `start` condition with exactly one of `before_fork` 
 follow an `after_fork` check whose fork activates at or after its own. Builder RPC failures while
 waiting for a fork are retried until the scenario deadline; a reachable builder that never reaches
 an `after_fork` activation fails that check. `heads_converge` never accepts a common height of zero,
-so `safe` and `finalized` comparisons wait for derivation to progress. See `scenarios/` for complete examples.
+so `safe` and `finalized` comparisons wait for derivation to progress. With an `after_fork` start, it
+also waits for a common block timestamped at or after the fork activation, so it compares a post-fork
+block. See `scenarios/` for complete examples.
 
 ## CLI workflows
 

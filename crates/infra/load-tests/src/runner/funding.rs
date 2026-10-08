@@ -1079,9 +1079,6 @@ impl LoadRunner {
         if let Some(display) = &self.display {
             return display.progress_bar(total, prefix);
         }
-        if self.snapshot_tx.is_some() {
-            return ProgressBar::hidden();
-        }
         let pb = ProgressBar::new(total);
         pb.set_style(
             ProgressStyle::with_template("{prefix} [{bar:40.cyan/blue}] {pos}/{len} ({eta})")

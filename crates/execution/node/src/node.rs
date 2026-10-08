@@ -19,7 +19,6 @@ use base_execution_evm::{BaseEvmConfig, BaseRethReceiptBuilder};
 use base_execution_payload_builder::{
     Attributes, BaseBuiltPayload, BasePayloadBuilderAttributes,
     DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, PayloadPrimitives, RejectionCache,
-    builder::BasePayloadTransactions,
     config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
 use base_execution_rpc::{
@@ -30,7 +29,7 @@ use base_execution_rpc::{
 };
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
-    BaseTransactionValidator, GuardLimits, TimestampedTransaction,
+    BaseTransactionValidator, GuardLimits, ParkableTransactionPool, TimestampedTransaction,
     maintain_state_diff_invalidation,
 };
 use reth_chain_state::CanonStateSubscriptions;
@@ -257,6 +256,7 @@ impl BaseNode {
             max_inflight_delegated_slots,
             mempool_sender_limit,
             mempool_payer_limit,
+            mempool_allowlisted_payer_limit,
             ..
         } = self.args;
         let ordering = match txpool_ordering {
@@ -273,10 +273,12 @@ impl BaseNode {
                     .with_guard_limits(GuardLimits {
                         signature_limit: mempool_sender_limit,
                         payment_limit: mempool_payer_limit,
+                        allowlisted_payment_limit: mempool_allowlisted_payer_limit,
                     })
                     .with_additional_trusted_delegation_targets(
                         self.args.mempool_trusted_delegation_targets.iter().copied(),
-                    ),
+                    )
+                    .with_allowlisted_payers(self.args.mempool_allowlisted_payers.iter().copied()),
             )
             .payload(BasePayloadServiceBuilder::new(
                 BasePayloadBuilder::new()
@@ -882,6 +884,8 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
     pub guard_limits: GuardLimits,
     /// Additional trusted EIP-7702 delegation targets for locked payers.
     pub additional_trusted_delegation_targets: AddressSet,
+    /// Operator-allowlisted EIP-8130 payers.
+    pub allowlisted_payers: AddressSet,
     /// Marker for the pooled transaction type.
     _pd: core::marker::PhantomData<T>,
 }
@@ -894,6 +898,7 @@ impl<T> Default for BasePoolBuilder<T> {
             max_inflight_delegated_slots: 4,
             guard_limits: GuardLimits::default(),
             additional_trusted_delegation_targets: AddressSet::default(),
+            allowlisted_payers: AddressSet::default(),
             _pd: Default::default(),
         }
     }
@@ -909,6 +914,7 @@ impl<T> Clone for BasePoolBuilder<T> {
             additional_trusted_delegation_targets: self
                 .additional_trusted_delegation_targets
                 .clone(),
+            allowlisted_payers: self.allowlisted_payers.clone(),
             _pd: core::marker::PhantomData,
         }
     }
@@ -950,6 +956,14 @@ impl<T> BasePoolBuilder<T> {
         self.additional_trusted_delegation_targets = targets.into_iter().collect();
         self
     }
+
+    /// Sets the operator-allowlisted EIP-8130 payers, limited to
+    /// [`GuardLimits::allowlisted_payment_limit`] inflight payments and bounded
+    /// by their balance.
+    pub fn with_allowlisted_payers(mut self, payers: impl IntoIterator<Item = Address>) -> Self {
+        self.allowlisted_payers = payers.into_iter().collect();
+        self
+    }
 }
 
 impl<Node, T, Evm> PoolBuilder<Node, Evm> for BasePoolBuilder<T>
@@ -971,6 +985,7 @@ where
             max_inflight_delegated_slots,
             guard_limits,
             additional_trusted_delegation_targets,
+            allowlisted_payers,
             ..
         } = self;
 
@@ -997,6 +1012,7 @@ where
                         .with_additional_trusted_delegation_targets(
                             additional_trusted_delegation_targets.clone(),
                         )
+                        .with_allowlisted_payers(allowlisted_payers.iter().copied())
                 });
 
         let mut final_pool_config = pool_config_overrides.apply(ctx.pool_config());
@@ -1008,6 +1024,7 @@ where
             blob_store,
             final_pool_config.clone(),
         );
+        let allowlisted_payer_count = allowlisted_payers.len();
         let transaction_pool =
             BaseTransactionPool::new(transaction_pool, ordering).with_guard_limits(guard_limits);
         spawn_maintenance_tasks(ctx, transaction_pool.clone(), &final_pool_config)?;
@@ -1022,6 +1039,8 @@ where
             max_inflight_delegated_slots = max_inflight_delegated_slots,
             sender_limit = guard_limits.signature_limit,
             payer_limit = guard_limits.payment_limit,
+            allowlisted_payer_limit = guard_limits.allowlisted_payment_limit,
+            allowlisted_payers = allowlisted_payer_count,
             "Transaction pool initialized"
         );
         debug!(target: "reth::cli", "Spawned txpool maintenance tasks");
@@ -1032,10 +1051,7 @@ where
 
 /// A basic Base payload service builder
 #[derive(Debug, Clone)]
-pub struct BasePayloadBuilder<Txs = ()> {
-    /// The type responsible for yielding the best transactions for the payload if mempool
-    /// transactions are allowed.
-    pub best_transactions: Txs,
+pub struct BasePayloadBuilder {
     /// This data availability configuration specifies constraints for the payload builder
     /// when assembling payloads
     pub da_config: BaseDAConfig,
@@ -1055,10 +1071,9 @@ pub struct BasePayloadBuilder<Txs = ()> {
     pub rejection_cache: RejectionCache,
 }
 
-impl<Txs: Default> Default for BasePayloadBuilder<Txs> {
+impl Default for BasePayloadBuilder {
     fn default() -> Self {
         Self {
-            best_transactions: Txs::default(),
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
@@ -1073,16 +1088,7 @@ impl<Txs: Default> Default for BasePayloadBuilder<Txs> {
 impl BasePayloadBuilder {
     /// Create a new instance with the default configuration.
     pub fn new() -> Self {
-        Self {
-            best_transactions: (),
-            da_config: BaseDAConfig::default(),
-            gas_limit_config: GasLimitConfig::default(),
-            manifest_precheck_enabled: true,
-            predicate_eval_hard_cutoff: Duration::from_millis(10),
-            predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
-            resource_metering: ResourceMeteringConfig::default(),
-            rejection_cache: RejectionCache::default(),
-        }
+        Self::default()
     }
 
     /// Configure the data availability configuration for the payload builder.
@@ -1128,24 +1134,7 @@ impl BasePayloadBuilder {
     }
 }
 
-impl<Txs> BasePayloadBuilder<Txs> {
-    /// Configures the type responsible for yielding the transactions that should be included in the
-    /// payload.
-    pub fn with_transactions<T>(self, best_transactions: T) -> BasePayloadBuilder<T> {
-        BasePayloadBuilder {
-            best_transactions,
-            da_config: self.da_config,
-            gas_limit_config: self.gas_limit_config,
-            manifest_precheck_enabled: self.manifest_precheck_enabled,
-            predicate_eval_hard_cutoff: self.predicate_eval_hard_cutoff,
-            predicate_bucket_ordered_threshold: self.predicate_bucket_ordered_threshold,
-            resource_metering: self.resource_metering,
-            rejection_cache: self.rejection_cache,
-        }
-    }
-}
-
-impl<Node, Pool, Txs, Evm, Attrs> PayloadBuilderBuilder<Node, Pool, Evm> for BasePayloadBuilder<Txs>
+impl<Node, Pool, Evm, Attrs> PayloadBuilderBuilder<Node, Pool, Evm> for BasePayloadBuilder
 where
     Node: FullNodeTypes<
             Provider: ChainSpecProvider<ChainSpec: Upgrades>,
@@ -1165,13 +1154,13 @@ where
                 <Node::Types as NodeTypes>::ChainSpec,
             >,
         > + 'static,
-    Pool:
-        TransactionPool<Transaction: BasePooledTx<Consensus = TxTy<Node::Types>>> + Unpin + 'static,
-    Txs: BasePayloadTransactions<Pool>,
+    Pool: ParkableTransactionPool<Transaction: BasePooledTx<Consensus = TxTy<Node::Types>>>
+        + Unpin
+        + 'static,
     Attrs: Attributes<Transaction = TxTy<Node::Types>> + Unpin,
 {
     type PayloadBuilder =
-        base_execution_payload_builder::BasePayloadBuilder<Pool, Node::Provider, Evm, Txs, Attrs>;
+        base_execution_payload_builder::BasePayloadBuilder<Pool, Node::Provider, Evm, Attrs>;
 
     async fn build_payload_builder(
         self,
@@ -1194,8 +1183,7 @@ where
                     rejection_cache: self.rejection_cache,
                     state_provider_metrics: ctx.config().engine.state_provider_metrics,
                 },
-            )
-            .with_transactions(self.best_transactions);
+            );
         Ok(payload_builder)
     }
 }
@@ -1485,11 +1473,10 @@ mod tests {
 
     #[test]
     fn payload_builder_preserves_manifest_precheck_setting() {
-        let builder =
-            BasePayloadBuilder::new().with_manifest_precheck_enabled(false).with_transactions(());
+        let builder = BasePayloadBuilder::new().with_manifest_precheck_enabled(false);
 
         assert!(!builder.manifest_precheck_enabled);
-        assert!(BasePayloadBuilder::<()>::default().manifest_precheck_enabled);
+        assert!(BasePayloadBuilder::default().manifest_precheck_enabled);
     }
 
     #[rstest]

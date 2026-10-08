@@ -90,6 +90,9 @@ pub struct InProcessConsensusConfig {
     /// CLI. The config is also passed to the node for live polling (and, in runtime-admin mode,
     /// automatic re-application of observed L1 changes).
     pub upgrade_signal: Option<UpgradeSignalConfig>,
+    /// Execution client HTTP RPC endpoint to which the consensus RPC forwards the methods it
+    /// does not serve. [`None`] disables forwarding.
+    pub execution_forwarding_endpoint: Option<Url>,
 }
 
 /// A running in-process consensus node.
@@ -226,7 +229,7 @@ impl InProcessConsensus {
             dev_enabled: false,
             http_timeout: Duration::from_secs(60),
             max_concurrent_requests: NonZeroUsize::new(1024).expect("nonzero"),
-            execution_forwarding_endpoint: None,
+            execution_forwarding_endpoint: config.execution_forwarding_endpoint,
         };
 
         let checkpoint_dir = tempfile::tempdir()

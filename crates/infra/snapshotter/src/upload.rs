@@ -1930,6 +1930,7 @@ mod tests {
             base_url: None,
             reth_version: None,
             components,
+            extensions: BTreeMap::new(),
         };
 
         let published =

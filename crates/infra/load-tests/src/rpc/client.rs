@@ -281,15 +281,17 @@ impl Display for BatchSendError {
 
 impl BatchRpcClient {
     /// Creates a new batch RPC client targeting the given endpoint.
-    pub fn new(url: Url) -> Self {
+    pub fn new(url: Url) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(RPC_TIMEOUT)
             .connect_timeout(Duration::from_secs(3))
             .pool_max_idle_per_host(256)
             .tcp_nodelay(true)
             .build()
-            .expect("failed to build reqwest client");
-        Self { client, url, batch_size: MAX_BATCH_RPC_SIZE }
+            .map_err(|e| {
+                BaselineError::Rpc(format!("failed to build batch RPC HTTP client: {e}"))
+            })?;
+        Ok(Self { client, url, batch_size: MAX_BATCH_RPC_SIZE })
     }
 
     /// Sets the maximum number of JSON-RPC calls in each HTTP request.
@@ -328,7 +330,9 @@ impl BatchRpcClient {
 
         let chunk_requests = items.chunks(self.batch_size).map(|chunk| async move {
             let _permit = match request_limiter {
-                Some(limiter) => Some(limiter.acquire().await.expect("semaphore never closed")),
+                Some(limiter) => Some(limiter.acquire().await.map_err(|e| {
+                    BaselineError::Rpc(format!("request limiter semaphore closed: {e}"))
+                })?),
                 None => None,
             };
             self.send_raw_chunk(chunk).await
@@ -476,7 +480,7 @@ mod tests {
         drop(listener);
         let url =
             Url::parse(&format!("http://user:secret@{address}")).expect("valid credentialed URL");
-        let client = BatchRpcClient::new(url);
+        let client = BatchRpcClient::new(url).expect("build batch client");
 
         let error = client
             .send_raw_transactions(&[SubmitItem::plain(Bytes::from(vec![1]))], None)
@@ -494,7 +498,7 @@ mod tests {
     fn batch_size_is_configurable() {
         let url = Url::parse("http://localhost:8545").unwrap();
 
-        assert_eq!(BatchRpcClient::new(url).with_batch_size(25).batch_size, 25);
+        assert_eq!(BatchRpcClient::new(url).unwrap().with_batch_size(25).batch_size, 25);
     }
 
     #[test]
