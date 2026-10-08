@@ -571,14 +571,14 @@ class WorkflowTests(unittest.TestCase):
         return job.split("    if: >-\n", 1)[1].split("    runs-on:", 1)[0]
 
     def test_a_push_does_not_start_a_review(self) -> None:
-        condition = self.job_if(self.review_job)
+        condition = self.job_if(self.authorize_job)
         self.assertIn("github.event.action != 'synchronize'", condition)
         triggers = self.text.split("on:\n", 1)[1].split("\n\n", 1)[0]
         self.assertNotIn("reopened", triggers)  # a reopened pull request does not start a review
         self.assertIn("types: [opened, ready_for_review, synchronize]", triggers)
 
     def test_only_a_pull_request_that_is_ready_and_from_this_repository_is_reviewed_on_open(self) -> None:
-        condition = self.job_if(self.review_job)
+        condition = self.job_if(self.authorize_job)
         self.assertIn("github.event.pull_request.draft == false", condition)
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", condition)
 
@@ -599,15 +599,32 @@ class WorkflowTests(unittest.TestCase):
         # before it joins the review job's group, or it could take the place of an authorized one that waits.
         self.assertNotIn("concurrency:", self.authorize_job)
         self.assertIn("needs: authorize", self.review_job)
-        step = self.authorize_job.split("- name: Check that the commenter has write access\n", 1)[1]
-        self.assertIn('gh api "repos/$REPO/collaborators/$COMMENTER/permission" --jq \'.user.permissions.push\'', step)
-        self.assertIn('if [ "$can_push" = true ]; then', step)
+        step = self.authorize_job.split("- name: Check the request\n", 1)[1]
+        script = step.split("run: |", 1)[1]
+        self.assertIn('gh api "repos/$REPO/collaborators/$COMMENTER/permission" --jq \'.user.permissions.push\'', script)
+        self.assertIn('if [ "$can_push" != true ]; then', script)
         # An error from the API must count as "no": the fallback is `false`, not an empty string or success.
-        self.assertIn("|| echo false)", step)
+        self.assertIn("|| echo false)", script)
         # The commenter's name comes through the environment, never into the script text.
         self.assertIn("COMMENTER: ${{ github.event.comment.user.login }}", step)
-        self.assertNotIn("${{ github.event.comment", step.split("run: |", 1)[1])
+        self.assertNotIn("${{ github.event.comment", script)
         self.assertIn("allowed: ${{ steps.check.outputs.allowed }}", self.authorize_job)
+
+    def test_a_pull_request_that_already_has_a_review_is_refused_before_the_concurrency_group(self) -> None:
+        # Otherwise a draft-to-ready toggle could take the one waiting place and displace a waiting `/review`.
+        script = self.authorize_job.split("- name: Check the request\n", 1)[1].split("run: |", 1)[1]
+        self.assertIn('startswith("<!-- CLAUDE_REVIEW_SUMMARY -->")', script)
+        self.assertIn('"github-actions[bot]"', script)
+        self.assertIn("this pull request already has a review", script)
+        self.assertIn('echo "allowed=true" >> "$GITHUB_OUTPUT"', script)
+        # The refusal must be guarded by the count of existing summaries, and write "allowed=false".
+        refusal = script.split('if [ "$existing" -gt 0 ]; then', 1)
+        self.assertEqual(len(refusal), 2, "the check that a summary exists must be a real condition")
+        self.assertIn('echo "allowed=false" >> "$GITHUB_OUTPUT"', refusal[1].split("fi", 1)[0])
+        self.assertIn("exit 0", refusal[1].split("fi", 1)[0])
+        # A `/review` comment is not refused for having a review already: that is what it is for.
+        comment_branch = script.split("if [ \"$EVENT\" = issue_comment ]; then", 1)[1].split("\n          else\n", 1)[0]
+        self.assertNotIn("already has a review", comment_branch)
 
     def test_the_gate_needs_no_secret_but_the_token_and_no_self_hosted_runner(self) -> None:
         self.assertNotIn("LLM_GATEWAY", self.authorize_job)
@@ -622,8 +639,11 @@ class WorkflowTests(unittest.TestCase):
         condition = self.job_if(self.review_job)
         self.assertIn("needs.authorize.result == 'success'", condition)
         self.assertIn("needs.authorize.outputs.allowed == 'true'", condition)
-        # `authorize` is skipped for a pull request event, which must still be reviewed.
+        # A skipped `authorize` (a push, a draft, a fork) must skip this job cleanly.
         self.assertIn("!cancelled()", condition)
+        # Everything about who and what is decided in the gate, so there is one place to get it right.
+        for needle in ("draft", "head.repo", "author_association", "synchronize"):
+            self.assertNotIn(needle, condition)
 
     def test_only_an_exact_review_command_gets_as_far_as_the_concurrency_group(self) -> None:
         condition = self.job_if(self.authorize_job)
