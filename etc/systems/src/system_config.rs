@@ -193,6 +193,10 @@ pub struct DevnetSnapshotConfig {
     /// modify the captured snapshot's system configuration.
     #[serde(default)]
     pub eip1559_elasticity_override: Option<u32>,
+    /// Registers `dev_impersonateTransaction` on the builder RPC and injects its requests as
+    /// synthetic deposits. Enabled only by the interactive `base-devnet snapshot` launcher.
+    #[serde(default)]
+    pub enable_impersonation: bool,
 }
 
 /// Initial execution state used by a devnet stack.
@@ -370,6 +374,7 @@ impl DevnetConfig {
                 block_interval: DevnetBlockInterval::default(),
                 block_gas_limit: None,
                 eip1559_elasticity_override: None,
+                enable_impersonation: false,
             })),
             stable: StableSystemTestConfig::standard(),
             use_stable_ports: false,

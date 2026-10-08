@@ -29,6 +29,12 @@ pub use in_process_standalone_consensus::{
 mod snapshot_boundary;
 pub use snapshot_boundary::SnapshotBoundary;
 
+mod snapshot_impersonation;
+pub use snapshot_impersonation::{
+    ImpersonatedDeposit, SnapshotImpersonation, SnapshotImpersonationAttributesBuilder,
+    SnapshotImpersonationRequest,
+};
+
 mod snapshot_stack;
 pub use snapshot_stack::{SnapshotL2Stack, SnapshotL2StackConfig};
 

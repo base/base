@@ -12,6 +12,7 @@ use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
 use base_common_network::Base;
 use base_consensus_node::StandalonePrefund;
 use base_execution_chainspec::BaseChainSpec;
+use base_node_runner::BaseNodeExtension;
 use eyre::{Result, WrapErr, ensure};
 use reth_ethereum_forks::ForkCondition;
 use url::Url;
@@ -20,7 +21,7 @@ use super::{
     ChainSpecSource, InProcessBuilder, InProcessBuilderConfig, InProcessClient,
     InProcessClientConfig, InProcessFollowConsensus, InProcessFollowConsensusConfig,
     InProcessNodeRuntime, InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig,
-    L2ContainerConfig, SnapshotBoundary,
+    L2ContainerConfig, SnapshotBoundary, SnapshotImpersonation,
 };
 use crate::{DevnetBlockInterval, DevnetSnapshotConfig};
 
@@ -88,6 +89,14 @@ impl SnapshotL2Stack {
             block_interval,
         ));
         let jwt_secret = JwtSecret::random();
+        let impersonation = config.snapshot.enable_impersonation.then(|| {
+            SnapshotImpersonation::new(
+                config
+                    .snapshot
+                    .block_gas_limit
+                    .unwrap_or_else(|| block_interval.snapshot_block_gas_limit()),
+            )
+        });
 
         let builder = InProcessBuilder::start(InProcessBuilderConfig {
             runtime: InProcessNodeRuntime::Host,
@@ -102,7 +111,10 @@ impl SnapshotL2Stack {
             metrics_port: None,
             block_time: block_interval.duration(),
             payload_builder_cutover: block_interval == DevnetBlockInterval::TwoHundredMilliseconds,
-            extra_extensions: Vec::new(),
+            extra_extensions: impersonation
+                .iter()
+                .map(|queue| Box::new(queue.clone()) as Box<dyn BaseNodeExtension>)
+                .collect(),
             persistence_threshold: Some(0),
             persistence_backpressure_threshold: Some(snapshot_persistence_backpressure_threshold(
                 block_interval,
@@ -189,9 +201,11 @@ impl SnapshotL2Stack {
                 rollup_config: rollup_config.as_ref().clone(),
                 jwt_secret,
                 l2_engine_url: builder.engine_url()?,
+                l2_rpc_url: builder.rpc_url()?,
                 l1_info: boundary.l1_info,
                 system_config,
                 prefund,
+                impersonation,
             })
             .await
             .wrap_err("failed to start snapshot standalone consensus")?;
