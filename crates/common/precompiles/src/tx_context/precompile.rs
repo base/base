@@ -1,6 +1,6 @@
 //! Precompile entry point for the EIP-8130 transaction context.
 
-use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
+use alloy_evm::precompiles::PrecompilesMap;
 use base_common_genesis::BaseUpgrade;
 
 use crate::{TxContextStorage, UpgradeGatedStorageFeatures, macros::base_precompile};
@@ -16,24 +16,16 @@ use crate::{TxContextStorage, UpgradeGatedStorageFeatures, macros::base_precompi
 pub struct TxContext;
 
 impl TxContext {
-    /// Installs the `TxContext` precompile, gated to the storage features active
-    /// at `upgrade`.
+    /// Installs the `TxContext` precompile, gated to the storage features
+    /// active at `upgrade`.
     pub fn install(precompiles: &mut PrecompilesMap, upgrade: BaseUpgrade) {
-        precompiles.extend_precompiles(core::iter::once((
-            TxContextStorage::ADDRESS,
-            Self::precompile(upgrade),
-        )));
-    }
-
-    /// Creates the EVM precompile wrapper for `TxContext`, gated to the storage
-    /// features active at `upgrade`.
-    pub fn precompile(upgrade: BaseUpgrade) -> DynPrecompile {
         let storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade);
-        base_precompile!(
+        let precompile = base_precompile!(
             "TxContext",
             storage_features: storage_features,
             |ctx, calldata| TxContextStorage::new(ctx).dispatch(ctx, &calldata),
-        )
+        );
+        precompiles.extend_precompiles(core::iter::once((TxContextStorage::ADDRESS, precompile)));
     }
 }
 

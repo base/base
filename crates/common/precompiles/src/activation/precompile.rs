@@ -1,12 +1,11 @@
 //! Precompile entry point for the activation registry.
 
 use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
-use alloy_primitives::Address;
 use base_common_genesis::BaseUpgrade;
 
 use crate::{
-    ActivationAdminConfig, ActivationRegistryStorage, NoopPrecompileCallObserver,
-    PrecompileCallObserver, UpgradeGatedStorageFeatures, macros::base_precompile,
+    ActivationAdminConfig, ActivationRegistryStorage, PrecompileCallObserver,
+    UpgradeGatedStorageFeatures, macros::base_precompile,
 };
 
 /// Entry point for the activation registry precompile.
@@ -14,31 +13,6 @@ use crate::{
 pub struct ActivationRegistry;
 
 impl ActivationRegistry {
-    /// Installs the activation registry precompile using a static fallback admin.
-    pub fn install(
-        precompiles: &mut PrecompilesMap,
-        activation_admin_address: Option<Address>,
-        upgrade: BaseUpgrade,
-    ) {
-        Self::install_with_config(
-            precompiles,
-            ActivationAdminConfig::static_fallback(activation_admin_address),
-            upgrade,
-        );
-    }
-
-    /// Installs the activation registry precompile with an explicit admin configuration.
-    pub fn install_with_config(
-        precompiles: &mut PrecompilesMap,
-        admin_config: ActivationAdminConfig,
-        upgrade: BaseUpgrade,
-    ) {
-        precompiles.extend_precompiles(core::iter::once((
-            ActivationRegistryStorage::ADDRESS,
-            Self::precompile_with_observer(admin_config, upgrade, NoopPrecompileCallObserver),
-        )));
-    }
-
     /// Installs the activation registry precompile with an observer.
     pub fn install_with_observer<O>(
         precompiles: &mut PrecompilesMap,
@@ -88,16 +62,20 @@ mod tests {
     use base_common_genesis::BaseUpgrade;
     use revm::precompile::Precompiles;
 
-    use crate::{ActivationRegistry, ActivationRegistryStorage};
+    use crate::{
+        ActivationAdminConfig, ActivationRegistry, ActivationRegistryStorage,
+        NoopPrecompileCallObserver,
+    };
 
     #[test]
     fn install_accepts_static_fallback_admin() {
         let mut precompiles = PrecompilesMap::from_static(Precompiles::cancun());
 
-        ActivationRegistry::install(
+        ActivationRegistry::install_with_observer(
             &mut precompiles,
-            Some(Address::repeat_byte(0x11)),
+            ActivationAdminConfig::static_fallback(Some(Address::repeat_byte(0x11))),
             BaseUpgrade::Beryl,
+            NoopPrecompileCallObserver,
         );
 
         assert!(precompiles.get(&ActivationRegistryStorage::ADDRESS).is_some());

@@ -1373,9 +1373,6 @@ mod tests {
     }
 
     impl PolicyAccounting for FakePolicyAccounting {
-        fn registry_address(&self) -> Address {
-            Address::repeat_byte(0x02)
-        }
         fn caller(&self) -> Address {
             self.caller
         }
