@@ -25,7 +25,7 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on:
       group: BaseRunnerGroup
-    timeout-minutes: 90
+    timeout-minutes: 15
     steps:
       - name: Harden the runner (Block unauthorized outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
