@@ -158,7 +158,9 @@ The review job runs on the BaseRunnerGroup runner (the one that can reach the LL
 
 The job's token cannot resolve review threads (GitHub answers "Resource not accessible by integration"), and no other token is available to this workflow. So the bot never calls the resolve mutation. It edits its own comment instead, which the token is allowed to do, and the thread stays open for a person to close. If a token that can resolve threads is ever provided, the place to use it is `apply_plan` in `review.py`.
 
-The script runs from a clean checkout of the base branch, so a PR cannot add files to the code that holds the tokens. Agents run with the PR's checkout as their working directory, `--setting-sources user` (the PR's own Claude settings and hooks are not loaded), read-only tools, and no `GH_TOKEN`.
+The script that holds the tokens comes from a clean checkout of the default branch, so a pull request cannot add or replace files in it. A `/review` comment never runs a pull request's copy: if the default branch has no pipeline yet, the job stops. A `pull_request` run falls back to the pull request's own copy only for the pull request that introduces the pipeline. Nothing from the pull request is on disk when the CLI is installed (npm reads `.npmrc` and `package.json` from the working directory), and the `status` job checks out only the default branch, because it calls the GitHub API and reads no files from the pull request. Agents run with the PR's checkout as their working directory, `--setting-sources user` (the PR's own Claude settings and hooks are not loaded), read-only tools, and no `GH_TOKEN`.
+
+Code scanning (CodeQL) flags a workflow that checks out a pull request and then runs code in a job started by `issue_comment`. The pull request's files are read by the agents and are never executed by the job, and the script is not taken from the pull request. The first version of this workflow had two such alerts, on installing the CLI after the checkout and on the `status` job's checkout; both were changed as described above. Check the code-scanning result on the pull request after changing this workflow.
 
 Safeguards in the script:
 
