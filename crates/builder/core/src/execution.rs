@@ -8,7 +8,9 @@ use ExecutionMeteringLimitExceeded::TransactionExecutionTime;
 use alloy_primitives::{Address, U256};
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
 use base_common_evm::BaseTransactionError;
+use base_execution_eip8130::Eip8130GasSchedule;
 use derive_more::Display;
+use reth_chainspec::MIN_TRANSACTION_GAS;
 use thiserror::Error;
 
 use crate::{InclusionTracker, PredicateLoadTracker};
@@ -56,6 +58,20 @@ pub struct TxResources {
     /// Raw EIP-2718 encoded transaction size in bytes.
     pub uncompressed_size: u64,
 }
+
+/// The smallest amount of gas a pool transaction can reserve against the block gas budget.
+///
+/// A candidate reserves its `gas_limit` plus its EIP-8130 payer-authentication ceiling
+/// ([`TxResources::payer_auth`]), and a valid transaction's `gas_limit` is at least its
+/// intrinsic gas. A standard transaction's intrinsic floor is [`MIN_TRANSACTION_GAS`]
+/// (21,000), while an EIP-8130 transaction's is its `AA_BASE_COST` (15,000), so the
+/// conservative bound across both transaction families is the smaller value. Once the
+/// remaining block gas drops below this, no candidate can fit and the scan can stop.
+pub const MIN_TX_RESERVED_GAS: u64 = if Eip8130GasSchedule::AA_BASE_COST < MIN_TRANSACTION_GAS {
+    Eip8130GasSchedule::AA_BASE_COST
+} else {
+    MIN_TRANSACTION_GAS
+};
 
 /// Execution metering limits that depend on metering service predictions.
 /// These can operate in dry-run or enforcement mode via the execution metering mode setting.

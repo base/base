@@ -46,8 +46,9 @@ use tracing::{Level, debug, span, trace, warn};
 
 use crate::{
     BlockDeferrals, BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded,
-    ParkedPredicateIndex, PayloadTxsBounds, PredicateReadRecorder, ResourceLimits,
-    StateChangeEffects, TxResources, TxnExecutionError, TxnOutcome, ValidityPredicateEvaluation,
+    MIN_TX_RESERVED_GAS, ParkedPredicateIndex, PayloadTxsBounds, PredicateReadRecorder,
+    ResourceLimits, StateChangeEffects, TxResources, TxnExecutionError, TxnOutcome,
+    ValidityPredicateEvaluation,
     transaction_events::{
         BuilderAcceptedEventData, BuilderDeferredEventData, BuilderExpiredEventData,
         BuilderRejectedEventData, BuilderTransactionEventContext, emit_builder_transaction_event,
@@ -783,7 +784,14 @@ impl BasePayloadBuilderCtx {
         // Time spent on validity candidates from yield to the predicate gate decision.
         let mut validity_handling = Duration::ZERO;
 
-        while let Some(tx) = best_txs.next(()) {
+        // Stop scanning once the remaining flashblock gas cannot fit even the smallest possible
+        // transaction. Every candidate past this point would be rejected by `is_tx_over_limits`
+        // after a full pool scan, and in a congested pool that scan is the dominant builder-thread
+        // cost. Candidates the scan leaves unconsidered stay in the pool and are picked up by the
+        // next flashblock or block, so inclusion is unchanged.
+        while limits.block_gas_limit.saturating_sub(info.cumulative_gas_used) >= MIN_TX_RESERVED_GAS
+            && let Some(tx) = best_txs.next(())
+        {
             if self.cancel.is_cancelled() {
                 diag.cancelled = true;
                 diag.txs_considered = num_txs_considered;
@@ -1857,7 +1865,7 @@ mod tests {
         let db = StateProviderDatabase::new(NoopProvider::default());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
-        let limits = ResourceLimits { block_gas_limit: 0, ..Default::default() };
+        let limits = ResourceLimits { block_gas_limit: MIN_TX_RESERVED_GAS, ..Default::default() };
 
         let diagnostics = ctx
             .execute_best_transactions(
@@ -1886,7 +1894,7 @@ mod tests {
         let db = StateProviderDatabase::new(NoopProvider::default());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
-        let limits = ResourceLimits { block_gas_limit: 0, ..Default::default() };
+        let limits = ResourceLimits { block_gas_limit: MIN_TX_RESERVED_GAS, ..Default::default() };
 
         let diagnostics = ctx
             .execute_best_transactions(
@@ -1903,6 +1911,107 @@ mod tests {
         assert_eq!(diagnostics.txs_rejected_gas, 1);
         assert_eq!(best_txs.over_limit_rejections, 1);
         assert!(best_txs.over_limit_remaining > OVER_LIMIT - 10);
+    }
+
+    /// Yields one pooled transaction and records how many times `next` was called, so a test can
+    /// assert whether the gas-exhaustion guard touched the pool at all.
+    #[derive(Debug)]
+    struct CountingTransactions {
+        transaction: Option<BasePooledTransaction>,
+        next_calls: usize,
+    }
+
+    impl PayloadTransactions for CountingTransactions {
+        type Transaction = BasePooledTransaction;
+
+        fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
+            self.next_calls += 1;
+            self.transaction.take()
+        }
+
+        fn mark_invalid(&mut self, _sender: Address, _nonce: u64) {}
+    }
+
+    impl RestingPayloadTransactions for CountingTransactions {}
+
+    impl ParkablePayloadTransactions for CountingTransactions {
+        fn park_current(&mut self) {}
+
+        fn mark_current_committed(&mut self) {}
+
+        fn promote(&mut self, _transaction_hash: TxHash) -> bool {
+            false
+        }
+
+        fn discard_parked(&mut self, _transaction_hash: TxHash) -> bool {
+            false
+        }
+    }
+
+    /// Once the remaining block gas is below the smallest amount any candidate can reserve, the
+    /// selection loop must stop before touching the pool: every candidate would be rejected, and
+    /// the scan itself is the cost this guard removes.
+    #[test]
+    fn scan_stops_before_the_pool_once_gas_cannot_fit_any_transaction() {
+        let ctx = test_builder_context();
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let block_gas_limit = 30_000_000;
+        let mut info = ExecutionInfo {
+            cumulative_gas_used: block_gas_limit - MIN_TX_RESERVED_GAS + 1,
+            ..Default::default()
+        };
+        let limits = ResourceLimits { block_gas_limit, ..Default::default() };
+        let mut best_txs =
+            CountingTransactions { transaction: Some(pooled_test_transaction()), next_calls: 0 };
+
+        let diagnostics = ctx
+            .execute_best_transactions(
+                &mut info,
+                &mut BlockDeferrals::default(),
+                &mut state,
+                &mut best_txs,
+                &limits,
+            )
+            .expect("selection should succeed");
+
+        assert_eq!(best_txs.next_calls, 0, "the scan must not read the pool when no tx can fit");
+        assert_eq!(diagnostics.txs_considered, 0);
+        assert_eq!(diagnostics.txs_included, 0);
+    }
+
+    /// The guard must not stop a scan that still has room for the smallest reservable
+    /// transaction: at exactly `MIN_TX_RESERVED_GAS` remaining the loop still considers a
+    /// candidate.
+    #[test]
+    fn scan_considers_candidates_while_the_smallest_transaction_fits() {
+        let ctx = test_builder_context();
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let block_gas_limit = 30_000_000;
+        let mut info = ExecutionInfo {
+            cumulative_gas_used: block_gas_limit - MIN_TX_RESERVED_GAS,
+            ..Default::default()
+        };
+        let limits = ResourceLimits { block_gas_limit, ..Default::default() };
+        let mut best_txs =
+            CountingTransactions { transaction: Some(pooled_test_transaction()), next_calls: 0 };
+
+        let diagnostics = ctx
+            .execute_best_transactions(
+                &mut info,
+                &mut BlockDeferrals::default(),
+                &mut state,
+                &mut best_txs,
+                &limits,
+            )
+            .expect("selection should succeed");
+
+        assert!(best_txs.next_calls >= 1, "the scan must read the pool while a tx could fit");
+        assert_eq!(diagnostics.txs_considered, 1);
+        // The candidate's 21,000-gas limit does not fit the remaining gas, so it is rejected by
+        // the gas limit rather than silently skipped.
+        assert_eq!(diagnostics.txs_rejected_gas, 1);
     }
 
     #[test]
