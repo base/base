@@ -107,7 +107,7 @@ def reviewed_sha(body: str) -> str | None:
 
 
 def status_block(reviewed: str, *, unreviewed: int | None, compare_url: str, files_url: str,
-                 uncountable: bool = False) -> str:
+                 uncountable: bool = False, unknown: bool = False) -> str:
     """The line that says how far the pull request has moved past the reviewed commit.
 
     `unreviewed` is the number of commits pushed since, 0 if none, or None when they cannot be counted:
@@ -115,7 +115,11 @@ def status_block(reviewed: str, *, unreviewed: int | None, compare_url: str, fil
     GitHub will list.
     """
     short = reviewed[:7]
-    if uncountable:
+    if unknown:
+        # The lookup failed. Do not claim the review is current; the next push or `/review` corrects this.
+        line = (f"Reviewed `{short}`. Whether newer commits were pushed could not be checked. "
+                f"[View all changes]({files_url}) · comment `/review` to review the latest commit.")
+    elif uncountable:
         line = (f"⚠️ **This pull request has too many commits to count the ones pushed after `{short}`.** "
                 f"[View all changes]({files_url}) · comment `/review` to review them.")
     elif unreviewed == 0:
@@ -250,7 +254,7 @@ def render_summary(*, overview: str | None, new: list[Finding], outside: list[Fi
     out = [SUMMARY_MARKER]
     if head_sha:
         out += [f"<!-- pr-review:reviewed={head_sha} -->", "", f"## {headline(counts)}", "",
-                status or status_block(head_sha, unreviewed=0, compare_url="", files_url="")]
+                status or status_block(head_sha, unreviewed=None, compare_url="", files_url="", unknown=True)]
     else:
         out += ["", f"## {headline(counts)}"]
     if failed:
