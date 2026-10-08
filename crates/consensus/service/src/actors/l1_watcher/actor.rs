@@ -41,12 +41,12 @@ use crate::{
 pub struct LogRetrier;
 
 impl LogRetrier {
-    /// Fetch logs matching `filter` with capped exponential backoff, trying up to 10 times.
+    /// Fetch logs matching `filter`, retrying with capped exponential backoff until it succeeds.
     ///
-    /// Returns `Ok(Some(logs))` on success, `Ok(None)` if `cancel` fires during a backoff sleep,
-    /// or `Err(`[`L1WatcherActorError::RetriesExhausted`]`)` once all attempts fail.
+    /// Returns `Some(logs)` on success, or `None` if `cancel` fires during a backoff sleep.
     ///
-    /// Provider failures, including request timeouts, use the same bounded retry path.
+    /// Every L1 head must have its logs scanned for unsafe block signer updates, so failures are
+    /// never skipped or escalated. Each request is bounded by the provider's transport timeout.
     ///
     /// `initial_backoff` and `max_backoff` are caller-supplied so tests can use tiny values.
     pub async fn fetch_logs_with_retry<F>(
@@ -56,16 +56,16 @@ impl LogRetrier {
         block_info: BlockInfo,
         initial_backoff: Duration,
         max_backoff: Duration,
-    ) -> Result<Option<Vec<Log>>, L1WatcherActorError<BlockInfo>>
+    ) -> Option<Vec<Log>>
     where
         F: L1BlockFetcher,
     {
-        const MAX_RETRIES: u32 = 10;
-
         let mut backoff = initial_backoff;
-        for attempt in 1..=MAX_RETRIES {
+        let mut attempt = 0u64;
+        loop {
+            attempt += 1;
             match provider.get_logs(filter.clone()).await {
-                Ok(logs) => return Ok(Some(logs)),
+                Ok(logs) => return Some(logs),
                 Err(e) => {
                     warn!(
                         target: "l1_watcher",
@@ -75,24 +75,14 @@ impl LogRetrier {
                         attempt,
                         "Failed to fetch logs for L1 head"
                     );
-                    if attempt < MAX_RETRIES {
-                        select! {
-                            _ = cancel.cancelled() => return Ok(None),
-                            _ = tokio::time::sleep(backoff) => {}
-                        }
-                        backoff = (backoff * 2).min(max_backoff);
+                    select! {
+                        _ = cancel.cancelled() => return None,
+                        _ = tokio::time::sleep(backoff) => {}
                     }
+                    backoff = (backoff * 2).min(max_backoff);
                 }
             }
         }
-
-        error!(
-            target: "l1_watcher",
-            block_hash = %block_info.hash,
-            block_number = block_info.number,
-            "Exhausted retries fetching logs for L1 head"
-        );
-        Err(L1WatcherActorError::RetriesExhausted)
     }
 }
 
@@ -272,9 +262,7 @@ where
                             .address(filter_address)
                             .select(derivation_block.hash);
 
-                        // The head stream already skips blocks, so this scan is best effort.
-                        // Skipping one block's logs is better than stopping the node.
-                        let logs = match LogRetrier::fetch_logs_with_retry(
+                        let Some(logs) = LogRetrier::fetch_logs_with_retry(
                             &self.l1_provider,
                             filter,
                             &cancel,
@@ -283,13 +271,8 @@ where
                             MAX_BACKOFF,
                         )
                         .await
-                        {
-                            Ok(Some(logs)) => logs,
-                            Ok(None) => return Ok(()),
-                            Err(_) => {
-                                Metrics::l1_watcher_log_fetch_failures().increment(1);
-                                continue;
-                            }
+                        else {
+                            return Ok(());
                         };
                         let ecotone_active =
                             self.rollup_config.is_ecotone_active(derivation_block.timestamp);
@@ -561,7 +544,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------
-    // LogRetrier tests (unchanged)
+    // LogRetrier tests
     // ---------------------------------------------------------------------------
 
     #[tokio::test]
@@ -576,28 +559,13 @@ mod tests {
             Duration::from_nanos(1),
         )
         .await;
-        assert!(matches!(result, Ok(Some(_))));
+        assert!(result.is_some());
     }
 
     #[tokio::test]
-    async fn fetch_logs_retries_and_eventually_succeeds() {
+    async fn fetch_logs_retries_until_success() {
         let cancel = CancellationToken::new();
-        let result = LogRetrier::fetch_logs_with_retry(
-            &MockFetcher::fail_times(3),
-            Filter::new(),
-            &cancel,
-            dummy_block(),
-            Duration::from_nanos(1),
-            Duration::from_nanos(1),
-        )
-        .await;
-        assert!(matches!(result, Ok(Some(_))));
-    }
-
-    #[tokio::test]
-    async fn fetch_logs_exhausted_retries_returns_error() {
-        let cancel = CancellationToken::new();
-        let fetcher = MockFetcher::always_fail();
+        let fetcher = MockFetcher::fail_times(50);
         let call_count = Arc::clone(&fetcher.call_count);
         let result = LogRetrier::fetch_logs_with_retry(
             &fetcher,
@@ -608,8 +576,8 @@ mod tests {
             Duration::from_nanos(1),
         )
         .await;
-        assert!(matches!(result, Err(L1WatcherActorError::RetriesExhausted)));
-        assert_eq!(call_count.load(Ordering::SeqCst), 10);
+        assert!(result.is_some());
+        assert_eq!(call_count.load(Ordering::SeqCst), 51);
     }
 
     #[tokio::test]
@@ -626,15 +594,7 @@ mod tests {
             Duration::from_secs(10),
         )
         .await;
-        assert!(matches!(result, Ok(None)));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn exhausted_log_retries_skip_head_and_continue() {
-        let (client, _, _) =
-            run_actor(MockFetcher::always_fail(), vec![block_at(100), block_at(101)], 0).await;
-
-        assert_eq!(client.sent_heads(), vec![block_at(100), block_at(101)]);
+        assert!(result.is_none());
     }
 
     // ---------------------------------------------------------------------------
