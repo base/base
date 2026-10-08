@@ -352,6 +352,7 @@ impl TransactionEventWriter {
         }
     }
 
+    #[cfg(any(test, feature = "test-utils"))]
     fn validate_event(event: &TransactionEvent) -> Result<(), WriteEventError> {
         event.validate().map_err(|err| {
             Metrics::dropped_events("validation").increment(1);

@@ -22,22 +22,32 @@ use crate::{InflightCounters, InvalidationIndex, InvalidationKey, PayerBook, Wat
 /// Default cap on inflight signatures per unlocked account.
 pub const DEFAULT_SIGNATURE_LIMIT: u32 = 4;
 /// Default cap on inflight payments per count-limited payer account.
-pub const DEFAULT_PAYMENT_LIMIT: u32 = 4;
+pub const DEFAULT_PAYMENT_LIMIT: u32 = 16;
+/// Default cap on inflight payments per operator-allowlisted payer account.
+pub const DEFAULT_ALLOWLISTED_PAYMENT_LIMIT: u32 = 64;
 
 /// Configurable per-account admission caps.
 #[derive(Debug, Clone, Copy)]
 pub struct GuardLimits {
     /// Cap on inflight transactions signed by an unlocked account, whether it
-    /// appears as sender or sponsor. Locked accounts are exempt.
+    /// appears as sender or sponsor. Locked accounts, and every account before
+    /// the Keystore is active, are exempt.
     pub signature_limit: u32,
     /// Cap on inflight payments for a count-limited payer. Balance-bounded
     /// trusted payers use aggregate reservations instead.
     pub payment_limit: u32,
+    /// Cap on inflight payments for an operator-allowlisted payer, which is
+    /// also balance-bounded through its payer book.
+    pub allowlisted_payment_limit: u32,
 }
 
 impl Default for GuardLimits {
     fn default() -> Self {
-        Self { signature_limit: DEFAULT_SIGNATURE_LIMIT, payment_limit: DEFAULT_PAYMENT_LIMIT }
+        Self {
+            signature_limit: DEFAULT_SIGNATURE_LIMIT,
+            payment_limit: DEFAULT_PAYMENT_LIMIT,
+            allowlisted_payment_limit: DEFAULT_ALLOWLISTED_PAYMENT_LIMIT,
+        }
     }
 }
 
@@ -77,12 +87,17 @@ pub struct LimitClass {
     /// state-diff invalidation advanced the generation while validation was in
     /// flight.
     pub classification_generation: u64,
-    /// Whether the sender's owner config is locked (stable auth surface).
+    /// Whether the sender's auth surface is stable: its owner config is locked,
+    /// or there is no Keystore (its only key can never change).
     pub sender_locked: bool,
-    /// Whether the payer's owner config is locked (stable auth surface).
+    /// Whether the payer's auth surface is stable: its owner config is locked,
+    /// or there is no Keystore (its only key can never change).
     pub payer_locked: bool,
     /// Whether the payer is balance-bounded (locked + trusted bytecode).
     pub payer_trusted: bool,
+    /// Whether the payer is operator-allowlisted (count-limited at its own cap
+    /// and balance-bounded through a payer book).
+    pub payer_allowlisted: bool,
     /// The payer's state balance, used to seed a balance-bounded payer book.
     pub payer_balance: U256,
     /// The maximum cost this transaction can charge the payer.
@@ -99,15 +114,18 @@ pub struct Admission {
     pub sender: Address,
     /// Resolved payer account (equals `sender` for self-paying transactions).
     pub payer: Address,
-    /// Whether the sender's owner config is locked (stable auth surface ⇒
-    /// unlimited sender dimension).
+    /// Whether the sender's auth surface is stable — its owner config is
+    /// locked, or there is no Keystore (⇒ unlimited sender dimension).
     pub sender_locked: bool,
-    /// Whether the payer's owner config is locked (stable auth surface ⇒ no
-    /// sponsored-payer signature charge).
+    /// Whether the payer's auth surface is stable — its owner config is
+    /// locked, or there is no Keystore (⇒ no sponsored-payer signature charge).
     pub payer_locked: bool,
     /// Whether the payer is balance-bounded (locked + trusted bytecode ⇒ the
     /// payer dimension is limited by balance rather than a count).
     pub payer_trusted: bool,
+    /// Whether the payer is operator-allowlisted (⇒ counted at
+    /// [`GuardLimits::allowlisted_payment_limit`] and also balance-bounded).
+    pub payer_allowlisted: bool,
     /// The payer's current balance, used to seed a balance-bounded payer book.
     pub payer_balance: U256,
     /// The maximum cost this transaction can charge the payer.
@@ -130,11 +148,14 @@ pub struct AdmissionRecord {
     pub sender_signature_charged: bool,
     /// Whether admission charged the sponsor-signature dimension.
     pub payer_signature_charged: bool,
-    /// Whether admission actually reserved aggregate balance instead of a
-    /// payment count. This records the accounting path taken, not merely the
-    /// incoming classification: forced insertion may conservatively fall back
-    /// to count accounting if an aggregate reservation does not fit.
-    pub payer_trusted: bool,
+    /// Whether admission actually reserved aggregate balance in the payer's
+    /// book. This records the accounting path taken, not merely the incoming
+    /// classification: forced insertion may conservatively fall back to count
+    /// accounting if an aggregate reservation does not fit.
+    pub payer_booked: bool,
+    /// Whether admission charged the payer's payment count. Trusted payers are
+    /// bounded by their book alone; allowlisted payers are charged both.
+    pub payment_counted: bool,
     /// Maximum payer cost reserved by this transaction.
     pub max_cost: U256,
 }
@@ -157,7 +178,11 @@ impl MempoolGuard {
     /// is rejected for exceeding a per-account count.
     #[must_use]
     pub fn unlimited() -> Self {
-        Self::new(GuardLimits { signature_limit: u32::MAX, payment_limit: u32::MAX })
+        Self::new(GuardLimits {
+            signature_limit: u32::MAX,
+            payment_limit: u32::MAX,
+            allowlisted_payment_limit: u32::MAX,
+        })
     }
 
     /// Creates a guard with the given limits.
@@ -170,6 +195,19 @@ impl MempoolGuard {
             payer_books: HashMap::new(),
             records: HashMap::new(),
             limits,
+        }
+    }
+
+    /// How a payer's payments are bounded: `(booked, count_limit)`. Trusted
+    /// payers are book-only (no count); allowlisted payers use both; every
+    /// other payer is count-limited.
+    const fn payment_bounds(&self, admission: &Admission) -> (bool, Option<u32>) {
+        if admission.payer_trusted {
+            (true, None)
+        } else if admission.payer_allowlisted {
+            (true, Some(self.limits.allowlisted_payment_limit))
+        } else {
+            (false, Some(self.limits.payment_limit))
         }
     }
 
@@ -219,9 +257,9 @@ impl MempoolGuard {
                 admission.payer != admission.sender && !admission.payer_locked,
                 "re-admission changed payer lock classification"
             );
-            // A forced replacement may conservatively fall back from trusted
-            // aggregate accounting to count accounting, but never vice versa.
-            debug_assert!(!record.payer_trusted || admission.payer_trusted);
+            // A forced replacement may conservatively fall back from aggregate
+            // accounting to count accounting, but never vice versa.
+            debug_assert!(!record.payer_booked || self.payment_bounds(&admission).0);
             debug_assert_eq!(
                 self.index.watch_set(&admission.hash),
                 Some(&admission.watch_set),
@@ -248,7 +286,13 @@ impl MempoolGuard {
             return Err(LimitRejection::PayerLimit);
         }
 
-        let payment_ok = if admission.payer_trusted {
+        let (wants_book, count_limit) = self.payment_bounds(&admission);
+        let payment_counted = count_limit.is_some();
+        let rejection = if let Some(limit) = count_limit
+            && !self.payment_counts.try_increment(admission.payer, limit)
+        {
+            Some(LimitRejection::PaymentLimit)
+        } else if wants_book && {
             // Only the first admission seeds the book. Once it exists, canonical
             // balance updates own this value through `on_balance_changed`; a
             // later validation snapshot must not overwrite a newer diff-fed value.
@@ -256,12 +300,17 @@ impl MempoolGuard {
                 .payer_books
                 .entry(admission.payer)
                 .or_insert_with(|| PayerBook::new(admission.payer_balance));
-            book.try_reserve(admission.hash, admission.max_cost, admission.priority)
+            !book.try_reserve(admission.hash, admission.max_cost, admission.priority)
+        } {
+            if payment_counted {
+                self.payment_counts.decrement(admission.payer);
+            }
+            Some(LimitRejection::PayerBalance)
         } else {
-            self.payment_counts.try_increment(admission.payer, self.limits.payment_limit)
+            None
         };
 
-        if !payment_ok {
+        if let Some(rejection) = rejection {
             // Roll back signature reservations so a payment rejection leaves
             // no trace.
             if sender_signature_charged {
@@ -272,16 +321,11 @@ impl MempoolGuard {
             }
             // A freshly created, now-empty payer book is pruned to avoid leaking
             // an entry for a payer that never successfully reserved.
-            if admission.payer_trusted
-                && self.payer_books.get(&admission.payer).is_some_and(PayerBook::is_empty)
+            if wants_book && self.payer_books.get(&admission.payer).is_some_and(PayerBook::is_empty)
             {
                 self.payer_books.remove(&admission.payer);
             }
-            return Err(if admission.payer_trusted {
-                LimitRejection::PayerBalance
-            } else {
-                LimitRejection::PaymentLimit
-            });
+            return Err(rejection);
         }
 
         self.records.insert(
@@ -291,7 +335,9 @@ impl MempoolGuard {
                 payer: admission.payer,
                 sender_signature_charged,
                 payer_signature_charged,
-                payer_trusted: admission.payer_trusted,
+                // Rejections returned above, so a wanted book was reserved.
+                payer_booked: wants_book,
+                payment_counted,
                 max_cost: admission.max_cost,
             },
         );
@@ -300,17 +346,18 @@ impl MempoolGuard {
     }
 
     /// Registers a transaction unconditionally, bypassing the count caps. Used
-    /// for replacements: the replaced transaction is released first, so the swap
-    /// is net-neutral on the count dimensions and must never be rejected (you can
+    /// for replacements that passed [`Self::check_replacement`]: the replaced
+    /// transaction is released first, so a swap that keeps the payer is
+    /// net-neutral on the count dimensions and must never be rejected (you can
     /// always fee-bump your own pooled transaction).
     ///
-    /// A balance-bounded (trusted) payer still goes through the book; if the
-    /// fee-bumped reservation no longer fits the cached balance (even after the
-    /// replaced transaction's release), the record falls back to the
-    /// count-based, per-transaction-threshold path instead of `payer_trusted`
-    /// — an unreserved trusted-payer record would be invisible both to
+    /// A balance-bounded (trusted or allowlisted) payer still goes through the
+    /// book; if the fee-bumped reservation no longer fits the cached balance
+    /// (even after the replaced transaction's release), the record falls back
+    /// to the count-based, per-transaction-threshold path instead of
+    /// `payer_booked` — an unreserved booked record would be invisible both to
     /// `PayerBook::set_balance` (never entered the book) and to the per-tx
-    /// threshold check in `on_balance_changed` (which skips `payer_trusted`
+    /// threshold check in `on_balance_changed` (which skips `payer_booked`
     /// records), so it would only ever be cleaned up by `reconcile_guard` or
     /// expiry. The fallback keeps the "never reject" guarantee while ensuring
     /// the record stays reachable by the next balance-driven eviction.
@@ -331,9 +378,9 @@ impl MempoolGuard {
                 admission.payer != admission.sender && !admission.payer_locked,
                 "forced re-admission changed payer lock classification"
             );
-            // A previous forced insertion may have fallen back from trusted
-            // aggregate accounting to count accounting, but never vice versa.
-            debug_assert!(!record.payer_trusted || admission.payer_trusted);
+            // A previous forced insertion may have fallen back from aggregate
+            // accounting to count accounting, but never vice versa.
+            debug_assert!(!record.payer_booked || self.payment_bounds(&admission).0);
             debug_assert_eq!(
                 self.index.watch_set(&admission.hash),
                 Some(&admission.watch_set),
@@ -353,7 +400,8 @@ impl MempoolGuard {
             debug_assert!(payer_ok, "uncapped increment must always succeed");
         }
 
-        let payer_trusted = admission.payer_trusted && {
+        let (wants_book, count_limit) = self.payment_bounds(&admission);
+        let payer_booked = wants_book && {
             // As in `try_admit`, only creation uses the validation snapshot;
             // canonical balance updates own an existing book's value.
             self.payer_books
@@ -361,18 +409,21 @@ impl MempoolGuard {
                 .or_insert_with(|| PayerBook::new(admission.payer_balance))
                 .try_reserve(admission.hash, admission.max_cost, admission.priority)
         };
+        // A booked payer whose reservation didn't fit falls back to the count.
+        let payment_counted = count_limit.is_some() || !payer_booked;
 
-        if !payer_trusted {
+        if payment_counted {
             let payer_ok = self.payment_counts.try_increment(admission.payer, u32::MAX);
             debug_assert!(payer_ok, "uncapped increment must always succeed");
-            // A trusted payer whose reservation didn't fit leaves a freshly
-            // created, still-empty book behind — prune it so a payer that
-            // never successfully reserved doesn't leak an entry.
-            if admission.payer_trusted
-                && self.payer_books.get(&admission.payer).is_some_and(PayerBook::is_empty)
-            {
-                self.payer_books.remove(&admission.payer);
-            }
+        }
+        // A booked payer whose reservation didn't fit leaves a freshly created,
+        // still-empty book behind — prune it so a payer that never
+        // successfully reserved doesn't leak an entry.
+        if wants_book
+            && !payer_booked
+            && self.payer_books.get(&admission.payer).is_some_and(PayerBook::is_empty)
+        {
+            self.payer_books.remove(&admission.payer);
         }
 
         self.records.insert(
@@ -382,11 +433,48 @@ impl MempoolGuard {
                 payer: admission.payer,
                 sender_signature_charged,
                 payer_signature_charged,
-                payer_trusted,
+                payer_booked,
+                payment_counted,
                 max_cost: admission.max_cost,
             },
         );
         self.index.insert(admission.hash, admission.watch_set);
+    }
+
+    /// Checks, without mutating, whether replacing the tracked `replaced` with
+    /// `admission` fits the caps. Keeping the payer is net-neutral and always
+    /// fits. Naming a different payer charges that payer's dimensions as a
+    /// fresh admission would, so the new payer must have room for them;
+    /// otherwise a fee bump could rotate a sponsor past its caps through
+    /// [`Self::insert_forced`].
+    ///
+    /// The sender dimension is unchanged by a replacement and is not checked.
+    pub fn check_replacement(
+        &self,
+        replaced: &TxHash,
+        admission: &Admission,
+    ) -> Result<(), LimitRejection> {
+        if self.records.get(replaced).is_none_or(|record| record.payer == admission.payer) {
+            return Ok(());
+        }
+        if admission.payer != admission.sender
+            && !admission.payer_locked
+            && self.signature_counts.get(&admission.payer) >= self.limits.signature_limit
+        {
+            return Err(LimitRejection::PayerLimit);
+        }
+        let (wants_book, count_limit) = self.payment_bounds(admission);
+        if count_limit.is_some_and(|limit| self.payment_counts.get(&admission.payer) >= limit) {
+            return Err(LimitRejection::PaymentLimit);
+        }
+        let available = self
+            .payer_books
+            .get(&admission.payer)
+            .map_or(admission.payer_balance, PayerBook::available);
+        if wants_book && admission.max_cost > available {
+            return Err(LimitRejection::PayerBalance);
+        }
+        Ok(())
     }
 
     /// Releases all bookkeeping for `hash` (limits and index). Returns `true` if
@@ -402,14 +490,15 @@ impl MempoolGuard {
         if record.payer_signature_charged {
             self.signature_counts.decrement(record.payer);
         }
-        if record.payer_trusted {
-            if let Some(book) = self.payer_books.get_mut(&record.payer) {
-                book.remove(hash);
-                if book.is_empty() {
-                    self.payer_books.remove(&record.payer);
-                }
+        if record.payer_booked
+            && let Some(book) = self.payer_books.get_mut(&record.payer)
+        {
+            book.remove(hash);
+            if book.is_empty() {
+                self.payer_books.remove(&record.payer);
             }
-        } else {
+        }
+        if record.payment_counted {
             self.payment_counts.decrement(record.payer);
         }
         self.index.remove(hash);
@@ -456,7 +545,7 @@ impl MempoolGuard {
 
     /// Re-evaluates a payer's balance against its sponsored transactions.
     ///
-    /// * Balance-bounded (trusted) payers evict from the low-priority end until
+    /// * Balance-bounded (trusted or allowlisted) payers evict from the low-priority end until
     ///   `reserved ≤ balance` (an aggregate set constraint).
     /// * Count-limited payers (and self-paying senders) drop any individual
     ///   transaction whose max cost now exceeds the balance (per-transaction
@@ -481,7 +570,7 @@ impl MempoolGuard {
                             record.payer, account,
                             "balance watcher must match the transaction payer"
                         );
-                        !record.payer_trusted && record.max_cost > new_balance
+                        !record.payer_booked && record.max_cost > new_balance
                     })
                 })
                 .copied()
@@ -493,8 +582,8 @@ impl MempoolGuard {
         dropped.dedup();
         for hash in &dropped {
             // The two eviction paths are mutually exclusive for each record:
-            // aggregate books contain trusted-payer records, while the
-            // threshold filter selects only non-trusted records.
+            // aggregate books contain booked records, while the threshold
+            // filter selects only unbooked records.
             // `PayerBook::set_balance` already removed aggregate-limit
             // evictions from the book. `release` intentionally touches that
             // book again (as a no-op) while releasing the other dimensions.
@@ -534,6 +623,7 @@ mod tests {
             sender_locked: false,
             payer_locked: false,
             payer_trusted: false,
+            payer_allowlisted: false,
             payer_balance: U256::from(1_000_000u64),
             max_cost: U256::from(max_cost),
             priority: 1,
@@ -628,6 +718,49 @@ mod tests {
     }
 
     #[test]
+    fn default_payment_limit_is_sixteen() {
+        assert_eq!(GuardLimits::default().payment_limit, 16);
+    }
+
+    /// An allowlisted payer gets its own payment cap and is also bounded by its
+    /// balance through a payer book; releasing frees both.
+    #[test]
+    fn allowlisted_payer_is_bounded_by_count_and_balance() {
+        let payer = addr(9);
+        let limits = GuardLimits { allowlisted_payment_limit: 20, ..GuardLimits::default() };
+        let mut guard = MempoolGuard::new(limits);
+        let make = |h: u8, cost: u64| Admission {
+            payer,
+            payer_locked: true,
+            payer_allowlisted: true,
+            payer_balance: U256::from(1_000u64),
+            max_cost: U256::from(cost),
+            ..self_pay(h, addr(h + 1), cost)
+        };
+
+        // Past the default payment limit, up to the allowlisted cap.
+        for i in 0..20u8 {
+            guard.try_admit(make(i, 10)).unwrap();
+        }
+        assert_eq!(guard.try_admit(make(100, 10)), Err(LimitRejection::PaymentLimit));
+
+        // The book bounds the aggregate cost: 20 * 10 is reserved of 1_000.
+        assert!(guard.release(&hash(0)));
+        assert_eq!(guard.try_admit(make(101, 900)), Err(LimitRejection::PayerBalance));
+        guard.try_admit(make(102, 810)).unwrap();
+        assert_eq!(guard.len(), 20);
+
+        // A balance drop evicts from the book.
+        assert!(!guard.on_balance_changed(payer, U256::from(500u64)).is_empty());
+        for hash in guard.tracked_hashes() {
+            assert!(guard.release(&hash));
+        }
+        assert!(guard.is_empty());
+        assert!(guard.payer_books.is_empty(), "releasing every payment drops the book");
+        guard.try_admit(make(103, 10)).unwrap();
+    }
+
+    #[test]
     fn trusted_payer_is_bounded_by_balance() {
         let mut guard = MempoolGuard::new(GuardLimits::default());
         let payer = addr(9);
@@ -641,14 +774,14 @@ mod tests {
             ..self_pay(h, addr(h + 1), cost)
         };
 
-        // 6 sponsored txs of cost 15 = 90 ≤ 100: all admitted, beating the
-        // count limit of 4 because the payer is balance-bounded.
-        for i in 0..6u8 {
-            assert!(guard.try_admit(make(i, 15)).is_ok());
+        // 20 sponsored txs of cost 5 = 100 ≤ 100: all admitted, past the
+        // payment count limit because the payer is balance-bounded.
+        for i in 0..20u8 {
+            assert!(guard.try_admit(make(i, 5)).is_ok());
         }
-        // The 7th (total 105) exceeds the balance.
-        assert_eq!(guard.try_admit(make(6, 15)), Err(LimitRejection::PayerBalance));
-        assert_eq!(guard.len(), 6);
+        // The 21st (total 105) exceeds the balance.
+        assert_eq!(guard.try_admit(make(20, 5)), Err(LimitRejection::PayerBalance));
+        assert_eq!(guard.len(), 20);
     }
 
     #[test]
@@ -656,8 +789,8 @@ mod tests {
         let mut guard = MempoolGuard::new(GuardLimits::default());
         let payer = addr(9);
 
-        // Saturate the payer count limit using distinct senders.
-        for i in 0..DEFAULT_PAYMENT_LIMIT as u8 {
+        // Saturate the unlocked payer's signature limit using distinct senders.
+        for i in 0..DEFAULT_SIGNATURE_LIMIT as u8 {
             assert!(guard.try_admit(Admission { payer, ..self_pay(i, addr(i + 1), 10) }).is_ok());
         }
         // A new sender whose payer is over the limit must be fully rejected,
@@ -781,14 +914,79 @@ mod tests {
         let new = Admission { payer: addr(200), ..self_pay(50, sender, 10) };
         assert_eq!(guard.try_admit(new), Err(LimitRejection::SenderLimit));
 
-        // A replacement (pool releases the old hash first, then force-inserts the
-        // new one) stays at the cap and is never rejected.
+        // A replacement that keeps its payer (pool releases the old hash first,
+        // then force-inserts the new one) stays at the cap and is never rejected.
+        let replacement = Admission { payer: addr(100), ..self_pay(60, sender, 10) };
+        assert_eq!(guard.check_replacement(&hash(0), &replacement), Ok(()));
         assert!(guard.release(&hash(0)));
-        let replacement = Admission { payer: addr(250), ..self_pay(60, sender, 10) };
         guard.insert_forced(replacement);
         assert_eq!(guard.len(), DEFAULT_SIGNATURE_LIMIT as usize);
         assert!(guard.contains(&hash(60)));
         assert!(!guard.contains(&hash(0)));
+    }
+
+    #[test]
+    fn replacement_naming_a_new_payer_is_held_to_its_payment_cap() {
+        let limits = GuardLimits { payment_limit: 2, ..GuardLimits::default() };
+        let mut guard = MempoolGuard::new(limits);
+        let sponsored = |h: u8, sender: Address, payer: Address| Admission {
+            payer,
+            payer_locked: true,
+            ..self_pay(h, sender, 10)
+        };
+        let (full, open) = (addr(50), addr(51));
+        for i in 0..2 {
+            assert!(guard.try_admit(sponsored(i, addr(10 + i), full)).is_ok());
+        }
+        assert!(guard.try_admit(sponsored(5, addr(20), addr(52))).is_ok());
+
+        // Rotating the fee bump to a payer at its cap is rejected; to one with
+        // room it is accepted.
+        assert_eq!(
+            guard.check_replacement(&hash(5), &sponsored(6, addr(20), full)),
+            Err(LimitRejection::PaymentLimit)
+        );
+        assert_eq!(guard.check_replacement(&hash(5), &sponsored(6, addr(20), open)), Ok(()));
+        // Switching to self-pay charges the sender's own payment count.
+        assert_eq!(guard.check_replacement(&hash(5), &self_pay(6, addr(20), 10)), Ok(()));
+        // An untracked replaced hash is admitted through `try_admit` instead.
+        assert_eq!(guard.check_replacement(&hash(9), &sponsored(6, addr(20), full)), Ok(()));
+    }
+
+    #[test]
+    fn replacement_naming_a_new_unlocked_sponsor_is_held_to_its_signature_cap() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let sponsor = addr(60);
+        for i in 0..DEFAULT_SIGNATURE_LIMIT as u8 {
+            let adm = Admission { payer: sponsor, ..self_pay(i, addr(10 + i), 10) };
+            assert!(guard.try_admit(adm).is_ok());
+        }
+        assert!(guard.try_admit(self_pay(20, addr(30), 10)).is_ok());
+
+        let rotated = Admission { payer: sponsor, ..self_pay(21, addr(30), 10) };
+        assert_eq!(guard.check_replacement(&hash(20), &rotated), Err(LimitRejection::PayerLimit));
+    }
+
+    #[test]
+    fn replacement_naming_a_new_booked_payer_must_fit_its_balance() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let payer = addr(70);
+        let booked = |h: u8, sender: Address, cost: u64| Admission {
+            payer,
+            payer_locked: true,
+            payer_trusted: true,
+            payer_balance: U256::from(100u64),
+            max_cost: U256::from(cost),
+            ..self_pay(h, sender, cost)
+        };
+        assert!(guard.try_admit(booked(1, addr(10), 80)).is_ok());
+        assert!(guard.try_admit(self_pay(2, addr(11), 10)).is_ok());
+
+        assert_eq!(
+            guard.check_replacement(&hash(2), &booked(3, addr(11), 30)),
+            Err(LimitRejection::PayerBalance)
+        );
+        assert_eq!(guard.check_replacement(&hash(2), &booked(3, addr(11), 20)), Ok(()));
     }
 
     #[test]
@@ -875,6 +1073,57 @@ mod tests {
         let dropped = guard.on_balance_changed(payer, U256::from(100u64));
         assert_eq!(dropped, vec![hash(2)]);
         assert!(guard.is_empty());
+    }
+
+    /// An allowlisted payer's forced replacement that overshoots its book falls
+    /// back to the per-transaction threshold path, still charged to its count,
+    /// and stays evictable by a balance drop.
+    #[test]
+    fn insert_forced_allowlisted_replacement_overshooting_balance_falls_back_to_count_path() {
+        let payer = addr(9);
+        let limits = GuardLimits { allowlisted_payment_limit: 2, ..GuardLimits::default() };
+        let mut guard = MempoolGuard::new(limits);
+        let make = |h: u8, cost: u64| Admission {
+            payer,
+            payer_locked: true,
+            payer_allowlisted: true,
+            payer_balance: U256::from(100u64),
+            max_cost: U256::from(cost),
+            watch_set: WatchSet::new().watch(InvalidationKey::Balance(payer)),
+            ..self_pay(h, addr(h + 1), cost)
+        };
+
+        guard.try_admit(make(1, 60)).unwrap();
+        assert!(guard.release(&hash(1)));
+        guard.insert_forced(make(2, 150));
+        assert!(guard.contains(&hash(2)));
+        assert!(guard.payer_books.is_empty(), "the overshooting reservation never entered a book");
+
+        // Still counted: one more fits under the cap of two, a third does not.
+        guard.try_admit(make(3, 10)).unwrap();
+        assert_eq!(guard.try_admit(make(4, 10)), Err(LimitRejection::PaymentLimit));
+
+        // The fallback record is evictable by the per-transaction threshold.
+        let dropped = guard.on_balance_changed(payer, U256::from(100u64));
+        assert_eq!(dropped, vec![hash(2)]);
+        guard.try_admit(make(5, 10)).unwrap();
+    }
+
+    /// A signer exempt from the signature limit (locked, or before Zenith) that
+    /// pays for itself is still bounded by its own payment limit.
+    #[test]
+    fn exempt_self_paying_sender_is_bounded_by_payment_limit() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let sender = addr(1);
+        let exempt = |h: u8| Admission {
+            sender_locked: true,
+            payer_locked: true,
+            ..self_pay(h, sender, 10)
+        };
+        for i in 0..DEFAULT_PAYMENT_LIMIT as u8 {
+            guard.try_admit(exempt(i)).unwrap();
+        }
+        assert_eq!(guard.try_admit(exempt(200)), Err(LimitRejection::PaymentLimit));
     }
 
     #[test]

@@ -49,12 +49,28 @@ impl FromConsensusTx<BaseTxEnvelope> for Transaction {
     }
 }
 
+/// Why a [`BaseTransactionRequest`] cannot be converted into a transaction
+/// environment for the standard call paths.
+#[derive(Debug, thiserror::Error)]
+pub enum BaseTxEnvError {
+    /// The standard request fields are invalid.
+    #[error(transparent)]
+    Eth(#[from] EthTxEnvError),
+    /// The request carries EIP-8130 fields, which the standard call paths cannot
+    /// represent: converting it would silently drop them.
+    #[error("EIP-8130 requests are supported only by eth_call and eth_estimateGas")]
+    Eip8130Unsupported,
+}
+
 impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm<TxEnv>, Spec, Block>
     for BaseTransactionRequest
 {
-    type Err = EthTxEnvError;
+    type Err = BaseTxEnvError;
 
     fn try_into_tx_env(self, evm_env: &EvmEnv<Spec, Block>) -> Result<BaseRevm<TxEnv>, Self::Err> {
+        if self.as_eip8130().is_some() {
+            return Err(BaseTxEnvError::Eip8130Unsupported);
+        }
         Ok(BaseRevm {
             base: self.as_ref().clone().try_into_tx_env(evm_env)?,
             enveloped_tx: Some(Bytes::new()),
@@ -66,6 +82,9 @@ impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm<TxEnv>, Spec, Block>
 
 impl TryIntoSimTx<BaseTxEnvelope> for BaseTransactionRequest {
     fn try_into_sim_tx(self) -> Result<BaseTxEnvelope, ValueError<Self>> {
+        if self.as_eip8130().is_some() {
+            return Err(ValueError::new(self, "EIP-8130 requests are not supported by simulation"));
+        }
         let tx = self
             .build_typed_tx()
             .map_err(|request| ValueError::new(request, "Required fields missing"))?;
@@ -99,7 +118,9 @@ impl SignableTxRequest<BaseTxEnvelope> for BaseTransactionRequest {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
-    use base_common_consensus::{Eip8130Constants, Eip8130Contracts, Eip8130Signed};
+    use base_common_consensus::{
+        Eip8130Constants, Eip8130Contracts, Eip8130Signed, Eip8130StructuralError,
+    };
     use base_common_evm::Eip8130ExecutionMode;
     use serde_json::json;
 
@@ -132,6 +153,23 @@ mod tests {
         }
         v.resize(v.len() + data_len, STUB_AUTH_FILL);
         alloy_primitives::hex::encode_prefixed(v)
+    }
+
+    /// The standard call paths cannot represent EIP-8130 fields, so they reject
+    /// the request instead of silently dropping them.
+    #[test]
+    fn standard_tx_env_rejects_eip8130_request() {
+        let env = EvmEnv::<revm::primitives::hardfork::SpecId>::default();
+        let request: BaseTransactionRequest =
+            serde_json::from_value(json!({ "sender": SENDER, "calls": [] })).unwrap();
+        assert!(matches!(
+            TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(request, &env),
+            Err(BaseTxEnvError::Eip8130Unsupported)
+        ));
+        let plain: BaseTransactionRequest =
+            serde_json::from_value(json!({ "from": FROM, "to": SENDER })).unwrap();
+        let tx = TryIntoTxEnv::<BaseRevm<TxEnv>, _, _>::try_into_tx_env(plain, &env).unwrap();
+        assert!(tx.eip8130.is_none());
     }
 
     #[test]
@@ -244,20 +282,22 @@ mod tests {
     }
 
     #[test]
-    fn unrecognized_sender_auth_prefix_is_treated_as_bare_eoa() {
+    fn unrecognized_sender_auth_prefix_is_rejected() {
         // An unrecognized 20-byte prefix is not an enshrined authenticator, so the
-        // blob is treated as a bare signature (EOA path) and priced verbatim by
-        // length — it cannot under-price (no authenticator execution gas applies
-        // to the bare path).
+        // blob is read as a bare EOA signature, and at 85 bytes it is not one.
         let unrecognized = address!("0x000000000000000000000000000000000000dead");
-        let tx = sim_tx(json!({
+        let req: BaseTransactionRequest = serde_json::from_value(json!({
             "from": FROM,
             "calls": [],
             "senderAuth": blob(Some(unrecognized), 65),
-        }));
-        let s = signed(&tx);
-        assert!(s.tx().sender.is_none(), "an unrecognized prefix falls to the EOA path");
-        assert_eq!(s.sender_auth().len(), 20 + 65, "priced verbatim as a bare blob");
+        }))
+        .expect("valid request");
+        assert_eq!(
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(Eip8130SimulationRequestError::Structural(
+                Eip8130StructuralError::MalformedSenderAuth
+            )),
+        );
     }
 
     #[test]
@@ -358,11 +398,12 @@ mod tests {
     #[test]
     fn sender_auth_data_at_the_cap_is_accepted() {
         // The 20-byte selector is excluded from the cap, so `MAX_AUTH_SIZE` data
-        // bytes are honoured (total = selector + data).
+        // bytes are honoured (total = selector + data). WebAuthn carries
+        // variable-length data, unlike k1's fixed 65 bytes.
         let tx = sim_tx(json!({
             "sender": SENDER,
             "calls": [],
-            "senderAuth": blob(Some(Eip8130Constants::K1_AUTHENTICATOR), MAX_AUTH_SIZE as usize),
+            "senderAuth": blob(Some(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR), MAX_AUTH_SIZE as usize),
         }));
         let auth = signed(&tx).sender_auth();
         assert_eq!(
@@ -373,14 +414,25 @@ mod tests {
     }
 
     #[test]
-    fn bare_sender_auth_data_at_the_cap_is_accepted() {
-        // On the EOA path there is no selector, so the whole blob is the data.
-        let tx = sim_tx(json!({
-            "from": FROM,
-            "calls": [],
-            "senderAuth": blob(None, MAX_AUTH_SIZE as usize),
-        }));
-        assert_eq!(signed(&tx).sender_auth().len(), MAX_AUTH_SIZE as usize);
+    fn bare_sender_auth_of_the_wrong_length_is_rejected() {
+        // On the EOA path the blob is a raw secp256k1 signature: exactly 65
+        // bytes, as pool admission requires, so a shorter or longer one is not
+        // priced.
+        for len in [64, 66, MAX_AUTH_SIZE as usize] {
+            let req: BaseTransactionRequest = serde_json::from_value(json!({
+                "from": FROM,
+                "calls": [],
+                "senderAuth": blob(None, len),
+            }))
+            .expect("valid request");
+            assert_eq!(
+                req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+                Some(Eip8130SimulationRequestError::Structural(
+                    Eip8130StructuralError::MalformedSenderAuth
+                )),
+                "a {len}-byte bare signature is rejected",
+            );
+        }
     }
 
     #[test]

@@ -48,7 +48,7 @@ digest = "de5b6325d7"
 
 ["bin/audit-archiver/README.md"]
 summary = "audit-archiver service: NDJSON ingest into Postgres, JSON-RPC queries, retention classes and partition maintenance, BRIN summary worker, event_seq extraction split, env vars, S3 removal rollout."
-digest = "4681f8af49"
+digest = "72abeb6d55"
 
 ["bin/base-telemetry/README.md"]
 summary = "base-telemetry backend: CLI and env config, per-IP rate limiting, and on-demand P2P reachability probes for execution-layer (enode) and consensus-layer (ENR or multiaddr) nodes."
@@ -152,7 +152,7 @@ digest = "d1525977c0"
 
 ["crates/batcher/cli/README.md"]
 summary = "base-batcher-cli: base batcher flags and startup, with sequencer endpoints and leader search, channel and DA config, and shadow mode posting to the inbox a parity validator derives its chain from."
-digest = "8c65ed44e2"
+digest = "876305aea7"
 
 ["crates/batcher/comp/README.md"]
 summary = "base-comp: incremental Brotli channel compression (CompressionStream, BrotliLevel) producing protocol-compatible channels; batch encoding and framing live in batcher-encoder."
@@ -339,8 +339,8 @@ summary = "Node extension wiring the standalone EIP-8130 eth_getTransactionCount
 digest = "2d0cf30e0d"
 
 ["crates/execution/eip8130-rpc/README.md"]
-summary = "EIP-8130 RPC helpers: ChannelNonceReader for 2D nonce reads by nonce_key and Eip8130GasEstimator doing one simulation for eth_estimateGas. Use when debugging AA nonce or gas estimation RPCs."
-digest = "565c03ca22"
+summary = "EIP-8130 RPC helpers: ChannelNonceReader for 2D nonce reads by nonce_key and Eip8130GasEstimator, one simulation for eth_estimateGas and eth_call. Use when debugging AA nonce, call or gas RPCs."
+digest = "9c987d9934"
 
 ["crates/execution/eip8130/README.md"]
 summary = "Native EIP-8130 account abstraction validation: enshrined authenticators (not precompiles) needing parity with contracts, validation layers, intrinsic gas formula, EIP-7623 floor, fee checks."
