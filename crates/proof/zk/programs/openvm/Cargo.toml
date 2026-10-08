@@ -2,8 +2,6 @@
 #
 # Built separately via `just openvm build-elf` (which shells out to
 # `cargo openvm build` with the `riscv32im-risc0-zkvm-elf` target).
-# Aggregation is not ported: SP1's `verify_sp1_proof` has no OpenVM
-# equivalent here (OpenVM uses a deferral/STARK-verify guest lib).
 
 [workspace]
 resolver = "2"
