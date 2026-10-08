@@ -82,6 +82,10 @@ class ReviewError(Exception):
     """Raised when the pipeline cannot continue."""
 
 
+class StaleError(ReviewError):
+    """Raised when the pull request has a newer commit than the one reviewed."""
+
+
 def log(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
 
@@ -334,6 +338,9 @@ class Context:
     head_sha: str | None = None
     threads: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     previous_summary: str | None = None
+    # The threads that were there when the run started. Comments the run posts itself are new, not "open
+    # from earlier", and the final decider should not be asked about them.
+    earlier_thread_ids: frozenset[str] | None = None
 
 
 def gh(args: list[str], input_text: str | None = None) -> str:
@@ -622,6 +629,8 @@ def chair_prompt(ctx: Context, triage: dict[str, Any], candidates: list[dict[str
 # the threads. The script enforces this, so a model that ignores its instructions changes nothing else.
 FINDINGS_ROUND_ACTIONS = frozenset({"comment", "reply"})
 FINAL_ROUND_ACTIONS = frozenset({"resolve", "reopen", "reply"})
+# The final round may also comment: a thread that cannot be reopened, or one a person closed whose problem
+# is back, needs a new comment. Problems an earlier round already posted are skipped, whatever the round.
 
 
 def thread_status(t: dict[str, Any]) -> str:
@@ -709,12 +718,14 @@ def finding_order(f: render.Finding) -> tuple[int, str, int]:
 
 def build_plan(decision: dict[str, Any], threads: list[dict[str, Any]],
                valid_lines: set[tuple[str, int]], inline_room: int = MAX_INLINE_COMMENTS,
-               allowed: frozenset[str] | set[str] | None = None) -> Plan:
+               allowed: frozenset[str] | set[str] | None = None,
+               replied: set[str] | None = None) -> Plan:
     """Check the decider's actions against the diff and threads; demote what cannot be applied."""
     by_id = {t["thread_id"]: t for t in threads}
     plan = Plan()
     anchored: list[render.Finding] = []
     touched: set[str] = set()
+    replied = replied if replied is not None else set()  # shared across rounds so a thread gets one follow-up
     for action in decision.get("actions", []):
         kind = action["type"]
         if allowed is not None and kind not in allowed:
@@ -729,8 +740,12 @@ def build_plan(decision: dict[str, Any], threads: list[dict[str, Any]],
         if thread is None or not thread["owned_by_bot"]:
             plan.rejected.append(f"{kind}: unknown or foreign thread {action.get('thread_id')}")
         elif kind == "reply":
-            plan.replies.append({"thread_id": thread["thread_id"],
-                                 "body": f"{render.MARKER}\n**Follow-up:** {body}"})
+            if thread["thread_id"] in replied:
+                plan.rejected.append(f"reply: thread {thread['thread_id']} already got a follow-up in this run")
+            else:
+                replied.add(thread["thread_id"])
+                plan.replies.append({"thread_id": thread["thread_id"],
+                                     "body": f"{render.MARKER}\n**Follow-up:** {body}"})
         elif thread["thread_id"] in touched:
             plan.rejected.append(f"{kind}: thread {thread['thread_id']} already has a change in this run")
         elif kind == "resolve":
@@ -785,8 +800,16 @@ def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None]
     assert ctx.pr_number is not None
     repo, number = ctx.repo, ctx.pr_number
     problems: list[str] = []
-    if ctx.head_sha and fetch_head(number, repo) != ctx.head_sha:
-        raise ReviewError("the pull request has a newer commit than the one reviewed; nothing was posted")
+    try:
+        newer = bool(ctx.head_sha) and fetch_head(number, repo) != ctx.head_sha
+    except ReviewError as exc:
+        # Not being able to ask is not the same as the pull request having moved. Go on, and let
+        # the next round check again.
+        problems.append(f"check the pull request head: {exc}")
+        log(f"  could not check the pull request head: {exc}")
+        newer = False
+    if newer:
+        raise StaleError("the pull request has a newer commit than the one reviewed; nothing was posted")
 
     def attempt(what: str, args: list[str], input_text: str | None = None) -> bool:
         try:
@@ -825,7 +848,8 @@ def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None]
         plan.resolves, plan.reopens, plan.replies = [], [], []
     else:
         # The summary is written from the threads as they are now, not as they were an hour ago.
-        ctx.threads = live_threads
+        ctx.threads = [t for t in live_threads
+                       if ctx.earlier_thread_ids is None or t["thread_id"] in ctx.earlier_thread_ids]
         plan.resolves = [i for i in plan.resolves if unchanged(i, expect_marked=False)]
         kept = [i for i in plan.reopens if unchanged(i, expect_marked=True)]
         # A reopen that was dropped because the comment changed still means the problem is back, so
@@ -1020,14 +1044,16 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
     failed: dict[str, str] = {}
     unposted: dict[str, dict[str, Any]] = {}
     seen: set[tuple[str | None, str]] = set()
+    replied: set[str] = set()
     state = {"stale": False, "chair_ran": False}
+    ctx.earlier_thread_ids = frozenset(t["thread_id"] for t in ctx.threads)
 
     def publish(round_plan: Plan) -> None:
         """Post one round, unless the pull request moved on; fold what happened into the whole plan."""
         if post and not state["stale"]:
             try:
                 problems.extend(apply_plan(round_plan, ctx))
-            except ReviewError as exc:
+            except StaleError as exc:
                 state["stale"] = True
                 problems.append(str(exc))
                 log(f"  {exc}")
@@ -1047,8 +1073,8 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
             log(f"  decide ({name}) failed ({exc}); the final round will take its findings")
             return
         dropped.extend(decision.get("dropped", []))
-        round_plan = build_plan(decision, ctx.threads, valid_lines,
-                                inline_room=MAX_INLINE_COMMENTS - len(plan.new), allowed=FINDINGS_ROUND_ACTIONS)
+        round_plan = build_plan(decision, ctx.threads, valid_lines, inline_room=MAX_INLINE_COMMENTS - len(plan.new),
+                                allowed=FINDINGS_ROUND_ACTIONS, replied=replied)
         drop_repeats(round_plan, seen)
         publish(round_plan)
 
@@ -1088,9 +1114,13 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
     rows.append(row(decide_agent))
     dropped.extend(decision.get("dropped", []))
     final_plan = build_plan(decision, ctx.threads, valid_lines, inline_room=MAX_INLINE_COMMENTS - len(plan.new),
-                            allowed=FINAL_ROUND_ACTIONS | ({"comment"} if unposted else set()))
+                            allowed=FINAL_ROUND_ACTIONS | {"comment"}, replied=replied)
     drop_repeats(final_plan, seen)
     publish(final_plan)
+    for name in unposted:
+        # The final round took these findings, so the review is not missing them.
+        if "decide" not in failed:
+            failed.pop(f"decide/{name}", None)
     return Outcome(triage, reviews, failed, decision, rows, plan=plan, dropped=dropped, problems=problems,
                    stale=state["stale"])
 
