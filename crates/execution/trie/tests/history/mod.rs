@@ -179,6 +179,24 @@ fn test_prune_earliest_state_returns_correct_counts<
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
 #[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
+fn test_prune_earliest_state_no_entries_to_prune<
+    S: BaseProofsStore + BaseProofsInitialStateStore,
+>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    let block_1_hash = B256::repeat_byte(1);
+    storage.set_earliest_block_number(1, block_1_hash)?;
+
+    let block_10 = test_block(B256::ZERO, 10, 10);
+    let counts = storage.prune_earliest_state(block_10)?;
+
+    assert_eq!(counts, WriteCounts::default());
+    Ok(())
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[serial]
 fn test_unwind_history_with_trie_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
 ) -> Result<(), BaseProofsStorageError> {
