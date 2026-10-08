@@ -534,38 +534,56 @@ mod tests {
     }
 
     #[rstest]
-    #[case::inserted_pending(&[Action::Insert(TxEvent::Pending)], &[TxEvent::Pending], true)]
-    #[case::inserted_queued(&[Action::Insert(TxEvent::Queued)], &[TxEvent::Queued], false)]
+    #[case::inserted_pending(
+        &[(Action::Insert(TxEvent::Pending), true)],
+        &[TxEvent::Pending]
+    )]
+    #[case::inserted_queued(
+        &[(Action::Insert(TxEvent::Queued), false)],
+        &[TxEvent::Queued]
+    )]
     #[case::duplicate_insert_ignored(
-        &[Action::Insert(TxEvent::Pending), Action::Insert(TxEvent::Queued)],
-        &[TxEvent::Pending],
-        true
+        &[(Action::Insert(TxEvent::Pending), true), (Action::Insert(TxEvent::Queued), true)],
+        &[TxEvent::Pending]
     )]
     #[case::moved_queued_to_pending(
-        &[Action::Insert(TxEvent::Queued), Action::MoveTo(Pool::Queued), Action::MoveTo(Pool::Pending)],
-        &[TxEvent::Queued, TxEvent::QueuedToPending],
-        true
+        &[
+            (Action::Insert(TxEvent::Queued), false),
+            (Action::MoveTo(Pool::Queued), false),
+            (Action::MoveTo(Pool::Pending), true),
+        ],
+        &[TxEvent::Queued, TxEvent::QueuedToPending]
     )]
     fn records_transaction_event_log(
-        #[case] actions: &[Action],
+        #[case] steps: &[(Action, bool)],
         #[case] expected_events: &[TxEvent],
-        #[case] expect_pending_time: bool,
     ) {
         let mut tracker = Tracker::new(false);
         let tx_hash = TxHash::random();
 
-        for action in actions {
+        for (action, expect_pending_time) in steps {
             match action {
-                Action::Insert(event) => tracker.transaction_inserted(tx_hash, *event),
+                Action::Insert(event) => {
+                    let mempool_time = tracker.txs.peek(&tx_hash).map(|log| log.mempool_time);
+                    tracker.transaction_inserted(tx_hash, *event);
+                    if let Some(mempool_time) = mempool_time {
+                        let event_log = tracker.txs.peek(&tx_hash).expect("tx should exist");
+                        assert_eq!(event_log.mempool_time, mempool_time);
+                    }
+                }
                 Action::MoveTo(pool) => tracker.transaction_moved(tx_hash, pool.clone()),
             }
+
+            assert_eq!(
+                tracker.txs.peek(&tx_hash).expect("tx should exist").pending_time.is_some(),
+                *expect_pending_time,
+            );
         }
 
         assert_eq!(tracker.txs.len(), 1);
-        let event_log = tracker.txs.get(&tx_hash).expect("tx should exist");
+        let event_log = tracker.txs.peek(&tx_hash).expect("tx should exist");
         let events: Vec<TxEvent> = event_log.events.iter().map(|(_, event)| *event).collect();
         assert_eq!(events, expected_events);
-        assert_eq!(event_log.pending_time.is_some(), expect_pending_time);
     }
 
     #[test]
