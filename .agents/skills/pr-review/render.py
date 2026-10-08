@@ -106,14 +106,19 @@ def reviewed_sha(body: str) -> str | None:
     return match.group(1) if match else None
 
 
-def status_block(reviewed: str, *, unreviewed: int | None, compare_url: str, files_url: str) -> str:
+def status_block(reviewed: str, *, unreviewed: int | None, compare_url: str, files_url: str,
+                 uncountable: bool = False) -> str:
     """The line that says how far the pull request has moved past the reviewed commit.
 
-    `unreviewed` is the number of commits pushed since, 0 if none, or None when the branch was rewritten
-    and they cannot be counted.
+    `unreviewed` is the number of commits pushed since, 0 if none, or None when they cannot be counted:
+    because the branch was rewritten, or, with `uncountable`, because the pull request has more commits than
+    GitHub will list.
     """
     short = reviewed[:7]
-    if unreviewed == 0:
+    if uncountable:
+        line = (f"⚠️ **This pull request has too many commits to count the ones pushed after `{short}`.** "
+                f"[View all changes]({files_url}) · comment `/review` to review them.")
+    elif unreviewed == 0:
         line = f"✅ Reviewed `{short}`, the latest commit."
     elif unreviewed is None:
         line = (f"⚠️ **The branch was rewritten after the review of `{short}`**, so the commits that have not "

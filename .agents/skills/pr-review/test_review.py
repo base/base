@@ -252,14 +252,14 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(len(plan.outside), 2)
 
     def test_comments_are_sorted_by_severity_then_location(self) -> None:
-        plan = self.plan(comment(severity="minor", line=1), comment(severity="critical", line=4),
-                         comment(severity="major", line=2), comment(severity="major", line=1))
+        plan = self.plan(comment(severity="minor", line=1, title="a"), comment(severity="critical", line=4, title="b"),
+                         comment(severity="major", line=2, title="c"), comment(severity="major", line=1, title="d"))
         self.assertEqual([(f.severity, f.line) for f in plan.new],
                          [("critical", 4), ("major", 1), ("major", 2), ("minor", 1)])
 
     def test_inline_comments_are_capped_keeping_the_most_severe(self) -> None:
-        actions = [comment(severity="minor", line=1) for _ in range(review.MAX_INLINE_COMMENTS)]
-        actions.append(comment(severity="critical", line=2))
+        actions = [comment(severity="minor", line=1, title=f"minor {i}") for i in range(review.MAX_INLINE_COMMENTS)]
+        actions.append(comment(severity="critical", line=2, title="critical"))
         plan = self.plan(*actions)
         self.assertEqual(len(plan.new), review.MAX_INLINE_COMMENTS)
         self.assertEqual(plan.new[0].severity, "critical")
@@ -397,7 +397,8 @@ class SummaryTests(unittest.TestCase):
             repo="base/base", head_sha="abc123", status=status)
 
     def test_summary_lists_findings_with_links(self) -> None:
-        plan = review.build_plan({"actions": [comment(severity="critical"), comment(line=1)]}, [],
+        plan = review.build_plan({"actions": [comment(severity="critical", title="Panics on empty batch"),
+                                              comment(line=1, title="Leaks a handle")]}, [],
                                  review.diff_new_lines(DIFF))
         text = self.summary(plan)
         self.assertTrue(text.startswith(render.SUMMARY_MARKER))
@@ -632,6 +633,54 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn(f"timeout-minutes: {JOB_LIMIT_SECONDS // 60}\n", self.review_job)
 
 
+class RepeatTests(unittest.TestCase):
+    """Findings an earlier round posted, and follow-ups, are handled before the caps and only once posted."""
+
+    def plan(self, actions, **kwargs) -> review.Plan:
+        return review.build_plan({"actions": actions}, [thread("open")], review.diff_new_lines(DIFF), **kwargs)
+
+    def test_a_repeat_takes_no_inline_slot_so_a_new_finding_gets_it(self) -> None:
+        seen = {("src/a.rs", f"old {i}") for i in range(3)}
+        actions = [comment(title=f"old {i}", line=1 + i % 3) for i in range(3)] + [comment(title="new", line=2)]
+        plan = self.plan(actions, inline_room=1, seen=seen)
+        self.assertEqual([f.title for f in plan.new], ["new"])
+        self.assertEqual(plan.outside, [])
+
+    def test_a_repeat_within_one_round_is_dropped(self) -> None:
+        plan = self.plan([comment(title="Same", line=1), comment(title="same", line=2)])
+        self.assertEqual(len(plan.new), 1)
+
+    def test_the_same_title_in_another_file_is_a_different_finding(self) -> None:
+        plan = self.plan([comment(title="Same"), comment(title="Same", path="src/b.rs", line=1)],
+                         seen=set())
+        self.assertEqual(len(plan.new) + len(plan.outside), 2)
+
+    def test_build_plan_does_not_record_anything_itself(self) -> None:
+        seen: set = set()
+        replied: set = set()
+        self.plan([comment(title="x"), {"type": "reply", "thread_id": "open", "body": "again"}],
+                  seen=seen, replied=replied)
+        self.assertEqual((seen, replied), (set(), set()))
+
+    def test_a_follow_up_that_was_not_posted_does_not_block_a_later_round(self) -> None:
+        # A round's reply is rejected as a repeat only if an earlier round actually posted it.
+        first = self.plan([{"type": "reply", "thread_id": "open", "body": "a"}], replied=set())
+        self.assertEqual(len(first.replies), 1)
+        retry = self.plan([{"type": "reply", "thread_id": "open", "body": "b"}], replied=set())
+        self.assertEqual(len(retry.replies), 1)
+        posted = self.plan([{"type": "reply", "thread_id": "open", "body": "b"}], replied={"open"})
+        self.assertEqual((posted.replies, len(posted.rejected)), ([], 1))
+
+    def test_apply_plan_keeps_only_the_replies_it_posted(self) -> None:
+        ctx = review.Context(description="d", title="t", files=[], diff=DIFF, pr_number=7, head_sha="abc")
+        plan = self.plan([{"type": "reply", "thread_id": "open", "body": "a"}])
+        gh = FakeGh(fail=("addPullRequestReviewThreadReply",))
+        with mock.patch.object(review, "gh", gh), mock.patch.object(review, "fetch_threads",
+                                                                      return_value=[thread("open")]):
+            review.apply_plan(plan, ctx)
+        self.assertEqual(plan.replies, [])
+
+
 class StatusTests(unittest.TestCase):
     """The reviewed commit, the count of commits after it, and the line that says so."""
 
@@ -663,6 +712,13 @@ class StatusTests(unittest.TestCase):
         self.assertLessEqual(len(text), render.MAX_BODY_CHARS + 1)
         self.assertIn("comment `/review`", text)
         self.assertEqual(render.reviewed_sha(text), self.REVIEWED)
+
+    def test_the_status_line_for_a_long_pull_request(self) -> None:
+        block = render.status_block(self.REVIEWED, unreviewed=None, compare_url="c", files_url="https://x/files",
+                                    uncountable=True)
+        self.assertIn("too many commits to count", block)
+        self.assertIn("[View all changes](https://x/files)", block)
+        self.assertNotIn("rewritten", block)
 
     def test_the_status_line_for_each_case(self) -> None:
         def block(unreviewed):
@@ -722,6 +778,40 @@ class CommitCountTests(unittest.TestCase):
         with mock.patch.object(review, "gh", gh):
             self.assertEqual([review.commits_after(7, "base/base", s) for s in self.SHAS], [3, 2, 1, 0])
             self.assertEqual(review.commits_after(7, "base/base", self.SHAS[1][:7]), 2)
+
+    def test_a_pull_request_with_more_commits_than_github_lists_cannot_be_counted(self) -> None:
+        many = [f"{i:040x}" for i in range(review.COMMIT_LIST_LIMIT)]
+        gh, _ = self.fake_gh(many)
+        with mock.patch.object(review, "gh", gh):
+            # The reviewed commit may be in the list, but the newest commits are cut off, so any count is wrong.
+            for reviewed in (many[0], many[-1], "f" * 40):
+                with self.subTest(reviewed=reviewed[:7]), self.assertRaises(review.CommitsUncountable):
+                    review.commits_after(7, "base/base", reviewed)
+
+    def test_the_summary_says_so_instead_of_claiming_the_branch_was_rewritten(self) -> None:
+        many = [f"{i:040x}" for i in range(review.COMMIT_LIST_LIMIT)]
+        gh, _ = self.fake_gh(many, head="e" * 40)
+        ctx = review.Context(description="d", title="t", files=[], diff=DIFF, pr_number=7, head_sha=many[3])
+        with mock.patch.object(review, "gh", gh):
+            block = review.status_for(ctx)
+        self.assertIn("too many commits to count", block)
+        self.assertNotIn("rewritten", block)
+        self.assertIn("/pull/7/files", block)
+
+    def test_refresh_status_says_so_for_a_long_pull_request(self) -> None:
+        many = [f"{i:040x}" for i in range(review.COMMIT_LIST_LIMIT)]
+        gh, _ = self.fake_gh(many, head="e" * 40, body=self.body(many[3]))
+        sent: list[str] = []
+
+        def capture(args, input_text=None):
+            if "PATCH" in args:
+                sent.append(input_text)
+                return ""
+            return gh(args, input_text)
+
+        with mock.patch.object(review, "gh", capture):
+            review.refresh_status(7, "base/base")
+        self.assertIn("too many commits to count", json.loads(sent[0])["body"])
 
     def test_a_commit_no_longer_in_the_pull_request_means_the_branch_was_rewritten(self) -> None:
         gh, _ = self.fake_gh(self.SHAS)
