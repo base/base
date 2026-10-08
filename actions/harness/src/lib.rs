@@ -4,7 +4,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod action;
-pub use action::{Action, L2BlockProvider};
+pub use action::Action;
 
 mod conductor;
 pub use conductor::{ConductorState, TestConductor, TestConductorHandle};
@@ -36,7 +36,8 @@ mod derivation_fixture;
 
 mod batcher;
 pub use batcher::{
-    Batcher, BatcherConfig, BatcherError, Inner, L1MinerTxManager, L1SignedSubmission, Pending,
+    Batcher, BatcherConfig, HarnessBlockSource, HarnessL1HeadSource, Inner, L1HeadItem,
+    L1MinerTxManager, L1SignedSubmission, Pending, SharedL2Chain,
 };
 
 mod matrix;

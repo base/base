@@ -25,8 +25,5 @@ pub use types::{BaseComponentsBuilder, BaseNodeBuilder, BaseNodeTypes, BaseProvi
 mod node;
 pub use node::BaseNode;
 
-mod add_ons;
-pub use add_ons::{BaseAddOns, BaseAddOnsBuilder};
-
 #[cfg(feature = "test-utils")]
 pub mod test_utils;

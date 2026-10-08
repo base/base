@@ -10,6 +10,9 @@
 
 extern crate alloc;
 
+/// The system transaction gas limit post-Regolith.
+pub const REGOLITH_SYSTEM_TX_GAS: u64 = 1_000_000;
+
 #[cfg(feature = "evm")]
 use revm as _;
 
@@ -25,16 +28,17 @@ pub use receipts::{
 };
 
 mod transaction;
-#[cfg(feature = "serde")]
-pub use transaction::serde_deposit_tx_rpc;
 pub use transaction::{
     AccountChange, AccountChangeChannel, BasePooledTransaction, BaseTransaction,
     BaseTransactionInfo, BaseTxEnvelope, BaseTypedTransaction, Call, ChangeType, CoinbaseTip,
     CreateEntry, DEPOSIT_TX_TYPE_ID, Delegation, DepositInfo, DepositTransaction,
     EIP8130_REJECTION_MSG, EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
-    Eip8130StaticError, Eip8130TimestampError, IDefaultAccount, InitialActor, OpTxType, Scope,
-    SignedAccountChanges, SignedChange, TxDeposit, TxEip8130,
+    Eip8130StaticError, Eip8130StructuralError, Eip8130Structure, Eip8130TimestampError,
+    IDefaultAccount, InitialActor, OpTxType, Scope, SignedAccountChanges, SignedChange, TxDeposit,
+    TxEip8130, decode_2718_canonical,
 };
+#[cfg(feature = "serde")]
+pub use transaction::{Eip8130PayerSerde, serde_deposit_tx_rpc};
 
 mod extra;
 pub use extra::{EIP1559ParamEncoder, EIP1559ParamError, HoloceneExtraData, JovianExtraData};
@@ -44,6 +48,39 @@ pub use source::{
     BaseTimeDepositSource, DepositSourceDomain, DepositSourceDomainIdentifier, L1InfoDepositSource,
     UpgradeDepositSource, UserDepositSource,
 };
+
+mod base_time;
+pub use base_time::{
+    BaseTimeMetadataError, BaseTimeScheduleError, BaseTimeUpdateDecodeError, BaseTimeUpdateError,
+    BaseTimeUpdateTx,
+};
+
+mod info;
+pub use info::{
+    BlockInfoError, DecodeError, L1BlockInfoBedrock, L1BlockInfoBedrockBase,
+    L1BlockInfoBedrockBaseFields, L1BlockInfoBedrockFields, L1BlockInfoBedrockOnlyFields,
+    L1BlockInfoEcotone, L1BlockInfoEcotoneBase, L1BlockInfoEcotoneBaseFields,
+    L1BlockInfoEcotoneFields, L1BlockInfoEcotoneOnlyFields, L1BlockInfoIsthmus,
+    L1BlockInfoIsthmusBaseFields, L1BlockInfoIsthmusFields, L1BlockInfoJovian,
+    L1BlockInfoJovianBaseFields, L1BlockInfoJovianFields, L1BlockInfoTx,
+};
+
+#[cfg(test)]
+pub(crate) mod test_utils {
+    use alloy_primitives::hex;
+
+    use crate::{L1BlockInfoBedrock, L1BlockInfoEcotone, L1BlockInfoIsthmus};
+
+    pub(crate) const RAW_BEDROCK_INFO_TX: [u8; L1BlockInfoBedrock::L1_INFO_TX_LEN] = hex!(
+        "015d8eb9000000000000000000000000000000000000000000000000000000000117c4eb0000000000000000000000000000000000000000000000000000000065280377000000000000000000000000000000000000000000000000000000026d05d953392012032675be9f94aae5ab442de73c5f4fb1bf30fa7dd0d2442239899a40fc00000000000000000000000000000000000000000000000000000000000000040000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f3298500000000000000000000000000000000000000000000000000000000000000bc00000000000000000000000000000000000000000000000000000000000a6fe0"
+    );
+    pub(crate) const RAW_ECOTONE_INFO_TX: [u8; L1BlockInfoEcotone::L1_INFO_TX_LEN] = hex!(
+        "440a5e2000000558000c5fc5000000000000000500000000661c277300000000012bec20000000000000000000000000000000000000000000000000000000026e9f109900000000000000000000000000000000000000000000000000000000000000011c4c84c50740386c7dc081efddd644405f04cde73e30a2e381737acce9f5add30000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f32985"
+    );
+    pub(crate) const RAW_ISTHMUS_INFO_TX: [u8; L1BlockInfoIsthmus::L1_INFO_TX_LEN] = hex!(
+        "098999be00000558000c5fc5000000000000000500000000661c277300000000012bec20000000000000000000000000000000000000000000000000000000026e9f109900000000000000000000000000000000000000000000000000000000000000011c4c84c50740386c7dc081efddd644405f04cde73e30a2e381737acce9f5add30000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f329850000abcd000000000000dcba"
+    );
+}
 
 mod predeploys;
 pub use predeploys::{Deployers, Predeploys, SystemAddresses};

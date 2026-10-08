@@ -1,12 +1,11 @@
 use base_prover_service_db::{
-    ApiProofType, CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
-    canonical_session_id,
+    CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome, canonical_session_id,
 };
 use base_prover_service_protocol::{
     ProofRequestIdCollisionMessage, ProveBlockRangeRequest, ProveBlockRangeResponse,
 };
 use jsonrpsee::core::RpcResult;
-use tracing::{info, warn};
+use tracing::{Instrument, info, info_span, warn};
 
 use crate::server::{
     ProverServiceServer, failed_precondition, internal, invalid_argument, record_rpc_result,
@@ -47,41 +46,58 @@ impl ProverServiceServer {
             "Attempting to prove base block(s)",
         );
 
-        validate_intermediate_root_interval(
-            db_request.api_proof_type,
-            db_request.number_of_blocks_to_prove,
-            db_request.intermediate_root_interval,
-        )?;
+        let span = info_span!(
+            "prover.prove_block_range",
+            session_id = %session_id,
+            start_block = db_request.start_block_number,
+            block_count = db_request.number_of_blocks_to_prove,
+            proof_type = %crate::metrics::api_proof_type_label(db_request.api_proof_type),
+            outcome = tracing::field::Empty,
+        );
 
-        let outcome = self
+        let result = self
             .repo
-            .create_for_worker_queue(
-                db_request,
-                self.config.max_proof_retries,
-                retry_failed,
-            )
-            .await
-            .map_err(|e| match e {
-                CreateProofRequestError::IdCollision { id, field } => {
-                    warn!(
-                        proof_request_id = %id,
-                        mismatched_field = field,
-                        "rejected ProveBlockRange: session_id already bound to a different request"
-                    );
-                    failed_precondition(ProofRequestIdCollisionMessage::for_field(id, field))
-                }
-                CreateProofRequestError::SessionRowMissingAfterConflict { id } => {
-                    warn!(
-                        proof_request_id = %id,
-                        "rejected ProveBlockRange: session_id row missing after insert conflict"
-                    );
-                    unavailable(format!(
-                        "session_id {id} is temporarily unavailable after conflict; retry prove_block_range"
-                    ))
-                }
-                CreateProofRequestError::Validation(e) => invalid_argument(format!("{e}")),
-                CreateProofRequestError::Sqlx(e) => internal(format!("Database error: {e}")),
-            })?;
+            .create_for_worker_queue(db_request, self.config.max_proof_retries, retry_failed)
+            .instrument(span.clone())
+            .await;
+
+        let outcome_label = match &result {
+            Ok(CreateProofRequestOutcome::RetryNotAllowed(_)) => "retry_not_allowed",
+            Ok(CreateProofRequestOutcome::RetryExhausted(_)) => "retry_exhausted",
+            Ok(CreateProofRequestOutcome::Cancelled(_)) => "cancelled",
+            Ok(CreateProofRequestOutcome::Created(_)) => "created",
+            Ok(CreateProofRequestOutcome::Requeued(_)) => "requeued",
+            Ok(CreateProofRequestOutcome::Replayed(_)) => "replayed",
+            Err(CreateProofRequestError::IdCollision { .. }) => "id_collision",
+            Err(CreateProofRequestError::SessionRowMissingAfterConflict { .. }) => {
+                "session_missing"
+            }
+            Err(CreateProofRequestError::Validation(_)) => "validation",
+            Err(CreateProofRequestError::Sqlx(_)) => "database",
+        };
+        span.record("outcome", outcome_label);
+
+        let outcome = result.map_err(|e| match e {
+            CreateProofRequestError::IdCollision { id, field } => {
+                warn!(
+                    proof_request_id = %id,
+                    mismatched_field = field,
+                    "rejected ProveBlockRange: session_id already bound to a different request"
+                );
+                failed_precondition(ProofRequestIdCollisionMessage::for_field(id, field))
+            }
+            CreateProofRequestError::SessionRowMissingAfterConflict { id } => {
+                warn!(
+                    proof_request_id = %id,
+                    "rejected ProveBlockRange: session_id row missing after insert conflict"
+                );
+                unavailable(format!(
+                    "session_id {id} is temporarily unavailable after conflict; retry prove_block_range"
+                ))
+            }
+            CreateProofRequestError::Validation(e) => invalid_argument(format!("{e}")),
+            CreateProofRequestError::Sqlx(e) => internal(format!("Database error: {e}")),
+        })?;
 
         match outcome {
             CreateProofRequestOutcome::RetryNotAllowed(id) => {
@@ -105,23 +121,24 @@ impl ProverServiceServer {
                     "session_id {session_id}: proof request retry budget exhausted; use get_proof for the stored terminal result",
                 )));
             }
-            CreateProofRequestOutcome::Created(id) => {
-                info!(
+            CreateProofRequestOutcome::Cancelled(id) => {
+                warn!(
                     proof_request_id = %id,
-                    "Created proof request for worker queue"
+                    session_id = %session_id,
+                    "rejected ProveBlockRange: proof request was cancelled",
                 );
+                return Err(failed_precondition(format!(
+                    "session_id {session_id} was cancelled; delete it with deleteProofRequest before proving it again",
+                )));
+            }
+            CreateProofRequestOutcome::Created(id) => {
+                info!(proof_request_id = %id, "Created proof request for worker queue");
             }
             CreateProofRequestOutcome::Requeued(id) => {
-                info!(
-                    proof_request_id = %id,
-                    "Requeued previously failed proof request"
-                );
+                info!(proof_request_id = %id, "Requeued previously failed proof request");
             }
             CreateProofRequestOutcome::Replayed(id) => {
-                info!(
-                    proof_request_id = %id,
-                    "Idempotent replay of non-failed proof request"
-                );
+                info!(proof_request_id = %id, "Idempotent replay of non-failed proof request");
             }
         }
 
@@ -133,38 +150,12 @@ fn parse_session_id(session_id: &str) -> RpcResult<String> {
     canonical_session_id(session_id).map_err(|e| invalid_argument(format!("{e}")))
 }
 
-fn validate_intermediate_root_interval(
-    api_proof_type: ApiProofType,
-    number_of_blocks_to_prove: u64,
-    intermediate_root_interval: Option<u64>,
-) -> RpcResult<()> {
-    match api_proof_type {
-        ApiProofType::Tee => return Ok(()),
-        ApiProofType::Compressed | ApiProofType::SnarkPlonk => {}
-    }
-
-    if let Some(interval) = intermediate_root_interval {
-        if interval == 0 {
-            return Err(invalid_argument(
-                "Invalid intermediate_root_interval: must be greater than 0",
-            ));
-        }
-        if !number_of_blocks_to_prove.is_multiple_of(interval) {
-            return Err(invalid_argument(format!(
-                "Invalid number_of_blocks_to_prove ({number_of_blocks_to_prove}): must be a multiple of intermediate_root_interval ({interval})",
-            )));
-        }
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use base_prover_service_db::{ApiProofType, ProofType};
     use uuid::Uuid;
 
-    use super::{parse_session_id, validate_intermediate_root_interval};
+    use super::parse_session_id;
     use crate::metrics;
 
     #[test]
@@ -212,19 +203,5 @@ mod tests {
         let parsed = parse_session_id(session_id).unwrap();
 
         assert_eq!(parsed, session_id);
-    }
-
-    #[test]
-    fn zkp_request_rejects_non_multiple_intermediate_root_interval() {
-        let result = validate_intermediate_root_interval(ApiProofType::Compressed, 1, Some(30));
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn tee_request_accepts_intermediate_block_interval() {
-        let result = validate_intermediate_root_interval(ApiProofType::Tee, 1, Some(30));
-
-        assert!(result.is_ok());
     }
 }

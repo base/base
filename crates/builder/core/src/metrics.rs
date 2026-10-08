@@ -189,14 +189,12 @@ base_metrics::define_metrics! {
     tx_accounts_modified: histogram,
     #[describe("Number of storage slots modified by a transaction (from EVM post-state)")]
     tx_storage_slots_modified: histogram,
-    #[describe("Rejected transaction batch drops due to full forwarding channel")]
-    rejected_tx_channel_drops: counter,
-    #[describe("Rejected transaction drops due to per-block accumulation limit")]
-    rejected_tx_per_block_drops: counter,
-    #[describe("Rejected txs forwarded to audit-archiver")]
-    rejected_txs_forwarded: counter,
-    #[describe("Number of failed rejected transaction batch forwards to audit-archiver")]
-    rejected_tx_forward_failures: counter,
+    #[describe("Resting validity transactions parked in the transaction iterator without reaching the build loop")]
+    resting_predicate_parked_total: counter,
+    #[describe("Resting validity transactions whose predicates matched when evaluated in shadow mode")]
+    resting_predicate_shadow_mismatches_total: counter,
+    #[describe("Time per flashblock spent handling validity transactions, from yield to the predicate gate decision, including resting transactions parked in the iterator, in seconds")]
+    validity_candidate_handling_duration: histogram,
     #[describe("Builder transaction events successfully enqueued")]
     #[label(event_type)]
     builder_transaction_events_emitted: counter,
@@ -289,6 +287,7 @@ impl BuilderMetrics {
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::U256;
     use base_execution_payload_builder::{
         BuilderMetrics as SharedBuilderMetrics, InclusionTracker,
     };
@@ -434,9 +433,9 @@ mod tests {
         let handle = recorder.handle();
 
         let mut tracker = InclusionTracker::default();
-        tracker.record(true, 21_000, 2, 10);
-        tracker.record(false, 10_000, 4, 10);
-        tracker.record(true, 8_000, 9, 10);
+        tracker.record(true, 21_000, 2, 10, U256::from(500));
+        tracker.record(false, 10_000, 4, 10, U256::ZERO);
+        tracker.record(true, 8_000, 9, 10, U256::ZERO);
 
         metrics::with_local_recorder(&recorder, || {
             SharedBuilderMetrics::record_inclusion(&tracker);
@@ -478,11 +477,11 @@ mod tests {
         );
         assert!(
             rendered.contains("base_builder_coinbase_tip_revenue_wei_sum{flow=\"standard\"} 0"),
-            "expected coinbase tips to stay zero until decoded, got: {rendered}"
+            "expected no standard coinbase-tip revenue, got: {rendered}"
         );
         assert!(
-            rendered.contains("base_builder_coinbase_tip_revenue_wei_sum{flow=\"validity\"} 0"),
-            "expected coinbase tips to stay zero until decoded, got: {rendered}"
+            rendered.contains("base_builder_coinbase_tip_revenue_wei_sum{flow=\"validity\"} 500"),
+            "expected 500 validity coinbase-tip wei, got: {rendered}"
         );
     }
 

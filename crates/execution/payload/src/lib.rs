@@ -14,7 +14,7 @@ pub use affordability::CoinbaseTipAffordability;
 pub mod builder;
 pub use builder::BasePayloadBuilder;
 pub mod config;
-pub use config::ResourceMeteringConfig;
+pub use config::{BuilderStateProvider, ResourceMeteringConfig};
 mod rejection_cache;
 pub use rejection_cache::{REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache};
 pub mod error;
@@ -27,18 +27,21 @@ pub use resource_metering::{
     ResourceThrottlingDecision, ResourceThrottlingLimitExceeded, ResourceThrottlingLimitScope,
 };
 mod resource_metering_metrics;
-pub use resource_metering_metrics::ResourceMeteringMetrics;
+pub use resource_metering_metrics::{RejectionCacheMetrics, ResourceMeteringMetrics};
 pub mod payload;
 pub use payload::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 
 mod parkable;
 pub use parkable::{
-    NonParkablePayloadTransactions, NoopPayloadTransactions, ParkableBestPayloadTransactions,
-    ParkablePayloadTransactions, PayloadTransactionInvalidated,
+    NoopPayloadTransactions, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
+    PayloadTransactionInvalidated,
 };
 
 mod metrics;
 pub use metrics::{BuilderMetrics, ValidityMetrics};
+
+mod deferrals;
+pub use deferrals::BlockDeferrals;
 
 mod inclusion;
 pub use inclusion::{FLOW_STANDARD, FLOW_VALIDITY, InclusionFlow, InclusionTracker};
@@ -53,7 +56,8 @@ pub use types::BasePayloadTypes;
 
 mod validity;
 pub use validity::{
-    ParkedPredicateIndex, StateChangeEffects, ValidityPredicateEvaluation, ValidityPredicateKey,
+    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, ParkedPredicateIndex, StateChangeEffects,
+    ValidityPredicateEvaluation, ValidityPredicateKey,
 };
 
 pub mod validator;

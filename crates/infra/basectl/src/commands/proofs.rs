@@ -6,7 +6,6 @@ use std::{
     io::{self, Write},
     path::PathBuf,
     str::FromStr,
-    time::Duration,
 };
 
 use alloy_primitives::{Address, B256};
@@ -26,13 +25,6 @@ use crate::{
     ProofProposeRequest, ProofsClient, ProofsCommandError, ProposalProofSubmitter,
     SnarkPlonkProofBytes, SubmitterKey,
 };
-
-/// How long `--wait` and `finalize` poll the prover service before giving up.
-///
-/// Network-backend PLONK proposal proofs regularly take hours (a compressed
-/// range proof plus an aggregation/wrap stage), so the default client wait of
-/// 30 minutes would time out on legitimate in-flight proofs.
-const PROOF_MAX_WAIT: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Request and inspect ZK proofs on the internal prover service.
 #[derive(Debug, Args)]
@@ -165,10 +157,9 @@ pub struct ProofsProposeArgs {
     pub retry_failed: bool,
     /// Intermediate output root interval (checkpoint stride).
     ///
-    /// Only needed when the game type has no registered implementation to
-    /// read `INTERMEDIATE_BLOCK_INTERVAL` from; when it does, the flag must
-    /// match that canonical value because a proof with any other stride
-    /// would not verify on chain.
+    /// Only needed when the game does not expose its interval configuration;
+    /// otherwise the flag must match the canonical value because a proof with
+    /// any other stride would not verify on chain.
     #[arg(long = "intermediate-root-interval", value_name = "N")]
     pub intermediate_root_interval: Option<u64>,
     /// Poll the prover service until the proof succeeds or fails.
@@ -306,10 +297,9 @@ pub struct ProofsFinalizeArgs {
     pub retry_failed: bool,
     /// Intermediate output root interval (checkpoint stride).
     ///
-    /// Only needed when the game type has no registered implementation to
-    /// read `INTERMEDIATE_BLOCK_INTERVAL` from; when it does, the flag must
-    /// match that canonical value because a proof with any other stride
-    /// would not verify on chain.
+    /// Only needed when the game does not expose its interval configuration;
+    /// otherwise the flag must match the canonical value because a proof with
+    /// any other stride would not verify on chain.
     #[arg(long = "intermediate-root-interval", value_name = "N")]
     pub intermediate_root_interval: Option<u64>,
     /// Prover-service RPC URL (also `BASECTL_PROVER_RPC` or config `prover_rpc`).
@@ -573,7 +563,7 @@ async fn run_propose(config: MonitoringConfig, args: ProofsProposeArgs) -> Resul
     let prove_request = request.to_prove_request(&config.name, retry_failed);
     let prover_rpc_display = display_rpc_url(&endpoint);
     let session_id = prove_request.proof.session_id.clone();
-    let client = ProofsClient::connect(&endpoint)?.with_max_wait(PROOF_MAX_WAIT);
+    let client = ProofsClient::connect(&endpoint)?;
     let existing = existing_proof_session(&client, &session_id).await?;
     let retrying_failed =
         existing.as_ref().is_some_and(|response| response.status == ProofStatus::Failed);
@@ -715,7 +705,7 @@ async fn run_submit(config: MonitoringConfig, args: ProofsSubmitArgs) -> Result<
         return Ok(CommandOutcome::Success);
     }
 
-    let client = ProofsClient::connect(&endpoint)?.with_max_wait(PROOF_MAX_WAIT);
+    let client = ProofsClient::connect(&endpoint)?;
     let response = if wait {
         client.wait_for_completion(&session_id).await?
     } else {
@@ -827,7 +817,7 @@ async fn run_finalize(
     );
 
     let session_id = prove_request.proof.session_id.clone();
-    let client = ProofsClient::connect(&endpoint)?.with_max_wait(PROOF_MAX_WAIT);
+    let client = ProofsClient::connect(&endpoint)?;
     let existing = existing_proof_session(&client, &session_id).await?;
     let retrying_failed =
         existing.as_ref().is_some_and(|response| response.status == ProofStatus::Failed);

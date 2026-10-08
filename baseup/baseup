@@ -663,8 +663,7 @@ detect_arch() {
             echo "arm64"
             ;;
         *)
-            warn "Unknown architecture: $arch, defaulting to amd64"
-            echo "amd64"
+            error "Unsupported architecture: $arch"
             ;;
     esac
 }

@@ -90,6 +90,9 @@ pub struct InProcessConsensusConfig {
     /// CLI. The config is also passed to the node for live polling (and, in runtime-admin mode,
     /// automatic re-application of observed L1 changes).
     pub upgrade_signal: Option<UpgradeSignalConfig>,
+    /// Execution client HTTP RPC endpoint to which the consensus RPC forwards the methods it
+    /// does not serve. [`None`] disables forwarding.
+    pub execution_forwarding_endpoint: Option<Url>,
 }
 
 /// A running in-process consensus node.
@@ -210,7 +213,10 @@ impl InProcessConsensus {
             l2_jwt_secret: config.jwt_secret,
             l1_url: config.l1_rpc_url,
             l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
-            mode: config.mode,
+            mode: config
+                .mode
+                .try_into_operating_mode(false, config.shadow_blocks_per_cycle)
+                .map_err(|e| eyre::eyre!(e))?,
         };
 
         let rpc_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), rpc_port);
@@ -223,6 +229,7 @@ impl InProcessConsensus {
             dev_enabled: false,
             http_timeout: Duration::from_secs(60),
             max_concurrent_requests: NonZeroUsize::new(1024).expect("nonzero"),
+            execution_forwarding_endpoint: config.execution_forwarding_endpoint,
         };
 
         let checkpoint_dir = tempfile::tempdir()
@@ -245,10 +252,9 @@ impl InProcessConsensus {
         })
         .with_checkpoint_path(checkpoint_path);
 
-        if config.mode == NodeMode::Sequencer {
+        if config.mode.is_sequencer() {
             builder = builder.with_sequencer_config(SequencerConfig {
                 sequencer_stopped: config.sequencer_stopped,
-                shadow_blocks_per_cycle: config.shadow_blocks_per_cycle,
                 l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
                 ..Default::default()
             });

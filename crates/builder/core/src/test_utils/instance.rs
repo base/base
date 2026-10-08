@@ -24,7 +24,6 @@ use base_node_runner::{
     PayloadServiceBuilder as BasePayloadServiceBuilder, test_utils::init_silenced_tracing,
 };
 use futures::{FutureExt, StreamExt};
-use nanoid::nanoid;
 use parking_lot::Mutex;
 use reth_node_builder::{Node, NodeBuilder, NodeConfig};
 use reth_node_core::{
@@ -37,6 +36,7 @@ use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
 use tokio::{sync::oneshot, task::JoinHandle};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use crate::{
     BuilderConfig, SharedMeteringProvider,
@@ -356,18 +356,21 @@ impl Drop for LocalInstance {
             // Tokio runtimes cannot perform their blocking shutdown while they are being dropped
             // from another runtime's async context. `LocalInstance` is commonly owned directly by
             // async tests, so shut down and drop its runtime on a plain thread before cleaning up
-            // the resources it owns.
+            // the resources it owns. The node and pool hold `Runtime` clones (it is an `Arc`), so
+            // they must be dropped on that thread too, or the last reference, and with it the
+            // tokio runtime, is released here in async context. Dropping them also releases their
+            // database handles before the backing files are removed below.
+            let node_handle = self.node_handle.take();
+            let pool_handle = self.pool_handle.take();
             let shutdown = std::thread::spawn(move || {
                 runtime.graceful_shutdown_with_timeout(Duration::from_secs(10));
+                drop(node_handle);
+                drop(pool_handle);
                 drop(runtime);
             });
             if let Err(panic) = shutdown.join() {
                 std::panic::resume_unwind(panic);
             }
-            // Drop the node and the pool handle (both hold open database handles via the node's
-            // provider / the pool's transaction validator) before removing the backing files.
-            drop(self.node_handle.take());
-            drop(self.pool_handle.take());
             if let Err(e) = std::fs::remove_dir_all(self.node_config().datadir().to_string()) {
                 eprintln!(
                     "Warning: failed to remove temporary data directory {}: {e}",
@@ -436,7 +439,7 @@ pub fn default_node_config_with_azul() -> NodeConfig<BaseChainSpec> {
 /// builder node can be launched against a custom genesis (e.g. one derived from a rollup config).
 pub fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig<BaseChainSpec> {
     let tempdir = std::env::temp_dir();
-    let random_id = nanoid!();
+    let random_id = Uuid::new_v4();
 
     let data_path = tempdir.join(format!("rbuilder.{random_id}.datadir"));
     let rocksdb_path = tempdir.join(format!("rbuilder.{random_id}.rocksdb"));

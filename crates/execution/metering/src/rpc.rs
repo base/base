@@ -318,7 +318,6 @@ mod tests {
     use alloy_primitives::{B256, Bloom, Bytes, address};
     use alloy_rpc_client::RpcClient;
     use base_bundles::{Bundle, MeterBundleResponse};
-    use base_common_consensus::{BaseTransactionSigned, BaseTxEnvelope};
     use base_common_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
@@ -330,10 +329,6 @@ mod tests {
 
     use super::*;
     use crate::{MeteringConfig, MeteringExtension};
-
-    fn create_bundle(txs: Vec<Bytes>) -> Bundle {
-        Bundle { txs }
-    }
 
     async fn setup() -> eyre::Result<(TestHarness, RpcClient)> {
         let harness = TestHarness::builder()
@@ -371,7 +366,7 @@ mod tests {
             .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
             .await?;
 
-        let bundle = create_bundle(vec![]);
+        let bundle = Bundle { txs: vec![] };
 
         let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
@@ -394,7 +389,7 @@ mod tests {
         let sender_address = Account::Alice.address();
         let sender_secret = Account::Alice.signer_b256();
 
-        let tx = TransactionBuilder::default()
+        let tx_bytes = TransactionBuilder::default()
             .signer(sender_secret)
             .chain_id(harness.chain_id())
             .nonce(0)
@@ -403,15 +398,11 @@ mod tests {
             .gas_limit(21_000)
             .max_fee_per_gas(1_000_000_000) // 1 gwei
             .max_priority_fee_per_gas(1_000_000_000)
-            .into_eip1559();
+            .into_eip1559()
+            .into_encoded()
+            .into_encoded_bytes();
 
-        let signed_tx =
-            BaseTransactionSigned::Eip1559(tx.as_eip1559().expect("eip1559 transaction").clone());
-        let envelope: BaseTxEnvelope = signed_tx;
-
-        let tx_bytes = Bytes::from(envelope.encoded_2718());
-
-        let bundle = create_bundle(vec![tx_bytes]);
+        let bundle = Bundle { txs: vec![tx_bytes] };
 
         let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
@@ -444,7 +435,7 @@ mod tests {
         let address1 = Account::Alice.address();
         let secret1 = Account::Alice.signer_b256();
 
-        let tx1_inner = TransactionBuilder::default()
+        let tx1_bytes = TransactionBuilder::default()
             .signer(secret1)
             .chain_id(harness.chain_id())
             .nonce(0)
@@ -453,18 +444,14 @@ mod tests {
             .gas_limit(21_000)
             .max_fee_per_gas(1_000_000_000)
             .max_priority_fee_per_gas(1_000_000_000)
-            .into_eip1559();
-
-        let tx1_signed = BaseTransactionSigned::Eip1559(
-            tx1_inner.as_eip1559().expect("eip1559 transaction").clone(),
-        );
-        let tx1_envelope: BaseTxEnvelope = tx1_signed;
-        let tx1_bytes = Bytes::from(tx1_envelope.encoded_2718());
+            .into_eip1559()
+            .into_encoded()
+            .into_encoded_bytes();
 
         let address2 = Account::Bob.address();
         let secret2 = Account::Bob.signer_b256();
 
-        let tx2_inner = TransactionBuilder::default()
+        let tx2_bytes = TransactionBuilder::default()
             .signer(secret2)
             .chain_id(harness.chain_id())
             .nonce(0)
@@ -473,15 +460,11 @@ mod tests {
             .gas_limit(21_000)
             .max_fee_per_gas(2_000_000_000)
             .max_priority_fee_per_gas(2_000_000_000)
-            .into_eip1559();
+            .into_eip1559()
+            .into_encoded()
+            .into_encoded_bytes();
 
-        let tx2_signed = BaseTransactionSigned::Eip1559(
-            tx2_inner.as_eip1559().expect("eip1559 transaction").clone(),
-        );
-        let tx2_envelope: BaseTxEnvelope = tx2_signed;
-        let tx2_bytes = Bytes::from(tx2_envelope.encoded_2718());
-
-        let bundle = create_bundle(vec![tx1_bytes, tx2_bytes]);
+        let bundle = Bundle { txs: vec![tx1_bytes, tx2_bytes] };
 
         let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
@@ -510,7 +493,7 @@ mod tests {
     async fn test_meter_bundle_invalid_transaction() -> eyre::Result<()> {
         let (_harness, client) = setup().await?;
 
-        let bundle = create_bundle(vec![Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef])]);
+        let bundle = Bundle { txs: vec![Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef])] };
 
         let result: Result<MeterBundleResponse, _> =
             client.request("base_meterBundle", (bundle,)).await;
@@ -527,7 +510,7 @@ mod tests {
             .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
             .await?;
 
-        let bundle = create_bundle(vec![]);
+        let bundle = Bundle { txs: vec![] };
 
         let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
@@ -546,7 +529,7 @@ mod tests {
         let secret1 = Account::Alice.signer_b256();
         let secret2 = Account::Bob.signer_b256();
 
-        let tx1_inner = TransactionBuilder::default()
+        let tx1_bytes = TransactionBuilder::default()
             .signer(secret1)
             .chain_id(harness.chain_id())
             .nonce(0)
@@ -555,15 +538,11 @@ mod tests {
             .gas_limit(21_000)
             .max_fee_per_gas(3_000_000_000) // 3 gwei
             .max_priority_fee_per_gas(3_000_000_000)
-            .into_eip1559();
+            .into_eip1559()
+            .into_encoded()
+            .into_encoded_bytes();
 
-        let signed_tx1 = BaseTransactionSigned::Eip1559(
-            tx1_inner.as_eip1559().expect("eip1559 transaction").clone(),
-        );
-        let envelope1: BaseTxEnvelope = signed_tx1;
-        let tx1_bytes = Bytes::from(envelope1.encoded_2718());
-
-        let tx2_inner = TransactionBuilder::default()
+        let tx2_bytes = TransactionBuilder::default()
             .signer(secret2)
             .chain_id(harness.chain_id())
             .nonce(0)
@@ -572,15 +551,11 @@ mod tests {
             .gas_limit(21_000)
             .max_fee_per_gas(7_000_000_000) // 7 gwei
             .max_priority_fee_per_gas(7_000_000_000)
-            .into_eip1559();
+            .into_eip1559()
+            .into_encoded()
+            .into_encoded_bytes();
 
-        let signed_tx2 = BaseTransactionSigned::Eip1559(
-            tx2_inner.as_eip1559().expect("eip1559 transaction").clone(),
-        );
-        let envelope2: BaseTxEnvelope = signed_tx2;
-        let tx2_bytes = Bytes::from(envelope2.encoded_2718());
-
-        let bundle = create_bundle(vec![tx1_bytes, tx2_bytes]);
+        let bundle = Bundle { txs: vec![tx1_bytes, tx2_bytes] };
 
         let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
@@ -613,7 +588,7 @@ mod tests {
     async fn test_meter_bundle_no_l1_block_info() -> eyre::Result<()> {
         let (_harness, client) = setup().await?;
 
-        let bundle = create_bundle(vec![]);
+        let bundle = Bundle { txs: vec![] };
         let response: Result<MeterBundleResponse, _> =
             client.request("base_meterBundle", (bundle,)).await;
 
@@ -684,7 +659,7 @@ mod tests {
         builder.with_flashblocks([flashblock]);
         flashblocks_state.set_pending_blocks_for_testing(Some(builder.build()?));
 
-        let bundle = create_bundle(vec![]);
+        let bundle = Bundle { txs: vec![] };
         let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
         assert_eq!(response.state_block_number, 1);

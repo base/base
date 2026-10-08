@@ -86,6 +86,16 @@ pub struct OtelRpcMiddleware<S> {
     inner: S,
 }
 
+impl<S> OtelRpcMiddleware<S> {
+    /// Awaits `fut` as a child of the inbound caller context, if one was extracted.
+    async fn in_inbound_context<F: Future>(cx: Option<InboundOtelContext>, fut: F) -> F::Output {
+        match cx {
+            Some(InboundOtelContext(parent_ctx)) => fut.with_context(parent_ctx).await,
+            None => fut.await,
+        }
+    }
+}
+
 impl<S> RpcServiceT for OtelRpcMiddleware<S>
 where
     S: RpcServiceT + Send + Sync + Clone + 'static,
@@ -101,13 +111,7 @@ where
         let cx = req.extensions().get::<InboundOtelContext>().cloned();
         let inner = self.inner.clone();
 
-        async move {
-            if let Some(InboundOtelContext(parent_ctx)) = cx {
-                inner.call(req).with_context(parent_ctx).await
-            } else {
-                inner.call(req).await
-            }
-        }
+        async move { Self::in_inbound_context(cx, inner.call(req)).await }
     }
 
     fn batch<'a>(
@@ -117,13 +121,7 @@ where
         let cx = req.extensions().get::<InboundOtelContext>().cloned();
         let inner = self.inner.clone();
 
-        async move {
-            if let Some(InboundOtelContext(parent_ctx)) = cx {
-                inner.batch(req).with_context(parent_ctx).await
-            } else {
-                inner.batch(req).await
-            }
-        }
+        async move { Self::in_inbound_context(cx, inner.batch(req)).await }
     }
 
     fn notification<'a>(
@@ -133,12 +131,6 @@ where
         let cx = req.extensions().get::<InboundOtelContext>().cloned();
         let inner = self.inner.clone();
 
-        async move {
-            if let Some(InboundOtelContext(parent_ctx)) = cx {
-                inner.notification(req).with_context(parent_ctx).await
-            } else {
-                inner.notification(req).await
-            }
-        }
+        async move { Self::in_inbound_context(cx, inner.notification(req)).await }
     }
 }

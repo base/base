@@ -15,20 +15,15 @@ pub use outcome::TxOutcome;
 
 mod throttle;
 pub use throttle::{
-    DaThrottle, ThrottleConfig, ThrottleController, ThrottleInfo, ThrottleParams, ThrottleStrategy,
+    DaLimits, DaThrottle, ThrottleConfig, ThrottleConfigError, ThrottleController, ThrottleInfo,
+    ThrottleParams, ThrottleStrategy,
 };
-
-mod throttle_client;
-pub use throttle_client::{NoopThrottleClient, ThrottleClient};
 
 mod submissions;
 pub use submissions::{BatchTxCandidateBuilder, BatchTxCandidateError, SubmissionQueue};
 
 mod config;
 pub use config::BatchDriverConfig;
-
-mod event;
-pub use event::DriverEvent;
 
 mod derivation_status;
 pub use derivation_status::DerivationStatus;
@@ -39,6 +34,7 @@ pub use admin::{
 };
 
 mod driver;
-pub use driver::{BatchDriver, BatchDriverHeads};
+pub use driver::{BatchDriver, BatchDriverInputs};
 
+#[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

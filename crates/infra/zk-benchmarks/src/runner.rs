@@ -12,13 +12,15 @@ use base_prover_service_protocol::{
     ProveBlockRangeRequest, ZkBackend, ZkProofRequest, ZkVm,
 };
 use eyre::{Result, WrapErr, ensure};
-use nanoid::nanoid;
 use tokio::time::{sleep, timeout};
+use uuid::Uuid;
 
 use crate::types::{ZkBenchConfig, ZkBenchProofOutcome, ZkBenchSummary, ZkBenchTarget};
 
 const SAFE_L2_TIMEOUT: Duration = Duration::from_secs(300);
 const SAFE_L2_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const PROOF_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const PROOF_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Runs ZK proof benchmarks for completed load-test summaries.
 #[derive(Debug)]
@@ -109,11 +111,9 @@ impl ZkBenchRunner {
             block_number.checked_sub(1).ok_or_else(|| eyre::eyre!("cannot prove genesis block"))?;
         let zk_backend = config.zk_backend;
         let client_config = ProverServiceClientConfig::new(config.prover_url.as_str());
-        let proof_timeout = client_config.max_wait();
-        let poll_interval = client_config.poll_interval();
         let client = ProofRequesterClient::connect(&client_config)
             .wrap_err_with(|| format!("failed to connect prover service {}", config.prover_url))?;
-        let session_id = format!("zk-benchmarks-{}-{}", zk_backend.as_str(), nanoid!());
+        let session_id = format!("zk-benchmarks-{}-{}", zk_backend.as_str(), Uuid::new_v4());
         let request = Self::proof_request(session_id, start_block_number, l1_head, zk_backend);
         let proof_started = Instant::now();
         let response =
@@ -123,8 +123,8 @@ impl ZkBenchRunner {
             &client,
             &response.session_id,
             zk_backend,
-            proof_timeout,
-            poll_interval,
+            PROOF_TIMEOUT,
+            PROOF_POLL_INTERVAL,
         )
         .await?;
         let outcome = ZkBenchProofOutcome {
@@ -153,7 +153,6 @@ impl ZkBenchRunner {
                     number_of_blocks_to_prove: 1,
                     sequence_window: None,
                     l1_head: Some(l1_head),
-                    intermediate_root_interval: None,
                     schedule_l2_block_number: None,
                     zk_vm: ZkVm::Sp1,
                     zk_backend,

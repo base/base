@@ -2,9 +2,7 @@
 
 use std::{future::Future, time::Duration};
 
-use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_batcher_core::DerivationStatus;
-use base_consensus_rpc::RollupNodeApiClient;
 use base_protocol::BlockInfo;
 use base_runtime::Runtime;
 use tokio::sync::mpsc;
@@ -12,7 +10,7 @@ use tracing::warn;
 
 /// Fetches the derivation progress relevant to the batcher.
 pub trait DerivationStatusProvider: Send + Sync + 'static {
-    /// Return the current safe L2 head and derivation cursor, when available.
+    /// Return the safe L2 head and the L1 block derivation is processing.
     fn derivation_status(
         &self,
     ) -> impl Future<Output = Result<DerivationStatus, Box<dyn std::error::Error + Send + Sync>>>
@@ -20,36 +18,10 @@ pub trait DerivationStatusProvider: Send + Sync + 'static {
     + '_;
 }
 
-impl DerivationStatusProvider for jsonrpsee::http_client::HttpClient {
-    async fn derivation_status(
-        &self,
-    ) -> Result<DerivationStatus, Box<dyn std::error::Error + Send + Sync>> {
-        let status = self.sync_status().await?;
-        Ok(DerivationStatus::new(status.local_safe_l2.block_info, status.current_l1))
-    }
-}
-
-impl DerivationStatusProvider for crate::RpcL2BlockProvider {
-    async fn derivation_status(
-        &self,
-    ) -> Result<DerivationStatus, Box<dyn std::error::Error + Send + Sync>> {
-        let block =
-            self.provider.get_block_by_number(BlockNumberOrTag::Safe).await?.ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "safe L2 block unavailable from parity validator",
-                )
-            })?;
-        Ok(DerivationStatus::from_safe_l2(BlockInfo {
-            hash: block.header.hash,
-            number: block.header.number,
-            parent_hash: block.header.parent_hash,
-            timestamp: block.header.timestamp,
-        }))
-    }
-}
-
 /// Polls a provider and sends every derivation-status change in observation order.
+///
+/// Statuses without a safe L2 head are skipped. A starting node reports them until its engine
+/// is bootstrapped, and the driver would take them for a safe head back at genesis.
 #[derive(Debug)]
 pub struct DerivationStatusPoller<C: DerivationStatusProvider> {
     provider: C,
@@ -87,6 +59,9 @@ impl<C: DerivationStatusProvider> DerivationStatusPoller<C> {
             };
 
             match result {
+                Ok(status) if status.safe_l2 == BlockInfo::default() => {
+                    warn!("derivation status without a safe L2 head, node still starting");
+                }
                 Ok(status) if status != self.last_status => {
                     tokio::select! {
                         biased;
@@ -143,7 +118,7 @@ mod tests {
     }
 
     fn status(safe_l2: u64, current_l1: u64) -> DerivationStatus {
-        DerivationStatus::new(head(safe_l2), head(current_l1))
+        DerivationStatus { safe_l2: head(safe_l2), current_l1: head(current_l1) }
     }
 
     #[test]
@@ -169,6 +144,27 @@ mod tests {
             assert_eq!(rx.recv().await, Some(status(10, 2)));
             ctx.sleep(Duration::from_secs(2)).await;
             assert!(matches!(rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)));
+            ctx.cancel();
+            handle.await.unwrap();
+        });
+    }
+
+    /// The poller skips the empty safe head a starting node reports until its engine is
+    /// bootstrapped.
+    #[test]
+    fn skips_a_status_without_a_safe_head() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (tx, mut rx) = mpsc::channel(1);
+            let starting = DerivationStatus { safe_l2: BlockInfo::default(), current_l1: head(1) };
+            let provider = MockProvider {
+                statuses: Mutex::new(VecDeque::from([starting, starting])),
+                fallback: status(10, 2),
+            };
+            let poller =
+                DerivationStatusPoller::new(provider, Duration::from_secs(1), status(5, 1), tx);
+            let handle = ctx.spawn(poller.run(ctx.clone()));
+
+            assert_eq!(rx.recv().await, Some(status(10, 2)));
             ctx.cancel();
             handle.await.unwrap();
         });

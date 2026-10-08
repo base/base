@@ -24,6 +24,8 @@ use sp1_sdk::{
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::ProgramHashes;
+
 const POLL_INTERVAL_SECS: u64 = 30;
 const POLL_TIMEOUT_SECS: u64 = 14400; // 4 hours
 
@@ -38,6 +40,9 @@ const L2_BLOCK_STEP_BACK: u64 = 10;
 
 /// Maximum number of times we step back before giving up.
 const MAX_STEP_BACKS: u64 = 300;
+
+/// Game type whose `AggregateVerifier` the computed keys are compared with.
+const DEFAULT_GAME_TYPE: u32 = 621;
 
 /// SNARK PLONK end-to-end test runner.
 #[derive(Debug)]
@@ -74,6 +79,54 @@ impl SnarkE2e {
         Ok(())
     }
 
+    /// Fails unless the chain would accept proofs from this build.
+    ///
+    /// Reads `DISPUTE_GAME_FACTORY_ADDRESS` and `GAME_TYPE` (default 621).
+    /// Required unless `SKIP_ONCHAIN_VKEY_CHECK=true`: a check that quietly
+    /// disappears when its config is missing is the gap it exists to close.
+    async fn check_onchain_vkeys<P: Provider>(
+        l1_provider: &P,
+        computed: ProgramHashes,
+    ) -> Result<()> {
+        if std::env::var("SKIP_ONCHAIN_VKEY_CHECK").is_ok_and(|v| v == "true") {
+            warn!(
+                computed_zk_aggregate_hash = %computed.aggregate,
+                computed_zk_range_hash = %computed.range,
+                "skipping the on-chain verifying-key check (SKIP_ONCHAIN_VKEY_CHECK=true)"
+            );
+            return Ok(());
+        }
+        let factory: Address = std::env::var("DISPUTE_GAME_FACTORY_ADDRESS")
+            .context(
+                "DISPUTE_GAME_FACTORY_ADDRESS must be set (or SKIP_ONCHAIN_VKEY_CHECK=true) \
+                 to compare this build's verifying keys with the on-chain verifier",
+            )?
+            .parse()
+            .context("invalid DISPUTE_GAME_FACTORY_ADDRESS")?;
+        let game_type = match std::env::var("GAME_TYPE") {
+            Ok(value) => value.parse().context("invalid GAME_TYPE")?,
+            Err(_) => DEFAULT_GAME_TYPE,
+        };
+
+        let (implementation, onchain) =
+            ProgramHashes::onchain(l1_provider.root(), factory, game_type).await.with_context(
+                || format!("failed to read the verifier hashes for game type {game_type}"),
+            )?;
+        let matches = onchain == computed;
+        info!(
+            factory = %factory,
+            game_type,
+            implementation = %implementation,
+            onchain_zk_aggregate_hash = %onchain.aggregate,
+            computed_zk_aggregate_hash = %computed.aggregate,
+            onchain_zk_range_hash = %onchain.range,
+            computed_zk_range_hash = %computed.range,
+            matches,
+            "compared this build's verifying keys with the on-chain verifier"
+        );
+        onchain.ensure_match(computed, implementation)
+    }
+
     /// Extract SNARK receipt bytes from a successful getProof response.
     fn snark_receipt_bytes(result: ProofResult) -> Result<Vec<u8>> {
         match result {
@@ -95,8 +148,11 @@ impl SnarkE2e {
     ///    - `l1_head` is omitted so the prover service calculates it via `SafeDB`
     /// 3. Poll `prover_getProof` until completion or timeout
     /// 4. Deserialize the SNARK receipt
-    /// 5. Compute the aggregation verifying key
-    /// 6. Verify the SNARK proof with `CpuProver`
+    /// 5. Verify the SNARK proof with `CpuProver`
+    ///
+    /// Before requesting the proof, the verifying keys are computed and
+    /// compared with the on-chain `AggregateVerifier`, so a prover/contract
+    /// mismatch fails in seconds rather than after the proof.
     pub async fn run() -> Result<()> {
         let l2_rpc = std::env::var("L2_NODE_ADDRESS").context("L2_NODE_ADDRESS must be set")?;
 
@@ -152,6 +208,19 @@ impl SnarkE2e {
             .context("L1 finalized block not available")?
             .header
             .number;
+
+        // -- 1c. The chain must accept this build's proofs ----------------------
+        //
+        // Computed now rather than after the proof: the keys are needed for the
+        // verify step anyway, and a mismatch makes the proof pointless.
+        info!("computing range and aggregation verifying keys (LightProver — VK only)");
+        let t = std::time::Instant::now();
+        let (range_vk, agg_vk) = base_proof_zk_backend::cluster_setup_vkeys()
+            .await
+            .context("failed to compute verifying keys")?;
+        info!(elapsed_secs = t.elapsed().as_secs_f64(), "verifying keys computed");
+        Self::check_onchain_vkeys(&l1_provider, ProgramHashes::computed(&range_vk, &agg_vk)?)
+            .await?;
 
         let mut attempts = 0u64;
         let selected_l1_origin = loop {
@@ -214,7 +283,6 @@ impl SnarkE2e {
                             number_of_blocks_to_prove: 1,
                             sequence_window: Some(SEQUENCE_WINDOW),
                             l1_head: None,
-                            intermediate_root_interval: None,
                             schedule_l2_block_number: None,
                             zk_vm: ZkVm::Sp1,
                             zk_backend: ZkBackend::Cluster,
@@ -341,15 +409,7 @@ impl SnarkE2e {
 
         info!("SNARK proof deserialized successfully");
 
-        // -- 5. Compute aggregation verifying key ---------------------------------
-        info!("computing aggregation verifying key (LightProver — VK only)");
-        let t = std::time::Instant::now();
-        let (_range_vk, agg_vk) = base_proof_zk_backend::cluster_setup_vkeys()
-            .await
-            .context("failed to compute aggregation verifying key")?;
-        info!(elapsed_secs = t.elapsed().as_secs_f64(), "aggregation verifying key computed");
-
-        // -- 6. Verify SNARK proof ------------------------------------------------
+        // -- 5. Verify SNARK proof ------------------------------------------------
         Self::verify_snark_proof(snark_proof, agg_vk)
             .await
             .with_context(|| format!("failed to verify SNARK proof for session_id={session_id}"))?;

@@ -33,6 +33,9 @@ pub fn chain_value_parser(s: &str) -> eyre::Result<Arc<BaseChainSpec>, eyre::Err
 
 #[cfg(test)]
 mod tests {
+    use reth_chainspec::EthChainSpec;
+    use rstest::rstest;
+
     use super::*;
 
     #[test]
@@ -43,5 +46,19 @@ mod tests {
                 "Failed to parse {chain}"
             );
         }
+    }
+
+    #[rstest]
+    #[case("mainnet", 8453)]
+    #[case("base", 8453)]
+    #[case("sepolia", 84532)]
+    #[case("base-sepolia", 84532)]
+    #[case("base_sepolia", 84532)]
+    #[case("zeronet", 763360)]
+    #[case("base-zeronet", 763360)]
+    #[case("dev", 84538453)]
+    fn parse_chain_id(#[case] chain: &str, #[case] expected_id: u64) {
+        let spec = BaseChainSpecParser::parse(chain).unwrap();
+        assert_eq!(spec.chain().id(), expected_id);
     }
 }

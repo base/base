@@ -71,7 +71,7 @@ where
         self.next_poll_at = self.clock.now().saturating_add(self.poll_interval);
     }
 
-    async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
+    async fn next(&mut self) -> L2BlockEvent {
         let delay = self.next_poll_at.saturating_sub(self.clock.now());
         if !delay.is_zero() {
             self.clock.sleep(delay).await;
@@ -81,7 +81,7 @@ where
             let expected = self.tip.number.saturating_add(1);
             match self.poller.block_by_number(expected).await {
                 Ok(block) if block.header.number == expected => {
-                    return Ok(self.process(block));
+                    return self.process(block);
                 }
                 Ok(block) => {
                     tracing::warn!(
@@ -94,7 +94,6 @@ where
                 Err(SourceError::Provider(error)) => {
                     tracing::warn!(error = %error, "failed to poll next L2 block");
                 }
-                Err(error) => return Err(error),
             }
 
             self.next_poll_at = self.clock.now().saturating_add(self.poll_interval);
@@ -157,7 +156,7 @@ mod tests {
             );
 
             for expected in 1..=3 {
-                let L2BlockEvent::Block(block) = source.next().await.unwrap() else {
+                let L2BlockEvent::Block(block) = source.next().await else {
                     panic!("expected block");
                 };
                 assert_eq!(block.header.number, expected);
@@ -179,7 +178,7 @@ mod tests {
                 Duration::from_secs(1),
             );
 
-            assert!(matches!(source.next().await.unwrap(), L2BlockEvent::Reorg));
+            assert!(matches!(source.next().await, L2BlockEvent::Reorg));
         });
     }
 
@@ -215,7 +214,7 @@ mod tests {
                 Duration::from_secs(1),
             );
 
-            let L2BlockEvent::Block(block) = source.next().await.unwrap() else {
+            let L2BlockEvent::Block(block) = source.next().await else {
                 panic!("expected block");
             };
             assert_eq!(block.header.number, 1);
@@ -253,7 +252,7 @@ mod tests {
                 _ = std::future::ready(()) => {}
             }
 
-            let L2BlockEvent::Block(block) = source.next().await.unwrap() else {
+            let L2BlockEvent::Block(block) = source.next().await else {
                 panic!("expected block");
             };
             assert_eq!(block.header.number, 1);
@@ -276,7 +275,7 @@ mod tests {
             );
             source.reset_catchup(BlockInfo::from(&blocks[5]));
 
-            let L2BlockEvent::Block(block) = source.next().await.unwrap() else {
+            let L2BlockEvent::Block(block) = source.next().await else {
                 panic!("expected block");
             };
             assert_eq!(block.header.number, 6);

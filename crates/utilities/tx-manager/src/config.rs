@@ -123,8 +123,6 @@ pub struct TxManagerConfig {
     pub tx_send_timeout: Duration,
     /// Mempool appearance timeout (zero = disabled).
     pub tx_not_in_mempool_timeout: Duration,
-    /// Maximum time to poll for confirmation before giving up.
-    pub confirmation_timeout: Duration,
     /// Minimum blob base fee (in wei) to use for blob transactions.
     pub min_blob_fee: u128,
 }
@@ -145,7 +143,6 @@ impl Default for TxManagerConfig {
             receipt_query_interval: Duration::from_secs(12),
             tx_send_timeout: Duration::ZERO,
             tx_not_in_mempool_timeout: Duration::from_secs(120),
-            confirmation_timeout: Duration::from_secs(300),
             min_blob_fee: 1_000_000_000, // 1 gwei
         }
     }
@@ -156,7 +153,7 @@ impl TxManagerConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::OutOfRange`] if any required field is zero:
+    /// Returns [`ConfigError::OutOfRange`] if a field is out of range:
     /// - `num_confirmations` must be >= 1
     /// - `safe_abort_nonce_too_low_count` must be >= 1
     /// - `fee_limit_multiplier` must be >= 1
@@ -166,7 +163,9 @@ impl TxManagerConfig {
     /// - `publish_max_retries` must be >= 1
     /// - `publish_retry_delay` must be > 0
     /// - `receipt_query_interval` must be > 0
-    /// - `confirmation_timeout` must be > 0
+    /// - `(safe_abort_nonce_too_low_count - 1) * resubmission_timeout` must exceed
+    ///   `receipt_query_interval`, so a receipt poll runs before a send aborts on
+    ///   refused fee bumps
     pub fn validate(&self) -> Result<(), ConfigError> {
         macro_rules! reject_zero {
             ($($field:ident),+ $(,)?) => {$(
@@ -203,9 +202,24 @@ impl TxManagerConfig {
             resubmission_timeout,
             publish_retry_delay,
             receipt_query_interval,
-            confirmation_timeout,
         );
         reject_zero!(min_blob_fee);
+        let refusals_before_abort =
+            u32::try_from(self.safe_abort_nonce_too_low_count - 1).unwrap_or(u32::MAX);
+        if self.resubmission_timeout.saturating_mul(refusals_before_abort)
+            <= self.receipt_query_interval
+        {
+            return Err(ConfigError::OutOfRange {
+                field: "safe_abort_nonce_too_low_count",
+                constraint: "(count - 1) * resubmission_timeout > receipt_query_interval",
+                value: format!(
+                    "count {}, resubmission_timeout {:?}, receipt_query_interval {:?}",
+                    self.safe_abort_nonce_too_low_count,
+                    self.resubmission_timeout,
+                    self.receipt_query_interval
+                ),
+            });
+        }
         Ok(())
     }
 }
@@ -299,15 +313,33 @@ mod tests {
         assert_eq!(TxManagerConfig::default().min_blob_fee, 1_000_000_000);
     }
 
-    #[test]
-    fn validation_rejects_zero_confirmation_timeout() {
-        let config =
-            TxManagerConfig { confirmation_timeout: Duration::ZERO, ..TxManagerConfig::default() };
-        let err = config.validate().unwrap_err();
-        assert!(
-            matches!(err, ConfigError::OutOfRange { field: "confirmation_timeout", .. }),
-            "expected OutOfRange for confirmation_timeout, got: {err}"
-        );
+    #[rstest]
+    #[case::one_refusal(1, 48, 12, false)]
+    #[case::polls_at_the_abort(3, 6, 12, false)]
+    #[case::polls_before_the_abort(3, 7, 12, true)]
+    fn validation_requires_a_receipt_poll_before_an_abort(
+        #[case] safe_abort_nonce_too_low_count: u64,
+        #[case] resubmission_secs: u64,
+        #[case] receipt_query_secs: u64,
+        #[case] valid: bool,
+    ) {
+        let config = TxManagerConfig {
+            safe_abort_nonce_too_low_count,
+            resubmission_timeout: Duration::from_secs(resubmission_secs),
+            receipt_query_interval: Duration::from_secs(receipt_query_secs),
+            ..TxManagerConfig::default()
+        };
+        let result = config.validate();
+        assert_eq!(result.is_ok(), valid, "{result:?}");
+        if let Err(err) = result {
+            assert!(
+                matches!(
+                    err,
+                    ConfigError::OutOfRange { field: "safe_abort_nonce_too_low_count", .. }
+                ),
+                "expected OutOfRange for safe_abort_nonce_too_low_count, got: {err}"
+            );
+        }
     }
 
     #[test]

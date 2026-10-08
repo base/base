@@ -13,9 +13,9 @@ use base_prover_service_protocol::{
     ProofStatus, ProveBlockRangeRequest, ZkBackend, ZkProofRequest, ZkVm,
 };
 use eyre::{Result, WrapErr, ensure};
-use nanoid::nanoid;
 use tokio::time::{sleep, timeout};
 use url::Url;
+use uuid::Uuid;
 
 use super::BenchDisplay;
 
@@ -114,7 +114,7 @@ impl ZkProofBench {
         let client_config = ProverServiceClientConfig::new(prover_url.as_str())
             .with_request_timeout(Duration::from_secs(30));
         let client = ProofRequesterClient::connect(&client_config)?;
-        let session_id = format!("b20-zk-proving-{}", nanoid!());
+        let session_id = format!("b20-zk-proving-{}", Uuid::new_v4());
         let response = client
             .prove_block_range(ProveBlockRangeRequest {
                 proof: ProofRequest {
@@ -124,7 +124,6 @@ impl ZkProofBench {
                         number_of_blocks_to_prove,
                         sequence_window: None,
                         l1_head: Some(l1_head),
-                        intermediate_root_interval: None,
                         schedule_l2_block_number: None,
                         zk_vm: ZkVm::Sp1,
                         zk_backend: ZkBackend::DryRun,
