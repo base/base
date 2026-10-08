@@ -188,21 +188,27 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
 
         debug!(target: "rpc", request_id, rpc_method = RPC_METHOD, "Started rollup RPC request");
 
-        let (l1_sync_status, l2_sync_status) = tokio::try_join!(
-            self.l1_state().instrument(span.clone()),
-            self.engine_client.get_state().instrument(span.clone())
-        )
-        .map_err(|error| {
-            warn!(
-                target: "rpc",
-                request_id,
-                rpc_method = RPC_METHOD,
-                elapsed_ms = request_started_at.elapsed().as_millis() as u64,
-                error = ?error,
-                "Rollup RPC request failed"
-            );
-            ErrorObject::from(ErrorCode::InternalError)
-        })?;
+        // Read the L1 state first: local derivation advances `current_l1` only once every L2 block
+        // derived before it is safe, so safe heads read afterwards never lag `current_l1`. Delegated
+        // derivation publishes the delegate's `current_l1` before the engine applies its safe head,
+        // so this does not hold there.
+        let sync_statuses = async {
+            let l1_sync_status = self.l1_state().await?;
+            let l2_sync_status = self.engine_client.get_state().await?;
+            RpcResult::Ok((l1_sync_status, l2_sync_status))
+        };
+        let (l1_sync_status, l2_sync_status) =
+            sync_statuses.instrument(span).await.map_err(|error| {
+                warn!(
+                    target: "rpc",
+                    request_id,
+                    rpc_method = RPC_METHOD,
+                    elapsed_ms = request_started_at.elapsed().as_millis() as u64,
+                    error = ?error,
+                    "Rollup RPC request failed"
+                );
+                ErrorObject::from(ErrorCode::InternalError)
+            })?;
 
         debug!(
             target: "rpc",
@@ -225,5 +231,77 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
         Metrics::rpc_calls("base_version").increment(1.0);
 
         Ok(env!("CARGO_PKG_VERSION").to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicBool;
+
+    use base_consensus_safedb::DisabledSafeDB;
+    use base_protocol::{L2BlockInfo, OutputRoot};
+    use tokio::sync::{mpsc, watch};
+
+    use super::*;
+
+    // `automock` cannot implement the `Clone` supertrait `EngineRpcClient` requires.
+    mockall::mock! {
+        #[derive(Debug)]
+        Engine {}
+
+        impl Clone for Engine {
+            fn clone(&self) -> Self;
+        }
+
+        #[async_trait]
+        impl EngineRpcClient for Engine {
+            async fn get_config(&self) -> RpcResult<RollupConfig>;
+            async fn get_state(&self) -> RpcResult<EngineState>;
+            async fn output_at_block(
+                &self,
+                block: BlockNumberOrTag,
+            ) -> RpcResult<(L2BlockInfo, OutputRoot, EngineState)>;
+            async fn dev_get_task_queue_length(&self) -> RpcResult<usize>;
+            async fn dev_subscribe_to_engine_queue_length(&self) -> RpcResult<watch::Receiver<usize>>;
+            async fn dev_subscribe_to_engine_state(&self) -> RpcResult<watch::Receiver<EngineState>>;
+        }
+    }
+
+    /// `optimism_syncStatus` reads the engine state only once the L1 watcher has answered, so
+    /// the safe heads it reports include every block derived from the L1 blocks before
+    /// `current_l1`.
+    #[tokio::test]
+    async fn sync_status_reads_the_engine_state_after_the_l1_state() {
+        let l1_state_answered = Arc::new(AtomicBool::new(false));
+
+        let mut engine = MockEngine::new();
+        let answered = Arc::clone(&l1_state_answered);
+        engine.expect_get_state().returning(move || {
+            assert!(
+                answered.load(Ordering::SeqCst),
+                "the engine state was read before the L1 state"
+            );
+            Ok(EngineState::default())
+        });
+
+        let (l1_watcher_sender, mut l1_watcher) = mpsc::channel(1);
+        tokio::spawn(async move {
+            let Some(L1WatcherQueries::L1State(reply)) = l1_watcher.recv().await else {
+                panic!("expected an L1 state query");
+            };
+            l1_state_answered.store(true, Ordering::SeqCst);
+            reply
+                .send(L1State {
+                    current_l1: None,
+                    current_l1_finalized: None,
+                    head_l1: None,
+                    safe_l1: None,
+                    finalized_l1: None,
+                })
+                .unwrap();
+        });
+
+        let rpc = RollupRpc::new(engine, l1_watcher_sender, Arc::new(DisabledSafeDB));
+        rpc.sync_status().await.unwrap();
     }
 }
