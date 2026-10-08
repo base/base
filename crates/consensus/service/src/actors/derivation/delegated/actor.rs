@@ -41,11 +41,15 @@ where
     derivation_delegate_provider: DerivationDelegateClient,
     /// L1 provider for validating L1 info for derivation delegation.
     l1_provider: AlloyChainProvider,
-    /// Publishes the delegate-reported L1 derivation cursor.
+    /// Publishes the delegate-reported L1 derivation cursor, once the engine safe head reaches
+    /// the delegate's safe head.
     derivation_origin_tx: watch::Sender<Option<BlockInfo>>,
 
     /// The engine's L2 safe head, according to updates from the Engine.
     engine_l2_safe_head: L2BlockInfo,
+    /// The last delegate status whose `current_l1` is not published yet, because the engine
+    /// has not reached its safe head.
+    unapplied_status: Option<SyncStatus>,
     /// Whether the engine sync has completed. This will only ever go from false -> true.
     has_engine_sync_completed: bool,
 }
@@ -81,6 +85,7 @@ where
             l1_provider,
             derivation_origin_tx,
             engine_l2_safe_head: L2BlockInfo::default(),
+            unapplied_status: None,
             has_engine_sync_completed: false,
         }
     }
@@ -175,8 +180,18 @@ where
             return Ok(());
         }
 
-        self.derivation_origin_tx.send_replace(Some(sync_status.current_l1));
+        self.forward_delegate_status(sync_status).await
+    }
 
+    /// Sends the safe and finalized L2 heads of a validated delegate status to the engine.
+    ///
+    /// The delegate's `current_l1` is published once the engine safe head reaches the status's
+    /// safe head, as local derivation does, so `optimism_syncStatus` never reports a
+    /// `current_l1` ahead of the safe heads derived before it.
+    async fn forward_delegate_status(
+        &mut self,
+        sync_status: SyncStatus,
+    ) -> Result<(), DerivationError> {
         self.engine_client
             .send_safe_l2_signal(sync_status.safe_l2.into())
             .await
@@ -194,7 +209,21 @@ where
             "Processed sync status from delegate"
         );
 
+        self.unapplied_status = Some(sync_status);
+        self.publish_origin_if_applied();
         Ok(())
+    }
+
+    /// Publishes the `current_l1` of the unapplied delegate status once the engine safe head
+    /// has reached its safe head.
+    fn publish_origin_if_applied(&mut self) {
+        let Some(status) = &self.unapplied_status else {
+            return;
+        };
+        if self.engine_l2_safe_head.block_info.number >= status.safe_l2.block_info.number {
+            self.derivation_origin_tx.send_replace(Some(status.current_l1));
+            self.unapplied_status = None;
+        }
     }
 
     async fn start_delegate_derivation(mut self) -> Result<(), DerivationError> {
@@ -238,6 +267,7 @@ where
             DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(safe_head) => {
                 debug!(target: "derivation", safe_head = ?*safe_head, "Received safe head from engine.");
                 self.engine_l2_safe_head = *safe_head;
+                self.publish_origin_if_applied();
             }
             DerivationActorRequest::ProcessEngineSyncCompletionRequest(safe_head) => {
                 info!(target: "derivation", "Engine finished syncing, starting derivation.");
@@ -272,4 +302,69 @@ enum DerivationDelegationError {
     /// The hash provided by the derivation delegation does not match the canonical chain.
     #[error("L1 inconsistency in {context} at block {number}: expected {expected}, got {actual}")]
     L1ValidationFailed { context: String, number: u64, expected: BlockHash, actual: BlockHash },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::actors::derivation::engine_client::MockDerivationEngineClient;
+
+    /// An L2 head numbered `number`.
+    fn l2_head(number: u64) -> L2BlockInfo {
+        L2BlockInfo { block_info: BlockInfo { number, ..Default::default() }, ..Default::default() }
+    }
+
+    /// The delegate's `current_l1` is published once the engine safe head reaches the delegate's
+    /// safe head: after the engine reports it, or at once when the engine already holds it.
+    #[tokio::test]
+    async fn publishes_the_delegate_current_l1_once_the_engine_reaches_its_safe_head() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        engine_client.expect_send_safe_l2_signal().returning(|_| Ok(()));
+        engine_client.expect_send_finalized_l2_block().returning(|_| Ok(()));
+        let (derivation_origin_tx, derivation_origin) = watch::channel(None);
+        let (_inbound_request_tx, inbound_request_rx) = mpsc::channel(1);
+        let mut actor = DelegateDerivationActor::new(
+            engine_client,
+            CancellationToken::new(),
+            inbound_request_rx,
+            DerivationDelegateClient::new("http://127.0.0.1:1".parse().unwrap()).unwrap(),
+            AlloyChainProvider::new_http("http://127.0.0.1:1".parse().unwrap(), 1),
+            derivation_origin_tx,
+        );
+        let current_l1 = BlockInfo { number: 50, ..Default::default() };
+
+        actor
+            .forward_delegate_status(SyncStatus {
+                current_l1,
+                safe_l2: l2_head(10),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(*derivation_origin.borrow(), None, "the engine has not applied the safe head");
+
+        let engine_update = |number| {
+            DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(Box::new(l2_head(number)))
+        };
+        actor.handle_derivation_delegation_actor_request(engine_update(9)).await.unwrap();
+        assert_eq!(*derivation_origin.borrow(), None, "the engine is still below the safe head");
+
+        actor.handle_derivation_delegation_actor_request(engine_update(10)).await.unwrap();
+        assert_eq!(*derivation_origin.borrow(), Some(current_l1));
+
+        let next_l1 = BlockInfo { number: 51, ..Default::default() };
+        actor
+            .forward_delegate_status(SyncStatus {
+                current_l1: next_l1,
+                safe_l2: l2_head(10),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            *derivation_origin.borrow(),
+            Some(next_l1),
+            "the engine already holds the safe head"
+        );
+    }
 }
