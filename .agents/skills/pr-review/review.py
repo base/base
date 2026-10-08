@@ -53,12 +53,13 @@ BOT_COMMENT_JQ = 'select(.user.login == "github-actions[bot]" and .user.type == 
 # Credentials that agents, which only read files, have no use for.
 SECRET_ENV = ("GH_TOKEN", "GITHUB_TOKEN")
 
-# The whole run must finish inside the CI job's timeout (90 minutes) with time left to post.
-DEFAULT_BUDGET_SECONDS = 4800
+# The whole run must finish well inside the CI job's timeout (15 minutes) with time left to post. A deep
+# review normally takes about 5 minutes; this is the hard stop for the whole pipeline.
+DEFAULT_BUDGET_SECONDS = 450
 MIN_STAGE_SECONDS = 60
 # A hung gh or git call must not eat the time reserved for posting results.
 GH_TIMEOUT_SECONDS = 90
-VOTE_TIMEOUT_SECONDS = 600
+VOTE_TIMEOUT_SECONDS = 90
 AGENT_ATTEMPTS = 2
 # Failures that a second try cannot fix.
 NO_RETRY = ("timed out", "Access denied", "Invalid model name", "skipped, not enough")
@@ -174,7 +175,7 @@ def parse_agent(path: Path) -> Agent:
             model=fields["model"],
             effort=fields.get("effort", "high"),
             tools=fields.get("tools", "Read,Grep,Glob"),
-            timeout_seconds=int(fields.get("timeout_seconds", "1800")),
+            timeout_seconds=int(fields.get("timeout_seconds", "150")),
             max_budget_usd=float(fields["max_budget_usd"]) if "max_budget_usd" in fields else None,
             max_output_tokens=int(fields["max_output_tokens"]) if "max_output_tokens" in fields else None,
             prompt=match.group(2).strip(),
@@ -941,8 +942,11 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
     members = [a for a in agents if a.stage == "council"]
     chair = next((a for a in agents if a.stage == "chair"), None)
 
+    MODELS_RAN.clear()
+
     def row(agent: Agent) -> tuple[str, str, str]:
-        return agent.stage, agent.name, MODELS_RAN.get(agent.name) or model_override or agent.model
+        # An agent that failed or timed out never recorded a model, so it is shown as not finished.
+        return agent.stage, agent.name, MODELS_RAN.get(agent.name, "(did not finish)")
 
     log("Triage")
     try:

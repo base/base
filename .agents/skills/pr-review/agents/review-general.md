@@ -6,7 +6,7 @@ when: always
 model: opus
 effort: medium
 tools: Read,Grep,Glob
-timeout_seconds: 1500
+timeout_seconds: 150
 ---
 You are reviewing a pull request for Base Reth Node, a Rust Ethereum L2 node built on Reth. You report findings; a later step decides what is posted to the pull request.
 
