@@ -16,7 +16,6 @@ use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
 use base_batcher_source::{HybridL1HeadSource, PollingBlockSource};
 use base_common_network::Base;
 use base_consensus_rpc::RollupNodeApiClient;
-use base_protocol::BlockInfo;
 use base_retry::{DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
 use base_runtime::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
@@ -498,10 +497,10 @@ impl BatcherService {
                 rollup_node.derivation_status()
             })
             .await?;
-        let safe_l2 = initial_derivation_status.safe_l2;
-        if safe_l2 == BlockInfo::default() {
-            eyre::bail!("safe L2 head is empty");
+        if initial_derivation_status.is_from_a_starting_node() {
+            eyre::bail!("rollup node still starting, no safe L2 head or no L1 block yet");
         }
+        let safe_l2 = initial_derivation_status.safe_l2;
         let next_l2_timestamp = safe_l2.timestamp.saturating_add(rollup_config.block_time);
         self.config.encoder_config.validate_for_rollup_config(&rollup_config, next_l2_timestamp)?;
         info!(safe_l2 = %safe_l2.number, "fetched safe L2 head");
@@ -634,7 +633,7 @@ impl BatcherService {
                 source,
                 l1_head_source,
                 initial_l1_head,
-                initial_safe_head: safe_l2,
+                initial_derivation_status,
                 derivation_status_rx,
                 admin_rx,
             },
@@ -666,7 +665,7 @@ mod tests {
     use alloy_primitives::Address;
     use base_batcher_core::{ThrottleConfig, ThrottleController};
     use base_common_genesis::RollupConfig;
-    use base_protocol::SyncStatus;
+    use base_protocol::{BlockInfo, SyncStatus};
     use base_runtime::Cancellation;
     use base_tx_manager::SignerConfig;
     use httpmock::{Mock, prelude::*};

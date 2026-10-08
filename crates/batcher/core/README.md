@@ -5,12 +5,19 @@ Async orchestration core for the Base batcher.
 `BatchDriver` is the central type exported by this crate. It is generic over a `Runtime`, a
 `BatchPipeline` (frame encoding), an `UnsafeBlockSource` (L2 block delivery), an `L1HeadSource`
 (L1 chain head tracking) and a `TxManager` (L1 submission). Construction takes
-`BatchDriverInputs`: the sources the driver listens to and the L1 head and safe L2 head it
+`BatchDriverInputs`: the sources the driver listens to and the L1 head and derivation status it
 starts from. The initial L1 head seeds the pipeline, so
 channel duration is measured from the live L1 tip rather than from block 0. The driver runs a
 single `tokio::select!` task that reacts to unsafe L2 blocks, derivation-status updates, L1
 heads, completed transaction receipts, admin commands, and cancellation.
 Each arm advances the pipeline or adjusts submission pressure without blocking the others.
+
+A derivation status whose safe head is lower than the last one acted on is ignored while the
+rollup node has not read L1 past the block the last safe head was reported at: such a node is
+behind on L1, as a new leader or a restarted node is, and derives the same blocks again. Once
+the node has read past that block with its safe head still lower, L1 lost the data that made
+the last safe head safe, so the driver resets the pipeline and posts the blocks above the
+lower safe head again.
 
 `BatchDriverConfig` carries the L1 inbox address, in-flight transaction limit, shutdown drain
 timeout, DA-throttle submission policy, and whether block ingestion starts stopped.

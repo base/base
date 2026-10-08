@@ -3,7 +3,6 @@
 use std::{future::Future, time::Duration};
 
 use base_batcher_core::DerivationStatus;
-use base_protocol::BlockInfo;
 use base_runtime::Runtime;
 use tokio::sync::mpsc;
 use tracing::warn;
@@ -20,8 +19,8 @@ pub trait DerivationStatusProvider: Send + Sync + 'static {
 
 /// Polls a provider and sends every derivation-status change in observation order.
 ///
-/// Statuses without a safe L2 head are skipped. A starting node reports them until its engine
-/// is bootstrapped, and the driver would take them for a safe head back at genesis.
+/// The statuses of a starting node, without a safe L2 head or an L1 block, are skipped: the
+/// driver would take them for a safe head back at genesis or derivation back at L1 block 0.
 #[derive(Debug)]
 pub struct DerivationStatusPoller<C: DerivationStatusProvider> {
     provider: C,
@@ -59,8 +58,10 @@ impl<C: DerivationStatusProvider> DerivationStatusPoller<C> {
             };
 
             match result {
-                Ok(status) if status.safe_l2 == BlockInfo::default() => {
-                    warn!("derivation status without a safe L2 head, node still starting");
+                Ok(status) if status.is_from_a_starting_node() => {
+                    warn!(
+                        "derivation status without a safe L2 head or an L1 block, node still starting"
+                    );
                 }
                 Ok(status) if status != self.last_status => {
                     tokio::select! {
@@ -149,15 +150,19 @@ mod tests {
         });
     }
 
-    /// The poller skips the empty safe head a starting node reports until its engine is
-    /// bootstrapped.
+    /// The poller skips the statuses of a starting node, without a safe L2 head until its
+    /// engine is bootstrapped or without an L1 block until its derivation pipeline has an
+    /// origin.
     #[test]
-    fn skips_a_status_without_a_safe_head() {
+    fn skips_the_statuses_of_a_starting_node() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let (tx, mut rx) = mpsc::channel(1);
-            let starting = DerivationStatus { safe_l2: BlockInfo::default(), current_l1: head(1) };
+            let no_safe_head =
+                DerivationStatus { safe_l2: BlockInfo::default(), current_l1: head(1) };
+            let no_l1_block =
+                DerivationStatus { safe_l2: head(5), current_l1: BlockInfo::default() };
             let provider = MockProvider {
-                statuses: Mutex::new(VecDeque::from([starting, starting])),
+                statuses: Mutex::new(VecDeque::from([no_safe_head, no_l1_block])),
                 fallback: status(10, 2),
             };
             let poller =
