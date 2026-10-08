@@ -23,8 +23,8 @@ STATUS_START = "<!-- pr-review:status -->"
 STATUS_END = "<!-- /pr-review:status -->"
 RERUN_HELP = ("Reviews run when a pull request is opened or marked ready for review, not on every push. "
               "To review the latest commit, comment `/review` on this pull request; the review then posts a new "
-              "summary in place of this one. The pull request's author and the repository's members and "
-              "collaborators can do this.")
+              "summary in place of this one. Members of the Base organization with write access to "
+              "this repository can do this.")
 
 # Ordered most to least severe.
 SEVERITIES = {
