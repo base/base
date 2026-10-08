@@ -58,9 +58,8 @@ pub struct BasePooledTransaction<
     encoded_2718: OnceLock<Bytes>,
     /// Timestamp (millis since Unix epoch) when this transaction was received.
     received_at: u128,
-    /// State predicates that must hold before this transaction is eligible for
-    /// inclusion.
-    validity_predicates: Vec<crate::ValidityPredicate>,
+    /// Compiled conditions, shared across payload candidates; absent for ordinary transactions.
+    validity_conditions: Option<Arc<crate::ValidityConditions>>,
     /// The set of on-chain state surfaces whose change invalidates this
     /// transaction, computed once during validation and consumed by the pool's
     /// invalidation index. Empty until set; see [`crate::WatchSet`].
@@ -103,7 +102,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             _pd: core::marker::PhantomData,
             encoded_2718: Default::default(),
             received_at,
-            validity_predicates: Vec::new(),
+            validity_conditions: None,
             watch_set: OnceLock::new(),
             limit_class: OnceLock::new(),
             watch_manifest: OnceLock::new(),
@@ -125,23 +124,29 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
 
     /// Sets the validity predicates required for this transaction's inclusion.
     ///
-    /// Predicates are stored in canonical evaluation order (timing before
-    /// state) via [`crate::ValidityPredicate::sort_batch`], so every ingress
-    /// path yields transactions whose cheap timing predicates gate state reads.
+    /// Conditions are compiled once into timing bounds and separate state groups.
+    /// The submitted batch is retained only for lossless builder forwarding.
     #[must_use]
     pub fn with_validity_predicates(
         mut self,
-        mut validity_predicates: Vec<crate::ValidityPredicate>,
+        validity_predicates: Vec<crate::ValidityPredicate>,
     ) -> Self {
-        crate::ValidityPredicate::sort_batch(&mut validity_predicates);
-        self.validity_predicates = validity_predicates;
+        self.validity_conditions = (!validity_predicates.is_empty())
+            .then(|| Arc::new(crate::ValidityConditions::new(validity_predicates)));
         self
     }
 
-    /// Returns the validity predicates required for this transaction's inclusion.
+    /// Returns the submitted predicates for lossless builder forwarding.
+    /// Pool and builder checks must use [`Self::validity_conditions`] instead.
     #[must_use]
     pub fn validity_predicates(&self) -> &[crate::ValidityPredicate] {
-        &self.validity_predicates
+        self.validity_conditions().submitted()
+    }
+
+    /// Returns compiled validity conditions for pool and builder checks.
+    #[must_use]
+    pub fn validity_conditions(&self) -> &crate::ValidityConditions {
+        self.validity_conditions.as_deref().unwrap_or_else(|| crate::ValidityConditions::empty())
     }
 
     /// Returns the estimated compressed size of a transaction in bytes.
@@ -182,7 +187,7 @@ where
         replacement: &Self,
         price_bumps: &PriceBumpConfig,
     ) -> bool {
-        if !self.validity_predicates().is_empty() && !replacement.validity_predicates().is_empty() {
+        if !self.validity_conditions().is_empty() && !replacement.validity_conditions().is_empty() {
             return replacement.max_fee_per_gas() <= self.max_fee_per_gas();
         }
         if self.ty() == EIP8130_TX_TYPE_ID || replacement.ty() == EIP8130_TX_TYPE_ID {
@@ -261,13 +266,15 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
             .watch_manifest
             .get()
             .map_or(0, |manifest| core::mem::size_of_val(manifest.config_slots()));
-        let validity_predicates_size = core::mem::size_of_val(self.validity_predicates.as_slice());
+        let validity_predicates_size = self.validity_conditions.as_ref().map_or(0, |conditions| {
+            core::mem::size_of::<crate::ValidityConditions>() + conditions.heap_size()
+        });
         let metering_size = self.metering.as_ref().map_or(0, |metering| {
             core::mem::size_of::<MeterBundleResponse>() + metering.heap_size()
         });
         self.inner.size()
             + core::mem::size_of::<u128>()
-            + core::mem::size_of::<Vec<crate::ValidityPredicate>>()
+            + core::mem::size_of::<Option<Arc<crate::ValidityConditions>>>()
             + core::mem::size_of::<OnceLock<crate::WatchSet>>()
             + watch_keys_size
             + core::mem::size_of::<OnceLock<crate::LimitClass>>()
@@ -392,12 +399,17 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     /// Returns the EIP-2718 encoded bytes of the transaction.
     fn encoded_2718(&self) -> Cow<'_, Bytes>;
 
-    /// Returns state predicates required for this transaction's inclusion.
+    /// Returns submitted predicates for builder forwarding, not repeated evaluation.
     ///
     /// Defaults to an empty slice for transaction types that do not carry
     /// validity predicates.
     fn validity_predicates(&self) -> &[crate::ValidityPredicate] {
         &[]
+    }
+
+    /// Returns compiled validity conditions. Defaults to empty for ordinary transactions.
+    fn validity_conditions(&self) -> &crate::ValidityConditions {
+        crate::ValidityConditions::empty()
     }
 
     /// Returns the signed EIP-8130 payload when this transaction carries one.
@@ -478,7 +490,11 @@ where
     }
 
     fn validity_predicates(&self) -> &[crate::ValidityPredicate] {
-        &self.validity_predicates
+        self.validity_conditions().submitted()
+    }
+
+    fn validity_conditions(&self) -> &crate::ValidityConditions {
+        self.validity_conditions.as_deref().unwrap_or_else(|| crate::ValidityConditions::empty())
     }
 
     fn as_eip8130(&self) -> Option<&Eip8130Signed> {
@@ -906,5 +922,8 @@ mod tests {
             BasePooledTx::validity_predicates(&transaction),
             core::slice::from_ref(&predicate)
         );
+        assert!(transaction.validity_conditions().contains(&predicate));
+        let cloned = transaction.clone();
+        assert!(core::ptr::eq(transaction.validity_conditions(), cloned.validity_conditions()));
     }
 }
