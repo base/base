@@ -1,0 +1,73 @@
+# Sub-workspace for the OpenVM zkVM guest program (range).
+#
+# Built separately via `just openvm build-elf` (which shells out to
+# `cargo openvm build` with the `riscv32im-risc0-zkvm-elf` target).
+# Aggregation is not ported: SP1's `verify_sp1_proof` has no OpenVM
+# equivalent here (OpenVM uses a deferral/STARK-verify guest lib).
+
+[workspace]
+resolver = "2"
+members = [
+  "range/ethereum",
+  "range/utils",
+]
+exclude = ["sp1-bls12-shim"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.96"
+license = "MIT"
+homepage = "https://github.com/base/base"
+repository = "https://github.com/base/base"
+
+[workspace.lints.rust]
+missing-debug-implementations = "warn"
+missing-docs = "warn"
+unreachable-pub = "warn"
+unused-must-use = "deny"
+rust-2018-idioms = "deny"
+unnameable-types = "warn"
+
+[workspace.lints.rustdoc]
+all = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[workspace.dependencies]
+# Internal members
+base-proof-openvm-range-utils = { path = "range/utils" }
+base-proof = { path = "../../../proof", default-features = false }
+base-proof-zk-utils = { path = "../../utils" }
+
+# OpenVM (must match the cargo-openvm tag)
+openvm = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2" }
+
+# alloy (must match root Cargo.toml versions)
+alloy-sol-types = { version = "1.6.1", default-features = false }
+alloy-primitives = { version = "1.6.1", default-features = false }
+
+# misc (must match root Cargo.toml versions)
+rkyv = "0.8"
+anyhow = "1.0"
+tracing = { version = "0.1.43", default-features = false }
+tracing-subscriber = "0.3.22"
+
+[profile.dev]
+debug = "line-tables-only"
+incremental = true
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+debug = "none"
+strip = "symbols"
+panic = "unwind"
+codegen-units = 16
+
+# kzg-rs 0.2.8 depends on `sp1_bls12_381`, which emits SP1 syscalls on
+# `target_os = "zkvm"`. OpenVM uses that same target, so replace it with
+# vanilla bls12_381 under the crate name kzg-rs expects.
+[patch.crates-io]
+sp1_bls12_381 = { path = "sp1-bls12-shim" }
