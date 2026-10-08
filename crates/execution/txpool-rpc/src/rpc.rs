@@ -491,7 +491,9 @@ mod tests {
 
     #[rstest::rstest]
     #[case::off_unsigned(ValiditySignatureMode::Off, false, false, false, None)]
-    #[case::off_signed(ValiditySignatureMode::Off, true, false, false, Some("disabled"))]
+    #[case::off_signed(ValiditySignatureMode::Off, true, false, false, None)]
+    #[case::off_tampered(ValiditySignatureMode::Off, true, true, false, None)]
+    #[case::off_wrong_key(ValiditySignatureMode::Off, true, false, true, None)]
     #[case::optional_unsigned(ValiditySignatureMode::VerifyIfPresent, false, false, false, None)]
     #[case::optional_signed(ValiditySignatureMode::VerifyIfPresent, true, false, false, None)]
     #[case::optional_tampered(
@@ -616,13 +618,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn signed_validity_ingress_default_off_rejects_signed_sidecars() {
+    async fn signed_validity_ingress_default_off_accepts_signed_sidecars() {
         let (raw, mut options) = signed_validity_request(&PrivateKeySigner::random());
         let rpc = validity_rpc(everest_provider());
         let error =
             rpc.send_raw_transaction_validity(raw.clone(), options.clone()).await.unwrap_err();
-        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
-        assert!(error.message().contains("signed validity predicates are disabled"));
+        assert_ne!(error.code(), ErrorCode::InvalidParams.code(), "{error}");
         options.validity_signature = None;
         let error = rpc.send_raw_transaction_validity(raw, options).await.unwrap_err();
         assert_ne!(error.code(), ErrorCode::InvalidParams.code(), "{error}");

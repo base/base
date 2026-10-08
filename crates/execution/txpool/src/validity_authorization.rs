@@ -13,9 +13,6 @@ use crate::{
 /// Failure to authorize a validity sidecar with the transaction sender's key.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ValidityAuthorizationError {
-    /// Signed sidecars cannot be accepted in off mode.
-    #[error("signed validity predicates are disabled")]
-    Disabled,
     /// Non-empty predicates require a sender signature.
     #[error("validity predicates require a sender signature")]
     MissingSignature,
@@ -43,7 +40,6 @@ impl ValidityAuthorizationError {
     /// Returns a stable, low-cardinality metric and RPC rejection reason.
     pub const fn as_label(&self) -> &'static str {
         match self {
-            Self::Disabled => "disabled",
             Self::MissingSignature => "missing",
             Self::UnexpectedSignature => "unexpected",
             Self::MissingChainId => "missing_chain_id",
@@ -59,7 +55,7 @@ impl ValidityAuthorizationError {
 ///
 /// Only [`ValidityAuthorization`] constructs this type. It deliberately has no
 /// deserializer or public constructor. Unsigned sidecars may be accepted by the
-/// configured rollout mode; validation does not imply they have a signature.
+/// configured rollout mode; validation does not imply that a signature was verified.
 #[derive(Debug)]
 pub struct ValidatedValidity {
     transaction_hash: B256,
@@ -97,7 +93,7 @@ impl ValidityAuthorization {
         mode: ValiditySignatureMode,
     ) -> Result<ValidatedValidity, ValidityAuthorizationError> {
         mode.check(&sidecar.validity, sidecar.validity_signature.as_ref())?;
-        if sidecar.validity_signature.is_some() {
+        if mode != ValiditySignatureMode::Off && sidecar.validity_signature.is_some() {
             let sender = tx
                 .consensus_ref()
                 .inner()
@@ -118,7 +114,9 @@ impl ValidityAuthorization {
         mode: ValiditySignatureMode,
     ) -> Result<ValidatedValidity, ValidityAuthorizationError> {
         mode.check(&sidecar.validity, sidecar.validity_signature.as_ref())?;
-        if let Some(signature) = &sidecar.validity_signature {
+        if mode != ValiditySignatureMode::Off
+            && let Some(signature) = &sidecar.validity_signature
+        {
             let chain_id = tx.chain_id().ok_or(ValidityAuthorizationError::MissingChainId)?;
             if signature.normalize_s().is_some() {
                 return Err(ValidityAuthorizationError::InvalidSignature);
@@ -337,6 +335,14 @@ mod tests {
             verify(&tx, &predicates(), Some(&signature)),
             Err(ValidityAuthorizationError::MissingChainId),
         );
+        assert!(
+            ValidityAuthorization::validate(
+                &tx,
+                TransactionValidity { validity: predicates(), validity_signature: Some(signature) },
+                ValiditySignatureMode::Off,
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -531,11 +537,7 @@ mod tests {
 
     #[rstest::rstest]
     #[case::legacy_unsigned(ValiditySignatureMode::Off, false, Ok(()))]
-    #[case::legacy_signed(
-        ValiditySignatureMode::Off,
-        true,
-        Err(ValidityAuthorizationError::Disabled)
-    )]
+    #[case::legacy_signed(ValiditySignatureMode::Off, true, Ok(()))]
     #[case::optional_unsigned(ValiditySignatureMode::VerifyIfPresent, false, Ok(()))]
     #[case::optional_signed(ValiditySignatureMode::VerifyIfPresent, true, Ok(()))]
     #[case::required_unsigned(
@@ -560,6 +562,38 @@ mod tests {
         )
         .map(|_| ());
         assert_eq!(result, expected);
+    }
+
+    #[rstest::rstest]
+    #[case::raw_ingress(true)]
+    #[case::builder_wire(false)]
+    fn off_preserves_unverified_signatures_at_both_boundaries(#[case] recovered: bool) {
+        let signer = PrivateKeySigner::random();
+        let tx = transaction(&signer, 8453, 0);
+        let predicates = predicates();
+        let signature = sign(&signer, &tx, &predicates);
+        let curve_order: U256 =
+            "0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141".parse().unwrap();
+        let signatures = [
+            sign(&PrivateKeySigner::random(), &tx, &predicates),
+            Signature::new(U256::ZERO, U256::ZERO, false),
+            Signature::new(signature.r(), curve_order - signature.s(), !signature.v()),
+        ];
+        for signature in signatures {
+            let sidecar = TransactionValidity {
+                validity: predicates.clone(),
+                validity_signature: Some(signature),
+            };
+            let validated = if recovered {
+                ValidityAuthorization::validate_recovered(&tx, sidecar, ValiditySignatureMode::Off)
+            } else {
+                ValidityAuthorization::validate(&tx, sidecar, ValiditySignatureMode::Off)
+            }
+            .unwrap();
+            let attached = tx.clone().with_validity(validated).unwrap();
+            assert_eq!(attached.validity_signature(), Some(signature));
+            assert_eq!(attached.validity_predicates().len(), predicates.len());
+        }
     }
 
     #[rstest::rstest]

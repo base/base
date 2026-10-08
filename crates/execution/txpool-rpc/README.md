@@ -15,10 +15,11 @@ allows clients to query the current status of individual transactions by hash. T
 validity predicates and their optional `validity_signature` are preserved in the pool and
 while forwarding to builders. The endpoint is registered at startup. Use one shared
 `--validity-signature-mode off|verify-if-present|required` option on ingress and builders.
-It defaults to `off` (legacy unsigned submissions only). Deploy `verify-if-present`
-fleet-wide to accept unsigned submissions while checking all supplied signatures,
-migrate clients, then enable `required` to reject unsigned predicates.
-Optional verification does not protect against signature stripping and unsigned resubmission.
+It defaults to `off`, accepting unsigned or signed submissions without signature verification
+and preserving supplied signatures for forwarding. Deploy `verify-if-present` fleet-wide
+to accept unsigned submissions while checking all supplied signatures, migrate clients,
+then enable `required` to reject unsigned predicates. Neither `off` nor optional verification
+protects against signature stripping and unsigned resubmission.
 Predicates are enforced during block construction; an unsatisfied transaction is deferred
 and an expired one is evicted. Regular RPC nodes with a configured sequencer URL proxy
 the complete sidecar and upstream error response instead of admitting it locally.

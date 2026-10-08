@@ -56,18 +56,21 @@ inclusion until their front-run has changed a pool's reserves. This can aid a sa
 within the user's on-chain slippage limit; it does not change their signed calldata.
 
 Use the shared `--validity-signature-mode off|verify-if-present|required` option
-on forwarding ingress nodes and builders. It defaults to `off`: unsigned legacy
-predicates remain accepted and signed sidecars are rejected. On builders the mode
-covers both `base_sendRawTransactionValidity` and `base_insertValidatedTransaction`.
+on forwarding ingress nodes and builders. It defaults to `off`: unsigned and signed
+predicates are accepted without signature verification. Supplied signatures, even invalid
+ones, are preserved for forwarding; malformed wire encodings and invalid predicate
+parameters are still rejected. On builders the mode covers both
+`base_sendRawTransactionValidity` and `base_insertValidatedTransaction`.
 
-Roll out `verify-if-present` to **every** ingress and builder first. It accepts
-unsigned predicates while verifying every supplied signature. Migrate wallets
-and load clients to signing, observe signed/unsigned admission counters, then
-switch the fleet to `required`. Required mode rejects any non-empty predicate
-batch without valid user authorization. Plain transactions need no extra signature.
+In `off` mode, nodes accept signed clients during rollout, but do not authenticate them.
+Deploy `verify-if-present` to **every** ingress and builder to verify supplied signatures
+while continuing to accept unsigned predicates. Migrate wallets and load clients to
+signing, observe signed/unsigned admission counters, then switch the fleet to `required`.
+Required mode rejects any non-empty predicate batch without valid user authorization.
+Plain transactions need no extra signature.
 Query nodes proxy sidecars unchanged and leave policy to the upstream sequencer.
 
-**Optional verification is a compatibility stage, not sandwich protection.**
+**Off and optional verification modes are compatibility stages, not sandwich protection.**
 As long as unsigned predicates are accepted, an intermediary can remove a
 signature and submit different unsigned predicates. Do not claim protection
 until required mode is enforced on every relevant admission path.
@@ -114,7 +117,9 @@ This feature prevents unauthorized predicate attachment, not all sandwich attack
 ingress. Builder-wire admission uses `validate` to check the envelope sender.
 Both return an opaque `ValidatedValidity`, bound to the transaction hash, which
 `with_validity` requires before attachment. This witness is not deserializable.
-Builders retain verification for incoming wire data as well as local mode checks.
+Builders verify incoming wire signatures in `verify-if-present` and `required`;
+`off` preserves them without verification. A `ValidatedValidity` records policy admission,
+not proof that its signature was verified.
 
 `txpool.validity_signature.rejected{site,reason}` records bounded rejection reasons
 at `ingress` and `builder`, independently of generic extension errors.

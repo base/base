@@ -169,6 +169,7 @@ async fn forwards_to_healthy_destination_while_another_destination_is_blocked() 
 
 #[rstest::rstest]
 #[case::legacy_unsigned(ValiditySignatureMode::Off, false)]
+#[case::off_signed(ValiditySignatureMode::Off, true)]
 #[case::optional_unsigned(ValiditySignatureMode::VerifyIfPresent, false)]
 #[case::optional_signed(ValiditySignatureMode::VerifyIfPresent, true)]
 #[case::required_signed(ValiditySignatureMode::Required, true)]

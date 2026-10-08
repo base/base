@@ -377,25 +377,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn signed_validity_builder_default_off_does_not_silently_downgrade_signatures() {
+    async fn signed_validity_builder_default_off_accepts_unverified_signatures() {
         let handler = BuilderApiImpl::<_, TransactionValidity>::with_extensions(
             NoopTransactionPool::<BasePooledTransaction>::new(),
             true,
             DEFAULT_MAX_VALIDITY_PREDICATES,
         );
         let mut tx = signed_validity_transaction();
-        let error = handler.insert_validated_transaction(tx.clone()).await.unwrap_err();
-        assert!(error.message().contains("signed validity predicates are disabled"));
-        tx.extensions.validity_signature = None;
-        let error = handler.insert_validated_transaction(tx).await.unwrap_err();
-        assert!(error.message().starts_with("pool rejected transaction:"));
+        let mut tampered = tx.clone();
+        tampered.extensions.validity.push(ValidityPredicate::Balance {
+            address: Address::ZERO,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        });
+        let mut unsigned = tx.clone();
+        unsigned.extensions.validity_signature = None;
+        tx.extensions.validity.clear();
+        for sidecar in [signed_validity_transaction(), tampered, unsigned, tx] {
+            let error = handler.insert_validated_transaction(sidecar).await.unwrap_err();
+            assert!(
+                error.message().starts_with("pool rejected transaction:"),
+                "off mode must pass sidecars to pool insertion without verification: {error}"
+            );
+        }
     }
 
     #[rstest::rstest]
     #[case::missing(ValiditySignatureMode::Required, "missing")]
     #[case::invalid(ValiditySignatureMode::Required, "invalid")]
     #[case::sender_mismatch(ValiditySignatureMode::Required, "sender_mismatch")]
-    #[case::disabled(ValiditySignatureMode::Off, "disabled")]
+    #[case::optional_invalid(ValiditySignatureMode::VerifyIfPresent, "invalid")]
     #[tokio::test]
     async fn signature_rejections_have_dedicated_builder_metrics(
         #[case] mode: ValiditySignatureMode,
@@ -419,7 +430,6 @@ mod tests {
                 value: U256::ZERO,
             }),
             "sender_mismatch" => tx.sender = Address::ZERO,
-            "disabled" => {}
             _ => unreachable!(),
         }
         let error = handler.insert_validated_transaction(tx).await.unwrap_err();

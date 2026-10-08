@@ -13,7 +13,7 @@ use crate::{ValidityAuthorizationError, ValidityPredicate};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ValiditySignatureMode {
-    /// Preserve legacy unsigned predicates and reject signed sidecars.
+    /// Accept unsigned or signed sidecars without verifying supplied signatures.
     #[default]
     Off,
     /// Accept unsigned predicates, but verify every supplied signature.
@@ -30,6 +30,9 @@ impl ValiditySignatureMode {
         predicates: &[ValidityPredicate],
         signature: Option<&Signature>,
     ) -> Result<(), ValidityAuthorizationError> {
+        if matches!(self, Self::Off) {
+            return Ok(());
+        }
         if predicates.is_empty() {
             return if signature.is_some() {
                 Err(ValidityAuthorizationError::UnexpectedSignature)
@@ -38,7 +41,6 @@ impl ValiditySignatureMode {
             };
         }
         match (self, signature.is_some()) {
-            (Self::Off, true) => Err(ValidityAuthorizationError::Disabled),
             (Self::Required, false) => Err(ValidityAuthorizationError::MissingSignature),
             _ => Ok(()),
         }
@@ -65,5 +67,31 @@ impl FromStr for ValiditySignatureMode {
             "required" => Ok(Self::Required),
             _ => Err("expected off, verify-if-present, or required"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Signature, U256};
+
+    use super::ValiditySignatureMode;
+    use crate::ValidityAuthorizationError;
+
+    #[rstest::rstest]
+    #[case::off(ValiditySignatureMode::Off, Ok(()))]
+    #[case::optional(
+        ValiditySignatureMode::VerifyIfPresent,
+        Err(ValidityAuthorizationError::UnexpectedSignature)
+    )]
+    #[case::required(
+        ValiditySignatureMode::Required,
+        Err(ValidityAuthorizationError::UnexpectedSignature)
+    )]
+    fn signature_without_predicates_obeys_mode(
+        #[case] mode: ValiditySignatureMode,
+        #[case] expected: Result<(), ValidityAuthorizationError>,
+    ) {
+        let signature = Signature::new(U256::ZERO, U256::ZERO, false);
+        assert_eq!(mode.check(&[], Some(&signature)), expected);
     }
 }

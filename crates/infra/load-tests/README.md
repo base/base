@@ -59,7 +59,8 @@ The endpoint state is shared by workers; subsequent requests sign immediately.
 Retries remain bounded, transaction hashes and nonces are unchanged, and signed
 submissions never silently downgrade to unsigned or plain transactions.
 
-For proactive migration during the fleet's `verify-if-present` stage, configure:
+For proactive migration, including nodes in `off` mode or the fleet's
+`verify-if-present` stage, configure:
 
 ```yaml
 validity:
@@ -70,8 +71,9 @@ Keep the existing validity ratio and predicate configuration alongside that sett
 Signing uses the controlled sender's key and the EIP-712 contract documented in
 [base-execution-txpool](../../execution/txpool/README.md#signed-validity-predicates).
 Adaptive mode observes ingress errors only: an asynchronous builder drop cannot
-trigger it. Operators must deploy compatibility support fleet-wide before migrating
-clients, and should use explicit signing before enabling required enforcement.
+trigger it. In `off` mode, nodes preserve signatures without checking them; operators
+should deploy `verify-if-present` fleet-wide to verify signed requests while accepting
+legacy clients, and use explicit signing before enabling required enforcement.
 
 ## 200ms devnet profile
 

@@ -293,7 +293,8 @@ async fn test_send_raw_transaction_validity_enforces_configured_limit() -> eyre:
 /// Both real builder boundaries enforce their local staged signature policy.
 #[rstest::rstest]
 #[case::raw_unsigned_off(false, ValiditySignatureMode::Off, false, false, true)]
-#[case::raw_signed_off(false, ValiditySignatureMode::Off, true, false, false)]
+#[case::raw_signed_off(false, ValiditySignatureMode::Off, true, false, true)]
+#[case::raw_bad_off(false, ValiditySignatureMode::Off, true, true, true)]
 #[case::raw_unsigned_optional(false, ValiditySignatureMode::VerifyIfPresent, false, false, true)]
 #[case::raw_signed_optional(false, ValiditySignatureMode::VerifyIfPresent, true, false, true)]
 #[case::raw_bad_optional(false, ValiditySignatureMode::VerifyIfPresent, true, true, false)]
@@ -301,7 +302,8 @@ async fn test_send_raw_transaction_validity_enforces_configured_limit() -> eyre:
 #[case::raw_bad_required(false, ValiditySignatureMode::Required, true, true, false)]
 #[case::raw_signed_required(false, ValiditySignatureMode::Required, true, false, true)]
 #[case::forwarded_unsigned_off(true, ValiditySignatureMode::Off, false, false, true)]
-#[case::forwarded_signed_off(true, ValiditySignatureMode::Off, true, false, false)]
+#[case::forwarded_signed_off(true, ValiditySignatureMode::Off, true, false, true)]
+#[case::forwarded_bad_off(true, ValiditySignatureMode::Off, true, true, true)]
 #[case::forwarded_unsigned_optional(
     true,
     ValiditySignatureMode::VerifyIfPresent,
@@ -372,10 +374,7 @@ async fn signed_predicates_at_both_builder_endpoints(
         result?;
     } else {
         let error = result.expect_err("unauthorized sidecar must not enter the pool");
-        assert!(
-            error.to_string().contains("signature") || error.to_string().contains("disabled"),
-            "{error}"
-        );
+        assert!(error.to_string().contains("signature"), "{error}");
     }
     Ok(())
 }
