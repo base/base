@@ -282,6 +282,7 @@ fn test_store_trie_updates_comprehensive<S: BaseProofsStore + BaseProofsInitialS
 
     // Store the updates
     storage.store_trie_updates(block_ref, block_state_diff)?;
+    assert_eq!(storage.get_latest_block_number()?.map(|(number, _)| number), Some(100));
 
     // ========== Verify Account Branch Nodes ==========
     let mut account_trie_cursor = storage.account_trie_cursor(block_ref.block.number + 10)?;

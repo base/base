@@ -19,8 +19,8 @@ use reth_evm_ethereum::EthEvmConfig;
 use reth_node_api::{NodePrimitives, NodeTypesWithDB};
 use reth_primitives_traits::{Block as _, RecoveredBlock, crypto::secp256k1::sign_message};
 use reth_provider::{
-    BlockWriter as _, ExecutionOutcome, HashedPostStateProvider, LatestStateProviderRef,
-    ProviderFactory, StateRootProvider, StorageSettingsCache,
+    BlockHashReader as _, BlockWriter as _, ExecutionOutcome, HashedPostStateProvider,
+    LatestStateProviderRef, ProviderFactory, StateRootProvider, StorageSettingsCache,
     providers::{BlockchainProvider, ProviderNodeTypes},
     test_utils::create_test_provider_factory_with_chain_spec,
 };
@@ -426,7 +426,7 @@ fn test_execute_and_store_block_updates_state_root_mismatch() {
 
     // Create the next block
     let mut nonce_counter = 0;
-    let last_block_hash = chain_spec.genesis_hash(); // because scenario executes 1 block
+    let last_block_hash = provider_factory.block_hash(1).unwrap().expect("block 1 committed");
     let next_number = 2;
 
     let mut block = create_block_from_spec(
