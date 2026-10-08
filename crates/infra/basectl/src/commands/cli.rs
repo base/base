@@ -10,13 +10,18 @@ use super::{
 };
 use crate::{MonitoringConfig, ViewId, run_app, run_flashblocks_json};
 
+/// Network loaded when `-c` is not passed.
+const DEFAULT_NETWORK: &str = "mainnet";
+/// Network the `OpenVM` view opens on by default; it carries the beacon and op-node RPCs.
+const OPENVM_NETWORK: &str = "zeronet";
+
 /// Base infrastructure control CLI.
 #[derive(Debug, Parser)]
 #[command(name = "basectl")]
 #[command(about = "Base infrastructure control CLI")]
 pub struct Cli {
     /// Chain configuration (mainnet, sepolia, devnet, or path to config file)
-    #[arg(short = 'c', long = "config", default_value = "mainnet", global = true)]
+    #[arg(short = 'c', long = "config", default_value = DEFAULT_NETWORK, global = true)]
     pub config: String,
     /// Bootstrap conductor JSON-RPC URL for runtime cluster discovery.
     ///
@@ -152,11 +157,11 @@ impl Cli {
 
 /// Network used to launch a TUI view.
 ///
-/// The `OpenVM` demo needs zeronet RPCs (L1 debug, beacon, op-node). When the
-/// user did not pass `-c`, clap's default is mainnet — send that view to
-/// zeronet instead. An explicit `-c sepolia` / `-c path.yaml` is left alone.
+/// The `OpenVM` view needs beacon and op-node RPCs, which mainnet does not
+/// configure, so it opens on zeronet when `-c` is left at the default. Any other
+/// `-c` value is kept.
 fn tui_network(config: &str, view: ViewId) -> &str {
-    if view == ViewId::OpenVm && config == "mainnet" { "zeronet" } else { config }
+    if view == ViewId::OpenVm && config == DEFAULT_NETWORK { OPENVM_NETWORK } else { config }
 }
 
 impl MonitorCommands {
