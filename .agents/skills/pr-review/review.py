@@ -821,11 +821,20 @@ def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None]
     # if a person resolved a thread, or edited the bot's comment, in the meantime, leave it alone.
     try:
         live_threads: list[dict[str, Any]] | None = fetch_threads(number, repo)
-    except ReviewError as exc:
+    except (ReviewError, ValueError, KeyError, TypeError) as exc:
         problems.append(f"re-read threads: {exc}")
         log(f"  could not re-read the threads: {exc}")
         live_threads = None
     live = {t["thread_id"]: t for t in live_threads or []}
+
+    def head_is_reviewed_commit() -> bool:
+        if not ctx.head_sha:
+            return True
+        try:
+            return fetch_head(number, repo) == ctx.head_sha
+        except (ReviewError, ValueError, KeyError) as exc:
+            problems.append(f"check the pull request head: {exc}")
+            return False  # when in doubt, do not claim that something is fixed
 
     def unchanged(item: dict[str, Any], expect_marked: bool) -> bool:
         thread = live.get(item["thread_id"])
@@ -844,6 +853,11 @@ def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None]
         ctx.threads = [t for t in live_threads
                        if ctx.earlier_thread_ids is None or t["thread_id"] in ctx.earlier_thread_ids]
         plan.resolves = [i for i in plan.resolves if unchanged(i, expect_marked=False)]
+        if plan.resolves and not head_is_reviewed_commit():
+            # A push during the run may have brought the problem back. Say nothing about it being fixed;
+            # the next review decides again, and the summary's status line says there are newer commits.
+            log("  the pull request has moved on, so threads are not marked as resolved")
+            plan.resolves = []
         kept = [i for i in plan.reopens if unchanged(i, expect_marked=True)]
         # A reopen that was dropped because the comment changed still means the problem is back, so
         # keep the thread in the summary as long as it is still open and marked on GitHub.
@@ -965,17 +979,7 @@ def refresh_status(number: int, repo: str) -> int:
     if reviewed is None:
         log("the latest summary does not record the commit it reviewed; leaving it as it is")
         return 0
-    head = fetch_head(number, repo)
-    uncountable = False
-    unreviewed: int | None = 0
-    if not (head.startswith(reviewed) or reviewed.startswith(head)):
-        try:
-            unreviewed = commits_after(number, repo, reviewed)
-        except CommitsUncountable:
-            unreviewed, uncountable = None, True
-    block = render.status_block(
-        reviewed, unreviewed=unreviewed, compare_url=f"https://github.com/{repo}/compare/{reviewed}...{head}",
-        files_url=f"https://github.com/{repo}/pull/{number}/files", uncountable=uncountable)
+    block = status_line(number, repo, reviewed)
     body = render.replace_status(latest["body"], block)
     if body is None:
         log("the latest summary has no status line (it is from an older version); leaving it as it is")
@@ -985,9 +989,7 @@ def refresh_status(number: int, repo: str) -> int:
         return 0
     gh(["api", "-X", "PATCH", f"repos/{repo}/issues/comments/{latest['id']}", "--input", "-"],
        input_text=json.dumps({"body": body}))
-    log("updated the status line: " + ("too many commits to count" if uncountable else
-                                         "rewritten branch" if unreviewed is None else
-                                         f"{unreviewed} unreviewed commit(s)"))
+    log("updated the status line")
     return 0
 
 
@@ -1176,6 +1178,25 @@ def run_pipeline(ctx: Context, agents: list[Agent], cwd: Path, artifacts: Path,
     return Outcome(triage, reviews, failed, decision, rows, plan=plan, dropped=dropped, problems=problems)
 
 
+def status_line(number: int, repo: str, reviewed: str) -> str:
+    """The status block for a summary of commit `reviewed`, counted against the pull request's head now.
+
+    A short or full SHA is accepted. Raises ReviewError (or ValueError/KeyError on a bad response) if the
+    head or the commits cannot be read.
+    """
+    head = fetch_head(number, repo)
+    uncountable = False
+    unreviewed: int | None = 0
+    if not (head.startswith(reviewed) or reviewed.startswith(head)):
+        try:
+            unreviewed = commits_after(number, repo, reviewed)
+        except CommitsUncountable:
+            unreviewed, uncountable = None, True
+    return render.status_block(
+        reviewed, unreviewed=unreviewed, compare_url=f"https://github.com/{repo}/compare/{reviewed}...{head}",
+        files_url=f"https://github.com/{repo}/pull/{number}/files", uncountable=uncountable)
+
+
 def status_for(ctx: Context) -> str | None:
     """The status line for a summary of `ctx.head_sha`, counted against the pull request's head right now.
 
@@ -1183,19 +1204,11 @@ def status_for(ctx: Context) -> str | None:
     """
     if not (ctx.head_sha and ctx.pr_number):
         return None
-    uncountable = False
     try:
-        head = fetch_head(ctx.pr_number, ctx.repo)
-        try:
-            unreviewed = 0 if head == ctx.head_sha else commits_after(ctx.pr_number, ctx.repo, ctx.head_sha)
-        except CommitsUncountable:
-            unreviewed, uncountable = None, True
+        return status_line(ctx.pr_number, ctx.repo, ctx.head_sha)
     except (ReviewError, ValueError, KeyError) as exc:
         log(f"warning: could not count the commits after the review ({exc})")
         return None
-    return render.status_block(
-        ctx.head_sha, unreviewed=unreviewed, compare_url=f"https://github.com/{ctx.repo}/compare/{ctx.head_sha}...{head}",
-        files_url=f"https://github.com/{ctx.repo}/pull/{ctx.pr_number}/files", uncountable=uncountable)
 
 
 def build_summary(outcome: Outcome, plan: Plan, ctx: Context) -> str:

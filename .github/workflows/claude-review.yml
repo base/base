@@ -33,15 +33,22 @@ jobs:
     # Note: This job runs on the BaseRunnerGroup to be able to access LLM Gateway
     # It will not work on other runners
     # Runs for a pull request that is opened or marked ready (not a draft, not a fork: secrets and the runner
-    # group are unavailable to forks), or for a comment that starts with `/review` on an open pull request by
-    # its author or by someone with write access. The first step checks the comment is exactly `/review`.
+    # group are unavailable to forks), or for a comment that is `/review`, alone or followed by a space or
+    # a line break, on an open pull request by its author or by someone with write access. The exact match
+    # is here, before the job joins the concurrency group below, because GitHub keeps one waiting run per
+    # group: a comment such as `/reviewed` must not take the place of a real request that is waiting. The
+    # first step checks the same thing again.
     if: >-
       (github.event_name == 'pull_request' && github.event.action != 'synchronize'
         && github.event.pull_request.draft == false
         && github.event.pull_request.head.repo.full_name == github.repository)
       || (github.event_name == 'issue_comment'
         && github.event.issue.pull_request && github.event.issue.state == 'open'
-        && startsWith(github.event.comment.body, '/review') && github.event.comment.user.type != 'Bot'
+        && (github.event.comment.body == '/review'
+            || startsWith(github.event.comment.body, '/review ')
+            || startsWith(github.event.comment.body, format('/review{0}', fromJSON('"\n"')))
+            || startsWith(github.event.comment.body, format('/review{0}', fromJSON('"\r"'))))
+        && github.event.comment.user.type != 'Bot'
         && (github.event.comment.user.login == github.event.issue.user.login
             || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)))
     runs-on:
