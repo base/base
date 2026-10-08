@@ -401,16 +401,19 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
 
     /// Returns submitted predicates for builder forwarding, not repeated evaluation.
     ///
-    /// Defaults to an empty slice for transaction types that do not carry
-    /// validity predicates.
+    /// Derived from [`Self::validity_conditions`] so forwarding and enforcement
+    /// use the same ingested metadata.
     fn validity_predicates(&self) -> &[crate::ValidityPredicate] {
-        &[]
+        self.validity_conditions().submitted()
     }
 
-    /// Returns compiled validity conditions. Defaults to empty for ordinary transactions.
-    fn validity_conditions(&self) -> &crate::ValidityConditions {
-        crate::ValidityConditions::empty()
-    }
+    /// Returns the compiled conditions used for pool and builder enforcement.
+    ///
+    /// Implementations must supply their ingested metadata, or explicitly return
+    /// [`crate::ValidityConditions::empty`] when they never carry validity predicates.
+    /// This required source prevents legacy implementations from silently forwarding
+    /// predicates that are not enforced.
+    fn validity_conditions(&self) -> &crate::ValidityConditions;
 
     /// Returns the signed EIP-8130 payload when this transaction carries one.
     ///
@@ -487,10 +490,6 @@ where
 {
     fn encoded_2718(&self) -> Cow<'_, Bytes> {
         Cow::Borrowed(self.encoded_2718())
-    }
-
-    fn validity_predicates(&self) -> &[crate::ValidityPredicate] {
-        self.validity_conditions().submitted()
     }
 
     fn validity_conditions(&self) -> &crate::ValidityConditions {
