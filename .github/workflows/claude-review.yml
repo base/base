@@ -78,8 +78,8 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          read -r state head_repo head_sha base_ref draft < <(gh api "repos/$REPO/pulls/$NUMBER" \
-            --jq '[.state, .head.repo.full_name, .head.sha, .base.ref, .draft] | @tsv')
+          read -r state head_repo head_sha draft < <(gh api "repos/$REPO/pulls/$NUMBER" \
+            --jq '[.state, .head.repo.full_name, .head.sha, .draft] | @tsv')
           if [ "$state" != open ] || [ "$head_repo" != "$REPO" ]; then
             echo "::notice::Not reviewing: the pull request is not open, or it comes from a fork."
             echo "ok=false" >> "$GITHUB_OUTPUT"
@@ -107,8 +107,13 @@ jobs:
           {
             echo "ok=true"
             echo "head_sha=$head_sha"
-            echo "base_ref=$base_ref"
           } >> "$GITHUB_OUTPUT"
+
+      # Nothing from the pull request is on disk yet, so this cannot be influenced by it.
+      - name: Install Claude Code
+        if: steps.pr.outputs.ok == 'true'
+        working-directory: ${{ runner.temp }}
+        run: npm install --global @anthropic-ai/claude-code@2.1.293
 
       # Agents read the PR's files, so check out the PR head (not the default merge commit) to make the
       # line numbers they report match the diff that comments are anchored to. Do not leave the job
@@ -121,31 +126,32 @@ jobs:
           persist-credentials: false
 
       # Models, prompts, and which reviewers run are defined in .agents/skills/pr-review/.
-      # Run the pipeline from a clean checkout of the base branch, so a PR cannot add or replace files
-      # (agents, prompts, or a module that shadows the standard library) in the code that holds the
-      # tokens. The agents read the PR's files from the working directory, and `--setting-sources user`
-      # keeps the PR's own Claude settings and hooks out. For a `pull_request` run this does not cover this
-      # workflow file, which is the PR's own copy; that is why only same-repository PRs run.
-      # The PR that introduces the pipeline has no base copy and runs its own.
-      - name: Check out the review pipeline from the base branch
+      # The script that holds the secrets always comes from a clean checkout of the default branch, never
+      # from the pull request: a pull request cannot add or replace files (agents, prompts, or a module that
+      # shadows the standard library) in code it does not control. The agents read the pull request's files
+      # from the working directory, and `--setting-sources user` keeps the PR's own Claude settings and hooks
+      # out. The one exception is the pull request that introduces the pipeline, which has no default-branch
+      # copy yet and runs its own; that is allowed for a `pull_request` run only, whose workflow file is the
+      # PR's own anyway. A `/review` comment never runs a pull request's copy.
+      - name: Check out the review pipeline from the default branch
         id: pipeline
         if: steps.pr.outputs.ok == 'true'
         run: |
-          git fetch --depth 1 origin "$BASE_REF"
+          git fetch --depth 1 origin "$DEFAULT_BRANCH"
           script=.agents/skills/pr-review/review.py
           if git cat-file -e "FETCH_HEAD:$script" 2>/dev/null; then
             rm -rf "$RUNNER_TEMP/pipeline"
             git worktree prune
             git worktree add --force --detach "$RUNNER_TEMP/pipeline" FETCH_HEAD
             script="$RUNNER_TEMP/pipeline/$script"
+          elif [ "$EVENT" != pull_request ]; then
+            echo "::error::The default branch has no review pipeline, and a comment may not run the pull request's copy."
+            exit 1
           fi
           echo "script=$script" >> "$GITHUB_OUTPUT"
         env:
-          BASE_REF: ${{ steps.pr.outputs.base_ref }}
-
-      - name: Install Claude Code
-        if: steps.pr.outputs.ok == 'true'
-        run: npm install --global @anthropic-ai/claude-code@2.1.293
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EVENT: ${{ github.event_name }}
 
       # The script exits with 3 when the pull request's head is no longer the commit that was checked out. The
       # review runs once per pull request, so it must not be lost to a push that landed a moment earlier:
@@ -207,33 +213,23 @@ jobs:
         with:
           egress-policy: audit
 
+      # Only the default branch is checked out, never the pull request: the script calls the GitHub API and
+      # reads nothing from the pull request's files. Until the pipeline is on the default branch there is
+      # nothing to run, and the step below says so.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 1
           persist-credentials: false
 
-      # The same rule as the review job: the base branch's copy of the script, unless the pull request
-      # is the one that introduces it.
-      - name: Check out the review pipeline from the base branch
-        id: pipeline
-        run: |
-          git fetch --depth 1 origin "$BASE_REF"
-          script=.agents/skills/pr-review/review.py
-          if git cat-file -e "FETCH_HEAD:$script" 2>/dev/null; then
-            rm -rf "$RUNNER_TEMP/pipeline"
-            git worktree prune
-            git worktree add --force --detach "$RUNNER_TEMP/pipeline" FETCH_HEAD
-            script="$RUNNER_TEMP/pipeline/$script"
-          fi
-          echo "script=$script" >> "$GITHUB_OUTPUT"
-        env:
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
-
       - name: Update the count of unreviewed commits
-        run: python3 "$SCRIPT" --pr "$PR_NUMBER" --refresh-status
+        run: |
+          if [ ! -f .agents/skills/pr-review/review.py ]; then
+            echo "::notice::The review pipeline is not on the default branch yet, so there is no status line to update."
+            exit 0
+          fi
+          python3 .agents/skills/pr-review/review.py --pr "$PR_NUMBER" --refresh-status
         env:
-          SCRIPT: ${{ steps.pipeline.outputs.script }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
