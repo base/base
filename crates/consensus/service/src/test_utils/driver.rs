@@ -40,7 +40,7 @@ pub struct ProgressTimeout {
 /// paused time (`#[tokio::test(start_paused = true)]`) because [`Driver::tick`]
 /// advances the mock clock via [`tokio::time::advance`], which panics unless
 /// time is paused.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Driver {
     harnesses: Vec<Harness>,
 }
@@ -109,11 +109,5 @@ impl Driver {
             });
         }
         DriverProgressSnapshot { nodes }
-    }
-}
-
-impl Default for Driver {
-    fn default() -> Self {
-        Self::new()
     }
 }

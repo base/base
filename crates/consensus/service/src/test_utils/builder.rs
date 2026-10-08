@@ -1,6 +1,6 @@
 //! Fluent builder that wires a deterministic in-memory actor harness.
 
-use std::sync::Arc;
+use std::{num::NonZeroU64, sync::Arc};
 
 use alloy_consensus::Header as ConsensusHeader;
 use alloy_eips::{BlockNumHash, BlockNumberOrTag};
@@ -8,7 +8,7 @@ use base_common_genesis::{ChainGenesis, RollupConfig};
 use base_consensus_derive::test_utils::new_test_pipeline;
 use base_consensus_engine::{Engine, EngineState};
 use base_consensus_safedb::SafeHeadResponse;
-use base_protocol::{BlockInfo, L2BlockInfo};
+use base_protocol::L2BlockInfo;
 use tokio::{
     sync::{mpsc, oneshot, watch},
     task::JoinHandle,
@@ -114,7 +114,6 @@ impl Harness {
 pub struct HarnessBuilder {
     role: NodeMode,
     scripted_el_responses: Vec<ScriptedForkchoiceResponse>,
-    l1_chain: Vec<BlockInfo>,
     initial_safedb: Vec<SafeHeadResponse>,
     initial_l2_head: L2BlockInfo,
     reset_recovery_support: bool,
@@ -126,7 +125,6 @@ impl Default for HarnessBuilder {
         Self {
             role: NodeMode::Validator,
             scripted_el_responses: Vec::new(),
-            l1_chain: Vec::new(),
             initial_safedb: Vec::new(),
             initial_l2_head: L2BlockInfo::default(),
             reset_recovery_support: false,
@@ -153,12 +151,6 @@ impl HarnessBuilder {
         responses: impl IntoIterator<Item = ScriptedForkchoiceResponse>,
     ) -> Self {
         self.scripted_el_responses.extend(responses);
-        self
-    }
-
-    /// Seeds the fake L1 chain.
-    pub fn with_l1_chain(mut self, blocks: impl IntoIterator<Item = BlockInfo>) -> Self {
-        self.l1_chain.extend(blocks);
         self
     }
 
@@ -242,27 +234,24 @@ impl HarnessBuilder {
             QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone()),
             engine,
         );
-        let role = self.role;
+        let shadow_blocks_per_cycle =
+            (self.role == NodeMode::ShadowSequencer).then_some(NonZeroU64::MIN);
+        let operating_mode = self
+            .role
+            .try_into_operating_mode(false, shadow_blocks_per_cycle)
+            .expect("harness role resolves to an operating mode");
         let engine_handle = tokio::spawn(async move {
             // Same rationale as the derivation actor above: panic on `Err` so
             // engine-side failures fail tests fast with the real error instead
             // of hanging until the tick budget expires and reporting a
             // misleading `ProgressTimeout`.
-            let result = match role {
-                NodeMode::Validator => {
+            let result = match operating_mode {
+                NodeOperatingMode::Validator => {
                     ValidatorEngineRequestHandler::new(engine_processor)
                         .start(engine_actor_request_rx)
                         .await
                 }
-                NodeMode::Sequencer | NodeMode::ShadowSequencer | NodeMode::IsolatedSequencer => {
-                    let operating_mode = match role {
-                        NodeMode::Validator => NodeOperatingMode::Validator,
-                        NodeMode::Sequencer => NodeOperatingMode::Sequencer,
-                        NodeMode::IsolatedSequencer => NodeOperatingMode::IsolatedSequencer,
-                        NodeMode::ShadowSequencer => NodeOperatingMode::ShadowSequencer {
-                            blocks_per_cycle: std::num::NonZeroU64::MIN,
-                        },
-                    };
+                operating_mode => {
                     let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
                     SequencerEngineRequestCoordinator::new(
                         engine_processor,
@@ -306,10 +295,6 @@ impl HarnessBuilder {
             Some(derivation_actor_request_tx.clone()),
             Some(fake_engine_handle.clone()),
         );
-
-        for block in self.l1_chain {
-            fake_l1.extend(block).await;
-        }
 
         Harness {
             fake_engine_handle,
