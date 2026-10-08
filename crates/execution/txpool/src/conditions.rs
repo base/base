@@ -1,6 +1,6 @@
 //! Ingested validity conditions, partitioned into timing bounds and state predicates.
 
-use std::sync::OnceLock;
+use std::{borrow::Cow, sync::OnceLock};
 
 use alloy_primitives::U256;
 
@@ -161,21 +161,24 @@ impl ValidityConditions {
     }
 
     /// Normalized predicates in evaluation order, for parking and resting checks.
-    pub fn iter(&self) -> impl Iterator<Item = ValidityPredicate> + '_ {
+    ///
+    /// Timing predicates are synthesized; state predicates are borrowed so successful
+    /// evaluation and membership checks do not clone them.
+    pub fn iter(&self) -> impl Iterator<Item = Cow<'_, ValidityPredicate>> + '_ {
         self.block
             .comparisons()
-            .map(|(op, value)| ValidityPredicate::BlockNumber { op, value })
+            .map(|(op, value)| Cow::Owned(ValidityPredicate::BlockNumber { op, value }))
             .chain(
-                self.flashblock
-                    .comparisons()
-                    .map(|(op, value)| ValidityPredicate::FlashblockIndex { op, value }),
+                self.flashblock.comparisons().map(|(op, value)| {
+                    Cow::Owned(ValidityPredicate::FlashblockIndex { op, value })
+                }),
             )
-            .chain(self.state_predicates().cloned())
+            .chain(self.state_predicates().map(Cow::Borrowed))
     }
 
     /// Whether these conditions contain the normalized predicate recorded by a resting iterator.
     pub fn contains(&self, predicate: &ValidityPredicate) -> bool {
-        self.iter().any(|candidate| candidate == *predicate)
+        self.iter().any(|candidate| candidate.as_ref() == predicate)
     }
 
     /// Whether a passed timing upper bound proves permanent expiry.
@@ -207,11 +210,77 @@ impl ValidityConditions {
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use alloy_primitives::{Address, U256};
     use revm::database::InMemoryDB;
 
     use super::{ValidityBounds, ValidityConditions};
     use crate::{PredicateContext, ValidityOperator, ValidityPredicate};
+
+    #[test]
+    fn normalized_iteration_borrows_state_and_preserves_membership() {
+        let block = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::GreaterThan,
+            value: U256::from(9),
+        };
+        let normalized_block = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::from(10),
+        };
+        let flashblock = ValidityPredicate::FlashblockIndex {
+            op: ValidityOperator::NotEqual,
+            value: U256::from(2),
+        };
+        let balance = ValidityPredicate::Balance {
+            address: Address::ZERO,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let nonce = ValidityPredicate::Nonce {
+            address: Address::ZERO,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let storage = ValidityPredicate::Storage {
+            address: Address::ZERO,
+            slot: U256::ZERO,
+            mask: U256::MAX,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let raw = vec![
+            storage.clone(),
+            block.clone(),
+            nonce.clone(),
+            flashblock.clone(),
+            balance.clone(),
+        ];
+        let conditions = ValidityConditions::new(raw.clone());
+        let normalized = conditions.iter().collect::<Vec<_>>();
+        assert_eq!(
+            normalized,
+            vec![
+                Cow::Owned(normalized_block.clone()),
+                Cow::Owned(flashblock.clone()),
+                Cow::Borrowed(&balance),
+                Cow::Borrowed(&nonce),
+                Cow::Borrowed(&storage),
+            ]
+        );
+        assert!(normalized[2..].iter().all(|predicate| matches!(predicate, Cow::Borrowed(_))));
+        for predicate in [&normalized_block, &flashblock, &balance, &nonce, &storage] {
+            assert!(conditions.contains(predicate));
+        }
+        assert!(!conditions.contains(&block));
+        assert!(!conditions.contains(&ValidityPredicate::Nonce {
+            address: Address::ZERO,
+            op: ValidityOperator::Equal,
+            value: U256::from(1),
+        }));
+        assert_eq!(conditions.submitted(), raw);
+        assert_eq!(conditions.len(), raw.len());
+    }
 
     #[test]
     fn normalized_timing_conjunctions_preserve_matching_and_expiry() {

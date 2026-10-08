@@ -1019,7 +1019,11 @@ mod tests {
             [state_predicate.clone(), timing_predicate.clone()]
         );
         assert_eq!(
-            transaction.validity_conditions().iter().collect::<Vec<_>>(),
+            transaction
+                .validity_conditions()
+                .iter()
+                .map(|predicate| predicate.into_owned())
+                .collect::<Vec<_>>(),
             [timing_predicate, state_predicate]
         );
     }

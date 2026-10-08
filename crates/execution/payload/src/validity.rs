@@ -48,6 +48,8 @@ impl ValidityPredicateKey {
     }
 
     /// Returns the first unsatisfied normalized predicate and its state or context key.
+    ///
+    /// State predicates are borrowed during evaluation and cloned only when unsatisfied.
     pub fn first_unsatisfied<DB: Database>(
         predicates: &ValidityConditions,
         db: &mut DB,
@@ -58,7 +60,7 @@ impl ValidityPredicateKey {
                 Ok(true) => {}
                 Ok(false) => {
                     let key = Self::for_predicate(&predicate);
-                    return Ok(Some((predicate, key)));
+                    return Ok(Some((predicate.into_owned(), key)));
                 }
                 Err(error) => return Err(error),
             }
