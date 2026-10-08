@@ -33,7 +33,6 @@ use base_common_precompiles::{
     UpgradeGatedStorageFeatures,
 };
 use base_precompile_storage::{BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx};
-use rstest::rstest;
 
 mod common;
 use common::{
@@ -531,21 +530,11 @@ fn run_burn_memo(s: &mut HashMapStorageProvider) -> Result<Bytes, BasePrecompile
     )
 }
 
-#[rstest]
-#[case::transfer("transfer_with_memo", ROOT_TRANSFER_WITH_MEMO, run_transfer_memo, ok_true())]
-#[case::transfer_from(
-    "transfer_from_with_memo",
-    ROOT_TRANSFER_FROM_WITH_MEMO,
-    run_transfer_from_memo,
-    ok_true()
-)]
-#[case::mint("mint_with_memo", ROOT_MINT_WITH_MEMO, run_mint_memo, Bytes::new())]
-#[case::burn("burn_with_memo", ROOT_BURN_WITH_MEMO, run_burn_memo, Bytes::new())]
-fn golden_memo_variants_emit_transfer_then_memo(
-    #[case] label: &str,
-    #[case] root: B256,
-    #[case] run: MemoRun,
-    #[case] expected: Bytes,
+fn assert_memo_variant_emits_transfer_then_memo(
+    label: &str,
+    root: B256,
+    run: MemoRun,
+    expected: Bytes,
 ) {
     let mut s = fresh();
     let out = run(&mut s).unwrap();
@@ -555,6 +544,46 @@ fn golden_memo_variants_emit_transfer_then_memo(
     assert_eq!(events[events.len() - 2].topics()[0], IB20::Transfer::SIGNATURE_HASH);
     assert_eq!(events[events.len() - 1].topics()[0], IB20::Memo::SIGNATURE_HASH);
     assert_root(label, s, root);
+}
+
+#[test]
+fn golden_transfer_with_memo_emits_transfer_then_memo() {
+    assert_memo_variant_emits_transfer_then_memo(
+        "transfer_with_memo",
+        ROOT_TRANSFER_WITH_MEMO,
+        run_transfer_memo,
+        ok_true(),
+    );
+}
+
+#[test]
+fn golden_transfer_from_with_memo_emits_transfer_then_memo() {
+    assert_memo_variant_emits_transfer_then_memo(
+        "transfer_from_with_memo",
+        ROOT_TRANSFER_FROM_WITH_MEMO,
+        run_transfer_from_memo,
+        ok_true(),
+    );
+}
+
+#[test]
+fn golden_mint_with_memo_emits_transfer_then_memo() {
+    assert_memo_variant_emits_transfer_then_memo(
+        "mint_with_memo",
+        ROOT_MINT_WITH_MEMO,
+        run_mint_memo,
+        Bytes::new(),
+    );
+}
+
+#[test]
+fn golden_burn_with_memo_emits_transfer_then_memo() {
+    assert_memo_variant_emits_transfer_then_memo(
+        "burn_with_memo",
+        ROOT_BURN_WITH_MEMO,
+        run_burn_memo,
+        Bytes::new(),
+    );
 }
 
 // ============================================================================
@@ -2795,10 +2824,6 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
     // No-op: forces each arm to name real golden `#[test]` fns by path.
     fn covered(_goldens: &[fn()]) {}
 
-    // The four with-memo ops share one parameterized golden; referencing the base fn keeps
-    // the rename/removal guard intact for all of them.
-    fn covered_memo(_golden: fn(&str, B256, MemoRun, Bytes)) {}
-
     match call {
         // ERC-20 core
         C::transfer(_) => covered(&[
@@ -2823,10 +2848,12 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_approve_reverts_zero_spender,
             golden_approve_reverts_zero_approver,
         ]),
-        C::transferWithMemo(_)
-        | C::transferFromWithMemo(_)
-        | C::mintWithMemo(_)
-        | C::burnWithMemo(_) => covered_memo(golden_memo_variants_emit_transfer_then_memo),
+        C::transferWithMemo(_) => covered(&[golden_transfer_with_memo_emits_transfer_then_memo]),
+        C::transferFromWithMemo(_) => {
+            covered(&[golden_transfer_from_with_memo_emits_transfer_then_memo])
+        }
+        C::mintWithMemo(_) => covered(&[golden_mint_with_memo_emits_transfer_then_memo]),
+        C::burnWithMemo(_) => covered(&[golden_burn_with_memo_emits_transfer_then_memo]),
 
         // mint / burn
         C::mint(_) => covered(&[
