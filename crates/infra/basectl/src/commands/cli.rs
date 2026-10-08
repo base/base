@@ -93,6 +93,9 @@ pub enum MonitorCommands {
     /// Network upgrade activation countdown and history
     #[command(visible_alias = "u")]
     Upgrades,
+    /// `OpenVM` range-guest prove demo
+    #[command(name = "openvm", visible_alias = "z")]
+    OpenVm,
 }
 
 impl Cli {
@@ -109,7 +112,7 @@ impl Cli {
         let command = match self.command {
             Some(Commands::Monitor { command }) => {
                 let view = command.map(|command| command.view_id()).unwrap_or(ViewId::Home);
-                run_app(view, &self.config, conductor_rpc).await?;
+                run_app(view, tui_network(&self.config, view), conductor_rpc).await?;
                 return Ok(CommandOutcome::Success);
             }
             None => {
@@ -147,6 +150,15 @@ impl Cli {
     }
 }
 
+/// Network used to launch a TUI view.
+///
+/// The `OpenVM` demo needs zeronet RPCs (L1 debug, beacon, op-node). When the
+/// user did not pass `-c`, clap's default is mainnet — send that view to
+/// zeronet instead. An explicit `-c sepolia` / `-c path.yaml` is left alone.
+fn tui_network(config: &str, view: ViewId) -> &str {
+    if view == ViewId::OpenVm && config == "mainnet" { "zeronet" } else { config }
+}
+
 impl MonitorCommands {
     /// Returns the TUI view selected by this command.
     pub const fn view_id(&self) -> ViewId {
@@ -158,6 +170,7 @@ impl MonitorCommands {
             Self::Conductor => ViewId::Conductor,
             Self::Pods => ViewId::Pods,
             Self::Upgrades => ViewId::Upgrades,
+            Self::OpenVm => ViewId::OpenVm,
         }
     }
 }
@@ -180,9 +193,18 @@ mod tests {
 
     #[test]
     fn monitor_aliases_parse() {
-        for alias in ["c", "f", "d", "cc", "co", "po", "u"] {
+        for alias in ["c", "f", "d", "cc", "co", "po", "u", "z"] {
             assert!(try_parse(["basectl", "monitor", alias]).is_ok(), "alias: {alias}");
         }
+        assert!(try_parse(["basectl", "monitor", "openvm"]).is_ok());
+    }
+
+    #[test]
+    fn openvm_monitor_defaults_to_zeronet() {
+        assert_eq!(super::tui_network("mainnet", crate::ViewId::OpenVm), "zeronet");
+        assert_eq!(super::tui_network("sepolia", crate::ViewId::OpenVm), "sepolia");
+        assert_eq!(super::tui_network("mainnet", crate::ViewId::Home), "mainnet");
+        assert_eq!(super::tui_network("mainnet", crate::ViewId::Proofs), "mainnet");
     }
 
     #[test]

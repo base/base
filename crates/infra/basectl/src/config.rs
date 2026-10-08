@@ -358,6 +358,9 @@ pub struct MonitoringConfig {
     pub flashblocks_ws: Url,
     /// L1 Ethereum JSON-RPC endpoint URL.
     pub l1_rpc: Url,
+    /// Optional L1 beacon HTTP endpoint, used by the `OpenVM` range-witness dump.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub l1_beacon_rpc: Option<Url>,
     /// Optional Base consensus node JSON-RPC endpoint URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consensus_node_rpc: Option<Url>,
@@ -546,6 +549,7 @@ struct MonitoringConfigOverride {
     public_rpc: Option<Url>,
     flashblocks_ws: Option<Url>,
     l1_rpc: Option<Url>,
+    l1_beacon_rpc: Option<Url>,
     consensus_node_rpc: Option<Url>,
     chain_id: Option<u64>,
     prover_rpc: Option<Url>,
@@ -599,6 +603,7 @@ impl MonitoringConfig {
             public_rpc: Some(Url::parse("https://mainnet.base.org").unwrap()),
             flashblocks_ws: Url::parse("wss://mainnet.flashblocks.base.org/ws").unwrap(),
             l1_rpc: Url::parse("https://ethereum-rpc.publicnode.com").unwrap(),
+            l1_beacon_rpc: None,
             consensus_node_rpc: Some(Url::parse("http://127.0.0.1:9545").unwrap()),
             chain_id: Some(8453),
             prover_rpc: None,
@@ -628,6 +633,7 @@ impl MonitoringConfig {
             public_rpc: Some(Url::parse("https://sepolia.base.org").unwrap()),
             flashblocks_ws: Url::parse("wss://sepolia.flashblocks.base.org/ws").unwrap(),
             l1_rpc: Url::parse("https://ethereum-sepolia-rpc.publicnode.com").unwrap(),
+            l1_beacon_rpc: None,
             consensus_node_rpc: Some(Url::parse("http://127.0.0.1:9545").unwrap()),
             chain_id: Some(84532),
             prover_rpc: None,
@@ -663,6 +669,7 @@ impl MonitoringConfig {
             public_rpc: None,
             flashblocks_ws: Url::parse("ws://localhost:7111").unwrap(),
             l1_rpc: Url::parse("http://localhost:4545").unwrap(),
+            l1_beacon_rpc: None,
             consensus_node_rpc: Some(Url::parse("http://localhost:7549").unwrap()),
             // Populated from optimism_rollupConfig in load_devnet.
             chain_id: None,
@@ -844,6 +851,7 @@ impl MonitoringConfig {
             public_rpc: overrides.public_rpc.or(base.public_rpc),
             flashblocks_ws: overrides.flashblocks_ws.unwrap_or(base.flashblocks_ws),
             l1_rpc: overrides.l1_rpc.unwrap_or(base.l1_rpc),
+            l1_beacon_rpc: overrides.l1_beacon_rpc.or(base.l1_beacon_rpc),
             consensus_node_rpc: overrides.consensus_node_rpc.or(base.consensus_node_rpc),
             chain_id: overrides.chain_id.or(base.chain_id),
             prover_rpc: overrides.prover_rpc.or(base.prover_rpc),
@@ -953,6 +961,24 @@ mod tests {
         assert!(sepolia.el_ws_rpc.is_none());
         assert_eq!(sepolia.public_rpc.as_ref().unwrap().as_str(), "https://sepolia.base.org/");
         assert_eq!(sepolia.consensus_node_rpc.as_ref().unwrap().as_str(), "http://127.0.0.1:9545/");
+    }
+
+    #[test]
+    fn zeronet_yaml_reads_l1_beacon_rpc() {
+        let cfg: MonitoringConfig = serde_yaml::from_str(
+            r#"
+name: zeronet
+rpc: http://127.0.0.1:8545
+flashblocks_ws: ws://127.0.0.1:1/ws
+l1_rpc: http://127.0.0.1:1
+l1_beacon_rpc: http://127.0.0.1:5052
+consensus_node_rpc: http://127.0.0.1:7545
+system_config: "0x0000000000000000000000000000000000000001"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.l1_beacon_rpc.unwrap().as_str(), "http://127.0.0.1:5052/");
+        assert_eq!(cfg.consensus_node_rpc.unwrap().as_str(), "http://127.0.0.1:7545/");
     }
 
     #[test]

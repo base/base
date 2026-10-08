@@ -1,0 +1,37 @@
+[package]
+name = "base-openvm-dump"
+description = "Dump a 1-block OpenVM range witness from live L1/L2 RPCs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "openvm-dump"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# alloy
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-provider = { workspace = true, features = ["reqwest"] }
+
+# base
+base-common-network.workspace = true
+base-optimism-rpc.workspace = true
+base-proof-zk-backend.workspace = true
+base-proof-zk-witness.workspace = true
+
+# misc
+url.workspace = true
+eyre.workspace = true
+tempfile.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["std"] }
+clap = { workspace = true, features = ["derive", "env"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
