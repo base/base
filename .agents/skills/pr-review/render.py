@@ -184,7 +184,8 @@ def cell(text: str) -> str:
 
 def render_summary(*, overview: str | None, new: list[Finding], outside: list[Finding],
                    threads: list[dict[str, Any]], reopened: set[str], fixed: set[str], failed: list[str],
-                   details: str, repo: str, head_sha: str | None, replace_existing: bool) -> str | None:
+                   details: str, repo: str, head_sha: str | None, replace_existing: bool,
+                   back: set[str] | frozenset[str] = frozenset()) -> str | None:
     """The top-level summary: headline counts, new findings, and what is still open.
 
     Returns None when there is nothing to report and no earlier summary to replace.
@@ -192,7 +193,7 @@ def render_summary(*, overview: str | None, new: list[Finding], outside: list[Fi
     # An outdated thread is still open until someone resolves it, so it still counts. A thread the bot
     # marked as resolved in an earlier run is done, unless it was reopened in this one.
     carried = [t for t in threads if t["owned_by_bot"] and t["thread_id"] not in fixed and not t["resolved"]
-               and (t["thread_id"] in reopened or not t["bot_resolved"])]
+               and (t["thread_id"] in reopened or t["thread_id"] in back or not t["bot_resolved"])]
     resolved_now = [t for t in threads if t["thread_id"] in fixed]
     if not (new or outside or carried or resolved_now or failed) and not replace_existing:
         return None
@@ -212,8 +213,12 @@ def render_summary(*, overview: str | None, new: list[Finding], outside: list[Fi
             place = location(repo, head_sha, f.path, f.line)
             out.append(f"| {SEVERITIES[f.severity][0]} | {CATEGORIES[f.category]} | {cell(f.title)} | {place} |")
 
-    for heading, is_reopened in (("Reopened", True), ("Open from earlier reviews", False)):
-        rows = [t for t in carried if (t["thread_id"] in reopened) == is_reopened]
+    groups = (("Reopened", [t for t in carried if t["thread_id"] in reopened]),
+              ("Problem is back, but the comment could not be restored",
+               [t for t in carried if t["thread_id"] in back and t["thread_id"] not in reopened]),
+              ("Open from earlier reviews",
+               [t for t in carried if t["thread_id"] not in reopened and t["thread_id"] not in back]))
+    for heading, rows in groups:
         if rows:
             out += ["", f"### {heading}", ""]
             for t in rows:

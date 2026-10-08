@@ -304,6 +304,18 @@ class PlanTests(unittest.TestCase):
         plan = self.plan({"type": "reopen", "thread_id": "damaged", "body": "back"})
         self.assertEqual((plan.reopens, len(plan.rejected)), ([], 1))
         self.assertIn("no original", plan.rejected[0])
+        self.assertEqual(plan.back, ["damaged"])
+
+    def test_the_decider_is_told_when_a_marked_thread_cannot_be_reopened(self) -> None:
+        damaged = thread("damaged", body=f"{render.MARKER}\n{render.RESOLVED_PREFIX} — fixed\n\nno details")
+        ctx = review.Context(description="d", title="t", files=[], diff=DIFF,
+                             threads=[resolved_by_bot("marked"), damaged, thread("open")])
+        prompt = review.decide_prompt(ctx, {}, {}, {})
+        statuses = {t["thread_id"]: t["status"] for t in json.loads(
+            prompt.split("<existing_threads>")[1].split("</existing_threads>")[0])}
+        self.assertEqual(statuses["marked"], "marked resolved by the bot")
+        self.assertIn("cannot be reopened", statuses["damaged"])
+        self.assertEqual(statuses["open"], "open")
 
     def test_a_thread_gets_one_change_per_run(self) -> None:
         plan = self.plan({"type": "resolve", "thread_id": "open", "body": "a"},
@@ -844,11 +856,17 @@ class ApplyPlanTests(unittest.TestCase):
             return render.render_summary(
                 overview=None, new=plan.new, outside=plan.outside, threads=self.ctx.threads,
                 reopened={u["thread_id"] for u in plan.reopens}, fixed={r["thread_id"] for r in plan.resolves},
-                failed=[], details="d", repo="base/base", head_sha="abc", replace_existing=True)
+                back=set(plan.back), failed=[], details="d", repo="base/base", head_sha="abc",
+                replace_existing=True)
 
         gh.responses.setdefault("pr view", json.dumps({"headRefOid": "abc"}))
+        def live_threads(*_):
+            if self.live is None:
+                raise review.ReviewError("graphql: boom")
+            return self.live
+
         with mock.patch.object(review, "gh", gh), mock.patch.object(
-                review, "fetch_threads", side_effect=lambda *_: self.live):
+                review, "fetch_threads", side_effect=live_threads):
             return review.apply_plan(self.plan, self.ctx, summarize)
 
     def test_everything_is_posted_and_the_old_summary_is_replaced_after_the_new_one(self) -> None:
@@ -888,6 +906,41 @@ class ApplyPlanTests(unittest.TestCase):
         self.assertNotIn("### Reopened", summary)
         # No reply claims the thread was reopened when the comment was not put back.
         self.assertFalse([c for c in gh.matching("addPullRequestReviewThreadReply") if "Reopened" in " ".join(c)])
+
+    def summary_of(self, gh: FakeGh) -> str:
+        [summary] = [i for c, i in zip(gh.calls, gh.inputs, strict=True) if c[:2] == ["pr", "comment"]]
+        return summary
+
+    def test_a_reopen_whose_edit_fails_keeps_the_thread_open_in_the_summary(self) -> None:
+        gh = FakeGh(fail=("comments/100",))
+        self.apply(gh)
+        self.assertEqual((self.plan.reopens, self.plan.back), ([], ["marked"]))
+        text = self.summary_of(gh)
+        self.assertIn("Problem is back, but the comment could not be restored", text)
+        self.assertNotIn("No open findings", text)
+
+    def test_when_the_live_read_fails_nothing_is_changed_but_everything_else_is_posted(self) -> None:
+        self.live = None
+        gh = FakeGh()
+        problems = self.apply(gh)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("re-read threads", problems[0])
+        self.assertEqual([c for c in gh.calls if "PATCH" in c], [])
+        self.assertEqual(len(gh.matching("pulls/7/reviews")), 1)
+        text = self.summary_of(gh)
+        self.assertNotIn("### Fixed in this push", text)
+        self.assertIn("Problem is back, but the comment could not be restored", text)
+
+    def test_the_summary_is_written_from_the_threads_as_they_are_now(self) -> None:
+        # A person resolved this open thread while the agents ran; it must not be counted as open.
+        self.live = [{**t, "resolved": True} if t["thread_id"] == "open" else t for t in self.threads]
+        text = self.summary_of(self.run_apply())
+        self.assertNotIn("A problem.", text.split("How this was reviewed")[0].split("Fixed in this push")[0])
+
+    def run_apply(self) -> FakeGh:
+        gh = FakeGh()
+        self.apply(gh)
+        return gh
 
     def test_a_reopen_whose_reply_fails_still_counts_because_the_comment_is_restored(self) -> None:
         gh = FakeGh(fail=("addPullRequestReviewThreadReply",))
