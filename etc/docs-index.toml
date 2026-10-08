@@ -694,10 +694,6 @@ digest = "12c930d703"
 summary = "Docs for base-system-tests: running the snapshot-backed mainnet devnet (builder and follow client), snapshot and transfer benchmarks, workload suite, 2s vs 200ms comparison, cleanup."
 digest = "261a5e39c4"
 
-["etc/systems/TIMINGS.md"]
-summary = "Per-test wall-clock durations (median, min, max) of the CI System Tests job, slowest first, with how to regenerate them from job logs and why they overstate a test's cost alone."
-digest = "6575c09a4a"
-
 ["etc/tools/witness-diff/README.md"]
 summary = "witness-diff tool that compares two execution witnesses (from debug_executionWitness) to find differing trie nodes, bytecodes, or preimages. Use when debugging state root mismatches between nodes."
 digest = "25447faa55"

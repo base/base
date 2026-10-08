@@ -7,7 +7,7 @@ logs, slowest first. Pass several logs from the same configuration so one noisy 
 decide the ranking.
 
     depot ci logs <attempt-id> --output-file run1.txt
-    python3 etc/scripts/ci/system_test_timings.py run1.txt run2.txt run3.txt > etc/systems/TIMINGS.md
+    python3 etc/scripts/ci/system_test_timings.py run1.txt run2.txt run3.txt
 """
 
 import re
@@ -60,8 +60,7 @@ def main(paths):
     unlisted = [row for row in rows if row[0] < LISTED_MIN_SECONDS]
 
     print("# System test timings\n")
-    print(f"Per-test durations from {len(runs)} CI run(s) of the `System Tests` job. Regenerate with")
-    print("`etc/scripts/ci/system_test_timings.py` (see its docstring) when the configuration changes.\n")
+    print(f"Per-test durations from {len(runs)} CI run(s) of the `System Tests` job.\n")
     print("**These are wall-clock times under load, not the cost of a test on its own.** Tests share the")
     print("runner and the shared L1, so a test's time includes waiting on CPU, on the deployment lock and")
     print("on other tests' Docker work. Locally one `upgrade_signal` test took 18-30s alone but 100s+ at")
