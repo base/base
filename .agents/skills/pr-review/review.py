@@ -44,6 +44,7 @@ SKILL_DIR = Path(__file__).resolve().parent
 AGENTS_DIR = SKILL_DIR / "agents"
 SCHEMAS_DIR = SKILL_DIR / "schemas"
 FINDING_GUIDE = SKILL_DIR / "shared" / "finding-guide.md"
+WORKING_GUIDE = SKILL_DIR / "shared" / "working-fast.md"
 
 # Only threads and comments authored by the Actions bot count as ours, so a human who quotes a bot
 # comment (marker included) cannot become a target for replies, resolves, or deletion.
@@ -278,6 +279,7 @@ def run_agent(agent: Agent, user_prompt: str, cwd: Path, artifacts: Path, model_
     system_prompt = agent.prompt
     if agent.stage in GUIDE_STAGES:
         system_prompt += "\n\n" + FINDING_GUIDE.read_text().strip()
+    system_prompt += "\n\n" + WORKING_GUIDE.read_text().strip()
     (artifacts / f"{label}.prompt.md").write_text(
         f"model: {model}\neffort: {agent.effort}\ntools: {agent.tools}\n\n"
         f"# System prompt\n\n{system_prompt}\n\n# User prompt\n\n{user_prompt}\n")
