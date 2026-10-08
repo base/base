@@ -622,7 +622,11 @@ def decide_prompt(ctx: Context, triage: dict[str, Any], reviews: dict[str, dict[
     def status(t: dict[str, Any]) -> str:
         if t["resolved"]:
             return "resolved on GitHub"
-        return "marked resolved by the bot" if t["bot_resolved"] else "open"
+        if t["bot_resolved"]:
+            if render.unmark_resolved(t["first_body"]) is None:
+                return "marked resolved by the bot, original text missing, cannot be reopened"
+            return "marked resolved by the bot"
+        return "open"
 
     threads = [{"thread_id": t["thread_id"], "status": status(t), "owned_by_bot": t["owned_by_bot"],
                 "outdated": t["outdated"], "path": t["path"], "line": t["line"],
@@ -651,6 +655,9 @@ class Plan:
     # Threads whose comment is rewritten to say the bot resolved it, and threads whose comment is put back.
     resolves: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     reopens: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    # Threads the decider says the problem is back on, where the comment was not restored. They stay
+    # open in the summary, so the problem is not lost.
+    back: list[str] = dataclasses.field(default_factory=list)
     rejected: list[str] = dataclasses.field(default_factory=list)
     summary: str | None = None
 
@@ -696,6 +703,7 @@ def build_plan(decision: dict[str, Any], threads: list[dict[str, Any]],
         elif (original := render.unmark_resolved(thread["first_body"])) is None:
             # Someone edited the original out of the comment. Raise it again as a new comment instead.
             plan.rejected.append(f"reopen: thread {thread['thread_id']} has no original comment to restore")
+            plan.back.append(thread["thread_id"])
         else:
             touched.add(thread["thread_id"])
             plan.reopens.append({"thread_id": thread["thread_id"], "comment_id": thread["comment_id"],
@@ -752,7 +760,13 @@ def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None]
 
     # The threads were read before the agents ran, which can be an hour ago. Act on them as they are now:
     # if a person resolved a thread, or edited the bot's comment, in the meantime, leave it alone.
-    live = {t["thread_id"]: t for t in fetch_threads(number, repo)}
+    try:
+        live_threads: list[dict[str, Any]] | None = fetch_threads(number, repo)
+    except ReviewError as exc:
+        problems.append(f"re-read threads: {exc}")
+        log(f"  could not re-read the threads: {exc}")
+        live_threads = None
+    live = {t["thread_id"]: t for t in live_threads or []}
 
     def unchanged(item: dict[str, Any], expect_marked: bool) -> bool:
         thread = live.get(item["thread_id"])
@@ -762,8 +776,15 @@ def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None]
             log(f"  {item['thread_id']}: changed since it was read, leaving it alone")
         return ok
 
-    plan.resolves = [i for i in plan.resolves if unchanged(i, expect_marked=False)]
-    plan.reopens = [i for i in plan.reopens if unchanged(i, expect_marked=True)]
+    if live_threads is None:
+        # Without a current view nothing is safe to change; the next push decides again.
+        plan.back += [i["thread_id"] for i in plan.reopens]
+        plan.resolves, plan.reopens = [], []
+    else:
+        # The summary is written from the threads as they are now, not as they were an hour ago.
+        ctx.threads = live_threads
+        plan.resolves = [i for i in plan.resolves if unchanged(i, expect_marked=False)]
+        plan.reopens = [i for i in plan.reopens if unchanged(i, expect_marked=True)]
 
     def edit_comment(item: dict[str, Any], body: str) -> bool:
         return attempt(f"edit comment {item['comment_id']}",
@@ -776,7 +797,13 @@ def apply_plan(plan: Plan, ctx: Context, summarize: Callable[[Plan], str | None]
     plan.resolves = [i for i in plan.resolves if edit_comment(i, i["body"])]
     # The comment is what the thread shows, so the thread counts as reopened once it is restored;
     # a failed reply is reported but does not hide it from the summary.
-    plan.reopens = [i for i in plan.reopens if edit_comment(i, i["edit"])]
+    restored = []
+    for item in plan.reopens:
+        if edit_comment(item, item["edit"]):
+            restored.append(item)
+        else:
+            plan.back.append(item["thread_id"])
+    plan.reopens = restored
     for item in plan.reopens:
         reply(item)
 
@@ -945,7 +972,7 @@ def build_summary(outcome: Outcome, plan: Plan, ctx: Context) -> str | None:
     return render.render_summary(
         overview=outcome.decision.get("overview"), new=plan.new, outside=plan.outside,
         threads=ctx.threads, reopened={u["thread_id"] for u in plan.reopens},
-        fixed={r["thread_id"] for r in plan.resolves},
+        fixed={r["thread_id"] for r in plan.resolves}, back=set(plan.back),
         failed=list(outcome.failed), details=details, repo=ctx.repo, head_sha=ctx.head_sha,
         replace_existing=ctx.previous_summary is not None)
 
