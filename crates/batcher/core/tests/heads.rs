@@ -114,9 +114,9 @@ fn test_lower_safe_head_from_a_node_ahead_on_l1_resets_pipeline_and_source() {
     });
 }
 
-/// A safe head at the same height as the last one with another hash is not lower, so the
-/// driver leaves it to reconciliation: the pipeline finds it off the buffered chain, and the
-/// driver resets the pipeline and restarts the source from it.
+/// A safe head at the same height as the last one with another hash goes through
+/// reconciliation: the pipeline finds it off the buffered chain, and the driver resets the
+/// pipeline and restarts the source from it.
 #[test]
 fn test_safe_head_off_the_buffered_chain_resets_pipeline_and_source() {
     Runner::start(Config::seeded(0), |ctx| async move {

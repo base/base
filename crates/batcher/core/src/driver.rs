@@ -281,7 +281,7 @@ where
     /// A safe head lower than the last one acted on means one of two things. Either the node is
     /// behind on L1, as a new leader or a restarted node is, and derives the same blocks again:
     /// while it has not read L1 past the block the last safe head was reported at, the status
-    /// says nothing new and is ignored. Or L1 lost the data that made the last safe head safe:
+    /// is ignored. Or L1 lost the data that made the last safe head safe:
     /// once the node has read past that block and its safe head is still lower, the driver
     /// resets the pipeline and posts the blocks above the lower safe head again.
     fn on_derivation_status(&mut self, status: DerivationStatus) {

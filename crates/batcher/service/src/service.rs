@@ -495,8 +495,8 @@ impl BatcherService {
         let initial_derivation_status =
             Self::rpc_retry("optimism_syncStatus", retry, rpc_timeout, || async {
                 match rollup_node.derivation_status().await {
-                    Ok(status) if status.is_from_a_starting_node() => {
-                        Err("rollup node still starting, no safe L2 head or no L1 block yet".into())
+                    Ok(status) if status.lacks_safe_head_or_l1_block() => {
+                        Err("sync status without a safe L2 head or an L1 block".into())
                     }
                     result => result,
                 }
@@ -888,10 +888,10 @@ mod tests {
         );
     }
 
-    /// Setup waits for a rollup node that is still starting: it reads the sync status again until
-    /// it carries a safe head and an L1 block, instead of failing on the first answer.
+    /// Setup reads the sync status again until it carries a safe head and an L1 block, instead of
+    /// failing on the first answer without them.
     #[tokio::test]
-    async fn setup_waits_for_a_starting_rollup_node() {
+    async fn setup_waits_for_a_sync_status_with_a_safe_head_and_an_l1_block() {
         let server = MockServer::start_async().await;
         let signer = Address::repeat_byte(0x51);
         mock_system_config(&server, signer).await;

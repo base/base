@@ -17,10 +17,10 @@ pub struct DerivationStatus {
 }
 
 impl DerivationStatus {
-    /// Whether the status is one a starting node reports: without a safe L2 head until its
-    /// engine is bootstrapped, or without an L1 block until its derivation pipeline has an
-    /// origin. Such a status says nothing about derivation progress.
-    pub fn is_from_a_starting_node(&self) -> bool {
+    /// Whether the status lacks a safe L2 head or an L1 block. A node reports them empty until
+    /// its engine is bootstrapped and its derivation pipeline has an origin, as at startup or
+    /// during execution-layer sync.
+    pub fn lacks_safe_head_or_l1_block(&self) -> bool {
         self.safe_l2 == BlockInfo::default() || self.current_l1 == BlockInfo::default()
     }
 }
