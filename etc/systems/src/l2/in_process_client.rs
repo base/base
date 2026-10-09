@@ -11,6 +11,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
 };
+use base_execution_txpool::ValiditySignatureMode;
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_node_core::args::RollupArgs;
@@ -82,6 +83,8 @@ pub struct InProcessClientConfig {
     /// Optional transaction forwarding configuration.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
+    /// Staged signature policy at local validity ingress before forwarding.
+    pub validity_signature_mode: ValiditySignatureMode,
     /// Optional L1 upgrade signal configuration.
     ///
     /// When the mode applies at startup, the schedule is read from L1 and applied to the chain
@@ -432,7 +435,10 @@ impl InProcessClient {
         if let Some(ref tx_fwd_config) = config.tx_forwarding_config {
             if tx_fwd_config.enabled && !tx_fwd_config.builder_urls.is_empty() {
                 extensions.push(Box::new(SendRawTransactionValidityExtension::from_config(
-                    SendRawTransactionValidityConfig::default(),
+                    SendRawTransactionValidityConfig {
+                        validity_signature_mode: config.validity_signature_mode,
+                        ..Default::default()
+                    },
                 )));
             }
             extensions.push(Box::new(TxForwardingExtension::from_config(tx_fwd_config.clone())));

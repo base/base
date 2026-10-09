@@ -273,6 +273,9 @@ impl TransactionAuthorizer {
         if tx.account_changes.iter().any(|change| !matches!(change, AccountChange::Delegation(_))) {
             return Err(TxAuthError::UnsupportedAccountChange);
         }
+        if tx.payer.is_none() && !signed.payer_auth().is_empty() {
+            return Err(TxAuthError::UnexpectedPayerAuth);
+        }
         let named_k1 =
             |auth: &[u8]| auth.starts_with(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
         if (tx.sender.is_some() && !named_k1(signed.sender_auth()))
@@ -1356,5 +1359,27 @@ mod tests {
             TransactionAuthorizer::authorize_without_keystore(&config_change),
             Err(TxAuthError::UnsupportedAccountChange)
         ));
+    }
+
+    /// A self-paid transaction carrying `payer_auth` is rejected on both
+    /// inclusion paths, before and after Zenith.
+    #[test]
+    fn self_pay_with_payer_auth_is_rejected_at_inclusion() {
+        let sender_key = key(0x63);
+        let tx = tx_with(None, None, Vec::new());
+        let sender_auth = sig(&sender_key, tx.sender_signature_hash());
+        let padded =
+            Eip8130Signed::new(tx, Bytes::from(sender_auth), Bytes::from_static(&[0xab; 32]));
+
+        assert!(matches!(
+            TransactionAuthorizer::authorize_without_keystore(&padded),
+            Err(TxAuthError::UnexpectedPayerAuth)
+        ));
+        with_storage(|acc| {
+            assert!(matches!(
+                TransactionAuthorizer::authorize_and_apply(&padded, acc, LOCAL, NOW),
+                Err(TxAuthError::UnexpectedPayerAuth)
+            ));
+        });
     }
 }

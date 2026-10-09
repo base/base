@@ -13,7 +13,4 @@ use crate::TokenAccounting;
 pub trait StablecoinAccounting: TokenAccounting {
     /// Returns the stablecoin currency identifier.
     fn currency(&self) -> Result<String>;
-
-    /// Writes the currency identifier. Called once by the factory at creation.
-    fn set_currency(&mut self, currency: String) -> Result<()>;
 }

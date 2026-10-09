@@ -97,7 +97,7 @@ pub(crate) fn encode_jovian_eip_1559_params(
     )?)
 }
 
-#[cfg(all(test, feature = "test-utils"))]
+#[cfg(test)]
 mod test {
     use alloy_consensus::Header;
     use alloy_primitives::{B64, b64, bytes};
