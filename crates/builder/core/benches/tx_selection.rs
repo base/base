@@ -34,8 +34,8 @@ use reth_payload_util::PayloadTransactions;
 use reth_primitives_traits::{Recovered, SealedHeader};
 use reth_revm::State;
 use reth_transaction_pool::{
-    BestTransactions, PoolTransaction, TransactionOrigin, ValidPoolTransaction,
-    identifier::TransactionId, pool::PendingPool,
+    BestTransactions, TransactionOrigin, ValidPoolTransaction, identifier::TransactionId,
+    pool::PendingPool,
 };
 use revm::{
     database::InMemoryDB,
@@ -251,7 +251,7 @@ fn run_predicate_selection(pool: &Pool, db: &mut InMemoryDB) -> usize {
 
     while let Some(transaction) = best.next(()) {
         let blocking_predicate = ValidityPredicateKey::first_unsatisfied(
-            transaction.validity_conditions(),
+            transaction.transaction.validity_conditions(),
             db,
             &context,
         )
