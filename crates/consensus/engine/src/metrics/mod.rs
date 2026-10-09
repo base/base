@@ -17,7 +17,6 @@ base_metrics::define_metrics! {
         default = [
             "insert",
             "consolidate",
-            "delegated-forkchoice",
             "build",
             "finalize",
             "seal",
@@ -31,7 +30,6 @@ base_metrics::define_metrics! {
         default = [
             "insert",
             "consolidate",
-            "delegated-forkchoice",
             "build",
             "finalize",
             "seal",
@@ -65,7 +63,6 @@ base_metrics::define_metrics! {
         default = [
             "insert",
             "consolidate",
-            "delegated-forkchoice",
             "build",
             "finalize",
             "seal",
@@ -97,8 +94,6 @@ impl Metrics {
     pub const INSERT_TASK_LABEL: &str = "insert";
     /// Consolidate task label.
     pub const CONSOLIDATE_TASK_LABEL: &str = "consolidate";
-    /// Delegated forkchoice task label.
-    pub const DELEGATED_FORKCHOICE_TASK_LABEL: &str = "delegated-forkchoice";
     /// Forkchoice task label.
     pub const FORKCHOICE_TASK_LABEL: &str = "forkchoice-update";
     /// Build task label.

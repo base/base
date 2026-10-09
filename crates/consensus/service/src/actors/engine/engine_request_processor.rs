@@ -390,7 +390,7 @@ where
         let CanonicalReconciliationInputs {
             shadow_head,
             payloads,
-            safe_signals,
+            derived_attributes,
             finalized_block_number,
         } = inputs;
         if self.engine.state().sync_state.unsafe_head() != shadow_head {
@@ -423,11 +423,11 @@ where
                 "engine returned an unexpected authoritative head".to_string(),
             ));
         }
-        for safe_signal in safe_signals {
+        for attributes in derived_attributes {
             self.engine.enqueue(EngineTask::Consolidate(Box::new(ConsolidateTask::new(
                 Arc::clone(&self.client),
                 Arc::clone(&self.rollup),
-                safe_signal,
+                *attributes,
             ))));
         }
         if let Some(finalized_block_number) = finalized_block_number {
@@ -723,12 +723,11 @@ mod tests {
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_consensus_derive::Signal;
     use base_consensus_engine::{
-        ConsolidateInput, Engine, EngineClient, EngineState, EngineTaskError,
-        EngineTaskErrorSeverity, ForkchoiceCheckpointError, ForkchoiceCheckpointLabel,
-        ForkchoiceCheckpointReader,
+        Engine, EngineClient, EngineState, EngineTaskError, EngineTaskErrorSeverity,
+        ForkchoiceCheckpointError, ForkchoiceCheckpointLabel, ForkchoiceCheckpointReader,
         test_utils::{
-            TestAttributesBuilder, TestEngineStateBuilder, test_block_info,
-            test_engine_client_builder,
+            TestAttributesBuilder, TestEngineStateBuilder, encoded_l1_info_deposit_tx,
+            matching_rpc_block, test_block_info, test_engine_client_builder,
         },
     };
     use base_protocol::{BaseTimeUpdateTx, BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
@@ -883,7 +882,7 @@ mod tests {
             unreachable!();
         };
         payload.timestamp = timestamp;
-        payload.transactions = vec![l1_info_deposit_tx_bytes().into()];
+        payload.transactions = vec![encoded_l1_info_deposit_tx(L1BlockInfoBedrock::default())];
         if let Some(millis) = millis {
             payload.transactions.push(
                 BaseTxEnvelope::from(BaseTimeUpdateTx::new(millis).unwrap().into_deposit_tx(2))
@@ -1604,11 +1603,16 @@ mod tests {
     /// immediately; updates entering the private range must remain deferred.
     #[tokio::test]
     async fn shadow_cycle_advances_safe_and_finalized_heads_through_canonical_anchor() {
-        let l1_origin = BlockNumHash { number: 1, hash: B256::with_last_byte(1) };
-        let block_96 = full_reth_l2_block_with_l1_info(96, B256::with_last_byte(95), l1_origin);
-        let block_97 = full_reth_l2_block_with_l1_info(97, block_96.header.hash, l1_origin);
-        let safe_96 = l2_head(96, block_96.header.hash);
-        let safe_97 = l2_head(97, block_97.header.hash);
+        let derived = |parent: L2BlockInfo| {
+            TestAttributesBuilder::new()
+                .with_parent(parent)
+                .with_transactions(vec![encoded_l1_info_deposit_tx(L1BlockInfoBedrock::default())])
+                .build()
+        };
+        let attributes_96 = derived(l2_head(95, B256::with_last_byte(95)));
+        let block_96 = matching_rpc_block(&attributes_96);
+        let attributes_97 = derived(l2_head(96, block_96.header.hash));
+        let block_97 = matching_rpc_block(&attributes_97);
         let anchor = l2_head(100, B256::with_last_byte(100));
         let private_unsafe = l2_head(105, B256::with_last_byte(105));
 
@@ -1651,9 +1655,7 @@ mod tests {
         let mut handle = coordinator.start(request_rx);
 
         request_tx
-            .send(EngineActorRequest::ProcessSafeL2SignalRequest(ConsolidateInput::BlockInfo(
-                safe_96,
-            )))
+            .send(EngineActorRequest::ProcessDerivedAttributesRequest(Box::new(attributes_96)))
             .await
             .expect("failed to send safe block 96");
         let mut safe_96_state = state_rx.clone();
@@ -1680,9 +1682,7 @@ mod tests {
             .expect("finalized block 96 was not applied during the shadow cycle");
 
         request_tx
-            .send(EngineActorRequest::ProcessSafeL2SignalRequest(ConsolidateInput::BlockInfo(
-                safe_97,
-            )))
+            .send(EngineActorRequest::ProcessDerivedAttributesRequest(Box::new(attributes_97)))
             .await
             .expect("failed to send safe block 97");
         state_rx
@@ -1692,9 +1692,7 @@ mod tests {
             .expect("safe block 97 was not applied during the same shadow cycle");
 
         request_tx
-            .send(EngineActorRequest::ProcessSafeL2SignalRequest(ConsolidateInput::BlockInfo(
-                l2_head(101, B256::with_last_byte(101)),
-            )))
+            .send(EngineActorRequest::ProcessDerivedAttributesRequest(Box::new(derived(anchor))))
             .await
             .expect("failed to send safe block above the anchor");
         request_tx
@@ -1946,14 +1944,6 @@ mod tests {
         );
     }
 
-    fn l1_info_deposit_tx_bytes() -> Vec<u8> {
-        BaseTxEnvelope::from(TxDeposit {
-            input: L1BlockInfoBedrock::default().encode_calldata(),
-            ..Default::default()
-        })
-        .encoded_2718()
-    }
-
     fn unsafe_payload_with_l1_info(
         block_number: u64,
         parent_hash: B256,
@@ -1975,7 +1965,7 @@ mod tests {
                 extra_data: Default::default(),
                 base_fee_per_gas: U256::ZERO,
                 block_hash,
-                transactions: vec![l1_info_deposit_tx_bytes().into()],
+                transactions: vec![encoded_l1_info_deposit_tx(L1BlockInfoBedrock::default())],
             }),
         }
     }

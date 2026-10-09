@@ -633,28 +633,28 @@ where
                             }
                         }
                     }
-                    EngineActorRequest::ProcessSafeL2SignalRequest(_)
+                    EngineActorRequest::ProcessDerivedAttributesRequest(_)
                     | EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(_)
                         if self.is_isolated_active() =>
                     {
-                        debug!(target: "engine", "Isolated sequencer dropping canonical safety signal");
+                        debug!(target: "engine", "Isolated sequencer dropping canonical derived attributes or finalized block");
                     }
-                    EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal) => {
+                    EngineActorRequest::ProcessDerivedAttributesRequest(attributes) => {
                         // Canonical ancestors of the cycle anchor cannot reorg the private unsafe
                         // branch, so confirm them immediately and let derivation keep advancing.
                         let should_defer = self
                             .active_shadow_gate()
-                            .is_some_and(|gate| gate.should_defer_safe_signal(&safe_signal));
+                            .is_some_and(|gate| gate.should_defer_derived_attributes(&attributes));
                         if should_defer {
                             self.active_shadow_gate()
                                 .expect("gate checked")
-                                .buffer_safe_signal(safe_signal);
+                                .buffer_derived_attributes(attributes);
                             continue;
                         }
                         let task = EngineTask::Consolidate(Box::new(ConsolidateTask::new(
                             Arc::clone(self.processor.client()),
                             Arc::clone(self.processor.rollup()),
-                            safe_signal,
+                            *attributes,
                         )));
                         self.processor.enqueue(task);
                     }

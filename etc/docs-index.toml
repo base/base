@@ -308,7 +308,7 @@ digest = "030a8cd22a"
 
 ["crates/consensus/service/README.md"]
 summary = "Consensus node composition layer: actor model, RollupNode vs FollowNode, startup sequence, and each actor (engine, derivation, sequencer, network, L1 watcher, RPC). Read to understand node wiring."
-digest = "07a60f6111"
+digest = "1c95c6ced9"
 
 ["crates/consensus/service/src/actors/network/README.md"]
 summary = "Overview and example of the network actor, which owns libp2p gossip and discv5 discovery, built via NetworkBuilder or with_transport for tests. Use when wiring or testing the P2P actor."
