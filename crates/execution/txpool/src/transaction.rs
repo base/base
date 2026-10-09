@@ -16,7 +16,8 @@ use alloy_eips::{
 use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, TxKind, U256};
 use base_bundles::MeterBundleResponse;
 use base_common_consensus::{
-    BaseTransactionSigned, EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Signed,
+    BaseTransactionSigned, CoinbaseTip, EIP8130_TX_TYPE_ID, Eip8130Constants, Eip8130Signed,
+    Predeploys,
 };
 use c_kzg::KzgSettings;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
@@ -428,6 +429,18 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     /// (account abstraction) transactions.
     fn as_eip8130(&self) -> Option<&Eip8130Signed> {
         None
+    }
+
+    /// Returns the statically declared coinbase tip this transaction can pay.
+    ///
+    /// A policy-gated sender's calls must all target its policy manager, so a
+    /// tip to the fee vault reverts, and pays nothing, unless the vault is that
+    /// target. Such a tip is not reported.
+    fn coinbase_tip(&self) -> Option<U256> {
+        let tip = CoinbaseTip::decode(self.as_eip8130()?.tx())?;
+        self.sender_policy_target()
+            .is_none_or(|target| target == Predeploys::SEQUENCER_FEE_VAULT)
+            .then_some(tip)
     }
 
     /// Returns the EIP-8130 `nonce_key` when this transaction belongs to a

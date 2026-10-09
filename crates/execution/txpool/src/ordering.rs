@@ -12,7 +12,6 @@ use std::{
 };
 
 use alloy_primitives::{TxHash, U256};
-use base_common_consensus::{CoinbaseTip, Predeploys};
 use reth_transaction_pool::{PoolTransaction, Priority, TransactionOrdering, ValidPoolTransaction};
 
 use crate::{BasePooledTransaction, BasePooledTx, TimestampedTransaction};
@@ -148,7 +147,7 @@ impl Ord for UnifiedTipPriority {
 
 /// Unified tip-per-gas ordering for standard and EIP-8130 transactions.
 ///
-/// Uses [`CoinbaseTip::decode`] when the transaction is a statically-analyzable
+/// Uses [`BasePooledTx::coinbase_tip`] when the transaction is a statically-analyzable
 /// EIP-8130 coinbase tip; otherwise ranks by `effective_tip_per_gas`. Returns
 /// [`Priority::None`] when `max_fee_per_gas < base_fee`, including for a
 /// decoded coinbase tip. A policy-gated sender's tip only counts when the fee
@@ -186,14 +185,7 @@ where
             return Priority::None;
         };
         let predicates = transaction.validity_predicates().len();
-        // A policy-gated sender's calls must all target its policy manager, so
-        // a tip to the fee vault reverts unless the vault is that target.
-        if let Some(signed) = transaction.as_eip8130()
-            && let Some(tip) = CoinbaseTip::decode(signed.tx())
-            && transaction
-                .sender_policy_target()
-                .is_none_or(|target| target == Predeploys::SEQUENCER_FEE_VAULT)
-        {
+        if let Some(tip) = transaction.coinbase_tip() {
             return Priority::Value(UnifiedTipPriority::new(
                 tip,
                 transaction.gas_limit(),
