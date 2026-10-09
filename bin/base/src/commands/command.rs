@@ -49,6 +49,23 @@ pub(crate) enum BaseCommand {
 }
 
 impl BaseCommand {
+    /// Returns whether running this command installs reth's process-wide Prometheus recorder.
+    ///
+    /// Execution launch always installs it; reth maintenance subcommands install it only to
+    /// serve their own `--metrics` endpoint. Either conflicts with the recorder the top-level
+    /// `--metrics.enabled` installs, because a process has one global recorder.
+    pub(crate) fn installs_reth_recorder(&self) -> bool {
+        match self {
+            Self::Rpc(_) | Self::Follow(_) | Self::Sequencer(_) => true,
+            Self::Reth(reth) => reth.serves_reth_metrics,
+            Self::Batcher(_)
+            | Self::Bootnode(_)
+            | Self::Update(_)
+            | Self::Proofs(_)
+            | Self::Snapshot(_) => false,
+        }
+    }
+
     pub(crate) fn run(
         self,
         chain_resolver: ChainResolver,

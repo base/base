@@ -87,8 +87,8 @@ impl FollowCommand {
             let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
             let task_executor = ctx.task_executor.clone();
             let launched = execution.launch_default(ctx).await?;
-            // Execution launch installs the shared reth recorder. The standalone metrics flag
-            // controls a separate endpoint, not emission into this recorder.
+            // Execution launch installs the shared reth recorder, so these metrics are always
+            // recorded and served on reth's `--metrics` endpoint.
             CliMetrics::init_rollup_config(&rollup_config);
             let _upgrade_countdown_metrics =
                 CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone());
