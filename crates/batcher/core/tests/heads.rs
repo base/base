@@ -10,17 +10,115 @@ use base_batcher_core::{
     },
 };
 use base_batcher_encoder::DerivationReconciliation;
+use base_batcher_source::L2BlockEvent;
 use base_protocol::BlockInfo;
 use base_runtime::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
 };
 
-/// A lower safe head, a different block at the same height and a safe head missing from the
-/// buffered chain each reset the pipeline and restart the source from the new safe head. The
-/// driver catches the first two itself and sends only the third through reconciliation.
+/// A status reporting `safe_l2` with derivation at L1 block `current_l1`.
+fn status(safe_l2: BlockInfo, current_l1: u64) -> DerivationStatus {
+    DerivationStatus { safe_l2, current_l1: BlockStub::info(current_l1) }
+}
+
+/// A lower safe head from a node that has not read L1 past the block the last safe head was
+/// reported at is the status of a node behind on L1. The driver neither reconciles it nor
+/// resets, and the reset an L2 reorg triggers meanwhile restarts the source from the last safe
+/// head, not the lower one.
 #[test]
-fn test_safe_head_conflicts_reset_pipeline_and_source() {
+fn test_lower_safe_head_from_a_node_behind_on_l1_is_ignored() {
+    Runner::start(Config::seeded(0), |ctx| async move {
+        let pipeline = TrackingPipeline::new();
+        let recorded = pipeline.recorded();
+        let (source, catchup_heads) = TrackingSource::new();
+
+        let (driver, handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                .source(source.with_events([L2BlockEvent::Reorg]))
+                .derivation_status(status(BlockStub::info(10), 5))
+                .build();
+        let status_tx = handles.derivation_status_tx;
+
+        // The first status, at the L1 block of the last one, is served before the source reorg
+        // and the second, below it, after. The catchup head then shows neither moved the safe
+        // head.
+        status_tx.send(status(BlockStub::info(5), 5)).await.unwrap();
+        let handle = ctx.spawn(driver.run());
+        status_tx.send(status(BlockStub::info(5), 3)).await.unwrap();
+        ctx.sleep(Duration::from_millis(50)).await;
+        ctx.cancel();
+
+        assert!(handle.await.unwrap().is_ok());
+        assert_eq!(recorded.lock().unwrap().calls, [PipelineCall::Reset, PipelineCall::Flush]);
+        assert_eq!(*catchup_heads.lock().unwrap(), [BlockStub::info(10)]);
+    });
+}
+
+/// A lower safe head is judged against the last status acted on, so the L1 block a node must
+/// have read past moves with every reconciled status.
+#[test]
+fn test_lower_safe_head_is_judged_against_the_last_status_acted_on() {
+    Runner::start(Config::seeded(0), |ctx| async move {
+        let pipeline = TrackingPipeline::new();
+        let recorded = pipeline.recorded();
+        let (source, catchup_heads) = TrackingSource::new();
+
+        let (driver, handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                .source(source)
+                .derivation_status(status(BlockStub::info(10), 5))
+                .build();
+        let handle = ctx.spawn(driver.run());
+        let status_tx = handles.derivation_status_tx;
+
+        // Past the initial L1 block, but not past the one of the reconciled status.
+        status_tx.send(status(BlockStub::info(12), 8)).await.unwrap();
+        status_tx.send(status(BlockStub::info(11), 7)).await.unwrap();
+        ctx.sleep(Duration::from_millis(50)).await;
+        ctx.cancel();
+
+        assert!(handle.await.unwrap().is_ok());
+        assert_eq!(
+            recorded.lock().unwrap().calls,
+            [PipelineCall::ReconcileDerivation { safe_l2: 12, current_l1: 8 }, PipelineCall::Flush]
+        );
+        assert!(catchup_heads.lock().unwrap().is_empty());
+    });
+}
+
+/// A lower safe head from a node that has read L1 past the block the last safe head was
+/// reported at did not derive the blocks the last safe head covered. The driver resets the
+/// pipeline and restarts the source from the lower safe head, without reconciling.
+#[test]
+fn test_lower_safe_head_from_a_node_ahead_on_l1_resets_pipeline_and_source() {
+    Runner::start(Config::seeded(0), |ctx| async move {
+        let pipeline = TrackingPipeline::new();
+        let recorded = pipeline.recorded();
+        let (source, catchup_heads) = TrackingSource::new();
+
+        let (driver, handles) =
+            DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
+                .source(source)
+                .derivation_status(status(BlockStub::info(10), 5))
+                .build();
+        let handle = ctx.spawn(driver.run());
+
+        handles.derivation_status_tx.send(status(BlockStub::info(5), 6)).await.unwrap();
+        ctx.sleep(Duration::from_millis(50)).await;
+        ctx.cancel();
+
+        assert!(handle.await.unwrap().is_ok());
+        assert_eq!(recorded.lock().unwrap().calls, [PipelineCall::Reset, PipelineCall::Flush]);
+        assert_eq!(*catchup_heads.lock().unwrap(), [BlockStub::info(5)]);
+    });
+}
+
+/// A safe head at the same height as the last one with another hash goes through
+/// reconciliation: the pipeline finds it off the buffered chain, and the driver resets the
+/// pipeline and restarts the source from it.
+#[test]
+fn test_safe_head_off_the_buffered_chain_resets_pipeline_and_source() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let pipeline =
             TrackingPipeline::new().with_reconciliation(DerivationReconciliation::SafeHeadMismatch);
@@ -30,20 +128,13 @@ fn test_safe_head_conflicts_reset_pipeline_and_source() {
         let (driver, handles) =
             DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
                 .source(source)
-                .safe_head(BlockStub::info(10))
+                .derivation_status(status(BlockStub::info(10), 5))
                 .build();
         let handle = ctx.spawn(driver.run());
-        let status_tx = handles.derivation_status_tx;
 
-        let regressed = BlockStub::info(5);
         let replacement =
-            BlockInfo { hash: B256::repeat_byte(0xff), number: 5, ..Default::default() };
-        for safe_l2 in [regressed, replacement, BlockStub::info(10)] {
-            status_tx
-                .send(DerivationStatus { safe_l2, current_l1: BlockStub::info(1) })
-                .await
-                .unwrap();
-        }
+            BlockInfo { hash: B256::repeat_byte(0xff), number: 10, ..Default::default() };
+        handles.derivation_status_tx.send(status(replacement, 5)).await.unwrap();
         ctx.sleep(Duration::from_millis(50)).await;
         ctx.cancel();
 
@@ -51,14 +142,12 @@ fn test_safe_head_conflicts_reset_pipeline_and_source() {
         assert_eq!(
             recorded.lock().unwrap().calls,
             [
-                PipelineCall::Reset,
-                PipelineCall::Reset,
-                PipelineCall::ReconcileDerivation { safe_l2: 10, current_l1: 1 },
+                PipelineCall::ReconcileDerivation { safe_l2: 10, current_l1: 5 },
                 PipelineCall::Reset,
                 PipelineCall::Flush,
             ]
         );
-        assert_eq!(*catchup_heads.lock().unwrap(), [regressed, replacement, BlockStub::info(10)]);
+        assert_eq!(*catchup_heads.lock().unwrap(), [replacement]);
     });
 }
 
@@ -77,15 +166,11 @@ fn test_stalled_channel_resets_pipeline_and_source() {
         let (driver, handles) =
             DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
                 .source(source)
-                .safe_head(safe_l2)
+                .derivation_status(status(safe_l2, 1))
                 .build();
         let handle = ctx.spawn(driver.run());
-        let status_tx = handles.derivation_status_tx;
 
-        status_tx
-            .send(DerivationStatus { safe_l2, current_l1: BlockStub::info(50) })
-            .await
-            .unwrap();
+        handles.derivation_status_tx.send(status(safe_l2, 50)).await.unwrap();
         ctx.sleep(Duration::from_millis(50)).await;
         ctx.cancel();
 

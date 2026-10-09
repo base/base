@@ -5,7 +5,6 @@ use std::time::Duration;
 use base_batcher_encoder::{BatchPipeline, BatcherMetrics, DerivationReconciliation, StepResult};
 use base_batcher_source::{L1HeadSource, L2BlockEvent, UnsafeBlockSource};
 use base_common_consensus::BaseBlock;
-use base_protocol::BlockInfo;
 use base_runtime::Runtime;
 use base_tx_manager::TxManager;
 use tokio::sync::mpsc;
@@ -19,7 +18,8 @@ use crate::{
 /// Encoding steps per CPU phase.
 const STEP_BUDGET: usize = 128;
 
-/// The sources a [`BatchDriver`] listens to, and the L1 head and safe L2 head it starts from.
+/// The sources a [`BatchDriver`] listens to, and the L1 head and derivation status it starts
+/// from.
 #[derive(Debug)]
 pub struct BatchDriverInputs<S, L> {
     /// Source of unsafe L2 blocks and reorg signals.
@@ -28,8 +28,8 @@ pub struct BatchDriverInputs<S, L> {
     pub l1_head_source: L,
     /// Live L1 head at startup.
     pub initial_l1_head: u64,
-    /// Safe L2 head at startup.
-    pub initial_safe_head: BlockInfo,
+    /// Derivation status at startup.
+    pub initial_derivation_status: DerivationStatus,
     /// Ordered derivation-status updates.
     pub derivation_status_rx: mpsc::Receiver<DerivationStatus>,
     /// Admin commands; see [`AdminHandle::channel`](crate::AdminHandle::channel).
@@ -65,9 +65,10 @@ where
     throttle: DaThrottle,
     /// L1 head source for chain head advancement.
     l1_head_source: L,
-    /// Last trusted L2 safe head.
-    safe_head: BlockInfo,
-    /// Ordered derivation-progress snapshots.
+    /// The last derivation status acted on. Blocks at or below its safe head are dropped as
+    /// derived and catchup restarts above it; a lower safe head is judged against its L1 block.
+    derivation: DerivationStatus,
+    /// Ordered derivation statuses.
     derivation_status_rx: mpsc::Receiver<DerivationStatus>,
     /// Maximum wall-clock time to wait for in-flight submissions to settle
     /// when draining on cancellation.
@@ -115,7 +116,7 @@ where
             ),
             throttle,
             l1_head_source: inputs.l1_head_source,
-            safe_head: inputs.initial_safe_head,
+            derivation: inputs.initial_derivation_status,
             derivation_status_rx: inputs.derivation_status_rx,
             drain_timeout: config.drain_timeout,
             stopped: config.stopped,
@@ -269,38 +270,53 @@ where
         self.pipeline.reset();
     }
 
-    /// Reset volatile state and restart delivery above the latest safe head.
+    /// Reset volatile state and restart delivery above the safe head.
     fn reset_to_safe_head(&mut self, reason: &'static str) {
         self.reset_pipeline(reason);
-        self.source.reset_catchup(self.safe_head);
+        self.source.reset_catchup(self.derivation.safe_l2);
     }
 
-    /// Reconcile buffered state with an ordered derivation-progress snapshot.
+    /// Reconcile buffered state with a derivation status.
+    ///
+    /// A safe head lower than the last one acted on is ignored while the node has not read L1
+    /// past the block the last safe head was reported at: such a node is behind on L1, as a new
+    /// leader or a restarted node is, and derives the same blocks again. Once it has read past
+    /// that block with its safe head still lower, it did not derive the blocks the last safe
+    /// head covered, after an L1 reorg or a divergence between nodes, so the driver resets the
+    /// pipeline and posts the blocks above the lower safe head again.
     fn on_derivation_status(&mut self, status: DerivationStatus) {
-        let head = status.safe_l2;
-        let previous = self.safe_head;
-        self.safe_head = head;
+        let last = self.derivation;
+        let went_back = status.safe_l2.number < last.safe_l2.number;
+        if went_back && status.current_l1.number <= last.current_l1.number {
+            debug!(
+                safe_l2 = %status.safe_l2.number,
+                current_l1 = %status.current_l1.number,
+                last_safe_l2 = %last.safe_l2.number,
+                last_current_l1 = %last.current_l1.number,
+                "rollup node behind on L1, ignoring its lower safe head"
+            );
+            return;
+        }
+        self.derivation = status;
 
-        if head.number < previous.number
-            || (head.number == previous.number && head.hash != previous.hash)
-        {
+        if went_back {
             warn!(
-                previous_safe_l2 = %previous.number,
-                previous_safe_hash = %previous.hash,
-                safe_l2 = %head.number,
-                safe_hash = %head.hash,
-                "safe L2 head changed chain, resetting pipeline"
+                safe_l2 = %status.safe_l2.number,
+                current_l1 = %status.current_l1.number,
+                last_safe_l2 = %last.safe_l2.number,
+                last_current_l1 = %last.current_l1.number,
+                "safe L2 head went back with derivation past the last one's L1 block, resetting pipeline"
             );
             self.reset_to_safe_head(BatcherMetrics::RESET_SAFE_HEAD_REORG);
             return;
         }
 
-        match self.pipeline.reconcile_derivation(head, status.current_l1.number) {
+        match self.pipeline.reconcile_derivation(status.safe_l2, status.current_l1.number) {
             DerivationReconciliation::Consistent => {}
             DerivationReconciliation::SafeHeadMismatch => {
                 warn!(
-                    safe_l2 = %head.number,
-                    safe_hash = %head.hash,
+                    safe_l2 = %status.safe_l2.number,
+                    safe_hash = %status.safe_l2.hash,
                     "safe L2 head does not match buffered chain, resetting pipeline"
                 );
                 self.reset_to_safe_head(BatcherMetrics::RESET_SAFE_HEAD_MISMATCH);
@@ -308,7 +324,7 @@ where
             DerivationReconciliation::StalledChannel => {
                 warn!(
                     current_l1 = %status.current_l1.number,
-                    safe_l2 = %head.number,
+                    safe_l2 = %status.safe_l2.number,
                     "rollup node passed a fully confirmed channel without deriving it, resetting pipeline"
                 );
                 self.reset_to_safe_head(BatcherMetrics::RESET_STALLED_CHANNEL);
@@ -319,11 +335,11 @@ where
     /// Ingest a new L2 block into the pipeline.
     ///
     /// If the pipeline signals a reorg via `add_block` (parent-hash mismatch),
-    /// resets the pipeline and restarts sequential catchup from `safe_head + 1`.
+    /// resets the pipeline and restarts sequential catchup above the safe head.
     /// The triggering block will be re-delivered by the sequential poller.
     fn on_block(&mut self, block: Box<BaseBlock>) {
         let number = block.header.number;
-        if number <= self.safe_head.number {
+        if number <= self.derivation.safe_l2.number {
             return;
         }
 
@@ -364,10 +380,10 @@ where
             return;
         }
 
-        self.source.reset_catchup(self.safe_head);
+        self.source.reset_catchup(self.derivation.safe_l2);
         info!(
             stopped = false,
-            safe_l2 = %self.safe_head.number,
+            safe_l2 = %self.derivation.safe_l2.number,
             "batcher started via admin, catching up from safe head"
         );
         self.stopped = false;
@@ -483,7 +499,10 @@ mod tests {
                 DriverFixture::new(ctx.clone(), pipeline, ScriptedTxManager::confirming_at(1))
                     .source(source)
                     .l1_head_source(l1_head_source)
-                    .safe_head(BlockStub::info(5))
+                    .derivation_status(DerivationStatus {
+                        safe_l2: BlockStub::info(5),
+                        ..Default::default()
+                    })
                     .build();
 
             let handle = ctx.spawn(driver.run());
