@@ -497,12 +497,13 @@ fn build_loop_bench(c: &mut Criterion, profile: Profile, observability: &Observa
     group.sample_size(20);
     group.throughput(Throughput::Elements(diag.txs_considered));
     group.bench_function(BenchmarkId::new("execute_best_transactions", profile.label()), |b| {
-        b.iter_batched(
+        // `iter_batched_ref` drops the state and iterator after timing stops.
+        b.iter_batched_ref(
             || {
                 observability.wait_for_event_writer();
                 (fixture.fresh_state(), fixture.best_transactions())
             },
-            |(mut state, mut best)| black_box(fixture.build(&mut state, &mut best)),
+            |(state, best)| black_box(fixture.build(state, best)),
             BatchSize::PerIteration,
         );
     });
@@ -730,17 +731,28 @@ impl MainnetBlock {
         State::builder().with_database(self.pre_state.clone()).with_bundle_update().build()
     }
 
+    /// An empty rejection cache. Created outside the timed region, as the builder's cache
+    /// outlives every block.
+    fn rejection_cache(&self) -> RejectionCache {
+        RejectionCache::new(Self::SENDER_COUNT as u64, REJECTION_CACHE_TTL)
+    }
+
     /// Builds every flashblock of the block, driving the candidate iterator as `payload.rs`
     /// does between flashblocks.
-    fn build(&self, state: &mut State<InMemoryDB>, mode: RestingPredicateMode) -> BlockTotals {
+    ///
+    /// `rejection_cache` stands in for the builder's long-lived cache, which each payload job
+    /// clones.
+    fn build(
+        &self,
+        state: &mut State<InMemoryDB>,
+        rejection_cache: &RejectionCache,
+        mode: RestingPredicateMode,
+    ) -> BlockTotals {
         let mut info = ExecutionInfo::default();
         let mut deferrals = BlockDeferrals::default();
         let mut totals = BlockTotals::default();
-        let mut best = BestFlashblocksTxs::new(
-            parkable(&self.pools[0]),
-            RejectionCache::new(Self::SENDER_COUNT as u64, REJECTION_CACHE_TTL),
-        )
-        .with_resting_predicate_mode(mode);
+        let mut best = BestFlashblocksTxs::new(parkable(&self.pools[0]), rejection_cache.clone())
+            .with_resting_predicate_mode(mode);
 
         for (flashblock, pool) in self.pools.iter().enumerate() {
             if flashblock > 0 {
@@ -814,7 +826,7 @@ fn mainnet_block_bench(c: &mut Criterion, profile: Profile, observability: &Obse
     group.sample_size(10);
     for mode in [RestingPredicateMode::Off, RestingPredicateMode::Enforce] {
         let expected = block.expected_totals(mode);
-        let totals = block.build(&mut block.fresh_state(), mode);
+        let totals = block.build(&mut block.fresh_state(), &block.rejection_cache(), mode);
         eprintln!(
             "build_loop/mainnet_block[{} mode={mode:?}]: considered={} included={} deferred={} rejected_gas={} rejected_da={} rejected_other={}",
             profile.label(),
@@ -831,13 +843,14 @@ fn mainnet_block_bench(c: &mut Criterion, profile: Profile, observability: &Obse
         group.bench_function(
             BenchmarkId::new(format!("mainnet_block/mode={mode:?}"), profile.label()),
             |b| {
-                b.iter_batched(
+                // `iter_batched_ref` drops the state and cache after timing stops.
+                b.iter_batched_ref(
                     || {
                         observability.wait_for_event_writer();
-                        block.fresh_state()
+                        (block.fresh_state(), block.rejection_cache())
                     },
-                    |mut state| {
-                        let totals = block.build(&mut state, mode);
+                    |(state, rejection_cache)| {
+                        let totals = block.build(state, rejection_cache, mode);
                         assert_eq!(
                             totals, expected,
                             "block outcomes match the documented workload"
