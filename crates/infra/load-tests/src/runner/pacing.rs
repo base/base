@@ -524,6 +524,7 @@ impl LoadRunner {
                 validity_priority_lead_multiplier: self.config.validity_priority_lead_multiplier,
                 validity_priority_fee_divisor: self.config.validity_priority_fee_divisor,
                 max_concurrent_submit_requests: self.config.max_concurrent_submit_requests,
+                validity_signing: self.config.validity_signing,
             },
         );
         let next_submit_batch_id = AtomicU64::new(0);
@@ -2220,6 +2221,7 @@ mod tests {
                 estimated_gas: 21_000,
                 validity: Vec::new(),
                 cohort: SubmitCohort::Plain,
+                validity_signature: None,
             }],
         }
     }
@@ -2247,6 +2249,7 @@ mod tests {
                 validity_priority_lead_multiplier: 1,
                 validity_priority_fee_divisor: 1,
                 max_concurrent_submit_requests: None,
+                validity_signing: crate::config::ValiditySigningMode::Adaptive,
             },
         );
 
@@ -2426,6 +2429,7 @@ mod tests {
                 validity_priority_lead_multiplier: 1,
                 validity_priority_fee_divisor: 1,
                 max_concurrent_submit_requests: None,
+                validity_signing: crate::config::ValiditySigningMode::Adaptive,
             },
         );
         let next_submit_batch_id = AtomicU64::new(0);
@@ -2559,6 +2563,7 @@ mod tests {
                 validity_priority_lead_multiplier: 1,
                 validity_priority_fee_divisor: 1,
                 max_concurrent_submit_requests: None,
+                validity_signing: crate::config::ValiditySigningMode::Adaptive,
             },
         );
         let next_submit_batch_id = AtomicU64::new(0);

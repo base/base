@@ -361,7 +361,37 @@ async fn postgres_fresh_database_runs_partitioned_migrations() -> anyhow::Result
         sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
             .fetch_all(&pool)
             .await?;
-    assert_eq!(versions, vec![1, 2, 3, 4, 5]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
+
+    Ok(())
+}
+
+/// A migration role that owns the schema but not the database still applies
+/// every migration, leaving the prefetch depth at its default.
+#[tokio::test]
+async fn postgres_migrations_skip_io_concurrency_without_database_ownership() -> anyhow::Result<()>
+{
+    let harness = PostgresHarness::new().await?;
+    let admin = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    for statement in [
+        "CREATE ROLE audit_archiver_migration LOGIN PASSWORD 'migration'",
+        "ALTER SCHEMA public OWNER TO audit_archiver_migration",
+    ] {
+        admin.execute(statement).await?;
+    }
+
+    let migration_url = harness.url_for("audit_archiver_migration", "migration");
+    PgTransactionEventSink::migrate(&migration_url).await?;
+
+    let migration = PgPoolOptions::new().max_connections(1).connect(&migration_url).await?;
+    let versions: Vec<i64> =
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations WHERE success ORDER BY version")
+            .fetch_all(&migration)
+            .await?;
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
+    let io_concurrency: String =
+        sqlx::query_scalar("SHOW effective_io_concurrency").fetch_one(&migration).await?;
+    assert_eq!(io_concurrency, "1");
 
     Ok(())
 }
@@ -888,8 +918,9 @@ async fn postgres_maintenance_uses_retention_pool_when_ingest_is_busy() -> anyho
     Ok(())
 }
 
-/// Mirrors production roles: the migration role owns the schema and tables,
-/// and the runtime role only has DML plus EXECUTE on the partition functions.
+/// Mirrors production roles: the migration role owns the database, schema and
+/// tables, and the runtime role only has DML plus EXECUTE on the partition
+/// functions.
 #[tokio::test]
 async fn postgres_runtime_role_maintains_partitions_through_definer_functions() -> anyhow::Result<()>
 {
@@ -899,6 +930,7 @@ async fn postgres_runtime_role_maintains_partitions_through_definer_functions() 
         "CREATE ROLE audit_archiver_migration LOGIN PASSWORD 'migration'",
         "CREATE ROLE audit_archiver LOGIN PASSWORD 'runtime'",
         "CREATE ROLE unrelated LOGIN PASSWORD 'unrelated'",
+        "ALTER DATABASE postgres OWNER TO audit_archiver_migration",
         "ALTER SCHEMA public OWNER TO audit_archiver_migration",
     ] {
         admin.execute(statement).await?;
@@ -906,6 +938,15 @@ async fn postgres_runtime_role_maintains_partitions_through_definer_functions() 
 
     PgTransactionEventSink::migrate(&harness.url_for("audit_archiver_migration", "migration"))
         .await?;
+
+    // The database owner can set prefetch depth for sessions of other roles.
+    let unrelated = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&harness.url_for("unrelated", "unrelated"))
+        .await?;
+    let io_concurrency: String =
+        sqlx::query_scalar("SHOW effective_io_concurrency").fetch_one(&unrelated).await?;
+    assert_eq!(io_concurrency, "32", "new sessions inherit the database prefetch depth");
 
     let runtime_url = harness.url_for("audit_archiver", "runtime");
     let sink = PgTransactionEventSink::connect(&runtime_url, 1).await?;
@@ -954,10 +995,6 @@ async fn postgres_runtime_role_maintains_partitions_through_definer_functions() 
     let direct_drop = runtime.execute(format!("DROP TABLE {partition}").as_str()).await;
     assert!(direct_drop.is_err(), "runtime role must not own partitions");
 
-    let unrelated = PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&harness.url_for("unrelated", "unrelated"))
-        .await?;
     let call = sqlx::query("SELECT transaction_events_v2_detach_partition('hot', current_date)")
         .execute(&unrelated)
         .await;

@@ -7,7 +7,7 @@ pub use config::{
     OsakaTarget, PrecompileTarget, PredicateAddressConfig, PredicateSlotConfig,
     PredicateValueConfig, RealTokenAcquisitionConfig, RealTokenPairTokenConfig,
     RealTokenSetupConfig, TestConfig, TxTypeConfig, ValidityConfig, ValidityPredicateConfig,
-    WeightedTxType, WorkloadConfig,
+    ValiditySigningMode, WeightedTxType, WorkloadConfig,
 };
 
 mod executor;

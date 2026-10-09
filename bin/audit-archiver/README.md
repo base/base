@@ -179,6 +179,13 @@ Watch `transaction_event_brin_ranges_summarized`,
 `transaction_event_brin_summary_lock_timeouts`, and
 `transaction_event_brin_summary_failures`.
 
+Migration 006 sets `effective_io_concurrency = 32` on the audit database so
+bitmap heap scans prefetch heap pages instead of reading one page per storage
+round trip. It applies to sessions that connect afterwards, and is skipped with
+a notice where the migration role does not own the database. Check it with
+`SELECT setconfig FROM pg_db_role_setting WHERE setdatabase = (SELECT oid FROM
+pg_database WHERE datname = current_database())`.
+
 ### Ingest admission
 
 Ingest rejects events whose `event_time` is older than their class's retention

@@ -127,12 +127,14 @@ impl NonceManagerStorage<'_> {
     }
 
     /// Increments the 2D nonce for `account` at `nonce_key`, returning the new
-    /// value and emitting [`INonceManager::NonceIncremented`]. The pre-write
-    /// value is loaded from storage inside this call, so the value written is
-    /// always `storage + 1` — callers cannot supply a stale `current`.
+    /// value. The pre-write value is loaded from storage inside this call, so
+    /// the value written is always `storage + 1` — callers cannot supply a
+    /// stale `current`.
     ///
     /// Intended for the EIP-8130 execution layer; not reachable through ABI
-    /// dispatch.
+    /// dispatch. Emits no log: the increment is a protocol write, and receipt
+    /// logs for EIP-8130 transactions are limited to the account-configuration
+    /// events.
     ///
     /// # Errors
     /// - [`INonceManager::InvalidNonceKey`] — `nonce_key` is `0` (the protocol nonce).
@@ -143,25 +145,12 @@ impl NonceManagerStorage<'_> {
         }
 
         let current = self.nonces.at(&account).at(&nonce_key).read()?;
-
-        // The nonce write and its NonceIncremented event must commit together;
-        // guard them with a checkpoint so a failure after the write (e.g. during
-        // event emission) reverts the advanced nonce rather than leaving it
-        // advanced without a log. The guard reverts on drop unless committed.
-        let checkpoint = self.storage.checkpoint();
-
-        self.__initialize()?;
         let new_nonce = current
             .checked_add(1)
             .ok_or_else(|| BasePrecompileError::revert(INonceManager::NonceOverflow {}))?;
-        self.nonces.at_mut(&account).at_mut(&nonce_key).write(new_nonce)?;
-        self.emit_event(INonceManager::NonceIncremented {
-            account,
-            nonceKey: nonce_key,
-            newNonce: new_nonce,
-        })?;
 
-        checkpoint.commit();
+        self.__initialize()?;
+        self.nonces.at_mut(&account).at_mut(&nonce_key).write(new_nonce)?;
         Ok(new_nonce)
     }
 
@@ -301,7 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn increment_nonce_advances_and_emits_event() {
+    fn increment_nonce_advances_without_logging() {
         let mut storage = HashMapStorageProvider::new(1);
         let nonce_key = U256::from(5);
         StorageCtx::enter(&mut storage, |ctx| {
@@ -309,7 +298,7 @@ mod tests {
             assert_eq!(mgr.increment_nonce(ACCOUNT_A, nonce_key).unwrap(), 1);
             assert_eq!(mgr.increment_nonce(ACCOUNT_A, nonce_key).unwrap(), 2);
         });
-        assert_eq!(storage.get_events(NonceManagerStorage::ADDRESS).len(), 2);
+        assert!(storage.get_events(NonceManagerStorage::ADDRESS).is_empty());
         StorageCtx::enter(&mut storage, |ctx| {
             assert_eq!(NonceManagerStorage::new(ctx).get_nonce(ACCOUNT_A, nonce_key).unwrap(), 2);
         });

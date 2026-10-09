@@ -45,19 +45,8 @@ thiserror.workspace = true
 # `custom` feature silences the bare-metal compile_error via Cargo unification.
 getrandom = { version = "0.2", features = ["custom"] }
 
-# `test-utils` feature dependencies
-rand = { workspace = true, optional = true }
-tempfile = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
-alloy-transport = { workspace = true, optional = true }
-alloy-rpc-client = { workspace = true, optional = true }
-alloy-transport-http = { workspace = true, optional = true }
-alloy-rpc-types-engine = { workspace = true, optional = true }
-base-common-chains = { workspace = true, optional = true }
-tokio = { workspace = true, features = ["full"], optional = true }
-serde = { workspace = true, features = ["derive"], optional = true }
-rocksdb = { workspace = true, features = ["snappy"], optional = true }
-alloy-provider = { workspace = true, features = ["reqwest"], optional = true }
+[dev-dependencies]
+alloy-rpc-types-engine.workspace = true
 
 [features]
 std = [
@@ -66,9 +55,7 @@ std = [
 	"alloy-evm/std",
 	"alloy-primitives/std",
 	"alloy-rlp/std",
-	"alloy-rpc-types-engine?/std",
 	"alloy-trie/std",
-	"base-common-chains?/std",
 	"base-common-consensus/std",
 	"base-common-evm/std",
 	"base-common-genesis/std",
@@ -77,26 +64,6 @@ std = [
 	"base-protocol/std",
 	"getrandom/std",
 	"revm/std",
-	"serde?/std",
-	"serde_json?/std",
 	"thiserror/std",
 	"tracing/std",
-]
-test-utils = [
-	"base-common-chains?/test-utils",
-	"base-common-genesis/test-utils",
-	"base-protocol/test-utils",
-	"dep:alloy-provider",
-	"dep:alloy-rpc-client",
-	"dep:alloy-rpc-types-engine",
-	"dep:alloy-transport",
-	"dep:alloy-transport-http",
-	"dep:base-common-chains",
-	"dep:rand",
-	"dep:rocksdb",
-	"dep:serde",
-	"dep:serde_json",
-	"dep:tempfile",
-	"dep:tokio",
-	"std",
 ]

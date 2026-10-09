@@ -48,7 +48,7 @@ digest = "de5b6325d7"
 
 ["bin/audit-archiver/README.md"]
 summary = "audit-archiver service: NDJSON ingest into Postgres, JSON-RPC queries, retention classes and partition maintenance, BRIN summary worker, event_seq extraction split, env vars, S3 removal rollout."
-digest = "4681f8af49"
+digest = "72abeb6d55"
 
 ["bin/base-telemetry/README.md"]
 summary = "base-telemetry backend: CLI and env config, per-IP rate limiting, and on-demand P2P reachability probes for execution-layer (enode) and consensus-layer (ENR or multiaddr) nodes."
@@ -292,7 +292,7 @@ digest = "f10fb0af43"
 
 ["crates/consensus/protocol/README.md"]
 summary = "Shared protocol types (batches, frames, channels, BlockInfo, L1 info per upgrade, output roots) and the Denim L1 origin rule for 200ms blocks. Use when touching batch or origin logic."
-digest = "f7e56f8c44"
+digest = "b6430af020"
 
 ["crates/consensus/providers/README.md"]
 summary = "Alloy-backed data providers for derivation (AlloyChainProvider, AlloyL2ChainProvider, beacon client, blob provider) and OnlinePipeline. Use when wiring derivation to live L1/L2 nodes."
@@ -339,8 +339,8 @@ summary = "Node extension wiring the standalone EIP-8130 eth_getTransactionCount
 digest = "2d0cf30e0d"
 
 ["crates/execution/eip8130-rpc/README.md"]
-summary = "EIP-8130 RPC helpers: ChannelNonceReader for 2D nonce reads by nonce_key and Eip8130GasEstimator doing one simulation for eth_estimateGas. Use when debugging AA nonce or gas estimation RPCs."
-digest = "565c03ca22"
+summary = "EIP-8130 RPC helpers: ChannelNonceReader for 2D nonce reads by nonce_key and Eip8130GasEstimator, one simulation for eth_estimateGas and eth_call. Use when debugging AA nonce, call or gas RPCs."
+digest = "9c987d9934"
 
 ["crates/execution/eip8130/README.md"]
 summary = "Native EIP-8130 account abstraction validation: enshrined authenticators (not precompiles) needing parity with contracts, validation layers, intrinsic gas formula, EIP-7623 floor, fee checks."
@@ -411,8 +411,8 @@ summary = "base-tx-forwarding: forwards mempool txs to builder RPCs via per-dest
 digest = "b72a1536e1"
 
 ["crates/execution/txpool-rpc/README.md"]
-summary = "Txpool RPC APIs: admin pool management, transaction status queries, and base_sendRawTransactionValidity (validity predicates, proxied to sequencer). Use for tx submission RPC behavior."
-digest = "d5082966c5"
+summary = "Txpool RPC admin/status APIs and validity submissions; shared staged signature modes, signature rejection metrics, predicate forwarding and sequencer proxy behavior."
+digest = "adef27d8c3"
 
 ["crates/execution/txpool-tracing/README.md"]
 summary = "Txpool tracing extension: tracks mempool lifecycle events, txpool_transactionStatus RPC, enabling CLI flags, and reth_transaction_tracing_tx_event histogram. Use to debug tx latency or drops."
@@ -423,8 +423,8 @@ summary = "Plan to forward mempool txs to builders via base_insertValidatedTrans
 digest = "2e785bfe9d"
 
 ["crates/execution/txpool/README.md"]
-summary = "Base txpool: BaseTransactionValidator (L1 data fee), BaseOrdering/TimestampOrdering, BuilderApiImpl, and the pluggable ValidatedTransactionExtensions wire format for base_insertValidatedTransaction."
-digest = "906eadac6b"
+summary = "Base txpool validation/ordering, builder wire extensions, staged EIP-712 predicate authorization, wallet signing contract, rejection metrics, and rollout/security limits."
+digest = "f8413da3b9"
 
 ["crates/infra/audit/README.md"]
 summary = "audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers the migrations and schema snapshot regeneration."
@@ -435,12 +435,12 @@ summary = "basectl-cli: the basectl clap parser and commands (blocks, sync, txpo
 digest = "1e4810a82c"
 
 ["crates/infra/challenger-e2e/README.md"]
-summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games, asserts valid games are left alone and each path is disputed. Covers mock/real prover modes, scenarios and env vars."
-digest = "2f4698e823"
+summary = "Behavioural e2e test of the challenger: forks L1 into Anvil, patches real games; the default `all` scenario covers Paths 1-4 on one fork by reviving nullified verifiers. Lists scenarios and env vars."
+digest = "a085a1e104"
 
 ["crates/infra/load-tests/README.md"]
-summary = "Load-testing framework (base-load-tests lib, base-load-tester bin): just/cargo commands, YAML config, tx mixes (precompile, B-20, swap, validity). Use to run or configure devnet/sepolia load tests."
-digest = "bdd5c4caec"
+summary = "Load testing: devnet/sepolia profiles, YAML workloads, calibration, adaptive or proactive validity signing, resource pacing, benchmark/report tools, and rollout limitations."
+digest = "a5633d6f46"
 
 ["crates/infra/roxy/README.md"]
 summary = "Scaffold-only Rust JSON-RPC reverse proxy meant to replace the ProxyD fork; currently just a listen-address flag plus /healthz and /readyz probes, no proxying yet."
@@ -644,7 +644,7 @@ digest = "b82a5a3590"
 
 ["crates/utilities/tx-manager/README.md"]
 summary = "Transaction lifecycle manager for EIP-1559/4844 txs: TxManager, fee bumping, nonce management, send state, error classification, blob sidecars, CLI config macros. Use when sending onchain txs."
-digest = "2b7de390c1"
+digest = "ffbb152cb0"
 
 ["crates/utilities/upgrade-signal/README.md"]
 summary = "Reads upgrade activation timestamps and minimum protocol version from the L1 ProtocolVersions contract; covers modes (metrics-only, startup-apply, runtime-admin), CLI flags, defaults, metrics."

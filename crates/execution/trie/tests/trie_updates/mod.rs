@@ -1,17 +1,18 @@
 //! Trie update storage and replacement behavior tests.
 
+use rstest::rstest;
 use serial_test::serial;
-use test_case::test_case;
 
 use super::*;
 
 /// Test storing and retrieving trie updates
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_trie_updates_operations<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let block_ref = BlockWithParent::new(B256::ZERO, NumHash::new(50, B256::repeat_byte(0x96)));
     let sorted_trie_updates = TrieUpdatesSorted::default();
@@ -36,12 +37,13 @@ fn test_trie_updates_operations<S: BaseProofsStore + BaseProofsInitialStateStore
 ///
 /// When `store_trie_updates` receives a [`HashedPostState`] with wiped=true for a storage entry,
 /// it should iterate all existing values for that address and create deletion entries for them.
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_store_trie_updates_with_wiped_storage<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let hashed_address = B256::repeat_byte(0x01);
     let block_ref = BlockWithParent::new(B256::ZERO, NumHash::new(100, B256::repeat_byte(0x96)));
@@ -126,14 +128,15 @@ fn test_store_trie_updates_with_wiped_storage<S: BaseProofsStore + BaseProofsIni
 /// the new slots corrupts `HashedStorageHistory` and makes `BaseProofsStateProviderRef::storage`
 /// return `None` for the new slots, producing divergent storage / state / output roots
 /// downstream of `LiveTrieCollector`.
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_store_trie_updates_with_wiped_storage_and_new_slots<
     S: BaseProofsStore + BaseProofsInitialStateStore,
 >(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let hashed_address = B256::repeat_byte(0x01);
     let block_ref = BlockWithParent::new(B256::ZERO, NumHash::new(100, B256::repeat_byte(0x96)));
@@ -210,12 +213,13 @@ fn test_store_trie_updates_with_wiped_storage_and_new_slots<
 ///
 /// This test verifies that all data stored via `store_trie_updates` can be read back
 /// through the cursor APIs.
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_store_trie_updates_comprehensive<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let block_ref = BlockWithParent::new(B256::ZERO, NumHash::new(100, B256::repeat_byte(0x96)));
 
@@ -383,12 +387,13 @@ fn test_store_trie_updates_comprehensive<S: BaseProofsStore + BaseProofsInitialS
 /// This test verifies the bug fix where `replace_updates` was only storing `trie_updates`
 /// and `post_states` directly without populating the internal data structures
 /// (`hashed_accounts`, `hashed_storages`, `account_branches`, `storage_branches`).
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_replace_updates_applies_all_updates<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let block_ref_50 = BlockWithParent::new(B256::ZERO, NumHash::new(50, B256::repeat_byte(0x96)));
 
@@ -647,14 +652,15 @@ fn test_replace_updates_applies_all_updates<S: BaseProofsStore + BaseProofsIniti
 
 /// Test that multi-block replacements make wiped storage see storage added earlier in the
 /// replacement chain.
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_replace_updates_wipes_storage_added_by_prior_replacement_block<
     S: BaseProofsStore + BaseProofsInitialStateStore,
 >(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     let common_block = BlockWithParent::new(B256::ZERO, NumHash::new(1, B256::repeat_byte(0xA1)));
     storage.store_trie_updates(common_block, BlockStateDiff::default())?;
@@ -719,12 +725,13 @@ fn test_replace_updates_wipes_storage_added_by_prior_replacement_block<
 ///
 /// This test verifies that when a node appears only in `removed_nodes` (not in updates),
 /// it is properly stored as a deletion and subsequent queries return None for that path.
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_pure_deletions_stored_correctly<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     // ========== Setup: Store initial branch nodes at block 50 ==========
     let account_path1 = nibbles_from(vec![1, 2, 3]);
@@ -852,12 +859,13 @@ fn test_pure_deletions_stored_correctly<S: BaseProofsStore + BaseProofsInitialSt
 /// This test verifies that when a path appears in both `removed_nodes` and `account_nodes`,
 /// the update from `account_nodes` takes precedence. This is critical for correctness
 /// when processing trie updates that both remove and update the same node.
-#[test_case(InMemoryProofsStorage::new(); "InMemory")]
-#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
-#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
 #[serial]
 fn test_updates_take_precedence_over_removals<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    storage: S,
+    #[case] storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     // ========== Setup: Store initial branch nodes at block 50 ==========
     let account_path = nibbles_from(vec![1, 2, 3]);

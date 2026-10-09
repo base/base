@@ -88,6 +88,41 @@ enum Path1Outcome {
     ZkChallenge,
 }
 
+/// The challenger's classification counters Path 3 is judged on, read from
+/// one scrape. Both are cumulative over the run, so they are only ever
+/// compared with an earlier reading.
+#[derive(Debug, Clone, Copy)]
+struct Classifications {
+    /// `invalid_dual_proposal_detected_total`. Path 3 staging exposes that
+    /// shape for one Anvil write plus one transaction, and this is what makes
+    /// the window observable.
+    dual: f64,
+    /// `invalid_zk_proposal_detected_total`: the path Path 3 must take.
+    zk_only: f64,
+}
+
+impl Classifications {
+    async fn fetch(config: &Config) -> Result<Self> {
+        let scrape = Scrape::fetch(&config.challenger_metrics_url).await?;
+        Ok(Self {
+            dual: scrape.sum("base_challenger_invalid_dual_proposal_detected_total"),
+            zk_only: scrape.sum("base_challenger_invalid_zk_proposal_detected_total"),
+        })
+    }
+}
+
+/// Which of a dual-proof game's two proofs the challenger dropped first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Path4Branch {
+    /// TEE first; the remaining ZK-only game was then cleared as Path 3.
+    TeeFirst,
+    /// ZK first, after the TEE request or submission failed. The TEE proof
+    /// remains, over a wrong root.
+    ZkFallback,
+    /// Both proofs were gone by the first observation.
+    BothCleared,
+}
+
 /// Everything the challenger can change about a game.
 ///
 /// The challenger only ever nullifies or challenges, and both show up here, so
@@ -278,35 +313,34 @@ impl ChallengerE2e {
 
         // Chosen before the challenger boots so the positive case below is
         // measured against a fork that already contains the target games.
+        //
+        // `all` takes a third game: B is spent by Path 4, so Path 3 is staged on
+        // its own dual-proof game C.
         progress::step(Phase::Setup, 2, setup_steps, "selecting the games under test");
-        let (game_a, game_b) =
-            Self::select_games(&config, &factory, &verifier, &anchor_registry).await?;
+        let wanted = if config.scenario == Scenario::All { 3 } else { 2 };
+        let games =
+            Self::select_games(&config, &factory, &verifier, &anchor_registry, wanted).await?;
+        let under_test: Vec<Address> = games.iter().map(|game| game.address).collect();
+        let (game_a, game_b) = (games[0], games[1]);
         if config.prover == ProverMode::Mock {
-            Self::install_mock_verifiers(
-                &config,
-                &provider,
-                &verifier,
-                [game_a.address, game_b.address],
-            )
-            .await?;
+            Self::install_mock_verifiers(&config, &provider, &verifier, &under_test).await?;
         }
 
         // Taken before the challenger boots. Every dispute assertion below is
-        // scoped to A or B, so without this a challenger that also disputes
-        // games it was never given would pass the run.
+        // scoped to the games under test, so without this a challenger that also
+        // disputes games it was never given would pass the run.
         progress::step(Phase::Setup, 3, setup_steps, "snapshotting bystander games");
-        let bystanders = Self::snapshot_bystanders(
-            &config,
-            &factory,
-            &verifier,
-            [game_a.address, game_b.address],
-        )
-        .await?;
+        let bystanders =
+            Self::snapshot_bystanders(&config, &factory, &verifier, &under_test).await?;
 
+        // B carries Path 4 in `all` and Path 3 in `path3`; C carries Path 3 in
+        // `all`. Every game after A starts as a valid dual-proof game.
         if stages_dual_proof {
-            progress::step(Phase::Setup, 4, setup_steps, "staging game B as a dual-proof game");
-            Self::stage_dual_proof(&config, &fork_url, &verifier, &provider, &driver, game_b)
-                .await?;
+            progress::step(Phase::Setup, 4, setup_steps, "staging the dual-proof games");
+            for game in &games[1..] {
+                Self::stage_dual_proof(&config, &fork_url, &verifier, &provider, &driver, *game)
+                    .await?;
+            }
         }
 
         progress::step(
@@ -337,11 +371,7 @@ impl ChallengerE2e {
             untouched
                 .push((game_a.address, Self::read_game_state(&verifier, game_a.address).await?));
 
-            // Zero, because `assert_quiet_on_valid_games` above asserts these
-            // counters are still absolutely zero once the first scan completes.
-            let submitted = Self::disputes_submitted(&config).await?;
-
-            let (nonce, dual_before, checkpoint) = Self::stage_path3(
+            Self::run_path3_staged(
                 &config,
                 &fork_url,
                 &verifier,
@@ -351,49 +381,6 @@ impl ChallengerE2e {
                 game_b,
             )
             .await?;
-
-            progress::step(
-                Phase::Path3,
-                4,
-                5,
-                "waiting for the challenger to nullify the ZK proof",
-            );
-            // The ZK proof must go, whichever route cleared it. A timeout here
-            // fails the run: the game is still invalid, and an E2E that reports
-            // success over an undisputed invalid game is worse than no E2E.
-            Self::await_path3(
-                &config,
-                &verifier,
-                &provider,
-                &challenger,
-                game_b,
-                nonce,
-                submitted,
-                dual_before,
-            )
-            .await?;
-            Self::assert_disputes_prove_canonical(
-                &config,
-                &provider,
-                &challenger,
-                game_b.address,
-                &checkpoint,
-                Phase::Path3,
-            )
-            .await?;
-
-            progress::step(Phase::Path3, 5, 5, "checking nothing else is disputed afterwards");
-            Self::observe(config.quiet_window, "the fork after Path 3").await;
-
-            let after = Self::disputes_submitted(&config).await?;
-            ensure!(
-                after <= submitted + 1.0,
-                "the challenger submitted {} dispute(s) in the {:?} after Path 3 completed; \
-                 nothing on the fork was disputable, and a dispute that reverts leaves every \
-                 game state untouched",
-                after - submitted - 1.0,
-                config.quiet_window
-            );
             progress.pass();
 
             progress.start(Phase::Bystanders);
@@ -432,23 +419,33 @@ impl ChallengerE2e {
                 "Path 1 landed as a TEE nullify, so there is no challenge to leave standing",
             );
         }
-        if config.scenario == Scenario::Path1Path2 {
+        // `path1-path2` exists to cover Path 2 dispute, so a Path 1 that leaves
+        // no challenge to dispute fails the run, charged to that phase.
+        if config.scenario == Scenario::Path1Path2 && matches!(path1, Path1Outcome::TeeNullify) {
             progress.start(Phase::Path2Dispute);
-            ensure!(
-                matches!(path1, Path1Outcome::ZkChallenge),
-                "Path 2 dispute requires Path 1 to land as a ZK challenge"
-            );
-            Self::run_path2(
-                &config,
-                Self::fork_config(&config, &fork_url, &driver, game_a),
-                &verifier,
-                &provider,
-                &challenger,
-                game_a,
-                checkpoint,
-            )
-            .await?;
-            progress.pass();
+            bail!("Path 2 dispute requires Path 1 to land as a ZK challenge");
+        }
+        match path1 {
+            Path1Outcome::ZkChallenge => {
+                progress.start(Phase::Path2Dispute);
+                Self::run_path2(
+                    &config,
+                    Self::fork_config(&config, &fork_url, &driver, game_a),
+                    &verifier,
+                    &provider,
+                    &challenger,
+                    game_a,
+                    checkpoint,
+                )
+                .await?;
+                progress.pass();
+            }
+            Path1Outcome::TeeNullify => progress.skip(
+                Phase::Path2Dispute,
+                "Path 1 landed as a TEE nullify, so there is no challenge to make fraudulent",
+            ),
+        }
+        if config.scenario == Scenario::Path1Path2 {
             progress.start(Phase::Bystanders);
             Self::assert_bystanders_untouched(&verifier, &bystanders).await?;
             progress.pass();
@@ -465,36 +462,176 @@ impl ChallengerE2e {
             return Ok(());
         }
         progress.start(Phase::Path4);
-        let path3_in_situ =
+        // Whatever Paths 1 and 2 nullified disabled a shared verifier; revive it
+        // so the rest of `all` runs on the same fork.
+        Self::revive_verifiers(&provider, &verifier, game_a.address).await?;
+        let (branch, b_checkpoint) =
             Self::run_path4(&config, &fork_url, &verifier, &provider, &driver, &challenger, game_b)
                 .await?;
-        progress.pass();
-        if path3_in_situ {
-            progress.passed_within(Phase::Path3, Phase::Path4);
-        } else {
-            progress.skip(
-                Phase::Path3,
-                "Path 4 did not drop the TEE proof first; the path3 scenario covers Path 3",
+        // Sampled before the revive: the follow-up dispute below cannot land
+        // while the ZK verifier is still nullified, so any later bump is it.
+        let follow_up_nonce = provider.get_transaction_count(challenger.address()).await?;
+        Self::revive_verifiers(&provider, &verifier, game_b.address).await?;
+        if branch == Path4Branch::ZkFallback {
+            progress::step(
+                Phase::Path4,
+                3,
+                3,
+                "waiting for the challenger to dispute B's remaining TEE proof",
             );
+            Self::await_dispute(
+                &config,
+                &verifier,
+                &provider,
+                game_b.address,
+                &challenger,
+                follow_up_nonce,
+                b_checkpoint.index + 1,
+                Phase::Path4,
+            )
+            .await?;
+            Self::assert_disputes_prove_canonical(
+                &config,
+                &provider,
+                &challenger,
+                game_b.address,
+                &b_checkpoint,
+                Phase::Path4,
+            )
+            .await?;
+            Self::revive_verifiers(&provider, &verifier, game_b.address).await?;
         }
+        progress.pass();
+
+        // A and B are settled from here on: A is a valid TEE-only game again
+        // (or fully nullified), B is either fully nullified or carries a
+        // legitimate challenge. Path 3 must leave both alone.
+        progress.start(Phase::Path3);
+        let mut untouched = bystanders;
+        for game in [game_a, game_b] {
+            untouched.push((game.address, Self::read_game_state(&verifier, game.address).await?));
+        }
+
+        Self::run_path3_staged(
+            &config,
+            &fork_url,
+            &verifier,
+            &provider,
+            &driver,
+            &challenger,
+            games[2],
+        )
+        .await?;
+        progress.pass();
 
         progress.start(Phase::Bystanders);
-        Self::assert_bystanders_untouched(&verifier, &bystanders).await?;
+        Self::assert_bystanders_untouched(&verifier, &untouched).await?;
         progress.pass();
 
-        // Built from what ran: `assert_game_a_settled` asserts the Path 2 skip
-        // only when Path 1 landed as a ZK challenge, and Path 4 reaches Path 3
-        // only on its TEE-first branch.
+        // Built from what ran: Path 2 skip and Path 2 dispute only when Path 1
+        // landed as a ZK challenge.
         let mut asserted = vec![Phase::QuietWindow, Phase::Path1];
         if matches!(path1, Path1Outcome::ZkChallenge) {
-            asserted.push(Phase::Path2Skip);
+            asserted.extend([Phase::Path2Skip, Phase::Path2Dispute]);
         }
-        asserted.push(Phase::Path4);
-        if path3_in_situ {
-            asserted.push(Phase::Path3);
-        }
-        asserted.push(Phase::Bystanders);
+        asserted.extend([Phase::Path4, Phase::Path3, Phase::Bystanders]);
         Self::log_scenario_complete(&config, &asserted);
+        Ok(())
+    }
+
+    /// Path 3 on a dual-proof `game`: stage it as an invalid ZK-only proposal,
+    /// require the challenger to nullify it with exactly one dispute, then
+    /// require nothing more is disputed for a further quiet window.
+    async fn run_path3_staged(
+        config: &Config,
+        fork_url: &Url,
+        verifier: &AggregateVerifierContractClient,
+        provider: &RootProvider,
+        driver: &PrivateKeySigner,
+        challenger: &PrivateKeySigner,
+        game: Candidate,
+    ) -> Result<()> {
+        // Sampled before staging; every earlier phase has finished by now.
+        let submitted = Self::disputes_submitted(config).await?;
+
+        let (nonce, classified_before, checkpoint) =
+            Self::stage_path3(config, fork_url, verifier, provider, driver, challenger, game)
+                .await?;
+
+        progress::step(Phase::Path3, 4, 5, "waiting for the challenger to nullify the ZK proof");
+        // The ZK proof must go, whichever route cleared it. A timeout here
+        // fails the run: the game is still invalid, and an E2E that reports
+        // success over an undisputed invalid game is worse than no E2E.
+        Self::await_path3(
+            config,
+            verifier,
+            provider,
+            challenger,
+            game,
+            nonce,
+            submitted,
+            classified_before,
+        )
+        .await?;
+        Self::assert_disputes_prove_canonical(
+            config,
+            provider,
+            challenger,
+            game.address,
+            &checkpoint,
+            Phase::Path3,
+        )
+        .await?;
+
+        progress::step(Phase::Path3, 5, 5, "checking nothing else is disputed afterwards");
+        Self::observe(config.quiet_window, "the fork after Path 3").await;
+
+        let after = Self::disputes_submitted(config).await?;
+        ensure!(
+            after <= submitted + 1.0,
+            "the challenger submitted {} dispute(s) in the {:?} after Path 3 completed; nothing \
+             on the fork was disputable, and a dispute that reverts leaves every game state \
+             untouched",
+            after - submitted - 1.0,
+            config.quiet_window
+        );
+        Ok(())
+    }
+
+    /// Clears the global `nullified` flag a dispute set on `game`'s verifiers.
+    ///
+    /// A successful `nullify` also nullifies the shared verifier of that proof
+    /// type (`AggregateVerifier.nullify` → `Verifier.nullify()`), which on a
+    /// real chain stops that proof type for every game until the verifier is
+    /// redeployed. On the fork it ended the run after the first nullify, which
+    /// is why the scenarios used to be split across pods. Clearing the flag
+    /// stands in for the redeploy. It runs only after the phase that set it
+    /// has been asserted, and only the flag is touched: the games keep exactly
+    /// the state the nullify left.
+    async fn revive_verifiers(
+        provider: &RootProvider,
+        verifier: &AggregateVerifierContractClient,
+        game: Address,
+    ) -> Result<()> {
+        let verifiers = [
+            ("tee", verifier.tee_verifier_address(game).await?),
+            ("zk", verifier.zk_verifier_address(game).await?),
+        ];
+        for (kind, address) in verifiers {
+            if !verifier.verifier_nullified(address).await? {
+                continue;
+            }
+            mock_verifier::revive(provider, address).await?;
+            ensure!(
+                !verifier.verifier_nullified(address).await?,
+                "the {kind} verifier at {address} still reads nullified after reviving it"
+            );
+            info!(
+                verifier = %address,
+                kind,
+                "revived the verifier a dispute nullified, so the run continues on this fork"
+            );
+        }
         Ok(())
     }
 
@@ -554,7 +691,8 @@ impl ChallengerE2e {
         factory: &DisputeGameFactoryContractClient,
         verifier: &AggregateVerifierContractClient,
         anchor_registry: &AnchorStateRegistryContractClient,
-    ) -> Result<(Candidate, Candidate)> {
+        wanted: usize,
+    ) -> Result<Vec<Candidate>> {
         let game_count = factory.game_count().await?;
         if game_count == 0 {
             bail!("factory {} has no games on the fork", config.dispute_game_factory_addr);
@@ -593,7 +731,7 @@ impl ChallengerE2e {
         );
 
         let mut stale = 0usize;
-        let mut selected = Vec::with_capacity(2);
+        let mut selected = Vec::with_capacity(wanted);
         for index in (floor..game_count).rev() {
             let game = factory.game_at_index(index).await?;
             // ZERO is the starting anchor, where the challenger scans from 0.
@@ -644,19 +782,19 @@ impl ChallengerE2e {
                 game = %game.proxy,
                 factory_index = index,
                 root_count,
-                // A or B, so a log line says which game it is talking about
+                // A, B or C, so a log line says which game it is talking about
                 // without cross-referencing the address.
-                slot = if selected.is_empty() { "a" } else { "b" },
+                slot = ["a", "b", "c"].get(selected.len()).copied().unwrap_or("extra"),
                 "selected game"
             );
             selected.push(Candidate { address: game.proxy, root_count });
-            if selected.len() == 2 {
+            if selected.len() == wanted {
                 break;
             }
         }
 
-        if let [game_a, game_b] = selected.as_slice() {
-            return Ok((*game_a, *game_b));
+        if selected.len() == wanted {
+            return Ok(selected);
         }
         ensure!(
             stale == 0,
@@ -669,9 +807,9 @@ impl ChallengerE2e {
             selected.len()
         );
         bail!(
-            "need two in-progress, uncountered games of type {} above the anchor in the newest \
-             {} factory indices, found {}; the fork source may be behind, the proposer may be \
-             stalled, or the anchor may have advanced past them",
+            "need {wanted} in-progress, uncountered games of type {} above the anchor in the \
+             newest {} factory indices, found {}; the fork source may be behind, the proposer \
+             may be stalled, or the anchor may have advanced past them",
             config.game_type,
             game_count - floor,
             selected.len()
@@ -702,7 +840,7 @@ impl ChallengerE2e {
             start_block = checkpoint.start_block,
             target_block = checkpoint.target_block(),
             interval = checkpoint.interval,
-            "requesting SNARK of canonical roots to stage Path 4"
+            "requesting SNARK of canonical roots to stage a dual-proof game"
         );
         let proof_bytes = checkpoint
             .request_proof(&fork_config, driver.address(), l1_head, game_l2_block_number)
@@ -735,11 +873,11 @@ impl ChallengerE2e {
         );
 
         info!(
-            phase = %Phase::Path4,
+            phase = %Phase::Setup,
             game = %game.address,
             tx_hash = %receipt.transaction_hash,
             zk_prover = %zk_prover,
-            "staged Path 4 dual-proof game; counteredIndex is 0"
+            "staged dual-proof game; counteredIndex is 0"
         );
         Ok(())
     }
@@ -815,9 +953,9 @@ impl ChallengerE2e {
     /// it proves [`PATH3_STAGING_ROOT`] at index 0 of the still-valid game.
     ///
     /// Returns the challenger's nonce, sampled before the fork is touched, the
-    /// `invalid_dual_proposal_detected_total` reading from before staging
-    /// began, which [`Self::await_path3`] requires to be unchanged, and the
-    /// checkpoint that was corrupted.
+    /// classification counters from before staging began, which
+    /// [`Self::await_path3`] judges against, and the checkpoint that was
+    /// corrupted.
     async fn stage_path3(
         config: &Config,
         fork_url: &Url,
@@ -826,11 +964,13 @@ impl ChallengerE2e {
         driver: &PrivateKeySigner,
         challenger: &PrivateKeySigner,
         game: Candidate,
-    ) -> Result<(u64, f64, Checkpoint)> {
+    ) -> Result<(u64, Classifications, Checkpoint)> {
         let fork_config = Self::fork_config(config, fork_url, driver, game);
         // Sampled before anything is staged, for the reason given in `run_path1`.
         let nonce = provider.get_transaction_count(challenger.address()).await?;
-        let dual_detected = Self::dual_proposals_detected(config).await?;
+        // Baselines, not absolutes: in `all`, Path 4 has already moved both
+        // counters on another game before this one is staged.
+        let classified = Classifications::fetch(config).await?;
 
         let tee_verifier = verifier
             .tee_verifier_address(game.address)
@@ -841,7 +981,12 @@ impl ChallengerE2e {
             .await
             .context("failed to build a tx manager for the Path 3 TEE nullify")?;
 
-        progress::step(Phase::Path3, 1, 5, "dropping game B's TEE proof while its roots are valid");
+        progress::step(
+            Phase::Path3,
+            1,
+            5,
+            "dropping the dual-proof game's TEE proof while its roots are valid",
+        );
         info!(
             game = %game.address,
             tee_verifier = %tee_verifier,
@@ -924,7 +1069,7 @@ impl ChallengerE2e {
             invalid_index = checkpoint.index,
             "staged Path 3: an invalid ZK-only proposal"
         );
-        Ok((nonce, dual_detected, checkpoint))
+        Ok((nonce, classified, checkpoint))
     }
 
     /// Runs `operation` with `verifier`'s code replaced by the mock verifier,
@@ -961,17 +1106,17 @@ impl ChallengerE2e {
     /// rest of the run.
     ///
     /// Games of one implementation share their verifiers, so this is normally
-    /// two addresses; collecting them per game keeps it correct if A and B come
+    /// two addresses; collecting them per game keeps it correct if the games come
     /// from different implementations. Bystanders on the same verifiers see the
     /// mock too, which is harmless: nothing on the fork submits proofs for them.
     async fn install_mock_verifiers(
         config: &Config,
         provider: &RootProvider,
         verifier: &AggregateVerifierContractClient,
-        games: [Address; 2],
+        games: &[Address],
     ) -> Result<()> {
         let mut verifiers = BTreeSet::new();
-        for game in games {
+        for &game in games {
             verifiers.insert(verifier.tee_verifier_address(game).await?);
             verifiers.insert(verifier.zk_verifier_address(game).await?);
         }
@@ -1130,9 +1275,9 @@ impl ChallengerE2e {
     ///
     /// The route is then asserted, not inferred from the end state.
     /// [`Self::stage_path3`] never lets a scan see an invalid game with both
-    /// proofs, so any `InvalidDualProposal` classification since
-    /// `dual_before` fails the run;
-    /// the challenger must have reached the game through `InvalidZkProposal`.
+    /// proofs, so any `InvalidDualProposal` classification since `before`
+    /// fails the run, and at least one new `InvalidZkProposal` classification
+    /// is required.
     /// The counter is judged here rather than at staging time because the
     /// driver increments it only after awaiting `validate_game`, so by the end
     /// of the dispute cycle any scan of the game has long since counted.
@@ -1150,7 +1295,7 @@ impl ChallengerE2e {
         game: Candidate,
         nonce: u64,
         submitted_before: f64,
-        dual_before: f64,
+        before: Classifications,
     ) -> Result<()> {
         let state = Self::poll_until(
             config,
@@ -1163,13 +1308,13 @@ impl ChallengerE2e {
         )
         .await?;
 
-        let dual_after = Self::dual_proposals_detected(config).await?;
+        let after = Classifications::fetch(config).await?;
         ensure!(
-            dual_after <= dual_before,
+            after.dual <= before.dual,
             "the challenger classified {} game(s) as InvalidDualProposal during Path 3, but \
              staging waits out every scan that saw both proofs before it patches the root; game \
              {} may have been cleared as Path 4 rather than as an invalid ZK proposal",
-            dual_after - dual_before,
+            after.dual - before.dual,
             game.address
         );
 
@@ -1197,13 +1342,13 @@ impl ChallengerE2e {
         // assertion above is satisfied by *any* route to a cleared ZK proof; this
         // is the one that says the challenger got there through
         // `InvalidZkProposal`.
-        let scrape = Scrape::fetch(&config.challenger_metrics_url).await?;
-        let classified = scrape.sum("base_challenger_invalid_zk_proposal_detected_total");
         ensure!(
-            classified >= 1.0,
-            "game {} was nullified but the challenger never classified an InvalidZkProposal; \
-             Path 3 was cleared through some other path",
-            game.address
+            after.zk_only >= before.zk_only + 1.0,
+            "game {} was nullified but the challenger classified no new InvalidZkProposal \
+             (counter {} before staging, {} after); Path 3 was cleared through some other path",
+            game.address,
+            before.zk_only,
+            after.zk_only
         );
 
         let submitted = Self::disputes_submitted(config).await? - submitted_before;
@@ -1271,15 +1416,6 @@ impl ChallengerE2e {
     async fn games_scanned(config: &Config) -> Result<f64> {
         let scrape = Scrape::fetch(&config.challenger_metrics_url).await?;
         Ok(scrape.sum("base_challenger_games_scanned_total"))
-    }
-
-    /// Times the challenger has classified a game as `InvalidDualProposal`.
-    ///
-    /// Path 3 staging exposes that shape for one Anvil write plus one
-    /// transaction, and this is what makes the window observable.
-    async fn dual_proposals_detected(config: &Config) -> Result<f64> {
-        let scrape = Scrape::fetch(&config.challenger_metrics_url).await?;
-        Ok(scrape.sum("base_challenger_invalid_dual_proposal_detected_total"))
     }
 
     /// Total dispute transactions the challenger has submitted, reverted or not.
@@ -1457,6 +1593,7 @@ impl ChallengerE2e {
             challenger,
             nonce,
             checkpoint.index + 1,
+            Phase::Path1,
         )
         .await?;
         Self::assert_disputes_prove_canonical(
@@ -1647,7 +1784,7 @@ impl ChallengerE2e {
         config: &Config,
         factory: &DisputeGameFactoryContractClient,
         verifier: &AggregateVerifierContractClient,
-        under_test: [Address; 2],
+        under_test: &[Address],
     ) -> Result<Vec<(Address, GameState)>> {
         let game_count = factory.game_count().await?;
         let floor = game_count.saturating_sub(config.game_lookback);
@@ -1672,7 +1809,7 @@ impl ChallengerE2e {
         Ok(snapshot)
     }
 
-    /// The challenger may only have moved the two games this test corrupted.
+    /// The challenger may only have moved the games this test corrupted.
     ///
     /// Catches collateral damage the per-game assertions cannot see: a
     /// challenger misconfigured on `game_type`, one with a broken lookback, or
@@ -1722,7 +1859,7 @@ impl ChallengerE2e {
     /// TEE proof cannot then be challenged with another ZK proof on the same fork,
     /// so that branch ends after Path 4.
     ///
-    /// Returns whether Path 3 was reached and asserted in situ.
+    /// Returns which proof went first and the corrupted checkpoint.
     async fn run_path4(
         config: &Config,
         fork_url: &Url,
@@ -1731,11 +1868,11 @@ impl ChallengerE2e {
         driver: &PrivateKeySigner,
         challenger: &PrivateKeySigner,
         game: Candidate,
-    ) -> Result<bool> {
+    ) -> Result<(Path4Branch, Checkpoint)> {
         let fork_config = Self::fork_config(config, fork_url, driver, game);
         // Sampled before the patch for the reason given in `run_path1`.
         let nonce = provider.get_transaction_count(challenger.address()).await?;
-        progress::step(Phase::Path4, 1, 2, "corrupting a root of dual-proof game B");
+        progress::step(Phase::Path4, 1, 3, "corrupting a root of dual-proof game B");
         let checkpoint = Checkpoint::patch(&fork_config, verifier)
             .await
             .context("failed to corrupt the dual-proof game on the fork")?;
@@ -1746,7 +1883,7 @@ impl ChallengerE2e {
             target_block = checkpoint.target_block(),
             "corrupted dual-proof game; waiting for Path 4"
         );
-        progress::step(Phase::Path4, 2, 2, "waiting for the challenger to drop one of B's proofs");
+        progress::step(Phase::Path4, 2, 3, "waiting for the challenger to drop one of B's proofs");
 
         // Path 4 is done when either proof is gone; which one tells us what the
         // game has become, and so which path must clear the remainder. Both
@@ -1780,6 +1917,12 @@ impl ChallengerE2e {
                 branch = "tee-first",
                 game = %game.address,
                 "Path 4: TEE proof nullified, ZK proof remains"
+            );
+            progress::step(
+                Phase::Path4,
+                3,
+                3,
+                "waiting for the challenger to ZK-nullify the remaining proof (Path 3 in situ)",
             );
             Self::poll_until(
                 config,
@@ -1832,8 +1975,12 @@ impl ChallengerE2e {
             transactions = nonce_after - nonce,
             "the challenger completed Path 4"
         );
-        // Path 3 was reached and asserted in situ only on the TEE-first branch.
-        Ok(tee_cleared && !zk_cleared)
+        let branch = match (tee_cleared, zk_cleared) {
+            (true, true) => Path4Branch::BothCleared,
+            (true, false) => Path4Branch::TeeFirst,
+            _ => Path4Branch::ZkFallback,
+        };
+        Ok((branch, checkpoint))
     }
 
     /// Negative case: the challenger must dispute the corrupted game, and it
@@ -1842,6 +1989,7 @@ impl ChallengerE2e {
     /// Both dispute paths count. A corrupted TEE-only game is Path 1, which
     /// tries a TEE proof first and falls back to a ZK challenge; insisting on
     /// `nullify` would fail the run whenever the TEE prover is briefly down.
+    #[expect(clippy::too_many_arguments, reason = "assertion inputs, all distinct")]
     async fn await_dispute(
         config: &Config,
         verifier: &AggregateVerifierContractClient,
@@ -1850,6 +1998,7 @@ impl ChallengerE2e {
         challenger: &PrivateKeySigner,
         nonce_before: u64,
         expected_countered: u64,
+        phase: Phase,
     ) -> Result<Path1Outcome> {
         let outcome = Self::poll_until(
             config,
@@ -1901,7 +2050,7 @@ impl ChallengerE2e {
             Self::assert_challenger_acted(provider, challenger, nonce_before, label).await?;
 
         info!(
-            phase = %Phase::Path1,
+            phase = %phase,
             verdict = %Verdict::Pass,
             game = %game,
             outcome = label,
