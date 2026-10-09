@@ -3295,7 +3295,6 @@ dependencies = [
  "k256 0.13.4",
  "metrics",
  "metrics-exporter-prometheus",
- "nanoid",
  "opentelemetry 0.32.0",
  "parking_lot",
  "rand 0.9.5",
@@ -3364,6 +3363,7 @@ dependencies = [
  "base-builder-core",
  "base-bundles",
  "base-node-runner",
+ "criterion",
  "jsonrpsee",
  "moka",
  "tracing",
@@ -4718,7 +4718,6 @@ dependencies = [
  "static_assertions",
  "strum 0.27.2",
  "tempfile",
- "test-case",
  "thiserror 2.0.19",
  "tokio",
  "tracing",
@@ -4769,6 +4768,7 @@ dependencies = [
  "reth-tasks",
  "reth-transaction-pool",
  "revm",
+ "rstest",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
@@ -4985,12 +4985,14 @@ dependencies = [
  "base-tx-manager",
  "eyre",
  "futures",
+ "httpmock",
  "humantime",
  "indicatif 0.18.6",
  "parking_lot",
  "rand 0.9.5",
  "reqwest 0.13.4",
  "revm",
+ "rstest",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -5354,14 +5356,9 @@ dependencies = [
  "alloy-eips 2.4.1",
  "alloy-evm",
  "alloy-primitives",
- "alloy-provider",
  "alloy-rlp",
- "alloy-rpc-client",
  "alloy-rpc-types-engine",
- "alloy-transport",
- "alloy-transport-http",
  "alloy-trie",
- "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
  "base-common-genesis",
@@ -5369,14 +5366,8 @@ dependencies = [
  "base-proof-mpt",
  "base-protocol",
  "getrandom 0.2.17",
- "rand 0.9.5",
  "revm",
- "rocksdb",
- "serde",
- "serde_json",
- "tempfile",
  "thiserror 2.0.19",
- "tokio",
  "tracing",
 ]
 
@@ -6408,7 +6399,6 @@ dependencies = [
  "jsonrpsee",
  "k256 0.13.4",
  "libp2p",
- "nanoid",
  "prometheus-scraper",
  "rand 0.9.5",
  "reqwest 0.13.4",
@@ -6434,6 +6424,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -6536,6 +6527,7 @@ dependencies = [
  "metrics",
  "reth-tasks",
  "reth-transaction-pool",
+ "rstest",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
@@ -6601,12 +6593,15 @@ dependencies = [
  "eyre",
  "httpmock",
  "jsonrpsee",
+ "metrics",
+ "metrics-util",
  "reth-chainspec",
  "reth-provider",
  "reth-rpc-eth-types",
  "reth-rpc-server-types",
  "reth-storage-api",
  "reth-transaction-pool",
+ "rstest",
  "serde",
  "serde_json",
  "tokio",
@@ -6715,11 +6710,11 @@ dependencies = [
  "base-prover-service-client",
  "base-prover-service-protocol",
  "eyre",
- "nanoid",
  "serde",
  "serde_json",
  "tokio",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -13159,15 +13154,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "nanoid"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ffa00dec017b5b1a8b7cf5e2c008bfda1aa7e0697ac1508b491fdf2622fb4d8"
-dependencies = [
- "rand 0.8.7",
 ]
 
 [[package]]
@@ -22227,39 +22213,6 @@ dependencies = [
  "wezterm-dynamic",
  "wezterm-input-types",
  "winapi",
-]
-
-[[package]]
-name = "test-case"
-version = "3.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb2550dd13afcd286853192af8601920d959b14c401fcece38071d53bf0768a8"
-dependencies = [
- "test-case-macros",
-]
-
-[[package]]
-name = "test-case-core"
-version = "3.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adcb7fd841cd518e279be3d5a3eb0636409487998a4aff22f3de87b81e88384f"
-dependencies = [
- "cfg-if",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "test-case-macros"
-version = "3.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c89e72a01ed4c579669add59014b9a524d609c0c88c6a585ce37485879f6ffb"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
- "test-case-core",
 ]
 
 [[package]]

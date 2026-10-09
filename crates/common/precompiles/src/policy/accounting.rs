@@ -7,9 +7,6 @@ use base_precompile_storage::Result;
 
 /// Raw storage port the policy-registry logic operates on.
 pub trait PolicyAccounting {
-    /// Returns the singleton registry address these slots are rooted at.
-    fn registry_address(&self) -> Address;
-
     /// Returns the current call's caller address.
     fn caller(&self) -> Address;
 

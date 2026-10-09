@@ -25,7 +25,7 @@ base-prover-service-protocol.workspace = true
 # misc
 url.workspace = true
 eyre.workspace = true
-nanoid.workspace = true
 serde_json.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 tokio = { workspace = true, features = ["time"] }
 serde = { workspace = true, features = ["derive"] }

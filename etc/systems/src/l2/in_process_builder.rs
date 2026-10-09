@@ -14,6 +14,7 @@ use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{
     BasePooledTransaction, BuilderApiImpl, BuilderApiServer, DEFAULT_MAX_VALIDITY_PREDICATES,
+    ValiditySignatureMode,
 };
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
@@ -62,6 +63,8 @@ pub struct InProcessBuilderConfig {
     pub metrics_port: Option<u16>,
     /// Whether to run both payload builders and cut over to basic at Denim.
     pub payload_builder_cutover: bool,
+    /// Staged signature policy used by both validity-bearing RPC endpoints.
+    pub validity_signature_mode: ValiditySignatureMode,
     /// Additional node extensions installed after the builder's built-in RPC wiring.
     ///
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard
@@ -195,7 +198,10 @@ impl InProcessBuilder {
 
         let extra_extensions = config.extra_extensions;
         let hooks = Box::new(SendRawTransactionValidityExtension::from_config(
-            SendRawTransactionValidityConfig::default(),
+            SendRawTransactionValidityConfig {
+                validity_signature_mode: config.validity_signature_mode,
+                ..Default::default()
+            },
         ))
         .apply(NodeHooks::new());
         // Reth's `extend_rpc_modules` is a single-slot hook that silently replaces whatever was
@@ -207,7 +213,8 @@ impl InProcessBuilder {
                     ctx.pool().clone(),
                     true,
                     DEFAULT_MAX_VALIDITY_PREDICATES,
-                );
+                )
+                .with_validity_signature_mode(config.validity_signature_mode);
             ctx.modules.merge_configured(api.into_rpc())?;
             Ok(())
         });

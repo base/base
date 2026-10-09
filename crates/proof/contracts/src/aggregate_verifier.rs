@@ -490,6 +490,11 @@ pub const fn invalid_signer_selector() -> [u8; 4] {
     IAggregateVerifier::InvalidSigner::SELECTOR
 }
 
+/// The 4-byte selector for `InvalidProof()`.
+pub const fn invalid_proof_selector() -> [u8; 4] {
+    IAggregateVerifier::InvalidProof::SELECTOR
+}
+
 /// The 4-byte selector for `AlreadyProven(uint8)`.
 pub const fn already_proven_selector() -> [u8; 4] {
     IAggregateVerifier::AlreadyProven::SELECTOR

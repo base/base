@@ -22,6 +22,7 @@ use alloy_primitives::{Address, B256};
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::NodeMode;
+use base_execution_txpool::ValiditySignatureMode;
 use eyre::{Result, WrapErr};
 use url::Url;
 
@@ -96,6 +97,7 @@ impl ShadowSequencer {
             metrics_port: None,
             payload_builder_cutover: false,
             extra_extensions: Vec::new(),
+            validity_signature_mode: ValiditySignatureMode::Off,
             block_time: Duration::from_secs(config.rollup_config.block_time),
             persistence_threshold: None,
             persistence_backpressure_threshold: None,

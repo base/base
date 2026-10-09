@@ -1,11 +1,11 @@
 //! Utility functions for system tests.
 
-const ALPHANUMERIC: &[char] = &[
-    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
-    't', 'u', 'v', 'w', 'x', 'y', 'z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-];
+use uuid::Uuid;
+
+/// Number of random hex characters appended to generated container names.
+const NAME_SUFFIX_LEN: usize = 8;
 
 /// Generates a unique container name with the given prefix.
 pub fn unique_name(prefix: &str) -> String {
-    format!("{}-{}", prefix, nanoid::nanoid!(8, ALPHANUMERIC))
+    format!("{}-{}", prefix, &Uuid::new_v4().simple().to_string()[..NAME_SUFFIX_LEN])
 }
