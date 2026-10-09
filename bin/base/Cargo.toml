@@ -68,8 +68,9 @@ axum = { workspace = true, features = ["tokio", "http1", "http2"] }
 tokio = { workspace = true, features = ["net", "time", "macros", "process", "rt-multi-thread"] }
 
 [features]
-default = [ "asm-keccak", "jemalloc" ]
+default = [ "asm-keccak", "jemalloc", "keccak-cache-global" ]
 asm-keccak = [ "base-execution-cli/asm-keccak" ]
+keccak-cache-global = [ "base-execution-cli/keccak-cache-global" ]
 jemalloc = [
 	"base-builder-core/jemalloc",
 	"base-execution-cli/jemalloc",
