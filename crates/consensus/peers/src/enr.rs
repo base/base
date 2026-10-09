@@ -127,16 +127,15 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    #[cfg(feature = "arbitrary")]
-    fn roundtrip_base_enr() {
-        arbtest::arbtest(|u| {
-            let base_enr = BaseEnr::from_chain_id(u.arbitrary()?);
+    proptest::proptest! {
+        #[test]
+        #[cfg(feature = "arbitrary")]
+        fn roundtrip_base_enr(chain_id in proptest::prelude::any::<u64>()) {
+            let base_enr = BaseEnr::from_chain_id(chain_id);
             let bytes = alloy_rlp::encode(base_enr);
             let decoded = BaseEnr::decode(&mut &bytes[..]).unwrap();
-            assert_eq!(decoded, base_enr);
-            Ok(())
-        });
+            proptest::prop_assert_eq!(decoded, base_enr);
+        }
     }
 
     #[test]
