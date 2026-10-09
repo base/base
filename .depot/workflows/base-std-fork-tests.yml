@@ -150,9 +150,14 @@ jobs:
 
           cd "$BASE_ANVIL_DIR"
           rustup show active-toolchain
-          cargo \
-            --config "patch.\"https://github.com/base/base.git\".base-common-precompiles.path=\"$GITHUB_WORKSPACE/crates/common/precompiles\"" \
-            --config "patch.\"https://github.com/base/base.git\".base-common-chains.path=\"$GITHUB_WORKSPACE/crates/common/chains\"" \
+          base_patch=(
+            --config "patch.\"https://github.com/base/base.git\".base-common-precompiles.path=\"$GITHUB_WORKSPACE/crates/common/precompiles\""
+            --config "patch.\"https://github.com/base/base.git\".base-common-chains.path=\"$GITHUB_WORKSPACE/crates/common/chains\""
+          )
+          # The pinned lockfile uses 0.0.0; release crates have a new version and
+          # Cargo otherwise keeps the old git packages and ignores these patches.
+          cargo "${base_patch[@]}" update -p base-common-precompiles -p base-common-chains
+          cargo "${base_patch[@]}" \
             build --release --no-default-features --features anvil/cli -p anvil -p forge
 
           "$BASE_ANVIL_DIR/target/release/anvil" --version
