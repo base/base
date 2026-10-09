@@ -181,7 +181,10 @@ mod tests {
             sender: sender(),
             raw: raw(),
             metering: None,
-            extensions: TransactionValidity { validity: vec![predicate.clone()] },
+            extensions: TransactionValidity {
+                validity: vec![predicate.clone()],
+                validity_signature: None,
+            },
         };
 
         let value = serde_json::to_value(&tx).unwrap();

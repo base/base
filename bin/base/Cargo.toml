@@ -43,7 +43,7 @@ alloy-chains = { workspace = true, features = ["std"] }
 reth-node-core.workspace = true
 reth-cli-runner.workspace = true
 reth-cli-commands.workspace = true
-reth-cli-util = { workspace = true, optional = true }
+reth-cli-util.workspace = true
 
 # cli
 clap = { workspace = true, features = ["env"] }
@@ -68,9 +68,16 @@ axum = { workspace = true, features = ["tokio", "http1", "http2"] }
 tokio = { workspace = true, features = ["net", "time", "macros", "process", "rt-multi-thread"] }
 
 [features]
+default = [ "asm-keccak", "jemalloc" ]
+asm-keccak = [ "base-execution-cli/asm-keccak" ]
+jemalloc = [
+	"base-builder-core/jemalloc",
+	"base-execution-cli/jemalloc",
+	"reth-cli-util/jemalloc",
+]
 jemalloc-prof = [
 	"base-builder-core/jemalloc-prof",
 	"base-execution-cli/jemalloc-symbols",
-	"dep:reth-cli-util",
+	"jemalloc",
 	"reth-cli-util/jemalloc-prof",
 ]

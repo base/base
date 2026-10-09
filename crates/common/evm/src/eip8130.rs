@@ -51,8 +51,8 @@ use base_common_consensus::{AccountChange, Delegation, Eip8130Constants, Predepl
 use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_execution_eip8130::{
     AccountChangeApplier, AccountConfigurationStorage, ApplyError, DelegationEffect,
-    Eip8130GasSchedule, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator,
-    TransactionAuthorizer,
+    Eip8130GasSchedule, FeeCheck, FeeError, IntrinsicGas, IntrinsicGasInput, NonceMode,
+    NonceValidator, TransactionAuthorizer,
 };
 use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 use revm::{
@@ -61,7 +61,7 @@ use revm::{
     context_interface::{
         Block, Cfg, ContextTr, JournalTr,
         context::take_error,
-        result::{EVMError, ExecutionResult, Output, ResultGas, SuccessReason},
+        result::{EVMError, ExecutionResult, InvalidTransaction, Output, ResultGas, SuccessReason},
     },
     handler::{EthFrame, EvmTr, FrameResult, Handler, PrecompileProvider},
     inspector::{InspectorEvmTr, InspectorHandler, JournalExt},
@@ -167,7 +167,9 @@ struct CallsResult {
     /// phases are then skipped.
     reverted: bool,
     /// The return data of the call that reverted the transaction (or the
-    /// `ActorPolicyViolation` payload for a policy-gate block); empty on success.
+    /// `ActorPolicyViolation` payload for a policy-gate block), or on success
+    /// the return data of the last call (empty when `calls` was empty), which
+    /// is what an EIP-8130 `eth_call` returns.
     output: Bytes,
     /// Per-phase execution status, one entry per phase in `calls` and in phase
     /// order: `0x01` if the phase committed, `0x00` if it reverted or was skipped
@@ -1142,7 +1144,12 @@ impl Eip8130Executor {
                 .with_account_info(payer, |info| Ok(info.balance))
                 .map_err(BaseTransactionError::eip8130)?;
             FeeCheck::validate_balance(payer_balance, gas_limit, intrinsic.payer_auth, max_fee)
-                .map_err(BaseTransactionError::eip8130)?;
+                .map_err(|error| match error {
+                    FeeError::InsufficientBalance { balance, required } => {
+                        Self::payer_cannot_pay(balance, required)
+                    }
+                    error => BaseTransactionError::eip8130(error),
+                })?;
 
             // 6. Publish the transaction context (sender / payer / actor id) so it
             //    is readable by the `TxContext` precompile during `calls`.
@@ -1209,11 +1216,10 @@ impl Eip8130Executor {
 
         let mut payer_acc =
             ctx.journal_mut().load_account_mut(outcome.payer).map_err(EVMError::Database)?;
-        let debited = payer_acc.balance().checked_sub(prepay).ok_or_else(|| {
-            EVMError::Transaction(BaseTransactionError::eip8130(
-                "payer balance is below the worst-case fee",
-            ))
-        })?;
+        let balance = *payer_acc.balance();
+        let debited = balance
+            .checked_sub(prepay)
+            .ok_or_else(|| EVMError::Transaction(Self::payer_cannot_pay(balance, prepay)))?;
         payer_acc.set_balance(debited);
 
         Ok(prepay)
@@ -1256,6 +1262,7 @@ impl Eip8130Executor {
         // One status byte per phase; phases not reached after a revert are filled
         // with `0x00` below.
         let mut phase_statuses: Vec<u8> = Vec::with_capacity(total_phases);
+        let mut last_output = Bytes::new();
 
         for phase in &signed.tx().calls {
             let checkpoint = evm.ctx_mut().journal_mut().checkpoint();
@@ -1313,6 +1320,7 @@ impl Eip8130Executor {
                     // matching standard transaction-level refund accounting. The
                     // sum is clamped and EIP-3529-capped once in `settle_fees`.
                     phase_refund = phase_refund.saturating_add(gas.refunded());
+                    last_output = frame.interpreter_result().output.clone();
                 } else {
                     phase_reverted = true;
                     phase_output = frame.interpreter_result().output.clone();
@@ -1350,7 +1358,7 @@ impl Eip8130Executor {
             call_gas_spent: pool.saturating_sub(remaining),
             refund,
             reverted: false,
-            output: Bytes::new(),
+            output: last_output,
             phase_statuses,
         })
     }
@@ -1874,6 +1882,19 @@ impl Eip8130Executor {
         Ok((intrinsic, execution_gas_available))
     }
 
+    /// The rejection for a payer whose balance cannot cover the worst-case fee.
+    ///
+    /// Reported as revm's `LackOfFundForMaxFee` (not an EIP-8130-specific
+    /// error) so the builder skips the transaction like any other one that
+    /// cannot pay, rather than aborting the payload: a payer's balance can
+    /// change after admission, including earlier in the same block.
+    fn payer_cannot_pay(balance: U256, required: U256) -> BaseTransactionError {
+        BaseTransactionError::Base(InvalidTransaction::LackOfFundForMaxFee {
+            fee: Box::new(required),
+            balance: Box::new(balance),
+        })
+    }
+
     /// The rejection for an EIP-8130 transaction under a spec before Everest.
     fn not_active_error() -> BaseTransactionError {
         BaseTransactionError::eip8130("EIP-8130 transactions are not active before Everest")
@@ -1897,15 +1918,14 @@ impl Eip8130Executor {
 
 #[cfg(test)]
 mod tests {
-    use alloy_evm::{Evm, FromTxWithEncoded, precompiles::PrecompilesMap};
+    use alloy_evm::{Evm, EvmError, FromTxWithEncoded, precompiles::PrecompilesMap};
     use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, keccak256};
-    use alloy_sol_types::{SolEvent, SolValue, sol};
+    use alloy_sol_types::{SolValue, sol};
     use base_common_consensus::{
         AccountChange, AccountChangeChannel, BaseTxEnvelope, Call, ChangeType, CreateEntry,
         Eip8130Contracts, Eip8130Signed, InitialActor, Predeploys, SignedAccountChanges,
         SignedChange, TxEip8130,
     };
-    use base_common_precompiles::INonceManager;
     use base_execution_eip8130::AccountChangeApplier;
     use base_precompile_storage::StorageCtx;
     use k256::ecdsa::SigningKey;
@@ -2371,17 +2391,10 @@ mod tests {
         let stored_nonce =
             nonce_account.storage.get(&nonce_slot).expect("nonce slot updated").present_value;
         assert_eq!(stored_nonce, U256::from(current_nonce + 1));
-
-        let log = outcome
-            .result
-            .logs()
-            .iter()
-            .find(|log| log.address == NonceManagerStorage::ADDRESS)
-            .expect("nonce increment event");
-        let event = INonceManager::NonceIncremented::decode_log_data(&log.data).unwrap();
-        assert_eq!(event.account, sender);
-        assert_eq!(event.nonceKey, nonce_key);
-        assert_eq!(event.newNonce, current_nonce + 1);
+        assert!(
+            outcome.result.logs().iter().all(|log| log.address != NonceManagerStorage::ADDRESS),
+            "the protocol nonce increment must not add a receipt log"
+        );
     }
 
     #[test]
@@ -2975,7 +2988,18 @@ mod tests {
         // Far below the worst-case charge (gas_limit · max_fee_per_gas).
         let mut evm = evm_with(U256::from(1_000u64), sender);
         let err = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
-        assert!(matches!(err, EVMError::Transaction(BaseTransactionError::Eip8130(_))));
+        assert!(
+            matches!(
+                err,
+                EVMError::Transaction(BaseTransactionError::Base(
+                    InvalidTransaction::LackOfFundForMaxFee { .. }
+                ))
+            ),
+            "got {err:?}"
+        );
+        // An invalid-transaction error, so the builder skips the transaction
+        // instead of aborting the payload.
+        assert!(err.as_invalid_tx_err().is_some());
     }
 
     #[test]

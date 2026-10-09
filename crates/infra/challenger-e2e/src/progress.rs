@@ -18,10 +18,9 @@ use crate::{
 
 /// Every phase a scenario can assert, in the order it runs them.
 ///
-/// Branches can leave a phase out: `all` reaches Path 2 skip only when Path 1
-/// lands as a ZK challenge, and Path 3 only when Path 4 drops the TEE proof
-/// first. Those are recorded as skipped, so the summary always lists the whole
-/// plan.
+/// Branches can leave a phase out: Path 2 skip and Path 2 dispute need Path 1
+/// to land as a ZK challenge. Those are recorded as skipped, so the summary
+/// always lists the whole plan.
 pub(crate) const fn plan(scenario: Scenario) -> &'static [Phase] {
     match scenario {
         Scenario::All => &[
@@ -29,6 +28,7 @@ pub(crate) const fn plan(scenario: Scenario) -> &'static [Phase] {
             Phase::QuietWindow,
             Phase::Path1,
             Phase::Path2Skip,
+            Phase::Path2Dispute,
             Phase::Path4,
             Phase::Path3,
             Phase::Bystanders,
@@ -97,19 +97,6 @@ impl Progress {
             phase.label()
         );
         self.outcomes.push(Outcome { phase, verdict: Verdict::Pass, elapsed_ms: Some(elapsed_ms) });
-    }
-
-    /// Records `phase` as asserted inside another phase rather than on its own.
-    pub(crate) fn passed_within(&mut self, phase: Phase, within: Phase) {
-        info!(
-            phase = %phase,
-            verdict = %Verdict::Pass,
-            within = %within,
-            "{} finished (asserted during {})",
-            phase.label(),
-            within.label()
-        );
-        self.outcomes.push(Outcome { phase, verdict: Verdict::Pass, elapsed_ms: None });
     }
 
     /// Records a planned phase this run's branch did not reach.
@@ -221,14 +208,12 @@ mod tests {
     }
 
     #[test]
-    fn skipped_and_nested_phases_carry_no_duration() {
+    fn skipped_phases_carry_no_duration() {
         let mut progress = Progress::new(Scenario::All);
         progress.skip(Phase::Path2Skip, "Path 1 landed as a TEE nullify");
-        progress.passed_within(Phase::Path3, Phase::Path4);
 
         let rendered = progress.render();
-        assert!(rendered.contains("path2-skip=skip "), "{rendered}");
-        assert!(rendered.contains("path3=pass "), "{rendered}");
+        assert!(rendered.contains(" path2-skip=skip "), "{rendered}");
     }
 
     #[test]
@@ -249,9 +234,9 @@ mod tests {
 
     #[test]
     fn positions_follow_the_plan() {
-        let progress = Progress::new(Scenario::All);
+        let progress = Progress::new(Scenario::Path3);
         assert_eq!(progress.position(Phase::Setup), 1);
-        assert_eq!(progress.position(Phase::Path4), 5);
-        assert_eq!(progress.position(Phase::Path2Dispute), 0);
+        assert_eq!(progress.position(Phase::Path3), 3);
+        assert_eq!(progress.position(Phase::Path4), 0);
     }
 }

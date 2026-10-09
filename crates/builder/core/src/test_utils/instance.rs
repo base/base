@@ -24,7 +24,6 @@ use base_node_runner::{
     PayloadServiceBuilder as BasePayloadServiceBuilder, test_utils::init_silenced_tracing,
 };
 use futures::{FutureExt, StreamExt};
-use nanoid::nanoid;
 use parking_lot::Mutex;
 use reth_node_builder::{Node, NodeBuilder, NodeConfig};
 use reth_node_core::{
@@ -37,6 +36,7 @@ use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
 use tokio::{sync::oneshot, task::JoinHandle};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use crate::{
     BuilderConfig, SharedMeteringProvider,
@@ -439,7 +439,7 @@ pub fn default_node_config_with_azul() -> NodeConfig<BaseChainSpec> {
 /// builder node can be launched against a custom genesis (e.g. one derived from a rollup config).
 pub fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig<BaseChainSpec> {
     let tempdir = std::env::temp_dir();
-    let random_id = nanoid!();
+    let random_id = Uuid::new_v4();
 
     let data_path = tempdir.join(format!("rbuilder.{random_id}.datadir"));
     let rocksdb_path = tempdir.join(format!("rbuilder.{random_id}.rocksdb"));

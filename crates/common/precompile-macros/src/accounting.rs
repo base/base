@@ -319,13 +319,6 @@ fn expand_stablecoin(input: DeriveInput) -> syn::Result<TokenStream> {
             fn currency(&self) -> ::base_precompile_storage::Result<::alloc::string::String> {
                 self.stablecoin.currency()
             }
-
-            fn set_currency(
-                &mut self,
-                currency: ::alloc::string::String,
-            ) -> ::base_precompile_storage::Result<()> {
-                self.stablecoin.set_currency(currency)
-            }
         }
     })
 }
