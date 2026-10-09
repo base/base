@@ -148,18 +148,13 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
         &self.validity_predicates
     }
 
-    /// Attaches an admitted sidecar to its original signed transaction.
-    /// The witness comes from raw-ingress validation or explicitly trusted forwarding.
-    pub fn with_validity(
-        mut self,
-        validity: crate::ValidatedValidity,
-    ) -> Result<Self, crate::ValidityAuthorizationError> {
-        let hash =
-            *alloy_consensus::transaction::TxHashRef::tx_hash(self.inner.transaction.inner());
-        let validity = validity.into_sidecar(hash)?;
+    /// Attaches a validity sidecar without verifying its signature.
+    /// Raw ingress must validate authorization first; builder insertion trusts its forwarder.
+    #[must_use]
+    pub fn with_validity(mut self, validity: crate::TransactionValidity) -> Self {
         self = self.with_validity_predicates(validity.validity);
         self.validity_signature = validity.validity_signature;
-        Ok(self)
+        self
     }
 
     /// Returns the sender's validity-sidecar signature, if any.

@@ -339,11 +339,13 @@ mod tests {
     }
 
     #[rstest::rstest]
+    #[case::off(ValiditySignatureMode::Off)]
     #[case::optional(ValiditySignatureMode::VerifyIfPresent)]
     #[case::required(ValiditySignatureMode::Required)]
     #[tokio::test]
     async fn signed_validity_builder_trusts_forwarded_authorization(
         #[case] mode: ValiditySignatureMode,
+        #[values("predicates", "sender", "transaction", "signature")] altered_field: &str,
     ) {
         let handler = BuilderApiImpl::<_, TransactionValidity>::with_extensions(
             NoopTransactionPool::<BasePooledTransaction>::new(),
@@ -351,53 +353,26 @@ mod tests {
             DEFAULT_MAX_VALIDITY_PREDICATES,
         )
         .with_validity_signature_mode(mode);
-        let tx = signed_validity_transaction();
-        let mut changed = tx.clone();
-        changed.extensions.validity.push(ValidityPredicate::Balance {
-            address: Address::repeat_byte(0x11),
-            op: ValidityOperator::Equal,
-            value: U256::ZERO,
-        });
-        let mut forged = tx.clone();
-        forged.sender = Address::ZERO;
-        let mut replayed = tx;
-        replayed.raw = signed_validity_transaction().raw;
-        let mut malformed = signed_validity_transaction();
-        malformed.extensions.validity_signature =
-            Some(Signature::new(U256::ZERO, U256::ZERO, false));
-        for altered in [changed, forged, replayed, malformed] {
-            let error = handler.insert_validated_transaction(altered).await.unwrap_err();
-            assert!(
-                error.message().starts_with("pool rejected transaction:"),
-                "trusted insert must not re-verify envelope or sidecar signatures: {error}"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn signed_validity_builder_default_off_accepts_unverified_signatures() {
-        let handler = BuilderApiImpl::<_, TransactionValidity>::with_extensions(
-            NoopTransactionPool::<BasePooledTransaction>::new(),
-            true,
-            DEFAULT_MAX_VALIDITY_PREDICATES,
-        );
         let mut tx = signed_validity_transaction();
-        let mut tampered = tx.clone();
-        tampered.extensions.validity.push(ValidityPredicate::Balance {
-            address: Address::ZERO,
-            op: ValidityOperator::Equal,
-            value: U256::ZERO,
-        });
-        let mut unsigned = tx.clone();
-        unsigned.extensions.validity_signature = None;
-        tx.extensions.validity.clear();
-        for sidecar in [signed_validity_transaction(), tampered, unsigned, tx] {
-            let error = handler.insert_validated_transaction(sidecar).await.unwrap_err();
-            assert!(
-                error.message().starts_with("pool rejected transaction:"),
-                "off mode must pass sidecars to pool insertion without verification: {error}"
-            );
+        match altered_field {
+            "predicates" => tx.extensions.validity.push(ValidityPredicate::Balance {
+                address: Address::repeat_byte(0x11),
+                op: ValidityOperator::Equal,
+                value: U256::ZERO,
+            }),
+            "sender" => tx.sender = Address::ZERO,
+            "transaction" => tx.raw = signed_validity_transaction().raw,
+            "signature" => {
+                tx.extensions.validity_signature =
+                    Some(Signature::new(U256::ZERO, U256::ZERO, false));
+            }
+            _ => unreachable!(),
         }
+        let error = handler.insert_validated_transaction(tx).await.unwrap_err();
+        assert!(
+            error.message().starts_with("pool rejected transaction:"),
+            "trusted insert must not re-verify envelope or sidecar signatures: {error}"
+        );
     }
 
     #[rstest::rstest]

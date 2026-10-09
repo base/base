@@ -65,14 +65,20 @@ In `off` mode, nodes accept signed clients during rollout, but do not authentica
 Deploy `verify-if-present` to **every** ingress and builder so raw ingress verifies supplied signatures
 while continuing to accept unsigned predicates. Migrate wallets and load clients to
 signing, observe signed/unsigned admission counters, then switch the fleet to `required`.
-Required mode rejects any non-empty predicate batch without valid user authorization.
-Plain transactions need no extra signature.
+At raw ingress, `required` rejects any non-empty predicate batch without valid sender
+authorization. Builder insertion checks signature presence only and trusts the forwarder
+to have verified it. Plain transactions need no extra signature.
 Query nodes proxy sidecars unchanged and leave policy to the upstream sequencer.
 
 **Off and optional verification modes are compatibility stages, not sandwich protection.**
 As long as unsigned predicates are accepted, an intermediary can remove a
 signature and submit different unsigned predicates. Do not claim protection
-until required mode is enforced on every relevant admission path.
+until **every forwarding ingress node** and each builder's raw ingress runs `required`,
+each builder's insert policy requires signatures, and `base_insertValidatedTransaction`
+is reachable only by trusted forwarders. A `required` builder alone is not protection:
+an `off` forwarder can pass through a dummy signature and modified predicates, which
+the builder's presence-only check will accept. Mixed-mode deployments are rollout
+stages, not an authorization guarantee.
 
 #### Wallet signing contract
 
@@ -118,9 +124,9 @@ ingress, including the builder's own `base_sendRawTransactionValidity` endpoint.
 and only checks the local mode against signature presence. It does not recover either
 the envelope sender or the sidecar signer again; restrict this endpoint to trusted forwarders.
 Generic extension attachment does not take a validity-specific mode or enforce signature policy.
-Both raw admission and trusted forwarding produce an opaque, transaction-bound
-`ValidatedValidity`, which `with_validity` requires before attachment. This witness is not
-deserializable and records admission, not proof that its signature was verified.
+`with_validity(TransactionValidity)` attaches the sidecar without signature verification.
+Raw ingress calls `validate_recovered` before attachment; the trusted builder insert
+path attaches directly, then checks the local signature-presence policy.
 
 `txpool.validity_signature.rejected{site,reason}` records bounded rejection reasons
 at `ingress` and `builder`, independently of generic extension errors.

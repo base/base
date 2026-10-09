@@ -37,9 +37,7 @@ pub use validity_signing::{
 };
 
 mod validity_authorization;
-pub use validity_authorization::{
-    ValidatedValidity, ValidityAuthorization, ValidityAuthorizationError,
-};
+pub use validity_authorization::{ValidityAuthorization, ValidityAuthorizationError};
 
 mod validity;
 pub use validity::{

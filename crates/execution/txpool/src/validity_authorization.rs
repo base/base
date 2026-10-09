@@ -22,9 +22,6 @@ pub enum ValidityAuthorizationError {
     /// Deposits and unprotected legacy transactions have no signing domain.
     #[error("signed validity predicates require a chain-protected transaction")]
     MissingChainId,
-    /// A validated sidecar was attached to a different transaction.
-    #[error("validity authorization belongs to a different transaction")]
-    TransactionMismatch,
     /// The signature is malformed, non-canonical, or belongs to another key.
     #[error("invalid validity signature: must be signed by the transaction sender")]
     InvalidSignature,
@@ -38,37 +35,7 @@ impl ValidityAuthorizationError {
             Self::UnexpectedSignature => "unexpected",
             Self::MissingChainId => "missing_chain_id",
             Self::InvalidSignature => "invalid",
-            Self::TransactionMismatch => "transaction_mismatch",
         }
-    }
-}
-
-/// Admitted validity sidecar bound to the exact signed transaction hash.
-///
-/// Only [`ValidityAuthorization`] constructs this type. It deliberately has no
-/// deserializer or public constructor. Admission may rely on a trusted forwarder
-/// or permit unverified signatures under the configured rollout mode.
-#[derive(Debug)]
-pub struct ValidatedValidity {
-    transaction_hash: B256,
-    sidecar: TransactionValidity,
-}
-
-impl ValidatedValidity {
-    /// Returns the original predicate batch for admission journaling.
-    pub fn predicates(&self) -> &[ValidityPredicate] {
-        &self.sidecar.validity
-    }
-
-    /// Releases the validated sidecar only for its original transaction.
-    pub fn into_sidecar(
-        self,
-        transaction_hash: B256,
-    ) -> Result<TransactionValidity, ValidityAuthorizationError> {
-        if transaction_hash != self.transaction_hash {
-            return Err(ValidityAuthorizationError::TransactionMismatch);
-        }
-        Ok(self.sidecar)
     }
 }
 
@@ -77,25 +44,13 @@ impl ValidatedValidity {
 pub struct ValidityAuthorization;
 
 impl ValidityAuthorization {
-    /// Binds a sidecar supplied by a trusted forwarding mempool node.
-    ///
-    /// This does not verify either signature or enforce the local rollout mode.
-    /// The builder RPC checks signature presence after applying extensions; raw
-    /// ingress must use [`Self::validate_recovered`] instead.
-    pub fn trust_forwarded(
-        tx: &BasePooledTransaction,
-        sidecar: TransactionValidity,
-    ) -> ValidatedValidity {
-        ValidatedValidity { transaction_hash: *tx.hash(), sidecar }
-    }
-
     /// Validates a sidecar at raw ingress after `recover_raw_transaction` has
     /// recovered the sender. Never use this for a sender supplied on the wire.
     pub fn validate_recovered(
         tx: &BasePooledTransaction,
         sidecar: TransactionValidity,
         mode: ValiditySignatureMode,
-    ) -> Result<ValidatedValidity, ValidityAuthorizationError> {
+    ) -> Result<TransactionValidity, ValidityAuthorizationError> {
         mode.check(&sidecar.validity, sidecar.validity_signature.as_ref())?;
         if mode != ValiditySignatureMode::Off
             && let Some(signature) = &sidecar.validity_signature
@@ -112,7 +67,7 @@ impl ValidityAuthorization {
                 return Err(ValidityAuthorizationError::InvalidSignature);
             }
         }
-        Ok(ValidatedValidity { transaction_hash: *tx.hash(), sidecar })
+        Ok(sidecar)
     }
 
     /// Returns the EIP-712 digest a sender must sign to authorize these predicates.
@@ -346,7 +301,7 @@ mod tests {
             ValiditySignatureMode::Required,
         )
         .unwrap();
-        let tx = tx.with_validity(validity).unwrap();
+        let tx = tx.with_validity(validity);
         let pooled = ValidPoolTransaction {
             transaction: tx,
             transaction_id: TransactionId::new(0.into(), 0),
@@ -536,10 +491,8 @@ mod tests {
         assert_eq!(result, expected);
     }
 
-    #[rstest::rstest]
-    #[case::raw_ingress(true)]
-    #[case::builder_wire(false)]
-    fn off_preserves_unverified_signatures_at_both_boundaries(#[case] recovered: bool) {
+    #[test]
+    fn off_preserves_unverified_signatures_at_raw_ingress() {
         let signer = PrivateKeySigner::random();
         let tx = transaction(&signer, 8453, 0);
         let predicates = predicates();
@@ -556,13 +509,10 @@ mod tests {
                 validity: predicates.clone(),
                 validity_signature: Some(signature),
             };
-            let validated = if recovered {
+            let validity =
                 ValidityAuthorization::validate_recovered(&tx, sidecar, ValiditySignatureMode::Off)
-            } else {
-                Ok(ValidityAuthorization::trust_forwarded(&tx, sidecar))
-            }
-            .unwrap();
-            let attached = tx.clone().with_validity(validated).unwrap();
+                    .unwrap();
+            let attached = tx.clone().with_validity(validity);
             assert_eq!(attached.validity_signature(), Some(signature));
             assert_eq!(attached.validity_predicates().len(), predicates.len());
         }
@@ -584,25 +534,6 @@ mod tests {
             )
             .map(|_| ()),
             Err(ValidityAuthorizationError::InvalidSignature)
-        );
-    }
-
-    #[test]
-    fn a_validated_sidecar_cannot_be_attached_to_another_transaction() {
-        let signer = PrivateKeySigner::random();
-        let tx = transaction(&signer, 8453, 0);
-        let predicates = predicates();
-        let signature = sign(&signer, &tx, &predicates);
-        let validated = ValidityAuthorization::validate_recovered(
-            &tx,
-            TransactionValidity { validity: predicates, validity_signature: Some(signature) },
-            ValiditySignatureMode::Required,
-        )
-        .unwrap();
-        let other = transaction(&signer, 8453, 1);
-        assert_eq!(
-            other.with_validity(validated).unwrap_err(),
-            ValidityAuthorizationError::TransactionMismatch
         );
     }
 

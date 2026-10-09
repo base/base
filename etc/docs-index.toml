@@ -292,7 +292,7 @@ digest = "f10fb0af43"
 
 ["crates/consensus/protocol/README.md"]
 summary = "Shared protocol types (batches, frames, channels, BlockInfo, L1 info per upgrade, output roots) and the Denim L1 origin rule for 200ms blocks. Use when touching batch or origin logic."
-digest = "f7e56f8c44"
+digest = "b6430af020"
 
 ["crates/consensus/providers/README.md"]
 summary = "Alloy-backed data providers for derivation (AlloyChainProvider, AlloyL2ChainProvider, beacon client, blob provider) and OnlinePipeline. Use when wiring derivation to live L1/L2 nodes."
@@ -412,7 +412,7 @@ digest = "b72a1536e1"
 
 ["crates/execution/txpool-rpc/README.md"]
 summary = "Txpool RPC admin/status APIs and validity submissions; shared staged signature modes, signature rejection metrics, predicate forwarding and sequencer proxy behavior."
-digest = "82344c14bf"
+digest = "adef27d8c3"
 
 ["crates/execution/txpool-tracing/README.md"]
 summary = "Txpool tracing extension: tracks mempool lifecycle events, txpool_transactionStatus RPC, enabling CLI flags, and reth_transaction_tracing_tx_event histogram. Use to debug tx latency or drops."
@@ -424,7 +424,7 @@ digest = "2e785bfe9d"
 
 ["crates/execution/txpool/README.md"]
 summary = "Base txpool validation/ordering, builder wire extensions, staged EIP-712 predicate authorization, wallet signing contract, rejection metrics, and rollout/security limits."
-digest = "67ffc4252f"
+digest = "f8413da3b9"
 
 ["crates/infra/audit/README.md"]
 summary = "audit-archiver-lib: ingests Vector transaction-event/v1 batches into Postgres idempotently and serves JSON-RPC queries; covers the migrations and schema snapshot regeneration."
