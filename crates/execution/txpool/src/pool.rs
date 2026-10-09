@@ -907,18 +907,22 @@ where
                 }
                 drop(guard);
                 let inserted_hash = outcome.outcome.hash;
+                let survived = |moved: &Arc<ValidPoolTransaction<T>>| {
+                    !evicted.iter().any(|transaction| transaction.hash() == moved.hash())
+                };
+                outcome.anchor.promoted.retain(survived);
+                outcome.anchor.queued.retain(survived);
+                outcome.promoted.retain(survived);
                 if evicted.iter().any(|transaction| *transaction.hash() == inserted_hash) {
                     evicted.retain(|transaction| *transaction.hash() != inserted_hash);
                     evicted.extend(outcome.replaced);
                     listeners.on_discarded(&evicted);
+                    listeners.on_lane_moved(&outcome.anchor);
                     return Err(reth_transaction_pool::error::PoolError::new(
                         inserted_hash,
                         reth_transaction_pool::error::PoolErrorKind::DiscardedOnInsert,
                     ));
                 }
-                outcome.promoted.retain(|promoted| {
-                    !evicted.iter().any(|transaction| transaction.hash() == promoted.hash())
-                });
                 listeners.on_discarded(&evicted);
                 listeners.on_inserted(&nonce_pool, &outcome);
                 if is_validity {
@@ -2892,6 +2896,60 @@ mod tests {
 
         pool.add_validated_sidecar_transaction(validated, TransactionOrigin::Local)
             .expect_err("stale classification must roll back the insert");
+
+        let pending = pool.nonce_pool.read().pending_transactions();
+        assert!(pending.iter().any(|transaction| *transaction.hash() == queued_hash));
+        assert!(matches!(
+            queued_events.next().now_or_never(),
+            Some(Some(TransactionEvent::Pending))
+        ));
+    }
+
+    #[tokio::test]
+    async fn insert_discarded_by_eviction_still_announces_the_anchored_lane() {
+        let config =
+            PoolConfig { pending_limit: SubPoolLimit::new(2, usize::MAX), ..PoolConfig::default() };
+        let (pool, client) = build_integration_pool_with_config(config);
+        let lane_signer = signer();
+        let other_signer = signer();
+        fund(&client, lane_signer.address());
+        fund(&client, other_signer.address());
+
+        let queued = self_paid_eoa_8130(&lane_signer, U256::from(1), 1, 0, 1_000);
+        let queued_hash = *queued.hash();
+        pool.add_transaction(TransactionOrigin::External, queued).await.unwrap();
+        let other = self_paid_eoa_8130(&other_signer, U256::from(1), 0, 0, 5_000);
+        pool.add_transaction(TransactionOrigin::External, other).await.unwrap();
+        let mut queued_events = pool.listeners.write().subscribe_hash(queued_hash).0;
+
+        let successor = self_paid_eoa_8130(&lane_signer, U256::from(1), 2, 0, 1_000);
+        let validated = match pool
+            .validator()
+            .validate_transaction(TransactionOrigin::External, successor)
+            .await
+        {
+            TransactionValidationOutcome::Valid {
+                balance,
+                bytecode_hash,
+                transaction,
+                propagate,
+                authorities,
+                ..
+            } => TransactionValidationOutcome::Valid {
+                balance,
+                state_nonce: 1,
+                bytecode_hash,
+                transaction,
+                propagate,
+                authorities,
+            },
+            other => panic!("successor must validate: {other:?}"),
+        };
+
+        let error = pool
+            .add_validated_sidecar_transaction(validated, TransactionOrigin::External)
+            .expect_err("the cheapest tail is the inserted transaction");
+        assert!(matches!(error.kind, PoolErrorKind::DiscardedOnInsert));
 
         let pending = pool.nonce_pool.read().pending_transactions();
         assert!(pending.iter().any(|transaction| *transaction.hash() == queued_hash));
