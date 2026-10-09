@@ -147,6 +147,9 @@ impl Observability {
         assert_eq!(status, GlobalTransactionEventWriterInitStatus::Initialized);
 
         let metrics = PrometheusBuilder::new().install_recorder().expect("install recorder");
+        // As in production, zero the registered metrics so the event writer counters checked
+        // below are rendered before they are first incremented.
+        base_metrics::initialize_registered_metrics();
         let upkeep = metrics.clone();
         thread::spawn(move || {
             loop {
@@ -174,6 +177,7 @@ impl Observability {
                 .lines()
                 .find(|line| line.starts_with("transaction_events_bytes_written"))
                 .and_then(|line| line.rsplit(' ').next()?.parse::<f64>().ok())
+                .expect("transaction_events_bytes_written is rendered")
         };
         let mut last = bytes_written();
         loop {
@@ -186,22 +190,33 @@ impl Observability {
         }
     }
 
-    /// Prints the event writer counters and fails if any event was dropped.
+    /// Prints the event writer counters and fails if any event was dropped or none was written.
     ///
     /// A full writer queue drops events before the producer does its usual work, so a run with
-    /// drops would measure a cheaper loop than production.
+    /// drops would measure a cheaper loop than production. Missing counters fail the check rather
+    /// than passing it vacuously.
     fn check_event_writer(&self) {
         let Some(metrics) = &self.metrics else { return };
+        let mut dropped_lines = 0;
+        let mut bytes_written = None;
         for line in metrics.render().lines() {
             if line.starts_with('#') || !line.contains("transaction_events_") {
                 continue;
             }
             eprintln!("{line}");
+            let value = line.rsplit(' ').next().and_then(|v| v.parse::<f64>().ok());
             if line.contains("dropped_events") {
-                let count = line.rsplit(' ').next().and_then(|v| v.parse::<f64>().ok());
-                assert_eq!(count, Some(0.0), "event writer dropped events: {line}");
+                dropped_lines += 1;
+                assert_eq!(value, Some(0.0), "event writer dropped events: {line}");
+            } else if line.starts_with("transaction_events_bytes_written") {
+                bytes_written = value;
             }
         }
+        assert!(dropped_lines > 0, "transaction_events_dropped_events is not rendered");
+        assert!(
+            bytes_written.is_some_and(|bytes| bytes > 0.0),
+            "event writer wrote no bytes: {bytes_written:?}",
+        );
     }
 }
 
