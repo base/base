@@ -6,11 +6,11 @@ use std::{any::Any, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
-use base_builder_core::test_utils::get_available_port;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
 };
+use base_execution_txpool::ValiditySignatureMode;
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_node_core::args::RollupArgs;
@@ -36,6 +36,7 @@ use tracing::warn;
 use url::Url;
 
 use super::InProcessNodeRuntime;
+use crate::PortPool;
 
 type BuiltExtensions = (Vec<Box<dyn BaseNodeExtension>>, Option<FlashblocksConfig>);
 
@@ -82,6 +83,8 @@ pub struct InProcessClientConfig {
     /// Optional transaction forwarding configuration.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
+    /// Staged signature policy at local validity ingress before forwarding.
+    pub validity_signature_mode: ValiditySignatureMode,
     /// Optional L1 upgrade signal configuration.
     ///
     /// When the mode applies at startup, the schedule is read from L1 and applied to the chain
@@ -226,7 +229,7 @@ impl InProcessClient {
         node_config.txpool.transactions_backup_path = None;
         let metrics_addr = SocketAddr::new(
             std::net::Ipv4Addr::LOCALHOST.into(),
-            config.metrics_port.unwrap_or_else(get_available_port),
+            config.metrics_port.unwrap_or_else(PortPool::claim),
         );
         node_config.metrics = MetricArgs { prometheus: Some(metrics_addr), ..Default::default() };
         if config.http_port.is_none()
@@ -236,6 +239,7 @@ impl InProcessClient {
         {
             node_config = node_config.with_unused_ports();
         }
+        config.runtime.bound_engine_memory(&mut node_config);
         if let Some(persistence_threshold) = config.persistence_threshold {
             node_config.engine.persistence_threshold = persistence_threshold;
         }
@@ -432,7 +436,10 @@ impl InProcessClient {
         if let Some(ref tx_fwd_config) = config.tx_forwarding_config {
             if tx_fwd_config.enabled && !tx_fwd_config.builder_urls.is_empty() {
                 extensions.push(Box::new(SendRawTransactionValidityExtension::from_config(
-                    SendRawTransactionValidityConfig::default(),
+                    SendRawTransactionValidityConfig {
+                        validity_signature_mode: config.validity_signature_mode,
+                        ..Default::default()
+                    },
                 )));
             }
             extensions.push(Box::new(TxForwardingExtension::from_config(tx_fwd_config.clone())));

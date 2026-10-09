@@ -2,53 +2,24 @@
 
 use std::{sync::Arc, time::Duration};
 
-use alloy_consensus::transaction::Recovered;
 use alloy_eips::{BlockNumberOrTag, Encodable2718};
-use alloy_primitives::{Address, B256, Bytes, FixedBytes, b256};
+use alloy_primitives::{B256, FixedBytes, b256};
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum};
 use alloy_rpc_types_eth::{Block as RpcBlock, BlockTransactions};
-use base_common_consensus::{BaseTxEnvelope, TxDeposit};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types::Transaction as BaseTransaction;
-use base_protocol::{AttributesWithParent, BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
+use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
 use tokio::{sync::watch, time::timeout};
 
 use crate::{
     AttributesMatch, AttributesMismatch, ConsolidateTask, Engine, EngineTask, EngineTaskError,
     EngineTaskErrorSeverity, EngineTaskExt, SynchronizeTask,
     state::EngineSyncStateUpdate,
-    task_queue::tasks::consolidate::task::ConsolidateInput,
-    test_utils::{TestAttributesBuilder, TestEngineStateBuilder, test_engine_client_builder},
+    test_utils::{
+        TestAttributesBuilder, TestEngineStateBuilder, encoded_l1_info_deposit_tx,
+        l1_info_deposit_tx, matching_rpc_block, rpc_transaction, test_engine_client_builder,
+    },
 };
-
-fn l1_info_deposit_tx() -> BaseTxEnvelope {
-    BaseTxEnvelope::from(TxDeposit {
-        input: L1BlockInfoBedrock::default().encode_calldata(),
-        ..Default::default()
-    })
-}
-
-fn encoded_l1_info_deposit_tx() -> Bytes {
-    let mut tx = Vec::new();
-    l1_info_deposit_tx().encode_2718(&mut tx);
-    tx.into()
-}
-
-fn rpc_transaction(tx: BaseTxEnvelope, block_number: u64) -> BaseTransaction {
-    BaseTransaction {
-        inner: alloy_rpc_types_eth::Transaction {
-            inner: Recovered::new_unchecked(tx, Address::ZERO),
-            block_hash: None,
-            block_number: Some(block_number),
-            block_timestamp: None,
-            effective_gas_price: Some(0),
-            transaction_index: Some(0),
-        },
-        block_timestamp_ms: None,
-        deposit_nonce: None,
-        deposit_receipt_version: None,
-    }
-}
 
 fn l2_block_info(number: u64, hash: B256, parent_hash: B256, timestamp: u64) -> L2BlockInfo {
     L2BlockInfo {
@@ -56,28 +27,6 @@ fn l2_block_info(number: u64, hash: B256, parent_hash: B256, timestamp: u64) -> 
         l1_origin: Default::default(),
         seq_num: 0,
     }
-}
-
-fn matching_rpc_block(
-    block_info: L2BlockInfo,
-    attributes: &AttributesWithParent,
-) -> RpcBlock<BaseTransaction> {
-    let mut block = RpcBlock::<BaseTransaction>::default();
-    block.header.hash = block_info.block_info.hash;
-    block.header.inner.number = block_info.block_info.number;
-    block.header.inner.parent_hash = attributes.parent.block_info.hash;
-    block.header.inner.timestamp = attributes.attributes().payload_attributes.timestamp;
-    block.header.inner.mix_hash = attributes.attributes().payload_attributes.prev_randao;
-    block.header.inner.gas_limit = attributes.attributes().gas_limit.unwrap_or_default();
-    block.header.inner.parent_beacon_block_root =
-        attributes.attributes().payload_attributes.parent_beacon_block_root;
-    block.header.inner.beneficiary =
-        attributes.attributes().payload_attributes.suggested_fee_recipient;
-    block.transactions = BlockTransactions::Full(vec![rpc_transaction(
-        l1_info_deposit_tx(),
-        block_info.block_info.number,
-    )]);
-    block
 }
 
 fn block_info_from_rpc_block(block: RpcBlock<BaseTransaction>, cfg: &RollupConfig) -> L2BlockInfo {
@@ -167,11 +116,7 @@ async fn consolidate_does_not_crash_when_safe_behind_unsafe_and_attributes_misma
             .build(),
     );
 
-    let task = ConsolidateTask::new(
-        client,
-        Arc::new(RollupConfig::default()),
-        ConsolidateInput::from(attributes),
-    );
+    let task = ConsolidateTask::new(client, Arc::new(RollupConfig::default()), attributes);
 
     // Execute — previously this returned Critical UnsafeHeadChangedSinceBuild.
     // Now it proceeds to seal_and_canonicalize_block (which will fail for other
@@ -216,7 +161,7 @@ async fn consolidate_reconciles_unadvanced_unsafe_before_non_span_safe_attribute
     let attributes = TestAttributesBuilder::new()
         .with_parent(pinned_head)
         .with_timestamp(safe_child.block_info.timestamp)
-        .with_transactions(vec![encoded_l1_info_deposit_tx()])
+        .with_transactions(vec![encoded_l1_info_deposit_tx(L1BlockInfoBedrock::default())])
         .with_is_last_in_span(false)
         .build();
 
@@ -248,7 +193,7 @@ async fn consolidate_reconciles_unadvanced_unsafe_before_non_span_safe_attribute
     // EL sync has now caught up enough to serve the next safe block that derivation is about to
     // confirm.
     client.set_fork_choice_updated_v3_response(valid_fcu()).await;
-    let safe_child_block = matching_rpc_block(safe_child, &attributes);
+    let safe_child_block = matching_rpc_block(&attributes);
     let expected_safe_child = block_info_from_rpc_block(safe_child_block.clone(), &cfg);
     client
         .set_l2_block_by_label(
@@ -257,7 +202,7 @@ async fn consolidate_reconciles_unadvanced_unsafe_before_non_span_safe_attribute
         )
         .await;
 
-    ConsolidateTask::new(Arc::clone(&client), Arc::clone(&cfg), ConsolidateInput::from(attributes))
+    ConsolidateTask::new(Arc::clone(&client), Arc::clone(&cfg), attributes)
         .execute(&mut state)
         .await
         .expect("safe derivation should reconcile the available unsafe block instead of building");
@@ -299,9 +244,9 @@ async fn consolidate_syncing_yields_until_a_later_drain() {
     let attributes = TestAttributesBuilder::new()
         .with_parent(pinned_head)
         .with_timestamp(safe_child.block_info.timestamp)
-        .with_transactions(vec![encoded_l1_info_deposit_tx()])
+        .with_transactions(vec![encoded_l1_info_deposit_tx(L1BlockInfoBedrock::default())])
         .build();
-    let safe_child_block = matching_rpc_block(safe_child, &attributes);
+    let safe_child_block = matching_rpc_block(&attributes);
     let expected_safe_child = block_info_from_rpc_block(safe_child_block.clone(), &cfg);
     let client = Arc::new(
         test_engine_client_builder()
@@ -324,7 +269,7 @@ async fn consolidate_syncing_yields_until_a_later_drain() {
     engine.enqueue(EngineTask::Consolidate(Box::new(ConsolidateTask::new(
         Arc::clone(&client),
         Arc::clone(&cfg),
-        ConsolidateInput::from(attributes),
+        attributes,
     ))));
 
     let err = timeout(Duration::from_secs(1), engine.drain())
@@ -369,7 +314,7 @@ async fn consolidate_reconciles_unadvanced_unsafe_before_last_span_safe_attribut
     let attributes = TestAttributesBuilder::new()
         .with_parent(pinned_head)
         .with_timestamp(safe_child.block_info.timestamp)
-        .with_transactions(vec![encoded_l1_info_deposit_tx()])
+        .with_transactions(vec![encoded_l1_info_deposit_tx(L1BlockInfoBedrock::default())])
         .with_is_last_in_span(true)
         .build();
 
@@ -397,7 +342,7 @@ async fn consolidate_reconciles_unadvanced_unsafe_before_last_span_safe_attribut
     assert_eq!(state.sync_state.unsafe_head(), pinned_head);
 
     client.set_fork_choice_updated_v3_response(valid_fcu()).await;
-    let safe_child_block = matching_rpc_block(safe_child, &attributes);
+    let safe_child_block = matching_rpc_block(&attributes);
     let expected_safe_child = block_info_from_rpc_block(safe_child_block.clone(), &cfg);
     client
         .set_l2_block_by_label(
@@ -406,7 +351,7 @@ async fn consolidate_reconciles_unadvanced_unsafe_before_last_span_safe_attribut
         )
         .await;
 
-    ConsolidateTask::new(Arc::clone(&client), Arc::clone(&cfg), ConsolidateInput::from(attributes))
+    ConsolidateTask::new(Arc::clone(&client), Arc::clone(&cfg), attributes)
         .execute(&mut state)
         .await
         .expect("span-ending safe derivation should use a bare FCU after unsafe reconciliation");
@@ -433,7 +378,7 @@ async fn consolidate_reconciles_unadvanced_unsafe_before_last_span_safe_attribut
 #[tokio::test]
 async fn consolidate_rejects_attribute_transaction_with_trailing_bytes() {
     let safe_head = crate::test_utils::test_block_info(0);
-    let tx = l1_info_deposit_tx();
+    let tx = l1_info_deposit_tx(L1BlockInfoBedrock::default());
     let mut attr_tx = Vec::new();
     tx.encode_2718(&mut attr_tx);
     attr_tx.extend_from_slice(b"trailing bytes");
@@ -471,7 +416,7 @@ async fn consolidate_rejects_attribute_transaction_with_trailing_bytes() {
             .with_l2_block_by_label(BlockNumberOrTag::Number(block_number), unsafe_block)
             .build(),
     );
-    let task = ConsolidateTask::new(client, Arc::new(cfg), ConsolidateInput::from(attributes));
+    let task = ConsolidateTask::new(client, Arc::new(cfg), attributes);
 
     let result = task.execute(&mut state).await;
 
