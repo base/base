@@ -21,7 +21,8 @@ use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics, CoinbaseTipAffordability,
-    ValidityMetrics, error::BasePayloadBuilderError,
+    ValidityEvaluationCounters, ValidityEvaluationOutcome, ValidityMetrics,
+    error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, PredicateContext, TimestampedTransaction,
@@ -771,6 +772,7 @@ impl BasePayloadBuilderCtx {
             ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
         let predicate_context =
             PredicateContext { block_number, flashblock_index: self.flashblock_index() };
+        let mut evaluation_counters = ValidityEvaluationCounters::default();
 
         // Total validity-predicate evaluation time (inclusive of the state loads each
         // evaluation performs) across this flashblock build. `None` until the first
@@ -821,8 +823,7 @@ impl BasePayloadBuilderCtx {
                     tx_hash = ?tx_hash,
                     "deferring validity-gated transaction: predicate evaluation budget exhausted for this flashblock"
                 );
-                ValidityMetrics::validity_predicate_evaluations_total("budget_exhausted")
-                    .increment(1);
+                evaluation_counters.increment(ValidityEvaluationOutcome::BudgetExhausted, 1);
                 validity_candidates_deferred += 1;
                 predicate_eval_cutoff_hit = true;
                 self.defer_current(best_txs, &mut diag, deferrals, &cx, tx_hash, ordering_position);
@@ -869,14 +870,16 @@ impl BasePayloadBuilderCtx {
             };
             if has_validity_predicates {
                 let outcome = if predicate_read_failed {
-                    "read_error"
+                    ValidityEvaluationOutcome::ReadError
                 } else if blocking_predicate.is_some() {
-                    "not_satisfied"
+                    ValidityEvaluationOutcome::NotSatisfied
                 } else {
-                    "matched"
+                    ValidityEvaluationOutcome::Matched
                 };
-                ValidityMetrics::validity_predicate_evaluations_total(outcome).increment(1);
-                if outcome == "matched" && best_txs.is_resting(tx_hash, tx.validity_predicates()) {
+                evaluation_counters.increment(outcome, 1);
+                if outcome == ValidityEvaluationOutcome::Matched
+                    && best_txs.is_resting(tx_hash, tx.validity_predicates())
+                {
                     BuilderMetrics::resting_predicate_shadow_mismatches_total().increment(1);
                     debug!(
                         target: "payload_builder",
@@ -1422,10 +1425,8 @@ impl BasePayloadBuilderCtx {
                 {
                     let remaining =
                         (state_change_effects.affected_transactions.len() - rescanned) as u64;
-                    ValidityMetrics::validity_predicate_evaluations_total(
-                        "rescan_budget_exhausted",
-                    )
-                    .increment(remaining);
+                    evaluation_counters
+                        .increment(ValidityEvaluationOutcome::RescanBudgetExhausted, remaining);
                     predicate_eval_cutoff_hit = true;
                     break;
                 }
@@ -1468,13 +1469,13 @@ impl BasePayloadBuilderCtx {
                         }
                     };
                 let outcome = if predicate_read_failed {
-                    "rescan_read_error"
+                    ValidityEvaluationOutcome::RescanReadError
                 } else if blocking_predicate.is_some() {
-                    "rescan_not_satisfied"
+                    ValidityEvaluationOutcome::RescanNotSatisfied
                 } else {
-                    "rescan_matched"
+                    ValidityEvaluationOutcome::RescanMatched
                 };
-                ValidityMetrics::validity_predicate_evaluations_total(outcome).increment(1);
+                evaluation_counters.increment(outcome, 1);
                 if predicate_read_failed {
                     predicate_index.remove(*parked_hash);
                     best_txs.discard_parked(*parked_hash);

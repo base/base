@@ -132,6 +132,73 @@ impl ValidityMetrics {
     }
 }
 
+#[cfg(feature = "metrics")]
+type CounterHandle = metrics::Counter;
+#[cfg(not(feature = "metrics"))]
+type CounterHandle = base_metrics::NoopMetric;
+
+/// `outcome` label of `validity_predicate_evaluations_total` recorded by the flashblocks build
+/// loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidityEvaluationOutcome {
+    /// Primary scan: every predicate held.
+    Matched,
+    /// Primary scan: a predicate did not hold.
+    NotSatisfied,
+    /// Primary scan: reading predicate state failed.
+    ReadError,
+    /// Primary scan: deferred unevaluated because the evaluation budget was exhausted.
+    BudgetExhausted,
+    /// Rescan: every predicate held.
+    RescanMatched,
+    /// Rescan: a predicate did not hold.
+    RescanNotSatisfied,
+    /// Rescan: reading predicate state failed.
+    RescanReadError,
+    /// Rescan: left parked unevaluated because the evaluation budget was exhausted.
+    RescanBudgetExhausted,
+}
+
+impl ValidityEvaluationOutcome {
+    const COUNT: usize = Self::RescanBudgetExhausted as usize + 1;
+
+    /// Returns the label value.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Matched => "matched",
+            Self::NotSatisfied => "not_satisfied",
+            Self::ReadError => "read_error",
+            Self::BudgetExhausted => "budget_exhausted",
+            Self::RescanMatched => "rescan_matched",
+            Self::RescanNotSatisfied => "rescan_not_satisfied",
+            Self::RescanReadError => "rescan_read_error",
+            Self::RescanBudgetExhausted => "rescan_budget_exhausted",
+        }
+    }
+}
+
+/// `validity_predicate_evaluations_total` handles, resolved on first increment of each outcome.
+///
+/// Resolving lazily keeps the exported series identical to incrementing through
+/// [`ValidityMetrics::validity_predicate_evaluations_total`]: an outcome's series appears only
+/// once it is first counted. Handles bind to the recorder active when resolved, so keep an
+/// instance for one build loop rather than caching it process-wide.
+#[derive(Debug, Default)]
+pub struct ValidityEvaluationCounters {
+    handles: [Option<CounterHandle>; ValidityEvaluationOutcome::COUNT],
+}
+
+impl ValidityEvaluationCounters {
+    /// Adds `count` evaluations with `outcome`.
+    pub fn increment(&mut self, outcome: ValidityEvaluationOutcome, count: u64) {
+        self.handles[outcome as usize]
+            .get_or_insert_with(|| {
+                ValidityMetrics::validity_predicate_evaluations_total(outcome.as_str())
+            })
+            .increment(count);
+    }
+}
+
 impl BuilderMetrics {
     /// Records per-block inclusion and EIP-1559 fee revenue.
     ///
@@ -224,6 +291,36 @@ mod tests {
         assert!(rendered.contains("base_builder_predicate_slots_loaded_unique_sum 1"));
         assert!(rendered.contains("base_builder_predicate_bucket_wakeups_sum 3"));
         assert!(rendered.contains("base_builder_predicate_bucket_depth_sum 1"));
+    }
+
+    #[test]
+    fn validity_evaluation_counters_export_only_counted_outcomes() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            let _counters = ValidityEvaluationCounters::default();
+        });
+        assert!(!handle.render().contains("validity_predicate_evaluations_total"));
+
+        metrics::with_local_recorder(&recorder, || {
+            let mut counters = ValidityEvaluationCounters::default();
+            counters.increment(ValidityEvaluationOutcome::NotSatisfied, 1);
+            counters.increment(ValidityEvaluationOutcome::NotSatisfied, 2);
+        });
+        let expected = PrometheusBuilder::new().build_recorder();
+        metrics::with_local_recorder(&expected, || {
+            ValidityMetrics::validity_predicate_evaluations_total("not_satisfied").increment(1);
+            ValidityMetrics::validity_predicate_evaluations_total("not_satisfied").increment(2);
+        });
+        let rendered = handle.render();
+        assert_eq!(rendered, expected.handle().render());
+        assert_eq!(
+            rendered
+                .lines()
+                .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                .collect::<Vec<_>>(),
+            ["base_builder_validity_predicate_evaluations_total{outcome=\"not_satisfied\"} 3"],
+        );
     }
 
     #[test]
