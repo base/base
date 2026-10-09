@@ -5,7 +5,7 @@ use std::{
 };
 
 use alloy_consensus::{Eip658Value, Transaction};
-use alloy_eips::{Encodable2718, Typed2718};
+use alloy_eips::{Encodable2718, Typed2718, eip2718::WithEncoded};
 use alloy_evm::Database;
 #[cfg(any(test, feature = "test-utils"))]
 use alloy_primitives::B256;
@@ -1032,9 +1032,9 @@ impl BasePayloadBuilderCtx {
                 continue;
             }
 
-            let tx = tx.into_consensus();
+            let (tx_encoded, tx) = tx.into_consensus_with2718().split();
             let tx_hash = tx.tx_hash();
-            let tx_uncompressed_size = tx.encode_2718_len() as u64;
+            let tx_uncompressed_size = tx_encoded.len() as u64;
 
             let log_txn = |result: Result<TxnOutcome, TxnExecutionError>| {
                 let result_str = match &result {
@@ -1226,7 +1226,9 @@ impl BasePayloadBuilderCtx {
             let _tx_span_guard = tx_span.enter();
 
             let execution_start_time = Instant::now();
-            let ResultAndState { result, state } = match evm.transact(&tx) {
+            let ResultAndState { result, state } = match evm
+                .transact(WithEncoded::new(tx_encoded, &tx))
+            {
                 Ok(res) => res,
                 Err(err) => {
                     if let Some(err) = err.as_invalid_tx_err() {
