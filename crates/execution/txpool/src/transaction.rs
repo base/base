@@ -76,8 +76,8 @@ pub struct BasePooledTransaction<
     watch_manifest: OnceLock<crate::WatchManifest>,
     /// In-process `meter_bundle` result, attached after sim and before pool insert.
     ///
-    /// Behind [`Arc`] so [`Clone`] (payload-building `ParkableBestPayloadTransactions`)
-    /// stays a pointer bump once later PRs populate this. `None` on
+    /// Behind [`Arc`] so [`Clone`] stays a pointer bump once later PRs populate
+    /// this. `None` on
     /// sequencer/builder inserts and on mempool txs while inline simulation is
     /// off. The later consumer only forwards `Some`.
     metering: Option<Arc<MeterBundleResponse>>,

@@ -47,7 +47,9 @@ use reth_revm::{
     witness::ExecutionWitnessRecord,
 };
 use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory, errors::ProviderError};
-use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
+use reth_transaction_pool::{
+    BestTransactionsAttributes, PoolTransaction, TransactionPool, ValidPoolTransaction,
+};
 use reth_trie_common::ExecutionWitnessMode;
 use reth_trie_parallel::state_root_task::PayloadStateRootHandle;
 use revm::context::{Block, BlockEnv};
@@ -181,7 +183,7 @@ where
     ) -> Result<BuildOutcome<BaseBuiltPayload<N>>, PayloadBuilderError>
     where
         Txs: ParkablePayloadTransactions<
-            Transaction: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
+            Pooled: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
         >,
     {
         let BuildArguments {
@@ -312,9 +314,11 @@ where
             cancel: Default::default(),
             best_payload: None,
         };
-        self.build_payload(args, |_| NoopPayloadTransactions::<Pool::Transaction>::default())?
-            .into_payload()
-            .ok_or_else(|| PayloadBuilderError::MissingPayload)
+        self.build_payload(args, |_| {
+            NoopPayloadTransactions::<Arc<ValidPoolTransaction<Pool::Transaction>>>::default()
+        })?
+        .into_payload()
+        .ok_or_else(|| PayloadBuilderError::MissingPayload)
     }
 }
 
@@ -374,7 +378,7 @@ impl<Txs> Builder<'_, Txs> {
         ChainSpec: EthChainSpec + Upgrades,
         N: PayloadPrimitives,
         Txs: ParkablePayloadTransactions<
-            Transaction: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
+            Pooled: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
         >,
         Attrs: Attributes<Transaction = N::SignedTx>,
     {
@@ -739,7 +743,6 @@ where
     fn skip_current<B>(best_txs: &mut B, sender: Address, nonce: u64, replay_independent: bool)
     where
         B: ParkablePayloadTransactions,
-        B::Transaction: PoolTransaction,
     {
         if replay_independent {
             best_txs.mark_current_committed();
@@ -888,7 +891,7 @@ where
         info: &mut ExecutionInfo,
         builder: &mut Builder,
         mut best_txs: impl ParkablePayloadTransactions<
-            Transaction: PoolTransaction<Consensus = TxTy<Evm::Primitives>> + BasePooledTx,
+            Pooled: PoolTransaction<Consensus = TxTy<Evm::Primitives>> + BasePooledTx,
         >,
     ) -> Result<Option<()>, PayloadBuilderError>
     where
@@ -927,7 +930,8 @@ where
         let can_finalize_early = self.is_denim_active();
         let resource_metering = &self.builder_config.resource_metering;
         let mut resource_throttled = 0u64;
-        while let Some(tx) = best_txs.next(()) {
+        while let Some(pooled) = best_txs.next(()) {
+            let tx = &pooled.transaction;
             if self.cancel.is_cancelled() {
                 return Ok(Some(()));
             }
@@ -1089,7 +1093,7 @@ where
                             );
                         }
                         let predicate = tx.validity_predicates()[blocker_index].clone();
-                        predicate_index.park(tx_hash, tx, predicate);
+                        predicate_index.park(tx_hash, pooled, predicate);
                         continue;
                     }
                     Err(error) => {
@@ -1184,11 +1188,8 @@ where
                 None => 0,
             };
 
-            if CoinbaseTipAffordability::unaffordable(
-                &tx,
-                tx_payer_auth,
-                builder.evm_mut().db_mut(),
-            ) {
+            if CoinbaseTipAffordability::unaffordable(tx, tx_payer_auth, builder.evm_mut().db_mut())
+            {
                 trace!(
                     target: "payload_builder",
                     tx_hash = ?tx.hash(),
@@ -1235,7 +1236,7 @@ where
                 continue;
             }
 
-            let tx = tx.into_consensus();
+            let tx = tx.clone_into_consensus();
 
             let da_footprint_gas_scalar = self
                 .chain_spec
@@ -1420,7 +1421,7 @@ where
                         &mut predicate_loads,
                     );
                     ValidityPredicateEvaluation::evaluate(
-                        parked_transaction.validity_predicates(),
+                        parked_transaction.transaction.validity_predicates(),
                         &mut recorder,
                         &predicate_context,
                     )
@@ -1439,8 +1440,9 @@ where
                             "rescan_not_satisfied",
                         )
                         .increment(1);
-                        let predicate =
-                            parked_transaction.validity_predicates()[blocker_index].clone();
+                        let predicate = parked_transaction.transaction.validity_predicates()
+                            [blocker_index]
+                            .clone();
                         predicate_index.reindex(parked_hash, predicate);
                     }
                     Err(error) => {
@@ -1531,10 +1533,10 @@ mod tests {
         collections::{HashMap, VecDeque},
         mem::ManuallyDrop,
         sync::{Arc, Mutex},
-        time::Duration,
+        time::{Duration, Instant},
     };
 
-    use alloy_consensus::{Header, SignableTransaction, TxEip1559};
+    use alloy_consensus::{Header, SignableTransaction, Transaction, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_evm::Evm;
     use alloy_primitives::{Address, B256, Signature, StorageKey, TxHash, TxKind, U256};
@@ -1558,7 +1560,9 @@ mod tests {
         cancelled::CancelOnDrop, database::StateProviderDatabase, db::State,
         test_utils::StateProviderTest,
     };
-    use reth_transaction_pool::PoolTransaction;
+    use reth_transaction_pool::{
+        PoolTransaction, TransactionOrigin, ValidPoolTransaction, identifier::TransactionId,
+    };
     use reth_trie_common::{HashedPostState, updates::TrieUpdates};
     use reth_trie_parallel::{
         error::StateRootTaskError,
@@ -1630,7 +1634,7 @@ mod tests {
             best_payload: None,
         };
         let provider = NoopProvider::default();
-        let builder = Builder::new(|_| NoopPayloadTransactions::<BasePooledTransaction>::default());
+        let builder = Builder::new(|_| NoopPayloadTransactions::<PooledCandidate>::default());
         let outcome = builder
             .build(StateProviderDatabase::new(&provider), &provider, Some(state_root_handle), ctx)
             .expect("empty payload must build");
@@ -1700,7 +1704,7 @@ mod tests {
         transactions: Txs,
     ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>
     where
-        Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
+        Txs: ParkablePayloadTransactions<Pooled = BasePooledTransaction> + Send + Sync,
     {
         let funded_sender = pool_transaction(0).sender();
         build_parkable_pool_payload(ctx, transactions, &[funded_sender])
@@ -1712,7 +1716,7 @@ mod tests {
         funded_senders: &[Address],
     ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>
     where
-        Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
+        Txs: ParkablePayloadTransactions<Pooled = BasePooledTransaction> + Send + Sync,
     {
         let mut storage = HashMap::default();
         storage.insert(
@@ -1745,7 +1749,7 @@ mod tests {
         evict: impl FnOnce(Vec<TxHash>),
     ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>
     where
-        Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
+        Txs: ParkablePayloadTransactions<Pooled = BasePooledTransaction> + Send + Sync,
     {
         let funded_sender = pool_transaction(0).sender();
         build_parkable_pool_payload_with(ctx, transactions, &[funded_sender], evict)
@@ -1758,7 +1762,7 @@ mod tests {
         evict: impl FnOnce(Vec<TxHash>),
     ) -> BuildOutcomeKind<crate::BaseBuiltPayload<BasePrimitives>>
     where
-        Txs: ParkablePayloadTransactions<Transaction = BasePooledTransaction> + Send + Sync,
+        Txs: ParkablePayloadTransactions<Pooled = BasePooledTransaction> + Send + Sync,
     {
         let mut storage = HashMap::default();
         storage.insert(
@@ -1811,13 +1815,26 @@ mod tests {
         )
     }
 
+    type PooledCandidate = Arc<ValidPoolTransaction<BasePooledTransaction>>;
+
+    fn pooled_candidate(transaction: BasePooledTransaction) -> PooledCandidate {
+        Arc::new(ValidPoolTransaction {
+            transaction_id: TransactionId::new(0.into(), transaction.nonce()),
+            transaction,
+            propagate: true,
+            timestamp: Instant::now(),
+            origin: TransactionOrigin::External,
+            authority_ids: None,
+        })
+    }
+
     /// Scripted iterator is required here because predicate promotion mutates which transaction
     /// `next` returns while the build is in flight, which a static mock cannot express.
     struct TestParkableTransactions {
-        queued: VecDeque<BasePooledTransaction>,
-        ready: VecDeque<BasePooledTransaction>,
-        parked: HashMap<B256, BasePooledTransaction>,
-        current: Option<BasePooledTransaction>,
+        queued: VecDeque<PooledCandidate>,
+        ready: VecDeque<PooledCandidate>,
+        parked: HashMap<B256, PooledCandidate>,
+        current: Option<PooledCandidate>,
         /// Whether promoted transactions are yielded before the remaining queued ones, as when
         /// they outbid them.
         promoted_first: bool,
@@ -1835,7 +1852,7 @@ mod tests {
             invalid: Arc<Mutex<Vec<(Address, u64)>>>,
         ) -> Self {
             Self {
-                queued: transactions.into(),
+                queued: transactions.into_iter().map(pooled_candidate).collect(),
                 ready: VecDeque::new(),
                 parked: HashMap::default(),
                 current: None,
@@ -1852,7 +1869,7 @@ mod tests {
     }
 
     impl PayloadTransactions for TestParkableTransactions {
-        type Transaction = BasePooledTransaction;
+        type Transaction = PooledCandidate;
 
         fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
             assert!(self.current.is_none(), "current transaction was not lifecycle-managed");
@@ -1861,7 +1878,7 @@ mod tests {
             } else {
                 self.queued.pop_front().or_else(|| self.ready.pop_front())
             }?;
-            self.current = Some(transaction.clone());
+            self.current = Some(Arc::clone(&transaction));
             Some(transaction)
         }
 
@@ -1872,6 +1889,8 @@ mod tests {
     }
 
     impl ParkablePayloadTransactions for TestParkableTransactions {
+        type Pooled = BasePooledTransaction;
+
         fn park_current(&mut self) {
             if let Some(transaction) = self.current.take() {
                 self.parked.insert(*transaction.hash(), transaction);
@@ -1903,7 +1922,7 @@ mod tests {
     }
 
     impl PayloadTransactions for FinalizeAfterFirstTransaction {
-        type Transaction = BasePooledTransaction;
+        type Transaction = PooledCandidate;
 
         fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
             self.calls += 1;
@@ -1919,6 +1938,8 @@ mod tests {
     }
 
     impl ParkablePayloadTransactions for FinalizeAfterFirstTransaction {
+        type Pooled = BasePooledTransaction;
+
         fn park_current(&mut self) {
             self.transactions.park_current();
         }
@@ -2225,7 +2246,7 @@ mod tests {
         drop(ctx.cancel.clone());
 
         assert!(matches!(
-            build_pool_payload(ctx, NoopPayloadTransactions::<BasePooledTransaction>::default()),
+            build_pool_payload(ctx, NoopPayloadTransactions::<PooledCandidate>::default()),
             BuildOutcomeKind::Cancelled
         ));
     }

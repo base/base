@@ -31,10 +31,15 @@ impl PoolTransactionError for PayloadTransactionInvalidated {
 /// A transaction returned by [`PayloadTransactions::next`] becomes current until the caller parks,
 /// commits, or invalidates it. Current-transaction callbacks use the exact validated pool
 /// transaction retained by the adapter rather than reconstructing its identity from a hash.
-pub trait ParkablePayloadTransactions: PayloadTransactions
-where
-    Self::Transaction: PoolTransaction,
+///
+/// Candidates are yielded as the pool's shared [`ValidPoolTransaction`] handle, so callers clone
+/// the consensus transaction only for candidates they actually include.
+pub trait ParkablePayloadTransactions:
+    PayloadTransactions<Transaction = Arc<ValidPoolTransaction<Self::Pooled>>>
 {
+    /// The pool transaction type wrapped by each yielded candidate.
+    type Pooled: PoolTransaction;
+
     /// Parks and clears the current transaction, if any.
     fn park_current(&mut self);
 
@@ -48,10 +53,12 @@ where
     fn discard_parked(&mut self, transaction_hash: TxHash) -> bool;
 }
 
-impl<T> ParkablePayloadTransactions for reth_payload_util::NoopPayloadTransactions<T>
+impl<T> ParkablePayloadTransactions for NoopPayloadTransactions<Arc<ValidPoolTransaction<T>>>
 where
     T: PoolTransaction,
 {
+    type Pooled = T;
+
     fn park_current(&mut self) {}
 
     fn mark_current_committed(&mut self) {}
@@ -99,7 +106,7 @@ impl<T> PayloadTransactions for ParkableBestPayloadTransactions<T>
 where
     T: BasePooledTx,
 {
-    type Transaction = T;
+    type Transaction = Arc<ValidPoolTransaction<T>>;
 
     fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
         debug_assert!(
@@ -108,7 +115,7 @@ where
         );
         let transaction = self.inner.next()?;
         self.current = Some(Arc::clone(&transaction));
-        Some(transaction.transaction.clone())
+        Some(transaction)
     }
 
     fn mark_invalid(&mut self, sender: Address, nonce: u64) {
@@ -133,6 +140,8 @@ impl<T> ParkablePayloadTransactions for ParkableBestPayloadTransactions<T>
 where
     T: BasePooledTx,
 {
+    type Pooled = T;
+
     fn park_current(&mut self) {
         if let Some(transaction) = self.current.take() {
             self.inner.park(&transaction);
