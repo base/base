@@ -24,7 +24,7 @@ use tracing::debug;
 use super::metrics::Metrics as BuilderApiMetrics;
 use crate::{
     BasePooledTransaction, NoExtensions, PoolRejectionLabel, ValidatedTransaction,
-    ValidatedTransactionExtensions,
+    ValidatedTransactionExtensions, ValiditySignatureMetrics, ValiditySignatureMode,
 };
 
 /// Host name of this builder, part of the validated-insert event ID.
@@ -68,6 +68,7 @@ pub struct BuilderApiImpl<P, E = NoExtensions> {
     pool: P,
     accept_extensions: bool,
     max_extension_items: usize,
+    validity_signature_mode: ValiditySignatureMode,
     metering_cache: Option<Arc<dyn InsertMetering>>,
     _extensions: PhantomData<E>,
 }
@@ -85,6 +86,7 @@ impl<P> BuilderApiImpl<P, NoExtensions> {
             pool,
             accept_extensions: false,
             max_extension_items: 0,
+            validity_signature_mode: ValiditySignatureMode::Off,
             metering_cache: None,
             _extensions: PhantomData,
         }
@@ -106,9 +108,17 @@ impl<P, E> BuilderApiImpl<P, E> {
             pool,
             accept_extensions,
             max_extension_items,
+            validity_signature_mode: ValiditySignatureMode::Off,
             metering_cache: None,
             _extensions: PhantomData,
         }
+    }
+
+    /// Sets the shared staged validity-signature rollout policy (default: off).
+    #[must_use]
+    pub const fn with_validity_signature_mode(mut self, mode: ValiditySignatureMode) -> Self {
+        self.validity_signature_mode = mode;
+        self
     }
 
     /// Writes inbound metering into the builder cache after the pool accepts the tx.
@@ -168,10 +178,29 @@ where
         }
         // Attach any extension data carried on the wire. This is a no-op for
         // `NoExtensions`, the default payload.
-        let pool_tx = tx.extensions.apply(pool_tx).map_err(|e| {
+        // Forwarding mempool nodes are trusted to authorize sidecars at raw ingress.
+        let pool_tx = tx.extensions.apply(pool_tx).map_err(|error| {
             BuilderApiMetrics::extension_errors().increment(1);
-            ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), e.to_string(), None::<()>)
+            ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), error.to_string(), None::<()>)
         })?;
+        // Every extension implementation must obey this builder's local rollout policy.
+        self.validity_signature_mode
+            .check(pool_tx.validity_predicates(), pool_tx.validity_signature().as_ref())
+            .map_err(|error| {
+                ValiditySignatureMetrics::rejected("builder", error.as_label()).increment(1);
+                ErrorObjectOwned::owned(
+                    ErrorCode::InvalidParams.code(),
+                    error.to_string(),
+                    Some(error.as_label()),
+                )
+            })?;
+        if !pool_tx.validity_predicates().is_empty() {
+            ValiditySignatureMetrics::accepted(
+                "builder",
+                if pool_tx.validity_signature().is_some() { "signed" } else { "unsigned" },
+            )
+            .increment(1);
+        }
 
         // Extension-bearing transactions remain private so normal P2P gossip
         // cannot propagate the raw transaction without its extension metadata.
@@ -248,15 +277,142 @@ impl<P, E> BuilderApiImpl<P, E> {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use alloy_consensus::TxEip1559;
+    use alloy_consensus::{SignableTransaction, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, Bytes, Signature, TxHash, TxKind, U256};
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
     use base_bundles::MeterBundleResponse;
     use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
     use reth_transaction_pool::noop::NoopTransactionPool;
 
     use super::*;
-    use crate::{BasePooledTransaction, NoExtensions, ValidatedTransaction};
+    use crate::{
+        BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, NoExtensions, TransactionValidity,
+        ValidatedTransaction, ValidityAuthorization, ValidityOperator, ValidityPredicate,
+    };
+
+    fn signed_validity_transaction() -> ValidatedTransaction<TransactionValidity> {
+        let signer = PrivateKeySigner::random();
+        let tx = TxEip1559 { chain_id: 8453, gas_limit: 21_000, ..Default::default() };
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let signed =
+            BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip1559(tx), signature);
+        let validity = vec![ValidityPredicate::BlockNumber {
+            op: ValidityOperator::LessThanOrEqual,
+            value: U256::from(31),
+        }];
+        let signature = signer
+            .sign_hash_sync(&ValidityAuthorization::signing_hash(8453, *signed.hash(), &validity))
+            .unwrap();
+        ValidatedTransaction {
+            sender: signer.address(),
+            raw: signed.encoded_2718().into(),
+            metering: None,
+            extensions: TransactionValidity { validity, validity_signature: Some(signature) },
+        }
+    }
+
+    #[tokio::test]
+    async fn signed_validity_builder_enforces_flag_and_preserves_ordinary_transactions() {
+        let handler = BuilderApiImpl::<_, TransactionValidity>::with_extensions(
+            NoopTransactionPool::<BasePooledTransaction>::new(),
+            true,
+            DEFAULT_MAX_VALIDITY_PREDICATES,
+        )
+        .with_validity_signature_mode(ValiditySignatureMode::Required);
+        let tx = signed_validity_transaction();
+        let error = handler.insert_validated_transaction(tx.clone()).await.unwrap_err();
+        assert!(
+            error.message().starts_with("pool rejected transaction:"),
+            "authorized predicates should reach pool insertion: {error}"
+        );
+        let mut unsigned = tx.clone();
+        unsigned.extensions.validity_signature = None;
+        let error = handler.insert_validated_transaction(unsigned).await.unwrap_err();
+        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+        assert_eq!(error.data().unwrap().get(), r#""missing""#);
+        let mut ordinary = tx;
+        ordinary.extensions = TransactionValidity::default();
+        let error = handler.insert_validated_transaction(ordinary).await.unwrap_err();
+        assert!(error.message().starts_with("pool rejected transaction:"));
+    }
+
+    #[rstest::rstest]
+    #[case::off(ValiditySignatureMode::Off)]
+    #[case::optional(ValiditySignatureMode::VerifyIfPresent)]
+    #[case::required(ValiditySignatureMode::Required)]
+    #[tokio::test]
+    async fn signed_validity_builder_trusts_forwarded_authorization(
+        #[case] mode: ValiditySignatureMode,
+        #[values("predicates", "sender", "transaction", "signature")] altered_field: &str,
+    ) {
+        let handler = BuilderApiImpl::<_, TransactionValidity>::with_extensions(
+            NoopTransactionPool::<BasePooledTransaction>::new(),
+            true,
+            DEFAULT_MAX_VALIDITY_PREDICATES,
+        )
+        .with_validity_signature_mode(mode);
+        let mut tx = signed_validity_transaction();
+        match altered_field {
+            "predicates" => tx.extensions.validity.push(ValidityPredicate::Balance {
+                address: Address::repeat_byte(0x11),
+                op: ValidityOperator::Equal,
+                value: U256::ZERO,
+            }),
+            "sender" => tx.sender = Address::ZERO,
+            "transaction" => tx.raw = signed_validity_transaction().raw,
+            "signature" => {
+                tx.extensions.validity_signature =
+                    Some(Signature::new(U256::ZERO, U256::ZERO, false));
+            }
+            _ => unreachable!(),
+        }
+        let error = handler.insert_validated_transaction(tx).await.unwrap_err();
+        assert!(
+            error.message().starts_with("pool rejected transaction:"),
+            "trusted insert must not re-verify envelope or sidecar signatures: {error}"
+        );
+    }
+
+    #[rstest::rstest]
+    #[case::missing(ValiditySignatureMode::Required, "missing")]
+    #[case::unexpected(ValiditySignatureMode::Required, "unexpected")]
+    #[case::optional_unexpected(ValiditySignatureMode::VerifyIfPresent, "unexpected")]
+    #[tokio::test]
+    async fn signature_rejections_have_dedicated_builder_metrics(
+        #[case] mode: ValiditySignatureMode,
+        #[case] reason: &str,
+    ) {
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        let handler = BuilderApiImpl::<_, TransactionValidity>::with_extensions(
+            NoopTransactionPool::<BasePooledTransaction>::new(),
+            true,
+            DEFAULT_MAX_VALIDITY_PREDICATES,
+        )
+        .with_validity_signature_mode(mode);
+        let mut tx = signed_validity_transaction();
+        match reason {
+            "missing" => tx.extensions.validity_signature = None,
+            "unexpected" => tx.extensions.validity.clear(),
+            _ => unreachable!(),
+        }
+        let error = handler.insert_validated_transaction(tx).await.unwrap_err();
+        assert_eq!(serde_json::from_str::<String>(error.data().unwrap().get()).unwrap(), reason);
+        let snapshot = snapshotter.snapshot().into_vec();
+        assert!(snapshot.iter().any(|(key, _, _, value)| {
+            key.key().name() == "txpool.validity_signature.rejected"
+                && key.key().labels().any(|l| l.key() == "site" && l.value() == "builder")
+                && key.key().labels().any(|l| l.key() == "reason" && l.value() == reason)
+                && matches!(value, metrics_util::debugging::DebugValue::Counter(1))
+        }));
+        assert!(!snapshot.iter().any(|(key, _, _, value)| {
+            key.key().name() == "txpool.builder_rpc.extension_errors"
+                && matches!(value, metrics_util::debugging::DebugValue::Counter(n) if *n > 0)
+        }));
+    }
 
     // ==========================================================================
     // Helper functions for creating test transactions
