@@ -4,8 +4,8 @@ _elf_stub := "BASE_SUCCINCT_ELF_STUB=1"
 default:
     @just --justfile {{source_file()}} --list --list-prefix '  check::'
 
-# Runs formatting, clippy, udeps, deny, and docs-index checks
-all: format clippy udeps deny docs-index
+# Runs formatting, clippy, udeps, deny, docs-index, and base-anvil tag checks
+all: format clippy udeps deny docs-index base-anvil-tags
 
 # Checks formatting
 format:
@@ -64,6 +64,10 @@ reth-pin:
 # Verifies llms.txt and llms-full.txt list every Markdown doc with a reviewed summary
 docs-index:
     python3 {{justfile_directory()}}/etc/scripts/local/docs-index.py check
+
+# Verifies custom base-anvil packages cannot overwrite canonical image tags
+base-anvil-tags:
+    python3 -B {{justfile_directory()}}/etc/scripts/ci/test-base-anvil-tags.py
 
 [private]
 _build-contracts:
