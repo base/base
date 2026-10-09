@@ -237,6 +237,10 @@ test-utils = [
 ]
 
 [[bench]]
+name = "build_loop"
+harness = false
+
+[[bench]]
 name = "state_root"
 harness = false
 
