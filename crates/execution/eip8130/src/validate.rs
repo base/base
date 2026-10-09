@@ -98,6 +98,9 @@ impl NonceValidator {
         channel: u64,
         mode: NonceMode,
     ) -> Result<NonceStatus, NonceError> {
+        if tx.nonce_sequence == u64::MAX {
+            return Err(NonceError::SequenceSaturated);
+        }
         match tx.nonce_sequence.cmp(&channel) {
             Ordering::Less => Err(NonceError::TooLow { channel, got: tx.nonce_sequence }),
             Ordering::Equal => Ok(NonceStatus::Ready),
@@ -160,6 +163,25 @@ mod tests {
     fn protocol_nonce_ready_when_sequence_matches() {
         let tx = tx_with(U256::ZERO, 5);
         assert_eq!(check(&tx, 5, NonceMode::Inclusion, 0, |_| {}), Ok(NonceStatus::Ready));
+    }
+
+    /// A sequence of `u64::MAX` can never be consumed: the protocol nonce would
+    /// saturate (leaving the transaction replayable) and a 2D channel would
+    /// overflow. Rejected in both modes, even when it equals the channel.
+    #[test]
+    fn saturated_sequence_is_rejected() {
+        for mode in [NonceMode::Pool, NonceMode::Inclusion] {
+            let protocol = tx_with(U256::ZERO, u64::MAX);
+            assert_eq!(
+                check(&protocol, u64::MAX, mode, 0, |_| {}),
+                Err(NonceError::SequenceSaturated)
+            );
+            let channel = tx_with(U256::from(9), u64::MAX);
+            assert_eq!(
+                NonceValidator::validate_sequence(&channel, u64::MAX, mode),
+                Err(NonceError::SequenceSaturated)
+            );
+        }
     }
 
     #[test]
