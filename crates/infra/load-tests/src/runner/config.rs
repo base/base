@@ -6,7 +6,7 @@ use revm::precompile::PrecompileId;
 use url::Url;
 
 use crate::{
-    config::OsakaTarget,
+    config::{OsakaTarget, ValiditySigningMode},
     utils::{BaselineError, Result},
 };
 
@@ -308,6 +308,8 @@ pub struct LoadConfig {
     pub fresh_recipient_ratio: f64,
     /// Fraction `0.0..=1.0` of senders routed through `base_sendRawTransactionValidity`.
     pub validity_ratio: f64,
+    /// Sidecar signing strategy during staged signature rollout.
+    pub validity_signing: ValiditySigningMode,
     /// Predicate templates attached to each validity-bearing transaction.
     pub validity_predicates: Vec<ValidityPredicateTemplate>,
     /// Fraction of validity senders in the priority-lead cohort.
@@ -348,6 +350,7 @@ impl LoadConfig {
             canonical_heads_ws: None,
             fresh_recipient_ratio: 0.0,
             validity_ratio: 0.0,
+            validity_signing: ValiditySigningMode::Adaptive,
             validity_predicates: Vec::new(),
             validity_priority_lead_ratio: 0.0,
             validity_priority_lead_multiplier: 1,

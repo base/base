@@ -56,3 +56,5 @@ tokio = { workspace = true, features = ["signal"] }
 tokio-tungstenite = { workspace = true, features = ["native-tls"] }
 
 [dev-dependencies]
+httpmock.workspace = true
+rstest.workspace = true
