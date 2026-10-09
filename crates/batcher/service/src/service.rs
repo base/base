@@ -16,7 +16,6 @@ use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
 use base_batcher_source::{HybridL1HeadSource, PollingBlockSource};
 use base_common_network::Base;
 use base_consensus_rpc::RollupNodeApiClient;
-use base_protocol::BlockInfo;
 use base_retry::{DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
 use base_runtime::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
@@ -494,14 +493,16 @@ impl BatcherService {
                 .await?;
 
         let initial_derivation_status =
-            Self::rpc_retry("optimism_syncStatus", retry, rpc_timeout, || {
-                rollup_node.derivation_status()
+            Self::rpc_retry("optimism_syncStatus", retry, rpc_timeout, || async {
+                match rollup_node.derivation_status().await {
+                    Ok(status) if status.lacks_safe_head_or_l1_block() => {
+                        Err("sync status without a safe L2 head or an L1 block".into())
+                    }
+                    result => result,
+                }
             })
             .await?;
         let safe_l2 = initial_derivation_status.safe_l2;
-        if safe_l2 == BlockInfo::default() {
-            eyre::bail!("safe L2 head is empty");
-        }
         let next_l2_timestamp = safe_l2.timestamp.saturating_add(rollup_config.block_time);
         self.config.encoder_config.validate_for_rollup_config(&rollup_config, next_l2_timestamp)?;
         info!(safe_l2 = %safe_l2.number, "fetched safe L2 head");
@@ -634,7 +635,7 @@ impl BatcherService {
                 source,
                 l1_head_source,
                 initial_l1_head,
-                initial_safe_head: safe_l2,
+                initial_derivation_status,
                 derivation_status_rx,
                 admin_rx,
             },
@@ -666,7 +667,7 @@ mod tests {
     use alloy_primitives::Address;
     use base_batcher_core::{ThrottleConfig, ThrottleController};
     use base_common_genesis::RollupConfig;
-    use base_protocol::SyncStatus;
+    use base_protocol::{BlockInfo, L2BlockInfo, SyncStatus};
     use base_runtime::Cancellation;
     use base_tx_manager::SignerConfig;
     use httpmock::{Mock, prelude::*};
@@ -885,6 +886,51 @@ mod tests {
                  SystemConfig at {SYSTEM_CONFIG}"
             )
         );
+    }
+
+    /// Setup reads the sync status again until it carries a safe head and an L1 block, instead of
+    /// failing on the first answer without them.
+    #[tokio::test]
+    async fn setup_waits_for_a_sync_status_with_a_safe_head_and_an_l1_block() {
+        let server = MockServer::start_async().await;
+        let signer = Address::repeat_byte(0x51);
+        mock_system_config(&server, signer).await;
+        mock_rpc(&server, r#"{"method":"eth_blockNumber"}"#, r#""0x1""#.into()).await;
+        let status = |current_l1| SyncStatus {
+            current_l1: BlockInfo { number: current_l1, ..Default::default() },
+            local_safe_l2: L2BlockInfo {
+                block_info: BlockInfo { number: 5, ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // The rollup node client numbers its requests, `optimism_rollupConfig` being 0, and
+        // rejects an answer under another id, so its first two sync status reads are mocked as 1
+        // and 2.
+        let mut reads = Vec::new();
+        for (id, status) in [(1, status(0)), (2, status(7))] {
+            let response = format!(
+                r#"{{"jsonrpc":"2.0","id":{id},"result":{}}}"#,
+                serde_json::to_string(&status).unwrap()
+            );
+            let request = format!(r#"{{"method":"optimism_syncStatus","id":{id}}}"#);
+            reads.push(
+                server
+                    .mock_async(|when, then| {
+                        when.method(POST).path("/").json_body_includes(request);
+                        then.status(200).header("content-type", "application/json").body(response);
+                    })
+                    .await,
+            );
+        }
+
+        // Setup fails later, on the encoder check against the mocked rollup config.
+        let _ =
+            BatcherService::new(mocked_config(&server, signer)).setup(TokioRuntime::new()).await;
+
+        for read in &reads {
+            read.assert_calls_async(1).await;
+        }
     }
 
     /// Setup goes past the batcher check when the signer is the one the `SystemConfig` authorizes.
