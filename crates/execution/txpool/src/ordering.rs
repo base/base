@@ -138,11 +138,18 @@ impl PartialOrd for UnifiedTipPriority {
 
 impl Ord for UnifiedTipPriority {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Saturate at U256::MAX so a pathological tip*gas product ranks as
-        // the highest bid instead of wrapping.
-        let left = self.tip.saturating_mul(U256::from(other.gas));
-        let right = other.tip.saturating_mul(U256::from(self.gas));
-        left.cmp(&right).then_with(|| self.predicates.cmp(&other.predicates))
+        // Priority-fee bids (`gas == 1`) dominate the pool and cannot saturate,
+        // so they compare by tip alone without the 256-bit multiplications.
+        let bid = if self.gas == 1 && other.gas == 1 {
+            self.tip.cmp(&other.tip)
+        } else {
+            // Saturate at U256::MAX so a pathological tip*gas product ranks as
+            // the highest bid instead of wrapping.
+            let left = self.tip.saturating_mul(U256::from(other.gas));
+            let right = other.tip.saturating_mul(U256::from(self.gas));
+            left.cmp(&right)
+        };
+        bid.then_with(|| self.predicates.cmp(&other.predicates))
     }
 }
 
@@ -631,6 +638,50 @@ mod tests {
             UnifiedTipPriority::new(U256::from(3u64), 2, 0)
                 > UnifiedTipPriority::new(U256::from(3u64), 2, 1)
         );
+    }
+
+    #[test]
+    fn ordering_matches_saturating_cross_multiplication() {
+        fn reference(left: &UnifiedTipPriority, right: &UnifiedTipPriority) -> Ordering {
+            let lhs = left.tip.saturating_mul(U256::from(right.gas));
+            let rhs = right.tip.saturating_mul(U256::from(left.gas));
+            lhs.cmp(&rhs).then_with(|| left.predicates.cmp(&right.predicates))
+        }
+
+        let tips = [
+            U256::ZERO,
+            U256::from(1u64),
+            U256::from(3u64),
+            U256::from(6u64),
+            U256::from(21_000u64),
+            U256::from(u128::MAX),
+            U256::MAX / U256::from(2u64),
+            U256::MAX - U256::from(1u64),
+            U256::MAX,
+        ];
+        let gases = [1, 2, 4, 21_000, u64::MAX];
+        let predicate_counts = [0, 1, 2];
+        let priorities: Vec<_> = tips
+            .iter()
+            .flat_map(|tip| gases.iter().map(move |gas| (*tip, *gas)))
+            .flat_map(|(tip, gas)| {
+                predicate_counts.iter().map(move |count| UnifiedTipPriority::new(tip, gas, *count))
+            })
+            .collect();
+
+        for left in &priorities {
+            for right in &priorities {
+                assert_eq!(left.cmp(right), reference(left, right), "{left:?} vs {right:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn saturated_bids_compare_equal_before_predicate_tiebreak() {
+        let huge_gas = UnifiedTipPriority::new(U256::MAX, u64::MAX, 0);
+        let small_gas = UnifiedTipPriority::new(U256::MAX - U256::from(1u64), 2, 0);
+        assert_eq!(huge_gas, small_gas);
+        assert!(small_gas > UnifiedTipPriority::new(U256::MAX, u64::MAX, 1));
     }
 
     #[test]
