@@ -12,9 +12,7 @@ use alloy_primitives::B256;
 use alloy_primitives::{Address, BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_common_chains::Upgrades;
-use base_common_consensus::{
-    BaseReceipt, BaseTransactionSigned, CoinbaseTip, DepositReceipt, OpTxType,
-};
+use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, OpTxType};
 use base_common_evm::{BaseReceiptBuilder, BaseSpecId, L1BlockInfo};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130::IntrinsicGas;
@@ -798,7 +796,7 @@ impl BasePayloadBuilderCtx {
             let replay_independent = tx.eip8130_replay_id().is_some();
             let has_validity_predicates = !tx.validity_predicates().is_empty();
             let validity_handling_start = has_validity_predicates.then(Instant::now);
-            let coinbase_tip = tx.as_eip8130().and_then(|signed| CoinbaseTip::decode(signed.tx()));
+            let coinbase_tip = tx.coinbase_tip();
             let has_coinbase_tip = coinbase_tip.is_some();
 
             // Defer without evaluating once this flashblock's predicate-eval time budget is
@@ -1395,6 +1393,11 @@ impl BasePayloadBuilderCtx {
                 cumulative_gas_used: info.cumulative_gas_used,
             };
             info.receipts.push(self.build_receipt(ctx, None));
+            // The tip is a phase-0 transfer, so it is revenue only if that phase
+            // committed; a reverted or policy-blocked phase pays nothing.
+            let coinbase_tip = coinbase_tip.filter(|_| {
+                matches!(info.receipts.last(), Some(BaseReceipt::Eip8130(receipt)) if receipt.phase_committed(0))
+            });
 
             let state_change_effects = if predicate_index.is_empty() {
                 StateChangeEffects::default()

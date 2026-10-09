@@ -14,7 +14,7 @@ use alloy_primitives::{Address, B256, TxHash, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseTransaction, CoinbaseTip, Predeploys};
+use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
 use base_common_evm::L1BlockInfo;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
@@ -951,7 +951,7 @@ where
             }
 
             let has_validity_predicates = !tx.validity_predicates().is_empty();
-            let coinbase_tip = tx.as_eip8130().and_then(|signed| CoinbaseTip::decode(signed.tx()));
+            let coinbase_tip = tx.coinbase_tip();
             let has_coinbase_tip = coinbase_tip.is_some();
             // Every validity candidate ends with a decision event, so there is no separate
             // `BUILDER_CONSIDERED`.
@@ -1467,6 +1467,16 @@ where
                 .expect("fee is always valid; execution succeeded");
             let gas_used = gas_output.tx_gas_used();
             info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
+            // The tip is a phase-0 transfer, so it is revenue only if that phase
+            // committed; a reverted or policy-blocked phase pays nothing.
+            let coinbase_tip = coinbase_tip.filter(|_| {
+                builder
+                    .executor()
+                    .receipts()
+                    .last()
+                    .and_then(DepositReceiptExt::as_eip8130_receipt)
+                    .is_some_and(|receipt| receipt.phase_committed(0))
+            });
             info.inclusion.record(
                 has_validity_predicates,
                 gas_used,
