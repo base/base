@@ -135,7 +135,9 @@ impl<DB: Database> Database for PredicateReadRecorder<'_, DB> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256};
-    use base_execution_txpool::{PredicateContext, ValidityOperator, ValidityPredicate};
+    use base_execution_txpool::{
+        PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate,
+    };
     use reth_revm::State;
     use revm::{database::InMemoryDB, state::AccountInfo};
 
@@ -180,7 +182,7 @@ mod tests {
         };
         let nonce =
             ValidityPredicate::Nonce { address, op: ValidityOperator::Equal, value: U256::from(2) };
-        let predicates = [balance, nonce, storage];
+        let predicates = ValidityConditions::new(vec![balance, nonce, storage]);
 
         // Evaluate the same batch twice: totals double, unique counts do not.
         for _ in 0..2 {
@@ -218,14 +220,14 @@ mod tests {
             op: ValidityOperator::Equal,
             value: U256::from(3),
         };
-        let predicates = [failing_balance, storage];
+        let predicates = ValidityConditions::new(vec![failing_balance.clone(), storage]);
 
         {
             let mut recorder = PredicateReadRecorder::new(&mut state, &mut tracker);
             assert_eq!(
                 ValidityPredicateKey::first_unsatisfied(&predicates, &mut recorder, &context())
                     .unwrap(),
-                Some((0, ValidityPredicateKey::Balance(address)))
+                Some((failing_balance, ValidityPredicateKey::Balance(address)))
             );
         }
 

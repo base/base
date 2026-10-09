@@ -184,7 +184,7 @@ where
         let Some(effective_tip) = transaction.effective_tip_per_gas(base_fee) else {
             return Priority::None;
         };
-        let predicates = transaction.validity_predicates().len();
+        let predicates = transaction.validity_conditions().len();
         if let Some(signed) = transaction.as_eip8130()
             && let Some(tip) = CoinbaseTip::decode(signed.tx())
         {

@@ -7,7 +7,9 @@ use alloy_primitives::{
     Address, TxHash, U256,
     map::{B256Map, B256Set, HashMap, U256Map},
 };
-use base_execution_txpool::{PredicateContext, ValidityOperator, ValidityPredicate};
+use base_execution_txpool::{
+    PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate,
+};
 use revm::{Database, state::EvmState};
 
 /// The number of parked predicates at which a flat bucket becomes ordered by default.
@@ -45,16 +47,21 @@ impl ValidityPredicateKey {
         }
     }
 
-    /// Returns the first predicate that does not hold against `db` and `context`, with its index.
+    /// Returns the first unsatisfied normalized predicate and its state or context key.
+    ///
+    /// State predicates are borrowed during evaluation and cloned only when unsatisfied.
     pub fn first_unsatisfied<DB: Database>(
-        predicates: &[ValidityPredicate],
+        predicates: &ValidityConditions,
         db: &mut DB,
         context: &PredicateContext,
-    ) -> Result<Option<(usize, Self)>, DB::Error> {
-        for (index, predicate) in predicates.iter().enumerate() {
+    ) -> Result<Option<(ValidityPredicate, Self)>, DB::Error> {
+        for predicate in predicates.iter() {
             match predicate.matches(db, context) {
                 Ok(true) => {}
-                Ok(false) => return Ok(Some((index, Self::for_predicate(predicate)))),
+                Ok(false) => {
+                    let key = Self::for_predicate(&predicate);
+                    return Ok(Some((predicate.into_owned(), key)));
+                }
                 Err(error) => return Err(error),
             }
         }
@@ -63,7 +70,7 @@ impl ValidityPredicateKey {
 }
 
 /// Result of evaluating a transaction's validity predicates at one build position.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidityPredicateEvaluation {
     /// Every predicate is satisfied.
     Matched,
@@ -71,8 +78,8 @@ pub enum ValidityPredicateEvaluation {
     Unsatisfied {
         /// State or position key that currently blocks the transaction.
         blocker: ValidityPredicateKey,
-        /// Position of the failed predicate in the submitted batch.
-        blocker_index: usize,
+        /// Failed condition, returned directly so parking does not rescan the batch.
+        predicate: ValidityPredicate,
         /// Whether the predicate batch can never be satisfied at a later build position.
         expired: bool,
     },
@@ -81,20 +88,16 @@ pub enum ValidityPredicateEvaluation {
 impl ValidityPredicateEvaluation {
     /// Evaluates predicates against the current state and build position.
     pub fn evaluate<DB: Database>(
-        predicates: &[ValidityPredicate],
+        predicates: &ValidityConditions,
         db: &mut DB,
         context: &PredicateContext,
     ) -> Result<Self, DB::Error> {
-        let Some((blocker_index, blocker)) =
+        let Some((predicate, blocker)) =
             ValidityPredicateKey::first_unsatisfied(predicates, db, context)?
         else {
             return Ok(Self::Matched);
         };
-        Ok(Self::Unsatisfied {
-            blocker,
-            blocker_index,
-            expired: ValidityPredicate::is_batch_expired(predicates, context),
-        })
+        Ok(Self::Unsatisfied { blocker, predicate, expired: predicates.is_expired(context) })
     }
 }
 
@@ -523,7 +526,9 @@ pub struct StateChangeEffects {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, map::B256Set};
-    use base_execution_txpool::{PredicateContext, ValidityOperator, ValidityPredicate};
+    use base_execution_txpool::{
+        PredicateContext, ValidityConditions, ValidityOperator, ValidityPredicate,
+    };
     use revm::{
         database::InMemoryDB,
         state::{Account, AccountInfo, EvmState, EvmStorageSlot},
@@ -569,6 +574,39 @@ mod tests {
     }
 
     #[test]
+    fn timing_mismatch_parks_without_reading_state() {
+        let address = Address::with_last_byte(1);
+        let conditions = ValidityConditions::new(vec![
+            balance(address, ValidityOperator::GreaterThan, 0),
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::GreaterThanOrEqual,
+                value: U256::from(101),
+            },
+        ]);
+        let context = PredicateContext { block_number: 100, flashblock_index: 1 };
+        let mut db = InMemoryDB::default();
+        assert_eq!(
+            ValidityPredicateEvaluation::evaluate(&conditions, &mut db, &context).unwrap(),
+            ValidityPredicateEvaluation::Unsatisfied {
+                blocker: ValidityPredicateKey::BlockNumber,
+                predicate: ValidityPredicate::BlockNumber {
+                    op: ValidityOperator::GreaterThanOrEqual,
+                    value: U256::from(101)
+                },
+                expired: false,
+            },
+        );
+        assert!(db.cache.accounts.is_empty(), "timing gate must not load account state");
+        let next = PredicateContext { block_number: 101, ..context };
+        let evaluation =
+            ValidityPredicateEvaluation::evaluate(&conditions, &mut db, &next).unwrap();
+        assert!(
+            matches!(evaluation, ValidityPredicateEvaluation::Unsatisfied { blocker: ValidityPredicateKey::Balance(found), .. } if found == address)
+        );
+        assert!(db.cache.accounts.contains_key(&address));
+    }
+
+    #[test]
     fn passed_nonce_upper_bounds_remain_ineligible_until_block_expiry() {
         let address = Address::with_last_byte(1);
         let context = PredicateContext { block_number: 100, flashblock_index: 1 };
@@ -584,6 +622,7 @@ mod tests {
                     value: U256::from(102),
                 },
             ];
+            let predicates = ValidityConditions::new(predicates.to_vec());
             let mut db = InMemoryDB::default();
             db.insert_account_info(
                 address,
@@ -598,7 +637,7 @@ mod tests {
                 ValidityPredicateEvaluation::evaluate(&predicates, &mut db, &context).unwrap(),
                 ValidityPredicateEvaluation::Unsatisfied {
                     blocker: ValidityPredicateKey::Nonce(address),
-                    blocker_index: 0,
+                    predicate: ValidityPredicate::Nonce { address, op, value: U256::from(3) },
                     expired: false,
                 },
             );
@@ -607,8 +646,11 @@ mod tests {
                 ValidityPredicateEvaluation::evaluate(&predicates, &mut db, &expired_context)
                     .unwrap(),
                 ValidityPredicateEvaluation::Unsatisfied {
-                    blocker: ValidityPredicateKey::Nonce(address),
-                    blocker_index: 0,
+                    blocker: ValidityPredicateKey::BlockNumber,
+                    predicate: ValidityPredicate::BlockNumber {
+                        op: ValidityOperator::LessThanOrEqual,
+                        value: U256::from(102)
+                    },
                     expired: true,
                 },
             );
