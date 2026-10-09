@@ -75,7 +75,7 @@ use revm::{
 };
 
 use crate::{
-    BaseContext, BaseContextTr, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransaction,
+    BaseContext, BaseContextTr, BaseEvm, BaseHaltReason, BaseSpecId, BaseTime, BaseTransaction,
     BaseTransactionError, BaseTxTr, BaseUpgrade, Eip8130PhaseStatuses, L1BlockInfo,
     handler::BaseHandler,
 };
@@ -266,6 +266,13 @@ impl Eip8130Executor {
             .timestamp()
             .try_into()
             .map_err(|_| BaseTransactionError::eip8130("block timestamp exceeds u64"))?;
+        // Everest implies Denim, so `tx[1]` has already written this block's
+        // millisecond part to `BaseTime`. Read through the database so the slot
+        // is not warmed in the transaction's journal.
+        let timestamp_millis_part =
+            BaseTime::fetch_timestamp_millis_part(ctx.journal_mut().db_mut())
+                .map_err(EVMError::Database)?;
+        let now_ms = BaseTime { timestamp_millis_part }.timestamp_ms(now);
         let base_fee: u128 = u128::from(ctx.block().basefee());
         let beneficiary = ctx.block().beneficiary();
         let block_number = ctx.block().number();
@@ -287,14 +294,15 @@ impl Eip8130Executor {
             *ctx.chain_mut() = fetched;
         }
 
-        let outcome =
-            match Self::authorize_and_apply(ctx, &signed, &encoded, chain_id, now, base_fee) {
-                Ok(outcome) => outcome,
-                Err(err) => {
-                    Self::discard_transaction_state(evm);
-                    return Err(err.into());
-                }
-            };
+        let outcome = match Self::authorize_and_apply(
+            ctx, &signed, &encoded, chain_id, now, now_ms, base_fee,
+        ) {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                Self::discard_transaction_state(evm);
+                return Err(err.into());
+            }
+        };
 
         // Pre-charge the payer the worst-case fee (so `calls` cannot spend the
         // gas reservation), publish the transaction context, and run `calls`.
@@ -971,6 +979,7 @@ impl Eip8130Executor {
         encoded: &[u8],
         chain_id: u64,
         now: u64,
+        now_ms: u64,
         base_fee: u128,
     ) -> Result<Eip8130Outcome, BaseTransactionError>
     where
@@ -992,18 +1001,19 @@ impl Eip8130Executor {
         // Validity bounds are normalized to Unix milliseconds (seconds bounds are
         // scaled by 1000 per EIP-8130 Timestamp Normalization); `0` stays `0`
         // (disabled). The nonce-free replay ring records this normalized upper
-        // bound and compares it against `block.timestamp * 1000` internally, so
-        // it MUST be the normalized value. The raw `valid_after`/`valid_before`
-        // remain the signed/encoded/replay-committed fields; only these
-        // comparisons use the normalized view.
+        // bound and compares it against `now_ms`, so it MUST be the normalized
+        // value. The raw `valid_after`/`valid_before` remain the
+        // signed/encoded/replay-committed fields; only these comparisons use the
+        // normalized view.
         let valid_after = tx.valid_after_ms();
         let valid_before = tx.valid_before_ms();
 
         // Consensus-level validity window. The transaction is includable only
         // within the inclusive interval `[valid_after, valid_before]` on the
-        // millisecond axis (`block.timestamp * 1000`). Per the EIP a transaction
-        // is still valid at `now_ms == valid_before`, so the upper bound is
-        // inclusive: reject only once `now_ms` is strictly past `valid_before`.
+        // millisecond axis (`now_ms`, the block's millisecond timestamp). Per the
+        // EIP a transaction is still valid at `now_ms == valid_before`, so the
+        // upper bound is inclusive: reject only once `now_ms` is strictly past
+        // `valid_before`.
         // Enforced here so a block that includes a transaction outside its window
         // is invalid at execution, not merely filtered by the mempool; both bounds
         // apply to nonce-free and nonce-bearing transactions alike (`0` disables
@@ -1011,7 +1021,6 @@ impl Eip8130Executor {
         // its own admission window (`valid_before > now_ms`) when it records the
         // nonce, so a nonce-free transaction at the boundary still fails there.
         let keystore = ctx.cfg().spec().is_enabled_in(BaseUpgrade::Zenith);
-        let now_ms = now.saturating_mul(1_000);
         if valid_after != 0 && now_ms < valid_after {
             return Err(BaseTransactionError::eip8130("transaction is not yet valid"));
         }
@@ -1077,9 +1086,9 @@ impl Eip8130Executor {
             let protocol_nonce = sctx
                 .with_account_info(sender, |info| Ok(info.nonce))
                 .map_err(BaseTransactionError::eip8130)?;
-            // The nonce-free replay lookup works in milliseconds (`now_ms`,
-            // `block.timestamp * 1000`), matching the validity window and the
-            // ring buffer; the sequence-channel branches ignore this argument.
+            // The nonce-free replay lookup works in milliseconds (`now_ms`),
+            // matching the validity window and the ring buffer; the
+            // sequence-channel branches ignore this argument.
             let (nonce_key_first_use, bump_protocol_nonce) =
                 if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
                     NonceValidator::validate(
@@ -1093,7 +1102,7 @@ impl Eip8130Executor {
                     .map_err(BaseTransactionError::eip8130)?;
                     let replay = NonceValidator::replay_hash(tx, sender);
                     nonce_mgr
-                        .check_and_mark_expiring_nonce(replay, valid_before)
+                        .check_and_mark_expiring_nonce(replay, valid_before, now_ms)
                         .map_err(BaseTransactionError::eip8130)?;
                     (false, false)
                 } else if nonce_key == U256::ZERO {
@@ -3820,6 +3829,65 @@ mod tests {
             panic!("expected an Eip8130 validity rejection, got {err:?}");
         };
         assert!(got.contains("validity window has expired"), "unexpected reason: {got}");
+    }
+
+    #[test]
+    fn execution_window_and_replay_ring_use_the_base_time_millisecond_clock() {
+        // The block is `BLOCK_SECONDS` plus the 200 ms `BaseTime` part, so both
+        // bounds and the nonce-free replay ring compare against `now_ms`, not
+        // the whole second.
+        const BLOCK_SECONDS: u64 = 1_700_000_000;
+        const MILLIS_PART: u64 = 200;
+        let now_ms = BLOCK_SECONDS * 1_000 + MILLIS_PART;
+        let key = signing_key(0x7b);
+        let sender = eoa_address(&key);
+        let target = address!("0x00000000000000000000000000000000000000d3");
+        let initial = U256::from(10u64).pow(U256::from(18u64));
+
+        let transact = |nonce_free: bool, valid_after: u64, valid_before: u64| {
+            let mut tx = base_tx();
+            tx.calls = vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]];
+            if nonce_free {
+                tx.nonce_key = Eip8130Constants::NONCE_KEY_MAX;
+            }
+            tx.valid_after = valid_after;
+            tx.valid_before = valid_before;
+            let signed = eoa_signed(tx, &key);
+            let mut evm = evm_with_accounts_and_storage(
+                initial,
+                sender,
+                &[(target, bytes!("00"))],
+                &[(
+                    Predeploys::BASE_TIME,
+                    BaseTime::TIMESTAMP_MILLIS_PART_SLOT,
+                    U256::from(MILLIS_PART),
+                )],
+            );
+            evm.ctx_mut().block.timestamp = U256::from(BLOCK_SECONDS);
+            evm.transact_raw(into_base_tx(&signed)).map(|outcome| outcome.result.is_success())
+        };
+        let rejection = |result: Result<bool, _>| match result {
+            Err(EVMError::Transaction(BaseTransactionError::Eip8130(reason))) => reason,
+            other => panic!("expected an Eip8130 rejection, got {other:?}"),
+        };
+
+        for nonce_free in [false, true] {
+            let valid_before = now_ms + 20_000;
+            assert_eq!(transact(nonce_free, now_ms, valid_before), Ok(true));
+            assert!(
+                rejection(transact(nonce_free, now_ms + 1, valid_before)).contains("not yet valid")
+            );
+            assert!(
+                rejection(transact(nonce_free, 0, now_ms - 1))
+                    .contains("validity window has expired")
+            );
+        }
+        assert_eq!(transact(false, 0, now_ms), Ok(true));
+        assert_eq!(
+            rejection(transact(true, 0, now_ms)),
+            "Revert",
+            "the replay ring requires `valid_before` strictly after `now_ms`"
+        );
     }
 
     #[test]
