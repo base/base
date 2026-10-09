@@ -2,7 +2,7 @@
 
 use base_proof_contracts::{
     already_proven_selector, game_already_exists_selector, invalid_parent_game_selector,
-    invalid_signer_selector, l1_origin_too_old_selector,
+    invalid_proof_selector, invalid_signer_selector, l1_origin_too_old_selector,
 };
 use base_tx_manager::TxManagerError;
 use thiserror::Error;
@@ -14,6 +14,18 @@ const ALREADY_PROVEN: &str = "AlreadyProven";
 const L1_ORIGIN_TOO_OLD: &str = "L1OriginTooOld";
 const INVALID_PARENT_GAME: &str = "InvalidParentGame";
 const INVALID_SIGNER: &str = "InvalidSigner";
+const INVALID_PROOF: &str = "InvalidProof";
+
+/// Whether `text` names the error `name` itself rather than a longer error
+/// that starts with it (`InvalidProof` vs `InvalidProofType`).
+fn names_error(text: &str, name: &str) -> bool {
+    text.match_indices(name).any(|(start, _)| {
+        !text[start + name.len()..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+    })
+}
 
 /// Known non-retryable contract reverts shared by proof-related onchain transactions.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Error)]
@@ -37,6 +49,11 @@ pub enum KnownRevert {
     /// The proof signer is not valid on-chain.
     #[error("invalid signer")]
     InvalidSigner,
+
+    /// The TEE or ZK verifier rejected the proof. Resubmitting the same proof
+    /// cannot succeed.
+    #[error("invalid proof")]
+    InvalidProof,
 }
 
 impl KnownRevert {
@@ -52,6 +69,7 @@ impl KnownRevert {
         let l1_origin_selector = l1_origin_too_old_selector();
         let invalid_parent_selector = invalid_parent_game_selector();
         let invalid_signer = invalid_signer_selector();
+        let invalid_proof = invalid_proof_selector();
 
         if let TxManagerError::ExecutionReverted { reason, data } = err {
             if reason.as_deref().is_some_and(|r| r.contains(GAME_ALREADY_EXISTS)) {
@@ -84,6 +102,12 @@ impl KnownRevert {
             if data.as_ref().is_some_and(|d| d.starts_with(&invalid_signer)) {
                 return Some(Self::InvalidSigner);
             }
+            if reason.as_deref().is_some_and(|r| names_error(r, INVALID_PROOF)) {
+                return Some(Self::InvalidProof);
+            }
+            if data.as_ref().is_some_and(|d| d.starts_with(&invalid_proof)) {
+                return Some(Self::InvalidProof);
+            }
             return None;
         }
 
@@ -113,6 +137,11 @@ impl KnownRevert {
         {
             return Some(Self::InvalidSigner);
         }
+        if msg.contains(&alloy_primitives::hex::encode(invalid_proof))
+            || names_error(&msg, INVALID_PROOF)
+        {
+            return Some(Self::InvalidProof);
+        }
 
         None
     }
@@ -126,6 +155,7 @@ impl From<KnownRevert> for ProofSubmissionError {
             KnownRevert::L1OriginTooOld => Self::L1OriginTooOld,
             KnownRevert::InvalidParentGame => Self::InvalidParentGame,
             KnownRevert::InvalidSigner => Self::InvalidSigner,
+            KnownRevert::InvalidProof => Self::InvalidProof,
         }
     }
 }
@@ -154,7 +184,7 @@ mod tests {
         expected: KnownRevert,
     }
 
-    fn known_revert_cases() -> [KnownRevertCase; 5] {
+    fn known_revert_cases() -> [KnownRevertCase; 6] {
         [
             KnownRevertCase {
                 name: GAME_ALREADY_EXISTS,
@@ -181,7 +211,35 @@ mod tests {
                 selector: invalid_signer_selector(),
                 expected: KnownRevert::InvalidSigner,
             },
+            KnownRevertCase {
+                name: INVALID_PROOF,
+                selector: invalid_proof_selector(),
+                expected: KnownRevert::InvalidProof,
+            },
         ]
+    }
+
+    /// `InvalidProofType` and `InvalidProofFormat` are different failures (a
+    /// wrong proof-type byte, a malformed TEE proof) and must not be read as
+    /// the verifier rejecting the proof.
+    #[test]
+    fn longer_error_names_are_not_invalid_proof() {
+        for name in ["InvalidProofType()", "InvalidProofFormat()"] {
+            assert_classifies(
+                TxManagerError::ExecutionReverted { reason: Some(name.to_string()), data: None },
+                None,
+                "structured revert reason",
+            );
+            assert_classifies(TxManagerError::Rpc(name.to_string()), None, "Rpc message");
+        }
+        assert_classifies(
+            TxManagerError::ExecutionReverted {
+                reason: Some("execution reverted: InvalidProof()".to_string()),
+                data: None,
+            },
+            Some(KnownRevert::InvalidProof),
+            "exact name in revert reason",
+        );
     }
 
     fn assert_classifies(err: TxManagerError, expected: Option<KnownRevert>, scenario: &str) {

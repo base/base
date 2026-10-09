@@ -6,8 +6,8 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::BasePrecompileError;
 
 use crate::{
-    B20AssetStorage, B20AssetToken, NoopPrecompileCallObserver, PolicyRegistryStorage,
-    PolicyVersions, PrecompileCallObserver, UpgradeGatedStorageFeatures, macros::base_precompile,
+    B20AssetStorage, B20AssetToken, PolicyRegistryStorage, PolicyVersions, PrecompileCallObserver,
+    UpgradeGatedStorageFeatures, macros::base_precompile,
 };
 
 /// Entry point for the asset B-20 token precompile.
@@ -18,12 +18,6 @@ use crate::{
 pub struct B20AssetPrecompile;
 
 impl B20AssetPrecompile {
-    /// Returns a [`DynPrecompile`] that dispatches to [`B20AssetToken`] logic at
-    /// `token_address`, gated to the version active at `upgrade`.
-    pub fn create_precompile(token_address: Address, upgrade: BaseUpgrade) -> DynPrecompile {
-        Self::create_precompile_with_observer(token_address, upgrade, NoopPrecompileCallObserver)
-    }
-
     /// Returns a [`DynPrecompile`] that observes and dispatches to [`B20AssetToken`] logic at
     /// `token_address`, gated to the version active at `upgrade`.
     pub fn create_precompile_with_observer<O>(

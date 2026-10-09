@@ -48,5 +48,11 @@ authentication), one simulation yields the exact estimate; no gas-limit binary
 search is needed. Plain (non-8130) requests fall through to the standard reth
 estimator unchanged.
 
+The simulation applies the request's validity window at the simulated block's
+time (honoring a `time` block override on `eth_call`) and applies its account
+changes as inclusion would. A sequenced config change must therefore carry the
+account's current channel sequence and, on the local channel, its current local
+epoch; a mismatch is rejected with the expected and supplied values.
+
 Both helpers are fork-agnostic: callers gate on the Everest hard fork via
 [`Eip8130EverestGate`] before invoking them.

@@ -222,6 +222,7 @@ where
             sender_locked: class.sender_locked,
             payer_locked: class.payer_locked,
             payer_trusted: class.payer_trusted,
+            payer_allowlisted: class.payer_allowlisted,
             payer_balance: class.payer_balance,
             max_cost: class.max_cost,
             priority: transaction.priority_fee_or_price(),
@@ -636,7 +637,7 @@ where
         validated: &TransactionValidationOutcome<T>,
     ) -> PoolResult<bool> {
         let mut guard = self.guard.write();
-        if guard.contains(&hash) || replaced.is_some_and(|hash| guard.contains(&hash)) {
+        if guard.contains(&hash) {
             return Ok(false);
         }
         let Some(admission) = validated
@@ -645,6 +646,14 @@ where
         else {
             return Ok(false);
         };
+        if let Some(replaced) = replaced.filter(|replaced| guard.contains(replaced)) {
+            // Rejecting here, before reth swaps the transactions, keeps the
+            // replaced transaction pooled.
+            guard
+                .check_replacement(&replaced, &admission)
+                .map_err(|rejection| Self::limit_rejection_error(hash, rejection))?;
+            return Ok(false);
+        }
         if let Err(rejection) = guard.try_admit(admission) {
             return Err(Self::limit_rejection_error(hash, rejection));
         }
@@ -840,8 +849,18 @@ where
                 let current = generation.is_none_or(|generation| {
                     generation == self.validator().validator().limit_class_cache_generation()
                 });
-                if !current {
-                    let hash = outcome.outcome.hash;
+                let hash = outcome.outcome.hash;
+                let rejection = if !current {
+                    Some(Self::stale_classification_error(hash))
+                } else if let (Some(replaced), Some(admission)) = (&outcome.replaced, &admission) {
+                    guard
+                        .check_replacement(replaced.hash(), admission)
+                        .err()
+                        .map(|rejection| Self::limit_rejection_error(hash, rejection))
+                } else {
+                    None
+                };
+                if let Some(error) = rejection {
                     let removed = nonce_pool.remove_transactions(&[hash]);
                     listeners.on_discarded(&removed);
                     listeners.on_lane_moved(&outcome.anchor);
@@ -859,7 +878,7 @@ where
                             listeners.on_discarded(std::slice::from_ref(replaced));
                         }
                     }
-                    return Err(Self::stale_classification_error(hash));
+                    return Err(error);
                 }
                 match (&outcome.replaced, admission) {
                     (Some(replaced), Some(admission)) => {
@@ -2112,6 +2131,7 @@ mod tests {
             sender_locked: false,
             payer_locked: false,
             payer_trusted: false,
+            payer_allowlisted: false,
             payer_balance: U256::from(1_000_000),
             max_cost: U256::from(1_000),
         });
@@ -2156,6 +2176,40 @@ mod tests {
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let signed =
             Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let pooled = ConsensusPooledTransaction::Eip8130(signed);
+        BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
+    }
+
+    fn sponsored_eoa_8130(
+        signer: &PrivateKeySigner,
+        payer: &PrivateKeySigner,
+        nonce_key: U256,
+        max_fee_per_gas: u128,
+    ) -> BasePooledTransaction {
+        let tx = TxEip8130 {
+            chain_id: test_chain_id(),
+            sender: None,
+            nonce_key,
+            nonce_sequence: 0,
+            valid_after: 0,
+            valid_before: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas,
+            gas_limit: 1_000_000,
+            account_changes: Vec::new(),
+            calls: Vec::new(),
+            metadata: Bytes::new(),
+            payer: Some(payer.address()),
+        };
+        let sender_auth = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let payer_sig = payer.sign_hash_sync(&tx.payer_signature_hash(signer.address())).unwrap();
+        let mut payer_auth = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
+        payer_auth.extend_from_slice(&payer_sig.as_bytes());
+        let signed = Eip8130Signed::new(
+            tx,
+            Bytes::from(sender_auth.as_bytes().to_vec()),
+            Bytes::from(payer_auth),
+        );
         let pooled = ConsensusPooledTransaction::Eip8130(signed);
         BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
     }
@@ -2285,8 +2339,28 @@ mod tests {
 
     fn build_integration_pool()
     -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
+        build_integration_pool_at(false)
+    }
+
+    /// [`build_integration_pool`] with the Keystore active (Zenith at genesis).
+    fn build_zenith_integration_pool()
+    -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
+        build_integration_pool_at(true)
+    }
+
+    fn build_integration_pool_at(
+        zenith: bool,
+    ) -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
         let mut genesis = build_test_genesis_everest();
         genesis.config.chain_id = test_chain_id();
+        if zenith {
+            genesis.config.extra_fields.insert(
+                "base".to_string(),
+                serde_json::json!({
+                    "azul": 0, "beryl": 0, "cobalt": 0, "denim": 0, "everest": 0, "zenith": 0
+                }),
+            );
+        }
         let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
@@ -2403,7 +2477,7 @@ mod tests {
     async fn protocol_and_sidecar_eip8130_routes_enforce_sender_limit() {
         let cap = u64::from(GuardLimits::default().signature_limit);
 
-        let (protocol_pool, protocol_client) = build_integration_pool();
+        let (protocol_pool, protocol_client) = build_zenith_integration_pool();
         let protocol_signer = signer();
         fund(&protocol_client, protocol_signer.address());
         for sequence in 0..cap {
@@ -2426,7 +2500,7 @@ mod tests {
             "guard-rejected protocol transaction must not publish pool events"
         );
 
-        let (sidecar_pool, sidecar_client) = build_integration_pool();
+        let (sidecar_pool, sidecar_client) = build_zenith_integration_pool();
         let sidecar_signer = signer();
         fund(&sidecar_client, sidecar_signer.address());
         for key in 1..=cap {
@@ -2447,9 +2521,23 @@ mod tests {
         assert!(matches!(over_events.next().await, Some(TransactionEvent::Discarded)));
     }
 
+    /// Without the Keystore a signer's key can never change, so the sender
+    /// signature limit does not apply: a sender may queue past it.
+    #[tokio::test]
+    async fn sender_signature_limit_does_not_apply_before_zenith() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let cap = u64::from(GuardLimits::default().signature_limit);
+        for sequence in 0..cap + 2 {
+            let transaction = self_paid_eoa_8130(&signer, U256::ZERO, sequence, 0, 1_000);
+            assert!(pool.add_transaction(TransactionOrigin::Local, transaction).await.is_ok());
+        }
+    }
+
     #[tokio::test]
     async fn nonce_free_sidecar_members_are_guarded_independently() {
-        let (pool, client) = build_integration_pool();
+        let (pool, client) = build_zenith_integration_pool();
         let signer = signer();
         fund(&client, signer.address());
         let cap = u64::from(GuardLimits::default().signature_limit);
@@ -2525,6 +2613,50 @@ mod tests {
         assert!(!pool.guard.read().contains(&original_hash));
         assert!(pool.guard.read().contains(&replacement_hash));
         assert_eq!(pool.guard.read().len(), cap as usize);
+    }
+
+    /// A fee bump that names a new payer is held to that payer's payment cap,
+    /// on both the protocol (key 0) and sidecar (2D channel) routes. A rejected
+    /// rotation keeps the original transaction pooled and tracked.
+    #[tokio::test]
+    async fn replacement_cannot_rotate_to_a_payer_at_its_payment_cap() {
+        for nonce_key in [U256::ZERO, U256::from(1)] {
+            let (pool, client) = build_integration_pool();
+            let pool =
+                pool.with_guard_limits(GuardLimits { payment_limit: 1, ..GuardLimits::default() });
+            let [sender, other, full, original_payer, open] = std::array::from_fn(|_| signer());
+            for account in [&sender, &other, &full, &original_payer, &open] {
+                fund(&client, account.address());
+            }
+            pool.add_transaction(
+                TransactionOrigin::Local,
+                sponsored_eoa_8130(&other, &full, nonce_key, 1_000),
+            )
+            .await
+            .unwrap();
+            let original = sponsored_eoa_8130(&sender, &original_payer, nonce_key, 1_000);
+            let original_hash = *original.hash();
+            pool.add_transaction(TransactionOrigin::Local, original).await.unwrap();
+
+            let rotated = sponsored_eoa_8130(&sender, &full, nonce_key, 1_250);
+            let rotated_hash = *rotated.hash();
+            let error = pool
+                .add_transaction(TransactionOrigin::Local, rotated)
+                .await
+                .expect_err("rotating to a payer at its cap must be rejected");
+            assert!(error.to_string().contains("payment limit"), "{nonce_key}: {error}");
+            assert!(pool.get(&rotated_hash).is_none());
+            assert!(pool.get(&original_hash).is_some());
+            assert!(pool.guard.read().contains(&original_hash));
+
+            let bumped = sponsored_eoa_8130(&sender, &open, nonce_key, 1_250);
+            let bumped_hash = *bumped.hash();
+            pool.add_transaction(TransactionOrigin::Local, bumped)
+                .await
+                .expect("rotating to a payer with room is allowed");
+            assert!(pool.get(&original_hash).is_none());
+            assert!(pool.guard.read().contains(&bumped_hash));
+        }
     }
 
     #[tokio::test]
@@ -2862,6 +2994,7 @@ mod tests {
             sender_locked: false,
             payer_locked: true,
             payer_trusted: false,
+            payer_allowlisted: false,
             payer_balance: U256::from(1_000),
             max_cost: U256::from(1_000),
         });
