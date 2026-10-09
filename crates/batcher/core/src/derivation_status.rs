@@ -4,8 +4,9 @@ use base_protocol::BlockInfo;
 
 /// The derivation progress of the rollup node the batcher follows.
 ///
-/// The two fields are read from the node together but not atomically, so they can be one
-/// derivation step apart.
+/// The safe head includes every block derived from the L1 blocks before `current_l1`: a node
+/// moves its derivation past an L1 block only once its engine has made those blocks safe, and
+/// reads `current_l1` before the safe head.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DerivationStatus {
     /// The safe L2 head derivation has reached.
