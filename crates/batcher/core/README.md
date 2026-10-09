@@ -15,9 +15,9 @@ Each arm advances the pipeline or adjusts submission pressure without blocking t
 A derivation status whose safe head is lower than the last one acted on is ignored while the
 rollup node has not read L1 past the block the last safe head was reported at: such a node is
 behind on L1, as a new leader or a restarted node is, and derives the same blocks again. Once
-the node has read past that block with its safe head still lower, L1 lost the data that made
-the last safe head safe, so the driver resets the pipeline and posts the blocks above the
-lower safe head again.
+the node has read past that block with its safe head still lower, it did not derive the blocks
+the last safe head covered, after an L1 reorg or a divergence between nodes, so the driver
+resets the pipeline and posts the blocks above the lower safe head again.
 
 `BatchDriverConfig` carries the L1 inbox address, in-flight transaction limit, shutdown drain
 timeout, DA-throttle submission policy, and whether block ingestion starts stopped.

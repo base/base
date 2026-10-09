@@ -88,8 +88,8 @@ fn test_lower_safe_head_is_judged_against_the_last_status_acted_on() {
 }
 
 /// A lower safe head from a node that has read L1 past the block the last safe head was
-/// reported at means L1 lost the data that made it safe. The driver resets the pipeline and
-/// restarts the source from the lower safe head, without reconciling.
+/// reported at did not derive the blocks the last safe head covered. The driver resets the
+/// pipeline and restarts the source from the lower safe head, without reconciling.
 #[test]
 fn test_lower_safe_head_from_a_node_ahead_on_l1_resets_pipeline_and_source() {
     Runner::start(Config::seeded(0), |ctx| async move {
