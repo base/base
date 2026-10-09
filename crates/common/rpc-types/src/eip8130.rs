@@ -6,7 +6,8 @@ use alloy_evm::FromRecoveredTx;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use alloy_rpc_types_eth::state::StateOverride;
 use base_common_consensus::{
-    BaseTxEnvelope, Call, Eip8130Constants, Eip8130Contracts, Eip8130Signed, TxEip8130,
+    BaseTxEnvelope, Call, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
+    Eip8130StructuralError, Eip8130Structure, TxEip8130,
 };
 use base_common_evm::{BaseTransaction as BaseRevm, Eip8130ExecutionMode};
 use revm::context::TxEnv;
@@ -50,6 +51,12 @@ pub enum Eip8130SimulationRequestError {
     /// The top-level `to` is a contract creation, which EIP-8130 calls cannot do.
     #[error("an EIP-8130 call cannot create a contract")]
     ContractCreation,
+    /// `senderActorId` is `bytes32(0)`, the reserved "no actor" id.
+    #[error("`senderActorId` must not be zero")]
+    ZeroSenderActorId,
+    /// The transaction fails the structural rules pool admission enforces.
+    #[error(transparent)]
+    Structural(#[from] Eip8130StructuralError),
 }
 
 /// Maximum caller-supplied authentication payload length.
@@ -112,6 +119,9 @@ impl BaseTransactionRequest {
     ) -> Result<BaseRevm<TxEnv>, Eip8130SimulationRequestError> {
         let aa = self.as_eip8130().ok_or(Eip8130SimulationRequestError::NotEip8130)?;
         let req = self.as_ref();
+        if aa.sender_actor_id.is_some_and(|actor_id| actor_id.is_zero()) {
+            return Err(Eip8130SimulationRequestError::ZeroSenderActorId);
+        }
 
         let account = match (aa.sender, req.from) {
             (Some(sender), Some(from)) if sender != from => {
@@ -194,7 +204,11 @@ impl BaseTransactionRequest {
             payer,
         };
 
-        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(tx, sender_auth, payer_auth));
+        let signed = Eip8130Signed::new(tx, sender_auth, payer_auth);
+        // Reject what pool admission rejects as malformed, so an estimate is
+        // never returned for a transaction that could not be submitted.
+        Eip8130Structure::validate(&signed)?;
+        let envelope = BaseTxEnvelope::Eip8130(signed);
         let mut simulation = BaseRevm::from_recovered_tx(&envelope, account);
         if let Some(parts) = simulation.eip8130.as_mut() {
             parts.mode = Eip8130ExecutionMode::Simulate;
@@ -395,6 +409,37 @@ mod tests {
         assert_eq!(signed(&tx).tx().gas_limit, GAS_CAP);
         let tx = simulation(json!({ "sender": SENDER, "calls": [], "gas": "0x5208" }));
         assert_eq!(signed(&tx).tx().gas_limit, 21_000);
+    }
+
+    #[test]
+    fn zero_sender_actor_id_is_rejected() {
+        let request = serde_json::from_value::<BaseTransactionRequest>(json!({
+            "sender": SENDER,
+            "calls": [],
+            "senderActorId": B256::ZERO,
+        }))
+        .unwrap();
+        assert_eq!(
+            request.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(Eip8130SimulationRequestError::ZeroSenderActorId)
+        );
+    }
+
+    /// The structural limits enforced at pool admission also bound simulation.
+    #[test]
+    fn too_many_call_phases_are_rejected() {
+        let calls: Vec<Vec<Call>> = vec![vec![]; Eip8130Constants::MAX_CALL_PHASES_PER_TX + 1];
+        let request = serde_json::from_value::<BaseTransactionRequest>(json!({
+            "sender": SENDER,
+            "calls": calls,
+        }))
+        .unwrap();
+        assert_eq!(
+            request.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).err(),
+            Some(Eip8130SimulationRequestError::Structural(
+                Eip8130StructuralError::TooManyCallPhases
+            ))
+        );
     }
 
     #[test]

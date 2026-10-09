@@ -329,7 +329,10 @@ impl TransactionEventWriter {
             #[cfg(any(test, feature = "test-utils"))]
             WriterBackend::Memory { recorder } => {
                 let event = build(&self.inner.network);
-                Self::validate_event(&event)?;
+                event.validate().map_err(|err| {
+                    Metrics::dropped_events("validation").increment(1);
+                    WriteEventError::Invalid(err)
+                })?;
                 recorder.push(event);
                 Metrics::submitted_events().increment(1);
                 Ok(())
@@ -350,13 +353,6 @@ impl TransactionEventWriter {
                 Ok(())
             }
         }
-    }
-
-    fn validate_event(event: &TransactionEvent) -> Result<(), WriteEventError> {
-        event.validate().map_err(|err| {
-            Metrics::dropped_events("validation").increment(1);
-            WriteEventError::Invalid(err)
-        })
     }
 
     /// Returns the configured network label for this writer.

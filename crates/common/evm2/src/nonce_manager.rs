@@ -7,8 +7,7 @@
 //! [`base_common_eip8130::NonceManagerSlots`], shared with the revm path so the two engines cannot
 //! diverge. This module provides the EVM2-specific access layer over that layout: the untracked
 //! reads and the channel-nonce increment against an [`Evm`] state. The remaining precompile surface
-//! (ABI dispatch, the `NonceIncremented` events, and the nonce-free replay ring buffer) is layered
-//! on with the EIP-8130 track.
+//! (ABI dispatch and the nonce-free replay ring buffer) is layered on with the EIP-8130 track.
 
 use alloy_primitives::{Address, B256, U256};
 use base_common_eip8130::NonceManagerSlots;

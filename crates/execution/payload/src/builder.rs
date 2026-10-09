@@ -2246,8 +2246,8 @@ mod tests {
     struct MapProvider(Mutex<HashMap<TxHash, MeterBundleResponse>>);
 
     impl MeteringProvider for MapProvider {
-        fn get(&self, tx_hash: &TxHash) -> Option<MeterBundleResponse> {
-            self.0.lock().unwrap().get(tx_hash).cloned()
+        fn get(&self, tx_hash: &TxHash) -> Option<Arc<MeterBundleResponse>> {
+            self.0.lock().unwrap().get(tx_hash).cloned().map(Arc::new)
         }
     }
 
