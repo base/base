@@ -287,7 +287,7 @@ where
             let mut listeners = self.listeners.write();
             let mut update = LaneUpdate::default();
             for (lane_id, nonce) in lane_moves {
-                update.extend(nonce_pool.set_lane_nonce(lane_id, nonce));
+                update.extend(nonce_pool.advance_lane_nonce(lane_id, nonce));
             }
             listeners.on_lane_update(&update);
             let mut guard = self.guard.write();
@@ -2756,6 +2756,41 @@ mod tests {
             tokio::time::timeout(Duration::from_millis(50), successor_events.next()).await.is_err(),
             "a successor that stays pending is not re-announced"
         );
+    }
+
+    #[tokio::test]
+    async fn stale_nonce_diff_does_not_rewind_a_lane() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let channel = U256::from(2);
+        let lane: Vec<_> = (0..3)
+            .map(|sequence| self_paid_eoa_8130(&signer, channel, sequence, 0, 1_000))
+            .collect();
+        for transaction in &lane {
+            pool.add_transaction(TransactionOrigin::Local, transaction.clone()).await.unwrap();
+        }
+        let slot = B256::from(NonceManagerStorage::nonce_slot(signer.address(), channel).unwrap());
+        let nonce_diff = |value: u64| AccountStateDiff {
+            address: NonceManagerStorage::ADDRESS,
+            changed_slots: vec![(slot, U256::from(value))],
+            ..Default::default()
+        };
+        pool.apply_state_diff(&[nonce_diff(2)]);
+        let mut head_events = pool.listeners.write().subscribe_hash(*lane[2].hash()).0;
+
+        let removed = pool.apply_state_diff(&[nonce_diff(1)]);
+
+        assert!(removed.is_empty());
+        let pending: Vec<_> = pool
+            .nonce_pool
+            .read()
+            .pending_transactions()
+            .iter()
+            .map(|transaction| *transaction.hash())
+            .collect();
+        assert_eq!(pending, vec![*lane[2].hash()]);
+        assert!(head_events.next().now_or_never().is_none(), "the head must not be re-queued");
     }
 
     #[tokio::test]

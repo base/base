@@ -386,6 +386,20 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         })
     }
 
+    /// Moves a lane's cursor forward to `nonce`, leaving it alone when the
+    /// cursor is already there or past it.
+    ///
+    /// Canonical maintenance runs independently of validation, so a late update
+    /// for an older block can report a nonce an insert has already anchored
+    /// past. Only validation anchoring may move a cursor backward (on a reorg).
+    pub(crate) fn advance_lane_nonce(&mut self, lane_id: LaneId, nonce: u64) -> LaneUpdate<T> {
+        if self.lanes.get(&lane_id).is_some_and(|lane| lane.next_nonce < nonce) {
+            self.set_lane_nonce(lane_id, nonce)
+        } else {
+            LaneUpdate::default()
+        }
+    }
+
     /// Moves a finite channel's cursor to its canonical `nonce`, as validation
     /// or a canonical state change observed it.
     ///
@@ -518,10 +532,8 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         let mined: HashSet<TxHash> = ordered_hashes.iter().map(|(.., hash)| *hash).collect();
         let mut lanes = LaneUpdate::default();
         for (lane_id, nonce) in mined_heads {
-            if let Some(next_nonce) = nonce.checked_add(1)
-                && self.lanes.get(&lane_id).is_some_and(|lane| lane.next_nonce < next_nonce)
-            {
-                let mut update = self.set_lane_nonce(lane_id, next_nonce);
+            if let Some(next_nonce) = nonce.checked_add(1) {
+                let mut update = self.advance_lane_nonce(lane_id, next_nonce);
                 let (lane_mined, discarded) = update
                     .discarded
                     .into_iter()
