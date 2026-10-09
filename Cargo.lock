@@ -3363,6 +3363,7 @@ dependencies = [
  "base-builder-core",
  "base-bundles",
  "base-node-runner",
+ "criterion",
  "jsonrpsee",
  "moka",
  "tracing",
