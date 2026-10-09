@@ -28,8 +28,9 @@ base-execution-cli = { workspace = true, features = ["otlp"] }
 clap.workspace = true
 
 [features]
-default = [ "asm-keccak", "jemalloc" ]
+default = [ "asm-keccak", "jemalloc", "keccak-cache-global" ]
 asm-keccak = [ "base-execution-cli/asm-keccak" ]
+keccak-cache-global = [ "base-execution-cli/keccak-cache-global" ]
 jemalloc = [ "base-execution-cli/jemalloc", "reth-cli-util/jemalloc" ]
 jemalloc-prof = [
 	"base-execution-cli/jemalloc-symbols",
