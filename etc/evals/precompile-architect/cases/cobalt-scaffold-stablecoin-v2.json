@@ -1,0 +1,106 @@
+{
+  "id": "cobalt-scaffold-stablecoin-v2",
+  "category": "scaffold_logic",
+  "polarity": "positive",
+  "split": "holdout",
+  "source": "historical",
+  "base_commit": "ed0af50fd7499c6b8e35f9bccc0d985e362da97e",
+  "reference_commit": "a16c5a6396556e1acd19cf94af473cf155e91dbc",
+  "ticket": "Cobalt will add seize support to the stablecoin token. Prepare the stablecoin precompile so Cobalt-era changes can land without affecting Beryl execution. This ticket must not change any behavior.",
+  "fork_state": {
+    "as_of": "2026-07-27",
+    "mainnet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "new_logic_version",
+    "activation_fork": "Cobalt",
+    "versions": {
+      "create": [
+        "V2"
+      ],
+      "modify": [],
+      "frozen": [
+        "V1"
+      ]
+    },
+    "files": {
+      "create": [
+        "crates/common/precompiles/src/b20_stablecoin/logic/v2.rs"
+      ],
+      "modify": [
+        "crates/common/precompiles/src/b20_stablecoin/logic/mod.rs",
+        "crates/common/precompiles/src/b20_stablecoin/mod.rs",
+        "crates/common/precompiles/src/b20_stablecoin/versions.rs",
+        "crates/common/precompiles/src/lib.rs",
+        "crates/common/precompiles/tests/b20_stablecoin_v1_golden.rs"
+      ],
+      "must_not_modify": [
+        "crates/common/precompiles/src/b20_stablecoin/logic/v1.rs"
+      ]
+    },
+    "symmetric_modules": [
+      "b20_stablecoin"
+    ],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": false,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "Cobalt resolves to V2 and Beryl to V1"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/src/b20_stablecoin/logic/v2.rs",
+      "crates/common/precompiles/src/b20_stablecoin/versions.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "copy_of_v1",
+      "check": "The plan makes V2 a behavior-identical copy of V1.",
+      "critical": true
+    }
+  ],
+  "notes": "Positive scaffold case added for balance."
+}

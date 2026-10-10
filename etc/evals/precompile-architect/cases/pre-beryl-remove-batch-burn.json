@@ -1,0 +1,98 @@
+{
+  "id": "pre-beryl-remove-batch-burn",
+  "category": "deprecate_old",
+  "polarity": "positive",
+  "split": "holdout",
+  "source": "historical",
+  "base_commit": "e1a63c49d863a0adb50c465ab631b3a3c689499d",
+  "reference_commit": "82e0ebc724f3dd926e69f896455bf3aafc4522ed",
+  "ticket": "The security token variant should not expose batchBurn or BURN_FROM_ROLE. Remove them from the precompile, including the ABI entries, dispatch arms, token logic and guard, and update every test or harness that calls them.",
+  "fork_state": {
+    "as_of": "2026-06-02",
+    "mainnet": {
+      "live": [],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "edit_in_place",
+    "activation_fork": "Beryl",
+    "versions": {
+      "create": [],
+      "modify": [],
+      "frozen": []
+    },
+    "files": {
+      "create": [],
+      "modify": [
+        "actions/harness/tests/beryl/security.rs",
+        "crates/common/precompiles/src/b20_security/abi.rs",
+        "crates/common/precompiles/src/b20_security/dispatch.rs",
+        "crates/common/precompiles/src/b20_security/token.rs"
+      ],
+      "must_not_modify": []
+    },
+    "symmetric_modules": [
+      "b20_security"
+    ],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": false,
+      "storage": false,
+      "abi": true,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "harness tests no longer call batchBurn or BURN_FROM_ROLE"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/src/b20_security/abi.rs",
+      "crates/common/precompiles/src/b20_security/dispatch.rs",
+      "crates/common/precompiles/src/b20_security/token.rs"
+    ],
+    "allowed_extra_files": [
+      "actions/harness/**",
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "removal_safe_pre_launch",
+      "check": "The plan states that removing a selector is safe here because no network has activated the precompile.",
+      "critical": true
+    },
+    {
+      "id": "downstream_harness",
+      "check": "The plan updates the tests or harnesses that reference the removed selector.",
+      "critical": false
+    }
+  ],
+  "notes": "Deleting a selector from a live surface would break consensus. Here nothing is scheduled, so deletion is correct."
+}

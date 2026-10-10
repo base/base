@@ -1,0 +1,120 @@
+{
+  "id": "denim-executor-policy-in-v3",
+  "category": "scaffold_logic",
+  "polarity": "negative",
+  "split": "dev",
+  "source": "historical",
+  "base_commit": "bb7ba218ab2f84cc989217a310513cf5cbd147e2",
+  "reference_commit": "8478f7f169594e0c5d3455255f55cc3c1ac327c2",
+  "ticket": "At Denim, transfer should check TRANSFER_EXECUTOR_POLICY against the caller on every unprivileged transfer, before the sender and receiver checks. Skip the sender check when the caller is the sender and the executor and sender policies match. Apply to asset and stablecoin.",
+  "fork_state": {
+    "as_of": "2026-09-17",
+    "mainnet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": [
+        "Cobalt"
+      ]
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "edit_in_place",
+    "activation_fork": "Denim",
+    "versions": {
+      "create": [],
+      "modify": [
+        "V3"
+      ],
+      "frozen": [
+        "V1",
+        "V2"
+      ]
+    },
+    "files": {
+      "create": [],
+      "modify": [
+        "crates/common/precompiles/src/b20_asset/logic/v3.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v3.rs",
+        "crates/common/precompiles/tests/b20_asset_v3_golden.rs",
+        "crates/common/precompiles/tests/b20_stablecoin_v3_golden.rs"
+      ],
+      "must_not_modify": [
+        "crates/common/precompiles/src/b20_asset/logic/v1.rs",
+        "crates/common/precompiles/src/b20_asset/logic/v2.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v1.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v2.rs",
+        "crates/common/precompiles/tests/b20_asset_v1_golden.rs",
+        "crates/common/precompiles/tests/b20_asset_v2_golden.rs",
+        "crates/common/precompiles/tests/b20_stablecoin_v1_golden.rs",
+        "crates/common/precompiles/tests/b20_stablecoin_v2_golden.rs"
+      ]
+    },
+    "symmetric_modules": [
+      "b20_asset",
+      "b20_stablecoin"
+    ],
+    "surfaces": {
+      "gas": true,
+      "revert_bytes": true,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "executor checked before sender and receiver",
+        "sender check skipped when executor equals sender"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/src/b20_asset/logic/v3.rs",
+      "crates/common/precompiles/src/b20_stablecoin/logic/v3.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "edit_v3_not_v4",
+      "check": "The plan edits the existing V3 rather than creating V4, because Denim is not scheduled.",
+      "critical": true
+    },
+    {
+      "id": "order",
+      "check": "The plan orders executor, then sender, then receiver.",
+      "critical": false
+    }
+  ],
+  "notes": "V3 already exists and Denim is unscheduled. Denim previously ran the V3 copy of V2: transfers by a blocked executor that succeeded now revert, and executor==sender transfers skip a policy read."
+}

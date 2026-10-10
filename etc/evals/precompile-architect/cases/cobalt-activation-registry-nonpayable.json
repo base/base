@@ -1,0 +1,103 @@
+{
+  "id": "cobalt-activation-registry-nonpayable",
+  "category": "revert_bytes",
+  "polarity": "positive",
+  "split": "holdout",
+  "source": "historical",
+  "base_commit": "7a86460ecad71ff4bd44c943074c78bc79b49d10",
+  "reference_commit": "90e007183d627b0151039315f4e06d6981b9bf6a",
+  "ticket": "The activation registry accepts calls that carry ETH value, stranding the ETH, while every other precompile rejects value. Add the nonpayable guard with a NonPayable error, without changing Beryl execution.",
+  "fork_state": {
+    "as_of": "2026-08-31",
+    "mainnet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "fork_gate",
+    "activation_fork": "Cobalt",
+    "versions": {
+      "create": [],
+      "modify": [],
+      "frozen": []
+    },
+    "files": {
+      "create": [],
+      "modify": [
+        "crates/common/precompiles/src/activation/abi.rs",
+        "crates/common/precompiles/src/activation/dispatch.rs",
+        "crates/common/precompiles/src/activation/precompile.rs",
+        "crates/common/precompiles/src/activation/storage.rs"
+      ],
+      "must_not_modify": []
+    },
+    "symmetric_modules": [
+      "activation"
+    ],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": true,
+      "storage": false,
+      "abi": true,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "valued call succeeds at Beryl",
+        "valued call reverts NonPayable at Cobalt"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/src/activation/dispatch.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompiles/src/activation/**",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "fork_gated",
+      "check": "The plan activates the guard at Cobalt so Beryl replay is byte-identical.",
+      "critical": true
+    },
+    {
+      "id": "both_forks_tested",
+      "check": "The plan tests behavior at both Beryl and Cobalt.",
+      "critical": false
+    }
+  ],
+  "notes": "The activation registry has no logic versions, so a fork gate in dispatch is the right approach."
+}

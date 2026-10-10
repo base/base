@@ -1,0 +1,134 @@
+{
+  "id": "denim-scaffold-asset-stablecoin-v3",
+  "category": "scaffold_logic",
+  "polarity": "positive",
+  "split": "dev",
+  "source": "historical",
+  "base_commit": "4c6c1131965d407129860471f548932ebe0a33f0",
+  "reference_commit": "040c4a80b8bc96eee6d70ad00ae86ede86596dbe",
+  "ticket": "Denim will carry new asset and stablecoin token behavior, and several Denim-era transfer and policy changes are queued behind this ticket. Prepare both precompiles so those changes can land without affecting how blocks from earlier forks execute. This ticket must not change any behavior.",
+  "fork_state": {
+    "as_of": "2026-09-16",
+    "mainnet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": [
+        "Cobalt"
+      ]
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "new_logic_version",
+    "activation_fork": "Denim",
+    "versions": {
+      "create": [
+        "V3"
+      ],
+      "modify": [],
+      "frozen": [
+        "V1",
+        "V2"
+      ]
+    },
+    "files": {
+      "create": [
+        "crates/common/precompiles/src/b20_asset/logic/v3.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v3.rs",
+        "crates/common/precompiles/tests/b20_asset_v3_golden.rs",
+        "crates/common/precompiles/tests/b20_stablecoin_v3_golden.rs"
+      ],
+      "modify": [
+        "crates/common/precompiles/Cargo.toml",
+        "crates/common/precompiles/src/b20_asset/dispatch.rs",
+        "crates/common/precompiles/src/b20_asset/logic/mod.rs",
+        "crates/common/precompiles/src/b20_asset/mod.rs",
+        "crates/common/precompiles/src/b20_asset/versions.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/mod.rs",
+        "crates/common/precompiles/src/b20_stablecoin/mod.rs",
+        "crates/common/precompiles/src/b20_stablecoin/versions.rs",
+        "crates/common/precompiles/src/lib.rs"
+      ],
+      "must_not_modify": [
+        "crates/common/precompiles/src/b20_asset/logic/v1.rs",
+        "crates/common/precompiles/src/b20_asset/logic/v2.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v1.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v2.rs",
+        "crates/common/precompiles/tests/b20_asset_v1_golden.rs",
+        "crates/common/precompiles/tests/b20_asset_v2_golden.rs",
+        "crates/common/precompiles/tests/b20_stablecoin_v1_golden.rs",
+        "crates/common/precompiles/tests/b20_stablecoin_v2_golden.rs"
+      ]
+    },
+    "symmetric_modules": [
+      "b20_asset",
+      "b20_stablecoin"
+    ],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": false,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "V3 goldens reproduce V2 at Denim",
+        "Denim resolves to V3"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/src/b20_asset/logic/v3.rs",
+      "crates/common/precompiles/src/b20_stablecoin/logic/v3.rs",
+      "crates/common/precompiles/src/b20_asset/versions.rs",
+      "crates/common/precompiles/src/b20_stablecoin/versions.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompiles/src/b20_asset/dispatch.rs",
+      "crates/common/precompiles/src/b20_stablecoin/dispatch.rs",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "v3_is_copy_of_v2",
+      "check": "The plan makes V3 a behavior-identical copy of V2.",
+      "critical": true
+    },
+    {
+      "id": "v2_frozen_reason",
+      "check": "The plan explains V2 must not change because Cobalt is scheduled on Sepolia.",
+      "critical": false
+    }
+  ],
+  "notes": "V2 is frozen because Cobalt is scheduled on Sepolia."
+}

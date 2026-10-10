@@ -1,0 +1,101 @@
+{
+  "id": "head-test-only-v3-golden",
+  "category": "old_fork_change",
+  "polarity": "negative",
+  "split": "holdout",
+  "source": "synthetic",
+  "base_commit": "fa0f64d32012efa9b0934bfe1dd074a4aed329c7",
+  "reference_commit": null,
+  "ticket": "Add golden test coverage in the policy V3 golden suite pinning that isAuthorized returns true for uncreated BLOCKLIST and INTERSECT policy IDs while policyExists returns false. Do not change any behavior.",
+  "fork_state": {
+    "as_of": "2026-10-02",
+    "mainnet": {
+      "live": [
+        "Beryl",
+        "Cobalt"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl",
+        "Cobalt"
+      ],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "edit_in_place",
+    "activation_fork": null,
+    "versions": {
+      "create": [],
+      "modify": [],
+      "frozen": [
+        "V1",
+        "V2",
+        "V3"
+      ]
+    },
+    "files": {
+      "create": [],
+      "modify": [
+        "crates/common/precompiles/tests/b20_policy_v3_golden.rs"
+      ],
+      "must_not_modify": [
+        "crates/common/precompiles/src/policy/logic/v1.rs",
+        "crates/common/precompiles/src/policy/logic/v2.rs",
+        "crates/common/precompiles/src/policy/logic/v3.rs"
+      ]
+    },
+    "symmetric_modules": [],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": false,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "V3 golden matrix for uncreated IDs"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/tests/b20_policy_v3_golden.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "test_only",
+      "check": "The plan changes only tests and no logic.",
+      "critical": true
+    }
+  ],
+  "notes": "Modelled on 56bcbfb24."
+}

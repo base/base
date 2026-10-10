@@ -1,0 +1,137 @@
+{
+  "id": "head-everest-reject-zero-amount-burn-blocked",
+  "category": "scaffold_logic",
+  "polarity": "positive",
+  "split": "dev",
+  "source": "synthetic",
+  "base_commit": "fa0f64d32012efa9b0934bfe1dd074a4aed329c7",
+  "reference_commit": null,
+  "ticket": "burnBlocked on asset and stablecoin tokens accepts a zero amount and emits a BurnedBlocked event with nothing burned. From the Everest upgrade, revert InvalidAmount when amount is zero. Denim must keep its current behavior because the Denim release is being finalized.",
+  "fork_state": {
+    "as_of": "2026-10-02",
+    "mainnet": {
+      "live": [
+        "Beryl",
+        "Cobalt"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl",
+        "Cobalt"
+      ],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "new_logic_version",
+    "activation_fork": "Everest",
+    "versions": {
+      "create": [
+        "V4"
+      ],
+      "modify": [],
+      "frozen": [
+        "V1",
+        "V2",
+        "V3"
+      ]
+    },
+    "files": {
+      "create": [
+        "crates/common/precompiles/src/b20_asset/logic/v4.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v4.rs",
+        "crates/common/precompiles/tests/b20_asset_v4_golden.rs",
+        "crates/common/precompiles/tests/b20_stablecoin_v4_golden.rs"
+      ],
+      "modify": [
+        "crates/common/precompiles/src/b20_asset/versions.rs",
+        "crates/common/precompiles/src/b20_stablecoin/versions.rs",
+        "crates/common/precompiles/src/b20_asset/logic/mod.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/mod.rs",
+        "crates/common/precompiles/src/lib.rs",
+        "crates/common/precompiles/Cargo.toml"
+      ],
+      "must_not_modify": [
+        "crates/common/precompiles/src/b20_asset/logic/v1.rs",
+        "crates/common/precompiles/src/b20_asset/logic/v2.rs",
+        "crates/common/precompiles/src/b20_asset/logic/v3.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v1.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v2.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v3.rs",
+        "crates/common/precompiles/tests/b20_asset_v1_golden.rs",
+        "crates/common/precompiles/tests/b20_asset_v2_golden.rs",
+        "crates/common/precompiles/tests/b20_asset_v3_golden.rs",
+        "crates/common/precompiles/tests/b20_stablecoin_v1_golden.rs",
+        "crates/common/precompiles/tests/b20_stablecoin_v2_golden.rs",
+        "crates/common/precompiles/tests/b20_stablecoin_v3_golden.rs"
+      ]
+    },
+    "symmetric_modules": [
+      "b20_asset",
+      "b20_stablecoin"
+    ],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": true,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "Everest resolves to V4 and Denim to V3",
+        "V4 burnBlocked(0) reverts InvalidAmount",
+        "V3 burnBlocked(0) still succeeds"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/src/b20_asset/logic/v4.rs",
+      "crates/common/precompiles/src/b20_stablecoin/logic/v4.rs",
+      "crates/common/precompiles/src/b20_asset/versions.rs",
+      "crates/common/precompiles/src/b20_stablecoin/versions.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompiles/src/b20_asset/**",
+      "crates/common/precompiles/src/b20_stablecoin/**",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "v3_frozen_reason",
+      "check": "The plan leaves V3 unchanged because the ticket freezes Denim behavior.",
+      "critical": false
+    },
+    {
+      "id": "v4_copy_then_change",
+      "check": "The plan creates V4 from V3 and applies the zero-amount check only in V4.",
+      "critical": true
+    }
+  ],
+  "notes": "Positive new-version case at the latest commit. Everest exists in BaseUpgrade but has no precompile version yet."
+}

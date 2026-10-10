@@ -1,0 +1,114 @@
+{
+  "id": "denim-scaffold-policy-v3",
+  "category": "scaffold_logic",
+  "polarity": "positive",
+  "split": "holdout",
+  "source": "historical",
+  "base_commit": "ccbe98d44af9405c2e7e2366c267c5cd096d8b8a",
+  "reference_commit": "c8520c03f217283a9ea8c47b586f13ad58142c9d",
+  "ticket": "Denim will change policy registry behavior. Prepare the policy registry so Denim changes can land without touching Beryl or Cobalt execution. This ticket must not change any behavior.",
+  "fork_state": {
+    "as_of": "2026-09-15",
+    "mainnet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": [
+        "Cobalt"
+      ]
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "new_logic_version",
+    "activation_fork": "Denim",
+    "versions": {
+      "create": [
+        "V3"
+      ],
+      "modify": [],
+      "frozen": [
+        "V1",
+        "V2"
+      ]
+    },
+    "files": {
+      "create": [
+        "crates/common/precompiles/src/policy/logic/v3.rs",
+        "crates/common/precompiles/tests/b20_policy_v3_golden.rs"
+      ],
+      "modify": [
+        "crates/common/precompiles/Cargo.toml",
+        "crates/common/precompiles/src/lib.rs",
+        "crates/common/precompiles/src/policy/logic/mod.rs",
+        "crates/common/precompiles/src/policy/mod.rs",
+        "crates/common/precompiles/src/policy/versions.rs"
+      ],
+      "must_not_modify": [
+        "crates/common/precompiles/src/policy/logic/v1.rs",
+        "crates/common/precompiles/src/policy/logic/v2.rs",
+        "crates/common/precompiles/tests/b20_policy_v1_golden.rs",
+        "crates/common/precompiles/tests/b20_policy_v2_golden.rs"
+      ]
+    },
+    "symmetric_modules": [
+      "policy"
+    ],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": false,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "policy V3 golden reproduces V2",
+        "Denim resolves to V3"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/src/policy/logic/v3.rs",
+      "crates/common/precompiles/src/policy/versions.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "copy_of_v2",
+      "check": "The plan copies V2, not V1.",
+      "critical": true
+    }
+  ],
+  "notes": "Same shape as the asset and stablecoin Denim scaffold."
+}

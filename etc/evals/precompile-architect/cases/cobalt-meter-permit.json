@@ -1,0 +1,119 @@
+{
+  "id": "cobalt-meter-permit",
+  "category": "gas_semantics",
+  "polarity": "positive",
+  "split": "dev",
+  "source": "historical",
+  "base_commit": "b4361b93617afc82dab4b3fea714299a1f3c7354",
+  "reference_commit": "32a84239bfc4c15eb6b3d7414979d54019ffb156",
+  "ticket": "B-20 permit does EIP-712 hashing and secp256k1 recovery without charging native gas, so a caller can loop permit cheaply. Meter that work for asset and stablecoin without changing Beryl's gas schedule.",
+  "fork_state": {
+    "as_of": "2026-09-03",
+    "mainnet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "edit_in_place",
+    "activation_fork": "Cobalt",
+    "versions": {
+      "create": [],
+      "modify": [
+        "V2"
+      ],
+      "frozen": [
+        "V1"
+      ]
+    },
+    "files": {
+      "create": [],
+      "modify": [
+        "crates/common/precompile-macros/src/accounting.rs",
+        "crates/common/precompiles/src/b20_asset/logic/v1.rs",
+        "crates/common/precompiles/src/b20_asset/logic/v2.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v1.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v2.rs",
+        "crates/common/precompiles/src/common/ops/permit.rs",
+        "crates/common/precompiles/src/common/test_utils.rs",
+        "crates/common/precompiles/src/common/token_accounting.rs",
+        "crates/common/precompiles/tests/b20_asset_v1_golden.rs",
+        "crates/common/precompiles/tests/b20_asset_v2_golden.rs",
+        "crates/common/precompiles/tests/b20_stablecoin_v1_golden.rs",
+        "crates/common/precompiles/tests/b20_stablecoin_v2_golden.rs"
+      ],
+      "must_not_modify": []
+    },
+    "symmetric_modules": [
+      "b20_asset",
+      "b20_stablecoin"
+    ],
+    "surfaces": {
+      "gas": true,
+      "revert_bytes": false,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": false,
+      "new": [
+        "V2 permit charges recovery gas",
+        "V1 permit charges none"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/src/b20_asset/logic/v2.rs",
+      "crates/common/precompiles/src/b20_stablecoin/logic/v2.rs",
+      "crates/common/precompiles/src/common/ops/permit.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompile-macros/src/**",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/src/common/token_accounting.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "v1_unmetered",
+      "check": "The plan leaves V1 unmetered because Beryl's gas schedule is frozen.",
+      "critical": true
+    },
+    {
+      "id": "symmetric",
+      "check": "The plan meters asset and stablecoin identically.",
+      "critical": false
+    }
+  ],
+  "notes": "V1 logic files change only in test fakes. A stale V2 golden pin was corrected, so existing_goldens_unchanged is false."
+}

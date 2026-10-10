@@ -1,0 +1,104 @@
+{
+  "id": "head-reject-meter-v1-permit",
+  "category": "gas_semantics",
+  "polarity": "negative",
+  "split": "dev",
+  "source": "synthetic",
+  "base_commit": "fa0f64d32012efa9b0934bfe1dd074a4aed329c7",
+  "reference_commit": null,
+  "ticket": "Permit in the V1 asset and stablecoin logic still does signature recovery without charging gas. Add the same metering V2 has to V1 permit so the DoS vector is closed on every version.",
+  "fork_state": {
+    "as_of": "2026-10-02",
+    "mainnet": {
+      "live": [
+        "Beryl",
+        "Cobalt"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl",
+        "Cobalt"
+      ],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "reject",
+    "approach": "none",
+    "activation_fork": null,
+    "versions": {
+      "create": [],
+      "modify": [],
+      "frozen": [
+        "V1",
+        "V2"
+      ]
+    },
+    "files": {
+      "create": [],
+      "modify": [],
+      "must_not_modify": [
+        "crates/common/precompiles/src/b20_asset/logic/v1.rs",
+        "crates/common/precompiles/src/b20_asset/logic/v2.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v1.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v2.rs",
+        "crates/common/precompiles/tests/b20_asset_v1_golden.rs",
+        "crates/common/precompiles/tests/b20_asset_v2_golden.rs",
+        "crates/common/precompiles/tests/b20_stablecoin_v1_golden.rs",
+        "crates/common/precompiles/tests/b20_stablecoin_v2_golden.rs"
+      ]
+    },
+    "symmetric_modules": [],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": false,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": []
+    }
+  },
+  "grading": {
+    "critical_files": [],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "gas_frozen",
+      "check": "The plan states V1's gas schedule cannot change because Beryl blocks must replay with the same gas.",
+      "critical": true
+    },
+    {
+      "id": "safe_alternative",
+      "check": "The plan proposes a consensus-safe alternative, such as activating the change at a future fork.",
+      "critical": false
+    }
+  ],
+  "notes": "V1 only executes historical blocks once Cobalt is live."
+}

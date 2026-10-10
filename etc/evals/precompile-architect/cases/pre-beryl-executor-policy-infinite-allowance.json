@@ -1,0 +1,85 @@
+{
+  "id": "pre-beryl-executor-policy-infinite-allowance",
+  "category": "old_fork_change",
+  "polarity": "negative",
+  "split": "dev",
+  "source": "historical",
+  "base_commit": "39dabd4947c11c6800d3571c4bd0b2f8c48cd5ec",
+  "reference_commit": "cdee452f22b81229e9d5e10f8323583abb9a5c78",
+  "ticket": "transferFrom skips the TRANSFER_EXECUTOR_POLICY check when the spender has an infinite allowance, so a blocked executor with max allowance can still move funds. Enforce the executor policy in transferFrom regardless of allowance, keep skipping the allowance decrement for infinite allowances, and add a regression test.",
+  "fork_state": {
+    "as_of": "2026-06-02",
+    "mainnet": {
+      "live": [],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "edit_in_place",
+    "activation_fork": "Beryl",
+    "versions": {
+      "create": [],
+      "modify": [],
+      "frozen": []
+    },
+    "files": {
+      "create": [],
+      "modify": [
+        "crates/common/precompiles/src/common/ops/transferable.rs"
+      ],
+      "must_not_modify": []
+    },
+    "symmetric_modules": [],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": true,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "transferFrom with max allowance reverts PolicyForbids when the executor policy denies"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/src/common/ops/transferable.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "nothing_live",
+      "check": "The plan recognizes that this behavior has not executed on any network, so it can be fixed in place.",
+      "critical": true
+    }
+  ],
+  "notes": "Pre-Beryl. Looks like changing old behavior, but there is no old behavior yet."
+}

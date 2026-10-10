@@ -1,0 +1,103 @@
+{
+  "id": "cobalt-zero-copy-create-b20",
+  "category": "gas_semantics",
+  "polarity": "negative",
+  "split": "holdout",
+  "source": "historical",
+  "base_commit": "d409f64eaf5f94ad079cd6d1fda2c64d086527a1",
+  "reference_commit": "2488a2cb0a8e1c532d1a3325f32b1b415b760c0f",
+  "ticket": "createB20 decodes its bytes[] initCalls argument into owned buffers. Decode it as borrowed slices to avoid the copy, keeping the accepted inputs and every returned byte the same.",
+  "fork_state": {
+    "as_of": "2026-09-16",
+    "mainnet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": [
+        "Cobalt"
+      ]
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "edit_in_place",
+    "activation_fork": null,
+    "versions": {
+      "create": [],
+      "modify": [],
+      "frozen": [
+        "V1"
+      ]
+    },
+    "files": {
+      "create": [],
+      "modify": [
+        "crates/common/precompiles/src/b20_factory/dispatch.rs",
+        "crates/common/precompiles/src/b20_factory/logic/interface.rs",
+        "crates/common/precompiles/src/b20_factory/logic/mod.rs",
+        "crates/common/precompiles/src/b20_factory/logic/v1.rs",
+        "crates/common/precompiles/src/b20_factory/mod.rs",
+        "crates/common/precompiles/src/lib.rs"
+      ],
+      "must_not_modify": []
+    },
+    "symmetric_modules": [
+      "b20_factory"
+    ],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": false,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "borrowed decode accepts iff owned decode accepts"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/src/b20_factory/dispatch.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompiles/src/b20_factory/**",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "no_behavior_change",
+      "check": "The plan argues gas and revert bytes are unchanged and adds no fork gate.",
+      "critical": true
+    }
+  ],
+  "notes": "FactoryV1 is live; its production code changes only in signatures, so behavior is unchanged."
+}

@@ -1,0 +1,112 @@
+{
+  "id": "cobalt-selector-only-abi-errors",
+  "category": "revert_bytes",
+  "polarity": "positive",
+  "split": "holdout",
+  "source": "historical",
+  "base_commit": "d6189cab283ef0a65a05016bcc241862681c6323",
+  "reference_commit": "118dd6849002e78c85064997234bfbbfa1540dc9",
+  "ticket": "ABI decode failures return the selector plus a variable-length decoder error string. From Cobalt, return only the 4-byte selector, across every precompile. Beryl revert bytes must not change.",
+  "fork_state": {
+    "as_of": "2026-09-14",
+    "mainnet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "fork_gate",
+    "activation_fork": "Cobalt",
+    "versions": {
+      "create": [],
+      "modify": [],
+      "frozen": []
+    },
+    "files": {
+      "create": [],
+      "modify": [
+        "crates/common/precompile-storage/src/error.rs",
+        "crates/common/precompile-storage/src/provider.rs",
+        "crates/common/precompile-storage/src/storage_ctx.rs",
+        "crates/common/precompiles/src/b20_factory/dispatch.rs",
+        "crates/common/precompiles/src/metrics.rs",
+        "crates/common/precompiles/src/nonce/dispatch.rs",
+        "crates/common/precompiles/src/policy/dispatch.rs",
+        "crates/common/precompiles/src/tx_context/dispatch.rs"
+      ],
+      "must_not_modify": []
+    },
+    "symmetric_modules": [
+      "b20_factory",
+      "policy",
+      "nonce",
+      "tx_context"
+    ],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": true,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "selector plus message under Legacy features",
+        "selector only under Cobalt features"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompile-storage/src/error.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompile-storage/src/**",
+      "crates/common/precompiles/src/*/dispatch.rs",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/src/metrics.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "central_gate",
+      "check": "The plan gates the encoding centrally rather than per logic version.",
+      "critical": false
+    },
+    {
+      "id": "legacy_preserved",
+      "check": "The plan keeps Beryl encoding byte-identical.",
+      "critical": true
+    }
+  ],
+  "notes": "Cross-cutting fork gate in the error encoding."
+}

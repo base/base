@@ -1,0 +1,121 @@
+{
+  "id": "beryl-solidify-stablecoin",
+  "category": "scaffold_logic",
+  "polarity": "positive",
+  "split": "dev",
+  "source": "historical",
+  "base_commit": "8817800cbb1767f5cd3a844ea79c88d8ae4c44da",
+  "reference_commit": "401ffe4d60f3d0e9c34168c865521a3b186339df",
+  "ticket": "Stablecoin token logic lives in token.rs as capability-trait impls shared across forks, so any future edit there changes Beryl execution. Restructure the stablecoin precompile so each fork's logic is frozen in its own versioned file and the dispatcher routes by the active hardfork. Behavior, gas and revert bytes must stay identical.",
+  "fork_state": {
+    "as_of": "2026-07-15",
+    "mainnet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "sepolia": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    },
+    "zeronet": {
+      "live": [
+        "Beryl"
+      ],
+      "scheduled": []
+    }
+  },
+  "expected": {
+    "verdict": "proceed",
+    "approach": "edit_in_place",
+    "activation_fork": null,
+    "versions": {
+      "create": [
+        "V1"
+      ],
+      "modify": [],
+      "frozen": []
+    },
+    "files": {
+      "create": [
+        "crates/common/precompiles/src/b20_stablecoin/logic/interface.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/mod.rs",
+        "crates/common/precompiles/src/b20_stablecoin/logic/v1.rs",
+        "crates/common/precompiles/src/b20_stablecoin/versions.rs"
+      ],
+      "modify": [
+        "crates/common/precompiles/src/b20_stablecoin/dispatch.rs",
+        "crates/common/precompiles/src/b20_stablecoin/mod.rs",
+        "crates/common/precompiles/src/b20_stablecoin/precompile.rs",
+        "crates/common/precompiles/src/b20_stablecoin/token.rs",
+        "crates/common/precompiles/src/lib.rs",
+        "crates/common/precompiles/src/lookup.rs",
+        "crates/common/precompiles/src/provider.rs"
+      ],
+      "must_not_modify": [
+        "crates/common/precompiles/src/b20_stablecoin/abi.rs",
+        "crates/common/precompiles/src/b20_stablecoin/storage.rs"
+      ]
+    },
+    "symmetric_modules": [
+      "b20_stablecoin"
+    ],
+    "surfaces": {
+      "gas": false,
+      "revert_bytes": false,
+      "storage": false,
+      "abi": false,
+      "events": false
+    },
+    "tests": {
+      "existing_goldens_unchanged": true,
+      "new": [
+        "Azul resolves to no version and Beryl to V1",
+        "V1 unit tests against local fakes"
+      ]
+    }
+  },
+  "grading": {
+    "critical_files": [
+      "crates/common/precompiles/src/b20_stablecoin/versions.rs",
+      "crates/common/precompiles/src/b20_stablecoin/logic/v1.rs",
+      "crates/common/precompiles/src/b20_stablecoin/logic/interface.rs",
+      "crates/common/precompiles/src/b20_stablecoin/dispatch.rs"
+    ],
+    "allowed_extra_files": [
+      "crates/common/precompile*/Cargo.toml",
+      "crates/common/precompile*/src/**/mod.rs",
+      "crates/common/precompile*/src/lib.rs",
+      "crates/common/precompiles/src/b20_stablecoin/**",
+      "crates/common/precompiles/src/common/ops/*.rs",
+      "crates/common/precompiles/src/common/test_utils.rs",
+      "crates/common/precompiles/src/lookup.rs",
+      "crates/common/precompiles/src/provider.rs",
+      "crates/common/precompiles/tests/**"
+    ],
+    "alternatives": [],
+    "graded_surfaces": [
+      "gas",
+      "revert_bytes",
+      "storage",
+      "abi",
+      "events"
+    ]
+  },
+  "rubric": [
+    {
+      "id": "behavior_identical",
+      "check": "The plan requires V1 to reproduce current Beryl behavior exactly, including revert order and storage access order.",
+      "critical": true
+    },
+    {
+      "id": "version_manager",
+      "check": "The plan adds a version resolver that owns fork routing, and an append-only logic interface.",
+      "critical": false
+    }
+  ],
+  "notes": "Pure restructure. Execution at every fork is unchanged, so activation_fork is null and approach is edit_in_place even though a V1 file is created."
+}
