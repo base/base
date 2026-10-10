@@ -1,4 +1,4 @@
-use core::fmt::Debug;
+use core::fmt::{Debug, Display};
 use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime},
@@ -25,7 +25,7 @@ use base_execution_txpool::{
     BasePooledTx, GuardMetrics, PredicateContext, TimestampedTransaction,
     estimated_da_size::DataAvailabilitySized,
 };
-use base_observability_events::TransactionEventType;
+use base_observability_events::{GlobalTransactionEventWriter, TransactionEventType};
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{
@@ -454,6 +454,9 @@ impl BasePayloadBuilderCtx {
         D: Serialize + Send + 'static,
         F: FnOnce() -> D,
     {
+        if GlobalTransactionEventWriter::get().is_none() {
+            return;
+        }
         emit_builder_transaction_event(
             self.builder_transaction_event_context(payload_id, ordering_position, None),
             event_type,
@@ -781,6 +784,17 @@ impl BasePayloadBuilderCtx {
         // Time spent on validity candidates from yield to the predicate gate decision.
         let mut validity_handling = Duration::ZERO;
 
+        // Register loop-invariant metric handles once; still record every transaction.
+        let tx_simulation_duration = BuilderMetrics::tx_simulation_duration();
+        let tx_byte_size = BuilderMetrics::tx_byte_size();
+        let tx_accounts_modified = BuilderMetrics::tx_accounts_modified();
+        let tx_storage_slots_modified = BuilderMetrics::tx_storage_slots_modified();
+        let unmetered_execution_time = BuilderMetrics::unmetered_tx_actual_execution_time_us();
+        let successful_tx_gas_used = BuilderMetrics::successful_tx_gas_used();
+        let reverted_tx_gas_used = BuilderMetrics::reverted_tx_gas_used();
+        let metering_known_transaction = BuilderMetrics::metering_known_transaction();
+        let metering_unknown_transaction = BuilderMetrics::metering_unknown_transaction();
+
         while let Some(tx) = best_txs.next(()) {
             if self.cancel.is_cancelled() {
                 diag.cancelled = true;
@@ -1035,16 +1049,16 @@ impl BasePayloadBuilderCtx {
             let tx_uncompressed_size = tx.encode_2718_len() as u64;
 
             let log_txn = |result: Result<TxnOutcome, TxnExecutionError>| {
-                let result_str = match &result {
-                    Ok(outcome) => outcome.to_string(),
-                    Err(err) => err.to_string(),
+                let result_display: &dyn Display = match &result {
+                    Ok(outcome) => outcome,
+                    Err(err) => err,
                 };
                 debug!(
                     target: "payload_builder",
                     message = "Considering transaction",
                     tx_hash = ?tx_hash,
                     tx_da_size = ?tx_da_size,
-                    result = %result_str,
+                    result = %result_display,
                 );
             };
 
@@ -1297,20 +1311,19 @@ impl BasePayloadBuilderCtx {
             // The "simulation" terminology comes from upstream op-rbuilder's name for
             // locally executing a candidate transaction before committing it to the payload;
             // this is not metering service simulation data from MeterBundleResponse.
-            BuilderMetrics::tx_simulation_duration().record(execution_time);
-            BuilderMetrics::tx_byte_size().record(tx.inner().size() as f64);
+            tx_simulation_duration.record(execution_time);
+            tx_byte_size.record(tx.inner().size() as f64);
             num_txs_simulated += 1;
 
             // Record state modification counts (trie work proxy)
             let accounts_modified = state.len();
             let storage_slots_modified: usize = state.values().map(|a| a.storage.len()).sum();
-            BuilderMetrics::tx_accounts_modified().record(accounts_modified as f64);
-            BuilderMetrics::tx_storage_slots_modified().record(storage_slots_modified as f64);
+            tx_accounts_modified.record(accounts_modified as f64);
+            tx_storage_slots_modified.record(storage_slots_modified as f64);
 
             // Record execution time for unmetered transactions (race condition indicator)
             if resource_usage.is_none() {
-                BuilderMetrics::unmetered_tx_actual_execution_time_us()
-                    .record(execution_time.as_micros() as f64);
+                unmetered_execution_time.record(execution_time.as_micros() as f64);
             }
 
             // Record prediction accuracy
@@ -1324,12 +1337,12 @@ impl BasePayloadBuilderCtx {
             if is_success {
                 log_txn(Ok(TxnOutcome::Success));
                 num_txs_simulated_success += 1;
-                BuilderMetrics::successful_tx_gas_used().record(gas_used as f64);
+                successful_tx_gas_used.record(gas_used as f64);
             } else {
                 log_txn(Ok(TxnOutcome::Reverted));
                 num_txs_simulated_fail += 1;
                 reverted_gas_used += gas_used;
-                BuilderMetrics::reverted_tx_gas_used().record(gas_used as f64);
+                reverted_tx_gas_used.record(gas_used as f64);
             }
 
             // add gas used by the transaction to cumulative gas used, before creating the
@@ -1524,9 +1537,9 @@ impl BasePayloadBuilderCtx {
             // Record metering hit/miss only for committed transactions so the
             // metric reflects actual payload inclusion, not speculative lookups.
             if self.builder_config.metering_provider.is_enabled() && resource_usage.is_some() {
-                BuilderMetrics::metering_known_transaction().increment(1);
+                metering_known_transaction.increment(1);
             } else {
-                BuilderMetrics::metering_unknown_transaction().increment(1);
+                metering_unknown_transaction.increment(1);
                 if self.builder_config.metering_provider.is_enabled() {
                     self.builder_config.metering_provider.mark_included_without_metering(&tx_hash);
                 }

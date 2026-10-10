@@ -10,6 +10,8 @@ base_metrics::define_metrics! {
     struct = BuilderMetrics,
     #[describe("Block built success")]
     block_built_success: counter,
+    #[describe("Payload jobs that expired at their configured availability deadline")]
+    payload_job_deadline_misses: counter,
     #[describe("Block synced success")]
     block_synced_success: counter,
     #[describe("Number of flashblocks added to block (Total per block)")]
@@ -18,6 +20,14 @@ base_metrics::define_metrics! {
     total_block_built_duration: histogram,
     #[describe("Latest time taken to build a block")]
     total_block_built_gauge: gauge,
+    #[describe("Active wall-clock time of a successful block build, excluding scheduled flashblock waits")]
+    active_block_build_duration: histogram,
+    #[describe("End-to-end wall-clock time of a successful block build, including scheduled flashblock waits")]
+    block_build_wall_duration: histogram,
+    #[describe("Complete successful try_build active time through state/provider cleanup and final watch handoff, excluding scheduled flashblock waits")]
+    complete_block_build_active_duration: histogram,
+    #[describe("Complete successful try_build wall time through state/provider cleanup and final watch handoff, including scheduled flashblock waits")]
+    complete_block_build_wall_duration: histogram,
     #[describe("Histogram of the time taken to build a Flashblock")]
     flashblock_build_duration: histogram,
     #[describe("Histogram of the time taken to sync a Flashblock")]

@@ -9,12 +9,11 @@ use std::{
 };
 
 use alloy_consensus::{
-    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, Transaction, TxReceipt, constants::EMPTY_WITHDRAWALS,
-    proofs,
+    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, Transaction, constants::EMPTY_WITHDRAWALS,
 };
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::Database;
-use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::HashMap};
+use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
 use base_builder_publish::WebSocketPublisher;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
@@ -22,7 +21,7 @@ use base_common_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblockId, FlashblocksPayloadV1,
     Metadata,
 };
-use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
+use base_execution_consensus::isthmus;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics,
@@ -250,8 +249,10 @@ where
     async fn build_payload(
         &self,
         args: BuildArguments<BasePayloadBuilderAttributes<BaseTransactionSigned>, BaseBuiltPayload>,
+        complete_scheduled_wait: &mut Duration,
     ) -> Result<BaseBuiltPayload, PayloadBuilderError> {
         let block_build_start_time = Instant::now();
+        let mut scheduled_wait = Duration::ZERO;
         let BuildArguments {
             mut cached_reads,
             execution_cache,
@@ -381,6 +382,8 @@ where
             let total_block_building_time = block_build_start_time.elapsed();
             BuilderMetrics::total_block_built_duration().record(total_block_building_time);
             BuilderMetrics::total_block_built_gauge().set(total_block_building_time);
+            BuilderMetrics::active_block_build_duration().record(total_block_building_time);
+            BuilderMetrics::block_build_wall_duration().record(total_block_building_time);
 
             return Ok(payload);
         }
@@ -468,7 +471,7 @@ where
         let mut deferrals = BlockDeferrals::default();
 
         // Process flashblocks in a blocking loop
-        loop {
+        let result = loop {
             let flashblock_index = ctx.flashblock_index();
             let fb_span = if span.is_none() {
                 tracing::Span::none()
@@ -490,7 +493,7 @@ where
                     &span,
                     "Payload building complete, target flashblock count reached",
                 );
-                return self.finalize_payload(&mut state, &ctx, &mut info);
+                break self.finalize_payload(&mut state, &ctx, &mut info);
             }
 
             // build first flashblock immediately
@@ -517,7 +520,7 @@ where
                         &span,
                         "Payload building complete, job cancelled or target flashblock count reached",
                     );
-                    return self.finalize_payload(&mut state, &ctx, &mut info);
+                    break self.finalize_payload(&mut state, &ctx, &mut info);
                 }
                 Err(err) => {
                     error!(
@@ -531,11 +534,14 @@ where
                 }
             };
 
+            let wait_start = Instant::now();
             tokio::select! {
                 Some(fb_cancel) = rx.recv() => {
+                    scheduled_wait += wait_start.elapsed();
                     ctx = ctx.with_cancel(fb_cancel).with_extra_ctx(next_flashblocks_ctx);
                 },
                 _ = block_cancel.cancelled() => {
+                    scheduled_wait += wait_start.elapsed();
                     self.record_flashblocks_metrics(
                         &ctx,
                         &info,
@@ -543,10 +549,18 @@ where
                         &span,
                         "Payload building complete, channel closed or job cancelled",
                     );
-                    return self.finalize_payload(&mut state, &ctx, &mut info);
+                    break self.finalize_payload(&mut state, &ctx, &mut info);
                 }
             }
+        };
+        if result.is_ok() {
+            let wall_duration = block_build_start_time.elapsed();
+            BuilderMetrics::active_block_build_duration()
+                .record(wall_duration.saturating_sub(scheduled_wait));
+            BuilderMetrics::block_build_wall_duration().record(wall_duration);
         }
+        *complete_scheduled_wait = scheduled_wait;
+        result
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1091,8 +1105,16 @@ where
     ) -> Result<(), PayloadBuilderError> {
         // Keep construction behind this call boundary so its state provider, including any shared
         // cache handle, is released before publishing wakes the payload resolver.
-        let payload = self.build_payload(args).await?;
+        let complete_build_start = Instant::now();
+        let mut scheduled_wait = Duration::ZERO;
+        let payload = self.build_payload(args, &mut scheduled_wait).await?;
         payload_tx.send_replace(Some(payload));
+        // The returned old payload is dropped at the statement boundary above.
+        // Include construction-future cleanup and the final resolver handoff in this scope.
+        let wall_duration = complete_build_start.elapsed();
+        BuilderMetrics::complete_block_build_active_duration()
+            .record(wall_duration.saturating_sub(scheduled_wait));
+        BuilderMetrics::complete_block_build_wall_duration().record(wall_duration);
         Ok(())
     }
 }
@@ -1160,12 +1182,9 @@ where
         ));
     }
 
-    let receipts_root = calculate_receipt_root_no_memo(
-        &info.receipts,
-        &ctx.chain_spec,
-        ctx.attributes().timestamp(),
-    );
-    let logs_bloom: Bloom = logs_bloom(info.receipts.iter().flat_map(|r| r.logs()));
+    let roots = info.block_roots(&ctx.chain_spec, ctx.attributes().timestamp());
+    let receipts_root = roots.receipts_root;
+    let logs_bloom = roots.logs_bloom;
 
     // TODO: maybe recreate state with bundle in here
     // calculate the state root
@@ -1217,7 +1236,7 @@ where
         };
 
     // create the block header
-    let transactions_root = proofs::calculate_transaction_root(&info.executed_transactions);
+    let transactions_root = roots.transactions_root;
 
     let (excess_blob_gas, blob_gas_used) = ctx.blob_fields(info);
     let extra_data = ctx.extra_data()?;
@@ -1265,12 +1284,34 @@ where
     // The builder prunes included transactions itself, so nonce advances are
     // omitted to avoid evicting valid successors promoted in the same lane.
     let state_diff = AccountStateDiff::collect_for_intra_block(&state.bundle_state);
-    let new_account_balances = state
-        .bundle_state
-        .state
-        .iter()
-        .filter_map(|(address, account)| account.info.as_ref().map(|info| (*address, info.balance)))
-        .collect::<HashMap<Address, U256>>();
+    let metadata = if ctx.chain_spec.is_azul_active_at_timestamp(ctx.attributes().timestamp()) {
+        FlashblocksMetadata {
+            metadata: Metadata { block_number: ctx.parent().number + 1, prev_flashblock_id },
+            receipts: None,
+            new_account_balances: None,
+        }
+    } else {
+        FlashblocksMetadata {
+            metadata: Metadata { block_number: ctx.parent().number + 1, prev_flashblock_id },
+            new_account_balances: Some(
+                state
+                    .bundle_state
+                    .state
+                    .iter()
+                    .filter_map(|(address, account)| {
+                        account.info.as_ref().map(|info| (*address, info.balance))
+                    })
+                    .collect(),
+            ),
+            receipts: Some(
+                info.executed_transactions[info.extra.last_flashblock_index..]
+                    .iter()
+                    .zip(&info.receipts[info.extra.last_flashblock_index..])
+                    .map(|(tx, receipt)| (tx.tx_hash(), receipt.clone()))
+                    .collect(),
+            ),
+        }
+    };
 
     // create the executed block data
     let executed = BuiltPayloadExecutedBlock {
@@ -1295,34 +1336,12 @@ where
     let block_hash = sealed_block.hash();
 
     // pick the new transactions from the info field and update the last flashblock index
-    let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..].to_vec();
+    let new_transactions = &info.executed_transactions[info.extra.last_flashblock_index..];
 
     let new_transactions_encoded =
-        new_transactions.clone().into_iter().map(|tx| tx.encoded_2718().into()).collect::<Vec<_>>();
+        new_transactions.iter().map(|tx| tx.encoded_2718().into()).collect::<Vec<_>>();
 
-    let new_receipts = info.receipts[info.extra.last_flashblock_index..].to_vec();
     info.extra.last_flashblock_index = info.executed_transactions.len();
-
-    let receipts_with_hash = new_transactions
-        .iter()
-        .zip(new_receipts.iter())
-        .map(|(tx, receipt)| (tx.tx_hash(), receipt.clone()))
-        .collect::<HashMap<B256, BaseReceipt>>();
-
-    let metadata: FlashblocksMetadata =
-        if ctx.chain_spec.is_azul_active_at_timestamp(ctx.attributes().timestamp()) {
-            FlashblocksMetadata {
-                metadata: Metadata { block_number: ctx.parent().number + 1, prev_flashblock_id },
-                receipts: None,
-                new_account_balances: None,
-            }
-        } else {
-            FlashblocksMetadata {
-                metadata: Metadata { block_number: ctx.parent().number + 1, prev_flashblock_id },
-                new_account_balances: Some(new_account_balances),
-                receipts: Some(receipts_with_hash),
-            }
-        };
 
     // Prepare the flashblocks message
     let fb_payload = FlashblocksPayloadV1 {
