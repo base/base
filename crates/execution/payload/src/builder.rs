@@ -40,7 +40,7 @@ use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock};
 use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{
-    HeaderTy, NodePrimitives, SealedHeader, SealedHeaderFor, SignedTransaction, TxTy,
+    HeaderTy, NodePrimitives, SealedHeader, SealedHeaderFor, SignedTransaction, TxTy, WithEncoded,
 };
 use reth_revm::{
     cancelled::CancelOnDrop, database::StateProviderDatabase, db::State,
@@ -1235,7 +1235,7 @@ where
                 continue;
             }
 
-            let tx = tx.into_consensus();
+            let (tx_encoded, tx) = tx.into_consensus_with2718().split();
 
             let da_footprint_gas_scalar = self
                 .chain_spec
@@ -1293,7 +1293,7 @@ where
             let mut pending_resource_usage = None;
             let mut executed_decision = None;
             let gas_output = match builder.execute_transaction_with_commit_condition(
-                tx.clone(),
+                WithEncoded::new(tx_encoded, tx.clone()),
                 |result| {
                     let result_and_state = result.result();
                     let decision = resource_metering.check_executed_usage(
