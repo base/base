@@ -43,6 +43,10 @@ pub struct ResourceMeteringSchedule {
     pub dimensions: Vec<ResourceMeteringDimension>,
     #[serde(skip)]
     operation_index: HashMap<String, Vec<(usize, u64, u64)>>,
+    /// Whether each executed post-state operation is priced, aligned with
+    /// `ResourceSample::EXECUTED_STATE_OPERATIONS`.
+    #[serde(skip)]
+    priced_state_operations: [bool; ResourceSample::EXECUTED_STATE_OPERATIONS.len()],
 }
 
 impl Default for ResourceMeteringSchedule {
@@ -225,82 +229,50 @@ impl ResourceSample {
     ///
     /// Actual gas and `STATE_*` counts from post-state replace simulated
     /// `STATE_*` rows. Other simulated opcode and precompile rows are kept.
-    /// Production execution does not attach opcode bags.
-    pub fn from_execution(gas_used: u64, state: &EvmState, simulated: Option<&Self>) -> Self {
+    /// Production execution does not attach opcode bags. Only `STATE_*` counts
+    /// that `schedule` prices are added, since the others cannot change its usage.
+    pub fn from_execution(
+        gas_used: u64,
+        state: &EvmState,
+        simulated: Option<&Self>,
+        schedule: &ResourceMeteringSchedule,
+    ) -> Self {
         let mut operations = simulated.map(|sample| sample.operations.clone()).unwrap_or_default();
         operations.retain(|entry| {
             let name = ResourceMeteringSchedule::normalize_operation_name(&entry.opcode);
             !Self::EXECUTED_STATE_OPERATIONS.iter().any(|operation| name == *operation)
         });
-        Self::push_count(
-            &mut operations,
-            Self::STATE_NEW_STORAGE_SLOT,
-            Self::count_new_storage_slots(state),
-        );
-        Self::push_count(
-            &mut operations,
-            Self::STATE_CHANGED_STORAGE_SLOT,
-            Self::count_changed_storage_slots(state),
-        );
-        Self::push_count(
-            &mut operations,
-            Self::STATE_CLEARED_STORAGE_SLOT,
-            Self::count_cleared_storage_slots(state),
-        );
-        Self::push_count(
-            &mut operations,
-            Self::STATE_TOUCHED_ACCOUNT,
-            Self::count_touched_accounts(state),
-        );
-        Self::push_count(
-            &mut operations,
-            Self::STATE_CHANGED_ACCOUNT,
-            Self::count_changed_accounts(state),
-        );
+        if !schedule.priced_state_operations.contains(&true) {
+            return Self { gas_used, operations };
+        }
+
+        let mut new_slots = 0;
+        let mut changed_slots = 0;
+        let mut cleared_slots = 0;
+        let mut touched_accounts = 0;
+        let mut changed_accounts = 0;
+        for account in state.values() {
+            touched_accounts += u64::from(account.is_touched());
+            changed_accounts += u64::from(account.is_changed());
+            for slot in account.storage.values() {
+                let original_is_zero = slot.original_value().is_zero();
+                let present_is_zero = slot.present_value().is_zero();
+                new_slots += u64::from(original_is_zero && !present_is_zero);
+                changed_slots += u64::from(slot.is_changed());
+                cleared_slots += u64::from(!original_is_zero && present_is_zero);
+            }
+        }
+        let counts = [new_slots, changed_slots, cleared_slots, touched_accounts, changed_accounts];
+        for ((name, count), priced) in Self::EXECUTED_STATE_OPERATIONS
+            .into_iter()
+            .zip(counts)
+            .zip(schedule.priced_state_operations)
+        {
+            if priced {
+                Self::push_count(&mut operations, name, count);
+            }
+        }
         Self { gas_used, operations }
-    }
-
-    /// Counts changed storage slots whose value transitions from zero to non-zero.
-    pub fn count_new_storage_slots(state: &EvmState) -> u64 {
-        state
-            .values()
-            .flat_map(|account| account.storage.values())
-            .filter(|slot| slot.original_value().is_zero() && !slot.present_value().is_zero())
-            .fold(0, |count, _| count.saturating_add(1))
-    }
-
-    /// Counts storage slots whose present value differs from the original value.
-    pub fn count_changed_storage_slots(state: &EvmState) -> u64 {
-        state
-            .values()
-            .flat_map(|account| account.storage.values())
-            .filter(|slot| slot.is_changed())
-            .fold(0, |count, _| count.saturating_add(1))
-    }
-
-    /// Counts changed storage slots whose value transitions from non-zero to zero.
-    pub fn count_cleared_storage_slots(state: &EvmState) -> u64 {
-        state
-            .values()
-            .flat_map(|account| account.storage.values())
-            .filter(|slot| !slot.original_value().is_zero() && slot.present_value().is_zero())
-            .fold(0, |count, _| count.saturating_add(1))
-    }
-
-    /// Counts accounts marked touched in post-EVM state.
-    pub fn count_touched_accounts(state: &EvmState) -> u64 {
-        state
-            .values()
-            .filter(|account| account.is_touched())
-            .fold(0, |count, _| count.saturating_add(1))
-    }
-
-    /// Counts accounts whose balance, nonce, or code changed from the original info.
-    pub fn count_changed_accounts(state: &EvmState) -> u64 {
-        state
-            .values()
-            .filter(|account| account.is_changed())
-            .fold(0, |count, _| count.saturating_add(1))
     }
 
     fn push_count(operations: &mut Vec<OpcodeGas>, name: &'static str, count: u64) {
@@ -322,7 +294,12 @@ impl ResourceMeteringSchedule {
     /// Call [`Self::compile`] before [`Self::evaluate`]. [`Self::from_json`]
     /// and [`Self::from_file`] compile automatically.
     pub fn new(dimensions: Vec<ResourceMeteringDimension>) -> Self {
-        Self { version: CURRENT_SCHEDULE_VERSION, dimensions, operation_index: HashMap::new() }
+        Self {
+            version: CURRENT_SCHEDULE_VERSION,
+            dimensions,
+            operation_index: HashMap::new(),
+            priced_state_operations: Default::default(),
+        }
     }
 
     /// Validates this schedule and builds the inverted operation index.
@@ -342,6 +319,8 @@ impl ResourceMeteringSchedule {
                     .push((dimension_index, operation.gas_used_weight, operation.count_cost));
             }
         }
+        self.priced_state_operations = ResourceSample::EXECUTED_STATE_OPERATIONS
+            .map(|operation| operation_index.contains_key(operation));
         self.operation_index = operation_index;
         Ok(self)
     }
@@ -613,22 +592,22 @@ impl ResourceMeteringSchedule {
     fn from_file_dto(file: ResourceMeteringScheduleFile) -> Result<Self, ResourceMeteringError> {
         Self {
             version: file.version,
-            dimensions: file
-                .dimensions
-                .into_iter()
-                .map(|dimension| {
-                    let block_limit = dimension.block_limit;
-                    ResourceMeteringDimension {
-                        name: dimension.name,
-                        block_limit,
-                        transaction_limit: dimension.transaction_limit.unwrap_or(block_limit),
-                        base_gas_weight: dimension.base_gas_weight,
-                        operations: dimension.operations,
-                        dry_run: dimension.dry_run,
-                    }
-                })
-                .collect(),
-            operation_index: HashMap::new(),
+            ..Self::new(
+                file.dimensions
+                    .into_iter()
+                    .map(|dimension| {
+                        let block_limit = dimension.block_limit;
+                        ResourceMeteringDimension {
+                            name: dimension.name,
+                            block_limit,
+                            transaction_limit: dimension.transaction_limit.unwrap_or(block_limit),
+                            base_gas_weight: dimension.base_gas_weight,
+                            operations: dimension.operations,
+                            dry_run: dimension.dry_run,
+                        }
+                    })
+                    .collect(),
+            )
         }
         .compile()
     }
@@ -1107,6 +1086,44 @@ mod tests {
         sample.operations.iter().find(|entry| entry.opcode == name).map(|entry| entry.count)
     }
 
+    /// A compiled schedule that prices every executed post-state operation.
+    fn state_effect_schedule() -> ResourceMeteringSchedule {
+        let operations = ResourceSample::EXECUTED_STATE_OPERATIONS
+            .iter()
+            .map(|name| operation(name, 0, 1))
+            .collect();
+        ResourceMeteringSchedule::new(vec![dimension("state", 1_000, None, 0, operations)])
+            .compile()
+            .unwrap()
+    }
+
+    fn state_effect_count(state: &EvmState, name: &str) -> u64 {
+        let sample = ResourceSample::from_execution(21_000, state, None, &state_effect_schedule());
+        operation_count(&sample, name).unwrap_or_default()
+    }
+
+    #[test]
+    fn executed_state_effects_match_schedule_operation_names_case_insensitively() {
+        let compiled = ResourceMeteringSchedule::new(vec![dimension(
+            "state",
+            1_000,
+            None,
+            0,
+            vec![operation("state_new_storage_slot", 0, 10)],
+        )])
+        .compile()
+        .unwrap();
+        let state = state_with_slots(&[
+            (U256::from(1), U256::ZERO, U256::from(1)),
+            (U256::from(2), U256::ZERO, U256::from(1)),
+        ]);
+        let sample = ResourceSample::from_execution(21_000, &state, None, &compiled);
+        assert_eq!(
+            compiled.evaluate(sample.gas_used, &sample.operations).unwrap(),
+            ResourceMeteringUsage { values: vec![20] }
+        );
+    }
+
     #[test]
     fn counts_only_zero_to_nonzero_storage_transitions() {
         let state = state_with_slots(&[
@@ -1114,16 +1131,16 @@ mod tests {
             (U256::from(2), U256::from(1), U256::from(2)),
             (U256::from(3), U256::from(4), U256::ZERO),
         ]);
-        assert_eq!(ResourceSample::count_new_storage_slots(&state), 1);
-        assert_eq!(ResourceSample::count_changed_storage_slots(&state), 3);
-        assert_eq!(ResourceSample::count_cleared_storage_slots(&state), 1);
+        assert_eq!(state_effect_count(&state, ResourceSample::STATE_NEW_STORAGE_SLOT), 1);
+        assert_eq!(state_effect_count(&state, ResourceSample::STATE_CHANGED_STORAGE_SLOT), 3);
+        assert_eq!(state_effect_count(&state, ResourceSample::STATE_CLEARED_STORAGE_SLOT), 1);
     }
 
     #[test]
     fn duplicate_writes_to_one_fresh_slot_count_once() {
         let state = state_with_slots(&[(U256::from(1), U256::ZERO, U256::from(9))]);
-        assert_eq!(ResourceSample::count_new_storage_slots(&state), 1);
-        assert_eq!(ResourceSample::count_changed_storage_slots(&state), 1);
+        assert_eq!(state_effect_count(&state, ResourceSample::STATE_NEW_STORAGE_SLOT), 1);
+        assert_eq!(state_effect_count(&state, ResourceSample::STATE_CHANGED_STORAGE_SLOT), 1);
     }
 
     #[test]
@@ -1135,12 +1152,12 @@ mod tests {
         let mut state = EvmState::default();
         state.insert(Address::ZERO, account);
 
-        assert_eq!(ResourceSample::count_new_storage_slots(&state), 0);
-        assert_eq!(ResourceSample::count_changed_storage_slots(&state), 0);
-        assert_eq!(ResourceSample::count_cleared_storage_slots(&state), 0);
-        assert_eq!(ResourceSample::count_touched_accounts(&state), 0);
-        assert_eq!(ResourceSample::count_changed_accounts(&state), 0);
-        let sample = ResourceSample::from_execution(21_000, &state, None);
+        assert_eq!(state_effect_count(&state, ResourceSample::STATE_NEW_STORAGE_SLOT), 0);
+        assert_eq!(state_effect_count(&state, ResourceSample::STATE_CHANGED_STORAGE_SLOT), 0);
+        assert_eq!(state_effect_count(&state, ResourceSample::STATE_CLEARED_STORAGE_SLOT), 0);
+        assert_eq!(state_effect_count(&state, ResourceSample::STATE_TOUCHED_ACCOUNT), 0);
+        assert_eq!(state_effect_count(&state, ResourceSample::STATE_CHANGED_ACCOUNT), 0);
+        let sample = ResourceSample::from_execution(21_000, &state, None, &state_effect_schedule());
         assert!(sample.operations.is_empty());
     }
 
@@ -1167,8 +1184,8 @@ mod tests {
         state.insert(Address::repeat_byte(0x03), changed);
         state.insert(Address::repeat_byte(0x04), both);
 
-        assert_eq!(ResourceSample::count_touched_accounts(&state), 2);
-        assert_eq!(ResourceSample::count_changed_accounts(&state), 2);
+        assert_eq!(state_effect_count(&state, ResourceSample::STATE_TOUCHED_ACCOUNT), 2);
+        assert_eq!(state_effect_count(&state, ResourceSample::STATE_CHANGED_ACCOUNT), 2);
         assert_eq!(state.len(), 4);
     }
 
@@ -1193,7 +1210,12 @@ mod tests {
                 (U256::from(2), U256::from(4), U256::ZERO),
             ],
         );
-        let sample = ResourceSample::from_execution(21_000, &state, Some(&simulated));
+        let sample = ResourceSample::from_execution(
+            21_000,
+            &state,
+            Some(&simulated),
+            &state_effect_schedule(),
+        );
 
         assert_eq!(sample.gas_used, 21_000);
         assert_eq!(operation_count(&sample, "SSTORE"), Some(6));
@@ -1225,7 +1247,7 @@ mod tests {
             (U256::from(5), U256::ZERO, U256::from(1)),
             (U256::from(6), U256::ZERO, U256::from(1)),
         ]);
-        let sample = ResourceSample::from_execution(21_000, &state, None);
+        let sample = ResourceSample::from_execution(21_000, &state, None, &compiled);
         let decision = compiled.decide_sample(&sample, &[]);
         assert!(matches!(
             decision,
@@ -1477,11 +1499,11 @@ mod tests {
             &[(U256::from(1), U256::ZERO, U256::from(7))],
         );
 
-        assert_eq!(ResourceSample::count_touched_accounts(&state), 1);
-        assert_eq!(ResourceSample::count_changed_storage_slots(&state), 1);
-        assert_eq!(ResourceSample::count_changed_accounts(&state), 0);
+        assert_eq!(state_effect_count(&state, ResourceSample::STATE_TOUCHED_ACCOUNT), 1);
+        assert_eq!(state_effect_count(&state, ResourceSample::STATE_CHANGED_STORAGE_SLOT), 1);
+        assert_eq!(state_effect_count(&state, ResourceSample::STATE_CHANGED_ACCOUNT), 0);
 
-        let sample = ResourceSample::from_execution(21_000, &state, None);
+        let sample = ResourceSample::from_execution(21_000, &state, None, &state_effect_schedule());
         assert_eq!(operation_count(&sample, ResourceSample::STATE_TOUCHED_ACCOUNT), Some(1));
         assert_eq!(operation_count(&sample, ResourceSample::STATE_CHANGED_STORAGE_SLOT), Some(1));
         assert!(operation_count(&sample, ResourceSample::STATE_CHANGED_ACCOUNT).is_none());
@@ -1503,7 +1525,12 @@ mod tests {
             account,
             &[(U256::from(1), U256::from(1), U256::from(2))],
         );
-        let sample = ResourceSample::from_execution(21_000, &state, Some(&simulated));
+        let sample = ResourceSample::from_execution(
+            21_000,
+            &state,
+            Some(&simulated),
+            &state_effect_schedule(),
+        );
 
         assert_eq!(sample.gas_used, 21_000);
         assert_eq!(operation_count(&sample, "SSTORE"), Some(4));
