@@ -6,7 +6,7 @@ use reth_transaction_pool::{
     BestTransactions, TransactionOrdering, ValidPoolTransaction, error::InvalidPoolTransactionError,
 };
 
-use crate::{BasePooledTx, BestTransactionPriority};
+use crate::{BasePooledTx, BestTransactionLane, BestTransactionPriority};
 
 /// Merges best-transaction iterators from the protocol pool and the 2D nonce sidecar.
 pub(crate) struct MergeBestTransactions<T: BasePooledTx, O>
@@ -100,14 +100,23 @@ impl<T: BasePooledTx, O> BestTransactions for MergeBestTransactions<T, O>
 where
     O: TransactionOrdering<Transaction = T>,
 {
+    /// Drops the held head of the transaction's source only when it shares the invalidated
+    /// lane (or is the same nonce-free transaction). An unrelated held head stays: it was already
+    /// pulled from its source, so dropping it would lose it for the rest of this iteration.
     fn mark_invalid(&mut self, transaction: &Self::Item, kind: InvalidPoolTransactionError) {
-        if transaction.transaction.is_eip8130_sidecar_transaction() {
-            self.next_sidecar = None;
-            self.sidecar.mark_invalid(transaction, kind);
+        let (held, source) = if transaction.transaction.is_eip8130_sidecar_transaction() {
+            (&mut self.next_sidecar, &mut self.sidecar)
         } else {
-            self.next_protocol = None;
-            self.protocol.mark_invalid(transaction, kind);
+            (&mut self.next_protocol, &mut self.protocol)
+        };
+        let lane = BestTransactionLane::for_transaction(transaction);
+        if held.as_ref().is_some_and(|head| {
+            head.hash() == transaction.hash()
+                || (lane.is_some() && BestTransactionLane::for_transaction(head) == lane)
+        }) {
+            *held = None;
         }
+        source.mark_invalid(transaction, kind);
     }
 
     fn no_updates(&mut self) {
@@ -357,6 +366,33 @@ mod tests {
 
         merged.mark_invalid(&first, InvalidPoolTransactionError::Underpriced);
 
+        assert!(merged.next().is_none());
+    }
+
+    #[test]
+    fn mark_invalid_keeps_unrelated_cached_protocol_transaction() {
+        let rejected = valid_pool_transaction(signed_tx(&signer(), U256::ZERO, 0, 1_200, 1_200));
+        let unrelated = valid_pool_transaction(signed_tx(&signer(), U256::ZERO, 0, 900, 900));
+        let unrelated_hash = *unrelated.hash();
+        let sidecar =
+            vec![valid_pool_transaction(signed_tx(&signer(), U256::from(1), 0, 1_000, 1_000))];
+
+        let mut merged = MergeBestTransactions::new(
+            Box::new(StaticBestTransactions::new(vec![rejected, unrelated])),
+            Box::new(StaticBestTransactions::new(sidecar)),
+            BaseOrdering::coinbase_tip(),
+            0,
+        );
+
+        let first = merged.next().expect("expected protocol transaction");
+        let second = merged.next().expect("expected sidecar transaction");
+        assert_eq!(second.transaction.eip8130_nonce_channel_key(), Some(U256::from(1)));
+
+        // A late rejection of `first` (e.g. after it was parked and promoted) must not drop the
+        // other sender's protocol transaction already pulled into the merge.
+        merged.mark_invalid(&first, InvalidPoolTransactionError::Underpriced);
+
+        assert_eq!(merged.next().map(|transaction| *transaction.hash()), Some(unrelated_hash));
         assert!(merged.next().is_none());
     }
 }
