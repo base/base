@@ -1633,9 +1633,10 @@ where
         {
             let mut nonce_pool = self.nonce_pool.write();
             let pruned = nonce_pool.prune_mined(&mined_transactions);
-            // The nonce-free validity window is in milliseconds, evaluated
-            // against `block.timestamp * 1000`.
-            let expired = nonce_pool.remove_expired_nonce_free(now.saturating_mul(1_000));
+            // `protocol_pool.on_canonical_state_change` has already advanced the
+            // validator's head clock to this block.
+            let expired = nonce_pool
+                .remove_expired_nonce_free(self.validator().validator().block_timestamp_ms());
             let mut listeners = self.listeners.write();
             if !pruned.removed.is_empty() {
                 listeners.on_mined(&pruned.removed, block_hash);
@@ -2237,7 +2238,7 @@ mod tests {
                 // `valid_before` bounds evaluate against a representative `now`
                 // (default is timestamp 0, where no future ms bound is reachable).
                 // Reuse the same seam the live head uses: `update_l1_block_info`
-                // with `tx = None` stores only the header timestamp and leaves the
+                // with no transactions stores only the header timestamp and leaves the
                 // L1 block info untouched, so the harness shares the one admission
                 // clock writer rather than a second, unsynchronized setter.
                 let validator =
@@ -2248,7 +2249,7 @@ mod tests {
                         timestamp: INTEGRATION_POOL_NOW_SECS,
                         ..Default::default()
                     },
-                    None,
+                    &[],
                 );
                 validator
             });
