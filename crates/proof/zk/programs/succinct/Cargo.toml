@@ -63,9 +63,7 @@ incremental = true
 
 [profile.release]
 opt-level = 3
-# LTO with the succinct-1.96.0-64bit-v2 toolchain (SP1 6.8.1) leaves `__atomic_*` libcalls that
-# fail to link for riscv64im-succinct-zkvm-elf.
-lto = false
+lto = "thin"
 debug = "none"
 strip = "symbols"
 panic = "unwind"

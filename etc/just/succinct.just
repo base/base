@@ -1,5 +1,5 @@
 _cargo_prove := "~/.sp1/bin/cargo-prove"
-_sp1_tag := "v6.8.1"
+_sp1_tag := "v6.9.0"
 _repo_root := justfile_directory()
 _succinct_dir := justfile_directory() / "crates/proof/zk/programs/succinct"
 
@@ -12,7 +12,7 @@ build-elfs: build-range-elf build-agg-elf
 
 # Build the range program ELF (reproducible docker build)
 #
-# SP1 v6.8.1's Docker rustc is 1.96 (`succinct-1.96.0-64bit-v2`), matching
+# SP1 v6.9.0's Docker rustc is 1.96 (`succinct-1.96.0-64bit-v3`), matching
 # the workspace toolchain. Ignore package rust-version so the guest still
 # compiles if a dependency declares a newer one.
 build-range-elf:
