@@ -58,6 +58,7 @@ reth-basic-payload-builder.workspace = true
 base-execution-payload-builder.workspace = true
 reth-ipc = { workspace = true, optional = true }
 reth-payload-builder-primitives.workspace = true
+reth-db-common = { workspace = true, optional = true }
 reth-node-core = { workspace = true, features = ["otlp"] }
 base-execution-rpc = { workspace = true, features = ["client"] }
 
@@ -77,6 +78,7 @@ alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
 alloy-transport-http.workspace = true
 alloy-rpc-types-beacon.workspace = true
+alloy-genesis = { workspace = true, optional = true }
 alloy-eips = { workspace = true, features = ["std"] }
 alloy-serde = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
@@ -172,6 +174,7 @@ metrics-exporter-prometheus.workspace = true
 alloy-provider = { workspace = true, default-features = true, features = ["txpool-api"] }
 
 # bench
+iai-callgrind.workspace = true
 criterion = { workspace = true, features = ["html_reports"] }
 
 # misc
@@ -206,6 +209,7 @@ min-info-logs = [ "tracing/release_max_level_info" ]
 min-debug-logs = [ "tracing/release_max_level_debug" ]
 min-trace-logs = [ "tracing/release_max_level_trace" ]
 test-utils = [
+	"alloy-genesis",
 	"base-bundles/test-utils",
 	"base-common-chains/test-utils",
 	"base-execution-eip8130/test-utils",
@@ -219,7 +223,9 @@ test-utils = [
 	"hyper-util",
 	"reth-chain-state/test-utils",
 	"reth-chainspec/test-utils",
+	"reth-db-common",
 	"reth-db/test-utils",
+	"reth-engine-tree/test-utils",
 	"reth-evm/test-utils",
 	"reth-execution-cache/test-utils",
 	"reth-ipc",
@@ -242,4 +248,8 @@ harness = false
 
 [[bench]]
 name = "tx_selection"
+harness = false
+
+[[bench]]
+name = "flashblock_build_iai"
 harness = false

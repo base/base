@@ -1,0 +1,245 @@
+name: Benchmarks (builder · iai)
+
+# Advisory base-vs-head benchmarks for the block build path of both production builders (the
+# flashblocks build loop and the native payload builder). Builds one block per scenario with
+# transaction events on, on the PR's base commit and on its head, and posts one PR comment with
+# the instruction-count change, the per-deferral cost and any change in event counts. Instruction
+# counts come from Valgrind's Callgrind, so they are deterministic on shared runners. The check
+# never fails on a regression. See docs/guides/BUILDER_BENCHMARKS.md.
+#
+# PRs that cannot affect base-builder-core (by dependency graph or benchmark inputs) skip the
+# measurement steps.
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: "Commit or branch to compare against (default: tip of main)"
+        type: string
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: "sccache"
+
+permissions:
+  contents: read
+  # Lists the PR's changed files and posts the results comment.
+  pull-requests: write
+
+jobs:
+  bench-builder:
+    name: Benchmarks (builder · iai)
+    # Building the bench profile peaks above 90% of the 8-vCPU runner's memory.
+    runs-on: depot-ubuntu-24.04-16
+    timeout-minutes: 75
+    env:
+      # For pull_request, github.sha is the merge commit and base.sha is the base branch tip.
+      # For workflow_dispatch the base is the `base_ref` input, or the tip of main.
+      HEAD_SHA: ${{ github.sha }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+      BASE_REF: ${{ inputs.base_ref || 'main' }}
+      MARKER: "<!-- builder-bench-results -->"
+      # Comments are skipped on forks: their pull_request workflows cannot write with GITHUB_TOKEN.
+      COMMENT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          # PRs are checked out at their test merge commit; the affected-crate
+          # calculation compares it to its first parent.
+          fetch-depth: 2
+
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            bench-inputs:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.cargo/**'
+              - 'rust-toolchain.toml'
+              - 'etc/scripts/ci/builder_bench_compare.py'
+              - 'etc/scripts/ci/iai_compare.py'
+              - 'etc/scripts/ci/post_pr_comment.sh'
+              - '.depot/actions/setup/**'
+              - '.depot/workflows/bench-builder.yml'
+
+      # Run on every manual run, and on PRs that change a benchmark input or any crate
+      # base-builder-core depends on.
+      - name: Decide whether the build path can be affected
+        id: affected
+        shell: bash
+        env:
+          BENCH_INPUTS: ${{ steps.filter.outputs.bench-inputs }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" != pull_request ] || [ "$BENCH_INPUTS" = true ] || \
+             python3 etc/scripts/local/affected-crates.py HEAD^1 | grep -Fxq base-builder-core; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Builder benchmarks skipped: base-builder-core is unaffected." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Post in-progress comment
+        if: steps.affected.outputs.run == 'true' && env.COMMENT == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/running.md" <<EOF
+          $MARKER
+
+          Running builder benchmarks on the base and head commits under Valgrind. Results will replace this comment when the run finishes. [View run]($RUN_URL)
+          EOF
+          bash etc/scripts/ci/post_pr_comment.sh "$RUNNER_TEMP/running.md" "$MARKER"
+
+      - uses: ./.depot/actions/setup
+        if: steps.affected.outputs.run == 'true'
+        with:
+          native-deps: "true"
+          just: "false"
+
+      - name: Install Valgrind
+        if: steps.affected.outputs.run == 'true'
+        shell: bash
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends valgrind
+          valgrind --version
+
+      # The runner binary version must match the iai-callgrind library version.
+      - uses: taiki-e/install-action@3575e532701a5fc614b0c842e4119af4cc5fd16d # v2.62.60
+        if: steps.affected.outputs.run == 'true'
+        with:
+          tool: iai-callgrind-runner@0.16.1
+
+      # Resolve the base commit and hoist the head copies of the scripts out of the tree, so
+      # both passes are rendered by the same code even while the tree is on the base commit.
+      - name: Prepare base commit and scripts
+        if: steps.affected.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$BASE_SHA" ]; then
+            git fetch --no-tags --depth 1 origin "$BASE_REF"
+            BASE_SHA="$(git rev-parse FETCH_HEAD)"
+          fi
+          git fetch --no-tags --depth 1 origin "$BASE_SHA"
+          mkdir -p "$RUNNER_TEMP/scripts"
+          cp etc/scripts/ci/builder_bench_compare.py etc/scripts/ci/iai_compare.py \
+            etc/scripts/ci/post_pr_comment.sh "$RUNNER_TEMP/scripts/"
+          echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
+
+      # A benchmark missing on the base commit (e.g. the PR that introduces it) must not fail
+      # the run; it is reported as new. Tree switches are not continue-on-error: benchmarking
+      # the wrong commit would invalidate the run. The event test uses the bench profile so it
+      # shares artifacts with the bench.
+      - name: Switch tree to base commit
+        if: steps.affected.outputs.run == 'true'
+        shell: bash
+        run: git checkout --force --detach "$BASE_SHA"
+
+      # Separate steps so a base commit without the event test still reports instruction counts.
+      - name: Event counts (base)
+        if: steps.affected.outputs.run == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          cargo test --profile bench -p base-builder-core --test flashblock_build_events \
+            -- --nocapture --test-threads=1 > "$RUNNER_TEMP/base-events.txt" 2>&1
+
+      - name: Instruction counts (base)
+        if: steps.affected.outputs.run == 'true'
+        continue-on-error: true
+        shell: bash
+        run: cargo bench -p base-builder-core --bench flashblock_build_iai > "$RUNNER_TEMP/base-iai.txt" 2>&1
+
+      - name: Switch tree to head commit
+        if: steps.affected.outputs.run == 'true'
+        shell: bash
+        run: git checkout --force --detach "$HEAD_SHA"
+
+      - name: Event counts (head)
+        if: steps.affected.outputs.run == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          cargo test --profile bench -p base-builder-core --test flashblock_build_events \
+            -- --nocapture --test-threads=1 2>&1 | tee "$RUNNER_TEMP/head-events.txt"
+
+      - name: Instruction counts (head)
+        if: steps.affected.outputs.run == 'true'
+        continue-on-error: true
+        shell: bash
+        run: cargo bench -p base-builder-core --bench flashblock_build_iai 2>&1 | tee "$RUNNER_TEMP/head-iai.txt"
+
+      - name: Render comparison
+        if: steps.affected.outputs.run == 'true'
+        shell: bash
+        env:
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 "$RUNNER_TEMP/scripts/builder_bench_compare.py" \
+            --base-iai "$RUNNER_TEMP/base-iai.txt" \
+            --head-iai "$RUNNER_TEMP/head-iai.txt" \
+            --base-events "$RUNNER_TEMP/base-events.txt" \
+            --head-events "$RUNNER_TEMP/head-events.txt" \
+            --output "$RUNNER_TEMP/comment.md" \
+            --run-url "$WORKFLOW_RUN_URL" \
+            --threshold-pct 2
+          {
+            echo "Base: \`$BASE_SHA\`, head: \`$HEAD_SHA\`"
+            echo
+            cat "$RUNNER_TEMP/comment.md"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Post results comment
+        if: steps.affected.outputs.run == 'true' && env.COMMENT == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: bash "$RUNNER_TEMP/scripts/post_pr_comment.sh" "$RUNNER_TEMP/comment.md" "$MARKER"
+
+      # Without this, a failed run would leave the in-progress comment saying "running".
+      - name: Report failure on PR
+        if: failure() && steps.affected.outputs.run == 'true' && env.COMMENT == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/failed.md" <<EOF
+          $MARKER
+
+          Builder benchmark run failed before producing results. See the [run log]($RUN_URL).
+          EOF
+          # Prefer the hoisted head copy: the tree may be on a base commit whose copy ignores
+          # the marker argument and would overwrite another benchmark's comment.
+          script="$RUNNER_TEMP/scripts/post_pr_comment.sh"
+          [ -f "$script" ] || script=etc/scripts/ci/post_pr_comment.sh
+          bash "$script" "$RUNNER_TEMP/failed.md" "$MARKER"

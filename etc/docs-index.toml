@@ -654,6 +654,10 @@ digest = "fd4c93a6fc"
 summary = "Review guide for block-production-sensitive PRs: mandatory payload size-limit gate across I/O boundaries, taxonomy of halt/stall scenarios (precompiles, builder, flashblocks), and a checklist."
 digest = "393c4961d6"
 
+["docs/guides/BUILDER_BENCHMARKS.md"]
+summary = "Advisory per-PR base-vs-head benchmarks for the flashblocks and native (Denim) builders: workload matrix, Callgrind instruction counts, per-deferral cost, event-count diffs, CI cost, exclusions."
+digest = "508aa48d35"
+
 ["docs/guides/P2P.md"]
 summary = "Explains the Base P2P stack for newcomers: consensus-layer discv5 and libp2p gossipsub versus execution-layer reth networking, how they interact via Engine API, key files, flags, and glossary."
 digest = "2407f38ac8"
