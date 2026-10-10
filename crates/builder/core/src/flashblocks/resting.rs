@@ -11,7 +11,9 @@ use revm::state::EvmState;
 pub struct RestingStats {
     /// Resting transactions parked without being yielded.
     pub parked: u64,
-    /// Time spent checking and parking resting transactions.
+    /// Time spent filtering resting transactions, from the first resting check of each
+    /// `next` call of the iterator until it returns, so it includes advancing the iterator
+    /// between resting transactions.
     pub duration: Duration,
 }
 
