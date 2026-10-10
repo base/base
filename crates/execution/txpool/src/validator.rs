@@ -805,7 +805,7 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
                 cache.invalidate_code(diff.address);
             }
             if diff.address == AccountConfigurationStorage::ADDRESS {
-                for slot in &diff.changed_slots {
+                for (slot, _) in &diff.changed_slots {
                     changed = true;
                     cache.invalidate_slot(slot);
                 }
@@ -2138,7 +2138,7 @@ mod tests {
         crate::AccountStateDiff {
             address,
             balance: Some(U256::from(balance)),
-            nonce_changed: false,
+            nonce: None,
             code_changed: false,
             changed_slots: Vec::new(),
         }
@@ -2231,7 +2231,7 @@ mod tests {
         let nonce_diff = crate::AccountStateDiff {
             address: trusted,
             balance: None,
-            nonce_changed: true,
+            nonce: Some(1),
             code_changed: false,
             changed_slots: Vec::new(),
         };
