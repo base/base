@@ -357,6 +357,25 @@ mod tests {
     }
 
     #[test]
+    fn record_flashblock_diagnostics_labels_gas_exhausted_selection() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let diag =
+            FlashblockDiagnostics { gas_exhausted: true, txs_considered: 6, ..Default::default() };
+        let info = ExecutionInfo::default();
+        let limits = ResourceLimits::default();
+
+        metrics::with_local_recorder(&recorder, || {
+            BuilderMetrics::record_flashblock_diagnostics(7, &diag, &info, &limits);
+        });
+
+        let rendered = handle.render();
+        assert!(rendered.contains(
+            "base_builder_flashblock_selection_total{flashblock_index=\"7\",outcome=\"gas_exhausted\"} 1"
+        ));
+    }
+
+    #[test]
     fn record_tip_per_gas_tags_flow_and_bid() {
         let recorder = PrometheusBuilder::new().build_recorder();
         let handle = recorder.handle();

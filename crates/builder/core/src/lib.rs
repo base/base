@@ -27,8 +27,8 @@ pub use resting_predicate_mode::RestingPredicateMode;
 
 mod traits;
 pub use base_execution_payload_builder::{
-    MeteringProvider, NoopMeteringProvider, RejectionCache, ResourceMeteringConfig,
-    SharedMeteringProvider,
+    MIN_TX_RESERVED_GAS, MeteringProvider, NoopMeteringProvider, RejectionCache,
+    ResourceMeteringConfig, SharedMeteringProvider,
 };
 pub use traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds};
 

@@ -16,7 +16,7 @@ use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTransaction, DepositReceiptExt, Predeploys};
 use base_common_evm::L1BlockInfo;
-use base_execution_eip8130::IntrinsicGas;
+use base_execution_eip8130::{Eip8130GasSchedule, IntrinsicGas};
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext, ValidityPredicate,
     estimated_da_size::DataAvailabilitySized,
@@ -28,7 +28,7 @@ use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
     PayloadConfig, is_better_payload,
 };
-use reth_chainspec::{ChainSpecProvider, EthChainSpec};
+use reth_chainspec::{ChainSpecProvider, EthChainSpec, MIN_TRANSACTION_GAS};
 use reth_evm::{
     BlockExecutorForEvm, ConfigureEvm, Database,
     execute::{
@@ -646,6 +646,22 @@ impl ExecutionInfo {
     }
 }
 
+/// A conservative lower bound on the gas a pool transaction reserves against the block gas
+/// budget, not a minimum transaction cost.
+///
+/// A candidate reserves its `gas_limit` plus its EIP-8130 payer-authentication ceiling. For a
+/// sponsored EIP-8130 transaction, `gas_limit` covers the sender's intrinsic gas and the AA
+/// floor, and payer authentication is reserved on top, so the total reserved gas is at least
+/// this bound. A standard transaction's intrinsic floor is [`MIN_TRANSACTION_GAS`] (21,000),
+/// while an EIP-8130 transaction's is its `AA_BASE_COST` (15,000), so the conservative bound
+/// across both families is the smaller value. Once the remaining block gas drops below this, no
+/// candidate can fit and the scan can stop.
+pub const MIN_TX_RESERVED_GAS: u64 = if Eip8130GasSchedule::AA_BASE_COST < MIN_TRANSACTION_GAS {
+    Eip8130GasSchedule::AA_BASE_COST
+} else {
+    MIN_TRANSACTION_GAS
+};
+
 /// Container type that holds all necessities to build a new payload.
 #[derive(derive_more::Debug)]
 pub struct BasePayloadBuilderCtx<
@@ -927,10 +943,19 @@ where
         let can_finalize_early = self.is_denim_active();
         let resource_metering = &self.builder_config.resource_metering;
         let mut resource_throttled = 0u64;
-        while let Some(tx) = best_txs.next(()) {
+        loop {
+            // Cancellation is observed before the gas guard stops the scan, so a cancelled job
+            // still returns `Ok(Some(()))` when the block gas is already exhausted. The guard
+            // stays ahead of `next` so an exhausted block never reads the pool.
             if self.cancel.is_cancelled() {
                 return Ok(Some(()));
             }
+            if block_gas_limit.saturating_sub(info.cumulative_gas_used) < MIN_TX_RESERVED_GAS {
+                break;
+            }
+            let Some(tx) = best_txs.next(()) else {
+                break;
+            };
             if can_finalize_early && self.cancel.is_finalization_requested() {
                 break;
             }
@@ -1576,9 +1601,9 @@ mod tests {
             PayloadStateRootHandle, StateRootComputeOutcome, StateRootSink, StateRootUpdateStream,
         },
     };
-    use revm::{Database, state::EvmState};
+    use revm::{Database, context::Block, state::EvmState};
 
-    use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
+    use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo, MIN_TX_RESERVED_GAS};
     use crate::{
         BasePayloadBuilderAttributes, MeteringProvider, NoopMeteringProvider,
         ParkablePayloadTransactions, ResourceMeteringConfig, ResourceMeteringDimension,
@@ -1832,6 +1857,8 @@ mod tests {
         /// they outbid them.
         promoted_first: bool,
         invalid: Arc<Mutex<Vec<(Address, u64)>>>,
+        /// Number of `next` calls, so a test can assert the gas guard did not read the pool.
+        next_calls: Arc<Mutex<usize>>,
     }
 
     impl TestParkableTransactions {
@@ -1851,6 +1878,7 @@ mod tests {
                 current: None,
                 promoted_first: true,
                 invalid,
+                next_calls: Arc::default(),
             }
         }
 
@@ -1859,12 +1887,23 @@ mod tests {
         fn with_promoted_last(transactions: Vec<BasePooledTransaction>) -> Self {
             Self { promoted_first: false, ..Self::new(transactions) }
         }
+
+        /// Records every `next` call into `next_calls` and every invalidated `(sender, nonce)`
+        /// into `invalid`, so a test can assert whether the gas guard read the pool at all.
+        fn counting(
+            transactions: Vec<BasePooledTransaction>,
+            invalid: Arc<Mutex<Vec<(Address, u64)>>>,
+            next_calls: Arc<Mutex<usize>>,
+        ) -> Self {
+            Self { next_calls, ..Self::recording(transactions, invalid) }
+        }
     }
 
     impl PayloadTransactions for TestParkableTransactions {
         type Transaction = BasePooledTransaction;
 
         fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
+            *self.next_calls.lock().unwrap() += 1;
             assert!(self.current.is_none(), "current transaction was not lifecycle-managed");
             let transaction = if self.promoted_first {
                 self.ready.pop_front().or_else(|| self.queued.pop_front())
@@ -1978,6 +2017,122 @@ mod tests {
             panic!("Denim payload must freeze")
         };
         assert_eq!(payload.block().body().transactions.len(), 1);
+    }
+
+    /// Once the remaining block gas is below the smallest amount any candidate can reserve, the
+    /// scan must stop before touching the pool: every candidate would be rejected, and the scan
+    /// itself is the cost the guard removes.
+    #[test]
+    fn native_scan_stops_before_the_pool_once_gas_cannot_fit_any_transaction() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        let provider = test_state_provider();
+        let mut db = State::builder()
+            .with_database(StateProviderDatabase::new(&provider))
+            .with_bundle_update()
+            .build();
+        db.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("L1 block info must load");
+        let mut builder = ctx.block_builder(&mut db).expect("block builder");
+        builder.apply_pre_execution_changes().expect("pre-execution changes");
+        let mut info = ctx.execute_sequencer_transactions(&mut builder).expect("sequencer");
+        let block_gas_limit = builder.evm_mut().block().gas_limit();
+        info.cumulative_gas_used = block_gas_limit - MIN_TX_RESERVED_GAS + 1;
+
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+        let next_calls = Arc::new(Mutex::new(0));
+        let transactions = TestParkableTransactions::counting(
+            vec![pool_transaction(0)],
+            Arc::clone(&invalid),
+            Arc::clone(&next_calls),
+        );
+
+        let cancelled = ctx
+            .execute_best_transactions(&mut info, &mut builder, transactions)
+            .expect("mempool scan");
+
+        assert!(cancelled.is_none());
+        assert_eq!(
+            *next_calls.lock().unwrap(),
+            0,
+            "the scan must not read the pool when no tx can fit"
+        );
+        assert!(invalid.lock().unwrap().is_empty());
+        assert_eq!(info.cumulative_gas_used, block_gas_limit - MIN_TX_RESERVED_GAS + 1);
+    }
+
+    /// The guard must not stop a scan that still has room for the smallest reservable
+    /// transaction: at exactly `MIN_TX_RESERVED_GAS` remaining the loop still considers a
+    /// candidate.
+    #[test]
+    fn native_scan_considers_candidates_while_the_smallest_transaction_fits() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        let provider = test_state_provider();
+        let mut db = State::builder()
+            .with_database(StateProviderDatabase::new(&provider))
+            .with_bundle_update()
+            .build();
+        db.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("L1 block info must load");
+        let mut builder = ctx.block_builder(&mut db).expect("block builder");
+        builder.apply_pre_execution_changes().expect("pre-execution changes");
+        let mut info = ctx.execute_sequencer_transactions(&mut builder).expect("sequencer");
+        let block_gas_limit = builder.evm_mut().block().gas_limit();
+        info.cumulative_gas_used = block_gas_limit - MIN_TX_RESERVED_GAS;
+
+        let invalid = Arc::new(Mutex::new(Vec::new()));
+        let next_calls = Arc::new(Mutex::new(0));
+        let transactions = TestParkableTransactions::counting(
+            vec![pool_transaction(0)],
+            Arc::clone(&invalid),
+            Arc::clone(&next_calls),
+        );
+
+        let cancelled = ctx
+            .execute_best_transactions(&mut info, &mut builder, transactions)
+            .expect("mempool scan");
+
+        assert!(cancelled.is_none());
+        assert!(
+            *next_calls.lock().unwrap() >= 1,
+            "the scan must read the pool while a tx could fit"
+        );
+        // The candidate's 21,000-gas limit does not fit the remaining gas, so it is rejected by
+        // the gas limit rather than silently skipped.
+        assert_eq!(invalid.lock().unwrap().len(), 1);
+        assert_eq!(info.cumulative_gas_used, block_gas_limit - MIN_TX_RESERVED_GAS);
+    }
+
+    /// A cancelled job must not be finalized even when the block gas is already exhausted, so the
+    /// cancellation check runs before the gas guard stops the scan.
+    #[test]
+    fn native_cancellation_wins_over_the_gas_guard() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        let provider = test_state_provider();
+        let mut db = State::builder()
+            .with_database(StateProviderDatabase::new(&provider))
+            .with_bundle_update()
+            .build();
+        db.load_cache_account(Predeploys::L1_BLOCK_INFO).expect("L1 block info must load");
+        let mut builder = ctx.block_builder(&mut db).expect("block builder");
+        builder.apply_pre_execution_changes().expect("pre-execution changes");
+        let mut info = ctx.execute_sequencer_transactions(&mut builder).expect("sequencer");
+        let block_gas_limit = builder.evm_mut().block().gas_limit();
+        info.cumulative_gas_used = block_gas_limit;
+
+        // `CancelOnDrop` flips the shared flag to `CANCELLED` when a clone is dropped.
+        drop(ctx.cancel.clone());
+
+        let next_calls = Arc::new(Mutex::new(0));
+        let transactions = TestParkableTransactions::counting(
+            vec![pool_transaction(0)],
+            Arc::default(),
+            Arc::clone(&next_calls),
+        );
+
+        let cancelled = ctx
+            .execute_best_transactions(&mut info, &mut builder, transactions)
+            .expect("mempool scan");
+
+        assert!(cancelled.is_some(), "a cancelled job must not be finalized");
+        assert_eq!(*next_calls.lock().unwrap(), 0, "the guard must stop before the pool is read");
     }
 
     #[test]
