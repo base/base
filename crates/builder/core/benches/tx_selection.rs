@@ -544,6 +544,7 @@ criterion_group!(
     predicate_index_lifecycle_benches,
     predicate_index_population_benches,
     predicate_index_crossing_benches,
+    predicate_index_ordered_churn_benches,
     resting_predicate_benches
 );
 criterion_main!(benches);
@@ -656,6 +657,41 @@ fn predicate_index_crossing_benches(c: &mut Criterion) {
                 let effects = index.affected_by_state(&changed_state);
                 assert_eq!(effects.affected_transactions.len(), PARKED_TRANSACTIONS);
                 black_box(effects);
+            });
+        });
+    }
+    group.finish();
+}
+
+// Kept separate so `cargo bench -p base-builder-core --bench tx_selection --
+// predicate_index_ordered_churn --sample-size 10` completes quickly.
+fn predicate_index_ordered_churn_benches(c: &mut Criterion) {
+    let mut group = c.benchmark_group("tx_selection/predicate_index_ordered_churn");
+    group.sample_size(10);
+    let watched_address = address(666_666);
+
+    for parked_transactions in [256, 2_048] {
+        group.throughput(Throughput::Elements(parked_transactions as u64));
+        group.bench_function(format!("distinct_thresholds/entries={parked_transactions}"), |b| {
+            b.iter(|| {
+                let mut index = ParkedPredicateIndex::new(32);
+                for transaction_index in 0..parked_transactions {
+                    let transaction_hash: B256 = U256::from(transaction_index + 1).into();
+                    index.park(
+                        transaction_hash,
+                        (),
+                        ValidityPredicate::Balance {
+                            address: watched_address,
+                            op: ValidityOperator::GreaterThanOrEqual,
+                            value: U256::from(transaction_index + 1),
+                        },
+                    );
+                }
+                for transaction_index in 0..parked_transactions {
+                    let transaction_hash: B256 = U256::from(transaction_index + 1).into();
+                    black_box(index.remove(transaction_hash));
+                }
+                assert!(index.is_empty());
             });
         });
     }
