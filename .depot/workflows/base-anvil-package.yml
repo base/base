@@ -323,10 +323,10 @@ jobs:
 
           short_sha="${GITHUB_SHA::12}"
           commit_date="$(git show -s --format=%cd --date=format:%Y%m%d "$GITHUB_SHA")"
-          primary_tag="sha-$GITHUB_SHA"
-          tags=("$REGISTRY_IMAGE:$primary_tag")
 
           if [[ "$GITHUB_REF_NAME" == "main" && "$BASE_ANVIL_REF" == "98e7839c65f64aee9627b69a9b98b79afaeb1fae" && "$BASE_STD_REF" == "main" && "$BASE_UPGRADE" == "denim" ]]; then
+            primary_tag="sha-$GITHUB_SHA"
+            tags=("$REGISTRY_IMAGE:$primary_tag")
             tags+=("$REGISTRY_IMAGE:main")
             tags+=("$REGISTRY_IMAGE:main-$commit_date-$short_sha")
           else
@@ -335,7 +335,8 @@ jobs:
             else
               ref_tag="$(printf '%s' "$GITHUB_REF_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_.-]+/-/g; s/^-+|-+$//g')"
             fi
-            tags+=("$REGISTRY_IMAGE:${ref_tag:-ref}-$commit_date-$short_sha")
+            primary_tag="${ref_tag:-ref}-$commit_date-$short_sha"
+            tags=("$REGISTRY_IMAGE:$primary_tag")
           fi
 
           {
