@@ -40,13 +40,13 @@ mod transaction_events;
 mod flashblocks;
 pub use flashblocks::{
     BasePayloadBuilderCtx, BestFlashblocksTxs, BlockDeferrals, BlockPayloadJob,
-    BlockPayloadJobGenerator, BuildArguments, FLOW_STANDARD, FLOW_VALIDITY, FlashblockDiagnostics,
-    FlashblockSelectionOutcome, FlashblocksExtraCtx, FlashblocksServiceBuilder, InclusionFlow,
-    InclusionTracker, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
-    ParkedPredicateIndex, PayloadBuilder, PayloadHandler, PayloadJobDeadline,
-    PayloadTransactionInvalidated, PredicateLoadTracker, PredicateReadRecorder, ResolvePayload,
-    RestingPayloadTransactions, RestingStats, StateChangeEffects, ValidityPredicateEvaluation,
-    ValidityPredicateKey,
+    BlockPayloadJobGenerator, BlockRejections, BuildArguments, FLOW_STANDARD, FLOW_VALIDITY,
+    FlashblockDiagnostics, FlashblockSelectionOutcome, FlashblocksExtraCtx,
+    FlashblocksServiceBuilder, InclusionFlow, InclusionTracker, ParkableBestPayloadTransactions,
+    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadBuilder, PayloadHandler,
+    PayloadJobDeadline, PayloadTransactionInvalidated, PredicateLoadTracker, PredicateReadRecorder,
+    ResolvePayload, RestingPayloadTransactions, RestingStats, StateChangeEffects,
+    ValidityPredicateEvaluation, ValidityPredicateKey,
 };
 
 mod extension;

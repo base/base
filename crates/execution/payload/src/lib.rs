@@ -41,7 +41,7 @@ mod metrics;
 pub use metrics::{BuilderMetrics, ValidityMetrics};
 
 mod deferrals;
-pub use deferrals::BlockDeferrals;
+pub use deferrals::{BlockDeferrals, BlockRejections};
 
 mod inclusion;
 pub use inclusion::{FLOW_STANDARD, FLOW_VALIDITY, InclusionFlow, InclusionTracker};

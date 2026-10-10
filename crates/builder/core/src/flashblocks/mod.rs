@@ -2,7 +2,7 @@
 
 mod best_txs;
 pub use base_execution_payload_builder::{
-    BlockDeferrals, FLOW_STANDARD, FLOW_VALIDITY, InclusionFlow, InclusionTracker,
+    BlockDeferrals, BlockRejections, FLOW_STANDARD, FLOW_VALIDITY, InclusionFlow, InclusionTracker,
     ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
     PayloadTransactionInvalidated, PredicateLoadTracker, PredicateReadRecorder, StateChangeEffects,
     ValidityPredicateEvaluation, ValidityPredicateKey,

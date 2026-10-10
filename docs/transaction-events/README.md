@@ -261,7 +261,12 @@ Neither builder emits `BUILDER_CONSIDERED`: every candidate gets one of the
 decision events above, which carries the same budget and position fields. The
 native builder journals only validity-gated candidates; a candidate whose
 predicates pass but which is then skipped (block limits, resource metering,
-coinbase tip, nonce or EVM validation) gets `BUILDER_REJECTED`. A parked
+coinbase tip, nonce or EVM validation) gets `BUILDER_REJECTED`. A transaction
+that overflows a flashblock's cumulative gas, DA, or size budget is rejected
+again on every later flashblock, but the flashblocks builder emits
+`BUILDER_REJECTED` only the first time it rejects a transaction for a given
+`rejection_reason` in a block build and again when the reason changes; its
+`flashblock_index` and `ordering_position` are those of that rejection. A parked
 transaction is parked again on every later flashblock and after every
 promote-and-repark, but both builders emit `BUILDER_DEFERRED` only the first
 time they defer a transaction in a block build and again when the

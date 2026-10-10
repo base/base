@@ -15,7 +15,7 @@ use alloy_consensus::{Header, SignableTransaction, TxEip1559};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
 use base_builder_core::{
-    BasePayloadBuilderCtx, BestFlashblocksTxs, BlockDeferrals, ExecutionInfo,
+    BasePayloadBuilderCtx, BestFlashblocksTxs, BlockDeferrals, BlockRejections, ExecutionInfo,
     ParkableBestPayloadTransactions, ParkablePayloadTransactions, ParkedPredicateIndex,
     RejectionCache, ResourceLimits, RestingPredicateMode, ValidityPredicateKey,
 };
@@ -462,6 +462,7 @@ fn run_resting_block(
 ) -> usize {
     let mut info = ExecutionInfo::default();
     let mut deferrals = BlockDeferrals::default();
+    let mut rejections = BlockRejections::default();
     let mut best = BestFlashblocksTxs::new(
         parkable(pool),
         RejectionCache::new(1_000, Duration::from_secs(60)),
@@ -479,8 +480,15 @@ fn run_resting_block(
             ..Default::default()
         };
         black_box(
-            ctx.execute_best_transactions(&mut info, &mut deferrals, state, &mut best, &limits)
-                .expect("in-memory execution cannot fail"),
+            ctx.execute_best_transactions(
+                &mut info,
+                &mut deferrals,
+                &mut rejections,
+                state,
+                &mut best,
+                &limits,
+            )
+            .expect("in-memory execution cannot fail"),
         );
         let committed = info.executed_transactions[committed_until..]
             .iter()
