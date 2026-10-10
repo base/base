@@ -17,6 +17,10 @@ eif*.bin
 crates/proof/zk/programs/succinct/elf/range-elf-embedded
 crates/proof/zk/programs/succinct/elf/aggregation-elf
 crates/proof/zk/programs/succinct/elf/*.bin
+# OpenVM guest artifacts are built on demand and not committed.
+crates/proof/zk/programs/openvm/elf/
+# `cargo openvm build` always stages the vmexe here before copying it to elf/.
+crates/proof/zk/programs/openvm/openvm/
 /etc/scripts/local/__pycache__/
 /.tmp/
 

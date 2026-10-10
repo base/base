@@ -5211,6 +5211,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-openvm-dump"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips 2.4.1",
+ "alloy-provider",
+ "base-common-network",
+ "base-optimism-rpc",
+ "base-proof-zk-backend",
+ "base-proof-zk-witness",
+ "clap",
+ "eyre",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "base-optimism-rpc"
 version = "0.0.0"
 dependencies = [

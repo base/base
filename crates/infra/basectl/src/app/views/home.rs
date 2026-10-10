@@ -82,6 +82,13 @@ const MENU_ITEMS: &[MenuItem] = &[
         view_id: Some(ViewId::Proofs),
     },
     MenuItem {
+        key: 'z',
+        label: "OpenVM",
+        description: "Prove one L2 block with the OpenVM range guest",
+        badge: Some("config-required"),
+        view_id: Some(ViewId::OpenVm),
+    },
+    MenuItem {
         key: 'u',
         label: "Upgrades",
         description: "Network upgrade activation countdown and history",
@@ -99,6 +106,7 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "h", description: "HA Conductor" },
     Keybinding { key: "o", description: "Pods" },
     Keybinding { key: "p", description: "Proofs" },
+    Keybinding { key: "z", description: "OpenVM" },
     Keybinding { key: "u", description: "Upgrades" },
     Keybinding { key: "j/k", description: "Navigate" },
     Keybinding { key: "←/→", description: "Switch column" },
@@ -140,6 +148,7 @@ impl View for HomeView {
             KeyCode::Char('h') => Action::SwitchView(ViewId::Conductor),
             KeyCode::Char('o') => Action::SwitchView(ViewId::Pods),
             KeyCode::Char('p') => Action::SwitchView(ViewId::Proofs),
+            KeyCode::Char('z') => Action::SwitchView(ViewId::OpenVm),
             KeyCode::Char('u') => Action::SwitchView(ViewId::Upgrades),
             KeyCode::Up | KeyCode::Char('k') => {
                 self.selected_index = self.selected_index.saturating_sub(1);
