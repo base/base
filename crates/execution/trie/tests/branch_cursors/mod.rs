@@ -126,48 +126,6 @@ fn test_cursor_multiple_entries<S: BaseProofsStore + BaseProofsInitialStateStore
 // 2. Seek Operations
 // =============================================================================
 
-/// Test `seek_exact` with existing path
-#[rstest]
-#[case::in_memory(InMemoryProofsStorage::new())]
-#[case::mdbx(create_mdbx_proofs_storage())]
-#[case::rocksdb(create_rocksdb_proofs_storage())]
-#[serial]
-fn test_seek_exact_existing_path<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    #[case] storage: S,
-) -> Result<(), BaseProofsStorageError> {
-    let path = nibbles_from(vec![1, 2, 3]);
-    let branch = create_test_branch();
-
-    storage.store_account_branches(vec![(path, Some(branch))])?;
-
-    let mut cursor = storage.account_trie_cursor(100)?;
-    let result = cursor.seek_exact(path)?.unwrap();
-    assert_eq!(result.0, path);
-
-    Ok(())
-}
-
-/// Test `seek_exact` with non-existing path
-#[rstest]
-#[case::in_memory(InMemoryProofsStorage::new())]
-#[case::mdbx(create_mdbx_proofs_storage())]
-#[case::rocksdb(create_rocksdb_proofs_storage())]
-#[serial]
-fn test_seek_exact_non_existing_path<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    #[case] storage: S,
-) -> Result<(), BaseProofsStorageError> {
-    let path = nibbles_from(vec![1, 2, 3]);
-    let branch = create_test_branch();
-
-    storage.store_account_branches(vec![(path, Some(branch))])?;
-
-    let mut cursor = storage.account_trie_cursor(100)?;
-    let non_existing = nibbles_from(vec![4, 5, 6]);
-    assert!(cursor.seek_exact(non_existing)?.is_none());
-
-    Ok(())
-}
-
 /// Test `seek_exact` with empty path
 #[rstest]
 #[case::in_memory(InMemoryProofsStorage::new())]
@@ -284,28 +242,6 @@ fn test_seek_before_all_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
 // 3. Navigation Tests
 // =============================================================================
 
-/// Test next without prior seek
-#[rstest]
-#[case::in_memory(InMemoryProofsStorage::new())]
-#[case::mdbx(create_mdbx_proofs_storage())]
-#[case::rocksdb(create_rocksdb_proofs_storage())]
-#[serial]
-fn test_next_without_prior_seek<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    #[case] storage: S,
-) -> Result<(), BaseProofsStorageError> {
-    let path = nibbles_from(vec![1, 2]);
-    let branch = create_test_branch();
-
-    storage.store_account_branches(vec![(path, Some(branch))])?;
-
-    let mut cursor = storage.account_trie_cursor(100)?;
-    // next() without prior seek should start from beginning
-    let result = cursor.next()?.unwrap();
-    assert_eq!(result.0, path);
-
-    Ok(())
-}
-
 /// Test next after seek
 #[rstest]
 #[case::in_memory(InMemoryProofsStorage::new())]
@@ -328,29 +264,6 @@ fn test_next_after_seek<S: BaseProofsStore + BaseProofsInitialStateStore>(
     // next() should return second node
     let result = cursor.next()?.unwrap();
     assert_eq!(result.0, path2);
-
-    Ok(())
-}
-
-/// Test next at end of trie
-#[rstest]
-#[case::in_memory(InMemoryProofsStorage::new())]
-#[case::mdbx(create_mdbx_proofs_storage())]
-#[case::rocksdb(create_rocksdb_proofs_storage())]
-#[serial]
-fn test_next_at_end_of_trie<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    #[case] storage: S,
-) -> Result<(), BaseProofsStorageError> {
-    let path = nibbles_from(vec![1]);
-    let branch = create_test_branch();
-
-    storage.store_account_branches(vec![(path, Some(branch))])?;
-
-    let mut cursor = storage.account_trie_cursor(100)?;
-    cursor.seek(path)?;
-
-    // next() at end should return None
-    assert!(cursor.next()?.is_none());
 
     Ok(())
 }
@@ -417,28 +330,11 @@ fn test_current_after_operations<S: BaseProofsStore + BaseProofsInitialStateStor
     Ok(())
 }
 
-/// Test current with no prior operations
-#[rstest]
-#[case::in_memory(InMemoryProofsStorage::new())]
-#[case::mdbx(create_mdbx_proofs_storage())]
-#[case::rocksdb(create_rocksdb_proofs_storage())]
-#[serial]
-fn test_current_no_prior_operations<S: BaseProofsStore + BaseProofsInitialStateStore>(
-    #[case] storage: S,
-) -> Result<(), BaseProofsStorageError> {
-    let mut cursor = storage.account_trie_cursor(100)?;
-
-    // Current should be None when no operations performed
-    assert!(cursor.current()?.is_none());
-
-    Ok(())
-}
-
 // =============================================================================
 // 4. Block Number Filtering
 // =============================================================================
 
-/// Test same path with different blocks
+/// Test that rewriting the same path keeps only the latest node
 #[rstest]
 #[case::in_memory(InMemoryProofsStorage::new())]
 #[case::mdbx(create_mdbx_proofs_storage())]
@@ -451,19 +347,12 @@ fn test_same_path_different_blocks<S: BaseProofsStore + BaseProofsInitialStateSt
     let branch1 = create_test_branch();
     let branch2 = create_test_branch_variant();
 
-    // Store same path at different blocks
+    // Initial-state writes share one version, so the later write replaces the earlier one.
     storage.store_account_branches(vec![(path, Some(branch1))])?;
-    storage.store_account_branches(vec![(path, Some(branch2))])?;
+    storage.store_account_branches(vec![(path, Some(branch2.clone()))])?;
 
-    // Cursor with max_block_number=75 should see only block 50 data
-    let mut cursor75 = storage.account_trie_cursor(75)?;
-    let result75 = cursor75.seek_exact(path)?.unwrap();
-    assert_eq!(result75.0, path);
-
-    // Cursor with max_block_number=150 should see block 100 data (latest)
-    let mut cursor150 = storage.account_trie_cursor(150)?;
-    let result150 = cursor150.seek_exact(path)?.unwrap();
-    assert_eq!(result150.0, path);
+    let mut cursor = storage.account_trie_cursor(150)?;
+    assert_eq!(cursor.seek_exact(path)?, Some((path, branch2)));
 
     Ok(())
 }

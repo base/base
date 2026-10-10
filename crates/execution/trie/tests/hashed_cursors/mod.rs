@@ -398,15 +398,13 @@ fn test_storage_cursor_skips_zero_values<S: BaseProofsStore + BaseProofsInitialS
     assert_eq!(found_slots[1], (B256::repeat_byte(0x30), U256::from(300)));
     assert_eq!(found_slots[2], (B256::repeat_byte(0x50), U256::from(500)));
 
-    // Verify seeking to a zero-value slot returns None or skips to next non-zero
+    // Seeking to a zero-value slot skips to the next non-zero slot
     let mut seek_cursor = storage.storage_hashed_cursor(hashed_address, 100)?;
-    let seek_result = seek_cursor.seek(B256::repeat_byte(0x20))?;
-
-    // Should either return None or skip to the next non-zero value (0x30)
-    if let Some((key, value)) = seek_result {
-        assert_eq!(key, B256::repeat_byte(0x30), "Should skip zero value and find next non-zero");
-        assert_eq!(value, U256::from(300));
-    }
+    assert_eq!(
+        seek_cursor.seek(B256::repeat_byte(0x20))?,
+        Some((B256::repeat_byte(0x30), U256::from(300))),
+        "Should skip zero value and find next non-zero"
+    );
 
     Ok(())
 }

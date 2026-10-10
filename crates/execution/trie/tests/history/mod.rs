@@ -72,6 +72,7 @@ fn test_store_trie_updates_out_of_order_rejects<
     let bad_block = test_block(B256::repeat_byte(0xFF), 99, 0x99);
     let error = storage.store_trie_updates(bad_block, BlockStateDiff::default()).unwrap_err();
     assert!(matches!(error, BaseProofsStorageError::OutOfOrder { .. }));
+    assert_eq!(storage.get_latest_block_number()?, Some((42, block_42.block.hash)));
     Ok(())
 }
 
@@ -84,6 +85,7 @@ fn test_prune_earliest_state_comprehensive<S: BaseProofsStore + BaseProofsInitia
 ) -> Result<(), BaseProofsStorageError> {
     storage.set_earliest_block_number(0, B256::ZERO)?;
     let account_address = B256::repeat_byte(1);
+    let account_address_2 = B256::repeat_byte(5);
     let storage_slot = B256::repeat_byte(2);
     let account_path = nibbles_from(vec![1]);
     let storage_path = nibbles_from(vec![3]);
@@ -107,6 +109,7 @@ fn test_prune_earliest_state_comprehensive<S: BaseProofsStore + BaseProofsInitia
 
     let mut post_state_2 = HashedPostState::default();
     post_state_2.accounts.insert(account_address, Some(account_v2));
+    post_state_2.accounts.insert(account_address_2, Some(account_v1));
 
     storage.store_trie_updates(
         block_1,
@@ -124,7 +127,10 @@ fn test_prune_earliest_state_comprehensive<S: BaseProofsStore + BaseProofsInitia
     )?;
     storage.prune_earliest_state(block_3)?;
 
+    assert!(storage.fetch_trie_updates(1).is_err());
+    assert!(storage.fetch_trie_updates(2).is_err());
     assert_account_at(&storage, 3, account_address, account_v2)?;
+    assert_account_at(&storage, 3, account_address_2, account_v1)?;
     assert_storage_at(&storage, account_address, 3, storage_slot, U256::from(1234))?;
     assert_account_branch_present(&storage, 3, account_path)?;
 
@@ -170,6 +176,26 @@ fn test_prune_earliest_state_returns_correct_counts<
     let counts = storage.prune_earliest_state(block_2)?;
     assert_eq!(counts.hashed_accounts_written_total, 1);
     assert_eq!(counts.account_trie_updates_written_total, 0);
+    assert_eq!(storage.get_earliest_block_number()?, Some((2, block_2.block.hash)));
+    Ok(())
+}
+
+#[rstest]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
+#[serial]
+fn test_prune_earliest_state_no_entries_to_prune<
+    S: BaseProofsStore + BaseProofsInitialStateStore,
+>(
+    #[case] storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    let block_1_hash = B256::repeat_byte(1);
+    storage.set_earliest_block_number(1, block_1_hash)?;
+
+    let block_10 = test_block(B256::ZERO, 10, 10);
+    let counts = storage.prune_earliest_state(block_10)?;
+
+    assert_eq!(counts, WriteCounts::default());
     Ok(())
 }
 
@@ -262,6 +288,10 @@ fn test_unwind_history_comprehensive<S: BaseProofsStore + BaseProofsInitialState
     assert!(storage.fetch_trie_updates(2).is_err());
     assert!(storage.fetch_trie_updates(3).is_err());
     assert_eq!(storage.get_latest_block_number()?, Some((1, block_1.block.hash)));
+    assert_account_at(&storage, 10, account_1, Account::default())?;
+    assert_storage_at(&storage, account_1, 10, slot_1, U256::from(1111))?;
+    assert_eq!(storage.account_hashed_cursor(10)?.seek(account_2)?, None);
+    assert_eq!(storage.storage_hashed_cursor(account_2, 10)?.seek(slot_2)?, None);
     Ok(())
 }
 
