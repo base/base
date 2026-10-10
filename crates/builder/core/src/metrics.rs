@@ -1,5 +1,9 @@
 //! Builder metrics collected during block and flashblock construction.
 
+use std::sync::{LazyLock, OnceLock};
+
+use base_observability_events::TransactionEventType;
+
 use crate::{ExecutionInfo, FlashblockDiagnostics, ResourceLimits};
 
 const PRIORITY_FEE_THRESHOLDS_WEI: [(&str, u64); 3] =
@@ -46,9 +50,9 @@ base_metrics::define_metrics! {
     state_transition_merge_duration: histogram,
     #[describe("Latest state merge transitions duration")]
     state_transition_merge_gauge: gauge,
-    #[describe("Histogram of the duration of payload simulation of all transactions")]
+    #[describe("Histogram of the time spent executing candidate transactions and updating the pool per flashblock")]
     payload_transaction_simulation_duration: histogram,
-    #[describe("Latest payload simulation of all transactions duration")]
+    #[describe("Latest time spent executing candidate transactions and updating the pool per flashblock")]
     payload_transaction_simulation_gauge: gauge,
     #[describe("Number of transaction considered for inclusion in the block")]
     payload_num_tx_considered: histogram,
@@ -62,10 +66,6 @@ base_metrics::define_metrics! {
     payload_num_tx: histogram,
     #[describe("Latest number of transactions in the payload")]
     payload_num_tx_gauge: gauge,
-    #[describe("Histogram of transactions in the payload that were successfully simulated")]
-    payload_num_tx_simulated: histogram,
-    #[describe("Latest number of transactions in the payload that were successfully simulated")]
-    payload_num_tx_simulated_gauge: gauge,
     #[describe("Histogram of transactions in the payload that were successfully simulated")]
     payload_num_tx_simulated_success: histogram,
     #[describe("Latest number of transactions in the payload that were successfully simulated")]
@@ -127,8 +127,6 @@ base_metrics::define_metrics! {
     block_uncompressed_size_exceeded_total: counter,
     #[describe("Cumulative uncompressed block size at end of block")]
     block_uncompressed_size: histogram,
-    #[describe("Transactions that would be rejected by execution metering limits")]
-    resource_limit_would_reject_total: counter,
     #[describe("Transactions that exceeded per-tx execution time limit")]
     tx_execution_time_exceeded_total: counter,
     #[describe("Histogram of (predicted - actual) execution time per transaction in microseconds")]
@@ -204,6 +202,43 @@ base_metrics::define_metrics! {
     builder_transaction_events_dropped: counter,
 }
 
+/// Counter handle returned by [`BuilderMetrics`] accessors.
+#[cfg(feature = "metrics")]
+pub type CounterHandle = metrics::Counter;
+/// Counter handle returned by [`BuilderMetrics`] accessors.
+#[cfg(not(feature = "metrics"))]
+pub type CounterHandle = base_metrics::NoopMetric;
+
+/// Builder event enqueue counters, resolved on first use per event type.
+///
+/// Builder events can be enqueued for each candidate, so caching the labelled handle skips a
+/// registry lookup and label allocation per event. Handles are registered only when their event
+/// type is first emitted, so no zero series are exported. A handle binds to the recorder installed
+/// when it is first used; node startup installs the Prometheus recorder before the event writer.
+#[derive(Debug)]
+pub struct BuilderEventMetrics {
+    emitted: Box<[OnceLock<CounterHandle>]>,
+}
+
+impl Default for BuilderEventMetrics {
+    fn default() -> Self {
+        Self { emitted: TransactionEventType::all().map(|_| OnceLock::new()).collect() }
+    }
+}
+
+/// Process-wide builder event counters.
+pub static BUILDER_EVENT_METRICS: LazyLock<BuilderEventMetrics> =
+    LazyLock::new(BuilderEventMetrics::default);
+
+impl BuilderEventMetrics {
+    /// Returns the `builder_transaction_events_emitted` counter for `event_type`.
+    pub fn emitted(&self, event_type: TransactionEventType) -> &CounterHandle {
+        self.emitted[event_type as usize].get_or_init(|| {
+            BuilderMetrics::builder_transaction_events_emitted(event_type.to_string())
+        })
+    }
+}
+
 impl BuilderMetrics {
     /// Records per-flashblock selection diagnostics as labeled metrics.
     pub fn record_flashblock_diagnostics(
@@ -264,19 +299,13 @@ impl BuilderMetrics {
 
     /// Records payload builder metrics.
     pub fn set_payload_builder_metrics(
-        payload_transaction_simulation_time: f64,
         num_txs_considered: f64,
-        num_txs_simulated: f64,
         num_txs_simulated_success: f64,
         num_txs_simulated_fail: f64,
         reverted_gas_used: f64,
     ) {
-        Self::payload_transaction_simulation_duration().record(payload_transaction_simulation_time);
-        Self::payload_transaction_simulation_gauge().set(payload_transaction_simulation_time);
         Self::payload_num_tx_considered().record(num_txs_considered);
         Self::payload_num_tx_considered_gauge().set(num_txs_considered);
-        Self::payload_num_tx_simulated().record(num_txs_simulated);
-        Self::payload_num_tx_simulated_gauge().set(num_txs_simulated);
         Self::payload_num_tx_simulated_success().record(num_txs_simulated_success);
         Self::payload_num_tx_simulated_success_gauge().set(num_txs_simulated_success);
         Self::payload_num_tx_simulated_fail().record(num_txs_simulated_fail);
@@ -294,6 +323,28 @@ mod tests {
     use metrics_exporter_prometheus::PrometheusBuilder;
 
     use super::*;
+
+    #[test]
+    fn builder_event_metrics_register_only_emitted_event_types() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        metrics::with_local_recorder(&recorder, || {
+            let metrics = BuilderEventMetrics::default();
+            metrics.emitted(TransactionEventType::BuilderDeferred).increment(1);
+            metrics.emitted(TransactionEventType::BuilderDeferred).increment(1);
+            metrics.emitted(TransactionEventType::BuilderFlashblockBuildStopped).increment(1);
+        });
+
+        let rendered = handle.render();
+        assert!(rendered.contains(
+            "base_builder_builder_transaction_events_emitted{event_type=\"BUILDER_DEFERRED\"} 2"
+        ));
+        assert!(rendered.contains(
+            "base_builder_builder_transaction_events_emitted{event_type=\"BUILDER_FLASHBLOCK_BUILD_STOPPED\"} 1"
+        ));
+        assert!(!rendered.contains("BUILDER_INCLUDED"));
+    }
 
     #[test]
     fn record_flashblock_diagnostics_emits_labeled_metrics() {
