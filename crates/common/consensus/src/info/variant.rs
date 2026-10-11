@@ -1081,6 +1081,59 @@ mod tests {
         RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
+    /// Runs [`L1BlockInfoTx::try_new`] with the given inputs and asserts that it produces an
+    /// Isthmus L1 info transaction matching the expected [`L1BlockInfoIsthmus`].
+    fn assert_try_new_isthmus(
+        rollup_config: &RollupConfig,
+        l1_config: &ChainConfig,
+        system_config: &SystemConfig,
+        sequence_number: u64,
+        l1_header: &Header,
+        l2_block_time: u64,
+        blob_params: BlobParams,
+    ) {
+        let l1_info = L1BlockInfoTx::try_new(
+            rollup_config,
+            l1_config,
+            system_config,
+            sequence_number,
+            l1_header,
+            l2_block_time.saturating_sub(2),
+            l2_block_time,
+        )
+        .unwrap();
+
+        assert!(matches!(l1_info, L1BlockInfoTx::Isthmus(_)));
+
+        let scalar = system_config.scalar.to_be_bytes::<32>();
+        let blob_base_fee_scalar = if scalar[0] == L1BlockInfoIsthmus::L1_SCALAR {
+            u32::from_be_bytes(
+                scalar[24..28].try_into().expect("Failed to parse L1 blob base fee scalar"),
+            )
+        } else {
+            Default::default()
+        };
+        let base_fee_scalar =
+            u32::from_be_bytes(scalar[28..32].try_into().expect("Failed to parse base fee scalar"));
+
+        assert_eq!(
+            l1_info,
+            L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new(
+                l1_header.number,
+                l1_header.timestamp,
+                l1_header.base_fee_per_gas.unwrap_or(0),
+                l1_header.hash_slow(),
+                sequence_number,
+                system_config.batcher_address,
+                l1_header.blob_fee(blob_params).unwrap_or(1),
+                blob_base_fee_scalar,
+                base_fee_scalar,
+                system_config.operator_fee_scalar.unwrap_or_default(),
+                system_config.operator_fee_constant.unwrap_or_default(),
+            ))
+        );
+    }
+
     #[test]
     fn test_try_new_isthmus_before_pectra_blob_schedule() {
         let rollup_config = RollupConfig {
@@ -1109,49 +1162,16 @@ mod tests {
         };
         let l2_block_time = 0xFFu64;
 
-        let l1_info = L1BlockInfoTx::try_new(
+        // Expect cancun blob schedule to be used, since pectra blob schedule is scheduled
+        // but not active yet.
+        assert_try_new_isthmus(
             &rollup_config,
             &l1_config,
             &system_config,
             sequence_number,
             &l1_header,
-            l2_block_time.saturating_sub(2),
             l2_block_time,
-        )
-        .unwrap();
-
-        assert!(matches!(l1_info, L1BlockInfoTx::Isthmus(_)));
-
-        let scalar = system_config.scalar.to_be_bytes::<32>();
-        let blob_base_fee_scalar = if scalar[0] == L1BlockInfoIsthmus::L1_SCALAR {
-            {
-                u32::from_be_bytes(
-                    scalar[24..28].try_into().expect("Failed to parse L1 blob base fee scalar"),
-                )
-            }
-        } else {
-            Default::default()
-        };
-        let base_fee_scalar =
-            u32::from_be_bytes(scalar[28..32].try_into().expect("Failed to parse base fee scalar"));
-
-        assert_eq!(
-            l1_info,
-            L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new(
-                l1_header.number,
-                l1_header.timestamp,
-                l1_header.base_fee_per_gas.unwrap_or(0),
-                l1_header.hash_slow(),
-                sequence_number,
-                system_config.batcher_address,
-                // Expect cancun blob schedule to be used, since pectra blob schedule is scheduled
-                // but not active yet.
-                l1_header.blob_fee(BlobParams::cancun()).unwrap_or(1),
-                blob_base_fee_scalar,
-                base_fee_scalar,
-                system_config.operator_fee_scalar.unwrap_or_default(),
-                system_config.operator_fee_constant.unwrap_or_default(),
-            ))
+            BlobParams::cancun(),
         );
     }
 
@@ -1177,47 +1197,14 @@ mod tests {
         };
         let l2_block_time = 0xFFu64;
 
-        let l1_info = L1BlockInfoTx::try_new(
+        assert_try_new_isthmus(
             &rollup_config,
             &l1_config,
             &system_config,
             sequence_number,
             &l1_header,
-            l2_block_time.saturating_sub(2),
             l2_block_time,
-        )
-        .unwrap();
-
-        assert!(matches!(l1_info, L1BlockInfoTx::Isthmus(_)));
-
-        let scalar = system_config.scalar.to_be_bytes::<32>();
-        let blob_base_fee_scalar = if scalar[0] == L1BlockInfoIsthmus::L1_SCALAR {
-            {
-                u32::from_be_bytes(
-                    scalar[24..28].try_into().expect("Failed to parse L1 blob base fee scalar"),
-                )
-            }
-        } else {
-            Default::default()
-        };
-        let base_fee_scalar =
-            u32::from_be_bytes(scalar[28..32].try_into().expect("Failed to parse base fee scalar"));
-
-        assert_eq!(
-            l1_info,
-            L1BlockInfoTx::Isthmus(L1BlockInfoIsthmus::new(
-                l1_header.number,
-                l1_header.timestamp,
-                l1_header.base_fee_per_gas.unwrap_or(0),
-                l1_header.hash_slow(),
-                sequence_number,
-                system_config.batcher_address,
-                l1_header.blob_fee(BlobParams::prague()).unwrap_or(1),
-                blob_base_fee_scalar,
-                base_fee_scalar,
-                system_config.operator_fee_scalar.unwrap_or_default(),
-                system_config.operator_fee_constant.unwrap_or_default(),
-            ))
+            BlobParams::prague(),
         );
     }
 
