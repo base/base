@@ -63,6 +63,7 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 
 # misc
 eyre.workspace = true
+rstest.workspace = true
 
 [features]
 default = [ "metrics" ]

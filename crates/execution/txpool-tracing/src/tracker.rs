@@ -523,24 +523,67 @@ mod tests {
     use base_flashblocks::FlashblocksAPI;
     use base_flashblocks_node::test_harness::{FlashblockBuilder, FlashblocksBuilderTestHarness};
     use base_test_utils::Account;
+    use rstest::rstest;
     use tokio::time;
 
     use super::*;
 
-    #[test]
-    fn test_transaction_inserted_pending() {
+    enum Action {
+        Insert(TxEvent),
+        MoveTo(Pool),
+    }
+
+    #[rstest]
+    #[case::inserted_pending(
+        &[(Action::Insert(TxEvent::Pending), true)],
+        &[TxEvent::Pending]
+    )]
+    #[case::inserted_queued(
+        &[(Action::Insert(TxEvent::Queued), false)],
+        &[TxEvent::Queued]
+    )]
+    #[case::duplicate_insert_ignored(
+        &[(Action::Insert(TxEvent::Pending), true), (Action::Insert(TxEvent::Queued), true)],
+        &[TxEvent::Pending]
+    )]
+    #[case::moved_queued_to_pending(
+        &[
+            (Action::Insert(TxEvent::Queued), false),
+            (Action::MoveTo(Pool::Queued), false),
+            (Action::MoveTo(Pool::Pending), true),
+        ],
+        &[TxEvent::Queued, TxEvent::QueuedToPending]
+    )]
+    fn records_transaction_event_log(
+        #[case] steps: &[(Action, bool)],
+        #[case] expected_events: &[TxEvent],
+    ) {
         let mut tracker = Tracker::new(false);
         let tx_hash = TxHash::random();
 
-        // Insert a pending transaction
-        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
-        assert_eq!(tracker.txs.len(), 1);
+        for (action, expect_pending_time) in steps {
+            match action {
+                Action::Insert(event) => {
+                    let mempool_time = tracker.txs.peek(&tx_hash).map(|log| log.mempool_time);
+                    tracker.transaction_inserted(tx_hash, *event);
+                    if let Some(mempool_time) = mempool_time {
+                        let event_log = tracker.txs.peek(&tx_hash).expect("tx should exist");
+                        assert_eq!(event_log.mempool_time, mempool_time);
+                    }
+                }
+                Action::MoveTo(pool) => tracker.transaction_moved(tx_hash, pool.clone()),
+            }
 
-        let event_log = tracker.txs.get(&tx_hash).expect("tx should exist");
-        assert_eq!(event_log.events.len(), 1);
-        assert_eq!(event_log.events[0].1, TxEvent::Pending);
-        // Pending transactions should have pending_time set
-        assert!(event_log.pending_time.is_some());
+            assert_eq!(
+                tracker.txs.peek(&tx_hash).expect("tx should exist").pending_time.is_some(),
+                *expect_pending_time,
+            );
+        }
+
+        assert_eq!(tracker.txs.len(), 1);
+        let event_log = tracker.txs.peek(&tx_hash).expect("tx should exist");
+        let events: Vec<TxEvent> = event_log.events.iter().map(|(_, event)| *event).collect();
+        assert_eq!(events, expected_events);
     }
 
     #[test]
@@ -562,65 +605,6 @@ mod tests {
             transaction_event_type(TxEvent::Overflowed),
             Some(TransactionEventType::Overflowed)
         );
-    }
-
-    #[test]
-    fn test_transaction_inserted_queued() {
-        let mut tracker = Tracker::new(false);
-        let tx_hash = TxHash::random();
-
-        // Insert a queued transaction
-        tracker.transaction_inserted(tx_hash, TxEvent::Queued);
-        assert_eq!(tracker.txs.len(), 1);
-
-        let event_log = tracker.txs.get(&tx_hash).expect("tx should exist");
-        assert_eq!(event_log.events.len(), 1);
-        assert_eq!(event_log.events[0].1, TxEvent::Queued);
-        // Queued transactions should not have pending_time set yet
-        assert!(event_log.pending_time.is_none());
-    }
-
-    #[test]
-    fn test_transaction_inserted_duplicate_ignored() {
-        let mut tracker = Tracker::new(false);
-        let tx_hash = TxHash::random();
-
-        // Insert same transaction twice
-        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
-        let first_mempool_time = tracker.txs.get(&tx_hash).unwrap().mempool_time;
-
-        // Second insert should be ignored
-        tracker.transaction_inserted(tx_hash, TxEvent::Queued);
-        assert_eq!(tracker.txs.len(), 1);
-
-        let event_log = tracker.txs.get(&tx_hash).unwrap();
-        // Should still have only 1 event (the first one)
-        assert_eq!(event_log.events.len(), 1);
-        assert_eq!(event_log.events[0].1, TxEvent::Pending);
-        // mempool_time should not have changed
-        assert_eq!(event_log.mempool_time, first_mempool_time);
-    }
-
-    #[test]
-    fn test_transaction_moved_queued_to_pending() {
-        let mut tracker = Tracker::new(false);
-        let tx_hash = TxHash::random();
-
-        // Start with queued transaction
-        tracker.transaction_inserted(tx_hash, TxEvent::Queued);
-        tracker.transaction_moved(tx_hash, Pool::Queued);
-
-        // Verify no pending_time initially
-        assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_none());
-
-        // Move to pending
-        tracker.transaction_moved(tx_hash, Pool::Pending);
-
-        // Verify event was logged and pending_time was set
-        let event_log = tracker.txs.get(&tx_hash).expect("tx should exist");
-        assert_eq!(event_log.events.len(), 2);
-        assert_eq!(event_log.events[1].1, TxEvent::QueuedToPending);
-        assert!(event_log.pending_time.is_some());
     }
 
     #[test]
