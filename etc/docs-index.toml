@@ -300,7 +300,7 @@ digest = "de5aceb5e6"
 
 ["crates/consensus/rpc/README.md"]
 summary = "jsonrpsee trait definitions for the rollup node RPC, chiefly optimism_syncStatus, with a security note that the endpoint is internal-only. Use when implementing or calling consensus RPC."
-digest = "969c4d6125"
+digest = "d382650c29"
 
 ["crates/consensus/safedb/README.md"]
 summary = "redb-backed persistent safe head tracking (SafeDB, SafeHeadListener, SafeDBReader) serving optimism_safeHeadAtL1; not multi-process safe. Use when working on safe head history."
