@@ -5,12 +5,18 @@ use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_common_consensus::BaseBlock;
 use base_common_precompiles::{B20FactoryStorage, B20Variant, IB20Factory};
+use rstest::{fixture, rstest};
 
 use crate::env::BerylTestEnv;
 
+#[fixture]
+fn env() -> BerylTestEnv {
+    BerylTestEnv::new()
+}
+
+#[rstest]
 #[tokio::test]
-async fn beryl_enables_b20_factory_precompile() {
-    let mut env = BerylTestEnv::new();
+async fn beryl_enables_b20_factory_precompile(mut env: BerylTestEnv) {
     let token = env.b20_token_address();
 
     let pre_beryl_create = env.create_b20_token_tx();
@@ -56,9 +62,9 @@ async fn beryl_enables_b20_factory_precompile() {
         .await;
 }
 
+#[rstest]
 #[tokio::test]
-async fn duplicate_b20_creation_reverts() {
-    let mut env = BerylTestEnv::new();
+async fn duplicate_b20_creation_reverts(mut env: BerylTestEnv) {
     let token = env.b20_token_address();
 
     let block1 = env.sequencer.build_empty_block().await;
@@ -88,10 +94,9 @@ async fn duplicate_b20_creation_reverts() {
     env.derive_blocks([(block1, 1), (activation_block, 2), (block2, 3), (block3, 4)], 4).await;
 }
 
+#[rstest]
 #[tokio::test]
-async fn b20_creation_reverts_while_variant_feature_is_deactivated() {
-    let mut env = BerylTestEnv::new();
-
+async fn b20_creation_reverts_while_variant_feature_is_deactivated(mut env: BerylTestEnv) {
     let block1 = env.sequencer.build_empty_block().await;
     let activation_block = B20FactoryPrecompiles::activate(&mut env).await;
 
@@ -138,9 +143,9 @@ async fn b20_creation_reverts_while_variant_feature_is_deactivated() {
     .await;
 }
 
+#[rstest]
 #[tokio::test]
-async fn b20_factory_views_and_events_are_available_after_beryl_activation() {
-    let mut env = BerylTestEnv::new();
+async fn b20_factory_views_and_events_are_available_after_beryl_activation(mut env: BerylTestEnv) {
     let token = env.b20_token_address();
 
     let block1 = env.sequencer.build_empty_block().await;
@@ -255,10 +260,9 @@ async fn b20_factory_views_and_events_are_available_after_beryl_activation() {
     .await;
 }
 
+#[rstest]
 #[tokio::test]
-async fn b20_factory_rejects_invalid_creation_parameters() {
-    let mut env = BerylTestEnv::new();
-
+async fn b20_factory_rejects_invalid_creation_parameters(mut env: BerylTestEnv) {
     let block1 = env.sequencer.build_empty_block().await;
     let activate_asset = env.activate_feature_tx(BerylTestEnv::b20_asset_feature());
     let activate_stablecoin = env.activate_feature_tx(BerylTestEnv::b20_stablecoin_feature());
