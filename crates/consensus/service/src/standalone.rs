@@ -1,19 +1,22 @@
 //! L1-free sequencing components for extending an existing L2 snapshot.
 
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
-use alloy_eips::{BlockNumHash, eip2718::Encodable2718};
+use alloy_eips::{BlockNumHash, BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256};
 use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
 use base_common_consensus::{Predeploys, TxDeposit};
-use base_common_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_derive::{
     AttributesBuilder, BuilderError, PipelineError, PipelineErrorKind, PipelineResult, Signal,
 };
 use base_consensus_engine::{Engine, EngineClient, EngineState};
-use base_protocol::{BaseTimeUpdateTx, BlockInfo, L1BlockInfoTx, L2BlockInfo};
+use base_protocol::{BaseTimeUpdateTx, BlockInfo, L1BlockInfoTx, L2BlockInfo, L2BlockMetadata};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -150,6 +153,79 @@ impl AttributesBuilder for StandaloneAttributesBuilder {
     }
 }
 
+/// Rollup schedule and gas parameters for extending a snapshot head at the Denim cadence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandaloneDenimSchedule {
+    /// Rollup configuration whose Denim schedule covers every descendant of the head.
+    pub rollup_config: RollupConfig,
+    /// Gas and fee parameters for the head's descendants.
+    pub system_config: SystemConfig,
+}
+
+impl StandaloneDenimSchedule {
+    /// Activates Denim at the first legacy slot after a pre-Denim head, or keeps the configured
+    /// schedule when Denim is already active at the head.
+    ///
+    /// Activation divides the head's gas limit and multiplies its EIP-1559 denominator by
+    /// [`RollupConfig::DENIM_GAS_PARAMETER_SCALING_FACTOR`], as derivation does for the first
+    /// Denim block. A Denim head keeps its parameters, so a restart never rescales them. The
+    /// execution layer must activate Denim at the same timestamp.
+    pub fn new(
+        mut rollup_config: RollupConfig,
+        head: &L2BlockMetadata,
+    ) -> Result<Self, StandaloneScheduleError> {
+        let head_info = head.l2_block_info.block_info;
+        let expected = rollup_config.l2_block_timestamp(head_info.number);
+        if head_info.timestamp != expected {
+            return Err(StandaloneScheduleError::HeadTimestamp {
+                expected,
+                actual: head_info.timestamp,
+            });
+        }
+        let mut system_config = head.system_config;
+        if rollup_config.is_denim_active(head_info.timestamp) {
+            return Ok(Self { rollup_config, system_config });
+        }
+        if let Some(upgrade) = BaseUpgrade::CONTRACT_VARIANTS
+            .into_iter()
+            .take_while(|upgrade| *upgrade != BaseUpgrade::Denim)
+            .find(|upgrade| {
+                rollup_config
+                    .upgrade_activation_timestamp(*upgrade)
+                    .is_some_and(|activation| activation > head_info.timestamp)
+            })
+        {
+            return Err(StandaloneScheduleError::PendingUpgrade(upgrade));
+        }
+
+        rollup_config.set_upgrade_activation_timestamp(
+            BaseUpgrade::Denim,
+            head_info.timestamp + rollup_config.block_time,
+        );
+        system_config.gas_limit /= u64::from(RollupConfig::DENIM_GAS_PARAMETER_SCALING_FACTOR);
+        system_config.eip1559_denominator = system_config.eip1559_denominator.map(|denominator| {
+            denominator.saturating_mul(RollupConfig::DENIM_GAS_PARAMETER_SCALING_FACTOR)
+        });
+        Ok(Self { rollup_config, system_config })
+    }
+}
+
+/// Error choosing a Denim schedule for a snapshot head.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum StandaloneScheduleError {
+    /// The head's timestamp is not on the configured block schedule.
+    #[error("snapshot head timestamp {actual} does not match scheduled timestamp {expected}")]
+    HeadTimestamp {
+        /// Timestamp the rollup schedule assigns to the head.
+        expected: u64,
+        /// Timestamp in the head header.
+        actual: u64,
+    },
+    /// An upgrade ordered before Denim activates after the head.
+    #[error("{0} activates after the snapshot head, so Denim cannot activate first")]
+    PendingUpgrade(BaseUpgrade),
+}
+
 /// Selects the snapshot's captured L1 origin for every standalone L2 block.
 #[derive(Debug, Clone, Copy)]
 pub struct StandaloneOriginSelector {
@@ -238,6 +314,12 @@ pub struct StandaloneSequencerNode<E: EngineClient> {
     pub attributes_builder: StandaloneAttributesBuilder,
     /// The fixed-origin selector seeded from the snapshot boundary.
     pub origin_selector: StandaloneOriginSelector,
+    /// Paces blocks from the head at startup instead of absolute chain time.
+    ///
+    /// Block timestamps still follow the rollup schedule; only local deadlines shift by the
+    /// head's age. The first descendant is due one block interval after startup, and a restart
+    /// resumes from the current head without producing blocks for the downtime.
+    pub pace_from_head: bool,
 }
 
 impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
@@ -259,6 +341,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             origin_selector: StandaloneOriginSelector::new(l1_info),
             rollup_config,
             engine_client,
+            pace_from_head: false,
         }
     }
 
@@ -272,6 +355,21 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
         &self,
         cancellation: CancellationToken,
     ) -> Result<(), String> {
+        let schedule_delay = if self.pace_from_head {
+            let head = self
+                .engine_client
+                .l2_block_info_by_label(BlockNumberOrTag::Latest)
+                .await
+                .map_err(|error| format!("failed to read standalone head: {error}"))?
+                .ok_or("standalone execution node has no head")?;
+            let head_time = UNIX_EPOCH
+                + Duration::from_millis(
+                    self.rollup_config.l2_block_timestamp_millis(head.block_info.number),
+                );
+            SystemTime::now().duration_since(head_time).unwrap_or_default()
+        } else {
+            Duration::ZERO
+        };
         let (engine_actor_request_tx, engine_actor_request_rx) = mpsc::channel(1024);
         let (unsafe_head_tx, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
         let (engine_state_tx, engine_state_rx) = watch::channel(EngineState::default());
@@ -321,6 +419,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             sealer: None,
             pending_stop: None,
             seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
+            schedule_delay,
         };
 
         crate::service::spawn_and_wait!(
@@ -335,15 +434,19 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
 mod tests {
     use alloy_consensus::Transaction as _;
     use alloy_eips::{BlockNumHash, eip2718::Decodable2718};
-    use alloy_primitives::{Address, B256, U256};
+    use alloy_primitives::{Address, B64, B256, U256};
     use base_common_consensus::BaseTxEnvelope;
-    use base_common_genesis::{RollupConfig, SystemConfig};
+    use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
     use base_consensus_derive::AttributesBuilder;
     use base_protocol::{
         BaseTimeUpdateTx, BlockInfo, L1BlockInfoBedrock, L1BlockInfoTx, L2BlockInfo,
+        L2BlockMetadata,
     };
 
-    use super::{StandaloneAttributesBuilder, StandaloneOriginSelector, StandalonePrefund};
+    use super::{
+        StandaloneAttributesBuilder, StandaloneDenimSchedule, StandaloneOriginSelector,
+        StandalonePrefund, StandaloneScheduleError,
+    };
     use crate::OriginSelector;
 
     fn snapshot_boundary() -> (L1BlockInfoTx, L2BlockInfo) {
@@ -490,5 +593,83 @@ mod tests {
 
         assert_eq!(origin.id(), l1_info.id());
         assert_eq!(origin.timestamp, 10_000);
+    }
+
+    #[tokio::test]
+    async fn denim_schedule_activates_and_scales_once_after_pre_denim_head() {
+        let (l1_info, parent) = snapshot_boundary();
+        let head = L2BlockMetadata {
+            l2_block_info: parent,
+            l1_info,
+            system_config: SystemConfig {
+                gas_limit: 150_000_000,
+                eip1559_denominator: Some(250),
+                eip1559_elasticity: Some(6),
+                min_base_fee: Some(1_000),
+                ..Default::default()
+            },
+        };
+
+        let mut rollup = anchored_rollup(parent, 2_002);
+        rollup.set_upgrade_activation_timestamp(BaseUpgrade::Holocene, 0);
+
+        let schedule = StandaloneDenimSchedule::new(rollup, &head).unwrap();
+
+        let rollup = &schedule.rollup_config;
+        assert_eq!(rollup.upgrade_activation_timestamp(BaseUpgrade::Denim), Some(2_002));
+        assert_eq!(rollup.l2_block_timestamp_parts(201), (2_002, 0));
+        assert_eq!(rollup.l2_block_timestamp_parts(202), (2_002, 200));
+        assert_eq!(rollup.l2_block_timestamp_parts(206), (2_003, 0));
+        let expected = SystemConfig {
+            gas_limit: 15_000_000,
+            eip1559_denominator: Some(2_500),
+            ..head.system_config
+        };
+        assert_eq!(schedule.system_config, expected);
+        let mut builder = StandaloneAttributesBuilder::new(
+            std::sync::Arc::new(rollup.clone()),
+            l1_info,
+            schedule.system_config,
+            None,
+        );
+        let first = builder.prepare_payload_attributes(parent, l1_info.id()).await.unwrap();
+        assert_eq!(first.gas_limit, Some(15_000_000));
+        assert_eq!(first.eip_1559_params, Some(B64::from(0x0000_09c4_0000_0006_u64)));
+
+        let restarted_head = L2BlockMetadata {
+            l2_block_info: L2BlockInfo {
+                block_info: BlockInfo { number: 206, timestamp: 2_003, ..parent.block_info },
+                ..parent
+            },
+            l1_info,
+            system_config: schedule.system_config,
+        };
+        assert_eq!(
+            StandaloneDenimSchedule::new(schedule.rollup_config.clone(), &restarted_head),
+            Ok(schedule)
+        );
+    }
+
+    #[test]
+    fn denim_schedule_rejects_off_schedule_head_and_pending_upgrade() {
+        let (l1_info, parent) = snapshot_boundary();
+        let mut head = L2BlockMetadata {
+            l2_block_info: parent,
+            l1_info,
+            system_config: SystemConfig::default(),
+        };
+        let mut rollup = anchored_rollup(parent, 2_002);
+        rollup.set_upgrade_activation_timestamp(BaseUpgrade::Cobalt, 2_100);
+
+        assert_eq!(
+            StandaloneDenimSchedule::new(rollup.clone(), &head),
+            Err(StandaloneScheduleError::PendingUpgrade(BaseUpgrade::Cobalt))
+        );
+
+        head.l2_block_info.block_info.timestamp += 1;
+        assert_eq!(
+            StandaloneDenimSchedule::new(rollup, &head),
+            Err(StandaloneScheduleError::HeadTimestamp { expected: 2_000, actual: 2_001 })
+        );
     }
 }
