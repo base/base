@@ -129,15 +129,15 @@ dev = [
 ]
 
 serde = [
+	"alloy-consensus/serde",
 	"alloy-eips/serde",
 	"base-common-chains/serde",
 	"base-common-consensus/serde",
 	"base-execution-chainspec/serde",
-	"reth-network/serde",
-	"secp256k1/serde",
-	"url/serde",
-	"alloy-consensus/serde",
 	"blake3/serde",
 	"reth-ethereum-forks/serde",
-	"reth-stages-types/serde"
+	"reth-network/serde",
+	"reth-stages-types/serde",
+	"secp256k1/serde",
+	"url/serde",
 ]
