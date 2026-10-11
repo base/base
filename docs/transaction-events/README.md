@@ -264,8 +264,10 @@ predicates pass but which is then skipped (block limits, resource metering,
 coinbase tip, nonce or EVM validation) gets `BUILDER_REJECTED`. A transaction
 that overflows a flashblock's cumulative gas, DA, or size budget is rejected
 again on every later flashblock, but the flashblocks builder emits
-`BUILDER_REJECTED` only the first time it rejects a transaction for a given
-`rejection_reason` in a block build and again when the reason changes; its
+`BUILDER_REJECTED` once for each new reason in a block build: the first time it
+rejects a transaction for a given `rejection_reason`, and again only when a
+different reason appears. A repeated rejection for a reason already seen for
+that transaction in the block build is suppressed. Its
 `flashblock_index` and `ordering_position` are those of that rejection. A parked
 transaction is parked again on every later flashblock and after every
 promote-and-repark, but both builders emit `BUILDER_DEFERRED` only the first

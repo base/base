@@ -21,7 +21,7 @@ use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics, CoinbaseTipAffordability,
-    ValidityMetrics, error::BasePayloadBuilderError,
+    RejectionReason, ValidityMetrics, error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, PredicateContext, TimestampedTransaction,
@@ -928,17 +928,17 @@ impl BasePayloadBuilderCtx {
             if predicate_read_failed || blocking_predicate.is_some() {
                 let (reason, detail) = if predicate_read_failed {
                     (
-                        "validity_predicate_read_failed",
+                        RejectionReason::VALIDITY_PREDICATE_READ_FAILED,
                         "failed to read state required by a validity predicate",
                     )
                 } else if predicate_expired {
                     (
-                        "validity_predicate_expired",
+                        RejectionReason::VALIDITY_PREDICATE_EXPIRED,
                         "a validity predicate can no longer be satisfied at or after the current build position",
                     )
                 } else {
                     (
-                        "validity_predicate_not_satisfied",
+                        RejectionReason::VALIDITY_PREDICATE_NOT_SATISFIED,
                         "a validity predicate is not satisfied by the current build state",
                     )
                 };
@@ -1013,7 +1013,7 @@ impl BasePayloadBuilderCtx {
                         payload_id: &payload_id,
                         info,
                         limits,
-                        reason: "manifest_precheck_stale",
+                        reason: RejectionReason::MANIFEST_PRECHECK_STALE,
                         detail: stale.cause(),
                     },
                     &tx,
@@ -1047,7 +1047,7 @@ impl BasePayloadBuilderCtx {
                                 payload_id: &payload_id,
                                 info,
                                 limits,
-                                reason: "unschedulable_payer_authenticator",
+                                reason: RejectionReason::UNSCHEDULABLE_PAYER_AUTHENTICATOR,
                                 detail: "EIP-8130 payer authenticator cannot be scheduled against the gas budget",
                             },
                             &tx,
@@ -1073,7 +1073,7 @@ impl BasePayloadBuilderCtx {
                         payload_id: &payload_id,
                         info,
                         limits,
-                        reason: "unaffordable_coinbase_tip",
+                        reason: RejectionReason::UNAFFORDABLE_COINBASE_TIP,
                         detail: "sender and gas payer cannot cover worst-case gas plus the declared coinbase tip",
                     },
                     &tx,

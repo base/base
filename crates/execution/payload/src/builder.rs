@@ -57,9 +57,9 @@ use crate::{
     Attributes, BasePayloadBuilderAttributes, BlockDeferrals, BuilderMetrics,
     CoinbaseTipAffordability, InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
     ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
-    PredicateReadRecorder, RejectionCacheMetrics, StateChangeEffects, ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    PredicateReadRecorder, RejectionCacheMetrics, RejectionReason, StateChangeEffects,
+    ValidityMetrics, ValidityPredicateEvaluation, config::BaseBuilderConfig,
+    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -970,7 +970,8 @@ where
                     tx_hash,
                     validity_consideration_index,
                     {
-                        "rejection_reason" => "unsupported_flashblock_index_predicate",
+                        "rejection_reason" =>
+                            RejectionReason::UNSUPPORTED_FLASHBLOCK_INDEX_PREDICATE,
                         "rejection_detail" =>
                             "flashblock-index predicates are unsupported by the native builder",
                         "permanent" => true,
@@ -1101,7 +1102,7 @@ where
                             tx_hash,
                             validity_consideration_index,
                             {
-                                "rejection_reason" => "validity_predicate_read_failed",
+                                "rejection_reason" => RejectionReason::VALIDITY_PREDICATE_READ_FAILED,
                                 "rejection_detail" => "failed to read state required by a validity predicate",
                                 "permanent" => false,
                             }
@@ -1138,7 +1139,7 @@ where
                     self.emit_validity_rejection(
                         tx_hash,
                         validity_consideration_index,
-                        "manifest_precheck_stale",
+                        RejectionReason::MANIFEST_PRECHECK_STALE,
                         stale.cause(),
                         false,
                     );
@@ -1167,7 +1168,7 @@ where
                             self.emit_validity_rejection(
                                 tx_hash,
                                 validity_consideration_index,
-                                "unschedulable_payer_authenticator",
+                                RejectionReason::UNSCHEDULABLE_PAYER_AUTHENTICATOR,
                                 "EIP-8130 payer authenticator cannot be scheduled against the gas budget",
                                 false,
                             );
@@ -1198,7 +1199,7 @@ where
                     self.emit_validity_rejection(
                         tx_hash,
                         validity_consideration_index,
-                        "unaffordable_coinbase_tip",
+                        RejectionReason::UNAFFORDABLE_COINBASE_TIP,
                         "sender and gas payer cannot cover worst-case gas plus the declared coinbase tip",
                         false,
                     );
@@ -1226,7 +1227,7 @@ where
                     self.emit_validity_rejection(
                         tx_hash,
                         validity_consideration_index,
-                        "resource_metering_excluded",
+                        RejectionReason::RESOURCE_METERING_EXCLUDED,
                         "simulated resource usage exceeds the resource metering budget",
                         admission.is_permanent(),
                     );
@@ -1261,7 +1262,7 @@ where
                     self.emit_validity_rejection(
                         tx_hash,
                         validity_consideration_index,
-                        "block_limits_exceeded",
+                        RejectionReason::BLOCK_LIMITS_EXCEEDED,
                         "transaction does not fit the remaining block gas or DA budget",
                         false,
                     );
@@ -1276,7 +1277,7 @@ where
                     self.emit_validity_rejection(
                         tx_hash,
                         validity_consideration_index,
-                        "sequencer_transaction",
+                        RejectionReason::SEQUENCER_TRANSACTION,
                         "blob and deposit transactions are not built from the pool",
                         true,
                     );
@@ -1332,7 +1333,7 @@ where
                         self.emit_validity_rejection(
                             tx_hash,
                             validity_consideration_index,
-                            "resource_metering_excluded",
+                            RejectionReason::RESOURCE_METERING_EXCLUDED,
                             "executed resource usage exceeds the resource metering budget",
                             executed_decision
                                 .as_ref()
@@ -1352,7 +1353,7 @@ where
                             self.emit_validity_rejection(
                                 tx_hash,
                                 validity_consideration_index,
-                                "nonce_too_low",
+                                RejectionReason::NONCE_TOO_LOW,
                                 "transaction nonce is below the sender's current nonce",
                                 true,
                             );
@@ -1364,7 +1365,7 @@ where
                             self.emit_validity_rejection(
                                 tx_hash,
                                 validity_consideration_index,
-                                "invalid_transaction",
+                                RejectionReason::INVALID_TRANSACTION,
                                 "transaction failed EVM validation",
                                 false,
                             );

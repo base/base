@@ -20,6 +20,94 @@ impl BlockDeferrals {
     }
 }
 
+/// The `rejection_reason` codes a builder journals in `BUILDER_REJECTED`, and the registry for
+/// per-block rejection dedupe.
+///
+/// [`BlockRejections`] suppresses a code only when it is in [`RejectionReason::ALL`], and both
+/// builders emit these constants instead of string literals, so a new reason cannot reach the
+/// journal without being registered for dedupe. Besides every code either builder emits, the
+/// registry keeps three codes that share the vocabulary but currently route to another event
+/// (`BUILDER_DEFERRED` or `BUILDER_EXPIRED`) or to no event at all.
+#[derive(Debug)]
+pub struct RejectionReason;
+
+impl RejectionReason {
+    /// A validity predicate's state read failed.
+    pub const VALIDITY_PREDICATE_READ_FAILED: &'static str = "validity_predicate_read_failed";
+    /// A validity predicate can no longer be satisfied at or after the current build position.
+    pub const VALIDITY_PREDICATE_EXPIRED: &'static str = "validity_predicate_expired";
+    /// A validity predicate is not satisfied by the current build state.
+    pub const VALIDITY_PREDICATE_NOT_SATISFIED: &'static str = "validity_predicate_not_satisfied";
+    /// An EIP-8130 authorization manifest was stale at the build position.
+    pub const MANIFEST_PRECHECK_STALE: &'static str = "manifest_precheck_stale";
+    /// An EIP-8130 payer authenticator cannot be scheduled against the gas budget.
+    pub const UNSCHEDULABLE_PAYER_AUTHENTICATOR: &'static str = "unschedulable_payer_authenticator";
+    /// The sender and gas payer cannot cover worst-case gas plus the declared coinbase tip.
+    pub const UNAFFORDABLE_COINBASE_TIP: &'static str = "unaffordable_coinbase_tip";
+    /// The transaction's DA size exceeds the per-transaction limit.
+    pub const TX_DA_SIZE_EXCEEDED: &'static str = "tx_da_size_exceeded";
+    /// The block's DA size limit was exceeded.
+    pub const BLOCK_DA_SIZE_EXCEEDED: &'static str = "block_da_size_exceeded";
+    /// The block's DA footprint limit was exceeded.
+    pub const DA_FOOTPRINT_LIMIT_EXCEEDED: &'static str = "da_footprint_limit_exceeded";
+    /// The transaction's gas limit exceeds the remaining block gas.
+    pub const TRANSACTION_GAS_LIMIT_EXCEEDED: &'static str = "transaction_gas_limit_exceeded";
+    /// The block's uncompressed size limit was exceeded.
+    pub const BLOCK_UNCOMPRESSED_SIZE_EXCEEDED: &'static str = "block_uncompressed_size_exceeded";
+    /// The transaction's predicted execution time exceeded its per-transaction limit.
+    pub const TX_EXECUTION_TIME_EXCEEDED: &'static str = "tx_execution_time_exceeded";
+    /// The transaction is a sequencer transaction that cannot be scheduled.
+    pub const SEQUENCER_TRANSACTION: &'static str = "sequencer_transaction";
+    /// The transaction nonce is below the account nonce.
+    pub const NONCE_TOO_LOW: &'static str = "nonce_too_low";
+    /// The builder hit an internal error handling the transaction.
+    pub const INTERNAL_ERROR: &'static str = "internal_error";
+    /// The transaction failed EVM validation in the flashblocks builder.
+    pub const EVM_ERROR: &'static str = "evm_error";
+    /// The transaction would exceed the block's maximum gas usage.
+    pub const MAX_GAS_USAGE_EXCEEDED: &'static str = "max_gas_usage_exceeded";
+    /// Resource metering data for the transaction has not arrived yet.
+    pub const METERING_DATA_PENDING: &'static str = "metering_data_pending";
+    /// The native builder does not support flashblock-index predicates.
+    pub const UNSUPPORTED_FLASHBLOCK_INDEX_PREDICATE: &'static str =
+        "unsupported_flashblock_index_predicate";
+    /// The transaction's simulated or executed resource usage exceeds the metering budget.
+    pub const RESOURCE_METERING_EXCLUDED: &'static str = "resource_metering_excluded";
+    /// The transaction does not fit the remaining block gas or DA budget.
+    pub const BLOCK_LIMITS_EXCEEDED: &'static str = "block_limits_exceeded";
+    /// The transaction failed EVM validation in the native builder.
+    pub const INVALID_TRANSACTION: &'static str = "invalid_transaction";
+
+    /// Every registered code, indexed by the bit it owns in a block's rejection set.
+    pub const ALL: [&'static str; 22] = [
+        Self::VALIDITY_PREDICATE_READ_FAILED,
+        Self::VALIDITY_PREDICATE_EXPIRED,
+        Self::VALIDITY_PREDICATE_NOT_SATISFIED,
+        Self::MANIFEST_PRECHECK_STALE,
+        Self::UNSCHEDULABLE_PAYER_AUTHENTICATOR,
+        Self::UNAFFORDABLE_COINBASE_TIP,
+        Self::TX_DA_SIZE_EXCEEDED,
+        Self::BLOCK_DA_SIZE_EXCEEDED,
+        Self::DA_FOOTPRINT_LIMIT_EXCEEDED,
+        Self::TRANSACTION_GAS_LIMIT_EXCEEDED,
+        Self::BLOCK_UNCOMPRESSED_SIZE_EXCEEDED,
+        Self::TX_EXECUTION_TIME_EXCEEDED,
+        Self::SEQUENCER_TRANSACTION,
+        Self::NONCE_TOO_LOW,
+        Self::INTERNAL_ERROR,
+        Self::EVM_ERROR,
+        Self::MAX_GAS_USAGE_EXCEEDED,
+        Self::METERING_DATA_PENDING,
+        Self::UNSUPPORTED_FLASHBLOCK_INDEX_PREDICATE,
+        Self::RESOURCE_METERING_EXCLUDED,
+        Self::BLOCK_LIMITS_EXCEEDED,
+        Self::INVALID_TRANSACTION,
+    ];
+}
+
+/// A block's rejection set is one bit per registered reason, so the registry must fit a `u32`.
+const _: () = assert!(RejectionReason::ALL.len() <= u32::BITS as usize);
+
 /// The reasons a transaction has been rejected for in the block being built.
 ///
 /// A transaction that overflows a flashblock's cumulative gas, DA, or size budget is rejected
@@ -39,8 +127,8 @@ impl BlockRejections {
     /// has not rejected the transaction for that reason yet.
     pub fn record(&mut self, tx_hash: TxHash, reason: &'static str) -> bool {
         let Some(bit) = Self::reason_bit(reason) else {
-            // A code this journal does not know is never suppressed, so a code added to the
-            // builder keeps reaching the journal until it is registered here.
+            // A code outside the registry is never suppressed, so a new builder reason keeps
+            // reaching the journal instead of being silently dropped.
             return true;
         };
         let seen = self.reasons.entry(tx_hash).or_default();
@@ -51,33 +139,10 @@ impl BlockRejections {
         true
     }
 
-    /// The bit this journal uses for `reason`, or `None` when the code is not one of the
-    /// `BUILDER_REJECTED` reasons the flashblocks builder emits: the six reason codes it records
-    /// through its `DecisionContext`, and the twelve `rejection_reason_code` maps a
-    /// `TxnExecutionError` to.
+    /// The bit `reason` owns in the block's rejection set, or `None` when it is not registered in
+    /// [`RejectionReason::ALL`].
     fn reason_bit(reason: &str) -> Option<u32> {
-        let bit = match reason {
-            "validity_predicate_read_failed" => 0,
-            "validity_predicate_expired" => 1,
-            "validity_predicate_not_satisfied" => 2,
-            "manifest_precheck_stale" => 3,
-            "unschedulable_payer_authenticator" => 4,
-            "unaffordable_coinbase_tip" => 5,
-            "tx_da_size_exceeded" => 6,
-            "block_da_size_exceeded" => 7,
-            "da_footprint_limit_exceeded" => 8,
-            "transaction_gas_limit_exceeded" => 9,
-            "block_uncompressed_size_exceeded" => 10,
-            "tx_execution_time_exceeded" => 11,
-            "sequencer_transaction" => 12,
-            "nonce_too_low" => 13,
-            "internal_error" => 14,
-            "evm_error" => 15,
-            "max_gas_usage_exceeded" => 16,
-            "metering_data_pending" => 17,
-            _ => return None,
-        };
-        Some(1 << bit)
+        RejectionReason::ALL.iter().position(|code| *code == reason).map(|bit| 1u32 << bit)
     }
 }
 
@@ -86,29 +151,6 @@ mod tests {
     use alloy_primitives::B256;
 
     use super::*;
-
-    /// Every `BUILDER_REJECTED` reason code the flashblocks builder emits, so the journal's bit
-    /// table is checked against the codes that reach it.
-    const REJECTION_REASON_CODES: [&str; 18] = [
-        "validity_predicate_read_failed",
-        "validity_predicate_expired",
-        "validity_predicate_not_satisfied",
-        "manifest_precheck_stale",
-        "unschedulable_payer_authenticator",
-        "unaffordable_coinbase_tip",
-        "tx_da_size_exceeded",
-        "block_da_size_exceeded",
-        "da_footprint_limit_exceeded",
-        "transaction_gas_limit_exceeded",
-        "block_uncompressed_size_exceeded",
-        "tx_execution_time_exceeded",
-        "sequencer_transaction",
-        "nonce_too_low",
-        "internal_error",
-        "evm_error",
-        "max_gas_usage_exceeded",
-        "metering_data_pending",
-    ];
 
     #[test]
     fn repeated_deferral_for_the_same_reason_is_recorded_once() {
@@ -162,10 +204,10 @@ mod tests {
         let mut rejections = BlockRejections::default();
         let tx = B256::repeat_byte(1);
 
-        for code in REJECTION_REASON_CODES {
+        for code in RejectionReason::ALL {
             assert!(rejections.record(tx, code), "first {code} must be recorded");
         }
-        for code in REJECTION_REASON_CODES {
+        for code in RejectionReason::ALL {
             assert!(!rejections.record(tx, code), "repeat {code} must be suppressed");
         }
     }

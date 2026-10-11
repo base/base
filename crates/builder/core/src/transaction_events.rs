@@ -1,6 +1,7 @@
 //! Builder transaction event emission.
 
 use alloy_primitives::{B256, TxHash};
+use base_execution_payload_builder::RejectionReason;
 use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventBuilder, TransactionEventProducer,
     TransactionEventType, WriteEventError,
@@ -388,27 +389,34 @@ impl BuilderIncludedEventData {
     }
 }
 
-/// Returns a stable rejection reason code for builder transaction events.
+/// Returns the registered rejection reason code for builder transaction events.
+///
+/// The codes come from [`RejectionReason`], so every `TxnExecutionError` maps to a code that
+/// per-block rejection dedupe knows.
 pub(crate) const fn rejection_reason_code(err: &TxnExecutionError) -> &'static str {
     match err {
-        TxnExecutionError::TransactionDASizeExceeded(_, _) => "tx_da_size_exceeded",
-        TxnExecutionError::BlockDASizeExceeded { .. } => "block_da_size_exceeded",
-        TxnExecutionError::DAFootprintLimitExceeded { .. } => "da_footprint_limit_exceeded",
-        TxnExecutionError::TransactionGasLimitExceeded { .. } => "transaction_gas_limit_exceeded",
+        TxnExecutionError::TransactionDASizeExceeded(_, _) => RejectionReason::TX_DA_SIZE_EXCEEDED,
+        TxnExecutionError::BlockDASizeExceeded { .. } => RejectionReason::BLOCK_DA_SIZE_EXCEEDED,
+        TxnExecutionError::DAFootprintLimitExceeded { .. } => {
+            RejectionReason::DA_FOOTPRINT_LIMIT_EXCEEDED
+        }
+        TxnExecutionError::TransactionGasLimitExceeded { .. } => {
+            RejectionReason::TRANSACTION_GAS_LIMIT_EXCEEDED
+        }
         TxnExecutionError::BlockUncompressedSizeExceeded { .. } => {
-            "block_uncompressed_size_exceeded"
+            RejectionReason::BLOCK_UNCOMPRESSED_SIZE_EXCEEDED
         }
         TxnExecutionError::ExecutionMeteringLimitExceeded(inner) => match inner {
             ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
-                "tx_execution_time_exceeded"
+                RejectionReason::TX_EXECUTION_TIME_EXCEEDED
             }
         },
-        TxnExecutionError::SequencerTransaction => "sequencer_transaction",
-        TxnExecutionError::NonceTooLow => "nonce_too_low",
-        TxnExecutionError::InternalError(_) => "internal_error",
-        TxnExecutionError::EvmError => "evm_error",
-        TxnExecutionError::MaxGasUsageExceeded => "max_gas_usage_exceeded",
-        TxnExecutionError::MeteringDataPending => "metering_data_pending",
+        TxnExecutionError::SequencerTransaction => RejectionReason::SEQUENCER_TRANSACTION,
+        TxnExecutionError::NonceTooLow => RejectionReason::NONCE_TOO_LOW,
+        TxnExecutionError::InternalError(_) => RejectionReason::INTERNAL_ERROR,
+        TxnExecutionError::EvmError => RejectionReason::EVM_ERROR,
+        TxnExecutionError::MaxGasUsageExceeded => RejectionReason::MAX_GAS_USAGE_EXCEEDED,
+        TxnExecutionError::MeteringDataPending => RejectionReason::METERING_DATA_PENDING,
     }
 }
 
