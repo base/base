@@ -201,16 +201,21 @@ where
     }
 
     /// The CPU phase: encode what is buffered, apply the DA throttle and submit ready
-    /// submissions up to the in-flight limit.
+    /// submissions up to the in-flight limit. A stopped batcher skips the throttle and keeps
+    /// the last published DA limits.
     ///
     /// Returns `true` when the encoding step budget ran out, so encoding must continue. Fails
     /// on a fatal encoding error or a blob submission that cannot be built.
     async fn work(&mut self) -> Result<bool, BatchDriverError> {
         let encoding_left = self.drain_encoding()?;
 
-        let is_throttling = self.throttle.publish_limits(self.pipeline.da_backlog_bytes());
-        if self.force_blobs_when_throttling {
-            self.pipeline.set_blob_override(is_throttling);
+        // A stopped batcher has dropped its buffered state, so its backlog reads as zero even
+        // though nothing is posted. Keep the last published limits until it starts again.
+        if !self.stopped {
+            let is_throttling = self.throttle.publish_limits(self.pipeline.da_backlog_bytes());
+            if self.force_blobs_when_throttling {
+                self.pipeline.set_blob_override(is_throttling);
+            }
         }
 
         self.submissions.submit_pending(&mut self.pipeline).await?;
