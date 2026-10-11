@@ -138,6 +138,23 @@ impl Server {
         session.get_attestation(public_key, user_data, nonce)
     }
 
+    /// Number of intermediate roots for a range of `block_count` blocks.
+    ///
+    /// Rejects a zero interval and ranges that are not a whole multiple of the interval, so
+    /// the last intermediate root always equals the range's final output root.
+    pub const fn intermediate_root_count(
+        block_count: usize,
+        interval: u64,
+    ) -> std::result::Result<usize, ProposalError> {
+        if interval == 0 {
+            return Err(ProposalError::InvalidInterval);
+        }
+        if !(block_count as u64).is_multiple_of(interval) {
+            return Err(ProposalError::UnalignedRange { block_count, interval });
+        }
+        Ok((block_count as u64 / interval) as usize)
+    }
+
     /// Run the proof-client pipeline for the given preimages and return per-block proposals
     /// with an aggregate.
     pub async fn prove(
@@ -205,18 +222,16 @@ impl Server {
             prev_output_root = *output_root;
         }
 
+        let interval = boot_info.intermediate_block_interval;
+        let count = Self::intermediate_root_count(proposals.len(), interval)?;
+
         let aggregate_proposal = if proposals.len() == 1 {
             proposals[0].clone()
         } else {
             let first = &proposals[0];
             let last = proposals.last().unwrap();
 
-            let interval = boot_info.intermediate_block_interval;
-            if interval == 0 {
-                return Err(ProposalError::InvalidInterval.into());
-            }
             let interval = interval as usize;
-            let count = proposals.len() / interval;
             let intermediate_roots: Vec<B256> =
                 (1..=count).map(|i| proposals[i * interval - 1].output_root).collect();
 
@@ -289,6 +304,24 @@ mod tests {
         let pk1 = server.signer_public_key();
         let pk2 = server.signer_public_key();
         assert_eq!(pk1, pk2);
+    }
+
+    #[test]
+    fn intermediate_root_count_requires_aligned_range() {
+        assert_eq!(Server::intermediate_root_count(1, 1).unwrap(), 1);
+        assert_eq!(Server::intermediate_root_count(512, 128).unwrap(), 4);
+        assert!(matches!(
+            Server::intermediate_root_count(10, 0),
+            Err(ProposalError::InvalidInterval)
+        ));
+        assert!(matches!(
+            Server::intermediate_root_count(10, 3),
+            Err(ProposalError::UnalignedRange { block_count: 10, interval: 3 })
+        ));
+        assert!(matches!(
+            Server::intermediate_root_count(1, 5),
+            Err(ProposalError::UnalignedRange { block_count: 1, interval: 5 })
+        ));
     }
 
     #[test]
