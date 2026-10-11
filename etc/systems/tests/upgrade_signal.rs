@@ -17,6 +17,22 @@ const COBALT_ACTIVATION_TIMESTAMP: u64 = 4_102_444_800;
 /// Rescheduled Cobalt activation timestamp for live updates (2101-01-01).
 const COBALT_RESCHEDULED_TIMESTAMP: u64 = 4_133_980_800;
 
+/// Base Azul activation block for upgrade signal stacks.
+const BASE_AZUL_ACTIVATION_BLOCK: u64 = 0;
+/// Base Beryl activation block for upgrade signal stacks.
+const BASE_BERYL_ACTIVATION_BLOCK: u64 = 3;
+
+/// Returns a stack builder whose rollup config schedules every execution fork before Cobalt.
+///
+/// Nodes reject an L1 schedule that activates an execution fork before, or without, an earlier
+/// fork in the ladder, so the forks preceding Cobalt must be scheduled for the Cobalt signal to
+/// be accepted.
+fn upgrade_signal_stack_builder() -> SystemTestStackBuilder {
+    SystemTestStackBuilder::new()
+        .with_base_azul_activation_block(BASE_AZUL_ACTIVATION_BLOCK)
+        .with_base_beryl_activation_block(BASE_BERYL_ACTIVATION_BLOCK)
+}
+
 /// Reads the rollup config served by a consensus node's RPC.
 async fn rollup_config_via_rpc(rpc_url: &url::Url) -> Result<RollupConfig> {
     let client = HttpClientBuilder::default()
@@ -32,7 +48,7 @@ async fn start_upgrade_signal_system(
     l2_chain_id: u64,
     mode: UpgradeSignalMode,
 ) -> Result<SystemTestStack> {
-    SystemTestStackBuilder::new()
+    upgrade_signal_stack_builder()
         .with_l2_chain_id(l2_chain_id)
         .with_upgrade_signal(
             UpgradeSignalStackOptions::new(mode)
@@ -70,7 +86,7 @@ async fn test_upgrade_signal_startup_apply_sets_rollup_config() -> Result<()> {
 /// Follow-mode consensus applies the same startup L1 schedule as validator-mode consensus.
 #[tokio::test]
 async fn test_upgrade_signal_follow_mode_startup_apply_sets_rollup_config() -> Result<()> {
-    let system = SystemTestStackBuilder::new()
+    let system = upgrade_signal_stack_builder()
         .with_l2_chain_id(84_538_467)
         .with_follow_mode_client_consensus()
         .with_upgrade_signal(
@@ -121,7 +137,7 @@ async fn test_upgrade_signal_metrics_only_does_not_mutate_schedule() -> Result<(
 /// config untouched.
 #[tokio::test]
 async fn test_upgrade_signal_execution_startup_apply_sets_chain_spec() -> Result<()> {
-    let system = SystemTestStackBuilder::new()
+    let system = upgrade_signal_stack_builder()
         .with_l2_chain_id(84_538_464)
         .with_upgrade_signal(
             UpgradeSignalStackOptions::new(UpgradeSignalMode::MetricsOnly)
@@ -158,7 +174,7 @@ async fn test_upgrade_signal_execution_startup_apply_sets_chain_spec() -> Result
 #[tokio::test]
 async fn test_upgrade_signal_runtime_admin_applies_new_live_schedule() -> Result<()> {
     let l2_chain_id = 84_538_466;
-    let system = SystemTestStackBuilder::new()
+    let system = upgrade_signal_stack_builder()
         .with_l2_chain_id(l2_chain_id)
         .with_upgrade_signal(UpgradeSignalStackOptions::new(UpgradeSignalMode::RuntimeAdmin))
         .build()
@@ -175,7 +191,7 @@ async fn test_upgrade_signal_runtime_admin_applies_new_live_schedule() -> Result
 async fn test_upgrade_signal_execution_runtime_admin_reapplies_live_schedule_change() -> Result<()>
 {
     let l2_chain_id = 84_538_465;
-    let system = SystemTestStackBuilder::new()
+    let system = upgrade_signal_stack_builder()
         .with_l2_chain_id(l2_chain_id)
         .with_upgrade_signal(
             UpgradeSignalStackOptions::new(UpgradeSignalMode::MetricsOnly)

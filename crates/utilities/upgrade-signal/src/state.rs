@@ -53,6 +53,41 @@ impl UpgradeSignalSchedule {
         Self { l1_block_number, signals }
     }
 
+    /// Returns an error if the execution forks in this schedule are out of ladder order.
+    ///
+    /// The EVM gates behavior by ladder position, so the latest active execution fork enables the
+    /// rules of every earlier fork, while header validation asks whether each fork is active on its
+    /// own. A later execution fork that activates before an earlier one, or while an earlier one is
+    /// unscheduled, makes those two views disagree, so such a schedule is rejected rather than
+    /// applied. Upgrades outside the execution ladder (Delta, Pectra blob schedule) are not checked.
+    pub fn validate_ladder_order(&self) -> Result<(), UpgradeSignalError> {
+        let mut execution_signals =
+            self.signals.iter().filter(|signal| signal.upgrade_id.is_execution());
+        let Some(mut earlier) = execution_signals.next() else {
+            return Ok(());
+        };
+
+        for signal in execution_signals {
+            if let Some(activation_timestamp) = signal.positive_activation_timestamp() {
+                let earlier_activation = earlier.positive_activation_timestamp();
+                if earlier_activation.is_none_or(|earlier| earlier > activation_timestamp) {
+                    return Err(UpgradeSignalError::OutOfLadderOrder {
+                        upgrade_id: signal.upgrade_id.contract_id().to_string(),
+                        activation_timestamp,
+                        earlier_upgrade_id: earlier.upgrade_id.contract_id().to_string(),
+                        earlier_activation: earlier_activation.map_or_else(
+                            || "not scheduled".to_string(),
+                            |timestamp| format!("scheduled at {timestamp}"),
+                        ),
+                    });
+                }
+            }
+            earlier = signal;
+        }
+
+        Ok(())
+    }
+
     /// Renders the minimum node protocol version each active signal demands as space-separated
     /// `upgrade=version` pairs, using the semver display of the packed contract value.
     ///
@@ -460,6 +495,72 @@ mod tests {
 
     use super::*;
     use crate::UpgradeSignalConfig;
+
+    fn ladder_schedule(signals: &[(BaseUpgrade, u64)]) -> UpgradeSignalSchedule {
+        UpgradeSignalSchedule::new(
+            1,
+            signals
+                .iter()
+                .map(|&(upgrade_id, activation_timestamp)| UpgradeSignal {
+                    upgrade_id,
+                    activation_timestamp,
+                    protocol_version: U256::from(7),
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn ladder_order_accepts_monotonic_schedule_with_trailing_and_non_execution_gaps() {
+        let schedule = ladder_schedule(&[
+            (BaseUpgrade::Regolith, 10),
+            (BaseUpgrade::Canyon, 10),
+            (BaseUpgrade::Delta, 0),
+            (BaseUpgrade::Ecotone, 20),
+            (BaseUpgrade::PectraBlobSchedule, 99),
+            (BaseUpgrade::Isthmus, 30),
+            (BaseUpgrade::Jovian, 0),
+            (BaseUpgrade::Azul, 0),
+        ]);
+
+        assert!(schedule.validate_ladder_order().is_ok());
+    }
+
+    #[test]
+    fn ladder_order_rejects_later_fork_activating_first() {
+        let schedule = ladder_schedule(&[
+            (BaseUpgrade::Jovian, 50),
+            (BaseUpgrade::Azul, 40),
+            (BaseUpgrade::Beryl, 60),
+        ]);
+
+        let error = schedule.validate_ladder_order().unwrap_err();
+
+        assert!(matches!(
+            error,
+            UpgradeSignalError::OutOfLadderOrder { ref upgrade_id, activation_timestamp: 40, .. }
+                if upgrade_id == BaseUpgrade::Azul.contract_id()
+        ));
+    }
+
+    #[test]
+    fn ladder_order_rejects_fork_scheduled_after_unscheduled_predecessor() {
+        let schedule = ladder_schedule(&[
+            (BaseUpgrade::Jovian, 50),
+            (BaseUpgrade::Azul, 0),
+            (BaseUpgrade::Beryl, 0),
+            (BaseUpgrade::Cobalt, 70),
+        ]);
+
+        let error = schedule.validate_ladder_order().unwrap_err();
+
+        assert!(matches!(
+            error,
+            UpgradeSignalError::OutOfLadderOrder { ref upgrade_id, ref earlier_upgrade_id, .. }
+                if upgrade_id == BaseUpgrade::Cobalt.contract_id()
+                    && earlier_upgrade_id == BaseUpgrade::Beryl.contract_id()
+        ));
+    }
 
     fn signal(timestamp: u64) -> UpgradeSignal {
         UpgradeSignal {

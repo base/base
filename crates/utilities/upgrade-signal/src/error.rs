@@ -27,6 +27,20 @@ pub enum UpgradeSignalError {
     /// kept distinct from a read failure so the empty-success case never advances local state.
     #[error("getSchedule returned an empty schedule from a contract that should be append-only")]
     EmptySchedule,
+    /// An execution fork is scheduled before, or without, an earlier fork in the ladder.
+    #[error(
+        "upgrade {upgrade_id} activates at {activation_timestamp} but earlier upgrade {earlier_upgrade_id} is {earlier_activation}"
+    )]
+    OutOfLadderOrder {
+        /// Upgrade whose activation breaks ladder order.
+        upgrade_id: String,
+        /// Activation timestamp of that upgrade.
+        activation_timestamp: u64,
+        /// Preceding execution upgrade in the ladder.
+        earlier_upgrade_id: String,
+        /// Activation of the preceding upgrade, rendered for the error message.
+        earlier_activation: String,
+    },
     /// A positive activation timestamp was not paired with a minimum node protocol version.
     #[error(
         "upgrade signal for {0} has an activation timestamp but no minimum node protocol version"
