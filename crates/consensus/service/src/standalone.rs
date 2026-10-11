@@ -1,6 +1,6 @@
 //! L1-free sequencing components for extending an existing L2 snapshot.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use alloy_eips::{BlockNumHash, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256};
@@ -238,6 +238,11 @@ pub struct StandaloneSequencerNode<E: EngineClient> {
     pub attributes_builder: StandaloneAttributesBuilder,
     /// The fixed-origin selector seeded from the snapshot boundary.
     pub origin_selector: StandaloneOriginSelector,
+    /// Delay added to chain timestamps to obtain local scheduling deadlines.
+    ///
+    /// Zero follows absolute chain time. To pace historical state, callers supply the age of
+    /// their validated head's scheduled millisecond timestamp at startup.
+    pub schedule_delay: Duration,
 }
 
 impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
@@ -259,6 +264,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             origin_selector: StandaloneOriginSelector::new(l1_info),
             rollup_config,
             engine_client,
+            schedule_delay: Duration::ZERO,
         }
     }
 
@@ -321,6 +327,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             sealer: None,
             pending_stop: None,
             seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
+            schedule_delay: self.schedule_delay,
         };
 
         crate::service::spawn_and_wait!(
