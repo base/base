@@ -215,16 +215,9 @@ where
 
     async fn start(self, _: Self::StartData) -> Result<(), Self::Error> {
         let cancellation = self.cancellation.clone();
-        let executor = self.executor.clone();
-        let query_processing = ReceiverStream::new(self.inbound_queries).for_each_concurrent(
-            self.query_concurrency,
-            move |query| {
-                let executor = executor.clone();
-                async move {
-                    executor.execute(query).await;
-                }
-            },
-        );
+        let executor = self.executor;
+        let query_processing = ReceiverStream::new(self.inbound_queries)
+            .for_each_concurrent(self.query_concurrency, |query| executor.execute(query));
 
         tokio::pin!(query_processing);
 

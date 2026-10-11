@@ -84,18 +84,14 @@ impl L2Finalizer {
     ) -> Option<L2BlockNumber> {
         // Find the highest safe L2 block that is contained within the finalized chain,
         // that the finalizer is aware of.
-        let highest_safe =
-            self.awaiting_finalization.range(..=new_finalized_l1_block.number).next_back();
-
-        // If the highest safe block is found, return it and drain the
-        // queue of all L1 blocks not contained in the finalized L1 chain.
-        if let Some((_, highest_safe_number)) = highest_safe {
-            let result = *highest_safe_number;
-            self.awaiting_finalization.retain(|&number, _| number > new_finalized_l1_block.number);
-            Some(result)
-        } else {
-            None
-        }
+        let Some(result) =
+            *self.awaiting_finalization.range(..=new_finalized_l1_block.number).next_back()?.1
+        else {
+            return None;
+        };
+        // Drain the queue of all L1 blocks contained in the finalized L1 chain.
+        self.awaiting_finalization.retain(|&number, _| number > new_finalized_l1_block.number);
+        Some(result)
     }
 }
 
