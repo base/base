@@ -4,14 +4,12 @@ use std::{path::Path, sync::Arc};
 
 use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
-    ConsensusNodeStartOptions, EmbeddedConsensusNodeConfigArgs,
+    EmbeddedConsensusNodeConfigArgs,
 };
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
-use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::Args;
 use reth_cli_runner::CliRunner;
-use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::config::ResolvedChainConfig;
@@ -98,46 +96,18 @@ impl RpcCommand {
             let _upgrade_countdown_metrics =
                 CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone());
 
-            let handle = launched.handle;
-            // Keep the execution node handle alive until both services have coordinated shutdown.
-            let execution_node = handle.node;
-            let execution_exit = handle.node_exit_future;
-
-            let consensus_cancellation = CancellationToken::new();
-            let consensus_exit = consensus_args.start_with_options(
-                ConsensusNodeStartOptions::new(rollup_config)
-                    .with_overrides(ConsensusNodeOverrides::embedded_execution(
+            consensus_args
+                .start_with_execution(
+                    rollup_config,
+                    ConsensusNodeOverrides::embedded_execution(
                         l2_engine_rpc,
                         upgrade_signal_l1_rpc,
-                    ))
-                    .with_cancellation(consensus_cancellation.clone())
-                    .with_upgrade_signal_startup_mode(UpgradeSignalStartupMode::AlreadyApplied),
-            );
-            tokio::pin!(execution_exit);
-            tokio::pin!(consensus_exit);
-
-            let result = tokio::select! {
-                result = &mut execution_exit => {
-                    consensus_cancellation.cancel();
-                    let consensus_result = consensus_exit.await;
-                    result?;
-                    consensus_result
-                }
-                result = &mut consensus_exit => {
-                    let consensus_result = result;
-                    task_executor
-                        .initiate_graceful_shutdown()
-                        .map_err(|e| eyre::eyre!("failed to signal execution node shutdown: {e}"))?
-                        .ignore_guard()
-                        .await;
-                    let execution_result = execution_exit.await;
-                    consensus_result?;
-                    execution_result
-                }
-            };
-
-            drop(execution_node);
-            result
+                    ),
+                    launched.handle.node,
+                    launched.handle.node_exit_future,
+                    task_executor,
+                )
+                .await
         })
     }
 }
