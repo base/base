@@ -197,20 +197,15 @@ impl ShadowBlockRepo {
     fn dedupe_canonical_last_write_wins(
         canonical: &[&ShadowCanonicalRef],
     ) -> (Vec<i64>, Vec<String>) {
-        let mut by_number: HashMap<i64, &str> = HashMap::with_capacity(canonical.len());
-        for entry in canonical {
-            by_number.insert(entry.number, entry.hash.as_str());
-        }
-
+        let by_number: HashMap<i64, &str> =
+            canonical.iter().map(|entry| (entry.number, entry.hash.as_str())).collect();
         by_number.into_iter().map(|(number, hash)| (number, hash.to_owned())).unzip()
     }
 
     /// Postgres cannot upsert one key twice; retain its final state within each run.
     fn dedupe_last_write_wins<'a>(rows: &[&'a ShadowBlockRow]) -> Vec<&'a ShadowBlockRow> {
-        let mut by_number: HashMap<i64, &ShadowBlockRow> = HashMap::with_capacity(rows.len());
-        for row in rows {
-            by_number.insert(row.number, row);
-        }
+        let by_number: HashMap<i64, &ShadowBlockRow> =
+            rows.iter().map(|row| (row.number, *row)).collect();
         by_number.into_values().collect()
     }
 
@@ -240,7 +235,7 @@ impl ShadowBlockRepo {
     /// # Errors
     /// Returns an error when the query fails.
     pub async fn list_by_number_range(&self, start: i64, end: i64) -> Result<Vec<ShadowBlockRow>> {
-        let rows = query_as::<_, ShadowBlockRow>(
+        query_as::<_, ShadowBlockRow>(
             "SELECT number, hash, canonical_hash, created_at, updated_at, payload \
              FROM shadow_blocks \
              WHERE number BETWEEN $1 AND $2 \
@@ -250,9 +245,7 @@ impl ShadowBlockRepo {
         .bind(end)
         .fetch_all(&self.pool)
         .await
-        .context("failed to list shadow blocks by number range")?;
-
-        Ok(rows)
+        .context("failed to list shadow blocks by number range")
     }
 
     /// Lists the most recent resolved shadow blocks, newest first.
@@ -269,7 +262,7 @@ impl ShadowBlockRepo {
         limit: i64,
         before: Option<i64>,
     ) -> Result<Vec<ShadowSummaryRow>> {
-        let rows = query_as::<_, ShadowSummaryRow>(
+        query_as::<_, ShadowSummaryRow>(
             "SELECT number, hash, canonical_hash, \
              payload->>'builder_version' AS builder_version, \
              payload#>'{block,block,header,header}' AS header, \
@@ -284,9 +277,7 @@ impl ShadowBlockRepo {
         .bind(limit)
         .fetch_all(&self.pool)
         .await
-        .context("failed to list recent shadow blocks")?;
-
-        Ok(rows)
+        .context("failed to list recent shadow blocks")
     }
 
     /// Lists reorged-out shadow candidates replaced by the canonical block with `canonical_hash`.
@@ -297,7 +288,7 @@ impl ShadowBlockRepo {
         &self,
         canonical_hash: &str,
     ) -> Result<Vec<ShadowSummaryRow>> {
-        let rows = query_as::<_, ShadowSummaryRow>(
+        query_as::<_, ShadowSummaryRow>(
             "SELECT number, hash, canonical_hash, \
              payload->>'builder_version' AS builder_version, \
              payload#>'{block,block,header,header}' AS header, \
@@ -311,9 +302,7 @@ impl ShadowBlockRepo {
         .bind(MAX_CANDIDATES_PER_CANONICAL)
         .fetch_all(&self.pool)
         .await
-        .context("failed to list shadow candidates by canonical hash")?;
-
-        Ok(rows)
+        .context("failed to list shadow candidates by canonical hash")
     }
 
     /// Lists reorged-out shadow candidates replaced by any canonical hash in the list.
@@ -328,7 +317,7 @@ impl ShadowBlockRepo {
             return Ok(Vec::new());
         }
 
-        let rows = query_as::<_, ShadowSummaryRow>(
+        query_as::<_, ShadowSummaryRow>(
             "SELECT number, hash, canonical_hash, \
              payload->>'builder_version' AS builder_version, \
              payload#>'{block,block,header,header}' AS header, \
@@ -342,9 +331,7 @@ impl ShadowBlockRepo {
         .bind(MAX_CANDIDATES_PER_BATCH)
         .fetch_all(&self.pool)
         .await
-        .context("failed to list shadow candidates by canonical hashes")?;
-
-        Ok(rows)
+        .context("failed to list shadow candidates by canonical hashes")
     }
 
     /// Returns the reorged-out block with a given hash.
@@ -352,7 +339,7 @@ impl ShadowBlockRepo {
     /// # Errors
     /// Returns an error when the query fails.
     pub async fn get_by_block_hash(&self, hash: &str) -> Result<Option<ShadowBlockRow>> {
-        let row = query_as::<_, ShadowBlockRow>(
+        query_as::<_, ShadowBlockRow>(
             "SELECT number, hash, canonical_hash, created_at, updated_at, payload \
              FROM shadow_blocks \
              WHERE hash = $1 \
@@ -362,9 +349,7 @@ impl ShadowBlockRepo {
         .bind(hash)
         .fetch_optional(&self.pool)
         .await
-        .context("failed to load shadow block by hash")?;
-
-        Ok(row)
+        .context("failed to load shadow block by hash")
     }
 
     /// Returns the summary projection for a reorged-out shadow block by its hash.
@@ -372,7 +357,7 @@ impl ShadowBlockRepo {
     /// # Errors
     /// Returns an error when the query fails.
     pub async fn get_summary_by_block_hash(&self, hash: &str) -> Result<Option<ShadowSummaryRow>> {
-        let row = query_as::<_, ShadowSummaryRow>(
+        query_as::<_, ShadowSummaryRow>(
             "SELECT number, hash, canonical_hash, \
              payload->>'builder_version' AS builder_version, \
              payload#>'{block,block,header,header}' AS header, \
@@ -385,9 +370,7 @@ impl ShadowBlockRepo {
         .bind(hash)
         .fetch_optional(&self.pool)
         .await
-        .context("failed to load shadow summary by hash")?;
-
-        Ok(row)
+        .context("failed to load shadow summary by hash")
     }
 }
 
