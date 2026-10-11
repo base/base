@@ -37,7 +37,7 @@ use reth_rpc_eth_api::{
         SpawnBlocking, Trace,
     },
 };
-use reth_rpc_eth_types::{EthStateCache, FeeHistoryCache, GasPriceOracle};
+use reth_rpc_eth_types::{EthApiSettings, EthStateCache, FeeHistoryCache, GasPriceOracle};
 use reth_storage_api::ProviderHeader;
 use reth_tasks::{
     Runtime,
@@ -118,6 +118,10 @@ where
     type Error = BaseEthApiError;
     type NetworkTypes = Rpc::Network;
     type RpcConvert = Rpc;
+
+    fn eth_api_settings(&self) -> &EthApiSettings {
+        self.inner.eth_api.eth_api_settings()
+    }
 
     fn converter(&self) -> &Self::RpcConvert {
         self.inner.eth_api.converter()

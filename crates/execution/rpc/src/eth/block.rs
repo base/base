@@ -34,8 +34,9 @@ where
             block.timestamp(),
             block.body().transactions(),
         );
-        let mut header =
-            self.converter().convert_header(block.clone_sealed_header(), block.rlp_length())?;
+        let mut header = self
+            .converter()
+            .convert_header(block.clone_sealed_header(), Some(block.rlp_length()))?;
         header.timestamp_ms = timestamp_ms;
         Ok(Some(header))
     }
@@ -58,7 +59,7 @@ where
         let mut block = block.clone_into_rpc_block(
             full.into(),
             |tx, tx_info| self.converter().fill(tx, tx_info),
-            |header, size| self.converter().convert_header(header, size),
+            |header, size| self.converter().convert_header(header, Some(size)),
         )?;
         block.header.timestamp_ms = timestamp_ms;
         Ok(Some(block))

@@ -20,7 +20,7 @@ use reth_node_api::{NodePrimitives, NodeTypesWithDB};
 use reth_primitives_traits::{Block as _, RecoveredBlock, crypto::secp256k1::sign_message};
 use reth_provider::{
     BlockWriter as _, ExecutionOutcome, HashedPostStateProvider, LatestStateProviderRef,
-    ProviderFactory, StateRootProvider, StorageSettingsCache,
+    ProviderFactory, StateProvider, StateRootProvider, StorageSettingsCache,
     providers::{BlockchainProvider, ProviderNodeTypes},
     test_utils::create_test_provider_factory_with_chain_spec,
 };
@@ -161,7 +161,9 @@ where
         > + NodeTypesWithDB,
 {
     let provider = provider_factory.provider()?;
-    let db = StateProviderDatabase::new(LatestStateProviderRef::new(&provider));
+    let db = StateProviderDatabase::new(
+        LatestStateProviderRef::new(&provider).into_evm_state_provider(),
+    );
     let evm_config = EthEvmConfig::ethereum(Arc::clone(chain_spec));
     let block_executor = evm_config.batch_executor(db);
 

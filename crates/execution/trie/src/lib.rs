@@ -33,8 +33,7 @@ pub use db::{
     RocksDbLatestVersionResult, RocksdbAccountCursor, RocksdbBatchSession,
     RocksdbHistoryDeleteBatch, RocksdbHistoryIterator, RocksdbPreparedHistoryDeletes,
     RocksdbPreparedPrune, RocksdbProofsStorage, RocksdbProofsStorageOptions, RocksdbPrunePlan,
-    RocksdbReadSnapshot, RocksdbReplacementState, RocksdbStorageCursor, RocksdbTrieCursor,
-    RocksdbVersionedCursor,
+    RocksdbReadSnapshot, RocksdbStorageCursor, RocksdbTrieCursor, RocksdbVersionedCursor,
 };
 
 pub mod metrics;

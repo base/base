@@ -13,6 +13,8 @@ workspace = true
 
 [dependencies]
 # reth
+reth-revm.workspace = true
+reth-tasks.workspace = true
 reth-node-api.workspace = true
 reth-db-common.workspace = true
 reth-trie-common.workspace = true
@@ -21,7 +23,6 @@ reth-transaction-pool.workspace = true
 reth-primitives-traits.workspace = true
 reth-payload-primitives.workspace = true
 reth-basic-payload-builder.workspace = true
-reth-revm.workspace = true
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 
@@ -47,7 +48,6 @@ base-common-consensus = { workspace = true, features = ["std", "evm"] }
 # base
 base-runtime.workspace = true
 base-node-core.workspace = true
-base-builder-core = { workspace = true, features = ["test-utils"] }
 base-test-utils.workspace = true
 base-tx-manager.workspace = true
 base-batcher-core.workspace = true
@@ -56,7 +56,6 @@ base-execution-evm.workspace = true
 base-consensus-rpc.workspace = true
 base-consensus-node.workspace = true
 base-batcher-source.workspace = true
-base-batcher-encoder = { workspace = true, features = ["test-utils"] }
 base-consensus-safedb.workspace = true
 base-consensus-gossip.workspace = true
 base-consensus-engine.workspace = true
@@ -65,6 +64,8 @@ base-execution-chainspec.workspace = true
 base-execution-payload-builder.workspace = true
 base-protocol = { workspace = true, features = ["std"] }
 base-common-genesis = { workspace = true, features = ["std"] }
+base-builder-core = { workspace = true, features = ["test-utils"] }
+base-batcher-encoder = { workspace = true, features = ["test-utils"] }
 base-consensus-derive = { workspace = true, features = ["test-utils"] }
 
 # tokio

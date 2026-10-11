@@ -274,7 +274,6 @@ pub fn encode_revoke_cert_calldata(cert_id: B256) -> Bytes {
 
 #[cfg(test)]
 mod tests {
-    use alloy_sol_types::SolCall as _;
 
     use super::*;
 

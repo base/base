@@ -8,7 +8,7 @@ use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, payload::EthPayloadBuilderAttributes,
 };
 use reth_e2e_test_utils::{
-    NodeHelperType, TmpDB, transaction::TransactionTestContext, wallet::Wallet,
+    E2ETestSetupBuilder, NodeHelperType, TmpDB, transaction::TransactionTestContext, wallet::Wallet,
 };
 use reth_node_api::NodeTypesWithDBAdapter;
 use reth_provider::providers::BlockchainProvider;
@@ -24,13 +24,12 @@ pub type BaseNode =
 pub async fn setup(num_nodes: usize) -> eyre::Result<(Vec<BaseNode>, Wallet)> {
     let genesis: Genesis =
         serde_json::from_str(include_str!("../tests/assets/genesis.json")).unwrap();
-    reth_e2e_test_utils::setup_engine(
+    E2ETestSetupBuilder::<OtherOpNode>::new(
         num_nodes,
         Arc::new(BaseChainSpecBuilder::base_mainnet().genesis(genesis).ecotone_activated().build()),
-        false,
-        Default::default(),
-        payload_attributes,
     )
+    .with_attributes_generator(payload_attributes)
+    .build()
     .await
 }
 

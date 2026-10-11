@@ -11,7 +11,8 @@ use reth_ethereum_primitives::Block;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
     AccountReader, BlockHashReader, BlockWriter, DBProvider, DatabaseProviderFactory,
-    ExecutionOutcome, ProviderFactory, StorageSettingsCache,
+    ExecutionOutcome, StateProviderFactory, StorageSettingsCache,
+    providers::BlockchainProvider,
     test_utils::{MockNodeTypesWithDB, create_test_provider_factory},
 };
 use reth_trie::{HashedPostState, KeccakKeyHasher};
@@ -26,7 +27,7 @@ const STORAGE_QUERY_POSITIONS: [(usize, usize); 5] =
 const QUERY_BLOCKS: [u64; 6] = [1, 16, 32, 64, 96, 127];
 
 struct HistoricalReadFixture {
-    factory: ProviderFactory<MockNodeTypesWithDB>,
+    provider: BlockchainProvider<MockNodeTypesWithDB>,
     account_queries: Vec<(Address, u64)>,
     storage_queries: Vec<(Address, B256, u64)>,
 }
@@ -74,7 +75,7 @@ impl HistoricalReadFixture {
             .collect::<Vec<_>>();
 
         // Validate every timed query against its deterministic expected state before measuring.
-        let provider = factory.provider().expect("sample provider should open");
+        let provider = BlockchainProvider::new(factory).expect("blockchain provider should open");
         for &(address, block) in &account_queries {
             let account = provider
                 .history_by_block_number(block)
@@ -97,9 +98,8 @@ impl HistoricalReadFixture {
                 .expect("fixture storage should exist");
             assert_eq!(value, Self::storage_value(block, account, slot_position.to::<usize>()));
         }
-        drop(provider);
 
-        Self { factory, account_queries, storage_queries }
+        Self { provider, account_queries, storage_queries }
     }
 
     fn blocks(mut parent_hash: B256) -> Vec<RecoveredBlock<Block>> {
@@ -213,7 +213,7 @@ fn historical_read_benches(c: &mut Criterion) {
                 block_index.set((index + 1) % fixture.storage_queries.len());
                 black_box(
                     fixture
-                        .factory
+                        .provider
                         .history_by_block_number(fixture.storage_queries[index].2)
                         .expect("historical provider should open"),
                 )
@@ -230,7 +230,7 @@ fn historical_read_benches(c: &mut Criterion) {
                     account_index.set((index + 1) % fixture.account_queries.len());
                     let (address, block) = fixture.account_queries[index];
                     let state = fixture
-                        .factory
+                        .provider
                         .history_by_block_number(block)
                         .expect("historical provider should open");
                     black_box(
@@ -252,7 +252,7 @@ fn historical_read_benches(c: &mut Criterion) {
                     storage_index.set((index + 1) % fixture.storage_queries.len());
                     let (address, slot, block) = fixture.storage_queries[index];
                     let state = fixture
-                        .factory
+                        .provider
                         .history_by_block_number(block)
                         .expect("historical provider should open");
                     black_box(
@@ -265,7 +265,7 @@ fn historical_read_benches(c: &mut Criterion) {
         );
 
         let state = fixture
-            .factory
+            .provider
             .history_by_block_number(HISTORY_BLOCKS / 2)
             .expect("reused historical provider should open");
         let reused_account_index = Cell::new(0);

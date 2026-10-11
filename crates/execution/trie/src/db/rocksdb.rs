@@ -1,7 +1,6 @@
 //! `RocksDB` implementation of proofs storage.
 
 use std::{
-    collections::BTreeMap,
     fmt,
     marker::PhantomData,
     ops::{Bound, RangeBounds},
@@ -313,15 +312,6 @@ pub struct RocksdbAccountCursor<'db> {
     pub inner: RocksdbVersionedCursor<'db, HashedAccountHistory>,
 }
 
-/// In-memory replacement overlays for wiped storage trie and hashed storage state.
-#[derive(Debug, Default)]
-pub struct RocksdbReplacementState {
-    /// Replacement entries for storage trie nodes keyed by address/path.
-    pub storage_trie: BTreeMap<StorageTrieKey, Option<BranchNodeCompact>>,
-    /// Replacement entries for hashed storage slots keyed by address/slot.
-    pub hashed_storage: BTreeMap<HashedStorageKey, Option<StorageValue>>,
-}
-
 /// Earliest and latest block/hash pair currently retained in proof storage.
 #[derive(Debug, Clone, Copy)]
 pub struct ProofWindowValue {
@@ -406,89 +396,6 @@ impl fmt::Debug for RocksdbStorageCursor<'_> {
 impl fmt::Debug for RocksdbAccountCursor<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RocksdbAccountCursor").finish_non_exhaustive()
-    }
-}
-
-impl RocksdbReplacementState {
-    fn storage_trie_wipe_entries(
-        &self,
-        storage: &RocksdbProofsStorage,
-        base_block_number: u64,
-        hashed_address: B256,
-    ) -> BaseProofsStorageResult<BTreeMap<Nibbles, Option<BranchNodeCompact>>> {
-        let mut entries = BTreeMap::new();
-        let mut cursor = storage.storage_trie_cursor(hashed_address, base_block_number)?;
-
-        while let Some((path, _)) = cursor.next()? {
-            entries.insert(path, None);
-        }
-
-        for (key, value) in &self.storage_trie {
-            if key.hashed_address != hashed_address {
-                continue;
-            }
-
-            let path = key.path.0;
-            if value.is_some() {
-                entries.insert(path, None);
-            } else {
-                entries.remove(&path);
-            }
-        }
-
-        Ok(entries)
-    }
-
-    fn apply_storage_trie_entries(
-        &mut self,
-        hashed_address: B256,
-        entries: impl IntoIterator<Item = (Nibbles, Option<BranchNodeCompact>)>,
-    ) {
-        for (path, node) in entries {
-            self.storage_trie
-                .insert(StorageTrieKey::new(hashed_address, StoredNibbles::from(path)), node);
-        }
-    }
-
-    fn hashed_storage_wipe_entries(
-        &self,
-        storage: &RocksdbProofsStorage,
-        base_block_number: u64,
-        hashed_address: B256,
-    ) -> BaseProofsStorageResult<BTreeMap<B256, Option<StorageValue>>> {
-        let mut entries = BTreeMap::new();
-        let mut cursor = storage.storage_hashed_cursor(hashed_address, base_block_number)?;
-
-        while let Some((slot, _)) = cursor.next()? {
-            entries.insert(slot, None);
-        }
-
-        for (key, value) in &self.hashed_storage {
-            if key.hashed_address != hashed_address {
-                continue;
-            }
-
-            if let Some(value) = value
-                && !value.0.is_zero()
-            {
-                entries.insert(key.hashed_storage_key, None);
-            } else {
-                entries.remove(&key.hashed_storage_key);
-            }
-        }
-
-        Ok(entries)
-    }
-
-    fn apply_hashed_storage_entries(
-        &mut self,
-        hashed_address: B256,
-        entries: impl IntoIterator<Item = (B256, Option<StorageValue>)>,
-    ) {
-        for (hashed_storage_key, value) in entries {
-            self.hashed_storage
-                .insert(HashedStorageKey::new(hashed_address, hashed_storage_key), value);
-        }
     }
 }
 
@@ -870,48 +777,6 @@ impl RocksdbProofsStorage {
         Ok(())
     }
 
-    /// Wipes existing key space and overlays replacement entries for one address scope.
-    pub fn wipe_and_overlay<T, Next, I, K, VV, V>(
-        &self,
-        batch: &mut WriteBatch,
-        block_number: u64,
-        hashed_address: B256,
-        mut next: Next,
-        new_entries: I,
-    ) -> BaseProofsStorageResult<Vec<T::Key>>
-    where
-        T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
-        T: RocksDbHistoryTable,
-        Next: FnMut() -> BaseProofsStorageResult<Option<(K, VV)>>,
-        I: IntoIterator<Item = (K, Option<V>)>,
-        (B256, K, Option<V>): IntoKV<T>,
-        T::Key: Clone,
-        K: Ord,
-    {
-        let cf = self.cf(T::NAME)?;
-        let mut merged: BTreeMap<K, Option<V>> = BTreeMap::new();
-        while let Some((key, _)) = next()? {
-            merged.insert(key, None);
-        }
-        for (key, value) in new_entries {
-            merged.insert(key, value);
-        }
-
-        let mut keys = Vec::with_capacity(merged.len());
-        for (key, value) in merged {
-            let db_key: T::Key = (hashed_address, key, Option::<V>::None).into_key();
-            let db_value: T::Value = VersionedValue { block_number, value: MaybeDeleted(value) };
-            batch.put_cf(
-                &cf,
-                encode_history_key::<T>(&db_key, block_number)?,
-                encode_table_value::<T>(&db_value),
-            );
-            keys.push(db_key);
-        }
-
-        Ok(keys)
-    }
-
     /// Stores trie and hashed-state updates for one block into the batch.
     pub fn store_trie_updates_for_block(
         &self,
@@ -940,20 +805,6 @@ impl RocksdbProofsStorage {
 
         let mut storage_trie_keys = Vec::with_capacity(storage_trie_len);
         for (hashed_address, nodes) in sorted_trie_updates.storage_tries_ref() {
-            if nodes.is_deleted && append_mode {
-                let mut cursor =
-                    self.storage_trie_cursor(*hashed_address, block_number.saturating_sub(1))?;
-                let keys = self.wipe_and_overlay::<StorageTrieHistory, _, _, _, _, _>(
-                    batch,
-                    block_number,
-                    *hashed_address,
-                    || Ok(cursor.next()?),
-                    nodes.storage_nodes_ref().iter().cloned(),
-                )?;
-                storage_trie_keys.extend(keys);
-                continue;
-            }
-
             let keys = self.persist_history_batch::<StorageTrieHistory, _, _>(
                 batch,
                 block_number,
@@ -969,23 +820,6 @@ impl RocksdbProofsStorage {
 
         let mut hashed_storage_keys = Vec::with_capacity(hashed_storage_len);
         for (hashed_address, storage) in sorted_post_state.storages {
-            if append_mode && storage.is_wiped() {
-                let mut cursor =
-                    self.storage_hashed_cursor(hashed_address, block_number.saturating_sub(1))?;
-                let keys = self.wipe_and_overlay::<HashedStorageHistory, _, _, _, _, _>(
-                    batch,
-                    block_number,
-                    hashed_address,
-                    || Ok(cursor.next()?),
-                    storage
-                        .storage_slots_ref()
-                        .iter()
-                        .map(|(slot, value)| (*slot, Some(StorageValue(*value)))),
-                )?;
-                hashed_storage_keys.extend(keys);
-                continue;
-            }
-
             let keys = self.persist_history_batch::<HashedStorageHistory, _, _>(
                 batch,
                 block_number,
@@ -1042,131 +876,6 @@ impl RocksdbProofsStorage {
             storage_trie_updates_written_total: change_set.storage_trie_keys.len() as u64,
             hashed_accounts_written_total: change_set.hashed_account_keys.len() as u64,
             hashed_storages_written_total: change_set.hashed_storage_keys.len() as u64,
-        })
-    }
-
-    /// Appends replacement-mode updates and records the resulting block change set.
-    pub fn store_replacement_trie_updates_append_only(
-        &self,
-        batch: &mut WriteBatch,
-        base_block_number: u64,
-        replacement_state: &mut RocksdbReplacementState,
-        block_ref: BlockWithParent,
-        block_state_diff: BlockStateDiff,
-    ) -> BaseProofsStorageResult<WriteCounts> {
-        let block_number = block_ref.block.number;
-        let change_set = self.store_replacement_trie_updates_for_block(
-            batch,
-            base_block_number,
-            replacement_state,
-            block_number,
-            block_state_diff,
-        )?;
-
-        self.put_table::<BlockChangeSet>(batch, block_number, &change_set)?;
-        self.put_proof_window(
-            batch,
-            ProofWindowKey::LatestBlock,
-            block_number,
-            block_ref.block.hash,
-        )?;
-
-        Ok(WriteCounts {
-            account_trie_updates_written_total: change_set.account_trie_keys.len() as u64,
-            storage_trie_updates_written_total: change_set.storage_trie_keys.len() as u64,
-            hashed_accounts_written_total: change_set.hashed_account_keys.len() as u64,
-            hashed_storages_written_total: change_set.hashed_storage_keys.len() as u64,
-        })
-    }
-
-    /// Stores replacement-mode trie updates for a specific block number.
-    pub fn store_replacement_trie_updates_for_block(
-        &self,
-        batch: &mut WriteBatch,
-        base_block_number: u64,
-        replacement_state: &mut RocksdbReplacementState,
-        block_number: u64,
-        block_state_diff: BlockStateDiff,
-    ) -> BaseProofsStorageResult<ChangeSet> {
-        let BlockStateDiff { sorted_trie_updates, sorted_post_state } = block_state_diff;
-
-        let storage_trie_len = sorted_trie_updates.storage_tries_ref().len();
-        let hashed_storage_len = sorted_post_state.storages.len();
-
-        let account_trie_keys = self.persist_history_batch::<AccountTrieHistory, _, _>(
-            batch,
-            block_number,
-            sorted_trie_updates.account_nodes_ref().iter().cloned(),
-            true,
-        )?;
-        let hashed_account_keys = self.persist_history_batch::<HashedAccountHistory, _, _>(
-            batch,
-            block_number,
-            sorted_post_state.accounts.iter().copied(),
-            true,
-        )?;
-
-        let mut storage_trie_keys = Vec::with_capacity(storage_trie_len);
-        for (hashed_address, nodes) in sorted_trie_updates.storage_tries_ref() {
-            let storage_entries = if nodes.is_deleted {
-                let mut entries = replacement_state.storage_trie_wipe_entries(
-                    self,
-                    base_block_number,
-                    *hashed_address,
-                )?;
-                for (path, node) in nodes.storage_nodes_ref().iter().cloned() {
-                    entries.insert(path, node);
-                }
-                entries.into_iter().collect::<Vec<_>>()
-            } else {
-                nodes.storage_nodes_ref().to_vec()
-            };
-
-            let keys = self.persist_history_batch::<StorageTrieHistory, _, _>(
-                batch,
-                block_number,
-                storage_entries.iter().cloned().map(|(path, node)| (*hashed_address, path, node)),
-                true,
-            )?;
-            replacement_state.apply_storage_trie_entries(*hashed_address, storage_entries);
-            storage_trie_keys.extend(keys);
-        }
-
-        let mut hashed_storage_keys = Vec::with_capacity(hashed_storage_len);
-        for (hashed_address, storage) in sorted_post_state.storages {
-            let storage_entries = if storage.is_wiped() {
-                let mut entries = replacement_state.hashed_storage_wipe_entries(
-                    self,
-                    base_block_number,
-                    hashed_address,
-                )?;
-                for (slot, value) in storage.storage_slots_ref() {
-                    entries.insert(*slot, Some(StorageValue(*value)));
-                }
-                entries.into_iter().collect::<Vec<_>>()
-            } else {
-                storage
-                    .storage_slots_ref()
-                    .iter()
-                    .map(|(key, value)| (*key, Some(StorageValue(*value))))
-                    .collect::<Vec<_>>()
-            };
-
-            let keys = self.persist_history_batch::<HashedStorageHistory, _, _>(
-                batch,
-                block_number,
-                storage_entries.iter().map(|(key, value)| (hashed_address, *key, *value)),
-                true,
-            )?;
-            replacement_state.apply_hashed_storage_entries(hashed_address, storage_entries);
-            hashed_storage_keys.extend(keys);
-        }
-
-        Ok(ChangeSet {
-            account_trie_keys,
-            storage_trie_keys,
-            hashed_account_keys,
-            hashed_storage_keys,
         })
     }
 
@@ -2089,14 +1798,17 @@ impl BaseProofsStore for RocksdbProofsStorage {
             latest_common_block.hash,
         )?;
 
-        let mut replacement_state = RocksdbReplacementState::default();
         for (block_with_parent, diff) in blocks_to_add {
-            self.store_replacement_trie_updates_append_only(
+            // Parent links were checked above; DB reads cannot see this batch's new head.
+            let block_number = block_with_parent.block.number;
+            let change_set =
+                self.store_trie_updates_for_block(&mut batch, block_number, diff, true)?;
+            self.put_table::<BlockChangeSet>(&mut batch, block_number, &change_set)?;
+            self.put_proof_window(
                 &mut batch,
-                latest_common_block.number,
-                &mut replacement_state,
-                block_with_parent,
-                diff,
+                ProofWindowKey::LatestBlock,
+                block_number,
+                block_with_parent.block.hash,
             )?;
         }
 

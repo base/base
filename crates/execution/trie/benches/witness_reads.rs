@@ -199,7 +199,7 @@ where
     Storage: BaseProofsStore + Clone,
 {
     let mut state = State::builder()
-        .with_database(StateProviderDatabase::new(provider))
+        .with_database(StateProviderDatabase::new(provider.into_evm_state_provider()))
         .with_bundle_update()
         .build();
     read_accounts_and_storage_with_state(&mut state, fixture)
@@ -250,7 +250,7 @@ fn read_accounts_storage_and_witness(fixture: &WitnessReadFixture) -> usize {
     let provider =
         BaseProofsStateProviderRef::new(Box::new(block_provider.clone()), &fixture.storage, 0);
     let mut state = State::builder()
-        .with_database(StateProviderDatabase::new(&provider))
+        .with_database(StateProviderDatabase::new((&provider).into_evm_state_provider()))
         .with_bundle_update()
         .build();
     let reads = read_accounts_and_storage_with_state(&mut state, fixture);

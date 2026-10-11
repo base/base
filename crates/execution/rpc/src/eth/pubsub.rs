@@ -24,7 +24,7 @@ where
                 .blocks_iter()
                 .filter_map(|block| {
                     let mut header = converter
-                        .convert_header(block.clone_sealed_header(), block.rlp_length())
+                        .convert_header(block.clone_sealed_header(), Some(block.rlp_length()))
                         .inspect_err(|err| {
                             error!(error = %err, "failed to convert canonical header");
                         })

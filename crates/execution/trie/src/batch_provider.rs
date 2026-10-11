@@ -19,16 +19,16 @@ use reth_revm::{
 };
 use reth_trie::{
     StateRoot, StorageRoot, TrieType,
-    hashed_cursor::{HashedCursor, HashedPostStateCursorFactory},
+    hashed_cursor::{HashedCursor, HashedPostStateCursorFactory, zero_destroyed_account_storage},
     metrics::TrieRootMetrics,
     proof,
     trie_cursor::InMemoryTrieCursorFactory,
     witness::TrieWitness,
 };
 use reth_trie_common::{
-    AccountProof, ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, HashedStorage,
-    KeccakKeyHasher, MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
-    updates::TrieUpdates,
+    AccountProof, DecodedMultiProofV2, ExecutionWitnessMode, HashedPostState,
+    HashedPostStateSorted, HashedStorage, KeccakKeyHasher, MultiProof, MultiProofTargets,
+    MultiProofTargetsV2, StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
 };
 
 use crate::{
@@ -269,11 +269,37 @@ impl<S: BaseProofsBatchSession> StateProofProvider for BaseProofsBatchStateProvi
             .map_err(ProviderError::from)?;
         Ok(result.into_values().collect())
     }
+
+    fn multiproof_v2(
+        &self,
+        input: TrieInput,
+        targets: MultiProofTargetsV2,
+    ) -> ProviderResult<DecodedMultiProofV2> {
+        let nodes_sorted = input.nodes.into_sorted();
+        let state_sorted = input.state.into_sorted();
+        let (trie_factory, hashed_factory) = self.factories();
+        proof::Proof::new(trie_factory.clone(), hashed_factory.clone())
+            .with_trie_cursor_factory(InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted))
+            .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
+                hashed_factory,
+                &state_sorted,
+            ))
+            .with_prefix_sets_mut(input.prefix_sets)
+            .multiproof_v2(targets)
+            .map_err(ProviderError::from)
+    }
 }
 
 impl<S: BaseProofsBatchSession> HashedPostStateProvider for BaseProofsBatchStateProviderRef<'_, S> {
     fn hashed_post_state(&self, bundle_state: &BundleState) -> ProviderResult<HashedPostState> {
-        Ok(HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle_state.state()))
+        let mut hashed_state =
+            HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle_state.state());
+        zero_destroyed_account_storage(
+            &self.factories().1,
+            bundle_state.state(),
+            &mut hashed_state,
+        )?;
+        Ok(hashed_state)
     }
 }
 

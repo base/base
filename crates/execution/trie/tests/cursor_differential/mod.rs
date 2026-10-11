@@ -1,7 +1,7 @@
 //! Differential cursor tests: `RocksDB` cursors must return exactly what the MDBX store (the
 //! previous production backend) returns for random multi-block histories and random seek/next
 //! sequences. MDBX is the reference because, unlike the in-memory store, it models storage-trie
-//! wipes (`StorageTrieUpdates::is_deleted`).
+//! storage deletions represented by explicit zero slots and removed trie nodes.
 
 use rand_08::{Rng, SeedableRng, rngs::StdRng};
 use reth_trie::{
@@ -118,7 +118,10 @@ fn random_block_diff(rng: &mut StdRng, keys: &Keyspace, block: u64) -> BlockStat
         if !rng.gen_bool(0.7) {
             continue;
         }
-        let mut storage = HashedStorage::new(rng.gen_bool(0.08));
+        let mut storage = HashedStorage::default();
+        if rng.gen_bool(0.08) {
+            storage.storage.extend(keys.slots.iter().map(|slot| (*slot, U256::ZERO)));
+        }
         for (index, slot) in keys.slots.iter().enumerate() {
             let touch = if index < 2 { 0.9 } else { 0.25 };
             if rng.gen_bool(touch) {
@@ -143,8 +146,10 @@ fn random_block_diff(rng: &mut StdRng, keys: &Keyspace, block: u64) -> BlockStat
         if !rng.gen_bool(0.6) {
             continue;
         }
-        let mut storage_trie =
-            StorageTrieUpdates { is_deleted: rng.gen_bool(0.08), ..Default::default() };
+        let mut storage_trie = StorageTrieUpdates::default();
+        if rng.gen_bool(0.08) {
+            storage_trie.removed_nodes.extend(keys.storage_paths.iter().copied());
+        }
         for (index, path) in keys.storage_paths.iter().enumerate() {
             let touch = if index < 2 { 0.9 } else { 0.25 };
             if rng.gen_bool(touch) {

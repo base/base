@@ -77,7 +77,7 @@ fn build_hashed_post_state(accounts: &[HashedAccountData]) -> HashedPostState {
     let mut state = HashedPostState::default();
     for (addr, account, slots) in accounts {
         state.accounts.insert(*addr, Some(*account));
-        let mut storage = HashedStorage::new(false);
+        let mut storage = HashedStorage::default();
         for (slot, value) in slots {
             storage.storage.insert(*slot, *value);
         }

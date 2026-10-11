@@ -95,7 +95,7 @@ fn block_diff(rng: &mut StdRng, fixture: &Fixture, block: u64) -> BlockStateDiff
             post_state.accounts.insert(*key, value);
         }
     }
-    let mut storage = HashedStorage::new(false);
+    let mut storage = HashedStorage::default();
     for slot in &fixture.slots {
         if rng.gen_bool(UPDATE_PROBABILITY) {
             storage.storage.insert(*slot, slot_value(rng));

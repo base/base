@@ -13,13 +13,12 @@ use reth_chainspec::ChainSpecProvider;
 use reth_evm::ConfigureEvm;
 use reth_node_api::{BuildNextEnv, NodePrimitives};
 use reth_primitives_traits::{SealedHeader, TxTy};
-use reth_revm::cancelled::CancelOnDrop;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use reth_storage_api::{
     BlockReaderIdExt, NodePrimitivesProvider, StateProviderFactory,
     errors::{ProviderError, ProviderResult},
 };
-use reth_tasks::Runtime;
+use reth_tasks::{CancelOnDrop, Runtime};
 use reth_transaction_pool::TransactionPool;
 use tokio::sync::{Semaphore, oneshot};
 
@@ -81,17 +80,17 @@ impl<Pool, Provider, EvmConfig, Attrs> DebugExecutionWitnessApiServer<Attrs::Rpc
 where
     Pool: TransactionPool<
             Transaction: BasePooledTx<
-                Consensus = <Provider::Primitives as NodePrimitives>::SignedTx,
+                Consensus = <<Provider as NodePrimitivesProvider>::Primitives as NodePrimitives>::SignedTx,
             >,
         > + 'static,
-    Provider: BlockReaderIdExt<Header = <Provider::Primitives as NodePrimitives>::BlockHeader>
+    Provider: BlockReaderIdExt<Header = <<Provider as NodePrimitivesProvider>::Primitives as NodePrimitives>::BlockHeader>
         + NodePrimitivesProvider<Primitives: PayloadPrimitives>
-        + StateProviderFactory
+        + StateProviderFactory<Primitives = <Provider as NodePrimitivesProvider>::Primitives>
         + ChainSpecProvider<ChainSpec: Upgrades>
         + Clone
         + 'static,
     EvmConfig: ConfigureEvm<
-            Primitives = Provider::Primitives,
+            Primitives = <Provider as NodePrimitivesProvider>::Primitives,
             NextBlockEnvCtx: BuildNextEnv<Attrs, Provider::Header, Provider::ChainSpec>,
         > + 'static,
     Attrs: Attributes<Transaction = TxTy<EvmConfig::Primitives>>,
