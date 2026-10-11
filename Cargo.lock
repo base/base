@@ -6880,6 +6880,7 @@ dependencies = [
  "futures",
  "jsonrpsee",
  "ratatui",
+ "rstest",
  "serde",
  "serde_json",
  "serde_yaml",
