@@ -9,7 +9,7 @@ use alloy_sol_types::sol;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result};
 use base_common_genesis::SystemConfig;
-use futures::StreamExt;
+use futures::{StreamExt, future::BoxFuture};
 use tokio::sync::mpsc;
 use tracing::warn;
 use url::Url;
@@ -132,6 +132,26 @@ fn http_to_ws(url: &str) -> String {
     url.replacen("http://", "ws://", 1).replacen("https://", "wss://", 1)
 }
 
+/// Fetches blocks in order and stops at the first missing block.
+///
+/// The returned block number is the highest block fetched contiguously from `start_block`.
+async fn fetch_contiguous_blocks<'a>(
+    start_block: u64,
+    end_block: u64,
+    mut fetch: impl FnMut(u64) -> BoxFuture<'a, bool>,
+) -> Option<u64> {
+    let mut last_block = None;
+
+    for block_number in start_block..=end_block {
+        if !fetch(block_number).await {
+            break;
+        }
+        last_block = Some(block_number);
+    }
+
+    last_block
+}
+
 /// Watches L1 blocks for blob transactions, preferring WebSocket with polling fallback.
 pub async fn run_l1_blob_watcher(
     l1_rpc: String,
@@ -172,11 +192,11 @@ async fn run_l1_blob_watcher_ws(
 
     let _ = mode_tx.send(L1ConnectionMode::WebSocket).await;
 
-    let mut last_block: Option<u64> = None;
+    let mut next_block: Option<u64> = None;
 
     if let Ok(Some(block)) = provider.get_block_by_number(BlockNumberOrTag::Latest).full().await {
         let info = extract_l1_block_info(&block, batcher_address);
-        last_block = Some(block.header.number);
+        next_block = Some(block.header.number.saturating_add(1));
         if result_tx.send(info).await.is_err() {
             return Ok(());
         }
@@ -184,30 +204,41 @@ async fn run_l1_blob_watcher_ws(
 
     while let Some(header) = stream.next().await {
         let block_num = header.number;
+        let start_block = next_block.unwrap_or(block_num);
+        if start_block > block_num {
+            continue;
+        }
 
-        let start = last_block.map_or(block_num, |last| last + 1);
-        for gap_num in start..block_num {
-            if let Ok(Some(block)) =
-                provider.get_block_by_number(BlockNumberOrTag::Number(gap_num)).full().await
-            {
-                let info = extract_l1_block_info(&block, batcher_address);
-                if result_tx.send(info).await.is_err() {
-                    return Ok(());
+        let provider_ref = &provider;
+        let result_tx_ref = &result_tx;
+        let watermark = fetch_contiguous_blocks(start_block, block_num, |number| {
+            Box::pin(async move {
+                match provider_ref
+                    .get_block_by_number(BlockNumberOrTag::Number(number))
+                    .full()
+                    .await
+                {
+                    Ok(Some(block)) => {
+                        let info = extract_l1_block_info(&block, batcher_address);
+                        result_tx_ref.send(info).await.is_ok()
+                    }
+                    Ok(None) => {
+                        warn!(block = number, "L1 block is unavailable; will retry from this block");
+                        false
+                    }
+                    Err(error) => {
+                        warn!(block = number, error = %error, "Failed to fetch L1 block; will retry from this block");
+                        false
+                    }
                 }
-            }
-        }
+            })
+        })
+        .await;
 
-        if block_num > last_block.unwrap_or(0)
-            && let Ok(Some(block)) =
-                provider.get_block_by_number(BlockNumberOrTag::Number(block_num)).full().await
-        {
-            let info = extract_l1_block_info(&block, batcher_address);
-            if result_tx.send(info).await.is_err() {
-                return Ok(());
-            }
+        if result_tx.is_closed() {
+            return Ok(());
         }
-
-        last_block = Some(block_num);
+        next_block = Some(watermark.map_or(start_block, |number| number.saturating_add(1)));
     }
 
     warn!("L1 WebSocket stream ended");
@@ -231,7 +262,7 @@ async fn run_l1_blob_watcher_poll(
         }
     };
 
-    let mut last_block: Option<u64> = None;
+    let mut next_block: Option<u64> = None;
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
 
     loop {
@@ -242,20 +273,37 @@ async fn run_l1_blob_watcher_poll(
             Err(_) => continue,
         };
 
-        let start_block = last_block.map_or(latest, |b| b + 1);
-
-        for block_num in start_block..=latest {
-            if let Ok(Some(block)) =
-                provider.get_block_by_number(BlockNumberOrTag::Number(block_num)).full().await
-            {
-                let info = extract_l1_block_info(&block, batcher_address);
-                if result_tx.send(info).await.is_err() {
-                    return;
+        let start_block = next_block.unwrap_or(latest);
+        let provider_ref = &provider;
+        let result_tx_ref = &result_tx;
+        let watermark = fetch_contiguous_blocks(start_block, latest, |number| {
+            Box::pin(async move {
+                match provider_ref
+                    .get_block_by_number(BlockNumberOrTag::Number(number))
+                    .full()
+                    .await
+                {
+                    Ok(Some(block)) => {
+                        let info = extract_l1_block_info(&block, batcher_address);
+                        result_tx_ref.send(info).await.is_ok()
+                    }
+                    Ok(None) => {
+                        warn!(block = number, "L1 block is unavailable; will retry from this block");
+                        false
+                    }
+                    Err(error) => {
+                        warn!(block = number, error = %error, "Failed to fetch L1 block; will retry from this block");
+                        false
+                    }
                 }
-            }
-        }
+            })
+        })
+        .await;
 
-        last_block = Some(latest);
+        if result_tx.is_closed() {
+            return;
+        }
+        next_block = Some(watermark.map_or(start_block, |number| number.saturating_add(1)));
     }
 }
 
@@ -281,5 +329,39 @@ fn extract_l1_block_info(
         timestamp: block.header.timestamp,
         total_blobs,
         base_blobs,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fetch_contiguous_blocks;
+
+    #[tokio::test]
+    async fn retries_the_first_block_that_failed() {
+        let mut requested = Vec::new();
+        let mut failed_102 = false;
+        let watermark = fetch_contiguous_blocks(101, 103, |number| {
+            requested.push(number);
+            Box::pin(std::future::ready(if number == 102 && !failed_102 {
+                failed_102 = true;
+                false
+            } else {
+                true
+            }))
+        })
+        .await;
+
+        assert_eq!(watermark, Some(101));
+        assert_eq!(requested, vec![101, 102]);
+
+        let next_start = watermark.map_or(101, |number| number + 1);
+        let watermark = fetch_contiguous_blocks(next_start, 103, |number| {
+            requested.push(number);
+            Box::pin(std::future::ready(true))
+        })
+        .await;
+
+        assert_eq!(watermark, Some(103));
+        assert_eq!(requested, vec![101, 102, 102, 103]);
     }
 }
