@@ -553,6 +553,7 @@ impl RollupNode {
                     recovery_mode,
                     rollup_config: Arc::clone(&self.config),
                     seal_offset: self.sequencer_config.seal_offset,
+                    schedule_delay: Duration::ZERO,
                     unsafe_payload_gossip_client: queued_gossip_client,
                     sealer: None,
                     pending_stop: None,

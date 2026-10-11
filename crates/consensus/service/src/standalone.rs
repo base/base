@@ -1,8 +1,11 @@
 //! L1-free sequencing components for extending an existing L2 snapshot.
 
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
-use alloy_eips::{BlockNumHash, eip2718::Encodable2718};
+use alloy_eips::{BlockNumHash, BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256};
 use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
@@ -238,6 +241,12 @@ pub struct StandaloneSequencerNode<E: EngineClient> {
     pub attributes_builder: StandaloneAttributesBuilder,
     /// The fixed-origin selector seeded from the snapshot boundary.
     pub origin_selector: StandaloneOriginSelector,
+    /// Paces blocks from the head at startup instead of absolute chain time.
+    ///
+    /// Block timestamps still follow the rollup schedule; only local deadlines shift by the
+    /// head's age. The first descendant is due one block interval after startup, and a restart
+    /// resumes from the current head without producing blocks for the downtime.
+    pub pace_from_head: bool,
 }
 
 impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
@@ -259,6 +268,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             origin_selector: StandaloneOriginSelector::new(l1_info),
             rollup_config,
             engine_client,
+            pace_from_head: false,
         }
     }
 
@@ -272,6 +282,21 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
         &self,
         cancellation: CancellationToken,
     ) -> Result<(), String> {
+        let schedule_delay = if self.pace_from_head {
+            let head = self
+                .engine_client
+                .l2_block_info_by_label(BlockNumberOrTag::Latest)
+                .await
+                .map_err(|error| format!("failed to read standalone head: {error}"))?
+                .ok_or("standalone execution node has no head")?;
+            let head_time = UNIX_EPOCH
+                + Duration::from_millis(
+                    self.rollup_config.l2_block_timestamp_millis(head.block_info.number),
+                );
+            SystemTime::now().duration_since(head_time).unwrap_or_default()
+        } else {
+            Duration::ZERO
+        };
         let (engine_actor_request_tx, engine_actor_request_rx) = mpsc::channel(1024);
         let (unsafe_head_tx, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
         let (engine_state_tx, engine_state_rx) = watch::channel(EngineState::default());
@@ -321,6 +346,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             sealer: None,
             pending_stop: None,
             seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
+            schedule_delay,
         };
 
         crate::service::spawn_and_wait!(

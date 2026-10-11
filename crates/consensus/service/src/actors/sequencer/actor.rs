@@ -83,6 +83,11 @@ pub struct SequencerActor<
     ///
     /// [`SequencerConfig::seal_offset`]: crate::SequencerConfig::seal_offset
     pub seal_offset: Duration,
+    /// Delay added to every scheduled block timestamp to get its local deadline.
+    ///
+    /// Zero follows absolute chain time. A sequencer extending historical state sets the head's
+    /// age so blocks keep their chain timestamps but are paced instead of produced back to back.
+    pub schedule_delay: Duration,
     /// A client to asynchronously sign and gossip built payloads to the network actor.
     pub unsafe_payload_gossip_client: UnsafePayloadGossipClient_,
     /// In-flight seal pipeline. [`Some`] while a sealed payload is being committed,
@@ -355,8 +360,7 @@ where
         block_number: u64,
         last_seal_duration: Duration,
     ) -> SystemTime {
-        let target = UNIX_EPOCH
-            + Duration::from_millis(self.rollup_config.l2_block_timestamp_millis(block_number));
+        let target = self.block_deadline(block_number);
         if self.rollup_config.is_denim_active(self.rollup_config.l2_block_timestamp(block_number)) {
             let interval =
                 Duration::from_millis(RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS);
@@ -364,6 +368,13 @@ where
         }
         let block_interval = Duration::from_secs(self.rollup_config.block_time);
         target - last_seal_duration.min(block_interval / 2)
+    }
+
+    /// Local wall-clock time of `block_number`'s scheduled timestamp.
+    fn block_deadline(&self, block_number: u64) -> SystemTime {
+        UNIX_EPOCH
+            + self.schedule_delay
+            + Duration::from_millis(self.rollup_config.l2_block_timestamp_millis(block_number))
     }
 
     fn next_block_seal_target(
@@ -515,11 +526,8 @@ where
                     // Queue the acknowledged parent instead of starting its child build here. Its
                     // timestamp is a hard lower bound for the steady-state child build because
                     // variable getPayload durations can make insertion complete early.
-                    let parent_millis = self
-                        .rollup_config
-                        .l2_block_timestamp_millis(inserted_head.block_info.number);
                     pipeline.pending_build_parent = Some(inserted_head);
-                    build_ticker.reset_at(UNIX_EPOCH + Duration::from_millis(parent_millis));
+                    build_ticker.reset_at(self.block_deadline(inserted_head.block_info.number));
                 }
             }
             Ok(SealStepOutcome::Pending) => {}
@@ -938,6 +946,7 @@ mod tests {
             recovery_mode,
             rollup_config: config,
             seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
+            schedule_delay: Duration::ZERO,
             unsafe_payload_gossip_client: gossip,
             sealer: None,
             pending_stop: None,
