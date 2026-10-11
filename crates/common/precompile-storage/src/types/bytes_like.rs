@@ -340,6 +340,7 @@ fn encode_long_string_length(byte_length: usize) -> U256 {
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
+    use rstest::rstest;
 
     use super::*;
     use crate::{
@@ -525,73 +526,30 @@ mod tests {
         });
     }
 
-    proptest! {
-        #![proptest_config(ProptestConfig::with_cases(200))]
-
-        #[test]
-        fn test_short_strings(s in arb_short_string(), base_slot in arb_safe_slot()) {
+    fn roundtrip<T>(strategy: impl Strategy<Value = T>)
+    where
+        T: Storable + Clone + PartialEq + core::fmt::Debug + Default,
+    {
+        proptest!(ProptestConfig::with_cases(200), |(value in strategy, base_slot in arb_safe_slot())| {
             let (mut storage, address) = setup_storage();
             StorageCtx::enter(&mut storage, |ctx| {
-                let mut slot = BytesLikeHandler::<String>::new(base_slot, address, ctx);
-                slot.write(s.clone()).unwrap();
-                let loaded = slot.read().unwrap();
-                prop_assert_eq!(&s, &loaded);
+                let mut slot = BytesLikeHandler::<T>::new(base_slot, address, ctx);
+                slot.write(value.clone()).unwrap();
+                prop_assert_eq!(&value, &slot.read().unwrap());
                 slot.delete().unwrap();
-                let after = slot.read().unwrap();
-                prop_assert_eq!(after, String::new());
+                prop_assert_eq!(slot.read().unwrap(), T::default());
                 Ok(())
             }).unwrap();
-        }
+        });
+    }
 
-        #[test]
-        fn test_long_strings(s in arb_long_string(), base_slot in arb_safe_slot()) {
-            let (mut storage, address) = setup_storage();
-            StorageCtx::enter(&mut storage, |ctx| {
-                let mut slot = BytesLikeHandler::<String>::new(base_slot, address, ctx);
-                slot.write(s.clone()).unwrap();
-                let loaded = slot.read().unwrap();
-                prop_assert_eq!(&s, &loaded);
-                slot.delete().unwrap();
-                let after = slot.read().unwrap();
-                prop_assert_eq!(after, String::new());
-                Ok(())
-            }).unwrap();
-        }
-
-        #[test]
-        fn test_short_bytes(b in arb_short_bytes(), base_slot in arb_safe_slot()) {
-            let (mut storage, address) = setup_storage();
-            StorageCtx::enter(&mut storage, |ctx| {
-                let mut slot = BytesLikeHandler::<Bytes>::new(base_slot, address, ctx);
-                slot.write(b.clone()).unwrap();
-                let loaded = slot.read().unwrap();
-                prop_assert_eq!(&b, &loaded);
-                Ok(())
-            }).unwrap();
-        }
-
-        #[test]
-        fn test_long_bytes(b in arb_long_bytes(), base_slot in arb_safe_slot()) {
-            let (mut storage, address) = setup_storage();
-            StorageCtx::enter(&mut storage, |ctx| {
-                let mut slot = BytesLikeHandler::<Bytes>::new(base_slot, address, ctx);
-                slot.write(b.clone()).unwrap();
-                let loaded = slot.read().unwrap();
-                prop_assert_eq!(&b, &loaded);
-                Ok(())
-            }).unwrap();
-        }
-
-        #[test]
-        fn test_32byte_strings(s in arb_32byte_string(), base_slot in arb_safe_slot()) {
-            let (mut storage, address) = setup_storage();
-            StorageCtx::enter(&mut storage, |ctx| {
-                let mut slot = BytesLikeHandler::<String>::new(base_slot, address, ctx);
-                slot.write(s.clone()).unwrap();
-                let loaded = slot.read().unwrap();
-                prop_assert_eq!(&s, &loaded);
-                Ok(())
-            }).unwrap();
-        }
+    #[rstest]
+    #[case::short_string(|| roundtrip(arb_short_string()))]
+    #[case::long_string(|| roundtrip(arb_long_string()))]
+    #[case::string_32byte(|| roundtrip(arb_32byte_string()))]
+    #[case::short_bytes(|| roundtrip(arb_short_bytes()))]
+    #[case::long_bytes(|| roundtrip(arb_long_bytes()))]
+    fn proptest_roundtrip(#[case] run: fn()) {
+        run();
     }
 }
