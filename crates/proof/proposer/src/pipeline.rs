@@ -19,13 +19,14 @@ use crate::{
     proof_collector::ProofCollector,
     proof_dispatcher::ProofDispatcher,
     proof_recovery::{ProofRecovery, ProofRecoveryCache},
+    tee_proof_recovery::TeeProofRecovery,
 };
 
 /// The proving pipeline.
 ///
 /// Runs concurrent dispatcher and collector tasks per [`Self::run`] session.
-/// The collector chains ready proofs internally and restarts both tasks only
-/// when it needs fresh onchain state.
+/// The collector chains ready proofs internally. Either task can restart the
+/// session when recovery needs fresh onchain state or deleted proofs need redispatch.
 pub struct ProvingPipeline<R>
 where
     R: RollupProvider + 'static,
@@ -34,6 +35,7 @@ where
     proof_dispatcher: ProofDispatcher,
     proof_recovery: Arc<ProofRecovery>,
     proof_collector: ProofCollector<R>,
+    tee_proof_recovery: Option<TeeProofRecovery>,
 }
 
 impl<R> std::fmt::Debug for ProvingPipeline<R>
@@ -56,7 +58,14 @@ where
         proof_recovery: Arc<ProofRecovery>,
         proof_collector: ProofCollector<R>,
     ) -> Self {
-        Self { config, proof_dispatcher, proof_recovery, proof_collector }
+        Self { config, proof_dispatcher, proof_recovery, proof_collector, tee_proof_recovery: None }
+    }
+
+    /// Enables proactive cleanup of proofs from unregistered TEE signers.
+    #[must_use]
+    pub fn with_tee_proof_recovery(mut self, recovery: TeeProofRecovery) -> Self {
+        self.tee_proof_recovery = Some(recovery);
+        self
     }
 
     /// Runs the proving pipeline until cancelled.
@@ -76,8 +85,8 @@ where
         loop {
             let dispatched_through = Arc::new(AtomicU64::new(0));
 
-            // dispatcher_loop intentionally does not return; this branch keeps it
-            // polled while collector_loop remains the session restart signal.
+            // Either loop can signal recovery: signer cleanup must reset the dispatch
+            // cursor too, otherwise deleted ranges behind that cursor are never requeued.
             // Dropping either loop mid-tick is safe: the next recovery walk
             // rediscovers any already-broadcast L1 transaction from onchain state.
             let session = async {
@@ -115,6 +124,7 @@ where
         let mut cache: Option<ProofRecoveryCache> = None;
         let mut cursor_source: Option<RecoveredState> = None;
         let mut cursor: Option<RecoveredState> = None;
+        let mut signer_scan_cursor = None;
 
         loop {
             {
@@ -133,11 +143,23 @@ where
                     if cursor_source != Some(recovered) || cursor.is_none() {
                         cursor_source = Some(recovered);
                         cursor = Some(recovered);
+                        signer_scan_cursor = None;
                     }
 
                     let current = cursor
                         .as_mut()
                         .expect("dispatcher cursor initialized from recovered state");
+                    if let Some(recovery) = &self.tee_proof_recovery
+                        && recovery
+                            .tick(
+                                recovered.l2_block_number,
+                                current.l2_block_number,
+                                &mut signer_scan_cursor,
+                            )
+                            .await
+                    {
+                        return;
+                    }
                     self.proof_dispatcher.tick(current, finalized_head).await;
 
                     dispatched_through.store(current.l2_block_number, Ordering::Relaxed);

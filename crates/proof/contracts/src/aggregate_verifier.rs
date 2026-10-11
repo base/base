@@ -16,6 +16,7 @@ use crate::{
     ContractError,
     anchor_state_registry::{AnchorPreflight, AnchorRoot, IAnchorStateRegistry},
     dispute_game_factory::DisputeGameFactoryClient,
+    tee_prover_registry::ITEEProverRegistry,
 };
 
 /// The first `AggregateVerifier` version that exposes `intervalsForStartingBlock`.
@@ -306,6 +307,15 @@ sol! {
     }
 }
 
+sol! {
+    /// TEE verifier registry discovery interface.
+    #[sol(rpc)]
+    interface ITEEVerifier {
+        /// Returns the registry used to validate registered enclave signers.
+        function TEE_PROVER_REGISTRY() external view returns (address);
+    }
+}
+
 /// Information about a dispute game instance.
 #[derive(Debug, Clone, Copy)]
 pub struct GameInfo {
@@ -527,6 +537,26 @@ impl AggregateVerifierContractClient {
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
         contract_call!(contract.TEE_VERIFIER().call(), "TEE_VERIFIER failed")
+    }
+
+    /// Returns registered TEE signers from the registry used by this game or implementation.
+    ///
+    /// Checks registration only, matching `TEEVerifier.InvalidSigner`. Image-hash validation
+    /// remains with the verifier, whose journal can depend on the game's fork and implementation.
+    pub async fn registered_tee_signers(
+        &self,
+        game_address: Address,
+    ) -> Result<Vec<Address>, ContractError> {
+        let verifier_address = self.tee_verifier_address(game_address).await?;
+        let verifier = ITEEVerifier::ITEEVerifierInstance::new(verifier_address, &self.provider);
+        let registry_address =
+            contract_call!(verifier.TEE_PROVER_REGISTRY().call(), "TEE_PROVER_REGISTRY failed")?;
+        if registry_address.is_zero() {
+            return Err(ContractError::Validation("TEE prover registry address is zero".into()));
+        }
+        let registry =
+            ITEEProverRegistry::ITEEProverRegistryInstance::new(registry_address, &self.provider);
+        contract_call!(registry.getRegisteredSigners().call(), "getRegisteredSigners failed")
     }
 
     /// Returns the ZK verifier used by a game.

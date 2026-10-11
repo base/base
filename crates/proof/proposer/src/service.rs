@@ -40,6 +40,7 @@ use crate::{
     proof_recovery::{ProofRecovery, ProofRecoveryConfig},
     proof_submitter::ProofSubmitter,
     proposal_intervals::IntervalResolver,
+    tee_proof_recovery::{OnchainTeeSignerRegistry, TeeProofRecovery},
 };
 
 const SUBMIT_TIMEOUT_SLACK: Duration = Duration::from_mins(2);
@@ -117,7 +118,7 @@ impl ProposerService {
         );
         info!(address = %config.dispute_game_factory_addr, "DisputeGameFactory client initialized");
 
-        let verifier_client = AggregateVerifierContractClient::new(read_provider);
+        let verifier_client = Arc::new(AggregateVerifierContractClient::new(read_provider));
         let impl_address = factory_client.game_impls(config.game_type).await?;
         if impl_address == Address::ZERO {
             return Err(eyre::eyre!(
@@ -134,7 +135,12 @@ impl ProposerService {
         );
 
         let factory_client: Arc<dyn DisputeGameFactoryClient> = Arc::new(factory_client);
-        let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
+        let tee_signer_registry = Arc::new(OnchainTeeSignerRegistry::new(
+            Arc::clone(&factory_client),
+            Arc::clone(&verifier_client),
+            config.game_type,
+        ));
+        let verifier_client: Arc<dyn AggregateVerifierClient> = verifier_client;
 
         // The proposal intervals change at the Denim activation block, so they are
         // resolved from each game's starting block instead of being read once here.
@@ -256,8 +262,16 @@ impl ProposerService {
             Arc::clone(&intervals),
             driver_config.submit_timeout,
         );
+        let tee_proof_recovery = TeeProofRecovery::new(
+            Arc::clone(&proof_requester),
+            Arc::<RollupClient>::clone(&rollup_client),
+            intervals,
+            tee_signer_registry,
+            config.rpc_timeout,
+        );
         let pipeline =
-            ProvingPipeline::new(driver_config, proof_dispatcher, proof_recovery, proof_collector);
+            ProvingPipeline::new(driver_config, proof_dispatcher, proof_recovery, proof_collector)
+                .with_tee_proof_recovery(tee_proof_recovery);
         info!("Proving pipeline initialized");
         let driver_handle: Arc<dyn ProposerDriverControl> =
             Arc::new(PipelineHandle::new(pipeline, cancel.clone()));

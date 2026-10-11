@@ -29,6 +29,9 @@ pub use proof_target::ProofTarget;
 mod proof_recovery;
 pub use proof_recovery::{ProofRecovery, ProofRecoveryCache, ProofRecoveryConfig};
 
+mod tee_proof_recovery;
+pub use tee_proof_recovery::{OnchainTeeSignerRegistry, TeeProofRecovery, TeeSignerRegistry};
+
 mod proof_collector;
 pub use proof_collector::ProofCollector;
 
