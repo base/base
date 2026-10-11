@@ -355,29 +355,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_block_compat_block_not_found_string_returns_none() {
-        let client = test_engine_client_builder()
-            .with_l2_block_error(
-                BlockNumberOrTag::Safe.into(),
-                MockL2BlockError::Custom("block not found".into()),
-            )
-            .build();
+    async fn get_block_compat_error_string_returns_none() {
+        for message in ["block not found", "Unknown block"] {
+            let client = test_engine_client_builder()
+                .with_l2_block_error(
+                    BlockNumberOrTag::Safe.into(),
+                    MockL2BlockError::Custom(message.into()),
+                )
+                .build();
 
-        let result = get_block_compat(&client, BlockNumberOrTag::Safe.into()).await.unwrap();
-        assert!(result.is_none());
-    }
-
-    #[tokio::test]
-    async fn get_block_compat_unknown_block_string_returns_none() {
-        let client = test_engine_client_builder()
-            .with_l2_block_error(
-                BlockNumberOrTag::Safe.into(),
-                MockL2BlockError::Custom("Unknown block".into()),
-            )
-            .build();
-
-        let result = get_block_compat(&client, BlockNumberOrTag::Safe.into()).await.unwrap();
-        assert!(result.is_none());
+            let result = get_block_compat(&client, BlockNumberOrTag::Safe.into()).await.unwrap();
+            assert!(result.is_none(), "expected none for error message {message:?}");
+        }
     }
 
     #[tokio::test]
