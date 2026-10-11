@@ -657,6 +657,7 @@ mod tests {
     use base_proof_rpc::L1Provider;
     use base_prover_service_protocol::{SnarkPlonkProofRequest, ZkProofRequest, ZkVm};
     use base_tx_manager::TxManagerError;
+    use rstest::rstest;
 
     use super::*;
     use crate::test_utils::{
@@ -752,25 +753,14 @@ mod tests {
         assert_eq!(proof_requester.state.lock().unwrap().prove_block_range_log.len(), 1);
     }
 
+    #[rstest]
+    #[case::proof_already_verified("AlreadyProven(1)")]
+    #[case::game_already_exists("GameAlreadyExists(0x00)")]
     #[tokio::test]
-    async fn proof_already_verified_revert_drops_pending_proof() {
+    async fn already_completed_revert_drops_pending_proof(#[case] reason: &str) {
         let (mut manager, submitter, _) =
             manager_with_tx_error(TxManagerError::ExecutionReverted {
-                reason: Some("AlreadyProven(1)".to_string()),
-                data: None,
-            });
-        insert_ready_proof(&mut manager);
-
-        manager.poll_or_submit(addr(0), &submitter).await.unwrap();
-
-        assert!(!manager.pending_proofs.contains_key(&addr(0)));
-    }
-
-    #[tokio::test]
-    async fn game_already_exists_revert_drops_pending_proof() {
-        let (mut manager, submitter, _) =
-            manager_with_tx_error(TxManagerError::ExecutionReverted {
-                reason: Some("GameAlreadyExists(0x00)".to_string()),
+                reason: Some(reason.to_string()),
                 data: None,
             });
         insert_ready_proof(&mut manager);
