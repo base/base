@@ -20,6 +20,33 @@ impl BlockDeferrals {
     }
 }
 
+/// Expands to the number of identifiers it is given, for sizing [`RejectionReason::ALL`].
+macro_rules! rejection_reason_count {
+    () => { 0usize };
+    ($head:ident $($tail:ident)*) => { 1usize + rejection_reason_count!($($tail)*) };
+}
+
+/// Declares the registry constants and builds [`RejectionReason::ALL`] from the same list, so a
+/// reason cannot be declared without also being registered for dedupe.
+///
+/// Each entry is `NAME => "code"`, and its position in the list is the bit it owns in a block's
+/// rejection set. Append new entries; do not reorder existing ones.
+macro_rules! rejection_reasons {
+    ($( $(#[$meta:meta])* $name:ident => $code:literal ),+ $(,)?) => {
+        impl RejectionReason {
+            $(
+                $(#[$meta])*
+                pub const $name: &'static str = $code;
+            )+
+
+            /// Every registered code, indexed by the bit it owns in a block's rejection set.
+            pub const ALL: [&'static str; rejection_reason_count!($($name)+)] = [
+                $( Self::$name, )+
+            ];
+        }
+    };
+}
+
 /// The `rejection_reason` codes a builder journals in `BUILDER_REJECTED`, and the registry for
 /// per-block rejection dedupe.
 ///
@@ -31,78 +58,51 @@ impl BlockDeferrals {
 #[derive(Debug)]
 pub struct RejectionReason;
 
-impl RejectionReason {
+rejection_reasons! {
     /// A validity predicate's state read failed.
-    pub const VALIDITY_PREDICATE_READ_FAILED: &'static str = "validity_predicate_read_failed";
+    VALIDITY_PREDICATE_READ_FAILED => "validity_predicate_read_failed",
     /// A validity predicate can no longer be satisfied at or after the current build position.
-    pub const VALIDITY_PREDICATE_EXPIRED: &'static str = "validity_predicate_expired";
+    VALIDITY_PREDICATE_EXPIRED => "validity_predicate_expired",
     /// A validity predicate is not satisfied by the current build state.
-    pub const VALIDITY_PREDICATE_NOT_SATISFIED: &'static str = "validity_predicate_not_satisfied";
+    VALIDITY_PREDICATE_NOT_SATISFIED => "validity_predicate_not_satisfied",
     /// An EIP-8130 authorization manifest was stale at the build position.
-    pub const MANIFEST_PRECHECK_STALE: &'static str = "manifest_precheck_stale";
+    MANIFEST_PRECHECK_STALE => "manifest_precheck_stale",
     /// An EIP-8130 payer authenticator cannot be scheduled against the gas budget.
-    pub const UNSCHEDULABLE_PAYER_AUTHENTICATOR: &'static str = "unschedulable_payer_authenticator";
+    UNSCHEDULABLE_PAYER_AUTHENTICATOR => "unschedulable_payer_authenticator",
     /// The sender and gas payer cannot cover worst-case gas plus the declared coinbase tip.
-    pub const UNAFFORDABLE_COINBASE_TIP: &'static str = "unaffordable_coinbase_tip";
+    UNAFFORDABLE_COINBASE_TIP => "unaffordable_coinbase_tip",
     /// The transaction's DA size exceeds the per-transaction limit.
-    pub const TX_DA_SIZE_EXCEEDED: &'static str = "tx_da_size_exceeded";
+    TX_DA_SIZE_EXCEEDED => "tx_da_size_exceeded",
     /// The block's DA size limit was exceeded.
-    pub const BLOCK_DA_SIZE_EXCEEDED: &'static str = "block_da_size_exceeded";
+    BLOCK_DA_SIZE_EXCEEDED => "block_da_size_exceeded",
     /// The block's DA footprint limit was exceeded.
-    pub const DA_FOOTPRINT_LIMIT_EXCEEDED: &'static str = "da_footprint_limit_exceeded";
+    DA_FOOTPRINT_LIMIT_EXCEEDED => "da_footprint_limit_exceeded",
     /// The transaction's gas limit exceeds the remaining block gas.
-    pub const TRANSACTION_GAS_LIMIT_EXCEEDED: &'static str = "transaction_gas_limit_exceeded";
+    TRANSACTION_GAS_LIMIT_EXCEEDED => "transaction_gas_limit_exceeded",
     /// The block's uncompressed size limit was exceeded.
-    pub const BLOCK_UNCOMPRESSED_SIZE_EXCEEDED: &'static str = "block_uncompressed_size_exceeded";
+    BLOCK_UNCOMPRESSED_SIZE_EXCEEDED => "block_uncompressed_size_exceeded",
     /// The transaction's predicted execution time exceeded its per-transaction limit.
-    pub const TX_EXECUTION_TIME_EXCEEDED: &'static str = "tx_execution_time_exceeded";
+    TX_EXECUTION_TIME_EXCEEDED => "tx_execution_time_exceeded",
     /// The transaction is a sequencer transaction that cannot be scheduled.
-    pub const SEQUENCER_TRANSACTION: &'static str = "sequencer_transaction";
+    SEQUENCER_TRANSACTION => "sequencer_transaction",
     /// The transaction nonce is below the account nonce.
-    pub const NONCE_TOO_LOW: &'static str = "nonce_too_low";
+    NONCE_TOO_LOW => "nonce_too_low",
     /// The builder hit an internal error handling the transaction.
-    pub const INTERNAL_ERROR: &'static str = "internal_error";
+    INTERNAL_ERROR => "internal_error",
     /// The transaction failed EVM validation in the flashblocks builder.
-    pub const EVM_ERROR: &'static str = "evm_error";
+    EVM_ERROR => "evm_error",
     /// The transaction would exceed the block's maximum gas usage.
-    pub const MAX_GAS_USAGE_EXCEEDED: &'static str = "max_gas_usage_exceeded";
+    MAX_GAS_USAGE_EXCEEDED => "max_gas_usage_exceeded",
     /// Resource metering data for the transaction has not arrived yet.
-    pub const METERING_DATA_PENDING: &'static str = "metering_data_pending";
+    METERING_DATA_PENDING => "metering_data_pending",
     /// The native builder does not support flashblock-index predicates.
-    pub const UNSUPPORTED_FLASHBLOCK_INDEX_PREDICATE: &'static str =
-        "unsupported_flashblock_index_predicate";
+    UNSUPPORTED_FLASHBLOCK_INDEX_PREDICATE => "unsupported_flashblock_index_predicate",
     /// The transaction's simulated or executed resource usage exceeds the metering budget.
-    pub const RESOURCE_METERING_EXCLUDED: &'static str = "resource_metering_excluded";
+    RESOURCE_METERING_EXCLUDED => "resource_metering_excluded",
     /// The transaction does not fit the remaining block gas or DA budget.
-    pub const BLOCK_LIMITS_EXCEEDED: &'static str = "block_limits_exceeded";
+    BLOCK_LIMITS_EXCEEDED => "block_limits_exceeded",
     /// The transaction failed EVM validation in the native builder.
-    pub const INVALID_TRANSACTION: &'static str = "invalid_transaction";
-
-    /// Every registered code, indexed by the bit it owns in a block's rejection set.
-    pub const ALL: [&'static str; 22] = [
-        Self::VALIDITY_PREDICATE_READ_FAILED,
-        Self::VALIDITY_PREDICATE_EXPIRED,
-        Self::VALIDITY_PREDICATE_NOT_SATISFIED,
-        Self::MANIFEST_PRECHECK_STALE,
-        Self::UNSCHEDULABLE_PAYER_AUTHENTICATOR,
-        Self::UNAFFORDABLE_COINBASE_TIP,
-        Self::TX_DA_SIZE_EXCEEDED,
-        Self::BLOCK_DA_SIZE_EXCEEDED,
-        Self::DA_FOOTPRINT_LIMIT_EXCEEDED,
-        Self::TRANSACTION_GAS_LIMIT_EXCEEDED,
-        Self::BLOCK_UNCOMPRESSED_SIZE_EXCEEDED,
-        Self::TX_EXECUTION_TIME_EXCEEDED,
-        Self::SEQUENCER_TRANSACTION,
-        Self::NONCE_TOO_LOW,
-        Self::INTERNAL_ERROR,
-        Self::EVM_ERROR,
-        Self::MAX_GAS_USAGE_EXCEEDED,
-        Self::METERING_DATA_PENDING,
-        Self::UNSUPPORTED_FLASHBLOCK_INDEX_PREDICATE,
-        Self::RESOURCE_METERING_EXCLUDED,
-        Self::BLOCK_LIMITS_EXCEEDED,
-        Self::INVALID_TRANSACTION,
-    ];
+    INVALID_TRANSACTION => "invalid_transaction",
 }
 
 /// A block's rejection set is one bit per registered reason, so the registry must fit a `u32`.
