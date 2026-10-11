@@ -1,5 +1,12 @@
 //! Trie update storage and replacement behavior tests.
 
+use alloy_primitives::{Address, keccak256};
+use base_execution_trie::{BaseProofsStorage, provider::BaseProofsStateProviderRef};
+use reth_provider::{HashedPostStateProvider, noop::NoopProvider};
+use reth_revm::{
+    db::{AccountStatus, BundleAccount, BundleState, states::StorageSlot},
+    state::AccountInfo,
+};
 use rstest::rstest;
 use serial_test::serial;
 
@@ -33,10 +40,7 @@ fn test_trie_updates_operations<S: BaseProofsStore + BaseProofsInitialStateStore
     Ok(())
 }
 
-/// Test wiped storage in [`HashedPostState`]
-///
-/// When `store_trie_updates` receives a [`HashedPostState`] with wiped=true for a storage entry,
-/// it should iterate all existing values for that address and create deletion entries for them.
+/// Explicit zero-valued updates remove all storage slots while preserving historical reads.
 #[rstest]
 #[case::in_memory(InMemoryProofsStorage::new())]
 #[case::mdbx(create_mdbx_proofs_storage())]
@@ -70,9 +74,10 @@ fn test_store_trie_updates_with_wiped_storage<S: BaseProofsStore + BaseProofsIni
     assert_eq!(found_slots[2], (B256::repeat_byte(0x30), U256::from(300)));
     assert_eq!(found_slots[3], (B256::repeat_byte(0x40), U256::from(400)));
 
-    // Now create a HashedPostState with wiped=true for this address at block 100
+    // Delete every previously stored slot at block 100.
     let mut post_state = HashedPostState::default();
-    let wiped_storage = HashedStorage::new(true); // wiped=true, empty storage map
+    let wiped_storage =
+        HashedStorage::from_iter(storage_slots.iter().map(|(slot, _)| (*slot, U256::ZERO)));
     post_state.storages.insert(hashed_address, wiped_storage);
 
     let block_state_diff = BlockStateDiff {
@@ -121,13 +126,8 @@ fn test_store_trie_updates_with_wiped_storage<S: BaseProofsStore + BaseProofsIni
     Ok(())
 }
 
-/// When a [`HashedPostState`] entry has `wiped = true` AND non-empty `storage` (the shape revm
-/// produces for `AccountStatus::DestroyedChanged` accounts that are destroyed and recreated in
-/// the same block), `store_trie_updates` must tombstone every prior storage slot for the address
-/// at `block_number` AND persist the new post-recreation slot values from `storage`. Dropping
-/// the new slots corrupts `HashedStorageHistory` and makes `BaseProofsStateProviderRef::storage`
-/// return `None` for the new slots, producing divergent storage / state / output roots
-/// downstream of `LiveTrieCollector`.
+/// Deleting old slots and writing recreated storage in one block preserves the new values
+/// and leaves earlier historical values readable.
 #[rstest]
 #[case::in_memory(InMemoryProofsStorage::new())]
 #[case::mdbx(create_mdbx_proofs_storage())]
@@ -151,7 +151,8 @@ fn test_store_trie_updates_with_wiped_storage_and_new_slots<
     let new_slot_overwriting_old = (B256::repeat_byte(0x10), U256::from(0xBEEF));
 
     let mut post_state = HashedPostState::default();
-    let mut wiped_with_new = HashedStorage::new(true);
+    let mut wiped_with_new =
+        HashedStorage::from_iter(pre_existing_slots.iter().map(|(slot, _)| (*slot, U256::ZERO)));
     wiped_with_new.extend(&HashedStorage::from_iter(vec![new_slot_kept, new_slot_overwriting_old]));
     post_state.storages.insert(hashed_address, wiped_with_new);
 
@@ -273,7 +274,7 @@ fn test_store_trie_updates_comprehensive<S: BaseProofsStore + BaseProofsInitialS
 
     // Add storage for an address
     let storage_addr = B256::repeat_byte(0x50);
-    let mut hashed_storage = HashedStorage::new(false);
+    let mut hashed_storage = HashedStorage::default();
     hashed_storage.storage.insert(B256::repeat_byte(0x01), U256::from(111));
     hashed_storage.storage.insert(B256::repeat_byte(0x02), U256::from(222));
     hashed_storage.storage.insert(B256::repeat_byte(0x03), U256::ZERO); // Deleted storage
@@ -427,7 +428,7 @@ fn test_replace_updates_applies_all_updates<S: BaseProofsStore + BaseProofsIniti
     initial_trie_updates_100.account_nodes.insert(common_branch_path, initial_branch.clone());
 
     let mut initial_post_state_100 = HashedPostState::default();
-    let mut initial_storage_100 = HashedStorage::new(false);
+    let mut initial_storage_100 = HashedStorage::default();
     initial_storage_100.storage.insert(initial_storage_slot, initial_storage_value);
     initial_post_state_100.storages.insert(initial_storage_addr, initial_storage_100);
 
@@ -511,7 +512,7 @@ fn test_replace_updates_applies_all_updates<S: BaseProofsStore + BaseProofsIniti
     let mut new_post_state = HashedPostState::default();
     new_post_state.accounts.insert(new_account_addr, Some(new_account));
 
-    let mut new_storage = HashedStorage::new(false);
+    let mut new_storage = HashedStorage::default();
     new_storage.storage.insert(new_storage_slot, new_storage_value);
     new_post_state.storages.insert(new_storage_addr, new_storage);
 
@@ -684,12 +685,14 @@ fn test_replace_updates_wipes_storage_added_by_prior_replacement_block<
     );
 
     let mut replacement_post_state_2 = HashedPostState::default();
-    let mut replacement_storage_2 = HashedStorage::new(false);
+    let mut replacement_storage_2 = HashedStorage::default();
     replacement_storage_2.storage.insert(storage_slot, storage_value);
     replacement_post_state_2.storages.insert(storage_address, replacement_storage_2);
 
     let mut replacement_post_state_3 = HashedPostState::default();
-    replacement_post_state_3.storages.insert(storage_address, HashedStorage::new(true));
+    replacement_post_state_3
+        .storages
+        .insert(storage_address, HashedStorage::from_iter([(storage_slot, U256::ZERO)]));
 
     storage.replace_updates(
         BlockNumHash::new(common_block.block.number, common_block.block.hash),
@@ -975,4 +978,49 @@ fn test_updates_take_precedence_over_removals<S: BaseProofsStore + BaseProofsIni
     );
 
     Ok(())
+}
+
+/// Destruction clears unread parent slots; recreation keeps the new values for overwritten slots.
+#[rstest]
+#[case::in_memory(InMemoryProofsStorage::new())]
+#[case::mdbx(create_mdbx_proofs_storage())]
+#[case::rocksdb(create_rocksdb_proofs_storage())]
+#[serial]
+fn destroyed_storage_materializes_parent_slots<
+    S: BaseProofsStore + BaseProofsInitialStateStore + 'static,
+>(
+    #[case] storage: S,
+    #[values(false, true)] recreated: bool,
+) {
+    let address = Address::with_last_byte(1);
+    let hashed_address = keccak256(address);
+    let untouched_slot = keccak256(B256::from(U256::from(1)));
+    let overwritten_slot = keccak256(B256::from(U256::from(2)));
+    storage
+        .store_hashed_storages(
+            hashed_address,
+            vec![(untouched_slot, U256::from(11)), (overwritten_slot, U256::from(22))],
+        )
+        .unwrap();
+    let storage = BaseProofsStorage::from(Arc::new(storage));
+    let provider = BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &storage, 0);
+    let mut bundle = BundleState::default();
+    let account = BundleAccount::new(
+        Some(AccountInfo::default()),
+        recreated.then(AccountInfo::default),
+        if recreated {
+            [(U256::from(2), StorageSlot::new_changed(U256::ZERO, U256::from(33)))]
+                .into_iter()
+                .collect()
+        } else {
+            Default::default()
+        },
+        if recreated { AccountStatus::DestroyedChanged } else { AccountStatus::Destroyed },
+    );
+    bundle.state.insert(address, account);
+
+    let post_state = provider.hashed_post_state(&bundle).unwrap();
+    let slots = &post_state.storages[&hashed_address].storage;
+    assert_eq!(slots[&untouched_slot], U256::ZERO);
+    assert_eq!(slots[&overwritten_slot], if recreated { U256::from(33) } else { U256::ZERO });
 }
