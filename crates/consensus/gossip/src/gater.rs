@@ -103,15 +103,7 @@ pub struct ConnectionGater {
 impl ConnectionGater {
     /// Creates a new instance of the `ConnectionGater`.
     pub fn new(config: GaterConfig) -> Self {
-        Self {
-            config,
-            current_dials: HashMap::new(),
-            dialed_peers: HashMap::new(),
-            protected_peers: HashSet::new(),
-            blocked_peers: HashSet::new(),
-            blocked_addrs: HashSet::new(),
-            blocked_subnets: HashSet::new(),
-        }
+        Self { config, ..Default::default() }
     }
 
     /// Returns if the given [`Multiaddr`] has been dialed the maximum number of times.
@@ -128,10 +120,7 @@ impl ConnectionGater {
         if redialing == 0 {
             return false;
         }
-        if dialed.num_dials >= redialing {
-            return true;
-        }
-        false
+        dialed.num_dials >= redialing
     }
 
     fn dial_period_expired(&self, addr: &Multiaddr) -> bool {
@@ -213,12 +202,7 @@ impl ConnectionGater {
 
     /// Checks if a given [`IpAddr`] is within any of the `blocked_subnets`.
     pub fn check_ip_in_blocked_subnets(&self, ip_addr: &IpAddr) -> bool {
-        for subnet in &self.blocked_subnets {
-            if subnet.contains(ip_addr) {
-                return true;
-            }
-        }
-        false
+        self.blocked_subnets.iter().any(|subnet| subnet.contains(ip_addr))
     }
 
     /// Gets the [`IpAddr`] used for blocklist checks from a given [`Multiaddr`].
@@ -411,11 +395,7 @@ impl ConnectionGate for ConnectionGater {
             return true;
         };
         // If the peer is protected, do not disconnect.
-        if !self.protected_peers.contains(&peer_id) {
-            return true;
-        }
-        // Peer is protected, cannot disconnect.
-        false
+        !self.protected_peers.contains(&peer_id)
     }
 
     fn block_peer(&mut self, peer_id: &PeerId) {
