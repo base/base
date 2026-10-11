@@ -170,11 +170,21 @@ struct WorkerArgs {
     prover_service_endpoint: String,
 
     /// Prover-service JSON-RPC request timeout in seconds.
-    #[arg(long, env = "PROVER_SERVICE_REQUEST_TIMEOUT_SECS", default_value_t = 60)]
+    #[arg(
+        long,
+        env = "PROVER_SERVICE_REQUEST_TIMEOUT_SECS",
+        default_value_t = 60,
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
     prover_service_request_timeout_secs: u64,
 
     /// Delay after an empty or failed discovery attempt, in milliseconds.
-    #[arg(long, env = "JOB_DISCOVERY_POLL_INTERVAL_MS", default_value_t = 5_000)]
+    #[arg(
+        long,
+        env = "JOB_DISCOVERY_POLL_INTERVAL_MS",
+        default_value_t = 5_000,
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
     job_discovery_poll_interval_ms: u64,
 
     /// Requested claim lock duration in seconds. Zero uses the server default.
@@ -189,12 +199,18 @@ struct WorkerArgs {
     #[arg(
         long,
         env = "JOB_DISCOVERY_MAX_CONCURRENT_JOBS",
-        default_value_t = DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS
+        default_value_t = DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
     )]
     job_discovery_max_concurrent_jobs: usize,
 
     /// Delay between worker API heartbeats while an enclave proof is being generated.
-    #[arg(long, env = "PROOF_GENERATOR_HEARTBEAT_INTERVAL_SECS", default_value_t = 30)]
+    #[arg(
+        long,
+        env = "PROOF_GENERATOR_HEARTBEAT_INTERVAL_SECS",
+        default_value_t = 30,
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
     proof_generator_heartbeat_interval_secs: u64,
 
     /// Requested heartbeat lock duration in seconds. Zero uses the server default.
@@ -209,7 +225,8 @@ struct WorkerArgs {
     #[arg(
         long,
         env = "PROOF_GENERATOR_MAX_CONSECUTIVE_HEARTBEAT_FAILURES",
-        default_value_t = DEFAULT_PROOF_GENERATOR_MAX_CONSECUTIVE_HEARTBEAT_FAILURES
+        default_value_t = DEFAULT_PROOF_GENERATOR_MAX_CONSECUTIVE_HEARTBEAT_FAILURES,
+        value_parser = clap::value_parser!(u32).range(1..)
     )]
     proof_generator_max_consecutive_heartbeat_failures: u32,
 }
@@ -416,4 +433,67 @@ enum WorkerTransportMode {
     Vsock,
     #[cfg(feature = "local")]
     Local,
+}
+
+#[cfg(all(test, any(target_os = "linux", feature = "local")))]
+mod tests {
+    use clap::{Parser, error::ErrorKind};
+
+    use super::WorkerArgs;
+
+    #[test]
+    fn worker_options_reject_zero_and_accept_positive_values() {
+        for flag in [
+            "--prover-service-request-timeout-secs",
+            "--job-discovery-poll-interval-ms",
+            "--job-discovery-max-concurrent-jobs",
+            "--proof-generator-heartbeat-interval-secs",
+            "--proof-generator-max-consecutive-heartbeat-failures",
+        ] {
+            for value in ["0", "1", "2"] {
+                let result = WorkerArgs::try_parse_from([
+                    "nitro-host",
+                    "--prover-service-endpoint",
+                    "http://localhost:8080",
+                    flag,
+                    value,
+                ]);
+                if value == "0" {
+                    let error = result.err().expect("zero must be rejected");
+                    assert_eq!(error.kind(), ErrorKind::ValueValidation, "{flag}");
+                    assert!(error.to_string().contains(flag), "{error}");
+                } else {
+                    assert!(result.is_ok(), "{flag}={value} must be accepted");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn worker_defaults_and_zero_lock_durations_are_accepted() {
+        let defaults = WorkerArgs::try_parse_from([
+            "nitro-host",
+            "--prover-service-endpoint",
+            "http://localhost:8080",
+        ])
+        .expect("worker defaults must be accepted");
+        assert!(defaults.prover_service_request_timeout_secs > 0);
+        assert!(defaults.job_discovery_poll_interval_ms > 0);
+        assert!(defaults.job_discovery_max_concurrent_jobs > 0);
+        assert!(defaults.proof_generator_heartbeat_interval_secs > 0);
+        assert!(defaults.proof_generator_max_consecutive_heartbeat_failures > 0);
+
+        let args = WorkerArgs::try_parse_from([
+            "nitro-host",
+            "--prover-service-endpoint",
+            "http://localhost:8080",
+            "--job-discovery-lock-duration-seconds",
+            "0",
+            "--proof-generator-heartbeat-lock-duration-seconds",
+            "0",
+        ])
+        .expect("zero lock durations must be accepted");
+        assert_eq!(args.job_discovery_lock_duration_seconds, 0);
+        assert_eq!(args.proof_generator_heartbeat_lock_duration_seconds, 0);
+    }
 }
