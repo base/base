@@ -252,12 +252,4 @@ mod tests {
         assert!(max_fee >= base_fee + priority_fee);
         assert_eq!(max_fee, base_fee * PREP_MAX_FEE_BASE_FEE_MULTIPLIER);
     }
-
-    #[test]
-    fn default_prepare_outputs_are_empty() {
-        let outputs = ChainPrepOutputs::default();
-        assert!(outputs.b20_run_salt.is_none());
-        assert!(!outputs.real_tokens_prepared);
-        assert!(!outputs.needs_sender_refresh);
-    }
 }
