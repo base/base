@@ -77,6 +77,29 @@ where
         dispatched_through: u64,
         cancel: &CancellationToken,
     ) -> bool {
+        self.tick_with_restart(
+            current,
+            finalized_head,
+            dispatched_through,
+            cancel,
+            &CancellationToken::new(),
+        )
+        .await
+    }
+
+    /// Collects proofs until idle or recovery is required, honoring deferred cleanup restarts.
+    ///
+    /// Unlike shutdown cancellation, `restart` never interrupts a submission. It is checked
+    /// before starting each submission and after the current submission returns, allowing the
+    /// transaction manager to finish nonce cleanup and manage any pending L1 transaction.
+    pub async fn tick_with_restart(
+        &self,
+        current: &mut RecoveredState,
+        finalized_head: u64,
+        dispatched_through: u64,
+        cancel: &CancellationToken,
+        restart: &CancellationToken,
+    ) -> bool {
         if cancel.is_cancelled() {
             return false;
         }
@@ -84,6 +107,9 @@ where
         loop {
             if cancel.is_cancelled() {
                 return false;
+            }
+            if restart.is_cancelled() {
+                return true;
             }
 
             // Resolved per target: the interval changes at the Denim activation
@@ -143,6 +169,12 @@ where
                     return self.delete_proof_request(&session_id, target_block).await;
                 }
             };
+
+            // A cleanup may have completed while the proof was being polled. Do not
+            // start a new transaction, but never use this token to cancel an existing one.
+            if restart.is_cancelled() {
+                return true;
+            }
 
             match self
                 .submit_proof(

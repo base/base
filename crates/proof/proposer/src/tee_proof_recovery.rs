@@ -269,8 +269,14 @@ mod tests {
         },
     };
 
-    use alloy_primitives::{B256, U256, hex};
+    use alloy_consensus::{
+        Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, Transaction, TxEnvelope,
+    };
+    use alloy_eips::eip2718::Decodable2718;
+    use alloy_primitives::{B256, Bloom, Bytes, U256, hex};
     use alloy_provider::RootProvider;
+    use alloy_rpc_types_eth::{Block, Header, TransactionReceipt};
+    use alloy_signer_local::PrivateKeySigner;
     use alloy_sol_types::SolValue;
     use base_common_genesis::RollupConfig;
     use base_optimism_rpc::{OutputAtBlock, SyncStatus};
@@ -282,6 +288,8 @@ mod tests {
         PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofRequestKind, ProofResult, ProveBlockRangeRequest,
         ProveBlockRangeResponse, TeeKind, TeeProofResult, ZkProofResult, ZkVm,
     };
+    use base_retry::RetryConfig;
+    use base_tx_manager::{NoopTxMetrics, SimpleTxManager, TxManagerConfig};
     use jsonrpsee::{RpcModule, core::RpcResult, server::ServerBuilder, types::ErrorObjectOwned};
     use mockall::Sequence;
     use serde_json::Value;
@@ -291,7 +299,7 @@ mod tests {
     use super::*;
     use crate::{
         DriverConfig, ProofCollector, ProofDispatcher, ProofRecovery, ProofRecoveryConfig,
-        ProofSubmitter, ProvingPipeline,
+        ProofSubmitter, ProposalSubmitter, ProvingPipeline,
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
             MockOutputProposer, MockRollupClient, test_anchor_root, test_fixed_interval_resolver,
@@ -418,6 +426,7 @@ mod tests {
         rollup: Arc<R>,
         scan_timeout: Duration,
         poll_interval: Duration,
+        submitter: Option<ProofSubmitter>,
     ) -> ProvingPipeline<R> {
         let intervals = test_fixed_interval_resolver(100, 100);
         let factory = Arc::new(MockDisputeGameFactory::default());
@@ -444,14 +453,16 @@ mod tests {
             Arc::<MockDisputeGameFactory>::clone(&factory),
             Arc::clone(&intervals),
         ));
-        let submitter = ProofSubmitter::new(
-            Arc::new(MockOutputProposer::default()),
-            Arc::<R>::clone(&rollup),
-            factory,
-            Arc::new(MockAggregateVerifier::default()),
-            Arc::clone(&intervals),
-            &config,
-        );
+        let submitter = submitter.unwrap_or_else(|| {
+            ProofSubmitter::new(
+                Arc::new(MockOutputProposer::default()),
+                Arc::<R>::clone(&rollup),
+                factory,
+                Arc::new(MockAggregateVerifier::default()),
+                Arc::clone(&intervals),
+                &config,
+            )
+        });
         let collector = ProofCollector::new(
             Arc::clone(&requester),
             Arc::clone(&rollup),
@@ -780,6 +791,457 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ambiguous_batch_delete_is_not_hidden_by_zero_rows_or_rejection_on_retry() {
+        for final_code in
+            [None, Some(ErrorCode::MethodNotFound.code()), Some(ErrorCode::InvalidParams.code())]
+        {
+            let server = ServerBuilder::default().build("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("http://{}", server.local_addr().unwrap());
+            let deleted = Arc::new(AtomicBool::new(false));
+            let attempts = Arc::new(AtomicUsize::new(0));
+            let mut module = RpcModule::new(());
+            let proof_deleted = Arc::clone(&deleted);
+            module
+                .register_method("prover_getProof", move |_, _, _| {
+                    if proof_deleted.load(Ordering::SeqCst) {
+                        Err(ErrorObjectOwned::owned(
+                            ProverServiceClientError::ERROR_NOT_FOUND,
+                            PROOF_REQUEST_NOT_FOUND_MESSAGE,
+                            None::<()>,
+                        ))
+                    } else {
+                        Ok(succeeded(100, Address::repeat_byte(0x11)))
+                    }
+                })
+                .unwrap();
+            let committed = Arc::clone(&deleted);
+            let calls = Arc::clone(&attempts);
+            module
+                .register_method("prover_deleteProofsByTeeSigner", move |_, _, _| {
+                    if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                        // The destructive effect commits, but its response is ambiguous.
+                        committed.store(true, Ordering::SeqCst);
+                        Err(ErrorObjectOwned::owned(
+                            ErrorCode::InternalError.code(),
+                            "response lost after commit",
+                            None::<()>,
+                        ))
+                    } else if let Some(code) = final_code {
+                        Err(ErrorObjectOwned::owned(code, "later request rejected", None::<()>))
+                    } else {
+                        Ok(0_u64)
+                    }
+                })
+                .unwrap();
+            let handle = server.start(module);
+            let requester =
+                ProofRequesterClient::connect(&ProverServiceClientConfig::new(endpoint))
+                    .unwrap()
+                    .with_retry_config(RetryConfig::new(
+                        3,
+                        Duration::from_millis(1),
+                        Duration::from_millis(1),
+                    ));
+            let mut registry = MockTeeSignerRegistry::new();
+            registry.expect_registered_signers().times(1).returning(|| Ok(vec![]));
+            let recovery = TeeProofRecovery::new(
+                Arc::new(requester),
+                rollup(100),
+                test_fixed_interval_resolver(100, 100),
+                Arc::new(registry),
+                Duration::from_secs(1),
+            );
+            assert!(
+                recovery.tick(0, 100, &mut None).await,
+                "a committed deletion must require redispatch even if a retry would report {final_code:?}"
+            );
+            assert!(deleted.load(Ordering::SeqCst));
+            assert_eq!(
+                attempts.load(Ordering::SeqCst),
+                1,
+                "the client must expose the first ambiguous outcome instead of retrying destructively"
+            );
+            assert!(!recovery.tick(0, 100, &mut None).await);
+            assert_eq!(attempts.load(Ordering::SeqCst), 1);
+            handle.stop().unwrap();
+            tokio::time::timeout(Duration::from_secs(1), handle.stopped()).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn sweep_discovers_accepted_prefix_while_later_dispatch_is_blocked() {
+        let blocked = CancellationToken::new();
+        let cleaned = CancellationToken::new();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let server = ServerBuilder::default().build("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", server.local_addr().unwrap());
+        let mut module = RpcModule::new(());
+        let dispatch_blocked = blocked.clone();
+        let progress = Arc::clone(&accepted);
+        module
+            .register_async_method("prover_proveBlockRange", move |params, _, _| {
+                let blocked = dispatch_blocked.clone();
+                let progress = Arc::clone(&progress);
+                async move {
+                    let request: ProveBlockRangeRequest = params.one()?;
+                    let ProofRequestKind::Tee(tee) = &request.proof.request else {
+                        panic!("expected TEE")
+                    };
+                    if tee.proof.claimed_l2_block_number == 300 {
+                        blocked.cancel();
+                        pending::<RpcResult<ProveBlockRangeResponse>>().await
+                    } else {
+                        progress.fetch_max(
+                            tee.proof.claimed_l2_block_number as usize,
+                            Ordering::SeqCst,
+                        );
+                        Ok(ProveBlockRangeResponse { session_id: request.proof.session_id })
+                    }
+                }
+            })
+            .unwrap();
+        let dispatched = Arc::clone(&accepted);
+        module
+            .register_method("prover_getProof", move |params, _, _| {
+                let request: GetProofRequest = params.one()?;
+                Ok::<_, ErrorObjectOwned>(
+                    if request.session_id == session(200)
+                        && dispatched.load(Ordering::SeqCst) >= 200
+                    {
+                        succeeded(200, Address::repeat_byte(0x11))
+                    } else {
+                        unfinished(ProofStatus::Queued)
+                    },
+                )
+            })
+            .unwrap();
+        let cleanup_observed = cleaned.clone();
+        module
+            .register_method("prover_deleteProofsByTeeSigner", move |params, _, _| {
+                let request: DeleteProofsByTeeSignerRequest = params.one()?;
+                assert_eq!(request.tee_signer, Address::repeat_byte(0x11));
+                cleanup_observed.cancel();
+                Ok::<_, ErrorObjectOwned>(1_u64)
+            })
+            .unwrap();
+        let handle = server.start(module);
+        let requester =
+            ProofRequesterClient::connect(&ProverServiceClientConfig::new(endpoint)).unwrap();
+        let mut registry = MockTeeSignerRegistry::new();
+        registry.expect_registered_signers().returning(|| Ok(vec![]));
+        let pipeline = test_pipeline(
+            Arc::new(requester),
+            registry,
+            rollup(300),
+            Duration::from_secs(5),
+            Duration::from_millis(10),
+            None,
+        );
+        let cancel = CancellationToken::new();
+        let run = pipeline.run(cancel.clone());
+        tokio::pin!(run);
+        tokio::select! {
+            () = &mut run => panic!("pipeline must run until cancelled"),
+            result = tokio::time::timeout(Duration::from_secs(2), async {
+                blocked.cancelled().await;
+                cleaned.cancelled().await;
+            }) => result.expect("block 200 must be swept before dispatch of block 300 finishes"),
+        }
+        assert_eq!(
+            accepted.load(Ordering::SeqCst),
+            200,
+            "unaccepted targets must not be published"
+        );
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_millis(100), &mut run).await.unwrap();
+        handle.stop().unwrap();
+        tokio::time::timeout(Duration::from_secs(1), handle.stopped()).await.unwrap();
+    }
+
+    // This server drives the real transaction manager across publication and confirmation;
+    // its responses change while the submission is in flight, rather than mocking send().
+    async fn assert_cleanup_preserves_transaction_lifecycle(stall_before_publish: bool) {
+        let healthy = Address::repeat_byte(0x33);
+        let bad_signer = Address::repeat_byte(0x11);
+        let block_hash = B256::repeat_byte(0x55);
+        let publish_started = CancellationToken::new();
+        let receipt_waiting = CancellationToken::new();
+        let fee_bumped = CancellationToken::new();
+        let release = CancellationToken::new();
+        let cleaned = CancellationToken::new();
+        let redispatched = CancellationToken::new();
+        let receipt_delivered = Arc::new(AtomicBool::new(false));
+        let premature_redispatch = Arc::new(AtomicBool::new(false));
+        let nonces = Arc::new(Mutex::new(Vec::new()));
+        let cleanup_stage =
+            if stall_before_publish { publish_started.clone() } else { receipt_waiting.clone() };
+        let server = ServerBuilder::default().build("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", server.local_addr().unwrap());
+        let mut module = RpcModule::new(());
+        for (method, value) in [
+            ("eth_chainId", "0x1"),
+            ("eth_blockNumber", "0x1"),
+            ("eth_maxPriorityFeePerGas", "0x3b9aca00"),
+            ("eth_estimateGas", "0x5208"),
+            ("eth_getTransactionCount", "0x0"),
+        ] {
+            module
+                .register_method(method, move |_, _, _| Ok::<_, ErrorObjectOwned>(value))
+                .unwrap();
+        }
+        let block = Block::<B256> {
+            header: Header {
+                hash: block_hash,
+                inner: alloy_consensus::Header {
+                    number: 1,
+                    base_fee_per_gas: Some(1_000_000_000),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        module
+            .register_method("eth_getBlockByNumber", move |_, _, _| {
+                Ok::<_, ErrorObjectOwned>(block.clone())
+            })
+            .unwrap();
+        let publication = publish_started.clone();
+        let unlock = release.clone();
+        let bumped = fee_bumped.clone();
+        let sent_nonces = Arc::clone(&nonces);
+        let cleanup = cleaned.clone();
+        module
+            .register_async_method("eth_sendRawTransaction", move |params, _, _| {
+                let publication = publication.clone();
+                let unlock = unlock.clone();
+                let bumped = bumped.clone();
+                let sent_nonces = Arc::clone(&sent_nonces);
+                let cleanup = cleanup.clone();
+                async move {
+                    let raw: Bytes = params.one()?;
+                    let envelope = TxEnvelope::decode_2718(&mut raw.as_ref()).unwrap();
+                    let first = {
+                        let mut nonces = sent_nonces.lock().unwrap();
+                        let first = nonces.is_empty();
+                        nonces.push(envelope.nonce());
+                        first
+                    };
+                    publication.cancel();
+                    if stall_before_publish && first {
+                        unlock.cancelled().await;
+                    }
+                    if !first && envelope.nonce() == 0 && cleanup.is_cancelled() {
+                        bumped.cancel();
+                    }
+                    Ok::<_, ErrorObjectOwned>(*envelope.tx_hash())
+                }
+            })
+            .unwrap();
+        let waiting = receipt_waiting.clone();
+        let unlock = release.clone();
+        let delivered = Arc::clone(&receipt_delivered);
+        module
+            .register_method(
+                "eth_getTransactionReceipt",
+                move |params, _, _| -> RpcResult<Option<TransactionReceipt>> {
+                    waiting.cancel();
+                    if !unlock.is_cancelled() {
+                        return Ok::<_, ErrorObjectOwned>(None);
+                    }
+                    delivered.store(true, Ordering::SeqCst);
+                    Ok(Some(TransactionReceipt {
+                        inner: ReceiptEnvelope::Legacy(ReceiptWithBloom {
+                            receipt: Receipt {
+                                status: Eip658Value::success(),
+                                cumulative_gas_used: 21_000,
+                                logs: vec![],
+                            },
+                            logs_bloom: Bloom::ZERO,
+                        }),
+                        transaction_hash: params.one()?,
+                        transaction_index: Some(0),
+                        block_hash: Some(block_hash),
+                        block_number: Some(1),
+                        gas_used: 21_000,
+                        effective_gas_price: 1_000_000_000,
+                        blob_gas_used: None,
+                        blob_gas_price: None,
+                        from: Address::ZERO,
+                        to: Some(Address::repeat_byte(0xf0)),
+                        contract_address: None,
+                    }))
+                },
+            )
+            .unwrap();
+        let dispatch_count = Arc::new(AtomicUsize::new(0));
+        let dispatches = Arc::clone(&dispatch_count);
+        let cleanup = cleaned.clone();
+        let observed = redispatched.clone();
+        let delivered = Arc::clone(&receipt_delivered);
+        let premature = Arc::clone(&premature_redispatch);
+        module
+            .register_method("prover_proveBlockRange", move |params, _, _| {
+                let request: ProveBlockRangeRequest = params.one()?;
+                let ProofRequestKind::Tee(tee) = &request.proof.request else {
+                    panic!("expected TEE")
+                };
+                if tee.proof.claimed_l2_block_number == 300
+                    && dispatches.fetch_add(1, Ordering::SeqCst) > 0
+                    && cleanup.is_cancelled()
+                {
+                    premature.store(!delivered.load(Ordering::SeqCst), Ordering::SeqCst);
+                    observed.cancel();
+                }
+                Ok::<_, ErrorObjectOwned>(ProveBlockRangeResponse {
+                    session_id: request.proof.session_id,
+                })
+            })
+            .unwrap();
+        let cleanup = cleaned.clone();
+        let delivered = Arc::clone(&receipt_delivered);
+        module
+            .register_method("prover_getProof", move |params, _, _| {
+                let request: GetProofRequest = params.one()?;
+                let response =
+                    // Keep a second healthy proof ready: draining must stop after the
+                    // current transaction, not start another submission in the same tick.
+                    if (request.session_id == session(100) && !delivered.load(Ordering::SeqCst))
+                        || request.session_id == session(200)
+                    {
+                        let block = if request.session_id == session(100) { 100 } else { 200 };
+                        let mut response = succeeded(block, healthy);
+                        let Some(ProofResult::Tee(proof)) = response.result.as_mut() else {
+                            unreachable!()
+                        };
+                        proof.proposals = (block - 100 + 1..=block)
+                            .map(|block| base_proof_primitives::Proposal {
+                                output_root: root(block),
+                                ..test_proposal(block)
+                            })
+                            .collect();
+                        response
+                    } else if request.session_id == session(300)
+                        && cleanup_stage.is_cancelled()
+                        && !cleanup.is_cancelled()
+                    {
+                        succeeded(300, bad_signer)
+                    } else {
+                        unfinished(ProofStatus::Queued)
+                    };
+                Ok::<_, ErrorObjectOwned>(response)
+            })
+            .unwrap();
+        let cleanup = cleaned.clone();
+        module
+            .register_method("prover_deleteProofsByTeeSigner", move |params, _, _| {
+                let request: DeleteProofsByTeeSignerRequest = params.one()?;
+                assert_eq!(request.tee_signer, bad_signer);
+                cleanup.cancel();
+                Ok::<_, ErrorObjectOwned>(1_u64)
+            })
+            .unwrap();
+        let handle = server.start(module);
+        let tx_manager = SimpleTxManager::from_wallet(
+            RootProvider::new_http(endpoint.parse().unwrap()),
+            PrivateKeySigner::random().into(),
+            TxManagerConfig {
+                num_confirmations: 1,
+                network_timeout: Duration::from_secs(3),
+                resubmission_timeout: Duration::from_millis(50),
+                receipt_query_interval: Duration::from_millis(10),
+                tx_send_timeout: Duration::from_secs(5),
+                ..Default::default()
+            },
+            1,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .unwrap();
+        let rollup = rollup(300);
+        let submitter = ProofSubmitter::new(
+            Arc::new(ProposalSubmitter::new(
+                tx_manager.clone(),
+                Address::repeat_byte(0xf0),
+                0,
+                U256::ZERO,
+            )),
+            Arc::<MockRollupClient>::clone(&rollup),
+            Arc::new(MockDisputeGameFactory::with_uuid_game_responses([
+                Address::ZERO,
+                Address::repeat_byte(0x66),
+            ])),
+            Arc::new(MockAggregateVerifier::default()),
+            test_fixed_interval_resolver(100, 100),
+            &DriverConfig::default(),
+        );
+        let requester =
+            ProofRequesterClient::connect(&ProverServiceClientConfig::new(endpoint)).unwrap();
+        let mut registry = MockTeeSignerRegistry::new();
+        registry.expect_registered_signers().returning(move || Ok(vec![healthy]));
+        let pipeline = test_pipeline(
+            Arc::new(requester),
+            registry,
+            rollup,
+            Duration::from_secs(1),
+            Duration::from_millis(10),
+            Some(submitter),
+        );
+        let cancel = CancellationToken::new();
+        let run = pipeline.run(cancel.clone());
+        tokio::pin!(run);
+        tokio::select! {
+            () = &mut run => panic!("pipeline must run until cancelled"),
+            result = tokio::time::timeout(Duration::from_secs(2), cleaned.cancelled()) => result.expect("cleanup must occur during the L1 submission"),
+        }
+        tokio::select! {
+            () = &mut run => panic!("cleanup must drain rather than terminate the pipeline"),
+            () = tokio::time::sleep(Duration::from_millis(100)) => {},
+        }
+        assert!(
+            !redispatched.is_cancelled(),
+            "cleanup must not reset the pipeline before the in-flight send settles"
+        );
+        assert!(!premature_redispatch.load(Ordering::SeqCst));
+        assert!(
+            nonces.lock().unwrap().iter().all(|nonce| *nonce == 0),
+            "cleanup must not abandon nonce zero and start nonce one"
+        );
+        if !stall_before_publish {
+            tokio::select! {
+                () = &mut run => panic!("pipeline must keep the published transaction alive"),
+                result = tokio::time::timeout(Duration::from_secs(2), fee_bumped.cancelled()) => result.expect("fee bumping must continue after cleanup while the transaction is unmined"),
+            }
+        }
+        release.cancel();
+        tokio::select! {
+            () = &mut run => panic!("pipeline must run until cancelled"),
+            result = tokio::time::timeout(Duration::from_secs(2), redispatched.cancelled()) => result.expect("cleanup must redispatch after the current send confirms"),
+        }
+        assert!(receipt_delivered.load(Ordering::SeqCst));
+        assert!(!premature_redispatch.load(Ordering::SeqCst));
+        assert!(nonces.lock().unwrap().iter().all(|nonce| *nonce == 0));
+        let nonce = tx_manager.nonce_manager().next_nonce().await.unwrap();
+        assert_eq!(nonce.nonce(), 1, "exactly one nonce must be consumed; fee bumps reuse it");
+        nonce.rollback();
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_millis(100), &mut run).await.unwrap();
+        tx_manager.close();
+        handle.stop().unwrap();
+        tokio::time::timeout(Duration::from_secs(1), handle.stopped()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cleanup_preserves_consumed_nonce_before_publication() {
+        assert_cleanup_preserves_transaction_lifecycle(true).await;
+    }
+
+    #[tokio::test]
+    async fn cleanup_preserves_fee_bumping_after_publication() {
+        assert_cleanup_preserves_transaction_lifecycle(false).await;
+    }
+
+    #[tokio::test]
     async fn pipeline_redispatches_deleted_range_while_earlier_proof_is_still_queued() {
         let bad_signer = Address::repeat_byte(0x11);
         let deleted = Arc::new(AtomicBool::new(false));
@@ -831,6 +1293,7 @@ mod tests {
             rollup(200),
             Duration::from_secs(1),
             Duration::from_millis(10),
+            None,
         );
 
         tokio::time::timeout(Duration::from_secs(2), pipeline.run(cancel)).await.expect(
@@ -902,6 +1365,7 @@ mod tests {
             Arc::new(rollup),
             Duration::from_secs(5),
             Duration::from_millis(10),
+            None,
         );
         let cancel = CancellationToken::new();
         let run = pipeline.run(cancel.clone());
@@ -974,6 +1438,7 @@ mod tests {
             rollup(last),
             Duration::from_secs(1),
             poll_interval,
+            None,
         );
         tokio::time::timeout(poll_interval * 7, pipeline.run(cancel))
             .await

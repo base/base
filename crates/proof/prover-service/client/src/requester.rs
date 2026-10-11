@@ -40,6 +40,10 @@ pub trait ProofRequesterProvider: Send + Sync {
     ) -> Result<(), ProverServiceClientError>;
 
     /// Delete completed TEE proof requests produced by one signer.
+    ///
+    /// A call must make at most one destructive RPC attempt. Return ambiguous failures
+    /// to the caller rather than retrying: a later zero-row response or standard rejection
+    /// cannot establish that an earlier attempt did not delete proofs.
     async fn delete_proofs_by_tee_signer(
         &self,
         request: DeleteProofsByTeeSignerRequest,
@@ -54,10 +58,10 @@ pub trait ProofRequesterProvider: Send + Sync {
 
 /// JSON-RPC client for proof requester methods.
 ///
-/// Each requester operation is wrapped in a `backon` exponential backoff that retries
-/// transient JSON-RPC failures (per [`ProverServiceClientError::is_retryable`]). Retry
-/// behavior is controlled by the [`RetryConfig`] passed at construction time, defaulting
-/// to [`RetryConfig::default`].
+/// Requester operations use exponential backoff for transient JSON-RPC failures (per
+/// [`ProverServiceClientError::is_retryable`]), except signer batch deletion, which issues
+/// one attempt so callers can reconcile ambiguous destructive outcomes. Retry behavior
+/// for the other operations is controlled by [`RetryConfig`], defaulting to [`RetryConfig::default`].
 #[derive(Clone, Debug)]
 pub struct ProofRequesterClient {
     inner: HttpClient,
@@ -200,25 +204,16 @@ impl ProofRequesterClient {
     }
 
     /// Delete completed TEE proof requests produced by one signer.
+    ///
+    /// Intentionally makes one attempt, regardless of retry configuration. A lost response
+    /// may hide a committed deletion; transparently retrying could return zero rows or a
+    /// definite rejection and erase that ambiguity. The caller must reconcile before retrying.
     pub async fn delete_proofs_by_tee_signer(
         &self,
         request: DeleteProofsByTeeSignerRequest,
     ) -> Result<u64, ProverServiceClientError> {
         debug!(tee_signer = %request.tee_signer, "deleting proofs by TEE signer");
-        // `request` is `Copy`, so each retry attempt gets its own copy via `async move`
-        // while the outer binding stays available for the `notify` closure below.
-        (|| async move { Ok(self.inner.delete_proofs_by_tee_signer(request).await?) })
-            .retry(self.retry.to_backoff_builder())
-            .when(ProverServiceClientError::is_retryable)
-            .notify(|error, delay| {
-                warn!(
-                    tee_signer = %request.tee_signer,
-                    backoff_ms = delay.as_millis(),
-                    error_kind = error.kind(),
-                    "delete proofs by TEE signer failed; retrying"
-                );
-            })
-            .await
+        Ok(self.inner.delete_proofs_by_tee_signer(request).await?)
     }
 
     /// List submitted proof requests.

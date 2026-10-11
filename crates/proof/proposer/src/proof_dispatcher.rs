@@ -138,6 +138,19 @@ impl ProofDispatcher {
 
     /// Dispatches every target from the current dispatcher cursor up to `finalized_head`.
     pub async fn tick(&self, current: &mut RecoveredState, finalized_head: u64) {
+        self.tick_with_progress(current, finalized_head, |_| {}).await;
+    }
+
+    /// Dispatches targets, publishing progress synchronously after every accepted request.
+    ///
+    /// `on_accepted` runs after the cursor advances and before another RPC is issued, so
+    /// consumers can observe an accepted prefix even when a later request stalls.
+    pub async fn tick_with_progress(
+        &self,
+        current: &mut RecoveredState,
+        finalized_head: u64,
+        mut on_accepted: impl FnMut(&RecoveredState) + Send,
+    ) {
         loop {
             // Resolved per target: the interval changes at the Denim activation
             // block, so the cursor's own starting block picks the cadence.
@@ -202,6 +215,7 @@ impl ProofDispatcher {
                     );
                     current.l2_block_number = target_block;
                     current.output_root = claimed_l2_output_root;
+                    on_accepted(current);
                 }
                 Err(error) => {
                     Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);

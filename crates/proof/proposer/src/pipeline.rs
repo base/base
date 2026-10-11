@@ -26,8 +26,8 @@ use crate::{
 /// The proving pipeline.
 ///
 /// Runs concurrent dispatcher, collector, and optional signer recovery futures per session.
-/// The collector chains ready proofs internally. Cleanup or onchain recovery restarts
-/// the dispatcher and collector so deleted proofs are redispatched.
+/// The collector chains ready proofs internally. Signer cleanup requests a restart at
+/// a collector submission boundary so an in-flight L1 transaction is not abandoned.
 pub struct ProvingPipeline<R>
 where
     R: RollupProvider + 'static,
@@ -74,7 +74,7 @@ where
     /// Each session polls dispatcher, collector, and optional signer recovery loops concurrently.
     /// The dispatcher can run ahead up to the finalized head, while the collector
     /// submits ready proofs in order from an internal cursor. Cleanup outcomes that
-    /// may have deleted proofs restart the session from a fresh recovery walk.
+    /// may have deleted proofs restart the session only after the current submission settles.
     pub async fn run(&self, cancel: CancellationToken) {
         info!(
             poll_interval_secs = self.config.poll_interval.as_secs(),
@@ -89,22 +89,35 @@ where
         loop {
             let dispatched_through = Arc::new(AtomicU64::new(0));
             let (backlog_tx, backlog_rx) = watch::channel(None);
+            let cleanup_restart = CancellationToken::new();
 
-            // Cleanup must reset the dispatch cursor too, otherwise deleted ranges behind
-            // that cursor are never requeued. No loop is spawned: cancellation or restart
-            // drops all session futures, including any bounded sweep in flight. A fresh
-            // recovery walk rediscovers any already-broadcast L1 transaction.
+            // Cleanup resets the dispatch cursor so deleted ranges are requeued, but must
+            // not drop an in-flight collector submission: TxManager::send is not cancellation
+            // safe, and recovery cannot rediscover an unmined transaction. Keep the collector
+            // pinned while requesting and draining to a submission boundary.
             let session = async {
+                let collector =
+                    self.collector_loop(&cancel, Arc::clone(&dispatched_through), &cleanup_restart);
+                tokio::pin!(collector);
                 tokio::select! {
                     biased;
                     () = cancel.cancelled() => false,
                     () = self.dispatcher_loop(Arc::clone(&dispatched_through), backlog_tx) => true,
-                    () = self.collector_loop(&cancel, Arc::clone(&dispatched_through)) => true,
+                    () = &mut collector => true,
                     () = self.tee_recovery_loop(
                         backlog_rx,
                         &mut signer_cursor_source,
                         &mut signer_scan_cursor,
-                    ), if self.tee_proof_recovery.is_some() => true,
+                    ), if self.tee_proof_recovery.is_some() => {
+                        cleanup_restart.cancel();
+                        // Stop polling dispatch and sweeping, but retain the current L1
+                        // submission and its nonce/fee-bump lifecycle until it returns.
+                        tokio::select! {
+                            biased;
+                            () = cancel.cancelled() => false,
+                            () = &mut collector => true,
+                        }
+                    },
                 }
             };
             // Unwind safety: dispatch/collection caches and cursors are discarded on panic.
@@ -161,12 +174,16 @@ where
                     let current = cursor
                         .as_mut()
                         .expect("dispatcher cursor initialized from recovered state");
-                    self.proof_dispatcher.tick(current, finalized_head).await;
-
+                    // Reset the visible epoch before the first request, then publish each
+                    // accepted target without waiting for a later request to finish.
                     dispatched_through.store(current.l2_block_number, Ordering::Relaxed);
-                    // Publish both sweep bounds together; a recovered-state change must never
-                    // be paired with the previous state's dispatch cursor.
                     backlog.send_replace(Some((recovered, current.l2_block_number)));
+                    self.proof_dispatcher
+                        .tick_with_progress(current, finalized_head, |accepted| {
+                            dispatched_through.store(accepted.l2_block_number, Ordering::Relaxed);
+                            backlog.send_replace(Some((recovered, accepted.l2_block_number)));
+                        })
+                        .await;
                 }
             }
 
@@ -203,7 +220,12 @@ where
         }
     }
 
-    async fn collector_loop(&self, cancel: &CancellationToken, dispatched_through: Arc<AtomicU64>) {
+    async fn collector_loop(
+        &self,
+        cancel: &CancellationToken,
+        dispatched_through: Arc<AtomicU64>,
+        cleanup_restart: &CancellationToken,
+    ) {
         let mut cache: Option<ProofRecoveryCache> = None;
         let mut cursor_source: Option<RecoveredState> = None;
         let mut cursor: Option<RecoveredState> = None;
@@ -227,11 +249,12 @@ where
                     let current =
                         cursor.as_mut().expect("collector cursor initialized from recovered state");
                     self.proof_collector
-                        .tick(
+                        .tick_with_restart(
                             current,
                             finalized_head,
                             dispatched_through.load(Ordering::Relaxed),
                             cancel,
+                            cleanup_restart,
                         )
                         .await
                 } else {
@@ -239,11 +262,14 @@ where
                 }
             };
 
-            if restart {
+            if restart || cleanup_restart.is_cancelled() {
                 break;
             }
 
-            tokio::time::sleep(self.config.poll_interval).await;
+            tokio::select! {
+                () = cleanup_restart.cancelled() => break,
+                () = tokio::time::sleep(self.config.poll_interval) => {},
+            }
         }
     }
 }
