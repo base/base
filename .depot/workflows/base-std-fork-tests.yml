@@ -87,7 +87,7 @@ jobs:
     env:
       FORK_NAME: ${{ matrix.fork }}
       FORK_KEY: ${{ matrix.key }}
-      BASE_ANVIL_REF: 98e7839c65f64aee9627b69a9b98b79afaeb1fae
+      BASE_ANVIL_REF: c3e4acec7bfb92230dc4d7060576bdae6ef158d8
       BASE_STD_REF: ${{ matrix.base_std_ref }}
       # Consumed by base-std's fork harness to launch `anvil --base $BASE_UPGRADE`.
       BASE_UPGRADE: ${{ matrix.upgrade }}
