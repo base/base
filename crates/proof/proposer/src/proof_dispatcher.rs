@@ -8,6 +8,9 @@ use base_optimism_rpc::{L1BlockRef, SyncStatus};
 use base_proof_primitives::ProofRequest;
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use base_prover_service_client::ProofRequesterProvider;
+use base_prover_service_protocol::{
+    DeleteProofRequest, GetProofRequest, PROOF_REQUEST_CANCELLED_MESSAGE, ProofStatus,
+};
 use tracing::{debug, info, instrument, warn};
 
 use crate::{
@@ -116,23 +119,68 @@ impl ProofDispatcher {
 
     #[instrument(name = "proposer.dispatch_request", skip_all, fields(session_id), err(Display))]
     async fn dispatch_request(&self, request: ProofRequest) -> Result<String, ProposerError> {
-        let request = ProposerProofAdapter::tee_prove_block_range_request(request);
-        let session_id = request.proof.session_id.clone();
+        let session_id =
+            ProposerProofAdapter::tee_session_id_for_root(request.claimed_l2_output_root);
         tracing::Span::current().record("session_id", session_id.as_str());
-        match self.proof_requester.prove_block_range(request).await {
-            Ok(response) if response.session_id == session_id => Ok(response.session_id),
-            Ok(response) => Err(ProposerError::Prover(format!(
-                "prover service returned mismatched session_id: expected {session_id}, got {}",
-                response.session_id
-            ))),
-            Err(e) if e.is_l1_head_conflict_for_session(&session_id) => {
-                debug!(
-                    session_id = %session_id,
-                    "prover-service already has this TEE proof session with a different l1_head"
-                );
-                Ok(session_id)
+        let mut reset_attempted = false;
+
+        loop {
+            let rpc_request = ProposerProofAdapter::tee_prove_block_range_request_with_session_id(
+                request.clone(),
+                session_id.clone(),
+            );
+            match self.proof_requester.prove_block_range(rpc_request).await {
+                Ok(response) if response.session_id == session_id => return Ok(response.session_id),
+                Ok(response) => {
+                    return Err(ProposerError::Prover(format!(
+                        "prover service returned mismatched session_id: expected {session_id}, got {}",
+                        response.session_id
+                    )));
+                }
+                Err(e) if e.is_l1_head_conflict_for_session(&session_id) => {
+                    debug!(
+                        session_id = %session_id,
+                        "prover-service already has this TEE proof session with a different l1_head"
+                    );
+                    return Ok(session_id);
+                }
+                Err(e) if e.is_retry_exhausted() && !reset_attempted => {
+                    // Failed sessions otherwise hold the dispatcher behind the collector,
+                    // forcing the entire exhausted backlog to be reproved serially.
+                    match self
+                        .proof_requester
+                        .get_proof(GetProofRequest { session_id: session_id.clone() })
+                        .await
+                    {
+                        Ok(response) if response.status == ProofStatus::Failed => {
+                            if response.error_message.as_deref()
+                                == Some(PROOF_REQUEST_CANCELLED_MESSAGE)
+                            {
+                                return Err(ProposerError::Prover(e.to_string()));
+                            }
+                            self.proof_requester
+                                .delete_proof_request(DeleteProofRequest {
+                                    session_id: session_id.clone(),
+                                })
+                                .await
+                                .map_err(|error| ProposerError::Prover(error.to_string()))?;
+                            info!(
+                                session_id = %session_id,
+                                "Deleted exhausted proof request for redispatch"
+                            );
+                        }
+                        // Another recovery path may already have requeued or completed it.
+                        Ok(_) => return Ok(session_id),
+                        // The collector may have deleted it between dispatch and inspection.
+                        Err(error) if error.is_not_found() => {}
+                        Err(error) => return Err(ProposerError::Prover(error.to_string())),
+                    }
+                    // At most one reset and resubmission per dispatch. A second terminal
+                    // rejection backs off through the normal dispatcher tick interval.
+                    reset_attempted = true;
+                }
+                Err(e) => return Err(ProposerError::Prover(e.to_string())),
             }
-            Err(e) => Err(ProposerError::Prover(e.to_string())),
         }
     }
 
@@ -224,6 +272,14 @@ mod tests {
     use std::collections::HashMap;
 
     use alloy_primitives::Address;
+    use async_trait::async_trait;
+    use base_prover_service_client::ProverServiceClientError;
+    use base_prover_service_protocol::{
+        DeleteProofsByTeeSignerRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
+        PROOF_REQUEST_NOT_FOUND_MESSAGE, ProveBlockRangeRequest, ProveBlockRangeResponse,
+    };
+    use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
+    use mockall::Sequence;
 
     use super::*;
     use crate::test_utils::{
@@ -231,7 +287,54 @@ mod tests {
         test_l1_block_ref, test_l1_header, test_l2_block_ref, test_sync_status,
     };
 
-    fn dispatcher(requester: Arc<MockProofRequester>) -> ProofDispatcher {
+    mockall::mock! {
+        Requester {}
+
+        #[async_trait]
+        impl ProofRequesterProvider for Requester {
+            async fn prove_block_range(
+                &self,
+                request: ProveBlockRangeRequest,
+            ) -> Result<ProveBlockRangeResponse, ProverServiceClientError>;
+            async fn get_proof(
+                &self,
+                request: GetProofRequest,
+            ) -> Result<GetProofResponse, ProverServiceClientError>;
+            async fn delete_proof_request(
+                &self,
+                request: DeleteProofRequest,
+            ) -> Result<(), ProverServiceClientError>;
+            async fn delete_proofs_by_tee_signer(
+                &self,
+                request: DeleteProofsByTeeSignerRequest,
+            ) -> Result<u64, ProverServiceClientError>;
+            async fn list_proofs(
+                &self,
+                request: ListProofsRequest,
+            ) -> Result<ListProofsResponse, ProverServiceClientError>;
+        }
+    }
+
+    fn rpc_error(code: i32, message: &str) -> ProverServiceClientError {
+        JsonRpcClientError::Call(ErrorObjectOwned::owned(code, message, None::<()>)).into()
+    }
+
+    fn exhausted_error() -> ProverServiceClientError {
+        rpc_error(
+            ProverServiceClientError::ERROR_RESOURCE_EXHAUSTED,
+            "proof request retry budget exhausted",
+        )
+    }
+
+    fn cursor() -> RecoveredState {
+        RecoveredState {
+            parent_address: Address::ZERO,
+            output_root: B256::repeat_byte(0x03),
+            l2_block_number: 100,
+        }
+    }
+
+    fn dispatcher(requester: Arc<dyn ProofRequesterProvider>) -> ProofDispatcher {
         let sync_status = test_sync_status(10_000, B256::ZERO);
         ProofDispatcher::new(
             requester,
@@ -347,7 +450,7 @@ mod tests {
     #[tokio::test]
     async fn tick_dispatches_all_targets_up_to_finalized_head() {
         let requester = Arc::new(MockProofRequester::default());
-        let dispatcher = dispatcher(Arc::clone(&requester));
+        let dispatcher = dispatcher(Arc::<MockProofRequester>::clone(&requester));
         let mut current = RecoveredState {
             parent_address: Address::ZERO,
             output_root: B256::repeat_byte(0x03),
@@ -358,5 +461,190 @@ mod tests {
 
         assert_eq!(requester.requests.lock().unwrap().len(), 3);
         assert_eq!(current.l2_block_number, 400);
+    }
+
+    #[tokio::test]
+    async fn tick_requeues_multiple_exhausted_targets_without_waiting_for_collector() {
+        let mut requester = MockRequester::new();
+        let mut sequence = Sequence::new();
+        let mut expected_parent = cursor().output_root;
+
+        for target in [200, 300, 400] {
+            let root = B256::repeat_byte(target as u8);
+            let session_id = ProposerProofAdapter::tee_session_id_for_root(root);
+            for attempt in 0..2 {
+                let expected_session_id = session_id.clone();
+                requester
+                    .expect_prove_block_range()
+                    .withf(move |request| {
+                        let base_prover_service_protocol::ProofRequestKind::Tee(tee) =
+                            &request.proof.request
+                        else {
+                            return false;
+                        };
+                        request.proof.session_id == expected_session_id
+                            && tee.proof.claimed_l2_block_number == target
+                            && tee.proof.agreed_l2_output_root == expected_parent
+                            && tee.proof.l1_head_number == 1000
+                            && request.retry_failed
+                    })
+                    .times(1)
+                    .in_sequence(&mut sequence)
+                    .returning(move |request| {
+                        if attempt == 0 {
+                            Err(exhausted_error())
+                        } else {
+                            Ok(ProveBlockRangeResponse { session_id: request.proof.session_id })
+                        }
+                    });
+                if attempt == 0 {
+                    let expected_session_id = session_id.clone();
+                    requester
+                        .expect_get_proof()
+                        .withf(move |request| request.session_id == expected_session_id)
+                        .times(1)
+                        .in_sequence(&mut sequence)
+                        .returning(|_| {
+                            Ok(GetProofResponse {
+                                status: ProofStatus::Failed,
+                                error_message: Some(
+                                    "Worker claim expired after exhausting 5 attempts".into(),
+                                ),
+                                result: None,
+                            })
+                        });
+                    let expected_session_id = session_id.clone();
+                    requester
+                        .expect_delete_proof_request()
+                        .withf(move |request| request.session_id == expected_session_id)
+                        .times(1)
+                        .in_sequence(&mut sequence)
+                        .returning(|_| Ok(()));
+                }
+            }
+            expected_parent = root;
+        }
+
+        let mut current = cursor();
+        dispatcher(Arc::new(requester)).tick(&mut current, 400).await;
+
+        assert_eq!(current.l2_block_number, 400);
+        assert_eq!(current.output_root, expected_parent);
+    }
+
+    #[tokio::test]
+    async fn tick_preserves_sessions_already_recovered_by_another_caller() {
+        for status in [ProofStatus::Queued, ProofStatus::Running, ProofStatus::Succeeded] {
+            let mut requester = MockRequester::new();
+            requester.expect_prove_block_range().times(1).returning(|_| Err(exhausted_error()));
+            requester.expect_get_proof().times(1).returning(move |_| {
+                Ok(GetProofResponse { status, error_message: None, result: None })
+            });
+            requester.expect_delete_proof_request().never();
+
+            let mut current = cursor();
+            dispatcher(Arc::new(requester)).tick(&mut current, 200).await;
+            assert_eq!(current.l2_block_number, 200);
+        }
+    }
+
+    #[tokio::test]
+    async fn tick_does_not_reset_cancelled_sessions_or_other_rpc_failures() {
+        for code in [
+            ProverServiceClientError::ERROR_RESOURCE_EXHAUSTED,
+            ProverServiceClientError::ERROR_FAILED_PRECONDITION,
+            ProverServiceClientError::ERROR_UNAVAILABLE,
+        ] {
+            let mut requester = MockRequester::new();
+            requester
+                .expect_prove_block_range()
+                .times(1)
+                .returning(move |_| Err(rpc_error(code, "rejected")));
+            if code == ProverServiceClientError::ERROR_RESOURCE_EXHAUSTED {
+                requester.expect_get_proof().times(1).returning(|_| {
+                    Ok(GetProofResponse {
+                        status: ProofStatus::Failed,
+                        error_message: Some(PROOF_REQUEST_CANCELLED_MESSAGE.into()),
+                        result: None,
+                    })
+                });
+            } else {
+                requester.expect_get_proof().never();
+            }
+            requester.expect_delete_proof_request().never();
+
+            let mut current = cursor();
+            dispatcher(Arc::new(requester)).tick(&mut current, 200).await;
+            assert_eq!(current.l2_block_number, 100);
+        }
+    }
+
+    #[tokio::test]
+    async fn tick_stays_at_current_cursor_when_inspection_or_deletion_fails() {
+        for reject_inspection in [true, false] {
+            let mut requester = MockRequester::new();
+            requester.expect_prove_block_range().times(1).returning(|_| Err(exhausted_error()));
+            requester.expect_get_proof().times(1).returning(move |_| {
+                if reject_inspection {
+                    Err(ProverServiceClientError::from(JsonRpcClientError::RequestTimeout))
+                } else {
+                    Ok(GetProofResponse {
+                        status: ProofStatus::Failed,
+                        error_message: None,
+                        result: None,
+                    })
+                }
+            });
+            if reject_inspection {
+                requester.expect_delete_proof_request().never();
+            } else {
+                requester.expect_delete_proof_request().times(1).returning(|_| {
+                    Err(ProverServiceClientError::from(JsonRpcClientError::RequestTimeout))
+                });
+            }
+
+            let mut current = cursor();
+            dispatcher(Arc::new(requester)).tick(&mut current, 200).await;
+            assert_eq!(current.l2_block_number, 100);
+        }
+    }
+
+    #[tokio::test]
+    async fn tick_retries_once_if_collector_already_deleted_exhausted_session() {
+        let mut requester = MockRequester::new();
+        let mut sequence = Sequence::new();
+        requester
+            .expect_prove_block_range()
+            .times(1)
+            .in_sequence(&mut sequence)
+            .returning(|_| Err(exhausted_error()));
+        requester.expect_get_proof().times(1).in_sequence(&mut sequence).returning(|_| {
+            Err(rpc_error(
+                ProverServiceClientError::ERROR_NOT_FOUND,
+                PROOF_REQUEST_NOT_FOUND_MESSAGE,
+            ))
+        });
+        requester.expect_delete_proof_request().never();
+        requester.expect_prove_block_range().times(1).in_sequence(&mut sequence).returning(
+            |request| Ok(ProveBlockRangeResponse { session_id: request.proof.session_id }),
+        );
+
+        let mut current = cursor();
+        dispatcher(Arc::new(requester)).tick(&mut current, 200).await;
+        assert_eq!(current.l2_block_number, 200);
+    }
+
+    #[tokio::test]
+    async fn tick_limits_exhausted_session_recovery_to_one_reset_per_dispatch() {
+        let mut requester = MockRequester::new();
+        requester.expect_prove_block_range().times(2).returning(|_| Err(exhausted_error()));
+        requester.expect_get_proof().times(1).returning(|_| {
+            Ok(GetProofResponse { status: ProofStatus::Failed, error_message: None, result: None })
+        });
+        requester.expect_delete_proof_request().times(1).returning(|_| Ok(()));
+
+        let mut current = cursor();
+        dispatcher(Arc::new(requester)).tick(&mut current, 200).await;
+        assert_eq!(current.l2_block_number, 100);
     }
 }
