@@ -89,10 +89,10 @@ base-common-flz.workspace = true
 base-common-chains.workspace = true
 base-common-network.workspace = true
 base-common-rpc-types.workspace = true
+base-execution-eip8130.workspace = true
 base-common-rpc-types-engine.workspace = true
 base-common-evm = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
-base-execution-eip8130.workspace = true
 
 # tokio
 tokio.workspace = true
@@ -137,7 +137,6 @@ tar = { workspace = true, optional = true }
 ctor = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }
 rlimit = { workspace = true, optional = true }
-derive_more = { workspace = true, features = ["debug"] }
 serde = { workspace = true, features = ["std"] }
 hyper-util = { workspace = true, optional = true }
 thiserror = { workspace = true, features = ["std"] }
@@ -145,6 +144,7 @@ serde_json = { workspace = true, features = ["std"] }
 opentelemetry = { workspace = true, optional = true }
 testcontainers = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
+derive_more = { workspace = true, features = ["debug"] }
 uuid = { workspace = true, features = ["serde", "v5", "v4"] }
 
 [target.'cfg(unix)'.dependencies]
@@ -234,6 +234,7 @@ test-utils = [
 	"reth-trie/test-utils",
 	"rlimit",
 	"testcontainers",
+	"reth-engine-tree/test-utils"
 ]
 
 [[bench]]

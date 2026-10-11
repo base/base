@@ -13,26 +13,26 @@ workspace = true
 [dependencies]
 # reth
 reth-cli.workspace = true
+reth-tasks.workspace = true
 reth-discv4.workspace = true
 reth-discv5.workspace = true
+reth-db-api.workspace = true
 reth-net-nat.workspace = true
-reth-provider.workspace = true
 reth-network.workspace = true
+reth-tracing.workspace = true
+reth-provider.workspace = true
 reth-cli-util.workspace = true
 reth-node-core.workspace = true
 reth-chainspec.workspace = true
-reth-tracing.workspace = true
 reth-cli-runner.workspace = true
-reth-node-builder.workspace = true
 reth-network-p2p.workspace = true
+reth-node-builder.workspace = true
 reth-cli-commands.workspace = true
 reth-node-metrics.workspace = true
+reth-stages-types.workspace = true
 reth-network-peers.workspace = true
 reth-ethereum-forks.workspace = true
 reth-rpc-server-types.workspace = true
-reth-tasks.workspace = true
-reth-db-api.workspace = true
-reth-stages-types.workspace = true
 reth-db = { workspace = true, features = ["mdbx"] }
 
 # op-reth
@@ -43,42 +43,42 @@ base-node-core.workspace = true
 base-txpool-rpc.workspace = true
 base-flashblocks.workspace = true
 base-node-runner.workspace = true
-base-observability-events.workspace = true
 base-common-chains.workspace = true
 base-execution-evm.workspace = true
 base-tx-forwarding.workspace = true
 base-txpool-tracing.workspace = true
+base-execution-trie.workspace = true
+base-shadow-indexer.workspace = true
 base-flashblocks-node.workspace = true
 base-builder-metering.workspace = true
-base-execution-trie.workspace = true
-base-execution-eip8130-rpc-node.workspace = true
-base-execution-payload-builder.workspace = true
 base-proofs-extension.workspace = true
-base-shadow-indexer.workspace = true
 base-shadow-indexer-db.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
+base-observability-events.workspace = true
+base-execution-payload-builder.workspace = true
+base-execution-eip8130-rpc-node.workspace = true
 base-upgrade-signal = { workspace = true, features = ["metrics"] }
 
 # misc
 tar.workspace = true
+url.workspace = true
 zstd.workspace = true
 eyre.workspace = true
 rayon.workspace = true
 blake3.workspace = true
-humantime.workspace = true
-url.workspace = true
 backon.workspace = true
 futures.workspace = true
 tracing.workspace = true
-serde_json.workspace = true
-jsonrpsee = { workspace = true, features = ["server"] }
-reqwest = { workspace = true, features = ["json", "stream"] }
-alloy-consensus.workspace = true
-alloy-eips.workspace = true
+humantime.workspace = true
 secp256k1.workspace = true
+serde_json.workspace = true
+alloy-eips.workspace = true
 tokio-stream.workspace = true
+alloy-consensus.workspace = true
+jsonrpsee = { workspace = true, features = ["server"] }
 clap = { workspace = true, features = ["derive", "env"] }
+reqwest = { workspace = true, features = ["json", "stream"] }
 tokio = { workspace = true, features = ["macros", "time", "sync"] }
 
 # reth test-vectors
@@ -86,11 +86,11 @@ proptest = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, features = ["reth"] }
 
 [dev-dependencies]
-alloy-primitives.workspace = true
-base-common-genesis.workspace = true
 rstest.workspace = true
 tempfile.workspace = true
 criterion.workspace = true
+alloy-primitives.workspace = true
+base-common-genesis.workspace = true
 axum = { workspace = true, features = ["tokio", "http1"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
@@ -136,4 +136,8 @@ serde = [
 	"reth-network/serde",
 	"secp256k1/serde",
 	"url/serde",
+	"alloy-consensus/serde",
+	"blake3/serde",
+	"reth-ethereum-forks/serde",
+	"reth-stages-types/serde"
 ]
