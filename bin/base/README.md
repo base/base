@@ -97,6 +97,21 @@ Useful sequencer-specific flags include:
 - `--conductor.binary-commit` uses the conductor binary commit endpoint.
 - `--flashblocks.port` selects the Flashblocks websocket port.
 
+## `base dev`
+
+`base dev` continues an existing snapshot datadir as a local chain: an embedded execution node and
+an L1-free standalone sequencer in one process, connected over Engine IPC. It never creates,
+downloads, or reinitializes data. Discovery and peers are disabled, and HTTP and WS RPC listen on
+loopback. A pre-Denim head gets Denim at its next block; the schedule and snapshot head are saved to
+`base-dev.json` in the datadir before the first block and restored on restart. Block timestamps
+continue from the snapshot.
+
+```text
+base dev --dir <datadir>
+base --chain sepolia dev --dir <datadir> --http.port 9545 --ws.port 9546
+just devnet snapshot run --dir <datadir>
+```
+
 ## `base update`
 
 `base update` updates the installed `base` binary by running `baseup --bin base` against the same
