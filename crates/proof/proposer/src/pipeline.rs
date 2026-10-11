@@ -10,6 +10,7 @@ use std::{
 
 use base_proof_rpc::RollupProvider;
 use futures::FutureExt;
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -24,9 +25,9 @@ use crate::{
 
 /// The proving pipeline.
 ///
-/// Runs concurrent dispatcher and collector tasks per [`Self::run`] session.
-/// The collector chains ready proofs internally. Either task can restart the
-/// session when recovery needs fresh onchain state or deleted proofs need redispatch.
+/// Runs concurrent dispatcher, collector, and optional signer recovery futures per session.
+/// The collector chains ready proofs internally. Cleanup or onchain recovery restarts
+/// the dispatcher and collector so deleted proofs are redispatched.
 pub struct ProvingPipeline<R>
 where
     R: RollupProvider + 'static,
@@ -70,11 +71,10 @@ where
 
     /// Runs the proving pipeline until cancelled.
     ///
-    /// Each session starts a dispatcher task and a collector task. The
-    /// dispatcher can run ahead up to the finalized head, while the collector
-    /// submits ready proofs in order from an internal cursor. Outcomes that
-    /// cannot safely advance that cursor restart both tasks from a fresh
-    /// recovery walk.
+    /// Each session polls dispatcher, collector, and optional signer recovery loops concurrently.
+    /// The dispatcher can run ahead up to the finalized head, while the collector
+    /// submits ready proofs in order from an internal cursor. Cleanup outcomes that
+    /// may have deleted proofs restart the session from a fresh recovery walk.
     pub async fn run(&self, cancel: CancellationToken) {
         info!(
             poll_interval_secs = self.config.poll_interval.as_secs(),
@@ -82,24 +82,34 @@ where
             "Starting proving pipeline"
         );
 
+        // Cleanup restarts must not starve later scan pages. Only a change in the complete
+        // recovered onchain state invalidates this read-only pagination state.
+        let mut signer_cursor_source = None;
+        let mut signer_scan_cursor = None;
         loop {
             let dispatched_through = Arc::new(AtomicU64::new(0));
+            let (backlog_tx, backlog_rx) = watch::channel(None);
 
-            // Either loop can signal recovery: signer cleanup must reset the dispatch
-            // cursor too, otherwise deleted ranges behind that cursor are never requeued.
-            // Dropping either loop mid-tick is safe: the next recovery walk
-            // rediscovers any already-broadcast L1 transaction from onchain state.
+            // Cleanup must reset the dispatch cursor too, otherwise deleted ranges behind
+            // that cursor are never requeued. No loop is spawned: cancellation or restart
+            // drops all session futures, including any bounded sweep in flight. A fresh
+            // recovery walk rediscovers any already-broadcast L1 transaction.
             let session = async {
                 tokio::select! {
                     biased;
                     () = cancel.cancelled() => false,
-                    () = self.dispatcher_loop(Arc::clone(&dispatched_through)) => true,
+                    () = self.dispatcher_loop(Arc::clone(&dispatched_through), backlog_tx) => true,
                     () = self.collector_loop(&cancel, Arc::clone(&dispatched_through)) => true,
+                    () = self.tee_recovery_loop(
+                        backlog_rx,
+                        &mut signer_cursor_source,
+                        &mut signer_scan_cursor,
+                    ), if self.tee_proof_recovery.is_some() => true,
                 }
             };
-            // Unwind safety: this assertion is scoped to one pipeline session. Session progress
-            // lives in the loop-local caches/cursors above and is discarded on panic; `self` only
-            // carries shared clients and static config that are reused after a fresh recovery walk.
+            // Unwind safety: dispatch/collection caches and cursors are discarded on panic.
+            // Only read-only scan pagination survives; it is checked against fresh recovered
+            // state before reuse. Shared clients and static config are reused after recovery.
             let restart = AssertUnwindSafe(session).catch_unwind().await.unwrap_or_else(|panic| {
                 let panic = panic
                     .downcast_ref::<&'static str>()
@@ -120,11 +130,14 @@ where
         info!("Proving pipeline stopped");
     }
 
-    async fn dispatcher_loop(&self, dispatched_through: Arc<AtomicU64>) {
+    async fn dispatcher_loop(
+        &self,
+        dispatched_through: Arc<AtomicU64>,
+        backlog: watch::Sender<Option<(RecoveredState, u64)>>,
+    ) {
         let mut cache: Option<ProofRecoveryCache> = None;
         let mut cursor_source: Option<RecoveredState> = None;
         let mut cursor: Option<RecoveredState> = None;
-        let mut signer_scan_cursor = None;
 
         loop {
             {
@@ -143,30 +156,50 @@ where
                     if cursor_source != Some(recovered) || cursor.is_none() {
                         cursor_source = Some(recovered);
                         cursor = Some(recovered);
-                        signer_scan_cursor = None;
                     }
 
                     let current = cursor
                         .as_mut()
                         .expect("dispatcher cursor initialized from recovered state");
-                    if let Some(recovery) = &self.tee_proof_recovery
-                        && recovery
-                            .tick(
-                                recovered.l2_block_number,
-                                current.l2_block_number,
-                                &mut signer_scan_cursor,
-                            )
-                            .await
-                    {
-                        return;
-                    }
                     self.proof_dispatcher.tick(current, finalized_head).await;
 
                     dispatched_through.store(current.l2_block_number, Ordering::Relaxed);
+                    // Publish both sweep bounds together; a recovered-state change must never
+                    // be paired with the previous state's dispatch cursor.
+                    backlog.send_replace(Some((recovered, current.l2_block_number)));
                 }
             }
 
             tokio::time::sleep(self.config.poll_interval).await;
+        }
+    }
+
+    /// Sweeps coherent dispatched-backlog snapshots independently of dispatch and collection.
+    ///
+    /// Sleeps one poll interval before every sweep and returns when cleanup requires a
+    /// pipeline restart, or immediately if signer recovery is disabled. Callers must drop
+    /// this future on cancellation. Pagination may survive restarts while the full recovered
+    /// state is unchanged; a root, block, or parent change resets it before the next sweep.
+    pub async fn tee_recovery_loop(
+        &self,
+        backlog: watch::Receiver<Option<(RecoveredState, u64)>>,
+        cursor_source: &mut Option<RecoveredState>,
+        scan_cursor: &mut Option<u64>,
+    ) {
+        let Some(recovery) = &self.tee_proof_recovery else { return };
+        loop {
+            // Sleep before every sweep, including after cleanup restarts. Persistent unknown
+            // delete outcomes must back off without gating normal dispatch or collection.
+            tokio::time::sleep(self.config.poll_interval).await;
+            let bounds = *backlog.borrow();
+            let Some((recovered, dispatched_through)) = bounds else { continue };
+            if *cursor_source != Some(recovered) {
+                *cursor_source = Some(recovered);
+                *scan_cursor = None;
+            }
+            if recovery.tick(recovered.l2_block_number, dispatched_through, scan_cursor).await {
+                return;
+            }
         }
     }
 
@@ -239,10 +272,11 @@ mod tests {
     use super::*;
     use crate::{
         OutputProposer, ProofRecoveryConfig, ProofSubmitter,
+        tee_proof_recovery::MockTeeSignerRegistry,
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-            MockOutputProposer, MockRollupClient, test_anchor_root, test_fixed_interval_resolver,
-            test_sync_status,
+            MockOutputProposer, MockProofRequester, MockRollupClient, test_anchor_root,
+            test_fixed_interval_resolver, test_sync_status,
         },
     };
 
@@ -354,6 +388,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn disabled_signer_recovery_returns_without_touching_pagination() {
+        let pipeline = test_pipeline(Arc::new(RejectingProofRequester::default()));
+        let (_tx, rx) = watch::channel(None);
+        let mut source = None;
+        let mut cursor = Some(100);
+        pipeline.tee_recovery_loop(rx, &mut source, &mut cursor).await;
+        assert_eq!(source, None);
+        assert_eq!(cursor, Some(100));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn signer_pagination_resets_on_root_or_parent_change_but_not_cleanup_restart() {
+        let previous = RecoveredState {
+            parent_address: Address::ZERO,
+            output_root: B256::ZERO,
+            l2_block_number: 0,
+        };
+        for recovered in [
+            previous,
+            RecoveredState { output_root: B256::repeat_byte(1), ..previous },
+            RecoveredState { parent_address: Address::repeat_byte(1), ..previous },
+        ] {
+            let rollup = Arc::new(MockRollupClient {
+                sync_status: test_sync_status(6500, B256::ZERO),
+                output_roots: HashMap::new(),
+                max_safe_block: None,
+            });
+            let mut registry = MockTeeSignerRegistry::new();
+            registry.expect_registered_signers().never();
+            let pipeline = test_pipeline(Arc::new(RejectingProofRequester::default()))
+                .with_tee_proof_recovery(TeeProofRecovery::new(
+                    Arc::new(MockProofRequester::default()),
+                    rollup,
+                    test_fixed_interval_resolver(100, 100),
+                    Arc::new(registry),
+                    Duration::from_secs(1),
+                ));
+            let (_tx, rx) = watch::channel(Some((recovered, 6500)));
+            let mut source = Some(previous);
+            let mut cursor = Some(100);
+            assert!(
+                tokio::time::timeout(
+                    Duration::from_millis(15),
+                    pipeline.tee_recovery_loop(rx, &mut source, &mut cursor),
+                )
+                .await
+                .is_err()
+            );
+            assert_eq!(source, Some(recovered));
+            assert_eq!(cursor, Some(if recovered == previous { 6500 } else { 6400 }));
+        }
+    }
+
+    #[tokio::test]
     async fn dispatcher_failure_keeps_dispatcher_loop_running() {
         let requester = Arc::new(RejectingProofRequester::default());
         let pipeline = test_pipeline(Arc::clone(&requester));
@@ -361,7 +449,7 @@ mod tests {
         assert!(
             tokio::time::timeout(
                 Duration::from_millis(100),
-                pipeline.dispatcher_loop(Arc::new(AtomicU64::new(0)))
+                pipeline.dispatcher_loop(Arc::new(AtomicU64::new(0)), watch::channel(None).0)
             )
             .await
             .is_err(),

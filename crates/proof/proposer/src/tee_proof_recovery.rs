@@ -6,8 +6,9 @@ use alloy_primitives::Address;
 use async_trait::async_trait;
 use base_proof_contracts::{AggregateVerifierContractClient, DisputeGameFactoryClient};
 use base_proof_rpc::RollupProvider;
-use base_prover_service_client::ProofRequesterProvider;
+use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{DeleteProofsByTeeSignerRequest, GetProofRequest, ProofStatus};
+use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorCode};
 use tracing::{info, warn};
 
 use crate::{IntervalResolver, Metrics, ProofTarget, ProposerError, ProposerProofAdapter};
@@ -108,8 +109,8 @@ impl TeeProofRecovery {
     ///
     /// `scan_cursor` carries pagination across ticks and must be reset when recovered onchain
     /// state changes. Returns `true` when both pipeline cursors must restart so deleted ranges
-    /// behind the dispatcher are resubmitted. An interrupted or failed delete also requires a
-    /// restart: its server-side outcome may be unknown after the client stops waiting.
+    /// behind the dispatcher are resubmitted. Interrupted or ambiguous failed deletes also
+    /// require a restart; standard method-not-found and invalid-params rejections do not.
     pub async fn tick(
         &self,
         recovered_block: u64,
@@ -227,6 +228,21 @@ impl TeeProofRecovery {
                         "Deleted unregistered TEE signer proof requests during backlog scan"
                     );
                 }
+                Err(ProverServiceClientError::RpcTransport(JsonRpcClientError::Call(ref call)))
+                    if call.code() == ErrorCode::MethodNotFound.code()
+                        || call.code() == ErrorCode::InvalidParams.code() =>
+                {
+                    // These standard rejections occur before deletion. Other server errors
+                    // may follow a partial delete, so retain their unknown-outcome safeguard.
+                    *restart_required = already_requires_restart;
+                    Metrics::errors_total("prover").increment(1);
+                    warn!(
+                        target_block,
+                        tee_signer = %proof.tee_signer,
+                        error = %call,
+                        "TEE signer cleanup rejected without deletion"
+                    );
+                }
                 Err(error) => {
                     Metrics::errors_total("prover").increment(1);
                     warn!(
@@ -247,29 +263,29 @@ mod tests {
     use std::{
         collections::HashMap,
         future::pending,
-        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+        sync::{
+            Mutex,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
     };
 
     use alloy_primitives::{B256, U256, hex};
     use alloy_provider::RootProvider;
     use alloy_sol_types::SolValue;
+    use base_common_genesis::RollupConfig;
+    use base_optimism_rpc::{OutputAtBlock, SyncStatus};
     use base_proof_contracts::DisputeGameFactoryContractClient;
-    use base_prover_service_client::{
-        ProofRequesterClient, ProverServiceClientConfig, ProverServiceClientError,
-    };
+    use base_proof_rpc::RpcResult as RollupRpcResult;
+    use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
     use base_prover_service_protocol::{
         DeleteProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
         PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofRequestKind, ProofResult, ProveBlockRangeRequest,
         ProveBlockRangeResponse, TeeKind, TeeProofResult, ZkProofResult, ZkVm,
     };
-    use jsonrpsee::{
-        RpcModule,
-        core::{RpcResult, client::Error as JsonRpcClientError},
-        server::ServerBuilder,
-        types::ErrorObjectOwned,
-    };
+    use jsonrpsee::{RpcModule, core::RpcResult, server::ServerBuilder, types::ErrorObjectOwned};
     use mockall::Sequence;
     use serde_json::Value;
+    use tokio::time::Instant;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
@@ -279,7 +295,7 @@ mod tests {
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
             MockOutputProposer, MockRollupClient, test_anchor_root, test_fixed_interval_resolver,
-            test_interval_resolver, test_proposal, test_sync_status,
+            test_interval_resolver, test_l2_block_ref, test_proposal, test_sync_status,
         },
     };
 
@@ -308,6 +324,18 @@ mod tests {
                 &self,
                 request: ListProofsRequest,
             ) -> Result<ListProofsResponse, ProverServiceClientError>;
+        }
+    }
+
+    mockall::mock! {
+        Rollup {}
+
+        #[async_trait]
+        impl RollupProvider for Rollup {
+            async fn rollup_config(&self) -> RollupRpcResult<RollupConfig>;
+            async fn sync_status(&self) -> RollupRpcResult<SyncStatus>;
+            async fn output_at_block(&self, block_number: u64) -> RollupRpcResult<OutputAtBlock>;
+            async fn fresh_output_at_block(&self, block_number: u64) -> RollupRpcResult<OutputAtBlock>;
         }
     }
 
@@ -382,6 +410,59 @@ mod tests {
             Arc::new(registry),
             Duration::from_secs(1),
         )
+    }
+
+    fn test_pipeline<R: RollupProvider + 'static>(
+        requester: Arc<dyn ProofRequesterProvider>,
+        registry: MockTeeSignerRegistry,
+        rollup: Arc<R>,
+        scan_timeout: Duration,
+        poll_interval: Duration,
+    ) -> ProvingPipeline<R> {
+        let intervals = test_fixed_interval_resolver(100, 100);
+        let factory = Arc::new(MockDisputeGameFactory::default());
+        let config = DriverConfig { poll_interval, ..Default::default() };
+        let dispatcher = ProofDispatcher::new(
+            Arc::clone(&requester),
+            Arc::new(MockL1::new(1000)),
+            Arc::new(MockL2),
+            Arc::<R>::clone(&rollup),
+            Arc::clone(&intervals),
+            Address::ZERO,
+        );
+        let chain_recovery = Arc::new(ProofRecovery::new(
+            ProofRecoveryConfig {
+                game_type: 0,
+                anchor_state_registry_address: Address::ZERO,
+                scan_concurrency: 1,
+            },
+            Arc::<R>::clone(&rollup),
+            Arc::new(MockAnchorStateRegistry {
+                anchor_root: test_anchor_root(0),
+                anchor_game: Address::ZERO,
+            }),
+            Arc::<MockDisputeGameFactory>::clone(&factory),
+            Arc::clone(&intervals),
+        ));
+        let submitter = ProofSubmitter::new(
+            Arc::new(MockOutputProposer::default()),
+            Arc::<R>::clone(&rollup),
+            factory,
+            Arc::new(MockAggregateVerifier::default()),
+            Arc::clone(&intervals),
+            &config,
+        );
+        let collector = ProofCollector::new(
+            Arc::clone(&requester),
+            Arc::clone(&rollup),
+            submitter,
+            Arc::clone(&intervals),
+            config.submit_timeout,
+        );
+        let recovery =
+            TeeProofRecovery::new(requester, rollup, intervals, Arc::new(registry), scan_timeout);
+        ProvingPipeline::new(config, dispatcher, chain_recovery, collector)
+            .with_tee_proof_recovery(recovery)
     }
 
     #[tokio::test]
@@ -498,6 +579,47 @@ mod tests {
         registry.expect_registered_signers().times(1).returning(|| Ok(vec![]));
 
         assert!(recovery(requester, registry, 200).tick(0, 200, &mut None).await);
+    }
+
+    #[tokio::test]
+    async fn standard_delete_rejections_do_not_restart_but_preserve_prior_cleanup() {
+        for code in [ErrorCode::MethodNotFound.code(), ErrorCode::InvalidParams.code()] {
+            for (deleted_count, ambiguous, restart_expected) in
+                [(0, false, false), (1, false, true), (0, true, true)]
+            {
+                let first = Address::repeat_byte(0x11);
+                let second = Address::repeat_byte(0x22);
+                let mut requester =
+                    requester([(100, succeeded(100, first)), (200, succeeded(200, second))]);
+                requester
+                    .expect_delete_proofs_by_tee_signer()
+                    .withf(move |request| request.tee_signer == first)
+                    .times(1)
+                    .returning(move |_| {
+                        if ambiguous {
+                            Err(JsonRpcClientError::RequestTimeout.into())
+                        } else {
+                            Ok(deleted_count)
+                        }
+                    });
+                requester
+                    .expect_delete_proofs_by_tee_signer()
+                    .withf(move |request| request.tee_signer == second)
+                    .times(1)
+                    .returning(move |_| {
+                        Err(JsonRpcClientError::Call(ErrorObjectOwned::owned(
+                            code,
+                            "request rejected",
+                            None::<()>,
+                        ))
+                        .into())
+                    });
+                let mut registry = MockTeeSignerRegistry::new();
+                registry.expect_registered_signers().returning(|| Ok(vec![]));
+                let recovery = recovery(requester, registry, 200);
+                assert_eq!(recovery.tick(0, 200, &mut None).await, restart_expected);
+            }
+        }
     }
 
     #[tokio::test]
@@ -703,63 +825,164 @@ mod tests {
         let requester: Arc<dyn ProofRequesterProvider> = Arc::new(requester);
         let mut registry = MockTeeSignerRegistry::new();
         registry.expect_registered_signers().times(1).returning(|| Ok(vec![]));
-        let rollup = rollup(200);
-        let intervals = test_fixed_interval_resolver(100, 100);
-        let factory = Arc::new(MockDisputeGameFactory::default());
-        let config =
-            DriverConfig { poll_interval: Duration::from_millis(10), ..Default::default() };
-        let dispatcher = ProofDispatcher::new(
-            Arc::clone(&requester),
-            Arc::new(MockL1::new(1000)),
-            Arc::new(MockL2),
-            Arc::<MockRollupClient>::clone(&rollup),
-            Arc::clone(&intervals),
-            Address::ZERO,
-        );
-        let chain_recovery = Arc::new(ProofRecovery::new(
-            ProofRecoveryConfig {
-                game_type: 0,
-                anchor_state_registry_address: Address::ZERO,
-                scan_concurrency: 1,
-            },
-            Arc::<MockRollupClient>::clone(&rollup),
-            Arc::new(MockAnchorStateRegistry {
-                anchor_root: test_anchor_root(0),
-                anchor_game: Address::ZERO,
-            }),
-            Arc::<MockDisputeGameFactory>::clone(&factory),
-            Arc::clone(&intervals),
-        ));
-        let submitter = ProofSubmitter::new(
-            Arc::new(MockOutputProposer::default()),
-            Arc::<MockRollupClient>::clone(&rollup),
-            factory,
-            Arc::new(MockAggregateVerifier::default()),
-            Arc::clone(&intervals),
-            &config,
-        );
-        let collector = ProofCollector::new(
-            Arc::clone(&requester),
-            Arc::clone(&rollup),
-            submitter,
-            Arc::clone(&intervals),
-            config.submit_timeout,
-        );
-        let recovery = TeeProofRecovery::new(
+        let pipeline = test_pipeline(
             requester,
-            rollup,
-            intervals,
-            Arc::new(registry),
+            registry,
+            rollup(200),
             Duration::from_secs(1),
+            Duration::from_millis(10),
         );
-        let pipeline = ProvingPipeline::new(config, dispatcher, chain_recovery, collector)
-            .with_tee_proof_recovery(recovery);
 
         tokio::time::timeout(Duration::from_secs(2), pipeline.run(cancel)).await.expect(
             "deleted ranges must be redispatched without waiting for the earlier queued proof",
         );
         assert!(deleted.load(Ordering::SeqCst));
         assert_eq!(dispatches.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn dispatch_advances_and_cancellation_is_prompt_while_sweep_is_blocked() {
+        let head = Arc::new(AtomicUsize::new(200));
+        let scan_started = CancellationToken::new();
+        let new_range_dispatched = CancellationToken::new();
+        let mut rollup = MockRollup::new();
+        let finalized_head = Arc::clone(&head);
+        rollup.expect_sync_status().returning(move || {
+            Ok(test_sync_status(finalized_head.load(Ordering::SeqCst) as u64, B256::ZERO))
+        });
+        rollup.expect_output_at_block().returning(|block| {
+            Ok(OutputAtBlock {
+                output_root: root(block),
+                block_ref: test_l2_block_ref(block, root(block)),
+            })
+        });
+        let server = ServerBuilder::default().build("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", server.local_addr().unwrap());
+        let mut module = RpcModule::new(());
+        let advance_observed = new_range_dispatched.clone();
+        module
+            .register_method("prover_proveBlockRange", move |params, _, _| {
+                let request: ProveBlockRangeRequest = params.one()?;
+                let ProofRequestKind::Tee(tee) = &request.proof.request else {
+                    panic!("expected TEE")
+                };
+                if tee.proof.claimed_l2_block_number == 300 {
+                    advance_observed.cancel();
+                }
+                Ok::<_, ErrorObjectOwned>(ProveBlockRangeResponse {
+                    session_id: request.proof.session_id,
+                })
+            })
+            .unwrap();
+        let started = scan_started.clone();
+        module
+            .register_async_method("prover_getProof", move |params, _, _| {
+                let started = started.clone();
+                let head = Arc::clone(&head);
+                async move {
+                    let request: GetProofRequest = params.one()?;
+                    if request.session_id == session(200) {
+                        head.store(300, Ordering::SeqCst);
+                        started.cancel();
+                        pending::<RpcResult<GetProofResponse>>().await
+                    } else {
+                        Ok(unfinished(ProofStatus::Queued))
+                    }
+                }
+            })
+            .unwrap();
+        let handle = server.start(module);
+        let requester =
+            ProofRequesterClient::connect(&ProverServiceClientConfig::new(endpoint)).unwrap();
+        let mut registry = MockTeeSignerRegistry::new();
+        registry.expect_registered_signers().never();
+        let pipeline = test_pipeline(
+            Arc::new(requester),
+            registry,
+            Arc::new(rollup),
+            Duration::from_secs(5),
+            Duration::from_millis(10),
+        );
+        let cancel = CancellationToken::new();
+        let run = pipeline.run(cancel.clone());
+        tokio::pin!(run);
+        tokio::select! {
+            () = &mut run => panic!("pipeline must run until cancelled"),
+            result = tokio::time::timeout(Duration::from_secs(2), async {
+                scan_started.cancelled().await;
+                new_range_dispatched.cancelled().await;
+            }) => result.expect("dispatch must advance before the blocked sweep times out"),
+        }
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_millis(100), &mut run)
+            .await
+            .expect("cancellation must drop a blocked sweep promptly");
+        handle.stop().unwrap();
+        tokio::time::timeout(Duration::from_secs(1), handle.stopped()).await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ambiguous_deletes_back_off_and_later_scan_pages_survive_restarts() {
+        let first = Address::repeat_byte(0x11);
+        let later = Address::repeat_byte(0x22);
+        let last = (TeeProofRecovery::MAX_TARGETS_PER_TICK as u64 + 1) * 100;
+        let poll_interval = Duration::from_secs(12);
+        let started = Instant::now();
+        let deletion_times = Arc::new(Mutex::new(Vec::new()));
+        let deleted_later = Arc::new(AtomicBool::new(false));
+        let cancel = CancellationToken::new();
+        let mut requester = requester((100..=last).step_by(100).map(|block| {
+            let proof = if block == 200 {
+                succeeded(block, first)
+            } else if block == last {
+                succeeded(block, later)
+            } else {
+                unfinished(ProofStatus::Queued)
+            };
+            (block, proof)
+        }));
+        let later_deleted = Arc::clone(&deleted_later);
+        let stop = cancel.clone();
+        requester.expect_prove_block_range().returning(move |request| {
+            let ProofRequestKind::Tee(tee) = &request.proof.request else { panic!("expected TEE") };
+            if tee.proof.claimed_l2_block_number == last && later_deleted.load(Ordering::SeqCst) {
+                stop.cancel();
+            }
+            Ok(ProveBlockRangeResponse { session_id: request.proof.session_id })
+        });
+        let times = Arc::clone(&deletion_times);
+        let later_deleted = Arc::clone(&deleted_later);
+        let later_attempts = Arc::new(AtomicUsize::new(0));
+        requester.expect_delete_proofs_by_tee_signer().returning(move |request| {
+            times.lock().unwrap().push(Instant::now());
+            if request.tee_signer == first {
+                Err(JsonRpcClientError::RequestTimeout.into())
+            } else {
+                assert_eq!(request.tee_signer, later);
+                if later_attempts.fetch_add(1, Ordering::SeqCst) < 2 {
+                    return Err(JsonRpcClientError::RequestTimeout.into());
+                }
+                later_deleted.store(true, Ordering::SeqCst);
+                Ok(1)
+            }
+        });
+        let mut registry = MockTeeSignerRegistry::new();
+        registry.expect_registered_signers().returning(|| Ok(vec![]));
+        let pipeline = test_pipeline(
+            Arc::new(requester),
+            registry,
+            rollup(last),
+            Duration::from_secs(1),
+            poll_interval,
+        );
+        tokio::time::timeout(poll_interval * 7, pipeline.run(cancel))
+            .await
+            .expect("later signer must be cleaned and redispatched despite an earlier timeout");
+        assert!(deleted_later.load(Ordering::SeqCst));
+        let times = deletion_times.lock().unwrap();
+        assert_eq!(times.len(), 6, "cleanup restarts must retain later scan pages");
+        assert!(times[0] - started >= poll_interval);
+        assert!(times.windows(2).all(|pair| pair[1] - pair[0] >= poll_interval));
     }
 
     #[tokio::test]
