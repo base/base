@@ -11,17 +11,24 @@ verifies the output root locally, then submits through
 ### Game Tracking and Parent Selection
 
 Each dispute game references a parent game via `parent_address` in the factory.
-The proposer carries no cached parent state; it loads the latest game from chain
-at the top of every tick.
+At the top of every tick the proposer recovers its parent from chain.
 
-`recover_latest_state()` walks backwards through the `DisputeGameFactory` (up to
-`MAX_FACTORY_SCAN_LOOKBACK` entries, default 5000) to find the most recent game
-matching the configured `game_type`:
+`ProofRecovery::recover_latest_state()` reads the anchor root and anchor game
+from `AnchorStateRegistry` in one snapshot, then walks forward from the anchor.
+For each next proposal block it computes the expected root claim and extra data
+from canonical rollup output roots and looks the game up with
+`DisputeGameFactory.games()` for the configured `game_type`:
 
-- If a matching game exists, use it as the parent.
-- If none exists, use `AnchorStateRegistry`.
+- If the game exists, it becomes the new parent and the walk continues.
+- The walk stops at the first missing game, at a block past the finalized L2
+  head, or at a block the rollup node does not have yet.
+- If the anchor has no game, `AnchorStateRegistry` is used as the parent.
 - If recovery fails, skip the tick and retry on the next one.
 
-Because state is always loaded from chain, the proposer chains off games created
-by any proposer, handles `GameAlreadyExists` without special recovery logic, and
-cannot enter stale-state livelocks.
+The last walk result is cached with the factory `game_count`. The cache is
+reused while the count is unchanged and the finalized head has not reached the
+next proposal block; a higher count resumes the walk from the cached tip, and a
+lower count or an anchor past the cached tip restarts from the anchor.
+
+Because state is recovered from chain, the proposer chains off games created
+by any proposer and handles `GameAlreadyExists` without special recovery logic.
