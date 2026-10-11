@@ -681,6 +681,9 @@ mod tests {
     use alloy_sol_types::SolEvent;
     use base_precompile_storage::{BasePrecompileError, Result};
     use k256::ecdsa::SigningKey;
+    use rstest::rstest;
+
+    use super::{DOMAIN_TYPEHASH, VERSION};
 
     use crate::{
         B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinToken, B20TokenRole, IB20, PackedPolicy,
@@ -1078,14 +1081,25 @@ mod tests {
     fn transfer_unprivileged_enforces_transfer_policies() {
         let mut tok = token();
         fund(&mut tok, ALICE, U256::from(100u64));
-        // ALLOWLIST with no members → sender/receiver policy checks revert.
         const POLICY: u64 = (1u64 << 56) | 7;
         tok.accounting_mut().set_policy_id(B20PolicyType::TransferSender.id(), POLICY).unwrap();
         tok.accounting_mut().set_policy_id(B20PolicyType::TransferReceiver.id(), POLICY).unwrap();
         tok.policy_storage_mut().create_existing_policy(POLICY);
-        assert!(LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10u64), false).is_err());
-        // Authorize both parties → transfer succeeds through the guard path.
+        assert_eq!(
+            LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10u64), false).unwrap_err(),
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: B20PolicyType::TransferSender.id(),
+                policyId: POLICY,
+            })
+        );
         tok.policy_storage_mut().allow(POLICY, ALICE);
+        assert_eq!(
+            LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10u64), false).unwrap_err(),
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: B20PolicyType::TransferReceiver.id(),
+                policyId: POLICY,
+            })
+        );
         tok.policy_storage_mut().allow(POLICY, BOB);
         LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10u64), false).unwrap();
         assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(10u64));
@@ -1281,8 +1295,10 @@ mod tests {
                 true,
             )
             .unwrap();
-        assert_eq!(LOGIC.paused_features(&tok).unwrap().len(), 2);
-        assert!(LOGIC.is_paused(&tok, IB20::PausableFeature::BURN).unwrap());
+        assert_eq!(
+            LOGIC.paused_features(&tok).unwrap(),
+            vec![IB20::PausableFeature::MINT, IB20::PausableFeature::BURN]
+        );
     }
 
     // --- config / metadata ---
@@ -1421,8 +1437,14 @@ mod tests {
         let owner = anvil_owner();
         let args = signed_permit(&tok, owner, BOB, U256::from(1u64), U256::MAX);
         LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args.clone()).unwrap();
-        // Same (v, r, s): the nonce has advanced, so recovery no longer matches `owner`.
-        assert!(LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).is_err());
+        let replay_hash =
+            args.signing_hash(LOGIC.domain_separator(&tok, CHAIN_ID).unwrap(), U256::ONE);
+        let signer = args.recover_signer(replay_hash).unwrap();
+        assert_ne!(signer, owner);
+        assert_eq!(
+            LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).unwrap_err(),
+            BasePrecompileError::revert(IB20::InvalidSigner { signer, owner })
+        );
     }
 
     // --- reads ---
@@ -1442,26 +1464,21 @@ mod tests {
     }
 
     #[test]
-    fn domain_separator_is_deterministic_and_chain_specific() {
+    fn domain_separator_is_chain_specific() {
         let tok = token();
-        assert_eq!(
-            LOGIC.domain_separator(&tok, CHAIN_ID).unwrap(),
-            LOGIC.domain_separator(&tok, CHAIN_ID).unwrap()
-        );
         assert_ne!(
             LOGIC.domain_separator(&tok, 1).unwrap(),
             LOGIC.domain_separator(&tok, 2).unwrap()
         );
     }
 
-    /// Pins this version's frozen EIP-712 domain typehash to the exact type string it must hash.
-    /// The constant is duplicated per version so each fork's wire surface stays independently
-    /// frozen; without this check a typo in one copy would silently change that version's digest.
-    #[test]
-    fn domain_typehash_matches_eip712_domain_type() {
-        let domain_type =
-            b"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)";
-        assert_eq!(super::DOMAIN_TYPEHASH, keccak256(domain_type));
-        assert_eq!(super::VERSION, b"1");
+    #[rstest]
+    #[case::domain_typehash(
+        DOMAIN_TYPEHASH.as_slice(),
+        alloy_primitives::hex!("8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f").as_slice()
+    )]
+    #[case::version(VERSION, b"1")]
+    fn eip712_constants_match_standard(#[case] actual: &[u8], #[case] expected: &[u8]) {
+        assert_eq!(actual, expected);
     }
 }
