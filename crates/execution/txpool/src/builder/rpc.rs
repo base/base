@@ -623,9 +623,11 @@ mod tests {
     #[test]
     fn both_monomorphizations_build_rpc_modules() {
         // The stock call-site shape must keep working untouched...
-        let _stock = handler().into_rpc();
-        // ...and a custom extension payload must also produce a module.
-        let _custom = extension_handler(true).into_rpc();
+        let stock_methods: Vec<_> = handler().into_rpc().method_names().collect();
+        assert_eq!(stock_methods, ["base_insertValidatedTransaction"]);
+
+        let custom_methods: Vec<_> = extension_handler(true).into_rpc().method_names().collect();
+        assert_eq!(custom_methods, ["base_insertValidatedTransaction"]);
     }
 
     // ==========================================================================
