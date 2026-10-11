@@ -95,7 +95,7 @@ impl FlashblockSelectionOutcome {
 pub struct FlashblockDiagnostics {
     /// Whether the flashblock timer or block cancel fired during execution.
     pub cancelled: bool,
-    /// Whether the scan stopped on the gas-exhaustion guard with candidates left in the pool.
+    /// Whether the scan stopped on the gas-exhaustion guard; the pool may still hold candidates.
     pub gas_exhausted: bool,
     /// Number of transactions considered from the pool.
     pub txs_considered: u64,

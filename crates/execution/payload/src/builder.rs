@@ -944,9 +944,13 @@ where
         let resource_metering = &self.builder_config.resource_metering;
         let mut resource_throttled = 0u64;
         loop {
-            // Cancellation is observed before the gas guard stops the scan, so a cancelled job
-            // still returns `Ok(Some(()))` when the block gas is already exhausted. The guard
-            // stays ahead of `next` so an exhausted block never reads the pool.
+            // Cancellation is checked before the gas guard, so a cancel that arrives after the
+            // final commit still abandons the build. Pre-Denim, an empty, drained, or already
+            // full build now returns `Ok(Some(()))` where the old `while let` loop returned
+            // `Ok(None)` and assembled a payload. That is abandoned-work cleanup, not a lost
+            // `getPayload`: the resolver finalizes the payload it requested rather than
+            // cancelling it. The guard stays ahead of `next` so an exhausted block never reads
+            // the pool.
             if self.cancel.is_cancelled() {
                 return Ok(Some(()));
             }
@@ -1539,9 +1543,10 @@ where
             );
         }
 
-        // A cancellation that raced the finalization break (or an empty iterator) must still
-        // win, so re-check it before the finalized payload is assembled. Gated on Denim so
-        // pre-Denim control flow is unchanged.
+        // A cancellation that raced the finalization break must still win, so re-check it before
+        // the finalized payload is assembled. This stays Denim-gated: the loop already checks
+        // cancellation before every iteration, so pre-Denim cancellation is handled there, and
+        // only the Denim finalization break can skip past that check.
         if can_finalize_early && self.cancel.is_cancelled() {
             return Ok(Some(()));
         }
@@ -1815,12 +1820,26 @@ mod tests {
         pool_transaction_to(nonce, Address::repeat_byte(0x11), U256::ZERO)
     }
 
+    /// A transfer with an explicit declared `gas_limit`, so a test can fit it to a gas budget.
+    fn pool_transaction_with_gas_limit(nonce: u64, gas_limit: u64) -> BasePooledTransaction {
+        pool_transaction_to_with_gas_limit(nonce, Address::repeat_byte(0x11), U256::ZERO, gas_limit)
+    }
+
     fn pool_transaction_to(nonce: u64, to: Address, value: U256) -> BasePooledTransaction {
+        pool_transaction_to_with_gas_limit(nonce, to, value, 100_000)
+    }
+
+    fn pool_transaction_to_with_gas_limit(
+        nonce: u64,
+        to: Address,
+        value: U256,
+        gas_limit: u64,
+    ) -> BasePooledTransaction {
         let envelope = BaseTxEnvelope::Eip1559(
             TxEip1559 {
                 chain_id: 8_453,
                 nonce,
-                gas_limit: 100_000,
+                gas_limit,
                 max_fee_per_gas: 2_000_000_000,
                 max_priority_fee_per_gas: 1,
                 to: TxKind::Call(to),
@@ -2084,8 +2103,8 @@ mod tests {
             *next_calls.lock().unwrap() >= 1,
             "the scan must read the pool while a tx could fit"
         );
-        // The candidate's 21,000-gas limit does not fit the remaining gas, so it is rejected by
-        // the gas limit rather than silently skipped.
+        // The candidate's 100,000-gas limit exceeds the `MIN_TX_RESERVED_GAS` still remaining, so
+        // it is rejected by the gas limit rather than silently skipped.
         assert_eq!(invalid.lock().unwrap().len(), 1);
         assert_eq!(info.cumulative_gas_used, block_gas_limit - MIN_TX_RESERVED_GAS);
     }
@@ -2123,6 +2142,122 @@ mod tests {
 
         assert!(cancelled.is_some(), "a cancelled job must not be finalized");
         assert_eq!(*next_calls.lock().unwrap(), 0, "the guard must stop before the pool is read");
+    }
+
+    /// Cancels the payload as its last transaction commits, modelling a resolver that drops a
+    /// build it no longer waits for after the final commit has landed. Pre-Denim this is the
+    /// only cancellation signal the scan observes: finalization requests are ignored there.
+    struct CancelOnCommit {
+        transactions: TestParkableTransactions,
+        // Models the resolver retaining its clone until the build returns.
+        cancel: ManuallyDrop<CancelOnDrop>,
+    }
+
+    impl PayloadTransactions for CancelOnCommit {
+        type Transaction = BasePooledTransaction;
+
+        fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
+            self.transactions.next(())
+        }
+
+        fn mark_invalid(&mut self, sender: Address, nonce: u64) {
+            self.transactions.mark_invalid(sender, nonce);
+        }
+    }
+
+    impl ParkablePayloadTransactions for CancelOnCommit {
+        fn park_current(&mut self) {
+            self.transactions.park_current();
+        }
+
+        fn mark_current_committed(&mut self) {
+            self.transactions.mark_current_committed();
+            // Dropping a clone of the payload's cancel handle flips the shared flag to
+            // `CANCELLED`.
+            drop((*self.cancel).clone());
+        }
+
+        fn promote(&mut self, transaction_hash: B256) -> bool {
+            self.transactions.promote(transaction_hash)
+        }
+
+        fn discard_parked(&mut self, transaction_hash: B256) -> bool {
+            self.transactions.discard_parked(transaction_hash)
+        }
+    }
+
+    /// A pre-Denim job cancelled before the scan starts abandons the build: the cancellation
+    /// check now runs before the pool read on every iteration, so `Builder::build` reports
+    /// `Cancelled` instead of assembling a payload the caller has stopped waiting for.
+    #[test]
+    fn pre_denim_cancellation_abandons_an_empty_build() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        drop(ctx.cancel.clone());
+
+        assert!(matches!(
+            build_pool_payload(ctx, TestParkableTransactions::new(vec![])),
+            BuildOutcomeKind::Cancelled
+        ));
+    }
+
+    /// A pre-Denim job cancelled at the final commit of a drained build is abandoned too: the
+    /// old loop returned `Ok(None)` as soon as `next` yielded `None`, and only the Denim-gated
+    /// post-loop re-check could still report cancellation.
+    #[test]
+    fn pre_denim_cancellation_abandons_a_drained_build() {
+        let ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        let transactions = CancelOnCommit {
+            transactions: TestParkableTransactions::new(vec![pool_transaction(0)]),
+            cancel: ManuallyDrop::new(ctx.cancel.clone()),
+        };
+
+        assert!(matches!(build_pool_payload(ctx, transactions), BuildOutcomeKind::Cancelled));
+    }
+
+    /// A pre-Denim job cancelled at the final commit of a full build is abandoned too. The
+    /// target gas budget is exactly one transfer, so the gas guard stops the uncancelled control
+    /// scan after that transfer and the payload is assembled; adding the cancel makes the same
+    /// build report `Cancelled`, because cancellation is checked before the guard.
+    #[test]
+    fn pre_denim_cancellation_abandons_a_full_build() {
+        let sender = pool_transaction_with_gas_limit(0, 21_000).sender();
+
+        let ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        // A 21,000-gas target budget is exactly one transfer, so the scan has no room after it.
+        ctx.builder_config.gas_limit_config.set_gas_limit(21_000);
+        let next_calls = Arc::new(Mutex::new(0));
+        let control = build_parkable_pool_payload(
+            ctx,
+            TestParkableTransactions::counting(
+                vec![pool_transaction_with_gas_limit(0, 21_000)],
+                Arc::default(),
+                Arc::clone(&next_calls),
+            ),
+            &[sender],
+        );
+        let BuildOutcomeKind::Better { payload } = control else {
+            panic!("a full block without a cancel must still be assembled")
+        };
+        assert_eq!(payload.block().body().transactions.len(), 1);
+        assert_eq!(
+            *next_calls.lock().unwrap(),
+            1,
+            "the guard must stop the scan without a second pool read"
+        );
+
+        let ctx = pool_payload_context(DENIM_TIMESTAMP - 1);
+        ctx.builder_config.gas_limit_config.set_gas_limit(21_000);
+        let transactions = CancelOnCommit {
+            transactions: TestParkableTransactions::new(vec![pool_transaction_with_gas_limit(
+                0, 21_000,
+            )]),
+            cancel: ManuallyDrop::new(ctx.cancel.clone()),
+        };
+
+        assert!(matches!(
+            build_parkable_pool_payload(ctx, transactions, &[sender]),
+            BuildOutcomeKind::Cancelled
+        ));
     }
 
     #[test]
